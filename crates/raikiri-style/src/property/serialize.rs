@@ -58,11 +58,11 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         PropertyValue::AllRevertLayer => Some("revert-layer".to_owned()),
         PropertyValue::FontSizeKeyword(keyword) => Some(keyword.as_css_str().to_owned()),
         PropertyValue::ColumnSpan(value) => Some(value.as_css_str().to_owned()),
-        PropertyValue::FontSize(l)
-        | PropertyValue::PaddingTop(l)
+        PropertyValue::PaddingTop(l)
         | PropertyValue::PaddingRight(l)
         | PropertyValue::PaddingBottom(l)
-        | PropertyValue::PaddingLeft(l)
+        | PropertyValue::PaddingLeft(l) => Some(serialize_length_percentage_or_calc(l)),
+        PropertyValue::FontSize(l)
         | PropertyValue::BorderTopWidth(l)
         | PropertyValue::BorderRightWidth(l)
         | PropertyValue::BorderBottomWidth(l)
@@ -82,7 +82,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
             })
         }
         PropertyValue::BorderImageWidth(sides) => Some(serialize_sides(sides, |side| match side {
-            BorderImageWidthSide::LengthPercentage(length) => serialize_length(length),
+            BorderImageWidthSide::LengthPercentage(length) => {
+                serialize_length_percentage_or_calc(length)
+            }
             BorderImageWidthSide::Number(value) => serialize_number(*value),
             BorderImageWidthSide::Auto => "auto".to_owned(),
         })),
@@ -141,13 +143,15 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::MarginBottom(v)
         | PropertyValue::MarginLeft(v) => Some(serialize_length_or_auto(v)),
 
-        PropertyValue::Padding(sides) => Some(serialize_sides(sides, serialize_length)),
+        PropertyValue::Padding(sides) => {
+            Some(serialize_sides(sides, serialize_length_percentage_or_calc))
+        }
         PropertyValue::BorderWidth(sides) => Some(serialize_sides(sides, serialize_length)),
         PropertyValue::Margin(sides) => Some(serialize_sides(sides, serialize_length_or_auto)),
 
-        PropertyValue::PaddingInline(pair) | PropertyValue::PaddingBlock(pair) => {
-            Some(serialize_start_end(pair, serialize_length))
-        }
+        PropertyValue::PaddingInline(pair) | PropertyValue::PaddingBlock(pair) => Some(
+            serialize_start_end(pair, serialize_length_percentage_or_calc),
+        ),
         PropertyValue::MarginInline(pair) | PropertyValue::MarginBlock(pair) => {
             Some(serialize_start_end(pair, serialize_length_or_auto))
         }
@@ -782,6 +786,17 @@ pub(crate) fn serialize_length_or_auto(value: &LengthOrAuto) -> String {
         LengthOrAuto::Calc(calc) => serialize_calc_length_percentage(calc),
         LengthOrAuto::RelativeCalc(calc) => serialize_relative_calc_length_percentage(calc),
         LengthOrAuto::MinContent => "min-content".to_owned(),
+    }
+}
+
+/// Serializes a [`LengthPercentageOrCalc`] back to CSS text.
+pub(crate) fn serialize_length_percentage_or_calc(value: &LengthPercentageOrCalc) -> String {
+    match value {
+        LengthPercentageOrCalc::Length(l) => serialize_length(l),
+        LengthPercentageOrCalc::Calc(calc) => serialize_calc_length_percentage(calc),
+        LengthPercentageOrCalc::RelativeCalc(calc) => {
+            serialize_relative_calc_length_percentage(calc)
+        }
     }
 }
 

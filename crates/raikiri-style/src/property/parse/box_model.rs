@@ -51,6 +51,11 @@ pub(crate) fn parse_margin_side(input: &mut Parser<'_, '_>) -> Option<LengthOrAu
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension; keep its terms.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LengthOrAuto::from_relative_calc(calc));
+    }
     parse_length_value(input, true).map(LengthOrAuto::Length)
 }
 
@@ -238,10 +243,16 @@ pub(super) fn parse_width(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
 /// An older description of their asymmetry no longer applies: font-size once accepted only px lengths,
 /// while padding accepted all five `<length-percentage>` variants. Support for font-relative units
 /// removed that difference.
-pub(super) fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
+pub(super) fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<LengthPercentageOrCalc> {
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. A math function is
+    // clamped to the range rather than rejected.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LengthPercentageOrCalc::from_non_negative_calc(calc));
+    }
     let length = parse_length_value(input, true)?;
     // CSS Box 3 §4.1: "Negative values for padding properties are invalid."
-    (length.payload() >= 0.0).then_some(length)
+    (length.payload() >= 0.0).then_some(LengthPercentageOrCalc::Length(length))
 }
 
 /// Expand `padding: <'padding-top'>{1,4}` shorthand to [`Sides<Length>`].
@@ -261,7 +272,9 @@ pub(super) fn parse_padding_side(input: &mut Parser<'_, '_>) -> Option<Length> {
 /// - With no values, the first `parse_padding_side` returns `None`, which propagates to the whole parse.
 /// - [`parse_padding_side`] enforces each value's nonnegative constraint. For `padding: 10px -5px`,
 ///   the second value returns `None` and the whole declaration is dropped.
-pub(super) fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Sides<Length>> {
+pub(super) fn parse_padding_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<Sides<LengthPercentageOrCalc>> {
     // The first value is required. Without it, the 0-value form violates the grammar.
     let v1 = parse_padding_side(input)?;
     // Values 2–4 are optional and parsed with successive `try_parse` calls. Each failed call rewinds,
@@ -298,7 +311,7 @@ pub(super) fn parse_padding_shorthand(input: &mut Parser<'_, '_>) -> Option<Side
 /// wrapper.
 pub(super) fn parse_padding_side_res<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<Length, ParseError<'i, ()>> {
+) -> Result<LengthPercentageOrCalc, ParseError<'i, ()>> {
     parse_padding_side(input).ok_or_else(|| input.new_custom_error(()))
 }
 
@@ -321,7 +334,7 @@ pub(super) fn parse_padding_side_res<'i>(
 /// `expect_exhausted` and drops the declaration. See "Robustness" in [`parse_padding_shorthand`].
 pub(super) fn parse_padding_logical_shorthand(
     input: &mut Parser<'_, '_>,
-) -> Option<StartEnd<Length>> {
+) -> Option<StartEnd<LengthPercentageOrCalc>> {
     let start = parse_padding_side(input)?;
     let end = input.try_parse(parse_padding_side_res).ok();
     Some(match end {

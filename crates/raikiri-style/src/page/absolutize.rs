@@ -10,25 +10,26 @@ use crate::property::{
     FlexBasisValue, FlexShorthand, FontShorthand, FontShorthandSize, GapShorthand,
     GridInflexibleBreadth, GridTemplateTracks, GridTrackBreadth, GridTrackList,
     GridTrackListComponent, GridTrackRepeat, GridTrackSize, Length, LengthOrAuto, LengthOrNormal,
-    LengthPercentageCalc, Outline, OutlineColor, OutlineStyle, OverflowXY, PropertyValue, Sides,
-    TextDecorationInset, TextDecorationShorthand, TextDecorationThickness, TextIndentLength,
-    TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset, TransformFunction,
-    resolve_overflow,
+    LengthPercentageCalc, LengthPercentageOrCalc, Outline, OutlineColor, OutlineStyle, OverflowXY,
+    PropertyValue, Sides, TextDecorationInset, TextDecorationShorthand, TextDecorationThickness,
+    TextIndentLength, TextIndentValue, TextShadowItem, TextShadowLength, TextUnderlineOffset,
+    TransformFunction, resolve_overflow,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedCssPositionOffset, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
     ComputedGridTrackListComponent, ComputedGridTrackSize, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedTextIndent, ResolveContext, lift_border_spacing, lift_letter_spacing, lift_line_height,
-    lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_size, resolve_border,
-    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_css_position,
-    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    ComputedTextIndent, ResolveContext, lift_border_spacing, lift_length_percentage_or_calc,
+    lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
+    resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
+    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_outline, resolve_size_length_percentage_or_auto,
-    resolve_tab_size, resolve_text_indent_calc, resolve_text_shadow_item, resolve_vertical_align,
-    resolve_word_spacing,
+    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_indent_calc,
+    resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
 };
 
 /// Basis for resolving lengths in the page context: the page context's own
@@ -49,6 +50,16 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentage::Px(v) => Length::Px(v),
             ComputedLengthPercentage::Percent(p) => Length::Percent(p),
         }
+    }
+    /// `<length-percentage [0,∞]>` that may be a mixed `calc()` — same
+    /// mapping as [`Self::lp`], with a calc kept as one.
+    fn lpc(self, specified: LengthPercentageOrCalc) -> LengthPercentageOrCalc {
+        lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
     }
     /// `<length-percentage> | auto` — same mapping, `auto` preserved.
     fn lpa(self, specified: LengthOrAuto) -> LengthOrAuto {
@@ -679,7 +690,7 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BorderImageWidth(sides) => {
             PropertyValue::BorderImageWidth(sides.map(|side| match side {
                 BorderImageWidthSide::LengthPercentage(length) => {
-                    BorderImageWidthSide::LengthPercentage(basis.lp(length))
+                    BorderImageWidthSide::LengthPercentage(basis.lpc(length))
                 }
                 other => other,
             }))
@@ -728,18 +739,20 @@ pub(super) fn absolutize_in_page_context(
             })
         }
         // ── padding ───────────────────────────────────────────────────────
-        PropertyValue::PaddingTop(v) => PropertyValue::PaddingTop(basis.lp(v)),
-        PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(basis.lp(v)),
-        PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(basis.lp(v)),
-        PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(basis.lp(v)),
+        PropertyValue::PaddingTop(v) => PropertyValue::PaddingTop(basis.lpc(v)),
+        PropertyValue::PaddingRight(v) => PropertyValue::PaddingRight(basis.lpc(v)),
+        PropertyValue::PaddingBottom(v) => PropertyValue::PaddingBottom(basis.lpc(v)),
+        PropertyValue::PaddingLeft(v) => PropertyValue::PaddingLeft(basis.lpc(v)),
         // Shorthand fall-throughs: unreachable through `cascade_page` (shorthands are
         // expanded first) but kept as real arms, not `unreachable!`, so the cascade
         // stays panic-free for direct callers.
-        PropertyValue::Padding(sides) => PropertyValue::Padding(sides.map(|l| basis.lp(l))),
+        PropertyValue::Padding(sides) => PropertyValue::Padding(sides.map(|l| basis.lpc(l))),
         PropertyValue::PaddingInline(pair) => {
-            PropertyValue::PaddingInline(pair.map(|l| basis.lp(l)))
+            PropertyValue::PaddingInline(pair.map(|l| basis.lpc(l)))
         }
-        PropertyValue::PaddingBlock(pair) => PropertyValue::PaddingBlock(pair.map(|l| basis.lp(l))),
+        PropertyValue::PaddingBlock(pair) => {
+            PropertyValue::PaddingBlock(pair.map(|l| basis.lpc(l)))
+        }
         // ── margin ────────────────────────────────────────────────────────
         PropertyValue::MarginTop(v) => PropertyValue::MarginTop(basis.margin_lpa(v)),
         PropertyValue::MarginRight(v) => PropertyValue::MarginRight(basis.margin_lpa(v)),

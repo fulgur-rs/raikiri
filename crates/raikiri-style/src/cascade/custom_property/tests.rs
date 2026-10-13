@@ -1,12 +1,12 @@
 use super::*;
 use crate::cascade::test_support::*;
 use crate::cascade::{apply_value, cascade};
+use crate::property::LengthPercentageOrCalc;
 use crate::property::{
     CalcLengthPercentage, CssColor, Length, OutlineColor, OutlineStyle, PropertyKey, VerticalAlign,
 };
-use crate::resolve::{
-    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLineHeight,
-};
+use crate::resolve::ComputedLengthPercentageOrCalc;
+use crate::resolve::{ComputedLength, ComputedLengthPercentageOrAuto, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
 use crate::specified::SpecifiedValues;
 use crate::test_dom::TestDoc;
@@ -89,10 +89,10 @@ fn var_in_padding_inline_shorthand_preserves_later_longhand_cascade() {
         "div",
         Some("--space: 10px; padding-inline: var(--space); padding-left: 20px"),
     );
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(20.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(20.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
@@ -105,10 +105,10 @@ fn var_in_padding_block_shorthand_preserves_later_longhand_cascade() {
         "div",
         Some("--space: 10px; padding-block: var(--space); padding-top: 20px"),
     );
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(20.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(20.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn var_in_padding_inline_start_longhand_preserves_cascade() {
         "div",
         Some("--space: 7px; padding-inline-start: var(--space)"),
     );
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(7.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(7.0));
 }
 
 #[test]
@@ -1405,8 +1405,8 @@ fn important_var_in_logical_shorthand_resolves() {
         "p",
         None,
     );
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(3.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(3.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(3.0));
 }
 
 #[test]
@@ -1446,8 +1446,8 @@ fn var_after_another_component_keeps_the_separator() {
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(2.0));
 
     let cv = cascade_doc("", "p", Some("--gap: 5px; padding: 0 var(--gap) 3px"));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(5.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(3.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(5.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(3.0));
 }
 
 #[test]
@@ -2010,7 +2010,7 @@ fn shorthand_cache_keeps_sources_and_properties_separate() {
             "padding",
             "var(--a)",
             PropertyKey::PaddingRight,
-            PropertyValue::PaddingRight(Length::Px(4.0)),
+            PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(Length::Px(4.0))),
         ),
         (
             "margin",
@@ -2480,4 +2480,144 @@ fn env_inside_math_is_rejected_at_parse_time() {
         Some("width:10px; width: calc(env(unknown, 4px) + 1px)"),
     );
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(10.0));
+}
+
+#[test]
+fn var_ending_in_hex_escape_keeps_the_following_whitespace() {
+    // `\6d` would consume the space that follows `var()` if the substituted
+    // text were reparsed as is, leaving `1em+ 1px`, which is not a valid sum.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; --a: 1e\6d; width: calc(var(--a) + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(21.0));
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; --a: 1\65 m; width: calc(var(--a) + 1px + 10%)"),
+    );
+    assert_eq!(
+        cv.width,
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 21.0,
+        })
+    );
+}
+
+#[test]
+fn escaped_unit_written_directly_still_consumes_its_whitespace() {
+    // Written in the source, the escape consumes the space before `+`, so
+    // the sum has no whitespace on one side of the operator and is invalid.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; width: calc(1e\6d + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(r"font-size: 20px; width: calc(1e\6d  + 1px)"),
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(21.0));
+}
+
+#[test]
+fn hex_escape_detection_at_end_of_substitution() {
+    assert!(ends_with_open_hex_escape(r"1e\6d"));
+    assert!(ends_with_open_hex_escape(r"\10FFFF"));
+    assert!(!ends_with_open_hex_escape(r"\1234567"));
+    assert!(!ends_with_open_hex_escape(r"1e\\6d"));
+    assert!(!ends_with_open_hex_escape(r"\6d "));
+    assert!(!ends_with_open_hex_escape("1em"));
+}
+
+#[test]
+fn calc_folding_to_a_negative_size_clamps_to_zero() {
+    for declaration in [
+        "width: calc(0em - 10px)",
+        "width: calc(-10px)",
+        "--a: 0em; width: calc(var(--a) - 10px)",
+        "--a: 1em; width: calc(var(--a) - 1em - 10px)",
+    ] {
+        let cv = cascade_doc("", "div", Some(&format!("font-size: 20px; {declaration}")));
+        assert_eq!(
+            cv.width,
+            ComputedLengthPercentageOrAuto::Px(0.0),
+            "{declaration}"
+        );
+    }
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--a: 1em; min-height: calc(var(--a) - 1em - 10px)"),
+    );
+    assert_eq!(cv.min_height, ComputedLengthPercentageOrAuto::Px(0.0));
+    // A plain negative length stays invalid.
+    let cv = cascade_doc("", "div", Some("width: 5px; width: -10px"));
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(5.0));
+}
+
+#[test]
+fn mixed_calc_margin_and_padding_keep_the_percentage_until_used_time() {
+    use crate::property::{BorderImageWidthSide, CalcLengthPercentage};
+    use crate::resolve::{
+        ComputedLengthPercentageOrAuto as Auto, ComputedLengthPercentageOrCalc as Lpc,
+    };
+    let calc = |percent, px| CalcLengthPercentage { percent, px };
+
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 20px; margin: calc(10% + 1em) calc(1px + 2px)"),
+    );
+    assert_eq!(cv.margin.top, Auto::Calc(calc(10.0, 20.0)));
+    assert_eq!(cv.margin.right, Auto::Px(3.0));
+
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--a: 10%; margin-top: calc(var(--a) + 1px)"),
+    );
+    assert_eq!(cv.margin.top, Auto::Calc(calc(10.0, 1.0)));
+
+    let cv = cascade_doc("", "div", Some("margin-inline: calc(10% + 1px)"));
+    assert_eq!(cv.margin.left, Auto::Calc(calc(10.0, 1.0)));
+    assert_eq!(cv.margin.right, Auto::Calc(calc(10.0, 1.0)));
+
+    // Margins may be negative; a folded calc keeps its sign.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 20px; margin-top: calc(1em - 30px)"),
+    );
+    assert_eq!(cv.margin.top, Auto::Px(-10.0));
+
+    // Padding is non-negative: a calc folding to a negative length clamps.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 20px; padding: calc(1em - 30px) calc(10% + 2em)"),
+    );
+    assert_eq!(cv.padding.top, Lpc::Px(0.0));
+    assert_eq!(cv.padding.right, Lpc::Calc(calc(10.0, 40.0)));
+
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--p: 4px; padding-top: calc(var(--p) * 2 + 5%)"),
+    );
+    assert_eq!(cv.padding.top, Lpc::Calc(calc(5.0, 8.0)));
+
+    let cv = cascade_doc("", "div", Some("border-image-width: calc(10% + 1px) 2"));
+    assert_eq!(
+        cv.border_image.width.top,
+        BorderImageWidthSide::LengthPercentage(Lpc::Calc(calc(10.0, 1.0)))
+    );
+    assert_eq!(
+        cv.border_image.width.right,
+        BorderImageWidthSide::Number(2.0)
+    );
 }

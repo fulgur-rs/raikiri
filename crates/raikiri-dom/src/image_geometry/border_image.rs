@@ -13,7 +13,7 @@ use raikiri_style::property::{
     BorderImageOutsetSide, BorderImageRepeatKeyword, BorderImageSliceOffset, BorderImageWidthSide,
     Sides,
 };
-use raikiri_style::resolve::ComputedLengthPercentage;
+use raikiri_style::resolve::ComputedLengthPercentageOrCalc;
 use raikiri_traits::ImageIntrinsicSize;
 
 /// A rectangle as x, y, width and height, in CSS pixels.
@@ -143,17 +143,20 @@ pub fn border_image_geometry(
         |dimension: Option<f32>| dimension.is_some_and(|dimension| dimension > 0.0);
     let has_natural_width = natural.is_some_and(|natural| natural_dimension(natural.width));
     let has_natural_height = natural.is_some_and(|natural| natural_dimension(natural.height));
-    let side_width = |side: BorderImageWidthSide<ComputedLengthPercentage>,
+    let side_width = |side: BorderImageWidthSide<ComputedLengthPercentageOrCalc>,
                       basis: f64,
                       border: f64,
                       slice,
                       has_natural: bool| {
         let width = match side {
-            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(px)) => {
+            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(px)) => {
                 f64::from(px)
             }
-            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(p)) => {
+            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Percent(p)) => {
                 basis * f64::from(p) / 100.0
+            }
+            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Calc(calc)) => {
+                f64::from(calc.px) + basis * f64::from(calc.percent) / 100.0
             }
             BorderImageWidthSide::Number(number) => f64::from(number) * border,
             _ if has_natural => slice,

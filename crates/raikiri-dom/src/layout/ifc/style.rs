@@ -10,7 +10,7 @@ use super::error::IfcError;
 use raikiri_style::property::{self as p, FontFamilyKind, FontFamilyName};
 use raikiri_style::{ChFontKey, ChLengthProvenance};
 use raikiri_style::{
-    ComputedLengthPercentage as Length, ComputedLengthPercentageOrAuto as LengthOrAuto,
+    ComputedLengthPercentageOrAuto as LengthOrAuto, ComputedLengthPercentageOrCalc,
     ComputedLetterSpacing, ComputedLineHeight, ComputedTabSize, ComputedTextIndent, ComputedValues,
 };
 use shodo::font::FontCollection;
@@ -765,9 +765,12 @@ pub(crate) fn inline_edges(
             .as_ref()
             .map(|value| value.factor * ch_advance(fonts, &value.font))
     };
-    let padding = |value: Length, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {
+    let padding = |value: ComputedLengthPercentageOrCalc, ch: &Option<ChLengthProvenance>| match (
+        ch_px(ch),
+        value,
+    ) {
         (Some(px), _) => Ok::<f32, IfcError>(px),
-        (None, Length::Px(value)) => Ok(value),
+        (None, ComputedLengthPercentageOrCalc::Px(value)) => Ok(value),
         _ => Ok(0.0),
     };
     let margin = |value: LengthOrAuto, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {

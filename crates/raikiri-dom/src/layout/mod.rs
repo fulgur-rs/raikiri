@@ -19,15 +19,16 @@ use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, BreakBetween, CalcLengthPercentage, ClearValue,
     ColumnCountValue, ColumnFillValue, ContentAlignmentValue, Direction, DisplayValue,
     FlexDirectionValue, FlexWrapValue, FloatValue, GridAutoFlowValue, GridLineValue,
-    GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, OverflowValue, PositionValue,
-    PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue, WritingMode,
+    GridRepeatCount, GridTemplateAreasValue, Length, LengthOrAuto, LengthPercentageOrCalc,
+    OverflowValue, PositionValue, PropertyKey, PropertyValue, RubyPosition, SelfAlignmentValue,
+    WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackListComponent,
     ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal, ComputedLineHeight,
-    ComputedValues,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedLengthPercentageOrNormal, ComputedLineHeight, ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{

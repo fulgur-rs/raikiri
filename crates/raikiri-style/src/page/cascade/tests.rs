@@ -20,6 +20,7 @@
 
 use super::*;
 use crate::computed::INITIAL_FONT_SIZE_PX;
+use crate::property::LengthPercentageOrCalc;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue,
@@ -1476,7 +1477,7 @@ fn cascade_page_drops_invalid_deferred_value_at_computed_time() {
 
 fn padding_top_of(result: &PageCascadeResult) -> Option<Length> {
     match result.declarations().get(&PropertyKey::PaddingTop) {
-        Some(PropertyValue::PaddingTop(l)) => Some(*l),
+        Some(PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(l))) => Some(*l),
         _ => None,
     }
 }
@@ -2074,7 +2075,9 @@ fn cascade_page_all_box_properties_are_absolutized() {
     );
     assert_eq!(
         result.declarations().get(&PropertyKey::PaddingRight),
-        Some(&PropertyValue::PaddingRight(Length::Px(16.0))),
+        Some(&PropertyValue::PaddingRight(
+            LengthPercentageOrCalc::Length(Length::Px(16.0))
+        )),
     );
     assert_eq!(
         result.declarations().get(&PropertyKey::MarginBottom),
@@ -2333,7 +2336,9 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
 
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Padding(Sides::all(Length::Em(2.0)))),
+            ResolvedAgainstInherited::for_test(PropertyValue::Padding(Sides::all(
+                LengthPercentageOrCalc::Length(Length::Em(2.0))
+            ))),
             fs,
             None,
             &ctx,
@@ -2341,7 +2346,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Padding(Sides::all(Length::Px(40.0))),
+        PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Px(40.0)))),
     );
     assert_eq!(
         absolutize_in_page_context(
@@ -2720,8 +2725,8 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
     assert_eq!(
         absolutize_in_page_context(
             ResolvedAgainstInherited::for_test(PropertyValue::PaddingInline(StartEnd {
-                start: Length::Em(2.0),
-                end: Length::Em(3.0),
+                start: LengthPercentageOrCalc::Length(Length::Em(2.0)),
+                end: LengthPercentageOrCalc::Length(Length::Em(3.0)),
             })),
             fs,
             None,
@@ -2731,15 +2736,15 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::PaddingInline(StartEnd {
-            start: Length::Px(40.0),
-            end: Length::Px(60.0),
+            start: LengthPercentageOrCalc::Length(Length::Px(40.0)),
+            end: LengthPercentageOrCalc::Length(Length::Px(60.0)),
         }),
     );
     assert_eq!(
         absolutize_in_page_context(
             ResolvedAgainstInherited::for_test(PropertyValue::PaddingBlock(StartEnd {
-                start: Length::Em(1.0),
-                end: Length::Em(4.0),
+                start: LengthPercentageOrCalc::Length(Length::Em(1.0)),
+                end: LengthPercentageOrCalc::Length(Length::Em(4.0)),
             })),
             fs,
             None,
@@ -2749,8 +2754,8 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::PaddingBlock(StartEnd {
-            start: Length::Px(20.0),
-            end: Length::Px(80.0),
+            start: LengthPercentageOrCalc::Length(Length::Px(20.0)),
+            end: LengthPercentageOrCalc::Length(Length::Px(80.0)),
         }),
     );
     // `margin-inline`/`margin-block` additionally check that `auto` survives
@@ -3449,18 +3454,18 @@ property_key_samples! {
         hanging: false,
         each_line: false,
     }),
-    PaddingTop => PropertyValue::PaddingTop(Length::Em(2.0)),
-    PaddingRight => PropertyValue::PaddingRight(Length::Em(2.0)),
-    PaddingBottom => PropertyValue::PaddingBottom(Length::Em(2.0)),
-    PaddingLeft => PropertyValue::PaddingLeft(Length::Em(2.0)),
-    Padding => PropertyValue::Padding(Sides::all(Length::Em(2.0))),
+    PaddingTop => PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(Length::Em(2.0))),
+    PaddingRight => PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(Length::Em(2.0))),
+    PaddingBottom => PropertyValue::PaddingBottom(LengthPercentageOrCalc::Length(Length::Em(2.0))),
+    PaddingLeft => PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(Length::Em(2.0))),
+    Padding => PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Em(2.0)))),
     // `PaddingInline`/`PaddingBlock` — same worst-case unit (`Em`) as
     // `Padding` above, placed right after it to match `PropertyKey`'s
     // own declaration order (`property.rs`'s "shorthand key comes after
     // the longhands it can compete with" placement, `PropertyKey` doc's
     // "declaration order is load-bearing" section).
-    PaddingInline => PropertyValue::PaddingInline(StartEnd::both(Length::Em(2.0))),
-    PaddingBlock => PropertyValue::PaddingBlock(StartEnd::both(Length::Em(2.0))),
+    PaddingInline => PropertyValue::PaddingInline(StartEnd::both(LengthPercentageOrCalc::Length(Length::Em(2.0)))),
+    PaddingBlock => PropertyValue::PaddingBlock(StartEnd::both(LengthPercentageOrCalc::Length(Length::Em(2.0)))),
     MarginTop => PropertyValue::MarginTop(LengthOrAuto::Length(Length::Rem(2.0))),
     MarginRight => PropertyValue::MarginRight(LengthOrAuto::Length(Length::Rem(2.0))),
     MarginBottom => PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Rem(2.0))),
@@ -4061,7 +4066,7 @@ property_key_samples! {
     BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
     BorderImageSlice => PropertyValue::BorderImageSlice(crate::property::BorderImageSlice::INITIAL),
     BorderImageWidth => PropertyValue::BorderImageWidth(Sides::all(
-        crate::property::BorderImageWidthSide::LengthPercentage(Length::Em(2.0)),
+        crate::property::BorderImageWidthSide::LengthPercentage(LengthPercentageOrCalc::Length(Length::Em(2.0))),
     )),
     BorderImageOutset => PropertyValue::BorderImageOutset(Sides::all(
         crate::property::BorderImageOutsetSide::Length(Length::Em(2.0)),
@@ -4663,6 +4668,13 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             LengthOrAuto::Length(l) => length(l),
         }
     }
+    fn length_percentage_or_calc(l: LengthPercentageOrCalc) -> Option<&'static str> {
+        match l {
+            LengthPercentageOrCalc::Calc(_) => Some("calc()"),
+            LengthPercentageOrCalc::RelativeCalc(_) => Some("LengthPercentageOrCalc::RelativeCalc"),
+            LengthPercentageOrCalc::Length(l) => length(l),
+        }
+    }
     fn text_underline_offset(value: TextUnderlineOffset) -> Option<&'static str> {
         match value {
             TextUnderlineOffset::Auto => None,
@@ -4865,7 +4877,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::BorderImageWidth(sides) => [sides.top, sides.right, sides.bottom, sides.left]
                 .into_iter()
                 .find_map(|side| match side {
-                    crate::property::BorderImageWidthSide::LengthPercentage(width) => length(width),
+                    crate::property::BorderImageWidthSide::LengthPercentage(width) => {
+                        length_percentage_or_calc(width)
+                    }
                     _ => None,
                 }),
             PropertyValue::BorderImageOutset(sides) => [sides.top, sides.right, sides.bottom, sides.left]
@@ -4943,8 +4957,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             PropertyValue::PaddingTop(l)
             | PropertyValue::PaddingRight(l)
             | PropertyValue::PaddingBottom(l)
-            | PropertyValue::PaddingLeft(l)
-            | PropertyValue::BorderTopWidth(l)
+            | PropertyValue::PaddingLeft(l) => length_percentage_or_calc(*l),
+            PropertyValue::BorderTopWidth(l)
             | PropertyValue::BorderRightWidth(l)
             | PropertyValue::BorderBottomWidth(l)
             | PropertyValue::BorderLeftWidth(l)
@@ -4968,10 +4982,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::InlineSize(l)
             | PropertyValue::BlockSize(l) => length_or_auto(*l),
             PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
-            PropertyValue::Padding(s) => sides(*s, length),
+            PropertyValue::Padding(s) => sides(*s, length_percentage_or_calc),
             PropertyValue::Margin(s) => sides(*s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
-                start_end(*p, length)
+                start_end(*p, length_percentage_or_calc)
             }
             PropertyValue::MarginInline(p) | PropertyValue::MarginBlock(p) => {
                 start_end(*p, length_or_auto)
@@ -5498,7 +5512,9 @@ fn percentage_is_specified_layer_residue_on_font_size_and_line_height() {
     );
     // Contrast: `%` remains a computed value for box properties (CSS Values 4 §5.5.1 default).
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Percent(50.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Percent(50.0)
+        ))),
         None,
     );
 }
@@ -5825,56 +5841,82 @@ fn additional_length_units_are_specified_layer_residue() {
     // failure, which would leave that formatting code permanently
     // uncovered by an all-passing loop.
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Ex(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ex(1.0)
+        ))),
         Some("Length::Ex"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Rex(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Rex(1.0)
+        ))),
         Some("Length::Rex"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Ch(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ch(1.0)
+        ))),
         Some("Length::Ch"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Rch(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Rch(1.0)
+        ))),
         Some("Length::Rch"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Ic(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ic(1.0)
+        ))),
         Some("Length::Ic"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Ric(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Ric(1.0)
+        ))),
         Some("Length::Ric"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Cm(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Cm(1.0)
+        ))),
         Some("Length::Cm"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Mm(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Mm(1.0)
+        ))),
         Some("Length::Mm"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Q(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Q(1.0)
+        ))),
         Some("Length::Q"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::In(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::In(1.0)
+        ))),
         Some("Length::In"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Pc(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Pc(1.0)
+        ))),
         Some("Length::Pc"),
     );
     // `lh` / `rlh` units.
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Lh(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Lh(1.0)
+        ))),
         Some("Length::Lh"),
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::PaddingTop(Length::Rlh(1.0))),
+        specified_layer_residue(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Rlh(1.0)
+        ))),
         Some("Length::Rlh"),
     );
 }
@@ -6394,10 +6436,10 @@ fn margin_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
 fn padding_px(result: &PageCascadeResult, key: PropertyKey) -> Option<f32> {
     match result.declarations().get(&key) {
         Some(
-            PropertyValue::PaddingTop(Length::Px(v))
-            | PropertyValue::PaddingRight(Length::Px(v))
-            | PropertyValue::PaddingBottom(Length::Px(v))
-            | PropertyValue::PaddingLeft(Length::Px(v)),
+            PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(Length::Px(v)))
+            | PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(Length::Px(v)))
+            | PropertyValue::PaddingBottom(LengthPercentageOrCalc::Length(Length::Px(v)))
+            | PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(Length::Px(v))),
         ) => Some(*v),
         _ => None,
     }
@@ -6444,10 +6486,10 @@ fn post_parse_page_padding_shorthand_before_longhand_lets_longhand_win() {
         "@page { padding-left: 99px; padding-top: 10px }",
         0,
         PropertyValue::Padding(Sides {
-            top: Length::Px(1.0),
-            right: Length::Px(2.0),
-            bottom: Length::Px(3.0),
-            left: Length::Px(4.0),
+            top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+            right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
+            bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
+            left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
         }),
     );
     assert_eq!(padding_px(&result, PropertyKey::PaddingTop), Some(10.0));

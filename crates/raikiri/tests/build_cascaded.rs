@@ -410,13 +410,15 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
     // directly constructible variant (Padding/Margin/LineHeight), rather
     // than checking only its type.
     use raikiri::{
-        Border, BorderColor, BorderStyle, CssColor, Length, LengthOrAuto, LineHeight,
-        PropertyValue, Sides,
+        Border, BorderColor, BorderStyle, CssColor, Length, LengthOrAuto, LengthPercentageOrCalc,
+        LineHeight, PropertyValue, Sides,
     };
 
-    // `Padding(Sides<Length>)`: both `Sides<T>` and `Length` are re-exported
-    // and can be constructed directly without a struct-literal restriction.
-    let _specified_padding: PropertyValue = PropertyValue::Padding(Sides::all(Length::Px(4.0)));
+    // `Padding(Sides<LengthPercentageOrCalc>)`: `Sides<T>`, `Length`, and
+    // `LengthPercentageOrCalc` are re-exported and can be constructed directly
+    // without a struct-literal restriction.
+    let _specified_padding: PropertyValue =
+        PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Px(4.0))));
 
     // `Margin(Sides<LengthOrAuto>)`: LengthOrAuto is also constructible directly.
     let _specified_margin: PropertyValue =
@@ -462,8 +464,8 @@ fn umbrella_re_exports_cover_computed_sides_container_fields() {
     // computed.rs). Verify typed access to those three fields using real
     // cascade output after the later `Sides` addition.
     use raikiri::{
-        ComputedBorder, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ParseOptions,
-        Sides, build_cascaded, parse,
+        ComputedBorder, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+        ParseOptions, Sides, build_cascaded, parse,
     };
 
     let opts = ParseOptions {
@@ -476,7 +478,7 @@ fn umbrella_re_exports_cover_computed_sides_container_fields() {
     let p_id = find_by_tag(&doc.dom, "p").expect("<p> exists");
     let computed = &result.computed[p_id.0 as usize];
 
-    let _padding: Sides<ComputedLengthPercentage> = computed.padding;
+    let _padding: Sides<ComputedLengthPercentageOrCalc> = computed.padding;
     let _margin: Sides<ComputedLengthPercentageOrAuto> = computed.margin;
     let _border: Sides<ComputedBorder> = computed.border;
 }

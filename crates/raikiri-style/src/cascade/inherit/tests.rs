@@ -6,6 +6,7 @@ use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX};
 use crate::media::MediaContext;
 use crate::property::CssColor;
 use crate::property::DisplayValue;
+use crate::property::LengthPercentageOrCalc;
 use crate::property::{
     Border, BorderColor, BorderStyle, CalcLengthPercentage, ColumnFillValue, ContentComponent,
     GridAreaShorthand, GridAutoFlowValue, GridLineValue, GridShorthand, GridTemplateAreasValue,
@@ -18,6 +19,7 @@ use crate::property::{
     TextUnderlinePosition, UnicodeBidi, WritingMode, empty_counter_entries,
     initial_grid_auto_track_list,
 };
+use crate::resolve::ComputedLengthPercentageOrCalc;
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedLength,
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLetterSpacing,
@@ -630,7 +632,10 @@ fn box_property_em_resolves_against_own_computed_font_size() {
         ),
     );
     assert_eq!(cv.font_size, ComputedLength(20.0));
-    assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(40.0))
+    );
     assert_eq!(cv.margin.left, ComputedLengthPercentageOrAuto::Px(30.0));
     assert_eq!(cv.border.top.width, ComputedLength(10.0));
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(60.0));
@@ -662,7 +667,10 @@ fn rem_below_root_element_resolves_against_root_computed_font_size() {
 fn rem_on_root_element_box_property_uses_own_font_size() {
     let cv = cascade_doc("", "html", Some("font-size: 20px; padding: 2rem"));
     assert_eq!(cv.font_size, ComputedLength(20.0));
-    assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(40.0))
+    );
 }
 
 #[test]
@@ -674,14 +682,20 @@ fn lh_resolves_against_own_computed_line_height() {
         ComputedLineHeight::Number(2.0),
         "line-height 自身は Number のまま computed 層に残る (spec 上 load-bearing)"
     );
-    assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(48.0))); // 1.5 * 32
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(48.0))
+    ); // 1.5 * 32
 }
 
 #[test]
 fn lh_falls_back_to_zero_when_own_line_height_is_normal() {
     let cv = cascade_doc("", "div", Some("padding: 1lh"));
     assert_eq!(cv.line_height, ComputedLineHeight::Normal);
-    assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
+    );
 }
 
 #[test]
@@ -721,13 +735,13 @@ fn rlh_on_root_element_matches_child_root_line_height_basis() {
     );
     assert_eq!(
         r.computed[html].padding,
-        Sides::all(ComputedLengthPercentage::Px(40.0)),
+        Sides::all(ComputedLengthPercentageOrCalc::Px(40.0)),
     );
     // child's `1rlh` uses the *same* 40px basis, not its own (100px,
     // Number(5) → 500px) line-height.
     assert_eq!(
         r.computed[p].padding,
-        Sides::all(ComputedLengthPercentage::Px(40.0)),
+        Sides::all(ComputedLengthPercentageOrCalc::Px(40.0)),
         "rlh must be the same tree-global constant on the root and on a descendant"
     );
 }
@@ -736,7 +750,10 @@ fn rlh_on_root_element_matches_child_root_line_height_basis() {
 fn rlh_falls_back_to_zero_when_root_line_height_is_normal() {
     let (root, child) = cascade_parent_child("html", None, "p", Some("padding: 1rlh"));
     assert_eq!(root.line_height, ComputedLineHeight::Normal);
-    assert_eq!(child.padding, Sides::all(ComputedLengthPercentage::Px(0.0)),);
+    assert_eq!(
+        child.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(0.0)),
+    );
 }
 
 #[test]
@@ -907,7 +924,7 @@ fn non_element_node_under_document_does_not_establish_rem_context() {
     assert_eq!(r.computed[html].font_size, ComputedLength(20.0));
     assert_eq!(
         r.computed[child].padding,
-        Sides::all(ComputedLengthPercentage::Px(20.0))
+        Sides::all(ComputedLengthPercentageOrCalc::Px(20.0))
     );
 }
 
@@ -921,7 +938,7 @@ fn rem_ignores_intermediate_font_sizes() {
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(
         r.computed[leaf].padding,
-        Sides::all(ComputedLengthPercentage::Px(20.0)),
+        Sides::all(ComputedLengthPercentageOrCalc::Px(20.0)),
         "rem は root element (20px) 基準 — 直近の親 (40px) ではない"
     );
 }
@@ -1186,7 +1203,7 @@ fn pt_is_absolutized_at_cascade() {
         ComputedValues::initial().font_size,
         "initial と一致する期待値は parse 側の drop を検出できない"
     );
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(12.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(12.0));
 }
 
 #[test]
@@ -1223,7 +1240,10 @@ fn line_height_number_stays_unitless_through_computed_layer() {
 fn absolutization_is_independent_of_declaration_order() {
     let a = cascade_doc("", "div", Some("font-size: 20px; padding: 2em"));
     let b = cascade_doc("", "div", Some("padding: 2em; font-size: 20px"));
-    assert_eq!(a.padding, Sides::all(ComputedLengthPercentage::Px(40.0)));
+    assert_eq!(
+        a.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(40.0))
+    );
     assert_eq!(a.padding, b.padding);
     assert_eq!(a.font_size, b.font_size);
 }
@@ -2619,7 +2639,7 @@ fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
     assert_eq!(r.computed[p].text_indent, ComputedTextIndent::Px(15.0));
     assert_eq!(
         r.computed[p].padding.top,
-        ComputedLengthPercentage::Px(15.0)
+        ComputedLengthPercentageOrCalc::Px(15.0)
     );
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
@@ -2632,7 +2652,7 @@ fn text_indent_inheritance_contrasts_with_padding_non_inheritance() {
     // failure, which doesn't happen while this test passes.
     assert_eq!(
         r.computed[span].padding.top,
-        ComputedLengthPercentage::Px(0.0),
+        ComputedLengthPercentageOrCalc::Px(0.0),
         "padding-top must NOT inherit (CSS Box 3 §4.1 Inherited: no) — initial 0"
     );
 }
@@ -6579,10 +6599,10 @@ fn padding_shorthand_wired_through_cascade_from_inline_style() {
     assert_eq!(
         cv.padding,
         Sides {
-            top: ComputedLengthPercentage::Px(10.0),
-            right: ComputedLengthPercentage::Percent(5.0),
-            bottom: ComputedLengthPercentage::Px(10.0),
-            left: ComputedLengthPercentage::Percent(5.0),
+            top: ComputedLengthPercentageOrCalc::Px(10.0),
+            right: ComputedLengthPercentageOrCalc::Percent(5.0),
+            bottom: ComputedLengthPercentageOrCalc::Px(10.0),
+            left: ComputedLengthPercentageOrCalc::Percent(5.0),
         }
     );
 }
@@ -6599,10 +6619,10 @@ fn padding_longhand_wired_through_cascade_from_inline_style() {
     assert_eq!(
         cv.padding,
         Sides {
-            top: ComputedLengthPercentage::Px(1.0),
-            right: ComputedLengthPercentage::Px(2.0),
-            bottom: ComputedLengthPercentage::Px(3.0),
-            left: ComputedLengthPercentage::Px(4.0),
+            top: ComputedLengthPercentageOrCalc::Px(1.0),
+            right: ComputedLengthPercentageOrCalc::Px(2.0),
+            bottom: ComputedLengthPercentageOrCalc::Px(3.0),
+            left: ComputedLengthPercentageOrCalc::Px(4.0),
         }
     );
 }
@@ -6623,16 +6643,16 @@ fn padding_is_non_inherited_child_starts_from_initial_zero() {
     assert_eq!(
         r.computed[div].padding,
         Sides {
-            top: ComputedLengthPercentage::Px(10.0),
-            right: ComputedLengthPercentage::Percent(5.0),
-            bottom: ComputedLengthPercentage::Px(10.0),
-            left: ComputedLengthPercentage::Percent(5.0),
+            top: ComputedLengthPercentageOrCalc::Px(10.0),
+            right: ComputedLengthPercentageOrCalc::Percent(5.0),
+            bottom: ComputedLengthPercentageOrCalc::Px(10.0),
+            left: ComputedLengthPercentageOrCalc::Percent(5.0),
         }
     );
     // The child retains initial Sides::all(0px) via inherit_from; no inheritance.
     assert_eq!(
         r.computed[span].padding,
-        Sides::all(ComputedLengthPercentage::Px(0.0))
+        Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
     );
 }
 
@@ -6644,7 +6664,10 @@ fn padding_negative_declaration_dropped_at_cascade() {
     use crate::property::Sides;
     let cv = cascade_doc("", "div", Some("padding-top: -5px"));
     // Negative value → declaration dropped → no padding override → initial 0.
-    assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
+    );
 }
 
 #[test]
@@ -6656,10 +6679,10 @@ fn padding_shorthand_then_longhand_longhand_wins() {
     // top=5, others=10 (independent of property-key order; spec-correct).
     // This uses the parse-time expansion model already implemented for margin.
     let cv = cascade_doc("", "div", Some("padding: 10px; padding-top: 5px"));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(10.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(5.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(10.0));
 }
 
 #[test]
@@ -6669,10 +6692,10 @@ fn padding_longhand_then_shorthand_shorthand_wins() {
     // declaration wins in reverse order, `padding-top: 5px; padding: 10px;`.
     // All sides become 10px: the later shorthand also overrides top.
     let cv = cascade_doc("", "div", Some("padding-top: 5px; padding: 10px"));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(10.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(10.0));
 }
 
 #[test]
@@ -6788,11 +6811,11 @@ fn padding_inline_longhand_wired_through_cascade() {
         "div",
         Some("padding-inline-start: 5px; padding-inline-end: 10px"),
     );
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(5.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(5.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(10.0));
     // untouched block axis stays at initial (0).
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
@@ -6802,10 +6825,10 @@ fn padding_block_longhand_wired_through_cascade() {
         "div",
         Some("padding-block-start: 5px; padding-block-end: 10px"),
     );
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(5.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
@@ -6840,26 +6863,26 @@ fn padding_inline_shorthand_one_value_wired_through_cascade() {
     // Values 1 §4.4 "If only one value is given, it applies to both the
     // start and end edges").
     let cv = cascade_doc("", "div", Some("padding-inline: 12px"));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(12.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(12.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(12.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(12.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
 fn padding_inline_shorthand_two_value_wired_through_cascade() {
     let cv = cascade_doc("", "div", Some("padding-inline: 5px 10px"));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(5.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(5.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(10.0));
 }
 
 #[test]
 fn padding_block_shorthand_two_value_wired_through_cascade() {
     let cv = cascade_doc("", "div", Some("padding-block: 5px 10px"));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(5.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(10.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Px(0.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(5.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(10.0));
+    assert_eq!(cv.padding.left, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
@@ -7048,10 +7071,10 @@ fn apply_value_direct_position_sticky_and_fixed() {
 fn apply_value_direct_padding_shorthand_direct_assign() {
     let mut cv = SpecifiedValues::initial();
     let sides = Sides {
-        top: Length::Px(1.0),
-        right: Length::Px(2.0),
-        bottom: Length::Px(3.0),
-        left: Length::Px(4.0),
+        top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+        right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
+        bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
+        left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
     };
     apply_value(PropertyValue::Padding(sides), &mut cv);
     assert_eq!(cv.padding, sides);
@@ -7431,14 +7454,20 @@ fn apply_value_direct_padding_inline_shorthand_fall_through() {
     use crate::property::StartEnd;
     let mut cv = SpecifiedValues::initial();
     let pair = StartEnd {
-        start: Length::Px(5.0),
-        end: Length::Px(6.0),
+        start: LengthPercentageOrCalc::Length(Length::Px(5.0)),
+        end: LengthPercentageOrCalc::Length(Length::Px(6.0)),
     };
     apply_value(PropertyValue::PaddingInline(pair), &mut cv);
     assert_eq!(cv.padding.left, pair.start);
     assert_eq!(cv.padding.right, pair.end);
-    assert_eq!(cv.padding.top, Length::Px(0.0));
-    assert_eq!(cv.padding.bottom, Length::Px(0.0));
+    assert_eq!(
+        cv.padding.top,
+        LengthPercentageOrCalc::Length(Length::Px(0.0))
+    );
+    assert_eq!(
+        cv.padding.bottom,
+        LengthPercentageOrCalc::Length(Length::Px(0.0))
+    );
 }
 
 #[test]
@@ -7446,14 +7475,20 @@ fn apply_value_direct_padding_block_shorthand_fall_through() {
     use crate::property::StartEnd;
     let mut cv = SpecifiedValues::initial();
     let pair = StartEnd {
-        start: Length::Px(7.0),
-        end: Length::Px(8.0),
+        start: LengthPercentageOrCalc::Length(Length::Px(7.0)),
+        end: LengthPercentageOrCalc::Length(Length::Px(8.0)),
     };
     apply_value(PropertyValue::PaddingBlock(pair), &mut cv);
     assert_eq!(cv.padding.top, pair.start);
     assert_eq!(cv.padding.bottom, pair.end);
-    assert_eq!(cv.padding.left, Length::Px(0.0));
-    assert_eq!(cv.padding.right, Length::Px(0.0));
+    assert_eq!(
+        cv.padding.left,
+        LengthPercentageOrCalc::Length(Length::Px(0.0))
+    );
+    assert_eq!(
+        cv.padding.right,
+        LengthPercentageOrCalc::Length(Length::Px(0.0))
+    );
 }
 
 #[test]

@@ -40,10 +40,10 @@ use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
     ComputedBoxShadowItem, ComputedColumnWidth, ComputedCssPosition, ComputedCssPositionOffset,
     ComputedFlexBasis, ComputedGridTemplateTracks, ComputedGridTrackSize, ComputedLength,
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
-    ComputedLetterSpacing, ComputedLineHeight, ComputedOutline, ComputedTabSize,
-    ComputedTextDecorationInset, ComputedTextDecorationThickness, ComputedTextIndent,
-    ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
+    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedLengthPercentageOrNormal, ComputedLetterSpacing, ComputedLineHeight, ComputedOutline,
+    ComputedTabSize, ComputedTextDecorationInset, ComputedTextDecorationThickness,
+    ComputedTextIndent, ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
     ComputedWordSpacing, empty_computed_box_shadow_list, empty_computed_text_shadow_list,
     empty_computed_transform_list, initial_computed_grid_auto_track_list,
 };
@@ -438,7 +438,7 @@ pub struct ComputedBorderImage {
     /// `border-image-slice`, as specified.
     pub slice: BorderImageSlice,
     /// `border-image-width`.
-    pub width: Sides<BorderImageWidthSide<ComputedLengthPercentage>>,
+    pub width: Sides<BorderImageWidthSide<ComputedLengthPercentageOrCalc>>,
     /// `border-image-outset`, lengths in CSS px.
     pub outset: Sides<BorderImageOutsetSide<f32>>,
     /// `border-image-repeat`, as specified.
@@ -814,7 +814,7 @@ pub struct ComputedValues {
     /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
     pub text_indent_each_line: bool,
     /// `padding`: four-sided box-model padding. **Not inherited**; initial:
-    /// `Sides::all(ComputedLengthPercentage::Px(0.0))` (CSS Box 3 §4.1
+    /// `Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))` (CSS Box 3 §4.1
     /// <https://www.w3.org/TR/css-box-3/#padding-physical>, initial "0").
     ///
     /// - Physical longhands: [`padding-top`](https://www.w3.org/TR/css-box-3/#propdef-padding-top) /
@@ -829,7 +829,7 @@ pub struct ComputedValues {
     /// (containing-block width) is known only at the used-value layer (CSS
     /// Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>); in Raikiri,
     /// this is delegated to Taffy.
-    pub padding: Sides<ComputedLengthPercentage>,
+    pub padding: Sides<ComputedLengthPercentageOrCalc>,
     /// Authored `ch` provenance for each padding side.
     pub padding_ch: Sides<Option<ChLengthProvenance>>,
     /// `margin`: four-sided box-model margin (top / right / bottom / left).
@@ -2093,7 +2093,7 @@ impl ComputedValues {
             text_indent_hanging: false,
             text_indent_each_line: false,
             // CSS Box 3 §4.1: initial padding is 0 on all four sides.
-            padding: Sides::all(ComputedLengthPercentage::Px(0.0)),
+            padding: Sides::all(ComputedLengthPercentageOrCalc::Px(0.0)),
             padding_ch: Sides::all(None),
             // CSS Box 3 §3.1: the physical margin-* properties initially have
             // value `0`, spread to all four sides by `Sides::all(0)`.

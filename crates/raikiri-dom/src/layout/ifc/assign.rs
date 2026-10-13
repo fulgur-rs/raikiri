@@ -616,7 +616,7 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
         let padding = doc.nodes[idx].style.padding.left.into_raw();
         let deferred = if padding.is_calc() {
             Some(
-                *doc.calc_values
+                doc.calc_values
                     .iter()
                     .find(|value| {
                         std::ptr::eq(
@@ -627,7 +627,7 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
                     .ok_or_else(|| LayoutError::Internal {
                         message: "legacy marker padding calc handle is not registered".to_owned(),
                     })?
-                    .as_ref(),
+                    .value,
             )
         } else if padding.tag() == taffy::CompactLength::PERCENT_TAG {
             Some(raikiri_style::property::CalcLengthPercentage {
@@ -638,12 +638,14 @@ pub(crate) fn prepare_legacy_inside_markers_before_taffy(
             None
         };
         doc.nodes[idx].style.padding.left = if let Some(base) = deferred {
-            let payload = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
-                percent: base.percent,
-                px: base.px + advance,
-            });
-            let pointer = std::sync::Arc::as_ptr(&payload).cast();
-            doc.calc_values.push(payload);
+            let pointer = crate::taffy_impl::push_calc(
+                &mut doc.calc_values,
+                raikiri_style::property::CalcLengthPercentage {
+                    percent: base.percent,
+                    px: base.px + advance,
+                },
+                true,
+            );
             taffy::LengthPercentage::calc(pointer)
         } else {
             taffy::LengthPercentage::length(padding.value() + advance)

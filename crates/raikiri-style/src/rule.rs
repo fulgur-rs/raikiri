@@ -17,10 +17,10 @@ use crate::property::{
     DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride,
     FontOpticalSizing, FontShorthand, FontShorthandSize, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GapShorthand, GridLineShorthand, Length, LengthOrAuto, Outline, OverflowXY,
-    PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey, PropertyValue,
-    Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand, consume_deferred_value,
-    parse_consumer_text_value, parse_value,
+    GapShorthand, GridLineShorthand, Length, LengthOrAuto, LengthPercentageOrCalc, Outline,
+    OverflowXY, PlaceContentShorthand, PlaceItemsShorthand, PlaceSelfShorthand, PropertyKey,
+    PropertyValue, Sides, StartEnd, TextDecorationShorthand, TextEmphasisShorthand,
+    consume_deferred_value, parse_consumer_text_value, parse_value,
 };
 
 /// One property declaration = value + `!important` flag.
@@ -1051,7 +1051,10 @@ pub(crate) fn expand_margin_inherit(mut push: impl FnMut(PropertyValue)) {
 
 /// Cold helper that expands the `padding` shorthand into four longhands.
 #[inline(never)]
-pub(crate) fn expand_padding(sides: Sides<Length>, mut push: impl FnMut(PropertyValue)) {
+pub(crate) fn expand_padding(
+    sides: Sides<LengthPercentageOrCalc>,
+    mut push: impl FnMut(PropertyValue),
+) {
     push(PropertyValue::PaddingTop(sides.top));
     push(PropertyValue::PaddingRight(sides.right));
     push(PropertyValue::PaddingBottom(sides.bottom));
@@ -1090,7 +1093,10 @@ pub(crate) fn expand_margin_block(
 /// `padding-right`: the padding sibling of [`expand_margin_inline`].
 /// sibling.
 #[inline(never)]
-pub(crate) fn expand_padding_inline(pair: StartEnd<Length>, mut push: impl FnMut(PropertyValue)) {
+pub(crate) fn expand_padding_inline(
+    pair: StartEnd<LengthPercentageOrCalc>,
+    mut push: impl FnMut(PropertyValue),
+) {
     push(PropertyValue::PaddingLeft(pair.start));
     push(PropertyValue::PaddingRight(pair.end));
 }
@@ -1099,7 +1105,10 @@ pub(crate) fn expand_padding_inline(pair: StartEnd<Length>, mut push: impl FnMut
 /// `padding-bottom`: the padding sibling of [`expand_margin_block`].
 /// sibling.
 #[inline(never)]
-pub(crate) fn expand_padding_block(pair: StartEnd<Length>, mut push: impl FnMut(PropertyValue)) {
+pub(crate) fn expand_padding_block(
+    pair: StartEnd<LengthPercentageOrCalc>,
+    mut push: impl FnMut(PropertyValue),
+) {
     push(PropertyValue::PaddingTop(pair.start));
     push(PropertyValue::PaddingBottom(pair.end));
 }

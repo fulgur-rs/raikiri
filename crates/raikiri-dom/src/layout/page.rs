@@ -174,6 +174,8 @@ pub(crate) fn used_style_length_percentage(value: LengthPercentage, basis: f32) 
     let resolved = match raw.tag() {
         CompactLength::LENGTH_TAG => raw.value(),
         CompactLength::PERCENT_TAG => raw.value() * basis,
+        // Calc handles in a document style point into its calc arena.
+        _ if raw.is_calc() => crate::taffy_impl::resolve_calc(raw.calc_value(), basis),
         _ => return None,
     };
     resolved.is_finite().then_some(resolved)
@@ -187,6 +189,8 @@ pub(crate) fn used_style_length_percentage_auto(
     let resolved = match raw.tag() {
         CompactLength::LENGTH_TAG => raw.value(),
         CompactLength::PERCENT_TAG => raw.value() * basis,
+        // Calc handles in a document style point into its calc arena.
+        _ if raw.is_calc() => crate::taffy_impl::resolve_calc(raw.calc_value(), basis),
         _ => return None,
     };
     resolved.is_finite().then_some(resolved)
@@ -327,7 +331,15 @@ fn page_box_side(
         | Some(PropertyValue::PaddingLeft(value)) => Some(*value),
         _ => None,
     };
-    let padding = value.map_or(0.0, |length| page_length_to_px(length, basis));
+    let padding = value.map_or(0.0, |value| match value {
+        LengthPercentageOrCalc::Length(length) => page_length_to_px(length, basis),
+        // Page-context absolutization folds font-relative terms, leaving a
+        // percentage with an absolute offset.
+        LengthPercentageOrCalc::Calc(calc) => {
+            ComputedLengthPercentageOrCalc::Calc(calc).resolve(basis)
+        }
+        _ => 0.0,
+    });
     // A page border with an explicit margin encloses the page content box;
     // preserve the existing overlay behavior for a border-only page with no
     // margin (for example the page-box border smoke test).  Padding already

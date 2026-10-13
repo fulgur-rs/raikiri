@@ -174,7 +174,10 @@ fn initial_values_match_spec() {
     assert_eq!(cv.word_spacing, ComputedLength::ZERO);
     assert_eq!(cv.word_spacing_computed, ComputedLetterSpacing::Px(0.0));
     // CSS Box 3 §4.1: the initial padding is 0 on all four sides.
-    assert_eq!(cv.padding, Sides::all(ComputedLengthPercentage::Px(0.0)));
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(0.0))
+    );
     // CSS Box 3 §3.1: the initial margin is 0 on each side.
     assert_eq!(
         cv.margin,
@@ -323,7 +326,7 @@ fn non_initial_parent() -> ComputedValues {
         text_indent_ch_inherited: false,
         text_indent_hanging: false,
         text_indent_each_line: false,
-        padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
+        padding: Sides::all(ComputedLengthPercentageOrCalc::Px(7.0)),
         padding_ch: Sides::all(None),
         margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
         margin_ch: Sides::all(None),

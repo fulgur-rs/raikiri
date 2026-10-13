@@ -22,7 +22,8 @@
 
 use crate::error::CascadeError;
 use crate::property::{
-    BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, LengthOrAuto, PropertyValue,
+    BorderCollapseValue, BorderSpacingValue, BorderStyle, Length, LengthOrAuto,
+    LengthPercentageOrCalc, PropertyValue,
 };
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 use std::collections::HashMap;
@@ -56,7 +57,7 @@ pub(crate) fn push_table_attribute_hints<D: StyleDom>(
                         .attr("cellpadding")
                         .and_then(parse_non_negative_integer)
                 }) {
-                    let px = Length::Px(padding as f32);
+                    let px = LengthPercentageOrCalc::Length(Length::Px(padding as f32));
                     push(PropertyValue::PaddingTop(px))?;
                     push(PropertyValue::PaddingRight(px))?;
                     push(PropertyValue::PaddingBottom(px))?;

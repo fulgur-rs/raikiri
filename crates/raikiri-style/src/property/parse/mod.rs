@@ -291,9 +291,20 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
         }));
     }
     input.reset(&start);
+    parse_property_grammar(&normalized_name, input)
+}
 
+/// Parse a value of the ASCII-lowercase property `normalized_name` with its
+/// own grammar, without deferring math or substitution functions.
+///
+/// A mixed-unit `calc()` that cannot be folded is read here after
+/// substitution, by the properties whose grammar keeps one.
+pub(crate) fn parse_property_grammar(
+    normalized_name: &str,
+    input: &mut Parser<'_, '_>,
+) -> Option<PropertyValue> {
     // Dispatch property names using ASCII-lowercase comparisons.
-    match normalized_name.as_str() {
+    match normalized_name {
         "all" => {
             input.expect_ident_matching("revert-layer").ok()?;
             Some(PropertyValue::AllRevertLayer)

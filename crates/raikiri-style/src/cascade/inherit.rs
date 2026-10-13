@@ -2065,11 +2065,10 @@ fn border_image_defaulting_value(
         PropertyKey::BorderImageSlice => PropertyValue::BorderImageSlice(image.slice),
         PropertyKey::BorderImageWidth => {
             PropertyValue::BorderImageWidth(image.width.map(|side| match side {
-                BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(px)) => {
-                    BorderImageWidthSide::LengthPercentage(Length::Px(px))
-                }
-                BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(p)) => {
-                    BorderImageWidthSide::LengthPercentage(Length::Percent(p))
+                BorderImageWidthSide::LengthPercentage(length) => {
+                    BorderImageWidthSide::LengthPercentage(
+                        crate::resolve::lift_length_percentage_or_calc(length),
+                    )
                 }
                 BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
                 _ => BorderImageWidthSide::Auto,
