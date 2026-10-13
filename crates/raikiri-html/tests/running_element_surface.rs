@@ -260,6 +260,23 @@ fn margins_in_percent_and_auto_and_unusable_widths_are_handled() {
 }
 
 #[test]
+fn a_calc_bottom_margin_resolves_against_the_running_width() {
+    let result = lay_out(
+        r#"<div class="hdr" id="calc" style="margin-bottom: calc(10% + 5px)">C</div><p>Body</p>"#,
+    );
+    let page = result.pages().next().expect("page");
+    let node = page
+        .running_element("hdr", StringFetchMode::First)
+        .expect("running element");
+    let layout = result
+        .layout_running_element(node, 100.0)
+        .expect("layout")
+        .expect("running");
+    // One 10px line and a 10% (of 100px) + 5px bottom margin.
+    assert_eq!(layout.height(), 25.0);
+}
+
+#[test]
 fn a_running_layout_is_made_once_per_element_and_width() {
     let result =
         lay_out(r#"<div class="hdr" id="a">A</div><div class="hdr" id="b">B</div><p>Body</p>"#);

@@ -1060,6 +1060,76 @@ pub enum LengthOrAuto {
     MinContent,
 }
 
+/// A `<length-percentage>` that keeps a mixed-unit `calc()` until it can be
+/// resolved, for properties without an `auto` value such as `padding-*` and
+/// the length sides of `border-image-width`.
+///
+/// CSS Values 4 "Computed Value"
+/// (<https://www.w3.org/TR/css-values-4/#calc-computed-value>) keeps the
+/// percentage of a math function until used-value time, so a sum of a
+/// percentage and a length is not reducible to a [`Length`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LengthPercentageOrCalc {
+    /// Authored length-percentage (`10px` / `1em` / `50%` / etc.).
+    Length(Length),
+    /// A percentage with an absolute-length offset.
+    Calc(CalcLengthPercentage),
+    /// A `calc()` with font-relative or viewport terms, absolutized at
+    /// computed-value time.
+    RelativeCalc(RelativeCalcLengthPercentage),
+}
+
+impl From<Length> for LengthPercentageOrCalc {
+    fn from(length: Length) -> Self {
+        Self::Length(length)
+    }
+}
+
+impl LengthPercentageOrCalc {
+    /// The value of a mixed-unit `calc()`, folded like
+    /// [`LengthOrAuto::from_relative_calc`].
+    pub(crate) fn from_relative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match LengthOrAuto::from_relative_calc(value) {
+            LengthOrAuto::Length(length) => Self::Length(length),
+            LengthOrAuto::Calc(calc) => Self::Calc(calc),
+            _ => Self::RelativeCalc(value),
+        }
+    }
+
+    /// The value of a `calc()` in a property whose range is `[0,∞]`.
+    ///
+    /// CSS Values 4 "Range Checking"
+    /// (<https://www.w3.org/TR/css-values-4/#calc-range>) clamps a math
+    /// function to the range instead of rejecting it. A value that is a plain
+    /// length or percentage is clamped here; one that still depends on a
+    /// percentage basis or a font or viewport is clamped when it is resolved.
+    pub(crate) fn from_non_negative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match Self::from_relative_calc(value) {
+            Self::Length(Length::Px(px)) => Self::Length(Length::Px(px.max(0.0))),
+            Self::Length(Length::Percent(percent)) => {
+                Self::Length(Length::Percent(percent.max(0.0)))
+            }
+            other => other,
+        }
+    }
+}
+
+impl LengthOrAuto {
+    /// The value of a mixed-unit `calc()`: a plain length or percentage when
+    /// only one kind of term is left, [`Self::Calc`] for a percentage with an
+    /// absolute offset, and [`Self::RelativeCalc`] while font-relative or
+    /// viewport terms remain.
+    pub(crate) fn from_relative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match value.as_absolute() {
+            Some(calc) if calc.percent == 0.0 => Self::Length(Length::Px(calc.px)),
+            Some(calc) if calc.px == 0.0 => Self::Length(Length::Percent(calc.percent)),
+            Some(calc) => Self::Calc(calc),
+            None => Self::RelativeCalc(value),
+        }
+    }
+}
+
 /// `column-count` value from CSS Multi-column Layout.
 ///
 /// The `auto` keyword leaves the used count to the paired `column-width` and
@@ -8142,7 +8212,7 @@ impl BorderImageRepeat {
 }
 
 /// Initial `border-image-width`: `1` on every side.
-pub const BORDER_IMAGE_WIDTH_INITIAL: Sides<BorderImageWidthSide<Length>> = Sides {
+pub const BORDER_IMAGE_WIDTH_INITIAL: Sides<BorderImageWidthSide<LengthPercentageOrCalc>> = Sides {
     top: BorderImageWidthSide::Number(1.0),
     right: BorderImageWidthSide::Number(1.0),
     bottom: BorderImageWidthSide::Number(1.0),
@@ -8169,7 +8239,7 @@ pub struct BorderImageShorthand {
     /// `border-image-slice`.
     pub slice: BorderImageSlice,
     /// `border-image-width`.
-    pub width: Sides<BorderImageWidthSide<Length>>,
+    pub width: Sides<BorderImageWidthSide<LengthPercentageOrCalc>>,
     /// `border-image-outset`.
     pub outset: Sides<BorderImageOutsetSide<Length>>,
     /// `border-image-repeat`.
@@ -9365,13 +9435,13 @@ pub enum PropertyValue {
     /// dropping the declaration). Because the grammar does not include `auto`, the
     /// Dimension / Percentage arms of `parse_length_value` reject it naturally
     /// through fall-through.
-    PaddingTop(Length),
+    PaddingTop(LengthPercentageOrCalc),
     /// `padding-right: <length-percentage [0,∞]>` — same grammar as [`Self::PaddingTop`].
-    PaddingRight(Length),
+    PaddingRight(LengthPercentageOrCalc),
     /// `padding-bottom: <length-percentage [0,∞]>` — same grammar as [`Self::PaddingTop`].
-    PaddingBottom(Length),
+    PaddingBottom(LengthPercentageOrCalc),
     /// `padding-left: <length-percentage [0,∞]>` — same grammar as [`Self::PaddingTop`].
-    PaddingLeft(Length),
+    PaddingLeft(LengthPercentageOrCalc),
     /// `padding: <'padding-top'>{1,4}` shorthand — non-inherited, initial:
     /// `Sides::all(Length::Px(0.0))`. CSS Box 3 §4.2
     /// <https://www.w3.org/TR/css-box-3/#padding-shorthand>.
@@ -9401,7 +9471,7 @@ pub enum PropertyValue {
     /// the canonical documentation for [`crate::cascade::apply_value`] and
     /// [`crate::rule::expand_shorthand_into`]).
     /// Consider migrating to the margin-style parse-time expansion model (follow-up task).
-    Padding(Sides<Length>),
+    Padding(Sides<LengthPercentageOrCalc>),
     /// `padding-inline: <'padding-top'>{1,2}` shorthand — CSS Logical
     /// Properties and Values 1 §4.4 "Flow-Relative Padding: the
     /// padding-block-start, padding-block-end, padding-inline-start,
@@ -9487,14 +9557,14 @@ pub enum PropertyValue {
     /// does reach
     /// [`crate::cascade::apply_value`], that behavior is **not a safety net**
     /// (the same framing as the `Padding`/`Margin` arms).
-    PaddingInline(StartEnd<Length>),
+    PaddingInline(StartEnd<LengthPercentageOrCalc>),
     /// `padding-block: <'padding-top'>{1,2}` shorthand — the same grammar,
     /// expansion, and physical-mapping rationale as [`Self::PaddingInline`]
     /// (the [`Self::PaddingInline`] docs are canonical), but for the block axis
     /// (`padding-block-start`/`-end` → `padding-top`/`padding-bottom`: exact
     /// mapping, not an approximation). CSS Logical Properties and Values 1 §4.4
     /// <https://www.w3.org/TR/css-logical-1/#propdef-padding-block>.
-    PaddingBlock(StartEnd<Length>),
+    PaddingBlock(StartEnd<LengthPercentageOrCalc>),
     /// `margin-top: <length-percentage> | auto` — non-inherited, initial: 0
     /// (CSS Box 3 §3.1 <https://www.w3.org/TR/css-box-3/#margin-physical>).
     MarginTop(LengthOrAuto),
@@ -10708,7 +10778,7 @@ pub enum PropertyValue {
     BorderImageSlice(BorderImageSlice),
     /// `border-image-width` — non-inherited, initial `1` (§6.3). Lengths are
     /// absolutized in phase 3.
-    BorderImageWidth(Sides<BorderImageWidthSide<Length>>),
+    BorderImageWidth(Sides<BorderImageWidthSide<LengthPercentageOrCalc>>),
     /// `border-image-outset` — non-inherited, initial `0` (§6.4). Lengths
     /// are absolutized in phase 3.
     BorderImageOutset(Sides<BorderImageOutsetSide<Length>>),

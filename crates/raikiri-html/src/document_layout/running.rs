@@ -497,6 +497,7 @@ pub(crate) fn layout_running_element(
     let margin_bottom = match cascade.computed[index].margin.bottom {
         ComputedLengthPercentageOrAuto::Px(px) => px,
         ComputedLengthPercentageOrAuto::Percent(percent) => percent / 100.0 * width,
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + calc.percent / 100.0 * width,
         _ => 0.0,
     }
     .max(0.0);

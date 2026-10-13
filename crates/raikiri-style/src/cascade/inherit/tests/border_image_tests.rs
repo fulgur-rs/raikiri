@@ -4,7 +4,7 @@ use crate::property::{
     BackgroundImage, BorderImageOutsetSide, BorderImageRepeatKeyword, BorderImageSliceOffset,
     BorderImageWidthSide,
 };
-use crate::resolve::ComputedLengthPercentage;
+use crate::resolve::ComputedLengthPercentageOrCalc;
 
 const BORDER_IMAGE: &str = "url(https://images.test/a.png) 7 / 2px 10% 3 auto / 1px 2 round";
 
@@ -20,7 +20,7 @@ fn variable_border_image_shorthands_set_every_longhand() {
     assert_eq!(image.slice.offsets.top, BorderImageSliceOffset::Number(7.0));
     assert_eq!(
         image.width.top,
-        BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(2.0))
+        BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(2.0))
     );
     assert_eq!(image.width.bottom, BorderImageWidthSide::Number(3.0));
     assert_eq!(image.width.left, BorderImageWidthSide::Auto);

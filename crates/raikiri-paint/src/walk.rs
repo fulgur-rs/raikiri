@@ -25,8 +25,8 @@ use raikiri_style::property::{
     AnglePercentage, BackgroundImage, Border, BorderColor, BorderImageOutsetSide,
     BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient, CssColor, CssPosition,
     CssPositionOffset, DisplayValue, FloatValue, Gradient, GradientStopColor,
-    HueInterpolationMethod, Length, MixColorSpace, ObjectFit, OutlineColor, OutlineStyle,
-    OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
+    HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
     VerticalAlign, Visibility, VisualBox, WritingMode,
 };
 use raikiri_style::{
@@ -500,9 +500,18 @@ fn page_padding_widths(cascade: &CascadeResult, area: Rect) -> (f64, f64, f64, f
         Some(PropertyValue::PaddingTop(value))
         | Some(PropertyValue::PaddingRight(value))
         | Some(PropertyValue::PaddingBottom(value))
-        | Some(PropertyValue::PaddingLeft(value)) => {
-            length_to_px(*value, basis as f32, 16.0) as f64
-        }
+        | Some(PropertyValue::PaddingLeft(value)) => match *value {
+            LengthPercentageOrCalc::Length(length) => {
+                length_to_px(length, basis as f32, 16.0) as f64
+            }
+            // Page-context absolutization folds font-relative terms, leaving a
+            // percentage with an absolute offset.
+            LengthPercentageOrCalc::Calc(calc) => f64::from(
+                raikiri_style::resolve::ComputedLengthPercentageOrCalc::Calc(calc)
+                    .resolve(basis as f32),
+            ),
+            _ => 0.0,
+        },
         _ => 0.0,
     };
     (
@@ -711,9 +720,8 @@ fn paint_page_background_image(
 }
 
 fn canvas_used_padding(computed: &ComputedValues, area_width: f64) -> (f64, f64, f64, f64) {
-    let resolve = |value: ComputedLengthPercentage| match value {
-        ComputedLengthPercentage::Px(px) => px as f64,
-        ComputedLengthPercentage::Percent(percent) => area_width * percent as f64 / 100.0,
+    let resolve = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc| {
+        f64::from(value.resolve(area_width as f32))
     };
     (
         resolve(computed.padding.left),
@@ -3654,8 +3662,8 @@ fn img_src_url(document: &Document, node_id: usize) -> Option<url::Url> {
 ///
 /// Taffy owns the used-value resolution for the layout pass. Ordinary
 /// percentage/px padding keeps the painter's historical containing-width
-/// calculation, while a side authored in `ch` takes the exact used value that
-/// was measured before Taffy. This avoids re-probing fonts in the paint crate
+/// calculation, while a side authored in `ch` or as a mixed `calc()` takes the
+/// exact used value from layout. This avoids re-probing fonts in the paint crate
 /// and keeps backgrounds/images aligned with the geometry.
 fn used_padding_for_paint(
     cv: &raikiri_style::ComputedValues,
@@ -3664,26 +3672,21 @@ fn used_padding_for_paint(
     if cv.display == DisplayValue::TableCell {
         return layout.padding;
     }
-    fn computed_padding_px(
-        value: raikiri_style::resolve::ComputedLengthPercentage,
-        reference: f32,
-    ) -> f32 {
-        match value {
-            raikiri_style::resolve::ComputedLengthPercentage::Px(px) => px,
-            raikiri_style::resolve::ComputedLengthPercentage::Percent(percent) => {
-                reference * percent / 100.0
-            }
-        }
-    }
-
     let reference = layout.size.width;
-    let choose = |value: raikiri_style::resolve::ComputedLengthPercentage,
+    let choose = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc,
                   ch: &Option<raikiri_style::ChLengthProvenance>,
                   used: f32| {
-        if ch.is_some() {
+        // A calc() sum resolves its percentage against the containing block,
+        // which layout already did; take its used value.
+        if ch.is_some()
+            || matches!(
+                value,
+                raikiri_style::resolve::ComputedLengthPercentageOrCalc::Calc(_)
+            )
+        {
             used
         } else {
-            computed_padding_px(value, reference)
+            value.resolve(reference)
         }
     };
     taffy::Rect {

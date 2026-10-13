@@ -6,6 +6,7 @@ use crate::property::{
     FontFeatureSetting, FontFeatureSettings, FontSynthesisStyle, FontVariantEastAsianVariant,
     FontVariantEastAsianWidth, FontVariationSetting, FontVariationSettings, GeometryBox,
 };
+use crate::resolve::ComputedLengthPercentageOrCalc;
 use crate::resolve::{
     ComputedBorder, ComputedBorderRadius, ComputedBoxShadowItem, ComputedFlexBasis,
     ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackList,
@@ -48,7 +49,7 @@ fn box_ch_provenance_keeps_authored_factor_and_font() {
     let mut specified = SpecifiedValues::initial();
     specified.width = LengthOrAuto::Length(Length::Ch(2.0));
     specified.height = LengthOrAuto::Length(Length::Ch(3.0));
-    specified.padding = Sides::all(Length::Ch(1.0));
+    specified.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Ch(1.0)));
     specified.margin = Sides::all(LengthOrAuto::Length(Length::Ch(4.0)));
     let computed = specified.clone().finalize(&ComputedValues::initial(), &CTX);
 
@@ -75,7 +76,7 @@ fn box_ch_provenance_keeps_authored_factor_and_font() {
 
     specified.width = LengthOrAuto::Length(Length::Percent(25.0));
     specified.height = LengthOrAuto::Auto;
-    specified.padding = Sides::all(Length::Px(2.0));
+    specified.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Px(2.0)));
     specified.margin = Sides::all(LengthOrAuto::Auto);
     let ordinary = specified.finalize(&ComputedValues::initial(), &CTX);
     assert!(ordinary.width_ch.is_none());
@@ -298,7 +299,7 @@ fn parent_fixture() -> ComputedValues {
         text_indent_ch_inherited: false,
         text_indent_hanging: true,
         text_indent_each_line: false,
-        padding: Sides::all(ComputedLengthPercentage::Px(7.0)),
+        padding: Sides::all(ComputedLengthPercentageOrCalc::Px(7.0)),
         padding_ch: Sides::all(None),
         margin: Sides::all(ComputedLengthPercentageOrAuto::Px(12.0)),
         margin_ch: Sides::all(None),
@@ -1060,10 +1061,10 @@ fn finalize_passes_caption_side_and_empty_cells_through_unchanged() {
 fn finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest() {
     let mut sv = SpecifiedValues::initial();
     sv.font_size = Length::Em(2.0); // Parent 16px → 32px
-    sv.padding = Sides::all(Length::Em(1.0)); // Own 32px → 32px
+    sv.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Em(1.0))); // Own 32px → 32px
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.font_size, ComputedLength(32.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(32.0));
 }
 
 /// The added `ex` unit has the same parent/own distinction as `em` (unknown-metric fallback
@@ -1075,10 +1076,10 @@ fn finalize_uses_parent_font_size_for_font_size_and_own_for_the_rest() {
 fn finalize_resolves_ex_against_parent_for_font_size_and_own_for_padding() {
     let mut sv = SpecifiedValues::initial();
     sv.font_size = Length::Ex(4.0); // Parent 16px reference → 0.5 * 4 * 16 = 32px
-    sv.padding = Sides::all(Length::Ex(2.0)); // Own 32px reference (set in phase 2) → 0.5 * 2 * 32 = 32px
+    sv.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Ex(2.0))); // Own 32px reference (set in phase 2) → 0.5 * 2 * 32 = 32px
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.font_size, ComputedLength(32.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(32.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(32.0));
 }
 
 /// `vertical-align: <length>` absolutizes against the declaring node's
@@ -1138,10 +1139,10 @@ fn finalize_vertical_align_percentage_falls_back_to_zero_when_line_height_normal
 fn finalize_resolves_lh_against_own_line_height_for_padding() {
     let mut sv = SpecifiedValues::initial();
     sv.line_height = LineHeight::Number(2.0); // Own font size (inherited 16px) → used 32px
-    sv.padding = Sides::all(Length::Lh(1.5)); // 1.5 * 32 = 48px
+    sv.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Lh(1.5))); // 1.5 * 32 = 48px
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.line_height, ComputedLineHeight::Number(2.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(48.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(48.0));
 }
 
 /// When the own line-height is unresolvable (`normal`, the initial value
@@ -1150,10 +1151,10 @@ fn finalize_resolves_lh_against_own_line_height_for_padding() {
 #[test]
 fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
     let mut sv = SpecifiedValues::initial(); // line_height stays `normal`
-    sv.padding = Sides::all(Length::Lh(1.5));
+    sv.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Lh(1.5)));
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.line_height, ComputedLineHeight::Normal);
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(0.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 /// `<percentage>` is handled differently by property: `font-size` becomes a length, while
@@ -1163,12 +1164,15 @@ fn finalize_resolves_lh_falls_back_to_zero_when_line_height_normal() {
 fn finalize_keeps_box_percentages_and_resolves_font_size_percentage() {
     let mut sv = SpecifiedValues::initial();
     sv.font_size = Length::Percent(150.0);
-    sv.padding = Sides::all(Length::Percent(25.0));
+    sv.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Percent(25.0)));
     sv.margin = Sides::all(LengthOrAuto::Length(Length::Percent(10.0)));
     sv.width = LengthOrAuto::Length(Length::Percent(50.0));
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
     assert_eq!(cv.font_size, ComputedLength(24.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Percent(25.0));
+    assert_eq!(
+        cv.padding.left,
+        ComputedLengthPercentageOrCalc::Percent(25.0)
+    );
     assert_eq!(
         cv.margin.bottom,
         ComputedLengthPercentageOrAuto::Percent(10.0)
@@ -1338,10 +1342,10 @@ fn finalize_as_root_uses_initial_for_font_size_and_own_for_box_properties() {
 
     let mut box_case = SpecifiedValues::initial();
     box_case.font_size = Length::Px(20.0);
-    box_case.padding = Sides::all(Length::Rem(2.0));
+    box_case.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Rem(2.0)));
     let cv = box_case.finalize_as_root();
     assert_eq!(cv.font_size, ComputedLength(20.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(40.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(40.0));
 }
 
 /// The root element also resolves `font-size: Nem` against the initial 16px, because it has no parent.
@@ -1363,10 +1367,10 @@ fn finalize_as_root_resolves_rlh_using_own_line_height_basis() {
     let mut sv = SpecifiedValues::initial();
     sv.font_size = Length::Px(20.0);
     sv.line_height = LineHeight::Number(2.0); // own font-size 20px → used 40px
-    sv.padding = Sides::all(Length::Rlh(1.5)); // 1.5 * 40 = 60px
+    sv.padding = Sides::all(LengthPercentageOrCalc::Length(Length::Rlh(1.5))); // 1.5 * 40 = 60px
     let cv = sv.finalize_as_root();
     assert_eq!(cv.line_height, ComputedLineHeight::Number(2.0));
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(60.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(60.0));
 }
 
 /// With no parent, `1lh` / `1rlh` on the root element's own `line-height` are self-referential
@@ -1396,16 +1400,19 @@ fn finalize_as_root_line_height_self_reference_is_always_normal() {
 fn finalize_absolutizes_each_side_independently() {
     let mut sv = SpecifiedValues::initial();
     sv.padding = Sides {
-        top: Length::Px(1.0),
-        right: Length::Em(1.0),
-        bottom: Length::Pt(3.0),
-        left: Length::Percent(5.0),
+        top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+        right: LengthPercentageOrCalc::Length(Length::Em(1.0)),
+        bottom: LengthPercentageOrCalc::Length(Length::Pt(3.0)),
+        left: LengthPercentageOrCalc::Length(Length::Percent(5.0)),
     };
     let cv = sv.finalize(&parent_with_font_size(16.0), &CTX);
-    assert_eq!(cv.padding.top, ComputedLengthPercentage::Px(1.0));
-    assert_eq!(cv.padding.right, ComputedLengthPercentage::Px(16.0));
-    assert_eq!(cv.padding.bottom, ComputedLengthPercentage::Px(4.0));
-    assert_eq!(cv.padding.left, ComputedLengthPercentage::Percent(5.0));
+    assert_eq!(cv.padding.top, ComputedLengthPercentageOrCalc::Px(1.0));
+    assert_eq!(cv.padding.right, ComputedLengthPercentageOrCalc::Px(16.0));
+    assert_eq!(cv.padding.bottom, ComputedLengthPercentageOrCalc::Px(4.0));
+    assert_eq!(
+        cv.padding.left,
+        ComputedLengthPercentageOrCalc::Percent(5.0)
+    );
 }
 
 /// The list-shaped phase 3 of `text-shadow` generalizes the `Sides<Length>` precedent in

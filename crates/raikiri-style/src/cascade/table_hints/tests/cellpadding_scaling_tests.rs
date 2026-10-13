@@ -1,7 +1,7 @@
+use crate::resolve::ComputedLengthPercentageOrCalc;
 use std::cell::Cell;
 
 use crate::cascade::cascade;
-use crate::resolve::ComputedLengthPercentage;
 use crate::ruletree::build_rule_tree;
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::test_dom::{TestChildIter, TestDoc, TestElementRef, TestNodeRef};
@@ -115,7 +115,7 @@ fn long_cellpadding_is_read_once_per_table_independent_of_cell_count() {
             for &cell in &cells {
                 assert_eq!(
                     result.computed[cell].padding.left,
-                    ComputedLengthPercentage::Px(expected)
+                    ComputedLengthPercentageOrCalc::Px(expected)
                 );
             }
             assert_eq!(dom.reads.get(), 1, "cell count: {count}");
@@ -127,7 +127,7 @@ fn long_cellpadding_is_read_once_per_table_independent_of_cell_count() {
             for &cell in &cells {
                 assert_eq!(
                     result.computed[cell].padding.left,
-                    ComputedLengthPercentage::Px(5.0)
+                    ComputedLengthPercentageOrCalc::Px(5.0)
                 );
             }
         }

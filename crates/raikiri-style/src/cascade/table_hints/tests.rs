@@ -154,13 +154,22 @@ fn cellpadding_uses_the_nearest_html_table_and_preserves_author_padding() {
             cv.padding.bottom,
             cv.padding.left,
         ] {
-            assert_eq!(side, Padding::Px(expected), "{attribute:?}");
+            assert_eq!(side, Padding::Px(expected).into(), "{attribute:?}");
         }
-        assert_eq!(result.computed[header].padding.top, Padding::Px(expected));
-        assert_eq!(result.computed[header].padding.left, Padding::Px(9.0));
-        assert_eq!(result.computed[padded_cell].padding.left, Padding::Px(3.0));
+        assert_eq!(
+            result.computed[header].padding.top,
+            Padding::Px(expected).into()
+        );
+        assert_eq!(
+            result.computed[header].padding.left,
+            Padding::Px(9.0).into()
+        );
+        assert_eq!(
+            result.computed[padded_cell].padding.left,
+            Padding::Px(3.0).into()
+        );
         for node in [nested_cell, foreign, unrelated, orphan] {
-            assert_eq!(result.computed[node].padding.left, Padding::Px(0.0));
+            assert_eq!(result.computed[node].padding.left, Padding::Px(0.0).into());
         }
     }
 }

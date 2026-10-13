@@ -3,7 +3,7 @@
 
 use raikiri_html::computed::{
     BorderImageOutsetSide, BorderImageRepeatKeyword, BorderImageSliceOffset, BorderImageWidthSide,
-    ComputedBackgroundImage, ComputedBorderImage, ComputedLengthPercentage, Sides,
+    ComputedBackgroundImage, ComputedBorderImage, ComputedLengthPercentageOrCalc, Sides,
 };
 use raikiri_html::{
     LayoutOptions, LayoutStatus, NodeId, RenderResources, layout, parse_html_with_resources,
@@ -77,7 +77,7 @@ fn shorthand_sets_every_longhand() {
     assert_eq!(
         image.width,
         Sides {
-            top: BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Px(20.0)),
+            top: BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(20.0)),
             right: BorderImageWidthSide::Number(3.0),
             bottom: BorderImageWidthSide::Auto,
             left: BorderImageWidthSide::Number(3.0),
@@ -114,7 +114,7 @@ fn longhands_cascade_and_border_resets_them() {
     assert_eq!(images[3].source, ComputedBackgroundImage::None);
     assert_eq!(
         images[3].width.top,
-        BorderImageWidthSide::LengthPercentage(ComputedLengthPercentage::Percent(10.0))
+        BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Percent(10.0))
     );
     assert_eq!(images[3].outset.left, BorderImageOutsetSide::Length(4.0));
 }

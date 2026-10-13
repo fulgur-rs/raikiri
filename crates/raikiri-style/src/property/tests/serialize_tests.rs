@@ -88,7 +88,9 @@ fn serialize_length_or_auto_formats_relative_calc_terms_in_canonical_order() {
 #[test]
 fn serialize_value_covers_simple_length_variants() {
     assert_eq!(
-        serialize_value(&PropertyValue::PaddingTop(Length::Px(10.0))),
+        serialize_value(&PropertyValue::PaddingTop(LengthPercentageOrCalc::Length(
+            Length::Px(10.0)
+        ))),
         Some("10px".to_owned())
     );
     assert_eq!(
@@ -142,33 +144,35 @@ fn serialize_value_excludes_width_height_min_max_variants() {
 #[test]
 fn serialize_value_collapses_sides_by_css_box_model_rules() {
     assert_eq!(
-        serialize_value(&PropertyValue::Padding(Sides::all(Length::Px(10.0)))),
+        serialize_value(&PropertyValue::Padding(Sides::all(
+            LengthPercentageOrCalc::Length(Length::Px(10.0))
+        ))),
         Some("10px".to_owned())
     );
     assert_eq!(
         serialize_value(&PropertyValue::Padding(Sides {
-            top: Length::Px(1.0),
-            right: Length::Px(2.0),
-            bottom: Length::Px(1.0),
-            left: Length::Px(2.0),
+            top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+            right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
+            bottom: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+            left: LengthPercentageOrCalc::Length(Length::Px(2.0)),
         })),
         Some("1px 2px".to_owned())
     );
     assert_eq!(
         serialize_value(&PropertyValue::Padding(Sides {
-            top: Length::Px(1.0),
-            right: Length::Px(2.0),
-            bottom: Length::Px(3.0),
-            left: Length::Px(2.0),
+            top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+            right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
+            bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
+            left: LengthPercentageOrCalc::Length(Length::Px(2.0)),
         })),
         Some("1px 2px 3px".to_owned())
     );
     assert_eq!(
         serialize_value(&PropertyValue::Padding(Sides {
-            top: Length::Px(1.0),
-            right: Length::Px(2.0),
-            bottom: Length::Px(3.0),
-            left: Length::Px(4.0),
+            top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
+            right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
+            bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
+            left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
         })),
         Some("1px 2px 3px 4px".to_owned())
     );
@@ -178,15 +182,15 @@ fn serialize_value_collapses_sides_by_css_box_model_rules() {
 fn serialize_value_collapses_start_end_pairs() {
     assert_eq!(
         serialize_value(&PropertyValue::PaddingInline(StartEnd {
-            start: Length::Px(5.0),
-            end: Length::Px(5.0),
+            start: LengthPercentageOrCalc::Length(Length::Px(5.0)),
+            end: LengthPercentageOrCalc::Length(Length::Px(5.0)),
         })),
         Some("5px".to_owned())
     );
     assert_eq!(
         serialize_value(&PropertyValue::PaddingInline(StartEnd {
-            start: Length::Px(5.0),
-            end: Length::Px(10.0),
+            start: LengthPercentageOrCalc::Length(Length::Px(5.0)),
+            end: LengthPercentageOrCalc::Length(Length::Px(10.0)),
         })),
         Some("5px 10px".to_owned())
     );
@@ -734,7 +738,9 @@ fn serialize_value_writes_border_image_longhands() {
     );
     assert_eq!(
         serialize_value(&PropertyValue::BorderImageWidth(Sides {
-            top: BorderImageWidthSide::LengthPercentage(Length::Px(1.0)),
+            top: BorderImageWidthSide::LengthPercentage(LengthPercentageOrCalc::Length(
+                Length::Px(1.0)
+            )),
             right: BorderImageWidthSide::Number(2.0),
             bottom: BorderImageWidthSide::Auto,
             left: BorderImageWidthSide::Number(2.0),
