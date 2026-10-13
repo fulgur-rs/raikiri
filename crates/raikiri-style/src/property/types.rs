@@ -11824,12 +11824,12 @@ pub(crate) const MAX_SUBSTITUTED_VALUE_BYTES: usize = 64 * 1024;
 
 /// Maximum component-value nesting accepted by the deferred-value scanners.
 /// The recursive parser paths use the same bound as a stack guard.
-pub(crate) const MAX_DEFERRED_VALUE_NESTING_DEPTH: usize = 128;
+pub(crate) const MAX_DEFERRED_VALUE_NESTING_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
 
 // CSS Color 5's color endpoints and relative origins are recursive. Share
 // this limit across every color function, not just color-mix(), to bound
 // native recursion in declarations and direct color-parser callers.
-pub(crate) const MAX_COLOR_MIX_NESTING_DEPTH: usize = 128;
+pub(crate) const MAX_COLOR_MIX_NESTING_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
 
 fn is_deferred_function(name: &str) -> bool {
     DEFERRED_FUNCTIONS

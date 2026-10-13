@@ -27,6 +27,12 @@
 #![allow(rustdoc::private_intra_doc_links)]
 #![allow(missing_docs)] // seed phase; docs come later
 
+/// Shared ceiling for CSS parser recursion, variable expansion and calc trees.
+/// Matches cssparser 0.38's default block limit before that dependency is
+/// upgraded. Each parser counts its own blocks or tree levels; selector token
+/// nesting retains its stricter limit of 32.
+pub(crate) const MAX_CSS_NESTING_DEPTH: usize = 75;
+
 pub mod error;
 pub use error::{CascadeError, CascadeLimitKind};
 

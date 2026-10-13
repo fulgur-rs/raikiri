@@ -26,13 +26,19 @@ fn calc_serialization_bounds_shared_work_across_balanced_subtrees() {
 
 #[test]
 fn calc_serialization_bounds_ast_free_wrappers_and_sign_nodes() {
+    for wrapper in ["calc(", "("] {
+        let bounded = format!("{}1{}", wrapper.repeat(75), ")".repeat(75));
+        assert!(parse(&bounded, CalcUnitKind::Number).is_some());
+        let excessive = format!("{}1{}", wrapper.repeat(76), ")".repeat(76));
+        assert!(parse(&excessive, CalcUnitKind::Number).is_none());
+    }
     let deep = format!("{}1{}", "calc(".repeat(2048), ")".repeat(2048));
     assert!(parse(&deep, CalcUnitKind::Number).is_none());
     let deep = format!("{}1{}", "(".repeat(2048), ")".repeat(2048));
     assert!(parse(&deep, CalcUnitKind::Number).is_none());
-    let deep = format!("{}1{}", "sign(".repeat(128), ")".repeat(128));
+    let deep = format!("{}1{}", "sign(".repeat(75), ")".repeat(75));
     assert!(parse(&deep, CalcUnitKind::Number).is_none());
-    let bounded = format!("{}1{}", "sign(".repeat(127), ")".repeat(127));
+    let bounded = format!("{}1{}", "sign(".repeat(74), ")".repeat(74));
     let node = parse(&bounded, CalcUnitKind::Number).unwrap();
     assert_eq!(serialize_calc_node(&node), "calc(1)");
     let minimum = flat_expression("1", " + ", 32);
@@ -43,9 +49,9 @@ fn calc_serialization_bounds_ast_free_wrappers_and_sign_nodes() {
 
 #[test]
 fn calc_serialization_rejects_oversized_public_components_and_failed_tails() {
-    let sum = flat_expression("1", " + ", 129);
-    let unresolved = flat_expression("sign(1em - 10px)", " + ", 129);
-    let angle = flat_expression("1deg", " + ", 129);
+    let sum = flat_expression("1", " + ", 76);
+    let unresolved = flat_expression("sign(1em - 10px)", " + ", 76);
+    let angle = flat_expression("1deg", " + ", 76);
     for (function, component) in [
         ("lab", &sum),
         ("lch", &sum),
@@ -66,7 +72,7 @@ fn calc_serialization_rejects_oversized_public_components_and_failed_tails() {
     }
     let source = format!("lch(50 20 {angle})");
     assert!(crate::property::serialize_color_value("color", &source).is_none());
-    let bounded = flat_expression("1", " + ", 128);
+    let bounded = flat_expression("1", " + ", 75);
     let missing_rhs = bounded.replacen(')', " + )", 1);
     assert!(parse(&missing_rhs, CalcUnitKind::Number).is_none());
     let invalid_later = format!("lab({bounded} invalid 0)");
@@ -74,13 +80,13 @@ fn calc_serialization_rejects_oversized_public_components_and_failed_tails() {
     let valid_later = format!("lab({bounded} 0 0)");
     assert_eq!(
         crate::property::serialize_color_value("color", &valid_later).as_deref(),
-        Some("lab(calc(128) 0 0)")
+        Some("lab(calc(75) 0 0)")
     );
 }
 
 #[test]
 fn calc_serialization_rejects_flat_sum_before_the_ast_becomes_too_deep() {
-    let source = flat_expression("1", " + ", 129);
+    let source = flat_expression("1", " + ", 76);
     assert!(parse(&source, CalcUnitKind::Number).is_none());
     let color = format!("lab({source} 0 0)");
     assert!(crate::property::serialize_color_value("color", &color).is_none());
@@ -88,16 +94,16 @@ fn calc_serialization_rejects_flat_sum_before_the_ast_becomes_too_deep() {
 
 #[test]
 fn calc_serialization_rejects_flat_product_before_the_ast_becomes_too_deep() {
-    let source = flat_expression("1", " * ", 129);
+    let source = flat_expression("1", " * ", 76);
     assert!(parse(&source, CalcUnitKind::Number).is_none());
 }
 
 #[test]
 fn calc_serialization_preserves_bounded_math_and_unit_fallbacks() {
-    let sum = flat_expression("1", " + ", 128);
+    let sum = flat_expression("1", " + ", 75);
     let node = parse(&sum, CalcUnitKind::Number).unwrap();
-    assert_eq!(serialize_calc_node(&node), "calc(128)");
-    let product = flat_expression("1", " * ", 128);
+    assert_eq!(serialize_calc_node(&node), "calc(75)");
+    let product = flat_expression("1", " * ", 75);
     let node = parse(&product, CalcUnitKind::Number).unwrap();
     assert_eq!(serialize_calc_node(&node), "calc(1)");
     for (input, want) in [

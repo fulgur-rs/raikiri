@@ -17,7 +17,7 @@ use crate::ruletree::{
 type SupportsCondition = Condition<bool>;
 
 // Bound all nested blocks before any grammar or value parser recurses.
-const MAX_SUPPORTS_NESTING_DEPTH: usize = 128;
+const MAX_SUPPORTS_NESTING_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
 
 /// Evaluate a complete feature query; invalid syntax never matches.
 pub(crate) fn supports_condition(source: &str, namespaces: &SupportsContext<'_>) -> bool {
