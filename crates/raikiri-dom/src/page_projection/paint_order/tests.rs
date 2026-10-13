@@ -105,11 +105,13 @@ fn skipping_subtrees_without_events_keeps_every_page_order() {
             content_box: fragment.content_box,
             overflow_clips: document.overflow_clips_on_page(fragment),
             generated_boxes: document.page_projection.generated_boxes.get(&page),
+            inline_boxes: document.page_projection.inline_boxes.get(&page),
             generated_images: document.page_projection.generated_images.get(&page),
             cascade: &cascade,
             document: &document,
             page: fragment,
-            later_line_boxes: Default::default(),
+            line_boxes: Default::default(),
+            letter_groups: Default::default(),
         };
         for item in &fragment.items {
             items
@@ -154,11 +156,13 @@ fn an_untraceable_event_source_walks_every_node() {
         content_box: fragment.content_box,
         overflow_clips: BTreeMap::new(),
         generated_boxes: None,
+        inline_boxes: None,
         generated_images: None,
         cascade: &cascade,
         document: &document,
         page: fragment,
-        later_line_boxes: Default::default(),
+        line_boxes: Default::default(),
+        letter_groups: Default::default(),
     };
     assert!(document.page_paint_nodes(&items, 0, None).is_none());
 }
