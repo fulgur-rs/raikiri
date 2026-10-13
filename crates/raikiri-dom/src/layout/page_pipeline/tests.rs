@@ -8211,6 +8211,21 @@ fn measure_ch_advance_uses_the_engine_fonts() {
 }
 
 #[test]
+fn measure_normal_line_height_uses_the_engine_fonts() {
+    // Ahem's ascent and descent fill the em box with no line gap.
+    let key = raikiri_style::ChFontKey {
+        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        size: raikiri_style::ComputedLength(20.0),
+        weight: 400.0,
+        style: raikiri_style::property::FontStyle::Normal,
+    };
+    assert_eq!(
+        crate::layout::measure_normal_line_height(&ifc_ahem_fonts(), &key),
+        Some(20.0)
+    );
+}
+
+#[test]
 fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engine() {
     // A fixed box shrinks against the page area; "aaaa bbbb cccc" is one
     // 140px line wherever the box sits, also under a zero-wide positioned

@@ -17,7 +17,7 @@ use crate::property::{
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
-    calc_ch_factor, used_line_height_length,
+    calc_ch_factor,
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_bottom, expand_border_bottom_css_wide,
@@ -218,7 +218,7 @@ struct WalkEntry {
 
 /// How [`walk`] runs.
 #[derive(Clone, Copy)]
-pub(crate) struct WalkOptions {
+pub(crate) struct WalkOptions<'a> {
     /// Whether siblings with the same cascade input copy each other's
     /// results. Tests turn it off for the reference the shared walk must
     /// reproduce exactly.
@@ -238,9 +238,12 @@ pub(crate) struct WalkOptions {
     /// The basis of the viewport-percentage lengths; see
     /// [`crate::CascadeOptions::viewport`].
     pub(crate) viewport: Option<(f32, f32)>,
+    /// Measures `line-height: normal`; see
+    /// [`crate::CascadeOptions::normal_line_height`].
+    pub(crate) normal_line_height: Option<&'a dyn crate::resolve::NormalLineHeight>,
 }
 
-impl Default for WalkOptions {
+impl Default for WalkOptions<'_> {
     fn default() -> Self {
         Self {
             sibling_sharing: true,
@@ -249,6 +252,7 @@ impl Default for WalkOptions {
             stored_block_budget: STORED_BLOCK_BUDGET,
             limits: CascadeLimits::default(),
             viewport: None,
+            normal_line_height: None,
         }
     }
 }
@@ -680,7 +684,9 @@ pub(crate) fn walk_from<D: StyleDom>(
             // different `rem` bases in these phases, so it needs a dedicated entry
             // point (see the spec quote in `SpecifiedValues::finalize_as_root` docs).
             let mut computed = match &root_ctx {
-                Some(ctx) => specified.finalize(parent_computed, ctx),
+                Some(ctx) => {
+                    specified.finalize_with(parent_computed, ctx, options.normal_line_height)
+                }
                 None => {
                     // `finalize_as_root` fixes the phase-2 basis to the initial
                     // value (§6.1.1: "if the element has no parent"). This is
@@ -705,7 +711,11 @@ pub(crate) fn walk_from<D: StyleDom>(
                          親の computed font-size は initial でなければならない \
                          (subtree の途中から walk を開始していないか?)"
                     );
-                    specified.finalize_as_root_in_viewport(viewport.0, viewport.1)
+                    specified.finalize_as_root_in_viewport_with(
+                        viewport.0,
+                        viewport.1,
+                        options.normal_line_height,
+                    )
                 }
             };
             computed.custom_properties = custom_properties.clone();
@@ -724,12 +734,11 @@ pub(crate) fn walk_from<D: StyleDom>(
             let child_ctx = match root_ctx {
                 Some(ctx) => Some(ctx),
                 None if is_element => Some(
-                    ResolveContext::with_root_line_height(
-                        computed.font_size,
-                        used_line_height_length(computed.line_height, computed.font_size),
-                    )
-                    .with_viewport(viewport.0, viewport.1)
-                    .with_vertical_root(computed.cssom_writing_mode != WritingMode::HorizontalTb),
+                    ResolveContext::with_root_line_height(computed.font_size, computed.lh_basis())
+                        .with_viewport(viewport.0, viewport.1)
+                        .with_vertical_root(
+                            computed.cssom_writing_mode != WritingMode::HorizontalTb,
+                        ),
                 ),
                 None => None,
             };
@@ -828,7 +837,8 @@ pub(crate) fn walk_from<D: StyleDom>(
                          `child_ctx` is `Some` for every element by this point \
                          in the match above",
                     );
-                    let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
+                    let mut pseudo_computed =
+                        pseudo_specified.finalize_with(&computed, &ctx, options.normal_line_height);
                     if pseudo == PseudoElem::FirstLetter {
                         let decls = candidates.unwrap_or(ElementCandidates::EMPTY);
                         let custom = custom_candidates.unwrap_or(CustomCandidates::EMPTY);

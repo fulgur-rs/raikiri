@@ -84,7 +84,7 @@ use super::limits::{Counter, bytes_of, try_filled};
 use super::value_heap::own_heap_bytes;
 use super::{CascadeLimits, CascadeResult, finish};
 use crate::property::DisplayValue;
-use crate::resolve::{ResolveContext, used_line_height_length};
+use crate::resolve::ResolveContext;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{
     CascadeError, CascadeLimitKind, ComputedValues, MediaContext, PageContextQuery, RuleTree,
@@ -195,19 +195,16 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
         let ctx = if ctx.is_none() && node.kind() == StyleNodeKind::Element {
             let cv = &normal.computed[id.0 as usize];
             Some(
-                ResolveContext::with_root_line_height(
-                    cv.font_size,
-                    used_line_height_length(cv.line_height, cv.font_size),
-                )
-                // The walk above resolves viewport-percentage lengths against
-                // the media context's viewport too.
-                .with_viewport(
-                    media.viewport_width() as f32,
-                    media.viewport_height() as f32,
-                )
-                .with_vertical_root(
-                    cv.cssom_writing_mode != crate::property::WritingMode::HorizontalTb,
-                ),
+                ResolveContext::with_root_line_height(cv.font_size, cv.lh_basis())
+                    // The walk above resolves viewport-percentage lengths against
+                    // the media context's viewport too.
+                    .with_viewport(
+                        media.viewport_width() as f32,
+                        media.viewport_height() as f32,
+                    )
+                    .with_vertical_root(
+                        cv.cssom_writing_mode != crate::property::WritingMode::HorizontalTb,
+                    ),
             )
         } else {
             ctx

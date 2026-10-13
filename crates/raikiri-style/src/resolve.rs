@@ -1490,9 +1490,10 @@ pub struct ResolveContext {
     pub root_font_size: ComputedLength,
     /// Root element's `lh` value: the `rlh` basis.
     ///
-    /// An **absolutized length in px** derived by [`used_line_height_length`]
-    /// from the root's computed line-height and font-size, or `None` when
-    /// `normal` cannot be resolved. `None` reflects the same lack of font
+    /// An **absolutized length in px** derived by
+    /// [`used_line_height_length_or`] from the root's computed line-height and
+    /// font-size, with `normal` measured by a [`NormalLineHeight`], or `None`
+    /// when `normal` was not measured. `None` reflects the same lack of font
     /// metrics in the style layer as [`ComputedLineHeight::Normal`] (also true
     /// of `cap`/`rcap`; see [`Length::Lh`]). Do not substitute zero or another
     /// fabricated ratio.
@@ -1734,8 +1735,10 @@ fn pc_to_px(v: f32) -> f32 {
 ///   style layer. This is the same limit that split out `cap` / `rcap` (see
 ///   [`crate::property::Length::Lh`]). The spec gives no font-size ratio as a
 ///   fallback here; do not invent one like those for `ex`/`ch`/`ic`.
-///   The caller selects a fallback for the consuming property (see
-///   [`resolve_length_percentage`] and related documentation).
+///   A caller with a [`NormalLineHeight`] measure passes it to
+///   [`used_line_height_length_or`] instead; without one, it selects a
+///   fallback for the consuming property (see [`resolve_length_percentage`]
+///   and related documentation).
 ///
 /// `normal` is the **initial value** for `line-height`. Returning `None` is
 /// therefore common for elements using `lh`/`rlh`, not an edge case.
@@ -1769,6 +1772,64 @@ pub fn used_line_height_length(
         ComputedLineHeight::Normal => None,
         ComputedLineHeight::Number(n) => Some(ComputedLength(font_size.0 * n)),
         ComputedLineHeight::Length(l) => Some(l),
+    }
+}
+
+/// [`used_line_height_length`] with the used length of `normal` supplied by
+/// the caller.
+///
+/// `normal` is the absolute length that `line-height: normal` takes for this
+/// element's first available font, as a [`NormalLineHeight`] measured it, or
+/// `None` without one; the other values ignore it.
+pub fn used_line_height_length_or(
+    line_height: ComputedLineHeight,
+    font_size: ComputedLength,
+    normal: Option<ComputedLength>,
+) -> Option<ComputedLength> {
+    match line_height {
+        ComputedLineHeight::Normal => normal,
+        _ => used_line_height_length(line_height, font_size),
+    }
+}
+
+/// Measures the used length of `line-height: normal` for the `lh` and `rlh`
+/// units.
+///
+/// CSS Values 4 §6.1.1 [`lh`](https://www.w3.org/TR/css-values-4/#lh)
+/// converts `normal` "to an absolute length by using only the metrics of the
+/// first available font". The style layer has no fonts, so a consumer that
+/// has them passes an implementation through
+/// [`crate::CascadeOptions::normal_line_height`]. Without one, `normal`
+/// stays unresolved and each property applies the fallback its resolver
+/// documents.
+pub trait NormalLineHeight: Send + Sync {
+    /// The used `normal` line height in CSS px of the first available font
+    /// that `font` selects, or `None` when no font can be measured.
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<ComputedLength>;
+}
+
+/// A shared [`NormalLineHeight`] for [`crate::CascadeOptions`].
+///
+/// Two sources compare equal when they share the same measurer.
+#[derive(Clone)]
+pub struct NormalLineHeightSource(pub std::sync::Arc<dyn NormalLineHeight>);
+
+impl NormalLineHeightSource {
+    /// Wrap `measurer`.
+    pub fn new(measurer: impl NormalLineHeight + 'static) -> Self {
+        Self(std::sync::Arc::new(measurer))
+    }
+}
+
+impl std::fmt::Debug for NormalLineHeightSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NormalLineHeightSource(..)")
+    }
+}
+
+impl PartialEq for NormalLineHeightSource {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
     }
 }
 

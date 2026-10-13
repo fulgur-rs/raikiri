@@ -1619,6 +1619,33 @@ fn cascade_page_padding_lh_falls_back_to_zero_when_line_height_normal() {
     assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
 }
 
+/// A root whose `normal` line height was measured at 24px for its 20px font.
+fn root_with_measured_normal() -> ComputedValues {
+    ComputedValues {
+        normal_line_height: Some(ComputedLength(24.0)),
+        ..root_with_font_size(20.0)
+    }
+}
+
+#[test]
+fn cascade_page_lh_scales_the_roots_measured_normal_line_height() {
+    let root = root_with_measured_normal();
+    // `rlh` is the root's own measured `normal`.
+    let result = page("@page { padding: 1rlh }", &root);
+    assert_eq!(padding_top_of(&result), Some(Length::Px(24.0)));
+    // The page context keeps the root's font at its own size, so `normal`
+    // scales with it.
+    let result = page("@page { font-size: 40px; padding: 1lh }", &root);
+    assert_eq!(padding_top_of(&result), Some(Length::Px(48.0)));
+}
+
+#[test]
+fn cascade_page_lh_leaves_normal_unmeasured_for_another_font() {
+    let root = root_with_measured_normal();
+    let result = page("@page { font-family: serif; padding: 1lh }", &root);
+    assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
+}
+
 /// Regression pin, `@page` path:
 /// `margin-top: 1lh` under (the initial, unresolvable) `line-height: normal`
 /// must compute to `Px(0.0)` — margin's true spec initial (CSS Box 3

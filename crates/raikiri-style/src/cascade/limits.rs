@@ -91,7 +91,7 @@ impl Default for CascadeLimits {
 
 /// How [`super::cascade_with_options`] runs.
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct CascadeOptions {
     /// Limits on the cascade's work and on its result's memory.
     pub limits: CascadeLimits,
@@ -103,6 +103,11 @@ pub struct CascadeOptions {
     /// the page box media queries see. `None` uses the media context's
     /// viewport.
     pub viewport: Option<(f32, f32)>,
+    /// Measures the used length of `line-height: normal`, the basis of the
+    /// `lh` and `rlh` units on elements whose line height is `normal`.
+    /// `None` leaves that basis unresolved, and each property falls back as
+    /// its resolver documents.
+    pub normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
 }
 
 /// A count against one of the limits. It keeps what is left before the

@@ -756,6 +756,127 @@ fn rlh_falls_back_to_zero_when_root_line_height_is_normal() {
     );
 }
 
+/// Measures `line-height: normal` as 1.25 times the font size, counting the
+/// fonts it is asked about.
+struct ScaledNormal(std::sync::atomic::AtomicUsize);
+
+impl crate::resolve::NormalLineHeight for ScaledNormal {
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<ComputedLength> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some(ComputedLength(font.size.0 * 1.25))
+    }
+}
+
+fn cascade_measuring_normal(doc: &TestDoc) -> (crate::CascadeResult, Arc<ScaledNormal>) {
+    let measurer = Arc::new(ScaledNormal(Default::default()));
+    let mut options = crate::CascadeOptions::default();
+    options.normal_line_height = Some(crate::NormalLineHeightSource(measurer.clone()));
+    let tree = build_rule_tree(doc);
+    let result = crate::cascade_with_options(
+        doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+    (result, measurer)
+}
+
+#[test]
+fn lh_uses_the_measured_normal_line_height() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size: 16px"));
+    let div = doc.push_element(
+        html,
+        "div",
+        Some("font-size: 20px; padding: 1lh; margin-top: calc(1lh + 10%); width: 2lh"),
+    );
+    let (r, _) = cascade_measuring_normal(&doc);
+    let cv = &r.computed[div];
+    assert_eq!(cv.line_height, ComputedLineHeight::Normal);
+    assert_eq!(cv.normal_line_height, Some(ComputedLength(25.0)));
+    assert_eq!(
+        cv.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(25.0))
+    );
+    assert_eq!(
+        cv.margin.top,
+        ComputedLengthPercentageOrAuto::Calc(crate::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 25.0,
+        })
+    );
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(50.0));
+}
+
+#[test]
+fn rlh_and_parent_lh_use_the_measured_normal_line_height() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size: 16px; padding: 1rlh"));
+    let p = doc.push_element(
+        html,
+        "p",
+        Some("font-size: 1lh; line-height: 2lh; padding: 1rlh"),
+    );
+    let (r, _) = cascade_measuring_normal(&doc);
+    // The root's `normal` line is 20px.
+    assert_eq!(
+        r.computed[html].padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(20.0))
+    );
+    // `font-size` and `line-height` read `lh` from the parent.
+    assert_eq!(r.computed[p].font_size, ComputedLength(20.0));
+    assert_eq!(
+        r.computed[p].line_height,
+        ComputedLineHeight::Length(ComputedLength(40.0))
+    );
+    assert_eq!(
+        r.computed[p].padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(20.0))
+    );
+}
+
+#[test]
+fn normal_line_height_is_measured_only_where_the_font_changes() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let body = doc.push_element(html, "body", None);
+    for _ in 0..3 {
+        doc.push_element(body, "p", None);
+    }
+    let big = doc.push_element(body, "p", Some("font-size: 32px"));
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, "p::before { content: 'x'; padding: 1lh }");
+    let (r, measurer) = cascade_measuring_normal(&doc);
+    // The document node and the root element, which both resolve without a
+    // parent, and the larger paragraph; everything else shares a font.
+    assert_eq!(measurer.0.load(std::sync::atomic::Ordering::Relaxed), 3);
+    assert_eq!(
+        r.computed[big].normal_line_height,
+        Some(ComputedLength(40.0))
+    );
+    let pseudo = r
+        .pseudo
+        .get(&(crate::StyleNodeId(big as u64), crate::PseudoElem::Before))
+        .expect("::before");
+    assert_eq!(
+        pseudo.padding,
+        Sides::all(ComputedLengthPercentageOrCalc::Px(40.0))
+    );
+}
+
+#[test]
+fn normal_line_height_stays_unmeasured_for_other_line_heights() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("line-height: 1.5"));
+    doc.push_element(html, "p", Some("font-size: 32px"));
+    let (r, measurer) = cascade_measuring_normal(&doc);
+    assert_eq!(r.computed[html].normal_line_height, None);
+    // Only the document node, whose line height is the initial `normal`.
+    assert_eq!(measurer.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
 #[test]
 fn line_height_lh_self_reference_uses_parent_not_own_metrics() {
     let (parent, child) = cascade_parent_child(

@@ -2102,3 +2102,31 @@ fn a_calc_gap_that_folds_to_one_term_computes_as_that_term() {
         ComputedLengthPercentageOrNormal::Calc(calc)
     );
 }
+
+#[test]
+fn normal_line_height_sources_are_equal_when_they_share_a_measurer() {
+    struct Fixed;
+    impl NormalLineHeight for Fixed {
+        fn normal_line_height(&self, _: &crate::ChFontKey) -> Option<ComputedLength> {
+            Some(ComputedLength(18.0))
+        }
+    }
+    let source = NormalLineHeightSource::new(Fixed);
+    assert_eq!(source, source.clone());
+    assert_ne!(source, NormalLineHeightSource::new(Fixed));
+    assert_eq!(format!("{source:?}"), "NormalLineHeightSource(..)");
+}
+
+#[test]
+fn used_line_height_length_or_takes_normal_from_the_caller() {
+    let size = ComputedLength(10.0);
+    let normal = Some(ComputedLength(12.0));
+    assert_eq!(
+        used_line_height_length_or(ComputedLineHeight::Normal, size, normal),
+        normal
+    );
+    assert_eq!(
+        used_line_height_length_or(ComputedLineHeight::Number(2.0), size, normal),
+        Some(ComputedLength(20.0))
+    );
+}

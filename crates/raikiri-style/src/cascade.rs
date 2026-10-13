@@ -204,9 +204,17 @@ pub struct CascadeResult {
     /// dereferenced [`ComputedValues`] for independent ownership, or use
     /// [`PseudoValueArc::make_mut`] for copy-on-write mutation.
     pub pseudo: HashMap<(StyleNodeId, PseudoElem), PseudoValueArc<ComputedValues>>,
+    /// The measurer of `line-height: normal` the cascade ran with, kept for
+    /// the first-letter styles resolved after it.
+    normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
 }
 
 impl CascadeResult {
+    /// The measurer of `line-height: normal` the cascade ran with.
+    pub(crate) fn normal_line_height(&self) -> Option<&dyn crate::resolve::NormalLineHeight> {
+        self.normal_line_height.as_ref().map(|source| &*source.0)
+    }
+
     /// Explicit SVG paint properties after winner selection and defaulting.
     ///
     /// Read concrete values from [`Self::computed`]. Properties marked
@@ -311,6 +319,7 @@ impl CascadeResult {
             counter_styles,
             page_values,
             pseudo,
+            normal_line_height,
         } = self;
         let new_of_old: HashMap<u64, u64> = old_of_new
             .iter()
@@ -350,6 +359,7 @@ impl CascadeResult {
                 .iter()
                 .filter_map(|((id, kind), value)| Some(((node(id)?, *kind), value.clone())))
                 .collect(),
+            normal_line_height: normal_line_height.clone(),
         }
     }
 }
@@ -471,10 +481,13 @@ pub fn cascade_with_options<D: StyleDom>(
         WalkOptions {
             limits: options.limits,
             viewport: options.viewport,
+            normal_line_height: options.normal_line_height.as_ref().map(|source| &*source.0),
             ..WalkOptions::default()
         },
     )?;
-    Ok(finish(dom, rule_tree, page_query, media_context, outputs))
+    let mut result = finish(dom, rule_tree, page_query, media_context, outputs);
+    result.normal_line_height = options.normal_line_height.clone();
+    Ok(result)
 }
 
 /// The cascade result of one walk, with the `@page` cascade for `page_query`.
@@ -517,6 +530,7 @@ fn finish<D: StyleDom>(
         counter_styles: rule_tree.counter_styles_for(media_context),
         page_values: outputs.page_values,
         pseudo: outputs.pseudo,
+        normal_line_height: None,
     }
 }
 

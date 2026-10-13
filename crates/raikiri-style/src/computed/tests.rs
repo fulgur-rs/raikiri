@@ -287,6 +287,7 @@ fn non_initial_parent() -> ComputedValues {
         font_size_keyword_basis: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
+        normal_line_height: None,
         display: DisplayValue::Block,
         list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
         list_style_position: ListStylePosition::Inside,

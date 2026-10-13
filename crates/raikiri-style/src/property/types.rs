@@ -517,9 +517,11 @@ pub enum Length {
     /// a real font instance, see the [`crate::resolve::used_line_height_length`]
     /// documentation (the same obstacle as `cap`/`rcap`). Unlike `ex`/`ch`/`ic`,
     /// the spec gives no font-size-ratio fallback. Under our independent-
-    /// implementation policy, we do not invent one: resolution instead falls
-    /// back per property to a value equivalent to that property’s initial value
-    /// (see the `resolve_*` function docs in [`crate::resolve`]).
+    /// implementation policy, we do not invent one. A cascade given a
+    /// [`crate::resolve::NormalLineHeight`] measures `normal` in the element's
+    /// fonts; without one, resolution falls back per property to a value
+    /// equivalent to that property’s initial value (see the `resolve_*`
+    /// function docs in [`crate::resolve`]).
     ///
     /// # Self-reference (when used as the value of `line-height` itself)
     ///

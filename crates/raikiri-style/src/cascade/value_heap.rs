@@ -45,6 +45,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         font_size_keyword_basis: _,
         font_weight: _,
         line_height: _,
+        normal_line_height: _,
         display: _,
         list_style_type,
         list_style_position: _,
