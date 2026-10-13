@@ -774,3 +774,59 @@ fn serialize_value_writes_border_image_longhands() {
         None
     );
 }
+
+#[test]
+fn serialize_value_formats_sizing_lengths() {
+    let length = Length::Px(0.0);
+    for value in [
+        PropertyValue::Width(LengthOrAuto::Length(length.clone())),
+        PropertyValue::Height(LengthOrAuto::Length(length.clone())),
+        PropertyValue::MinWidth(LengthOrAuto::Length(length.clone())),
+        PropertyValue::MinHeight(LengthOrAuto::Length(length.clone())),
+        PropertyValue::MaxWidth(LengthOrAuto::Length(length.clone())),
+        PropertyValue::MaxHeight(LengthOrAuto::Length(length.clone())),
+        PropertyValue::InlineSize(LengthOrAuto::Length(length.clone())),
+        PropertyValue::BlockSize(LengthOrAuto::Length(length.clone())),
+    ] {
+        assert_eq!(serialize_value(&value).as_deref(), Some("0px"), "{value:?}");
+    }
+}
+
+#[test]
+fn serialize_value_formats_flex_factors_as_numbers() {
+    assert_eq!(
+        serialize_value(&PropertyValue::FlexGrow(1.5)).as_deref(),
+        Some("1.5")
+    );
+    assert_eq!(
+        serialize_value(&PropertyValue::FlexShrink(0.0)).as_deref(),
+        Some("0")
+    );
+}
+
+#[test]
+fn serialize_value_formats_font_family_lists() {
+    let families = |list: Vec<FontFamilyName>| PropertyValue::FontFamily(Arc::new(list));
+    assert_eq!(
+        serialize_value(&families(vec![
+            FontFamilyName::named("Times New Roman"),
+            FontFamilyName::generic("SERIF"),
+        ]))
+        .as_deref(),
+        Some("Times New Roman, serif")
+    );
+    // Names that would not read back as the same identifiers are quoted.
+    for (name, expected) in [
+        ("serif", "\"serif\""),
+        ("Inherit", "\"Inherit\""),
+        ("a  b", "\"a  b\""),
+        ("1st", "\"1st\""),
+        ("x\"y", "\"x\\\"y\""),
+    ] {
+        assert_eq!(
+            serialize_value(&families(vec![FontFamilyName::named(name)])).as_deref(),
+            Some(expected),
+            "{name}"
+        );
+    }
+}

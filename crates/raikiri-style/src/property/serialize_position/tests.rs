@@ -78,3 +78,26 @@ fn radial_gradient_positions_are_canonicalized_in_place() {
     assert_eq!(image("radial-gradient(red, blue)"), None);
     assert_eq!(image("linear-gradient(to top, red, blue)"), None);
 }
+
+#[test]
+fn object_position_and_odd_gradient_arguments() {
+    assert_eq!(
+        serialize_position_value("object-position", "top").as_deref(),
+        Some("center top")
+    );
+    assert_eq!(position("#fff"), None);
+    let image = |raw| serialize_position_value("background-image", raw);
+    // A sized shape with a math function before `at`.
+    assert_eq!(
+        image("radial-gradient(calc(10px) at top left, red, blue)").as_deref(),
+        Some("radial-gradient(calc(10px) at left top, red, blue)")
+    );
+    // A position with a math function offset.
+    assert_eq!(
+        image("radial-gradient(at top calc(1px + 2%), red, blue)").as_deref(),
+        Some("radial-gradient(at calc(1px + 2%) top, red, blue)")
+    );
+    // `at` without a position, or with one that is not a position.
+    assert_eq!(image("radial-gradient(at, red, blue)"), None);
+    assert_eq!(image("radial-gradient(at middle, red, blue)"), None);
+}

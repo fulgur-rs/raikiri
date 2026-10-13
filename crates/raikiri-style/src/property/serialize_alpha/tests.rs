@@ -37,3 +37,17 @@ fn unfoldable_text_and_other_properties_are_left_alone() {
     assert_eq!(opacity("clamp(1, 2)"), None);
     assert_eq!(serialize_alpha_value("width", "50%"), None);
 }
+
+#[test]
+fn mixed_types_unknown_tokens_and_deep_nesting_are_left_alone() {
+    assert_eq!(opacity("min(50%, 1)"), None);
+    assert_eq!(opacity("abs(1)"), None);
+    assert_eq!(opacity("calc(x)"), None);
+    assert_eq!(opacity("0.5 1"), None);
+    assert_eq!(opacity("50% 1"), None);
+    assert_eq!(opacity("none"), None);
+    let nested = format!("{}1{}", "calc(".repeat(40), ")".repeat(40));
+    assert_eq!(opacity(&nested), None);
+    let shallow = format!("{}1{}", "calc(".repeat(4), ")".repeat(4));
+    assert_eq!(opacity(&shallow).as_deref(), Some("calc(1)"));
+}
