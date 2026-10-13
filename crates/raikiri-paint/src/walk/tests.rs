@@ -2974,6 +2974,53 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
     );
     assert_eq!(background_fill_count(&empty_scene), 0);
 
+    // A border-area clip paints the color in the border ring only.
+    let mut ring = fixed_margin_box();
+    ring.borders = [Some(raikiri_dom::MarginBoxBorder::new(4.0, CssColor::BLACK)); 4];
+    ring.background_clip = VisualBox::BorderArea;
+    let mut ring_scene = Scene::new();
+    let mut ring_warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut ring_scene,
+        &ring,
+        None,
+        &mut ring_warnings,
+    );
+    assert!(ring_warnings.is_empty());
+    let ring_fill = ring_scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("the ring is painted");
+    assert_eq!(ring_fill.fill, Fill::EvenOdd);
+    let even_odd = |shape: &kurbo::BezPath, point| kurbo::Shape::winding(shape, point) % 2 != 0;
+    assert!(even_odd(&ring_fill.shape, Point::new(2.0, 2.0)));
+    assert!(!even_odd(&ring_fill.shape, Point::new(50.0, 25.0)));
+    // A box whose borders cover it fills the whole box.
+    let mut solid = ring.clone();
+    solid.borders = [Some(raikiri_dom::MarginBoxBorder::new(30.0, CssColor::BLACK)); 4];
+    let mut solid_scene = Scene::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut solid_scene,
+        &solid,
+        None,
+        &mut Vec::new(),
+    );
+    let solid_fill = solid_scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(fill),
+            _ => None,
+        })
+        .expect("the box is painted");
+    assert!(even_odd(&solid_fill.shape, Point::new(50.0, 25.0)));
+
     // An unsupported clip skips the color with a warning.
     let mut text = fixed_margin_box();
     text.background_clip = VisualBox::Text;
@@ -2988,6 +3035,27 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
     );
     assert_eq!(background_fill_count(&text_scene), 0);
     assert_eq!(text_warnings.len(), 1);
+}
+
+#[test]
+fn margin_box_warns_about_layers_under_the_painted_ones() {
+    let paint = |layer_count| {
+        let mut margin_box = fixed_margin_box();
+        margin_box.background_layer_count = layer_count;
+        let mut warnings = Vec::new();
+        paint_margin_box(
+            &crate::walk::ImageBrushCache::default(),
+            &mut Scene::new(),
+            &margin_box,
+            None,
+            &mut warnings,
+        );
+        warnings
+    };
+    assert!(paint(raikiri_style::MAX_PAINTED_BACKGROUND_LAYERS).is_empty());
+    let warnings = paint(raikiri_style::MAX_PAINTED_BACKGROUND_LAYERS + 1);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].details.contains("65 background layers"));
 }
 
 #[test]

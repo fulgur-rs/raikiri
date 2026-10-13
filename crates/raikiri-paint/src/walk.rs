@@ -471,6 +471,7 @@ fn page_layer_item<T: Copy>(list: Option<&[T]>, index: usize, initial: T) -> T {
     }
 }
 
+#[cfg(test)]
 fn page_background_clips(cascade: &CascadeResult) -> Option<&[VisualBox]> {
     match page_property(cascade, PropertyKey::BackgroundClip) {
         Some(PropertyValue::BackgroundClip(clips)) => Some(clips),
@@ -634,8 +635,14 @@ fn clip_inset_rect(
 /// The layers of `layers` that are painted, top first: all of them, or the
 /// top [`MAX_PAINTED_BACKGROUND_LAYERS`] with a warning.
 fn painted_background_layers<'a, T>(layers: &'a [T], warnings: &mut Vec<RenderWarning>) -> &'a [T] {
-    if layers.len() <= MAX_PAINTED_BACKGROUND_LAYERS {
-        return layers;
+    warn_unpainted_background_layers(layers.len(), warnings);
+    &layers[..layers.len().min(MAX_PAINTED_BACKGROUND_LAYERS)]
+}
+
+/// Warn when a box declares more background layers than are painted.
+fn warn_unpainted_background_layers(layer_count: usize, warnings: &mut Vec<RenderWarning>) {
+    if layer_count <= MAX_PAINTED_BACKGROUND_LAYERS {
+        return;
     }
     warnings.push(RenderWarning {
         kind: WarningKind::ResourceFallback {
@@ -644,11 +651,9 @@ fn painted_background_layers<'a, T>(layers: &'a [T], warnings: &mut Vec<RenderWa
         },
         node_id: None,
         details: format!(
-            "a box has {} background layers; only the top {MAX_PAINTED_BACKGROUND_LAYERS} were painted",
-            layers.len()
+            "a box has {layer_count} background layers; only the top {MAX_PAINTED_BACKGROUND_LAYERS} were painted"
         ),
     });
-    &layers[..MAX_PAINTED_BACKGROUND_LAYERS]
 }
 
 fn paint_page_background_image(
@@ -689,7 +694,6 @@ fn paint_page_background_image(
         _ => None,
     };
     let origins = page_background_origins(cascade);
-    let clips = page_background_clips(cascade);
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
     // The page context inherits `color` from the root element.
@@ -725,7 +729,6 @@ fn paint_page_background_image(
         });
         layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
         layer.origin = page_layer_item(origins, index, initial_layer.origin);
-        layer.clip = page_layer_item(clips, index, initial_layer.clip);
         paint_page_background_layer(
             image_cache,
             scene,
@@ -1503,6 +1506,27 @@ fn paint_margin_box(
                     );
                 }
             }
+            // `border-area` paints the color in the border ring only, as
+            // the element path does.
+            None if margin_box.background_clip == VisualBox::BorderArea => {
+                let inner = Rect::new(
+                    rect.x0 + border.0,
+                    rect.y0 + border.1,
+                    rect.x1 - border.2,
+                    rect.y1 - border.3,
+                );
+                let mut ring = kurbo::Shape::to_path(&rect, 0.1);
+                if inner.x1 > inner.x0 && inner.y1 > inner.y0 {
+                    ring.extend(kurbo::Shape::path_elements(&inner, 0.1));
+                }
+                scene.fill(
+                    Fill::EvenOdd,
+                    Affine::IDENTITY,
+                    css_color(color),
+                    None,
+                    &ring,
+                );
+            }
             None => warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
@@ -1515,10 +1539,11 @@ fn paint_margin_box(
             }),
         }
     }
+    // The layout already dropped the layers under the painted ones.
+    warn_unpainted_background_layers(margin_box.background_layer_count, warnings);
     if let Some(source) = pixel_source.filter(|_| !margin_box.background_layers.is_empty()) {
         // CSS Backgrounds 3 §2.1: the first layer is on top.
-        let layers = painted_background_layers(&margin_box.background_layers, warnings);
-        for image in layers.iter().rev() {
+        for image in margin_box.background_layers.iter().rev() {
             let Some(url) = image_cache.image_url(&image.url) else {
                 continue;
             };

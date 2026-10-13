@@ -997,8 +997,8 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::GridColumn(ref shorthand) => expand_grid_column(shorthand, push_longhand),
         PropertyValue::PlaceItems(p) => expand_place_items(p, push_longhand),
         PropertyValue::PlaceSelf(p) => expand_place_self(p, push_longhand),
-        // `BackgroundShorthand` holds a `BackgroundImage` field, which is not
-        // `Copy` (it can carry a `Gradient`) — same reason `GridLineShorthand`
+        // `BackgroundShorthand` holds its layers in a boxed slice, which is
+        // not `Copy` — same reason `GridLineShorthand`
         // needs `ref` binding here (`GridRow` arm's comment above), not the
         // `Sides<..>`/`FlexShorthand`/`GapShorthand` by-value pattern the
         // other shorthand arms use.
