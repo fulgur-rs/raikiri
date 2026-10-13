@@ -8546,6 +8546,97 @@ css_keywords!(Isolation {
     Isolate => "isolate",
 });
 
+/// Specified and computed value of `contain`.
+///
+/// CSS Containment 2 §2 "Strong Containment: the contain property"
+/// <https://www.w3.org/TR/css-contain-2/#contain-property>. Grammar:
+/// `none | strict | content | [ [ size | inline-size ] || layout || style ||
+/// paint ]`. **Non-inherited**. `strict` and `content` are stored as the
+/// containment types they turn on.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Contain(u8);
+
+impl Contain {
+    /// `none`, the initial value.
+    pub const NONE: Self = Self(0);
+    /// `size` containment.
+    pub const SIZE: Self = Self(1);
+    /// `inline-size` containment.
+    pub const INLINE_SIZE: Self = Self(1 << 1);
+    /// `layout` containment.
+    pub const LAYOUT: Self = Self(1 << 2);
+    /// `style` containment.
+    pub const STYLE: Self = Self(1 << 3);
+    /// `paint` containment.
+    pub const PAINT: Self = Self(1 << 4);
+    /// `content`: layout, paint and style containment.
+    pub const CONTENT: Self = Self(Self::LAYOUT.0 | Self::PAINT.0 | Self::STYLE.0);
+    /// `strict`: size containment and everything `content` turns on.
+    pub const STRICT: Self = Self(Self::CONTENT.0 | Self::SIZE.0);
+
+    /// Whether every containment type of `other` is on.
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// The containment types of both values.
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Whether the value turns on layout or paint containment, which makes
+    /// the box the containing block of its absolutely positioned and fixed
+    /// positioned descendants (CSS Containment 2 §3.2, §3.4).
+    pub const fn contains_positioned_descendants(self) -> bool {
+        self.0 & (Self::LAYOUT.0 | Self::PAINT.0) != 0
+    }
+}
+
+/// Specified and computed value of `will-change`, reduced to the effects
+/// the named properties would have.
+///
+/// CSS Will Change 1 §3 "Hinting at Future Behavior: the will-change
+/// property" <https://www.w3.org/TR/css-will-change-1/#will-change>.
+/// Grammar: `auto | <animateable-feature>#`. **Non-inherited**. Naming a
+/// property whose non-initial value would make the box a containing block
+/// for absolutely or fixed positioned descendants does so now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WillChange(u8);
+
+impl WillChange {
+    /// `auto`, the initial value, or features with no effect here.
+    pub const AUTO: Self = Self(0);
+    /// A named property makes the box the containing block of its
+    /// absolutely positioned descendants (`position`).
+    pub const ABSOLUTE_CONTAINING_BLOCK: Self = Self(1);
+    /// A named property makes the box the containing block of its
+    /// absolutely and fixed positioned descendants (`transform`, `filter`,
+    /// `contain` and the like).
+    pub const FIXED_CONTAINING_BLOCK: Self = Self(1 << 1);
+
+    /// Whether every effect of `other` is on.
+    pub const fn contains(self, other: Self) -> bool {
+        self.0 & other.0 == other.0
+    }
+
+    /// The effects of both values.
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    /// Whether the box is the containing block of its absolutely positioned
+    /// descendants.
+    pub const fn contains_absolute_descendants(self) -> bool {
+        self.0 != 0
+    }
+
+    /// Whether the box is the containing block of its fixed positioned
+    /// descendants.
+    pub const fn contains_fixed_descendants(self) -> bool {
+        self.contains(Self::FIXED_CONTAINING_BLOCK)
+    }
+}
+
 /// Specified value of `mix-blend-mode`.
 ///
 /// CSS Compositing and Blending Level 1 §3.4.1 "Mix Blend Mode: the
@@ -10530,6 +10621,14 @@ pub enum PropertyValue {
     /// Compositing and Blending Level 1 §3.4.2; see [`Isolation`]). Appended
     /// as a new 1:1 disjoint field under the placement rule in [`PropertyKey`].
     Isolation(Isolation),
+    /// `contain` — **non-inherited**, initial: [`Contain::NONE`] (CSS
+    /// Containment 2 §2; see [`Contain`]). Appended as a new 1:1 disjoint
+    /// field under the placement rule in [`PropertyKey`].
+    Contain(Contain),
+    /// `will-change` — **non-inherited**, initial: [`WillChange::AUTO`]
+    /// (CSS Will Change 1 §3; see [`WillChange`]). Appended as a new 1:1
+    /// disjoint field under the placement rule in [`PropertyKey`].
+    WillChange(WillChange),
     /// `mix-blend-mode` — **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
     /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -11221,6 +11320,11 @@ pub enum PropertyKey {
     // existing fields.
     Isolation,
     MixBlendMode,
+    // contain (CSS Containment 2 §2) / will-change (CSS Will Change 1 §3),
+    // semantics on the matching PropertyValue variants. Appended for the
+    // same reason as background-repeat.
+    Contain,
+    WillChange,
     // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1, semantics on
     // the matching PropertyValue::MaskImage / PropertyValue::ClipPath
     // variants; sibling PropertyKey variants carry no per-variant docs per
@@ -11627,6 +11731,8 @@ impl PropertyValue {
             PropertyValue::Opacity(_) => PropertyKey::Opacity,
             PropertyValue::Isolation(_) => PropertyKey::Isolation,
             PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
+            PropertyValue::Contain(_) => PropertyKey::Contain,
+            PropertyValue::WillChange(_) => PropertyKey::WillChange,
             PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
             PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
             PropertyValue::Transform(_) => PropertyKey::Transform,
@@ -12713,6 +12819,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "opacity" => PropertyKey::Opacity,
         "isolation" => PropertyKey::Isolation,
         "mix-blend-mode" => PropertyKey::MixBlendMode,
+        "contain" => PropertyKey::Contain,
+        "will-change" => PropertyKey::WillChange,
         "mask-image" => PropertyKey::MaskImage,
         "clip-path" => PropertyKey::ClipPath,
         "transform" => PropertyKey::Transform,

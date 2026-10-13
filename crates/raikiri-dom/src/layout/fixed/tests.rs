@@ -154,8 +154,8 @@ fn sized_by_keyword_nested_fixed_boxes_keep_that_size_and_move() {
         "",
         "position:fixed;left:5px;top:6px;width:max-content;height:50%",
     );
-    // The keyword width keeps taffy's size; the percentage height resolves
-    // against the page area.
+    // The keyword width keeps the measured size; the percentage height
+    // resolves against the page area.
     let (x, y, _, height) = absolute_rect(&doc, fixed);
     assert_eq!((x, y, height), (5.0, 6.0, 300.0));
 }
@@ -450,4 +450,97 @@ fn fixed_boxes_use_the_page_area_when_a_content_box_body_outgrows_it() {
         "position:fixed;right:0;bottom:0;width:50%;height:10%",
     );
     assert_eq!(absolute_rect(&doc, fixed), (400.0, 540.0, 400.0, 60.0));
+}
+
+#[test]
+fn keyword_sized_fixed_boxes_are_clamped_against_the_page_area() {
+    let (mut doc, fixed) = laid_out(
+        "margin-left:30px;width:200px",
+        "",
+        "position:fixed;left:5px;top:6px;width:min-content;max-width:50%;height:10px",
+    );
+    doc.append_element(
+        Some(fixed),
+        "div",
+        Style::default(),
+        Some("display:block;width:500px;height:5px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    // Against the 200px parent the 500px content was clamped to 100px; 50%
+    // of the 800px page area lets it grow to 400px.
+    assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 400.0, 10.0));
+}
+
+#[test]
+fn static_positions_keep_the_flex_alignment_of_the_parent() {
+    // Centered in the 200px row starting at x=100: 100px wide at x=150
+    // against the parent, 400px wide at x=0 against the page area.
+    let (doc, fixed) = laid_out(
+        "margin-left:100px;width:200px",
+        "display:flex;justify-content:center",
+        "position:fixed;width:50%;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (0.0, 50.0, 400.0, 10.0));
+    // Aligned to the end of a column's cross axis, the right edge stays at
+    // x=300.
+    let (doc, fixed) = laid_out(
+        "margin-left:100px;width:200px",
+        "display:flex;flex-direction:column;align-items:flex-end",
+        "position:fixed;width:50%;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (-100.0, 50.0, 400.0, 10.0));
+    // The default start alignment keeps the left edge.
+    let (doc, fixed) = laid_out(
+        "margin-left:100px;width:200px",
+        "display:flex",
+        "position:fixed;width:50%;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
+}
+
+#[test]
+fn uncontained_absolute_boxes_are_placed_against_the_initial_containing_block() {
+    let (doc, abspos) = laid_out(
+        "margin-left:30px;height:1000px",
+        "",
+        "position:absolute;left:5px;bottom:0;width:50%;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, abspos), (5.0, 590.0, 400.0, 10.0));
+}
+
+#[test]
+fn positioned_ancestors_contain_absolute_boxes() {
+    let (doc, abspos) = laid_out(
+        "margin-left:30px",
+        "position:relative;height:40px",
+        "position:absolute;left:5px;bottom:0;width:20px;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, abspos), (35.0, 80.0, 20.0, 10.0));
+}
+
+#[test]
+fn contained_and_will_change_ancestors_contain_absolute_boxes() {
+    for css in ["contain:layout", "contain:paint", "will-change:position"] {
+        let (doc, abspos) = laid_out(
+            &format!("margin-left:30px;{css}"),
+            "",
+            "position:absolute;left:5px;top:6px;width:20px;height:10px",
+        );
+        // Taffy's placement against the parent, at its content box below
+        // the first block, is the right one.
+        assert_eq!(
+            absolute_rect(&doc, abspos),
+            (35.0, 56.0, 20.0, 10.0),
+            "{css}"
+        );
+    }
+    // `will-change: position` does not contain fixed boxes.
+    let (doc, fixed) = laid_out(
+        "margin-left:30px;will-change:position",
+        "",
+        "position:fixed;left:5px;top:6px;width:20px;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
 }

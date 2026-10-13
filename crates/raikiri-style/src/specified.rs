@@ -37,7 +37,7 @@ use crate::property::{
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxShadowItem, BoxSizing, BreakBetween, BreakInside,
     CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue, ColumnSpanValue,
-    ColumnWidthValue, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
+    ColumnWidthValue, Contain, ContentAlignmentValue, ContentComponent, CssColor, CssPosition,
     CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue,
     FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName, FontFeatureSettings,
     FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle,
@@ -55,7 +55,7 @@ use crate::property::{
     TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation,
     TextOverflowValue, TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset,
     TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WordBreak,
+    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
     WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
     empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
     empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
@@ -658,6 +658,10 @@ pub struct SpecifiedValues {
     pub isolation: Isolation,
     /// **Specified** `mix-blend-mode`; same pass-through shape as `isolation`.
     pub mix_blend_mode: MixBlendMode,
+    /// **Specified** `contain`; same pass-through shape as `isolation`.
+    pub contain: Contain,
+    /// **Specified** `will-change`; same pass-through shape as `isolation`.
+    pub will_change: WillChange,
     /// **Specified** `mask-image`; `None` / `Url(String)` are computed-equivalent. As for
     /// `background_image`, phase 3 absolutizes font-relative parts of `<length-percentage>` in
     /// `Gradient(..)` but leaves percentages unchanged (see the `resolve_background_image` docs).
@@ -1061,6 +1065,10 @@ impl SpecifiedValues {
             isolation: Isolation::Auto,
             // CSS Compositing and Blending Level 1 §3.4.1: mix-blend-mode is initially `normal`.
             mix_blend_mode: MixBlendMode::Normal,
+            // CSS Containment 2 §2: contain is initially `none`.
+            contain: Contain::NONE,
+            // CSS Will Change 1 §3: will-change is initially `auto`.
+            will_change: WillChange::AUTO,
             // CSS Masking Level 1 §7.1: mask-image is initially `none`.
             mask_image: MaskImage::None,
             // CSS Masking Level 1 §5.1: clip-path is initially `none`.
@@ -1452,6 +1460,10 @@ impl SpecifiedValues {
             // non-inherited (CSS Compositing and Blending Level 1 §3.4.1
             // "Inherited: no").
             mix_blend_mode: MixBlendMode::Normal,
+            // non-inherited (CSS Containment 2 §2 "Inherited: no").
+            contain: Contain::NONE,
+            // non-inherited (CSS Will Change 1 §3 "Inherited: no").
+            will_change: WillChange::AUTO,
             // non-inherited (CSS Masking Level 1 §7.1 "Inherited: no").
             mask_image: MaskImage::None,
             // non-inherited (CSS Masking Level 1 §5.1 "Inherited: no").
@@ -2513,6 +2525,8 @@ impl SpecifiedValues {
             // CSS Compositing and Blending Level 1 §3.4.1: same shape as
             // `isolation` above.
             mix_blend_mode: self.mix_blend_mode,
+            contain: self.contain,
+            will_change: self.will_change,
             // CSS Masking Level 1 §7.1: `None` and `Url(String)` are computed-equivalent. As for
             // background_image, phase 3 absolutizes font-relative parts of `<length-percentage>`
             // in `Gradient(..)` but leaves percentages unchanged (see resolve_background_image

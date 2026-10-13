@@ -2354,6 +2354,104 @@ fn isolation_key_maps_to_isolation_property_key() {
     assert_eq!(v.key(), PropertyKey::Isolation);
 }
 
+// ── contain (CSS Containment 2 §2) ──────────────────────────────────
+
+#[test]
+fn contain_parses_single_keywords_and_combinations() {
+    for (source, expected) in [
+        ("none", Contain::NONE),
+        ("strict", Contain::STRICT),
+        ("content", Contain::CONTENT),
+        ("layout", Contain::LAYOUT),
+        ("PAINT", Contain::PAINT),
+        ("paint layout", Contain::PAINT.union(Contain::LAYOUT)),
+        (
+            "inline-size style",
+            Contain::INLINE_SIZE.union(Contain::STYLE),
+        ),
+        ("size layout style paint", Contain::STRICT),
+    ] {
+        assert_eq!(
+            parse_entire(source, "contain"),
+            Some(PropertyValue::Contain(expected)),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn contain_rejects_invalid_combinations() {
+    for source in [
+        "",
+        "none layout",
+        "layout none",
+        "strict paint",
+        "layout layout",
+        "size inline-size",
+        "inline-size size",
+        "auto",
+        "layout, paint",
+    ] {
+        assert_eq!(parse_entire(source, "contain"), None, "{source}");
+    }
+}
+
+#[test]
+fn contain_turns_on_positioned_containment_with_layout_or_paint() {
+    assert!(Contain::CONTENT.contains_positioned_descendants());
+    assert!(Contain::PAINT.contains_positioned_descendants());
+    assert!(
+        !Contain::SIZE
+            .union(Contain::STYLE)
+            .contains_positioned_descendants()
+    );
+}
+
+// ── will-change (CSS Will Change 1 §3) ──────────────────────────────
+
+#[test]
+fn will_change_reduces_features_to_containing_block_effects() {
+    for (source, expected) in [
+        ("auto", WillChange::AUTO),
+        ("scroll-position, contents", WillChange::AUTO),
+        ("opacity", WillChange::AUTO),
+        ("position", WillChange::ABSOLUTE_CONTAINING_BLOCK),
+        ("Transform", WillChange::FIXED_CONTAINING_BLOCK),
+        (
+            "position, filter",
+            WillChange::ABSOLUTE_CONTAINING_BLOCK.union(WillChange::FIXED_CONTAINING_BLOCK),
+        ),
+    ] {
+        assert_eq!(
+            parse_entire(source, "will-change"),
+            Some(PropertyValue::WillChange(expected)),
+            "{source}"
+        );
+    }
+    assert!(WillChange::ABSOLUTE_CONTAINING_BLOCK.contains_absolute_descendants());
+    assert!(!WillChange::ABSOLUTE_CONTAINING_BLOCK.contains_fixed_descendants());
+    assert!(WillChange::FIXED_CONTAINING_BLOCK.contains_fixed_descendants());
+}
+
+#[test]
+fn will_change_rejects_excluded_keywords_and_bad_lists() {
+    for source in [
+        "",
+        "none",
+        "all",
+        "will-change",
+        "auto, transform",
+        "transform, auto",
+        "transform, inherit",
+        "default, transform",
+        "transform,",
+        "transform opacity",
+        "1px",
+    ] {
+        assert_eq!(parse_entire(source, "will-change"), None, "{source}");
+    }
+}
+
 // ── mix-blend-mode (CSS Compositing and Blending Level 1 §3.4.1) ────
 
 #[test]
