@@ -2505,29 +2505,57 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                     pending.push(None);
                 }
             } else if in_flow(document, child) {
-                boxes.push(Some(child));
+                // An inline-level box is content of its parent's line, which
+                // pagination does not break around.
+                let inline_level = matches!(
+                    cascade.computed[child].display,
+                    DisplayValue::Inline
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::InlineGrid
+                        | DisplayValue::InlineTable
+                ) && !is_float(document, child);
+                boxes.push((!inline_level).then_some(child));
             }
         }
         boxes
     };
     // The page value a box ends with: that of its last in-flow content, down
-    // to the deepest box. A monolithic box does not pass up a descendant's.
-    let end_page_name = |document: &Document, mut id: usize, mut name: Option<String>| loop {
-        if page_applies_to_box(document, cascade, id) {
-            name = selected_page_name(cascade, id).or(name);
+    // to the deepest box, or `inherited` without one. A monolithic box does
+    // not pass up a descendant's. `trailing` keeps each box's own result, so
+    // nested boxes are each looked at once.
+    let end_page_name = |document: &Document,
+                         trailing: &mut HashMap<usize, Option<String>>,
+                         id: usize,
+                         inherited: Option<String>| {
+        let mut chain = Vec::new();
+        let mut id = id;
+        let mut name = loop {
+            if let Some(name) = trailing.get(&id) {
+                break name.clone();
+            }
+            chain.push(id);
+            if is_monolithic_for_pagination(document, cascade, id) {
+                break None;
+            }
+            let last = child_boxes(document, id)
+                .into_iter()
+                .rev()
+                .find(|child| child.is_none_or(|child| !is_float(document, child)));
+            match last {
+                Some(Some(child)) => id = child,
+                _ => break None,
+            }
+        };
+        for &id in chain.iter().rev() {
+            if page_applies_to_box(document, cascade, id) {
+                name = name.or_else(|| selected_page_name(cascade, id));
+            }
+            trailing.insert(id, name.clone());
         }
-        if is_monolithic_for_pagination(document, cascade, id) {
-            break name;
-        }
-        let last = child_boxes(document, id)
-            .into_iter()
-            .rev()
-            .find(|child| child.is_none_or(|child| !is_float(document, child)));
-        match last {
-            Some(Some(child)) => id = child,
-            _ => break name,
-        }
+        name.or(inherited)
     };
+    let mut trailing = HashMap::new();
     // Walk the boxes with the page value each inherits. Floats take their
     // parent's page, and their insides are not walked.
     let mut cleared = Vec::new();
@@ -2596,7 +2624,12 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             // A break after the last box inside this one is carried out to
             // the next box, as the paginator does.
             after_forced_break = page_edge_constraint(document, cascade, child, false).0;
-            previous_page_name = Some(end_page_name(document, child, inherited.clone()));
+            previous_page_name = Some(end_page_name(
+                document,
+                &mut trailing,
+                child,
+                inherited.clone(),
+            ));
             let own_page_name = if page_applies_to_box(document, cascade, child) {
                 selected_page_name(cascade, child).or_else(|| inherited.clone())
             } else {

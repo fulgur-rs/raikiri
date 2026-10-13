@@ -1761,6 +1761,26 @@ fn pipeline_clears_a_named_page_after_a_float_on_the_parent_page() {
 }
 
 #[test]
+fn pipeline_ignores_forced_breaks_on_inline_boxes() {
+    // Pagination does not break after an inline box, so the block after it
+    // stays beside the float on the same page.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div><span style='break-after:page'>a</span>\
+         <div style='display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let block = document
+        .page_fragments(0)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the page");
+    assert_eq!(block.rect().width, 300.0);
+}
+
+#[test]
 fn pipeline_clears_a_float_with_its_own_break_before() {
     // The float's own break moves it to the new page, clear of the earlier
     // page's float.
