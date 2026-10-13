@@ -1304,16 +1304,10 @@ pub fn cascade_page_with_media_context(
         let zero = crate::property::CornerRadius::circular(LengthPercentageOrCalc::Length(
             Length::Px(0.0),
         ));
-        let shorthand = match resolved
-            .get(&PropertyKey::BorderRadius)
-            .map(ResolvedAgainstInherited::as_property_value)
-        {
-            Some(PropertyValue::BorderRadius(radius)) => **radius,
-            _ => crate::property::BorderRadius::elliptical(
-                [Length::Px(0.0); 4],
-                [Length::Px(0.0); 4],
-            ),
-        };
+        // The stylesheet expands the `border-radius` shorthand into its corners
+        // (see `crate::rule`), so the corners start from zero.
+        let shorthand =
+            crate::property::BorderRadius::elliptical([Length::Px(0.0); 4], [Length::Px(0.0); 4]);
         let mut corners = [
             shorthand.top_left,
             shorthand.top_right,

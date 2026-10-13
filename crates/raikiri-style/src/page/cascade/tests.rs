@@ -7414,3 +7414,30 @@ fn page_corner_rollback_restores_static_radius_shorthands() {
         );
     }
 }
+
+#[test]
+fn page_border_radius_from_a_variable_yields_to_a_later_corner() {
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { --r: calc(10% + 4px); border-radius: var(--r); border-top-left-radius: 3px }",
+        &root,
+    );
+    let corner = |key| match result.declarations().get(&key) {
+        Some(
+            PropertyValue::BorderRadiusTopLeft(corner)
+            | PropertyValue::BorderRadiusBottomRight(corner),
+        ) => corner.horizontal,
+        other => panic!("unexpected {other:?}"),
+    };
+    assert_eq!(
+        corner(PropertyKey::BorderRadiusTopLeft),
+        LengthPercentageOrCalc::from(Length::Px(3.0))
+    );
+    assert_eq!(
+        corner(PropertyKey::BorderRadiusBottomRight),
+        LengthPercentageOrCalc::Calc(crate::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 4.0,
+        })
+    );
+}

@@ -7497,6 +7497,59 @@ fn walk_panics_when_root_parent_font_size_is_not_initial() {
 }
 
 #[test]
+fn apply_winners_deferred_border_radius_resolving_to_inherit() {
+    // As above, but the shorthand marker comes from substituting a variable
+    // whose fallback is `inherit`.
+    let candidates = OwnedCandidates::from_declarations([(
+        crate::rule::Declaration {
+            value: PropertyValue::Deferred(crate::property::DeferredValue {
+                property: "border-radius".into(),
+                value: "var(--missing, inherit)".into(),
+                key: crate::property::PropertyKey::BorderRadius,
+            }),
+            important: false,
+            key: crate::property::PropertyKey::BorderRadius,
+            rollback: crate::cascade::rollback::Rollback::None,
+        },
+        Precedence::new(
+            Origin::Author,
+            false,
+            0,
+            0,
+            crate::layer::LayerPosition::default(),
+        ),
+    )]);
+    let mut winners: Vec<Option<RankedDecl>> = Vec::new();
+    let mut specified = SpecifiedValues::initial();
+    let mut inherited = ComputedValues::initial();
+    inherited.border_radius.top_left = crate::resolve::ComputedLengthPercentageOrCalc::Calc(
+        crate::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 2.0,
+        },
+    )
+    .into();
+    let custom_properties = CustomPropertyEnvironment::from_map(HashMap::new());
+    apply_winners(
+        candidates.candidates(),
+        &mut winners,
+        &mut specified,
+        &inherited,
+        &custom_properties,
+        None,
+        None,
+        None,
+    );
+    assert_eq!(
+        specified.border_radius.top_left.horizontal,
+        crate::property::LengthPercentageOrCalc::Calc(crate::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 2.0,
+        })
+    );
+}
+
+#[test]
 fn apply_winners_direct_border_radius_inherit() {
     // Expansion never yields this shorthand marker, so the candidate is built
     // directly to reach `apply_winners`' arm for it.
