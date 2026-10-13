@@ -195,9 +195,13 @@ impl<'i> RuleBodyItemParser<'i, Option<usize>, ()> for NestedRuleRangeParser {
 /// `rule` as a single margin rule (`@<margin-box-name> { ... }`), trimmed, or
 /// `None` when it is anything else.
 fn parse_margin_rule(rule: &str) -> Option<&str> {
-    let trimmed = rule.trim();
-    let whole = 0..trimmed.len();
-    matches!(nested_at_rule_ranges(trimmed).as_slice(), [only] if *only == whole).then_some(trimmed)
+    let [range] = <[Range<usize>; 1]>::try_from(nested_at_rule_ranges(rule)).ok()?;
+    // Like "parse a rule", only whitespace and comments may surround it.
+    let blank = |text: &str| {
+        let mut input = ParserInput::new(text);
+        Parser::new(&mut input).is_exhausted()
+    };
+    (blank(&rule[..range.start]) && blank(&rule[range.end..])).then(|| &rule[range])
 }
 
 /// A rule as [`RuleRangeParser`] reports it: the trimmed prelude text, the
@@ -323,7 +327,14 @@ fn stylesheet_nodes(document: &Document) -> Vec<usize> {
                 Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
             )
         {
-            nodes.push(index);
+            // HTML "update a style block": a `type` other than empty or
+            // `text/css` (ASCII case-insensitive) creates no style sheet.
+            let is_css = document
+                .element_attribute(index, "type")
+                .is_none_or(|kind| kind.is_empty() || kind.eq_ignore_ascii_case("text/css"));
+            if is_css {
+                nodes.push(index);
+            }
             continue;
         }
         pending.extend(node.children.iter().rev().copied());
@@ -879,10 +890,12 @@ fn page_rule_insert_rule(
             "only a margin rule can be inserted into a page rule",
         ));
     };
-    let at = margins
-        .get(index)
-        .map_or(body.end - body.start, |range| range.start);
-    let inserted = format!(" {rule} ");
+    let (at, inserted) = match margins.get(index) {
+        Some(range) => (range.start, format!(" {rule} ")),
+        // At the end of the body the last declaration may lack its `;`;
+        // close it so the rule is not read as part of that value.
+        None => (body.end - body.start, format!("; {rule} ")),
+    };
     splice_rule_body(context, style_element, body.start, at..at, &inserted)?;
     Ok(JsValue::from(index as u32))
 }

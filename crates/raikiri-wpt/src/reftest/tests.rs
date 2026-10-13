@@ -2691,4 +2691,11 @@ fn page_orientation_rotates_the_presented_page_a_quarter_turn() {
     let upright = rotate_presented_page(page(), Some(raikiri_style::PageRotation::Upright));
     assert_eq!((upright.width, upright.height), (2, 1));
     assert_eq!(rotate_presented_page(page(), None).rgba, page().rgba);
+    assert!(rotates_presented_page(Some(
+        raikiri_style::PageRotation::RotateLeft
+    )));
+    assert!(!rotates_presented_page(Some(
+        raikiri_style::PageRotation::Upright
+    )));
+    assert!(!rotates_presented_page(None));
 }

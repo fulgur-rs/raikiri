@@ -1476,3 +1476,39 @@ fn svg_style_elements_expose_their_sheet() {
          svgStyle.sheet === document.styleSheets[0] && svgStyle.sheet.cssRules[0].selectorText === 'rect'",
     );
 }
+
+#[test]
+fn style_sheets_skip_non_css_style_types_and_inserts_ignore_comments() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var plain = document.createElement('style'); plain.setAttribute('type', 'text/plain'); \
+         plain.textContent = 'p { color: red }'; document.head.appendChild(plain); \
+         var css = document.createElement('style'); css.setAttribute('type', 'TEXT/CSS'); \
+         css.textContent = '@page { margin: 1px }'; document.head.appendChild(css);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "plain.sheet === null && document.styleSheets.length === 1 && \
+         document.styleSheets[0] === css.sheet",
+    );
+    rt.evaluate("plain.removeAttribute('type');").unwrap();
+    ok(
+        &mut rt,
+        "plain.sheet !== null && document.styleSheets.length === 2",
+    );
+    rt.evaluate(
+        "var pageRule = css.sheet.cssRules[0]; \
+         pageRule.insertRule(' /* lead */ @top-left { content: \"a\" } /* tail */ ');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules.length === 1 && pageRule.cssRules[0].cssText === '@top-left { content: \"a\" }' && \
+         pageRule.style.margin === '1px' && \
+         !css.textContent.includes('lead') && \
+         (function() { try { pageRule.insertRule('@top-left {} x'); return false; } \
+           catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+}

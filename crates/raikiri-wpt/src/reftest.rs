@@ -3309,16 +3309,29 @@ pub(crate) fn render_raikiri_pages_with_resources(
             page_height,
         );
         paint_result?;
+        let rotation = cascade.page.page_orientation();
+        if rotates_presented_page(rotation) {
+            // The quarter turn copies into a second buffer of the same size.
+            raster_budget.reserve_pixels(page_height, page_width)?;
+        }
         pages.push(rotate_presented_page(
             RenderedImage {
                 width: page_width,
                 height: page_height,
                 rgba,
             },
-            cascade.page.page_orientation(),
+            rotation,
         ));
     }
     Ok(RenderedDocument { pages })
+}
+
+/// Whether [`rotate_presented_page`] turns a page with this `page-orientation`.
+fn rotates_presented_page(rotation: Option<raikiri_style::PageRotation>) -> bool {
+    matches!(
+        rotation,
+        Some(raikiri_style::PageRotation::RotateLeft | raikiri_style::PageRotation::RotateRight)
+    )
 }
 
 /// Rotate a laid-out page for presentation per its `page-orientation`
