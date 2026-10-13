@@ -3008,3 +3008,28 @@ fn each_shadow_layer_covers_every_run_of_the_box_before_the_next() {
         "the back shadow is drawn for every run before the front one: {colors:?}"
     );
 }
+
+#[test]
+fn a_text_shadow_covers_the_emphasis_marks() {
+    let (mut doc, cascade, root) = paragraph(
+        "line-height:40px;color:black;text-emphasis:dot;text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    let black = solid(0, 0, 0);
+    // Two letters and two marks, each in the text color and the shadow's.
+    let shadow: Vec<_> = placed.iter().filter(|g| g.3 == blue).collect();
+    let own: Vec<_> = placed.iter().filter(|g| g.3 == black).collect();
+    assert_eq!((shadow.len(), own.len()), (4, 4), "{placed:?}");
+    for (shadow, own) in shadow.iter().zip(&own) {
+        let (dx, dy) = (shadow.1 - own.1, shadow.2 - own.2);
+        assert!(
+            (dx - 2.0).abs() < 0.01 && (dy - 3.0).abs() < 0.01,
+            "{dx},{dy}"
+        );
+    }
+}

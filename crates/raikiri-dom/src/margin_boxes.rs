@@ -615,14 +615,20 @@ fn inherited_margin_box_text_shadows(
         // `em` lengths resolve against its font size and root-relative
         // ones against the root's. Offsets may be negative, so only the
         // blur radius is clamped.
-        let root_size = root_computed(document, cascade).map_or(16.0, |c| c.font_size.px());
+        let root = root_computed(document, cascade);
+        let root_size = root.map_or(16.0, |c| c.font_size.px());
+        // `normal` depends on font metrics; 1.2 is the usual used value.
+        let root_line_height = match root.map(|c| c.line_height) {
+            Some(raikiri_style::resolve::ComputedLineHeight::Number(factor)) => factor * root_size,
+            Some(raikiri_style::resolve::ComputedLineHeight::Length(length)) => length.px(),
+            _ => 1.2 * root_size,
+        };
         let px = |length: TextShadowLength| match length {
+            TextShadowLength::Length(Length::Rlh(value)) => Some(value * root_line_height)
+                .filter(|px| px.is_finite())
+                .unwrap_or(0.0),
             TextShadowLength::Length(
-                length @ (Length::Rem(_)
-                | Length::Rex(_)
-                | Length::Rch(_)
-                | Length::Ric(_)
-                | Length::Rlh(_)),
+                length @ (Length::Rem(_) | Length::Rex(_) | Length::Rch(_) | Length::Ric(_)),
             ) => signed_length_to_px(length, 0.0, root_size),
             TextShadowLength::Length(length) => signed_length_to_px(length, 0.0, font_size),
             TextShadowLength::Calc { px, em } => px + em * font_size,

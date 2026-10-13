@@ -93,9 +93,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         vec![None; pieces.len()]
     } else {
         typographic::background_slices(&pieces, |node| {
-            cascade
-                .computed
-                .get(node)
+            computed_for_id(cascade, node)
                 .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl)
         })
     };
@@ -306,6 +304,12 @@ pub(crate) fn draw_ifc_lines_with_resources(
                                 font: &font,
                                 coords: &coords,
                                 glyph_transform,
+                                document,
+                                emphasis_origin: emphasis_origin(
+                                    position,
+                                    line.block_offset(),
+                                    draw,
+                                ),
                             },
                             shadow,
                             draw.style,
@@ -363,14 +367,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                         document,
                         &draw.run,
                         &draw.glyphs,
-                        (
-                            position.x + draw.offset.0,
-                            position.y
-                                + position.shift_y
-                                + draw.offset.1
-                                + line.block_offset()
-                                + draw.run.baseline(),
-                        ),
+                        emphasis_origin(position, line.block_offset(), draw),
                         owner_style,
                         draw.color,
                     );
@@ -551,6 +548,18 @@ struct ShadowRun<'a, 'b> {
     font: &'a peniko::FontData,
     coords: &'a [i16],
     glyph_transform: Option<Affine>,
+    document: &'a Document,
+    /// Where the run's emphasis marks are placed from: its start and its
+    /// baseline.
+    emphasis_origin: (f32, f32),
+}
+
+/// The start and baseline a run's emphasis marks are placed from.
+fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>) -> (f32, f32) {
+    (
+        position.x + draw.offset.0,
+        position.y + position.shift_y + draw.offset.1 + block_offset + draw.run.baseline(),
+    )
 }
 
 /// Draw one text shadow of one run, behind its glyphs and decorations.
@@ -630,6 +639,16 @@ fn draw_shadow(
         shadow_transform,
         run.glyph_transform,
         run.draw.glyphs.clone().into_iter(),
+    );
+    let (x, baseline) = run.emphasis_origin;
+    crate::emphasis::draw_marks_in(
+        scene,
+        run.document,
+        &run.draw.run,
+        &run.draw.glyphs,
+        (x + dx as f32, baseline + dy as f32),
+        owner_cv,
+        css_color_to_peniko(color),
     );
     draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
     if use_blur_layer {

@@ -795,9 +795,10 @@ fn a_known_page_count_has_no_deferred_slots() {
 #[test]
 fn margin_box_text_shadow_resolves_signed_and_root_relative_offsets() {
     let (doc, cascade) = page_cascade_fixture(
-        "html { text-shadow: 1px 1px blue } \
+        "html { text-shadow: 1px 1px blue; line-height: 2 } \
          @page { margin: 40px; text-shadow: 4px 4px lime; \
-           @top-left { content: 'abc'; font-size: 20px; text-shadow: -2px -3px red, 1rem 0 } \
+           @top-left { content: 'abc'; font-size: 20px; \
+                       text-shadow: -2px -3px red, 1rem 0, 1rlh 0 } \
            @top-right { content: 'abc'; text-shadow: inherit } }",
     );
     let boxes = layout_page(&doc, &cascade, small_page());
@@ -805,7 +806,7 @@ fn margin_box_text_shadow_resolves_signed_and_root_relative_offsets() {
         panic!("two boxes: {boxes:?}");
     };
     let negative = &left.text_runs()[0].shadows;
-    assert_eq!(negative.len(), 2);
+    assert_eq!(negative.len(), 3);
     assert_eq!(negative[0].offset, (-2.0, -3.0));
     assert_eq!(
         negative[1].offset,

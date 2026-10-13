@@ -78,16 +78,38 @@ pub(crate) fn draw_marks(
     style: &ComputedValues,
     text_color: Color,
 ) {
+    let color = match style.text_emphasis_color {
+        TextDecorationColor::Resolved(color) => crate::text::css_color_to_peniko(color),
+        _ => text_color,
+    };
+    draw_marks_in(
+        scene,
+        document,
+        run,
+        glyphs,
+        (origin_x, baseline),
+        style,
+        color,
+    );
+}
+
+/// [`draw_marks`] with every mark filled in `color`, as a text shadow
+/// draws them.
+pub(crate) fn draw_marks_in(
+    scene: &mut impl PaintScene,
+    document: &Document,
+    run: &shodo::GlyphRunView<'_>,
+    glyphs: &[AnyrenderGlyph],
+    (origin_x, baseline): (f32, f32),
+    style: &ComputedValues,
+    color: Color,
+) {
     let Some(mark) = run.emphasis_mark() else {
         return;
     };
     let Some(shaped) = shape_mark(document, mark.character, mark.font_size, &style.font_family)
     else {
         return; // cov:ignore: shaping one character fails only past the engine's limits.
-    };
-    let color = match style.text_emphasis_color {
-        TextDecorationColor::Resolved(color) => crate::text::css_color_to_peniko(color),
-        _ => text_color,
     };
     let advances: Vec<f32> = run.glyphs().map(|glyph| glyph.advance).collect();
     // A glyph records the text offset of its character, which falls inside
