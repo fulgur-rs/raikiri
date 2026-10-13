@@ -1995,6 +1995,15 @@ fn background_origin_and_clip_insets_follow_visual_boxes() {
         )
         .is_none()
     );
+    assert!(
+        clip_inset_rect(
+            area,
+            raikiri_style::property::VisualBox::BorderAreaText,
+            border,
+            padding
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -2073,37 +2082,43 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         bottom: 0.0,
         left: 0.0,
     };
-    // `text` skips both color and image with a visible warning.
-    let mut scene = Scene::new();
-    let mut warnings = Vec::new();
-    paint_element_background(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        100.0,
-        50.0,
-        0.0,
-        0.0,
-        CssColor {
-            r: 0,
-            g: 255,
-            b: 0,
-            a: 255,
-        },
-        &[{
-            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
-            layer.image = BackgroundImage::Url("https://example.test/red.png".into());
-            layer.clip = raikiri_style::property::VisualBox::Text;
-            layer
-        }],
-        CssColor::BLACK,
-        &ComputedBorderRadius::all(ComputedLength(0.0)),
-        &border,
-        &padding,
-        Some(&source),
-        &mut warnings,
-    );
-    assert!(!warnings.is_empty());
-    assert_eq!(background_fill_count(&scene), 0);
+    // `text` and `border-area text` skip both color and image with a
+    // visible warning.
+    for clip in [
+        raikiri_style::property::VisualBox::Text,
+        raikiri_style::property::VisualBox::BorderAreaText,
+    ] {
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            100.0,
+            50.0,
+            0.0,
+            0.0,
+            CssColor {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+            &[{
+                let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+                layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+                layer.clip = clip;
+                layer
+            }],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            Some(&source),
+            &mut warnings,
+        );
+        assert!(!warnings.is_empty());
+        assert_eq!(background_fill_count(&scene), 0);
+    }
 
     // `border-area` paints color and image into a mask of the borders.
     let mut authored = Border::new();

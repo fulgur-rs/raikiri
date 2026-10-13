@@ -579,7 +579,7 @@ fn origin_inset_rect(
             area.x1 - br - pr,
             area.y1 - bb - pb,
         ),
-        VisualBox::BorderArea | VisualBox::Text => {
+        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
@@ -624,7 +624,7 @@ fn clip_inset_rect(
             area.x1 - br - pr,
             area.y1 - bb - pb,
         )),
-        VisualBox::BorderArea | VisualBox::Text => None,
+        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => None,
         // cov:ignore: defensive fallback for future `VisualBox` variants
         _ => Some(area),
     }
@@ -4249,9 +4249,15 @@ fn vertical_table_cell_background_width(
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
 ) -> Option<f32> {
-    if cascade.computed.get(node_id)?.display != DisplayValue::TableCell
-        || cascade.computed.get(node_id)?.final_background_clip()
-            != raikiri_style::property::VisualBox::ContentBox
+    // The narrowed width applies to the whole background, so it is used only
+    // when every layer clips to the content box; a layer clipped to a larger
+    // box must keep the full cell width.
+    let cv = cascade.computed.get(node_id)?;
+    if cv.display != DisplayValue::TableCell
+        || !cv
+            .background_layers()
+            .iter()
+            .all(|layer| layer.clip == raikiri_style::property::VisualBox::ContentBox)
     {
         return None;
     }
@@ -4475,8 +4481,10 @@ fn paint_element_background_slice(
     }
     // background-clip: text trims to glyph shapes (CSS Backgrounds 4 section 2.6).
     // Glyph-path clipping is not implemented; warn and skip so the gap is
-    // visible instead of silently mispainting an opaque rect.
-    if matches!(clip, VisualBox::Text) {
+    // visible instead of silently mispainting an opaque rect. `border-area
+    // text` intersects the border area with the glyphs and needs the same
+    // glyph clipping.
+    if matches!(clip, VisualBox::Text | VisualBox::BorderAreaText) {
         if effective.a != 0 || background_url.is_some() || has_gradient {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
@@ -4537,7 +4545,7 @@ fn paint_element_background_slice(
         VisualBox::BorderBox => (bx0, by0, bx1, by1),
         VisualBox::PaddingBox => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
         VisualBox::ContentBox => (bx0 + bl + pl, by0 + bt + pt, bx1 - br - pr, by1 - bb - pb),
-        VisualBox::BorderArea | VisualBox::Text => {
+        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
@@ -4662,7 +4670,7 @@ fn paint_element_background_slice(
         // `text` returns above; this arm is unreachable but keeps the match
         // exhaustive for future `VisualBox` variants.
         // cov:ignore: unreachable text arm; early return above handles text
-        VisualBox::Text => Rect::new(bx0, by0, bx1, by1),
+        VisualBox::Text | VisualBox::BorderAreaText => Rect::new(bx0, by0, bx1, by1),
         // cov:ignore: defensive fallback for future `VisualBox` variants
         _ => Rect::new(bx0, by0, bx1, by1),
     };
