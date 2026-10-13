@@ -438,3 +438,32 @@ fn a_relative_pseudo_element_moves_its_images() {
     // The offset moves the pseudo-element alone, not the text after it.
     assert_eq!(run(&runs, "AB").origin.0, 8.0);
 }
+
+/// An image alone in `content` replaces its pseudo-element, so `object-fit`
+/// and `object-position` place it in the box, which clips it.
+#[test]
+fn object_fit_places_a_replacing_image_in_its_box() {
+    let pixels = Pixels::new();
+    let image = |css: &str| {
+        let document = lay_out("<p>A</p>", css, &pixels);
+        let (images, _) = images_and_runs(&document, &pixels);
+        assert_eq!(images.len(), 1, "{css}");
+        images[0].clone()
+    };
+    // The 8x4 image in a 40x40 box. Its line's baseline is the box's
+    // bottom, 40px down.
+    let contain =
+        image("p::before{content:url(icon.png);width:40px;height:40px;object-fit:contain}");
+    assert_eq!(contain.rect, PaintRect::new(0.0, 10.0, 40.0, 20.0));
+    assert_eq!(contain.clip.rect, PaintRect::new(0.0, 0.0, 40.0, 40.0));
+    let cover = image(
+        "p::before{content:url(icon.png);width:40px;height:40px;object-fit:cover;object-position:left top}",
+    );
+    assert_eq!(cover.rect, PaintRect::new(0.0, 0.0, 80.0, 40.0));
+    assert_eq!(cover.clip.rect, PaintRect::new(0.0, 0.0, 40.0, 40.0));
+    // Among other content the image is not replaced content and fills its
+    // box.
+    let mixed =
+        image("p::before{content:url(icon.png) 'B';width:40px;height:40px;object-fit:contain}");
+    assert_eq!(mixed.rect, mixed.clip.rect);
+}

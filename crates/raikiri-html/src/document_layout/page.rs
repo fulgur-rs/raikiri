@@ -326,7 +326,28 @@ impl<'a> Page<'a> {
         image: GeneratedImageId,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
-        let (url, rect) = self.document.page_generated_image(self.index(), image)?;
+        let (url, content) = self.document.page_generated_image(self.index(), image)?;
+        // An image that replaces its pseudo-element is drawn at its
+        // `object-fit` rectangle, clipped to its box.
+        let object = usize::try_from(image.owner.0)
+            .ok()
+            .and_then(|owner| {
+                self.document.content_image_object_rect(
+                    owner,
+                    match image.kind {
+                        crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
+                        _ => raikiri_style::PseudoElem::Before,
+                    },
+                    image.index,
+                )
+            })
+            .unwrap_or(PaintRect::new(0.0, 0.0, content.width, content.height));
+        let rect = PaintRect::new(
+            content.x + object.x,
+            content.y + object.y,
+            object.width,
+            object.height,
+        );
         if ![rect.x, rect.y, rect.width, rect.height]
             .into_iter()
             .all(f32::is_finite)
@@ -354,7 +375,7 @@ impl<'a> Page<'a> {
             url: url.clone(),
             pixels,
             rect,
-            clip: raikiri_traits::PaintClip::new(rect),
+            clip: raikiri_traits::PaintClip::new(content),
             clip_owner: Some(image.owner),
         })
     }

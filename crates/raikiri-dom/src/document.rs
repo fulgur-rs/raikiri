@@ -288,6 +288,10 @@ struct PreparedImage {
     url: url::Url,
     pixels: std::sync::Arc<raikiri_traits::DecodedImage>,
     size: raikiri_traits::ImageRasterSize,
+    /// Where the pixels are drawn, relative to the image box's origin: the
+    /// whole box, or the `object-fit` rectangle of an image that replaces
+    /// its pseudo-element. Drawing is clipped to the box.
+    object: raikiri_traits::PaintRect,
 }
 
 /// DOM Document (root plus a Vec-backed node arena).
@@ -2971,6 +2975,7 @@ impl Document {
                     url,
                     pixels: image,
                     size,
+                    object: raikiri_traits::PaintRect::new(0.0, 0.0, size.width, size.height),
                 },
             );
         }
@@ -3025,7 +3030,47 @@ impl Document {
                 if !(size.width > 0.0 && size.height > 0.0) {
                     continue;
                 }
-                let Some(image) = decode(&url, size) else {
+                // An image alone in the list replaces its pseudo-element, so
+                // `object-fit` and `object-position` place it in the box (CSS
+                // Content 3 §2.1, CSS Images 3 §5.5).
+                let object = if replacement {
+                    crate::image_geometry::object_image_rect(
+                        (0.0, 0.0, f64::from(size.width), f64::from(size.height)),
+                        intrinsic,
+                        cv.object_fit,
+                        &cv.object_position,
+                    )
+                    .map(|(x, y, width, height)| {
+                        raikiri_traits::PaintRect::new(
+                            x as f32,
+                            y as f32,
+                            width as f32,
+                            height as f32,
+                        )
+                    })
+                    .filter(|rect| {
+                        [rect.x, rect.y, rect.width, rect.height]
+                            .into_iter()
+                            .all(f32::is_finite)
+                            && rect.width > 0.0
+                            && rect.height > 0.0
+                    })
+                } else {
+                    None
+                }
+                .unwrap_or(raikiri_traits::PaintRect::new(
+                    0.0,
+                    0.0,
+                    size.width,
+                    size.height,
+                ));
+                let Some(image) = decode(
+                    &url,
+                    raikiri_traits::ImageRasterSize {
+                        width: object.width,
+                        height: object.height,
+                    },
+                ) else {
                     continue;
                 };
                 self.content_images.insert(
@@ -3034,6 +3079,7 @@ impl Document {
                         url,
                         pixels: image,
                         size,
+                        object,
                     },
                 );
             }
@@ -3088,6 +3134,20 @@ impl Document {
     ) -> Option<raikiri_traits::ImageRasterSize> {
         self.content_image_entry(element, pseudo, index)
             .map(|image| image.size)
+    }
+
+    /// Where the pixels of a prepared content image are drawn, relative to
+    /// the origin of its box of [`Self::content_image_size`]: the whole box,
+    /// or for an image that replaces its pseudo-element, the rectangle that
+    /// `object-fit` and `object-position` give. Paint clips it to the box.
+    pub fn content_image_object_rect(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<raikiri_traits::PaintRect> {
+        self.content_image_entry(element, pseudo, index)
+            .map(|image| image.object)
     }
 
     fn content_image_entry(
