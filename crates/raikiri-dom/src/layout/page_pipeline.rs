@@ -30,6 +30,85 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
     child_parent_y
 }
 
+/// The lowest block-end edge of the boxes that paint below the paginated
+/// flow: the body's own border box, nested absolutely positioned boxes, and
+/// content overflowing a box that offers no break points (for example a
+/// `contain: size` box). Measured from the body's coordinate space after
+/// pagination moved the flow.
+///
+/// Fixed boxes repeat on every page and running elements leave the flow, so
+/// their subtrees do not extend the document. A box that clips its
+/// block-axis overflow contributes its own border box but not its content.
+/// Inline content is located by its paragraph's lines, which take part in
+/// pagination directly, so inline-level subtrees are not walked.
+fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
+    use raikiri_style::property::OverflowValue;
+    let mut end = f32::NEG_INFINITY;
+    let mut stack = vec![(body_id, 0.0_f32)];
+    while let Some((node_id, parent_y)) = stack.pop() {
+        let node = &document.nodes[node_id];
+        if !node.is_in_document()
+            || node.is_display_none()
+            || node.is_non_rendered_html_element()
+            || node.kind() != NodeKind::Element
+            || node.flags.contains(NodeFlags::IN_IFC_SUBTREE)
+        {
+            continue;
+        }
+        let computed = &cascade.computed[node_id];
+        if matches!(
+            computed.position,
+            PositionValue::Fixed | PositionValue::Running(_)
+        ) {
+            continue;
+        }
+        let y = if node_id == body_id {
+            0.0
+        } else {
+            parent_y + node.unrounded_layout.location.y
+        };
+        let height = if node_id == body_id {
+            body_border_box_height(document, cascade, body_id)
+        } else {
+            node.unrounded_layout.size.height
+        };
+        if height > 0.0 && (y + height).is_finite() {
+            end = end.max(y + height);
+        }
+        let clips = !matches!(computed.overflow.y, OverflowValue::Visible);
+        if clips || node.multicol.is_some() {
+            continue;
+        }
+        stack.extend(node.children.iter().map(|&child| (child, y)));
+    }
+    end
+}
+
+/// The body's border-box height from its own `height` and `min-height`.
+///
+/// Layout sizes the body to the page content box, so its laid-out height
+/// says nothing about the height the author gave it. Percentages resolve
+/// against the root's auto height and so behave as `auto`.
+fn body_border_box_height(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
+    let computed = &cascade.computed[body_id];
+    let px = |value: &ComputedLengthPercentageOrAuto| match value {
+        ComputedLengthPercentageOrAuto::Px(value) => value.max(0.0),
+        _ => 0.0,
+    };
+    let content = px(&computed.height).max(px(&computed.min_height));
+    if content <= 0.0 {
+        return 0.0;
+    }
+    let layout = &document.nodes[body_id].unrounded_layout;
+    let edges = layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
+    let border_box = if matches!(computed.box_sizing, raikiri_style::property::BoxSizing::BorderBox) {
+        content.max(edges)
+    } else {
+        content + edges
+    };
+    document.body_block_start_margin + border_box
+}
+
 // Cache the nearest column context for each visited source node. Row flex
 // suppresses local named-flow ownership, but its content still occupies the
 // enclosing physical page. Each source edge is resolved once per layout pass.
@@ -4397,6 +4476,18 @@ pub fn layout_pages_with_page_geometry_and_control(
             .is_some_and(|source| is_descendant_or_self(document, node_id, source, &parent_of));
         if candidate_break_after && !pending_source_is_ancestor {
             pending_break_source = Some(node_id);
+        }
+    }
+
+    // The candidates above stand for the paginated flow only. Boxes outside
+    // it, such as a nested absolutely positioned box or the overflow of a
+    // monolithic box, still need pages to paint on.
+    if !control.page_limit_reached.get() {
+        let end = root_flow_offset + content_overflow_end(document, cascade, body_id);
+        if end.is_finite() && end > 0.0 {
+            let end_page = page_index_for_end(end);
+            control.check_discovery_page_index(end_page)?;
+            max_page = max_page.max(end_page);
         }
     }
 
