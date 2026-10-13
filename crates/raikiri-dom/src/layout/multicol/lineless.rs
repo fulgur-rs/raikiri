@@ -283,10 +283,10 @@ fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
 /// Content that may break anywhere shares the columns equally; boxes that
 /// avoid breaks can need taller columns (CSS Multi-column 1, 7.1).
 fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f32 {
-    // The last column also holds the trailing margin.
+    // Every column holds its content, and the last one the trailing margin.
     let fits = |height: f32| {
         place(items, height, max_pieces).is_some_and(|placement| {
-            placement.columns_used() <= column_count && placement.end <= height + EPSILON
+            placement.columns_used() <= column_count && placement.extent() <= height + EPSILON
         })
     };
     // Margins collapse and are truncated at breaks, so only the boxes
@@ -325,7 +325,9 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
 }
 
 /// Lay out `children` (from [`supported`]) as one stream cut into columns.
-/// Returns the used border-box height of the container.
+/// `minimum` is the authored minimum border-box height of an auto-height
+/// container, which also bounds its columns from below. Returns the used
+/// border-box height of the container.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
     tree: &mut Document,
@@ -335,6 +337,7 @@ pub(super) fn layout(
     border_box: Size<f32>,
     origin: Point<f32>,
     block_end_inset: f32,
+    minimum: f32,
 ) -> Option<f32> {
     let mut sizes = Vec::with_capacity(children.len());
     for &child in children {
@@ -404,6 +407,13 @@ pub(super) fn layout(
             height
         }
         None => balanced_height(&items, context.column_count, max_pieces),
+    };
+    // Columns are as tall as the container's content box (CSS Multi-column
+    // 1, 2), so a minimum height makes them taller.
+    let column_height = if context.available_height.is_some() {
+        column_height
+    } else {
+        column_height.max(minimum - origin.y - block_end_inset)
     };
     if !column_height.is_finite() || column_height <= 0.0 {
         return None;

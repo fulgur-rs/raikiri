@@ -2009,5 +2009,21 @@ fn blocks_painting_whole_box_effects_are_not_sliced() {
             "display:block;height:100px;box-shadow:0 0 2px black",
         ],
     );
-    assert_eq!(fragment_rects(&doc, children[1]), vec![(1, 50.0, 0.0, 100.0)]);
+    assert_eq!(
+        fragment_rects(&doc, children[1]),
+        vec![(1, 50.0, 0.0, 100.0)]
+    );
+}
+
+#[test]
+fn a_minimum_height_makes_columns_of_blocks_without_lines_taller() {
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0;min-height:200px",
+        &["display:block;height:200px"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![(0, 0.0, 0.0, 200.0)]
+    );
 }

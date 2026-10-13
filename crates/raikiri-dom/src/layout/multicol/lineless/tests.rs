@@ -196,3 +196,12 @@ fn a_gap_taller_than_the_column_moves_a_box_avoiding_breaks() {
     };
     assert_eq!(shape(&[item], 100.0), vec![vec![(0, 90.0, 20.0)]]);
 }
+
+#[test]
+fn balancing_keeps_every_column_within_the_height() {
+    let first = Item {
+        margin_top: 30.0,
+        ..avoid(40.0)
+    };
+    assert_eq!(balanced_height(&[first, avoid(40.0)], 2, usize::MAX), 70.0);
+}

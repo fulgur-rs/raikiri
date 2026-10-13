@@ -206,6 +206,25 @@ pub(crate) fn compute_multicol_layout(
         };
         let block_end_inset = multicol_resolve_inset(tree, css.padding.bottom, basis)
             + multicol_resolve_inset(tree, css.border.bottom, basis);
+        // The authored minimum border-box height of an auto-height container.
+        let minimum = multicol_definite_dimension(
+            tree,
+            tree.nodes[index].style.min_size.height.into(),
+            inputs.parent_size.height,
+        )
+        .map_or(0.0, |height| {
+            let css = &tree.nodes[index].style;
+            if css.box_sizing == TaffyBoxSizing::BorderBox {
+                height
+            } else {
+                let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+                height
+                    + multicol_resolve_inset(tree, css.padding.top, basis)
+                    + multicol_resolve_inset(tree, css.padding.bottom, basis)
+                    + multicol_resolve_inset(tree, css.border.top, basis)
+                    + multicol_resolve_inset(tree, css.border.bottom, basis)
+            }
+        });
         let used_height = if let Some(children) = &lineless_children {
             lineless::layout(
                 tree,
@@ -215,6 +234,7 @@ pub(crate) fn compute_multicol_layout(
                 output.size,
                 content_origin,
                 block_end_inset,
+                minimum,
             )
             .unwrap_or(output.size.height)
         } else if let Some(chain) = constrained_chain {
@@ -234,24 +254,6 @@ pub(crate) fn compute_multicol_layout(
             )
         };
         if fragmentainer_height.is_none() {
-            let minimum = multicol_definite_dimension(
-                tree,
-                tree.nodes[index].style.min_size.height.into(),
-                inputs.parent_size.height,
-            )
-            .map_or(0.0, |height| {
-                let css = &tree.nodes[index].style;
-                if css.box_sizing == TaffyBoxSizing::BorderBox {
-                    height
-                } else {
-                    let basis = parent_width.unwrap_or(output.size.width).max(0.0);
-                    height
-                        + multicol_resolve_inset(tree, css.padding.top, basis)
-                        + multicol_resolve_inset(tree, css.padding.bottom, basis)
-                        + multicol_resolve_inset(tree, css.border.top, basis)
-                        + multicol_resolve_inset(tree, css.border.bottom, basis)
-                }
-            });
             output.size.height = used_height.max(minimum);
             for fragment in &mut tree.fragment_tree.fragments {
                 if fragment.node_id == index && fragment.parent.is_none() {
