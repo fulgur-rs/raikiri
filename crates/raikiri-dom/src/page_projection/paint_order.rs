@@ -481,7 +481,7 @@ impl Document {
                     let groups =
                         push_paragraph(self, &items, node_id, None, lines, part, &mut content);
                     let groups = self.groups_with_content(&items, node_id, groups, lines, part);
-                    let boxes = self.ifc_boxes_in_group(cascade, node_id, None);
+                    let boxes = self.ifc_boxes_in_group(cascade, node_id, None, part);
                     let frames =
                         self.paragraph_frames(cascade, node_id, boxes, groups, part, first_line);
                     list_paragraph(content, 0, frames, &mut events, &mut held, &mut stack);
@@ -504,9 +504,10 @@ impl Document {
                 }
                 Frame::FirstLine(root) => {
                     // The group composites the first line's content: its
-                    // text, inline boxes and generated content, and the
-                    // first-line parts of the groups on it. The boxes laid
-                    // out beside the lines stay with the rest.
+                    // text, inline boxes, generated content and atomic
+                    // inlines, and the first-line parts of the groups on it.
+                    // The other boxes laid out beside the lines stay with
+                    // the rest.
                     let Some(alpha) = paint_rules::first_line_opacity_layer(self, root) else {
                         continue; // cov:ignore: the frame is listed only for a translucent first line
                     };
@@ -518,14 +519,17 @@ impl Document {
                     let nested =
                         push_paragraph(self, &items, root, None, lines, part, &mut content);
                     let nested = self.groups_with_content(&items, root, nested, lines, part);
+                    let boxes = self.ifc_boxes_in_group(cascade, root, None, part);
                     // A first line on another page lists nothing here.
-                    if content.is_empty() && nested.is_empty() {
+                    if content.is_empty()
+                        && nested.is_empty()
+                        && !boxes.iter().any(|id| items.by_node.contains_key(id))
+                    {
                         continue;
                     }
                     events.push(PaintEvent::PushOpacity(alpha));
                     stack.push(Frame::PopOpacity);
-                    let frames =
-                        self.paragraph_frames(cascade, root, Vec::new(), nested, part, false);
+                    let frames = self.paragraph_frames(cascade, root, boxes, nested, part, false);
                     list_paragraph(content, 0, frames, &mut events, &mut held, &mut stack);
                     continue;
                 }
@@ -545,13 +549,7 @@ impl Document {
                     let nested =
                         push_paragraph(self, &items, root, Some(group), lines, part, &mut content);
                     let nested = self.groups_with_content(&items, root, nested, lines, part);
-                    // The boxes laid out beside the lines are not split by a
-                    // first line.
-                    let boxes = if part == LinePart::First {
-                        Vec::new()
-                    } else {
-                        self.ifc_boxes_in_group(cascade, root, Some(group))
-                    };
+                    let boxes = self.ifc_boxes_in_group(cascade, root, Some(group), part);
                     let frames = self.paragraph_frames(cascade, root, boxes, nested, part, false);
                     // The group's own boxes are its background, below the
                     // stacking contexts nested in it.
@@ -1105,7 +1103,8 @@ impl Document {
     /// position, a `::before` or `::first-letter` just after its originating
     /// element, and an `::after` after the element's last descendant. The
     /// second number orders the pieces that share a position.
-    fn group_tree_position(
+    #[doc(hidden)]
+    pub fn group_tree_position(
         &self,
         position: &HashMap<usize, usize>,
         group: usize,
@@ -1133,7 +1132,8 @@ impl Document {
     }
 
     /// The preorder index of each node in the subtree of `root`.
-    fn preorder_positions(&self, root: usize) -> HashMap<usize, usize> {
+    #[doc(hidden)]
+    pub fn preorder_positions(&self, root: usize) -> HashMap<usize, usize> {
         let mut positions = HashMap::new();
         let mut pending = vec![root];
         while let Some(id) = pending.pop() {
@@ -1162,8 +1162,8 @@ impl Document {
     }
 
     /// Whether inline opacity group `group` of paragraph `root`, or a group
-    /// nested in it, lists anything on the lines of `part`. The boxes laid
-    /// out beside the lines are listed apart from the first line.
+    /// nested in it, lists anything on the lines of `part`, or a box laid
+    /// out beside them.
     fn group_has_content(
         &self,
         items: &PageItems<'_>,
@@ -1177,11 +1177,12 @@ impl Document {
         while let Some(group) = pending.pop() {
             let mut content = Vec::new();
             let nested = push_paragraph(self, items, root, Some(group), lines, part, &mut content);
+            // A first line on another page lists none of its boxes here.
             if !content.is_empty()
-                || (part != LinePart::First
-                    && !self
-                        .ifc_boxes_in_group(items.cascade, root, Some(group))
-                        .is_empty())
+                || self
+                    .ifc_boxes_in_group(items.cascade, root, Some(group), part)
+                    .iter()
+                    .any(|id| part != LinePart::First || items.by_node.contains_key(id))
             {
                 return true;
             }
@@ -1190,11 +1191,16 @@ impl Document {
         false
     }
 
+    /// The boxes of paragraph `root` laid out beside its lines whose
+    /// innermost inline opacity group is `group`, and that belong to the
+    /// lines of `part`: an atomic inline to the line it is on, any other box
+    /// to the lines after the first.
     fn ifc_boxes_in_group(
         &self,
         cascade: &CascadeResult,
         root: usize,
         group: Option<usize>,
+        part: LinePart,
     ) -> Vec<usize> {
         let Some(node) = self.get_node(root) else {
             return Vec::new(); // cov:ignore: element paragraph roots are arena nodes
@@ -1204,6 +1210,11 @@ impl Document {
             self.parent_of(id)
                 .and_then(|parent| self.inline_opacity_group(cascade, root, parent))
                 == group
+                && match part {
+                    LinePart::All => true,
+                    LinePart::First => paint_rules::atomic_on_first_line(self, root, id),
+                    LinePart::Rest => !paint_rules::atomic_on_first_line(self, root, id),
+                }
         });
         boxes
     }

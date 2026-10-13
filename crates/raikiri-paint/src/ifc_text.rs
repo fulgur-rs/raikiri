@@ -12,7 +12,7 @@ use crate::text::{
     synthetic_embolden,
 };
 use anyrender::filters::{Filter, FilterEffect};
-use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
+use anyrender::{Glyph as AnyrenderGlyph, PaintScene, Scene};
 use kurbo::{Affine, Rect};
 use peniko::{Fill, Mix};
 use raikiri_dom::generated_content::{computed_for_id, generated_origin};
@@ -22,6 +22,7 @@ use raikiri_style::property::TextShadowColor;
 use shodo::geometry::{PhysicalConverter, WritingMode};
 use shodo::hit::{LineLayout, TextPosition};
 use shodo::node::NodeId;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 
@@ -74,9 +75,132 @@ pub(crate) fn draw_ifc_lines_with_resources(
     page_box: raikiri_traits::PageBox,
     paint_transform: Affine,
 ) {
-    let Some(positioned) = PositionedLines::new(document, cascade, root_id, fragmentainer) else {
-        return;
-    };
+    if let Some(lines) = hold_ifc_lines(
+        image_cache,
+        document,
+        cascade,
+        root_id,
+        position,
+        base_decorations,
+        fragmentainer,
+        custom_highlights,
+        pixel_source,
+        warnings,
+        page_box,
+        paint_transform,
+    ) {
+        lines.finish(scene);
+    }
+}
+
+/// The painted lines of a paragraph whose groups are not composited yet, so
+/// the boxes laid out beside the lines can still join them.
+pub(crate) struct HeldLines<'a> {
+    paragraph: Paragraph<'a>,
+    rest: typographic::TypographicPaint,
+    /// The paint of a translucent first line, with its opacity.
+    first_line: Option<(typographic::TypographicPaint, f32)>,
+    clip: Rect,
+    paint_transform: Affine,
+    /// The preorder positions of the paragraph's nodes, once a positioned
+    /// box needs its tree order among the groups.
+    positions: Option<HashMap<usize, usize>>,
+}
+
+impl HeldLines<'_> {
+    /// Whether the boxes beside the lines can join a group: the paragraph
+    /// has a translucent inline element, typographic pseudo or first line.
+    pub(crate) fn has_groups(&self) -> bool {
+        self.first_line.is_some() || self.rest.has_groups()
+    }
+
+    /// The paragraph root whose lines these are.
+    pub(crate) fn root_id(&self) -> usize {
+        self.paragraph.root_id
+    }
+
+    /// Place the paint of `id`, a box laid out beside the lines, painted in
+    /// page space. It joins the groups of the translucent inline elements
+    /// around it and, for an atomic inline on the first line, the group of
+    /// a translucent `::first-line` (CSS Color 4 §3.3; CSS Pseudo 4
+    /// §2.1.1), at the box's stack level (CSS 2.1 Appendix E).
+    pub(crate) fn place_box(&mut self, id: usize, content: Scene) {
+        let paragraph = self.paragraph;
+        let on_first_line = self.first_line.is_some()
+            && raikiri_dom::paint_rules::atomic_on_first_line(
+                paragraph.document,
+                paragraph.root_id,
+                id,
+            );
+        let paint = match self.first_line.as_mut() {
+            Some((first, _)) if on_first_line => first,
+            _ => &mut self.rest,
+        };
+        let group = paragraph
+            .document
+            .parent_of(id)
+            .and_then(|parent| paint.element_group(paragraph, parent));
+        let positioned = computed_for_id(paragraph.cascade, id)
+            .filter(|cv| cv.position != raikiri_style::property::PositionValue::Static)
+            .map(|_| {
+                let positions = self.positions.get_or_insert_with(|| {
+                    paragraph.document.preorder_positions(paragraph.root_id)
+                });
+                let at = positions.get(&id).map_or((usize::MAX, 0), |&at| (at, 0));
+                let before = paint.groups_before(|owner| {
+                    paragraph
+                        .document
+                        .group_tree_position(positions, owner)
+                        .is_some_and(|group_at| group_at < at)
+                });
+                (
+                    typographic::element_stack_level(paragraph.cascade, id),
+                    before,
+                )
+            });
+        // The groups are recorded before the paragraph's paint transform,
+        // which composites them; the box was painted after it.
+        let inverse = self.paint_transform.inverse();
+        if !inverse.as_coeffs().iter().all(|value| value.is_finite()) {
+            // A singular transform leaves no two-dimensional ink to place.
+            return;
+        }
+        let mut local = Scene::new();
+        local.append_scene(content, inverse);
+        paint.add_box(group, positioned, local);
+    }
+
+    /// The transform the lines were painted in, which [`Self::finish`]
+    /// expects on `scene`.
+    pub(crate) fn paint_transform(&self) -> Affine {
+        self.paint_transform
+    }
+
+    /// Composite the paragraph's groups into `scene`.
+    pub(crate) fn finish(self, scene: &mut impl PaintScene) {
+        self.rest
+            .finish(scene, self.clip, self.paint_transform, self.first_line);
+    }
+}
+
+/// Paint the lines of `root_id` like [`draw_ifc_lines_with_resources`], but
+/// hold their groups open; `None` when the paragraph has no lines.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn hold_ifc_lines<'a>(
+    image_cache: &crate::walk::ImageBrushCache,
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    root_id: usize,
+    position: IfcPosition,
+    base_decorations: &DecorationContext,
+    fragmentainer: Option<usize>,
+    custom_highlights: &[crate::TextHighlightRange],
+    pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
+    warnings: &mut Vec<raikiri_traits::RenderWarning>,
+    page_box: raikiri_traits::PageBox,
+    paint_transform: Affine,
+) -> Option<HeldLines<'a>> {
+    let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
     let writing_mode = positioned.writing_mode;
     let shifts = &positioned.shifts;
     let base = position;
@@ -457,17 +581,19 @@ pub(crate) fn draw_ifc_lines_with_resources(
             }
         }
     }
-    rest.finish(
-        scene,
-        Rect::new(
+    Some(HeldLines {
+        paragraph,
+        rest,
+        first_line,
+        clip: Rect::new(
             0.0,
             0.0,
             f64::from(page_box.width.max(0.0)),
             f64::from(page_box.height.max(0.0)),
         ),
         paint_transform,
-        first_line,
-    );
+        positions: None,
+    })
 }
 
 #[cfg(test)]

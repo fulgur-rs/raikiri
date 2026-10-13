@@ -41,6 +41,7 @@ pub struct TextHighlightRange {
 }
 
 pub mod border;
+mod capture;
 mod column_rules;
 #[allow(
     dead_code,

@@ -2534,8 +2534,8 @@ fn negative_inline_groups_paint_below_the_text() {
     );
 }
 
-/// An atomic inline inside a translucent inline element paints inside that
-/// element's opacity.
+/// An atomic inline inside a translucent inline element paints in the
+/// element's opacity group, composited once with the element's text.
 #[test]
 fn atomic_inline_in_a_translucent_element_paints_inside_its_opacity() {
     let scene = painted_html(
@@ -2544,11 +2544,133 @@ fn atomic_inline_in_a_translucent_element_paints_inside_its_opacity() {
     assert_eq!(
         command_kinds(&scene),
         [
-            "fill", "glyphs 2", "glyphs 2", "push 0.5", "glyphs 1", "glyphs 1", "pop", "push 0.5",
-            "fill", "pop"
+            "fill", "glyphs 2", "glyphs 2", "push 0.5", "glyphs 1", "glyphs 1", "fill", "pop"
         ]
     );
 }
+/// The atomic inlines of one translucent inline element share its single
+/// opacity group, so where they overlap they composite once.
+#[test]
+fn atomic_inlines_of_a_translucent_element_share_its_group() {
+    let scene = painted_html(
+        br#"<html><body><p><span style="opacity:.5"><i style="display:inline-block;width:5px;height:5px;background:blue"></i><i style="display:inline-block;width:5px;height:5px;margin-left:-3px;background:red"></i></span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "push 0.5", "fill", "fill", "pop"]
+    );
+}
+
+/// A positioned atomic inline and a translucent inline element composite by
+/// stack level, whichever comes first in the paragraph.
+#[test]
+fn positioned_atomic_inline_and_inline_group_paint_by_stack_level() {
+    let scene = painted_html(
+        br#"<html><body><p>A<i style="display:inline-block;width:5px;height:5px;position:relative;z-index:1;background:red"></i><span style="opacity:.5;position:relative;z-index:2">B</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "glyphs 1", "fill", "push 0.5", "glyphs 1", "pop"]
+    );
+    let above = painted_html(
+        br#"<html><body><p>A<i style="display:inline-block;width:5px;height:5px;position:relative;z-index:3;background:red"></i><span style="opacity:.5;position:relative;z-index:2">B</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&above),
+        ["fill", "glyphs 1", "push 0.5", "glyphs 1", "pop", "fill"]
+    );
+}
+
+/// An atomic inline that is not positioned is inline content, painted below
+/// the inline groups of its paragraph wherever it is in tree order (CSS 2.1
+/// Appendix E steps 7 and 8); a positioned one with `z-index: auto` paints
+/// among them in tree order.
+#[test]
+fn atomic_inlines_paint_below_or_among_inline_groups() {
+    let scene = painted_html(
+        br#"<html><body><p><span style="opacity:.5">A</span><i style="display:inline-block;width:5px;height:5px;background:red"></i></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "fill", "push 0.5", "glyphs 1", "pop"]
+    );
+    let positioned = painted_html(
+        br#"<html><body><p><span style="opacity:.5">A</span><i style="display:inline-block;width:5px;height:5px;position:relative;background:red"></i><span style="opacity:.25">B</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&positioned),
+        [
+            "fill",
+            "push 0.5",
+            "glyphs 1",
+            "pop",
+            "fill",
+            "push 0.25",
+            "glyphs 1",
+            "pop"
+        ]
+    );
+}
+
+/// Boxes and groups with the same negative stack level paint in tree order.
+#[test]
+fn negative_atomic_inline_and_group_paint_in_tree_order() {
+    let scene = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;position:relative;z-index:-1">B</span><i style="display:inline-block;width:5px;height:5px;position:relative;z-index:-1;background:red"></i></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "push 0.5", "glyphs 1", "pop", "fill", "glyphs 1"]
+    );
+}
+
+/// An atomic inline with a negative stack level inside a translucent inline
+/// element paints in the element's group, above the element's own box and
+/// below its text.
+#[test]
+fn negative_atomic_inline_paints_in_its_translucent_element() {
+    let scene = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;background:blue">B<i style="display:inline-block;width:5px;height:5px;position:relative;z-index:-1;background:red"></i></span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill", "glyphs 1", "push 0.5", "fill", "fill", "glyphs 1", "pop"
+        ]
+    );
+}
+
+/// A paragraph under a singular transform has no ink, so the boxes beside
+/// its lines place nothing in its groups.
+#[test]
+fn atomic_inline_under_a_singular_transform_places_nothing() {
+    let scene = painted_html(
+        br#"<html><body><p style="transform:scale(0)">A<span style="opacity:.5"><i style="display:inline-block;width:5px;height:5px;background:red"></i></span></p></body></html>"#,
+    );
+    assert!(
+        !command_kinds(&scene).iter().any(|kind| kind == "push 0.5"),
+        "{:?}",
+        command_kinds(&scene)
+    );
+}
+
+/// An atomic inline on the first line composites in a translucent
+/// `::first-line` group; one on a later line is inline content of the other
+/// lines, below that group.
+#[test]
+fn atomic_inline_on_the_first_line_paints_in_its_group() {
+    let scene = painted_html(
+        br#"<html><head><style>p{width:40px} p::first-line{opacity:.5}</style></head><body><p>A<i style="display:inline-block;width:5px;height:5px;background:red"></i> BBBB CCCC<i style="display:inline-block;width:5px;height:5px;background:blue"></i></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill", "glyphs 5", "glyphs 4", "fill", "push 0.5", "glyphs 1", "glyphs 1", "fill",
+            "pop"
+        ]
+    );
+}
+
 /// A box beside the lines with a negative stack level paints below the
 /// paragraph's text.
 #[test]

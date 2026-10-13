@@ -273,6 +273,23 @@ pub fn first_line_opacity_layer(document: &Document, root: usize) -> Option<f32>
     ifc.first_line_opacity
 }
 
+/// Whether `id` is an atomic inline on the first line of paragraph `root`,
+/// so the paragraph's `::first-line` wraps it (see
+/// [`first_line_opacity_layer`]). Floats and absolutely positioned boxes are
+/// not on any line: the `::first-line` box wraps only the inline-level
+/// content of the line (CSS Pseudo 4 §2.1.1).
+pub fn atomic_on_first_line(document: &Document, root: usize, id: usize) -> bool {
+    document
+        .get_node(root)
+        .and_then(|node| node.ifc_lines())
+        .and_then(|lines| lines.first())
+        .is_some_and(|line| {
+            line.fragments().any(|fragment| {
+                matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == id)
+            })
+        })
+}
+
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
 /// composites at among the other groups of its paragraph: the `z-index` of a
 /// relatively positioned pseudo-element, and 0 otherwise, the level of the
