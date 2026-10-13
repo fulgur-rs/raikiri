@@ -4966,8 +4966,23 @@ pub fn layout_pages_with_page_geometry_and_control(
                             let outer_bottom = node_target_y
                                 + height
                                 + document.nodes[node_id].unrounded_layout.margin.bottom;
+                            // An unforced break truncates the block-start
+                            // margin (CSS Fragmentation 3 §5.2), so the margin
+                            // box then starts at the border box.
+                            let outer_top = if forced_transition {
+                                node_target_y - margin_top
+                            } else {
+                                node_target_y
+                            };
                             later_float_edges.entry(context).or_insert(NO_FLOAT_EDGES)[index] =
-                                (node_target_y - margin_top, outer_bottom);
+                                (outer_top, outer_bottom);
+                            // The margin box then moved further than the
+                            // border box, and a later float may have to
+                            // follow it that far.
+                            if !forced_transition {
+                                later_float_shift =
+                                    later_float_shift.max(inherited + node_delta + margin_top);
+                            }
                         }
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
@@ -5692,6 +5707,10 @@ fn float_context_root(
             || style.overflow.x.is_scroll_container()
             || style.overflow.y.is_scroll_container()
             || document.nodes[parent].multicol.is_some()
+            // Layout and paint containment establish an independent
+            // formatting context (CSS Containment 2 §3.1, §3.3).
+            || computed.contain.contains(raikiri_style::property::Contain::LAYOUT)
+            || computed.contain.contains(raikiri_style::property::Contain::PAINT)
         {
             return parent;
         }

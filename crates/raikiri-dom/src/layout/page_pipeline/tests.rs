@@ -11990,3 +11990,69 @@ fn a_negative_bottom_margin_lowers_a_moved_float_floor() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 150.0]);
 }
+
+#[test]
+fn a_moved_float_keeps_no_truncated_top_margin_in_its_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;margin-top:20px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:right;width:20px;height:10px"),
+        ));
+    });
+    // The unforced break truncates the left float's top margin, so its
+    // margin box starts at the page top and the right float stays below it.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0]);
+}
+
+#[test]
+fn a_float_in_a_containment_context_ignores_a_moved_float() {
+    for contain in ["layout", "paint"] {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            ids.push(doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("float:left;width:40px;height:60px;break-inside:avoid"),
+            ));
+            let root = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;contain:{contain};width:50px")),
+            );
+            ids.push(doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("float:left;width:10px;height:20px;break-inside:avoid"),
+            ));
+        });
+        // Layout and paint containment each make the box its own block
+        // formatting context (CSS Containment 2 §3.1, §3.3).
+        let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+        assert_eq!(ys, vec![100.0, 60.0], "{contain}");
+    }
+}
