@@ -2461,8 +2461,9 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
     };
     let is_float =
         |document: &Document, id: usize| is_floating_box_for_pagination(document, cascade, id);
-    // The in-flow and floating child boxes of `parent`, with the children of
-    // a `display: contents` element standing in its place.
+    // The in-flow and floating child boxes of `parent`, and its nonempty text
+    // as `None`, with the children of a `display: contents` element standing
+    // in its place.
     let child_boxes = |document: &Document, parent: usize| {
         let mut boxes = Vec::new();
         let mut pending: Vec<usize> = document.nodes[parent]
@@ -2473,19 +2474,23 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             .collect();
         while let Some(child) = pending.pop() {
             let node = &document.nodes[child];
-            if node.kind() == NodeKind::Element
+            if let crate::node::NodeData::Text(text) = &node.data {
+                if node.is_in_document() && !text.text_content.trim().is_empty() {
+                    boxes.push(None);
+                }
+            } else if node.kind() == NodeKind::Element
                 && node.is_in_document()
                 && cascade.computed[child].display == DisplayValue::Contents
             {
                 pending.extend(node.children.iter().rev().copied());
             } else if in_flow(document, child) {
-                boxes.push(child);
+                boxes.push(Some(child));
             }
         }
         boxes
     };
-    // The page value a box ends with: that of its last in-flow child, down
-    // to the deepest one. A monolithic box does not pass up a descendant's.
+    // The page value a box ends with: that of its last in-flow content, down
+    // to the deepest box. A monolithic box does not pass up a descendant's.
     let end_page_name = |document: &Document, mut id: usize, mut name: Option<String>| loop {
         if page_applies_to_box(document, cascade, id) {
             name = selected_page_name(cascade, id).or(name);
@@ -2493,13 +2498,13 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         if is_monolithic_for_pagination(document, cascade, id) {
             break name;
         }
-        match child_boxes(document, id)
+        let last = child_boxes(document, id)
             .into_iter()
             .rev()
-            .find(|&child| !is_float(document, child))
-        {
-            Some(child) => id = child,
-            None => break name,
+            .find(|child| child.is_none_or(|child| !is_float(document, child)));
+        match last {
+            Some(Some(child)) => id = child,
+            _ => break name,
         }
     };
     // Walk the boxes with the page value each inherits. Floats take no part
@@ -2508,19 +2513,30 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
     let mut pending = vec![(0_usize, None::<String>)];
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
+        let mut float_after_break = false;
         let mut previous_page_name = None;
-        for child in child_boxes(document, parent) {
+        for item in child_boxes(document, parent) {
+            let Some(child) = item else {
+                // Text takes the parent's page and starts the new page itself.
+                after_forced_break = false;
+                float_after_break = false;
+                previous_page_name = Some(inherited.clone());
+                continue;
+            };
             if is_float(document, child) {
-                // A float right after a forced break goes to the new page, so
-                // it clears the earlier page's floats too. The break still
-                // carries on to the next in-flow box, which pagination would
-                // otherwise leave on the earlier page.
-                if after_forced_break {
+                // The first float right after a forced break goes to the new
+                // page, so it clears the earlier page's floats too; the floats
+                // after it line up beside it. The break still carries on to
+                // the next in-flow box, which pagination would otherwise leave
+                // on the earlier page.
+                if after_forced_break && !float_after_break {
                     document.nodes[child].style.clear = taffy::Clear::Both;
                     cleared.push(child);
+                    float_after_break = true;
                 }
                 continue;
             }
+            float_after_break = false;
             let start_page_name =
                 match propagated_start_page_name(document, cascade, child, inherited.as_deref()) {
                     (true, name) => name,

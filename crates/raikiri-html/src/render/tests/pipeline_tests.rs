@@ -1643,3 +1643,50 @@ fn pipeline_clears_a_float_right_after_a_forced_break() {
         "the block follows the float onto the new page"
     );
 }
+
+#[test]
+fn pipeline_lines_up_floats_after_a_forced_break_on_the_new_page() {
+    // Only the first float after the break clears the earlier page; the
+    // second lines up beside it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div style='break-after:page'>a</div>\
+         <div class='f'></div><div class='f'></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let mut floats: Vec<(f32, f32)> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| (fragment.rect().x, fragment.rect().y))
+        .collect();
+    floats.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(floats.len(), 2);
+    assert_eq!(floats[0].0, 200.0);
+    assert_eq!(floats[1].0, 300.0);
+    assert_eq!(floats[0].1, floats[1].1);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_leading_text() {
+    // The text takes the body's page, so the box on page `b` after it starts
+    // a new page clear of the float beside the text.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>text\
+         <div style='page:b'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
