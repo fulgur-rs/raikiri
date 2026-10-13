@@ -4333,6 +4333,10 @@ pub fn layout_pages_with_page_geometry_and_control(
     // side, or above the top of one on the other side unless it clears
     // that side. Floats in other contexts do not interact.
     let mut later_float_edges: HashMap<usize, [(f32, f32); 2]> = HashMap::new();
+    // Contexts whose floors only clearing boxes still keep: in-flow content
+    // that opened a page above a float's bottom leaves later floats there
+    // starting below that content anyway.
+    let mut clear_only_float_contexts: HashSet<usize> = HashSet::new();
     // A nested box that moved inside an ancestor whose height cannot grow
     // to hold it overflows that ancestor: the part of the shift the
     // ancestor did not absorb ends where its subtree does, and the page the
@@ -4525,17 +4529,22 @@ pub fn layout_pages_with_page_geometry_and_control(
             // and not above one on the other side (CSS 2.1 §9.5.1). An
             // in-flow box's border box stays below a float it clears
             // (CSS 2.1 §9.5.2).
+            let clear_only = clear_only_float_contexts.contains(&float_context);
             let floor = [FloatValue::Left, FloatValue::Right]
                 .into_iter()
                 .zip(float_edges)
                 .filter_map(|(side, (top, bottom))| {
                     let clears = clears_float_side(computed.clear, side);
                     if floating {
-                        Some(if clears || computed.float == side {
-                            bottom
+                        if clears {
+                            Some(bottom)
+                        } else if clear_only {
+                            None
+                        } else if computed.float == side {
+                            Some(bottom)
                         } else {
-                            top
-                        })
+                            Some(top)
+                        }
                     } else {
                         (!candidate.is_float_descendant && clears).then_some(bottom)
                     }
@@ -4558,6 +4567,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     if let Some(index) = float_side_index(cascade.computed[node_id].float) {
                         let layout = &document.nodes[node_id].unrounded_layout;
                         let top = candidate.raw_y + flow_shift;
+                        clear_only_float_contexts.remove(&float_context);
                         later_float_edges
                             .entry(float_context)
                             .or_insert(NO_FLOAT_EDGES)[index] = (
@@ -4972,7 +4982,12 @@ pub fn layout_pages_with_page_geometry_and_control(
         });
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
-        let relative_offset = layout_relative_offset_y(document, cascade, body_id, node_id);
+        // The relative offsets of the box and of its ancestors inside the
+        // body all moved it away from its normal-flow position.
+        let relative_offset = std::iter::successors(Some(node_id), |&id| parent_of[id])
+            .take_while(|&id| id != body_id)
+            .map(|id| layout_relative_offset_y(document, cascade, body_id, id))
+            .sum::<f32>();
         let flow_y = effective_y - relative_offset;
         // `break-inside` does not apply to inline boxes (CSS Fragmentation 3
         // §3.2): the block boxes inside an avoiding inline box break as they
@@ -5270,6 +5285,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                             } else {
                                 node_target_y
                             };
+                            clear_only_float_contexts.remove(&context);
                             later_float_edges.entry(context).or_insert(NO_FLOAT_EDGES)[index] =
                                 (outer_top, outer_bottom);
                             // The margin box then moved further than the
@@ -5284,13 +5300,28 @@ pub fn layout_pages_with_page_geometry_and_control(
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
                         // In-flow content that opened a page ends the floors
-                        // of its formatting context: later floats there start
-                        // below it anyway. A box that moved inside an
+                        // of its formatting context for later floats: they
+                        // start below it anyway. A float that still reaches
+                        // below the content's new place keeps its floor for
+                        // later clearing boxes. A box that moved inside an
                         // ancestor that cannot grow leaves the outer flow
                         // where it was, so the floors stay.
                         if !moved_in_bounded_ancestor {
-                            later_float_edges
-                                .remove(&float_context_root(document, cascade, node_id, body_id));
+                            let context = float_context_root(document, cascade, node_id, body_id);
+                            let flow_top = node_target_y - relative_offset;
+                            if let Some(edges) = later_float_edges.get_mut(&context) {
+                                for edge in edges.iter_mut() {
+                                    if edge.1 <= flow_top + 0.001 {
+                                        *edge = NO_FLOAT_EDGES[0];
+                                    }
+                                }
+                                if *edges == NO_FLOAT_EDGES {
+                                    later_float_edges.remove(&context);
+                                    clear_only_float_contexts.remove(&context);
+                                } else {
+                                    clear_only_float_contexts.insert(context);
+                                }
+                            }
                             if later_float_edges.is_empty() {
                                 later_float_shift = 0.0;
                             }
@@ -5835,9 +5866,9 @@ fn box_parent(document: &Document, node_id: usize) -> Option<usize> {
     Some(parent)
 }
 
-/// Whether `previous` is the in-flow box laid out just before `node_id`
-/// among its parent's boxes, or an empty box between them that their
-/// margins collapse through (CSS 2.1 §8.3.1). Collapsed white space and
+/// Whether only margins separate `previous` from `node_id`: `previous` is
+/// the in-flow box laid out just before `node_id` among its parent's boxes,
+/// or every box between them takes no block space. Collapsed white space and
 /// out-of-flow boxes are skipped. `display: contents` elements generate no
 /// box, so their children stand in their place.
 fn adjoins_previous_sibling(
@@ -5863,7 +5894,7 @@ fn adjoins_previous_sibling(
             if found == previous {
                 return true;
             }
-            if !margins_collapse_through(document, cascade, found) {
+            if !takes_no_block_space(document, cascade, found) {
                 return false;
             }
         }
@@ -5874,19 +5905,16 @@ fn adjoins_previous_sibling(
     }
 }
 
-/// Whether `node_id` is an empty block box whose block-start and block-end
-/// margins collapse together (CSS 2.1 §8.3.1).
-fn margins_collapse_through(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+/// Whether `node_id` is a block box that takes no block space, so that only
+/// margins lie between the boxes on either side of it.
+fn takes_no_block_space(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
     let layout = &node.unrounded_layout;
     node.kind() == NodeKind::Element
         && matches!(
             cascade.computed[node_id].display,
-            DisplayValue::Block | DisplayValue::ListItem
+            DisplayValue::Block | DisplayValue::ListItem | DisplayValue::FlowRoot
         )
-        && !establishes_containment_context(&cascade.computed[node_id])
-        && !node.style.overflow.x.is_scroll_container()
-        && !node.style.overflow.y.is_scroll_container()
         && layout.size.height <= 0.001
         && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
             <= 0.0
