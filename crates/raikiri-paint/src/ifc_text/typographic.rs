@@ -67,10 +67,14 @@ pub(super) fn background_slices(
 struct Group {
     scene: Scene,
     opacity: f32,
+    level: i32,
     parent: Option<usize>,
-    insertion: Option<usize>,
-    children: Vec<(usize, usize, Scene)>,
+    children: Vec<Child>,
 }
+
+/// A composited group placed in its parent's paint: the parent command it
+/// precedes, its stack level, its allocation order, and its commands.
+type Child = (usize, i32, usize, Scene);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 struct FragmentKey {
@@ -92,7 +96,14 @@ pub(super) struct TypographicPaint {
 }
 
 impl TypographicPaint {
-    pub(super) fn new(root: &Node, pieces: &[InlineBoxPiece]) -> Self {
+    /// `cascade` supplies the opacity of the `::before` and `::after` boxes,
+    /// which, like `::first-letter` ones, composite their complete paint as
+    /// one group (CSS Color 4 §3.3).
+    pub(super) fn new(
+        root: &Node,
+        pieces: &[InlineBoxPiece],
+        cascade: &raikiri_style::CascadeResult,
+    ) -> Self {
         let mut paint = Self {
             normal: Scene::new(),
             groups: Vec::new(),
@@ -110,6 +121,18 @@ impl TypographicPaint {
             parents.entry(key).or_insert_with(|| {
                 root.ifc_typographic_parent(piece.node)
                     .map(|id| key.parent(id))
+                    // The outermost first letter taken from `::before` or
+                    // `::after` text is inside that pseudo-element's box.
+                    .or_else(|| {
+                        piece
+                            .source_owner
+                            .filter(|&owner| {
+                                owner != piece.node
+                                    && raikiri_dom::generated_content::generated_origin(owner)
+                                        .is_some()
+                            })
+                            .map(|owner| key.parent(owner))
+                    })
             });
             if let Some((cv, _)) = root.ifc_typographic_fragment(
                 piece.node,
@@ -118,6 +141,10 @@ impl TypographicPaint {
             ) && cv.opacity < 1.0
             {
                 opacities.insert(key, cv.opacity);
+            } else if let Some(opacity) =
+                raikiri_dom::paint_rules::pseudo_opacity_layer(cascade, piece.node)
+            {
+                opacities.insert(key, opacity);
             }
         }
         // Resolve parents before children. Equal opacities share a group only
@@ -153,8 +180,10 @@ impl TypographicPaint {
                             paint.groups.push(Group {
                                 scene: Scene::new(),
                                 opacity,
+                                level: raikiri_dom::paint_rules::pseudo_stack_level(
+                                    cascade, key.node,
+                                ),
                                 parent: group,
-                                insertion: None,
                                 children: Vec::new(),
                             });
                             index
@@ -192,6 +221,17 @@ impl TypographicPaint {
                 node: id,
                 owner: Some(owner),
             })
+            // The text of a `::before` or `::after` box is its own.
+            .or_else(|| {
+                (id == owner)
+                    .then(|| {
+                        self.nearest_groups.get(&FragmentKey {
+                            node: id,
+                            owner: None,
+                        })
+                    })
+                    .flatten()
+            })
             .copied()
             .flatten()
     }
@@ -210,17 +250,6 @@ impl TypographicPaint {
         match group {
             Some(index) => &mut self.groups[index].scene,
             None => &mut self.normal,
-        }
-    }
-
-    pub(super) fn start_glyphs(&mut self, mut group: Option<usize>) {
-        while let Some(index) = group {
-            let parent = self.groups[index].parent;
-            if self.groups[index].insertion.is_some() {
-                break;
-            }
-            self.groups[index].insertion = Some(self.target(parent).commands.len());
-            group = parent;
         }
     }
 
@@ -257,21 +286,30 @@ impl TypographicPaint {
                 std::mem::take(&mut group.scene),
                 std::mem::take(&mut group.children),
             );
+            // A group whose pieces are on lines painted elsewhere draws
+            // nothing here.
             let mut composite = Scene::new();
-            composite.push_layer(
-                Mix::Normal,
-                group.opacity,
-                clip_transform,
-                &clip,
-                None,
-                None,
-            );
-            composite.append_scene(content, Affine::IDENTITY);
-            composite.pop_layer();
-            let insertion = group.insertion;
+            if !content.commands.is_empty() {
+                composite.push_layer(
+                    Mix::Normal,
+                    group.opacity,
+                    clip_transform,
+                    &clip,
+                    None,
+                    None,
+                );
+                composite.append_scene(content, Affine::IDENTITY);
+                composite.pop_layer();
+            }
+            // A group composites after the rest of its parent's paint, like
+            // the other stacking contexts with `z-index: auto` of the
+            // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8).
             let parent = group.parent;
-            let insertion = insertion.unwrap_or_else(|| self.target(parent).commands.len());
-            let child = (insertion, index, composite);
+            let level = group.level;
+            let insertion = self.target(parent).commands.len();
+            // Groups at the same place paint by stack level, then in tree
+            // order.
+            let child = (insertion, level, index, composite);
             match parent {
                 Some(parent) => {
                     self.groups[parent].children.push(child);
@@ -315,25 +353,25 @@ fn cached_group(
     group
 }
 
-fn merge_children(scene: Scene, mut children: Vec<(usize, usize, Scene)>) -> Scene {
+fn merge_children(scene: Scene, mut children: Vec<Child>) -> Scene {
     if children.is_empty() {
         return scene;
     }
-    children.sort_by_key(|(position, order, _)| (*position, *order));
+    children.sort_by_key(|(position, level, order, _)| (*position, *level, *order));
     let mut children = children.into_iter().peekable();
     let mut result = Scene::new();
     for (index, command) in scene.commands.into_iter().enumerate() {
         while children
             .peek()
-            .is_some_and(|(position, _, _)| *position == index)
+            .is_some_and(|(position, _, _, _)| *position == index)
         {
-            if let Some((_, _, child)) = children.next() {
+            if let Some((_, _, _, child)) = children.next() {
                 result.commands.extend(child.commands);
             }
         }
         result.commands.push(command);
     }
-    for (_, _, child) in children {
+    for (_, _, _, child) in children {
         result.commands.extend(child.commands);
     }
     result

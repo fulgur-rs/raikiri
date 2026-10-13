@@ -638,7 +638,11 @@ impl<'a> Page<'a> {
     /// element's inline boxes and generated boxes and those of its
     /// descendants, one [`PaintEvent::GroupTextLine`] per line with runs in
     /// the group, its floats and atomic inlines, the groups nested in it, and
-    /// the [`PaintEvent::PopOpacity`]. [`Self::text_run_opacity_group`] tells
+    /// the [`PaintEvent::PopOpacity`]. A `::before`, `::after` or
+    /// `::first-letter` with opacity below one is such a group too, holding
+    /// its generated boxes, its images and its text, named by the
+    /// pseudo-element's own id instead of an element's.
+    /// [`Self::text_run_opacity_group`] tells
     /// which line event draws a run: a run of no group belongs to the
     /// `TextLine` event of its line, and any other run to the `GroupTextLine`
     /// event of its line and group.
@@ -660,6 +664,11 @@ impl<'a> Page<'a> {
     /// opacity below one around the run's text inside its paragraph.
     /// `None` when the run is drawn with the rest of its paragraph. Elements
     /// with `display: contents` generate no box and form no group.
+    ///
+    /// The letters of a translucent `::first-letter` and the text of a
+    /// translucent `::before` or `::after` belong to that pseudo-element's
+    /// group. Its id is not a node of [`Self::dom`]; it is the group of the
+    /// matching [`PaintEvent::GroupTextLine`] events.
     pub fn text_run_opacity_group(&self, run: &PositionedGlyphRun<'_>) -> Option<NodeId> {
         self.document.text_run_opacity_group(self.cascade, run)
     }
