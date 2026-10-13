@@ -831,7 +831,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + Parsing tests passing with canonical position, alpha, sizing, flex and font-family serialization (+13).
     // + Ideographic spaces wrapping under break-spaces after the shodo update (+2).
     // + Weekly vacuity sweep KEEP ids re-audited twice (+358).
-    assert_eq!(set.baseline.entries.len(), 4311);
+    // + Content alternative text and canonical calc() sums (+3).
+    assert_eq!(set.baseline.entries.len(), 4314);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
