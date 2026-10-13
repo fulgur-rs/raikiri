@@ -4959,13 +4959,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 (delta, page)
                             });
                         pending_float_shift = Some((node_id, inherited + node_delta, flow_page));
-                        // A clearing follower stays below the margin box.
+                        // A clearing follower stays below the margin box,
+                        // which a negative block-end margin pulls up.
                         if let Some(index) = float_side_index(computed.float) {
                             let context = float_context_root(document, cascade, node_id, body_id);
-                            later_float_edges.entry(context).or_insert(NO_FLOAT_EDGES)[index] = (
-                                node_target_y - margin_top,
-                                node_target_y + height + margin_bottom,
-                            );
+                            let outer_bottom = node_target_y
+                                + height
+                                + document.nodes[node_id].unrounded_layout.margin.bottom;
+                            later_float_edges.entry(context).or_insert(NO_FLOAT_EDGES)[index] =
+                                (node_target_y - margin_top, outer_bottom);
                         }
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
@@ -5439,9 +5441,13 @@ fn grown_auto_height(
         }
         let child_layout = &child_node.unrounded_layout;
         // A relative offset that layout applied moves the box but not the
-        // flow around it (CSS 2.1 §9.4.3).
+        // flow around it (CSS 2.1 §9.4.3). Layout offsets a sticky box by
+        // its insets the same way.
         let computed = &cascade.computed[child];
-        let relative_offset = if computed.position == PositionValue::Relative {
+        let relative_offset = if matches!(
+            computed.position,
+            PositionValue::Relative | PositionValue::Sticky
+        ) {
             let offset = match (computed.top, computed.bottom) {
                 (ComputedLengthPercentageOrAuto::Px(top), _) => top,
                 (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
