@@ -1657,10 +1657,10 @@ fn pseudo_opacity_group(cascade: &CascadeResult, id: usize) -> Option<usize> {
 /// The opacity group the `::before` or `::after` of `element` forms in its
 /// paragraph, if any.
 fn generated_group(cascade: &CascadeResult, element: usize, kind: GeneratedKind) -> Option<usize> {
-    let pseudo = match kind {
-        GeneratedKind::Before => PseudoElem::Before,
-        GeneratedKind::After => PseudoElem::After,
-        _ => return None,
+    let pseudo = if kind == GeneratedKind::After {
+        PseudoElem::After
+    } else {
+        PseudoElem::Before
     };
     pseudo_opacity_group(
         cascade,

@@ -124,13 +124,7 @@ impl TypographicPaint {
                             .filter(|&owner| {
                                 owner != piece.node
                                     && raikiri_dom::generated_content::generated_origin(owner)
-                                        .is_some_and(|(_, pseudo)| {
-                                            matches!(
-                                                pseudo,
-                                                raikiri_style::PseudoElem::Before
-                                                    | raikiri_style::PseudoElem::After
-                                            )
-                                        })
+                                        .is_some()
                             })
                             .map(|owner| key.parent(owner))
                     })

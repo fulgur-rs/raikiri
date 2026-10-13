@@ -562,6 +562,47 @@ fn a_translucent_after_holds_its_images() {
     );
 }
 
+/// A translucent `::after` groups only the page that holds it; the
+/// paragraph's earlier page paints no group.
+#[test]
+fn a_translucent_after_groups_only_its_page() {
+    let document = lay_out(
+        "<p>AAAA BBBB CCCC DDDD</p>",
+        "p{margin:0}p::after{content:'E';opacity:.5}",
+    );
+    assert_eq!(
+        composited(&document.page(0).unwrap()),
+        ["text AAAA ", "text BBBB ", "text CCCC "]
+    );
+    assert_eq!(
+        composited(&document.page(1).unwrap()),
+        ["text DDDD", "push 0.5", "box After", "text E", "pop"]
+    );
+}
+
+/// A translucent `::after` composites after a translucent element that
+/// comes before it in tree order.
+#[test]
+fn a_translucent_after_follows_an_earlier_inline_group() {
+    let document = lay_out(
+        "<p>A<span>B</span>C</p>",
+        "p{margin:0}span{opacity:.5}p::after{content:'D';opacity:.25}",
+    );
+    assert_eq!(
+        composited(&document.page(0).unwrap()),
+        [
+            "text AC",
+            "push 0.5",
+            "text B",
+            "pop",
+            "push 0.25",
+            "box After",
+            "text D",
+            "pop"
+        ]
+    );
+}
+
 /// A translucent `::first-letter` composites its background and its letter
 /// as one group, as the built-in painter does.
 #[test]
