@@ -793,11 +793,11 @@ fn a_known_page_count_has_no_deferred_slots() {
 }
 
 #[test]
-fn margin_box_text_shadow_keeps_negative_offsets_and_inherits_the_page_value() {
+fn margin_box_text_shadow_resolves_signed_and_root_relative_offsets() {
     let (doc, cascade) = page_cascade_fixture(
         "html { text-shadow: 1px 1px blue } \
          @page { margin: 40px; text-shadow: 4px 4px lime; \
-           @top-left { content: 'abc'; text-shadow: -2px -3px red } \
+           @top-left { content: 'abc'; font-size: 20px; text-shadow: -2px -3px red, 1rem 0 } \
            @top-right { content: 'abc'; text-shadow: inherit } }",
     );
     let boxes = layout_page(&doc, &cascade, small_page());
@@ -805,8 +805,13 @@ fn margin_box_text_shadow_keeps_negative_offsets_and_inherits_the_page_value() {
         panic!("two boxes: {boxes:?}");
     };
     let negative = &left.text_runs()[0].shadows;
-    assert_eq!(negative.len(), 1);
+    assert_eq!(negative.len(), 2);
     assert_eq!(negative[0].offset, (-2.0, -3.0));
+    assert_eq!(
+        negative[1].offset,
+        (16.0, 0.0),
+        "rem resolves against the root"
+    );
     let inherited = &right.text_runs()[0].shadows;
     assert_eq!(inherited.len(), 1, "inherit takes the page context's value");
     assert_eq!(inherited[0].offset, (4.0, 4.0));

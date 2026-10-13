@@ -2984,3 +2984,27 @@ fn the_runs_of_one_box_paint_decorations_in_line_wide_phases() {
         "underlines come before every run's glyphs and line-throughs after: {kinds:?}"
     );
 }
+
+#[test]
+fn each_shadow_layer_covers_every_run_of_the_box_before_the_next() {
+    let on = painted_root(
+        "width:200px;color:black;text-shadow:1px 1px red,2px 2px blue",
+        |doc, root| {
+            // Mixed directions split one text node into several runs.
+            doc.append_text(root, "ab \u{5d0}\u{5d1} cd");
+        },
+    );
+    let red = format!("{:?}", solid(255, 0, 0));
+    let blue = format!("{:?}", solid(0, 0, 255));
+    let colors: Vec<String> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(_, color)| color)
+        .collect();
+    let last_blue = colors.iter().rposition(|color| *color == blue).unwrap();
+    let first_red = colors.iter().position(|color| *color == red).unwrap();
+    assert!(colors.len() > 3, "several runs: {colors:?}");
+    assert!(
+        last_blue < first_red,
+        "the back shadow is drawn for every run before the front one: {colors:?}"
+    );
+}

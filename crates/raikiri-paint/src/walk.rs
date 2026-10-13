@@ -4728,6 +4728,37 @@ pub(crate) fn paint_element_border_image(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) -> bool {
+    paint_border_image_within(
+        image_cache,
+        scene,
+        (width, height),
+        (abs_x, abs_y),
+        cv,
+        image,
+        border,
+        pixel_source,
+        warnings,
+        (f64::NEG_INFINITY, f64::INFINITY),
+    )
+}
+
+/// [`paint_element_border_image`] that emits only the parts and tiles
+/// crossing the horizontal range `visible`, for a caller that clips the
+/// image to that range anyway.
+#[allow(clippy::too_many_arguments)]
+fn paint_border_image_within(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    (width, height): (f32, f32),
+    (abs_x, abs_y): (f32, f32),
+    cv: &ComputedValues,
+    image: &ComputedBorderImage,
+    border: &Sides<raikiri_style::resolve::ComputedBorder>,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+    visible: (f64, f64),
+) -> bool {
+    let crosses = |x: f64, width: f64| x <= visible.1 && x + width >= visible.0;
     let border_box = (
         f64::from(abs_x),
         f64::from(abs_y),
@@ -4833,6 +4864,9 @@ pub(crate) fn paint_element_border_image(
                 let Some(crop) = crop else {
                     continue;
                 };
+                if !crosses(area_x, area_w) {
+                    continue;
+                }
                 let (brush, pixels) = if let Some(brush) = &shared {
                     // Whole decoded pixels to image coordinates.
                     let pixels = Affine::scale_non_uniform(1.0 / scale_x, 1.0 / scale_y);
@@ -4858,7 +4892,7 @@ pub(crate) fn paint_element_border_image(
                     Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
                         * Affine::translate((-src_x, -src_y));
                 for tile_y in &part.y {
-                    for tile_x in &part.x {
+                    for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
                         scene.fill(
                             Fill::NonZero,
                             Affine::translate((*tile_x, *tile_y)) * scale,
@@ -4882,12 +4916,15 @@ pub(crate) fn paint_element_border_image(
             // Fill each tile, so `space` keeps its gaps transparent.
             for part in &geometry.parts {
                 let (area_x, area_y, area_w, area_h) = part.area;
+                if !crosses(area_x, area_w) {
+                    continue;
+                }
                 scene.push_clip_layer(
                     Affine::IDENTITY,
                     &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
                 );
                 for tile_y in &part.y {
-                    for tile_x in &part.x {
+                    for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
                         scene.fill(
                             Fill::NonZero,
                             Affine::IDENTITY,
@@ -5428,18 +5465,17 @@ pub(crate) fn paint_inline_box(
             Affine::IDENTITY,
             &Rect::new(left, -UNBOUNDED, right, UNBOUNDED),
         );
-        let drawn = paint_element_border_image(
+        let drawn = paint_border_image_within(
             image_cache,
             scene,
-            joined.outer.width,
-            outer.height,
-            x + joined.outer.x,
-            abs_y,
+            (joined.outer.width, outer.height),
+            (x + joined.outer.x, abs_y),
             cv,
             &cv.border_image,
             &cv.border,
             pixel_source,
             warnings,
+            (left, right),
         );
         scene.pop_layer();
         drawn

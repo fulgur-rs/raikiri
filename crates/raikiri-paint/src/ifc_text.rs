@@ -86,13 +86,19 @@ pub(crate) fn draw_ifc_lines_with_resources(
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
     // A box split across lines is sliced from one joined box, which spans
-    // every line of the paragraph, including those on other pages.
-    let all_slices = typographic::background_slices(&pieces, |node| {
-        cascade
-            .computed
-            .get(node)
-            .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl)
-    });
+    // every line of the paragraph, including those on other pages. The join
+    // runs along the horizontal axis only, so fragments of vertical text
+    // keep painting their own boxes.
+    let all_slices = if vertical {
+        vec![None; pieces.len()]
+    } else {
+        typographic::background_slices(&pieces, |node| {
+            cascade
+                .computed
+                .get(node)
+                .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl)
+        })
+    };
     let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
     let mut slices_by_line = vec![Vec::new(); positioned.all_lines().len()];
     for (piece, slice) in pieces.into_iter().zip(all_slices) {
@@ -276,33 +282,42 @@ pub(crate) fn draw_ifc_lines_with_resources(
         // still covers an earlier box's text.
         for segment in runs.chunk_by(|a, b| a.style_owner == b.style_owner) {
             if !vertical {
-                for draw in segment {
-                    let Some(font) = draw.run.font_data() else {
-                        continue;
-                    };
-                    let coords = normalized_coords(&draw.run);
-                    let glyph_transform = physical_glyph_transform(
-                        &converter,
-                        draw.run.glyph_transform(),
-                        draw.run.skew(),
-                    );
-                    draw_shadows(
-                        paint.target(draw.group),
-                        &ShadowRun {
-                            draw,
-                            font: &font,
-                            coords: &coords,
-                            glyph_transform,
-                        },
-                        draw.style,
-                        run_transform(transform, draw),
-                        IfcPosition {
-                            x: position.x + draw.offset.0,
-                            y: position.y + draw.offset.1,
-                            shift_y: position.shift_y,
-                        },
-                        size,
-                    );
+                // Each shadow layer covers every run of the box before the
+                // next one up, so the first declared shadow stays on top.
+                let layers = segment[0].style.text_shadow.len();
+                for layer in (0..layers).rev() {
+                    for draw in segment {
+                        let Some(font) = draw.run.font_data() else {
+                            continue;
+                        };
+                        let Some(shadow) = draw.style.text_shadow.get(layer) else {
+                            continue;
+                        };
+                        let coords = normalized_coords(&draw.run);
+                        let glyph_transform = physical_glyph_transform(
+                            &converter,
+                            draw.run.glyph_transform(),
+                            draw.run.skew(),
+                        );
+                        draw_shadow(
+                            paint.target(draw.group),
+                            &ShadowRun {
+                                draw,
+                                font: &font,
+                                coords: &coords,
+                                glyph_transform,
+                            },
+                            shadow,
+                            draw.style,
+                            run_transform(transform, draw),
+                            IfcPosition {
+                                x: position.x + draw.offset.0,
+                                y: position.y + draw.offset.1,
+                                shift_y: position.shift_y,
+                            },
+                            size,
+                        );
+                    }
                 }
                 for draw in segment {
                     draw_resolved_decoration_phase(
@@ -538,88 +553,87 @@ struct ShadowRun<'a, 'b> {
     glyph_transform: Option<Affine>,
 }
 
-/// Draw the text shadows of one run, behind its glyphs and decorations.
+/// Draw one text shadow of one run, behind its glyphs and decorations.
 ///
 /// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
-/// on top, so the list is drawn in reverse. Each shadow is the run's glyphs
+/// on top, so callers draw the list in reverse. Each shadow is the run's glyphs
 /// and its decoration lines, in their paint order, filled with the shadow
 /// color. A blurred shadow is drawn inside a filter layer clipped to the
 /// lines grown by three times the blur radius, which isolates the blur from
 /// the rest of the page.
-fn draw_shadows(
+fn draw_shadow(
     scene: &mut impl PaintScene,
     run: &ShadowRun<'_, '_>,
+    shadow: &raikiri_style::ComputedTextShadow,
     owner_cv: &raikiri_style::ComputedValues,
     transform: Affine,
     position: IfcPosition,
     (width, height): (f32, f32),
 ) {
     let font_size = run.draw.run.font_size();
-    for shadow in owner_cv.text_shadow.iter().rev() {
-        let color = match shadow.color {
-            TextShadowColor::CurrentColor => owner_cv.color,
-            TextShadowColor::Resolved(color) => color,
-            _ => owner_cv.color,
-        };
-        let (dx, dy) = (
-            f64::from(shadow.offset_x.px()),
-            f64::from(shadow.offset_y.px()),
+    let color = match shadow.color {
+        TextShadowColor::CurrentColor => owner_cv.color,
+        TextShadowColor::Resolved(color) => color,
+        _ => owner_cv.color,
+    };
+    let (dx, dy) = (
+        f64::from(shadow.offset_x.px()),
+        f64::from(shadow.offset_y.px()),
+    );
+    let shadow_transform = transform * Affine::translate((dx, dy));
+    let blur = shadow.blur_radius.px();
+    let use_blur_layer = blur.is_finite() && blur > 0.0;
+    if use_blur_layer {
+        let extent = f64::from((blur * 3.0).max(1.0));
+        let (x, y) = (f64::from(position.x), f64::from(position.y));
+        let clip = Rect::new(
+            x + dx - extent,
+            y + dy - extent,
+            x + f64::from(width) + dx + extent,
+            y + f64::from(height) + dy + extent,
         );
-        let shadow_transform = transform * Affine::translate((dx, dy));
-        let blur = shadow.blur_radius.px();
-        let use_blur_layer = blur.is_finite() && blur > 0.0;
-        if use_blur_layer {
-            let extent = f64::from((blur * 3.0).max(1.0));
-            let (x, y) = (f64::from(position.x), f64::from(position.y));
-            let clip = Rect::new(
-                x + dx - extent,
-                y + dy - extent,
-                x + f64::from(width) + dx + extent,
-                y + f64::from(height) + dy + extent,
-            );
-            scene.push_layer(
-                Mix::Normal,
-                1.0,
-                Affine::IDENTITY,
-                &clip,
-                Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
-                None,
-            );
-        }
-        let decorations: Vec<_> = run
-            .draw
-            .decorations
-            .iter()
-            .map(|line| {
-                let mut line = line.clone();
-                let (dx, dy) = (dx as f32, dy as f32);
-                line.x_start += dx;
-                line.x_end += dx;
-                line.pattern_origin_x += dx;
-                line.pattern_end_x += dx;
-                line.y += dy;
-                line.color = color;
-                line
-            })
-            .collect();
-        draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
-        scene.draw_glyphs(
-            run.font,
-            font_size,
-            true,
-            run.coords,
-            synthetic_embolden(run.draw.run.embolden(), font_size),
-            Fill::NonZero,
-            css_color_to_peniko(color),
+        scene.push_layer(
+            Mix::Normal,
             1.0,
-            shadow_transform,
-            run.glyph_transform,
-            run.draw.glyphs.clone().into_iter(),
+            Affine::IDENTITY,
+            &clip,
+            Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
+            None,
         );
-        draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
-        if use_blur_layer {
-            scene.pop_layer();
-        }
+    }
+    let decorations: Vec<_> = run
+        .draw
+        .decorations
+        .iter()
+        .map(|line| {
+            let mut line = line.clone();
+            let (dx, dy) = (dx as f32, dy as f32);
+            line.x_start += dx;
+            line.x_end += dx;
+            line.pattern_origin_x += dx;
+            line.pattern_end_x += dx;
+            line.y += dy;
+            line.color = color;
+            line
+        })
+        .collect();
+    draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
+    scene.draw_glyphs(
+        run.font,
+        font_size,
+        true,
+        run.coords,
+        synthetic_embolden(run.draw.run.embolden(), font_size),
+        Fill::NonZero,
+        css_color_to_peniko(color),
+        1.0,
+        shadow_transform,
+        run.glyph_transform,
+        run.draw.glyphs.clone().into_iter(),
+    );
+    draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
+    if use_blur_layer {
+        scene.pop_layer();
     }
 }
 

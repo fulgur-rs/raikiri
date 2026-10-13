@@ -612,9 +612,18 @@ fn inherited_margin_box_text_shadows(
         .or_else(|| page_property(page, PropertyKey::TextShadow));
     if let Some(PropertyValue::TextShadow(items)) = declared {
         // Page-context lengths are already absolute; a margin box's own
-        // `em` lengths resolve against its font size. Offsets may be
-        // negative, so only the blur radius is clamped.
+        // `em` lengths resolve against its font size and root-relative
+        // ones against the root's. Offsets may be negative, so only the
+        // blur radius is clamped.
+        let root_size = root_computed(document, cascade).map_or(16.0, |c| c.font_size.px());
         let px = |length: TextShadowLength| match length {
+            TextShadowLength::Length(
+                length @ (Length::Rem(_)
+                | Length::Rex(_)
+                | Length::Rch(_)
+                | Length::Ric(_)
+                | Length::Rlh(_)),
+            ) => signed_length_to_px(length, 0.0, root_size),
             TextShadowLength::Length(length) => signed_length_to_px(length, 0.0, font_size),
             TextShadowLength::Calc { px, em } => px + em * font_size,
             _ => 0.0,
