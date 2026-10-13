@@ -2503,7 +2503,13 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             {
                 // An inline box is content of its parent's line, so its own
                 // break properties do not apply, but pagination still breaks
-                // at the blocks inside it.
+                // at the blocks inside it. One without children still makes
+                // a line of its own.
+                if node.children.is_empty()
+                    && cascade.computed[child].display == DisplayValue::Inline
+                {
+                    boxes.push(None);
+                }
                 pending.extend(node.children.iter().rev().map(|&child| Some(child)));
                 if crate::generated_content::is_in_flow_generated_text(
                     cascade,

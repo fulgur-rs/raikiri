@@ -1827,6 +1827,28 @@ fn pipeline_clears_a_named_page_after_an_inline_replaced_element() {
 }
 
 #[test]
+fn pipeline_clears_a_named_page_after_an_empty_inline_box() {
+    // An empty inline box still makes a line on its parent's page, so the
+    // named block after it changes page and starts the new page clear of
+    // the float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div><span style='padding:0 40px'></span>\
+         <div style='page:b; display:flow-root; height:50px'>b</div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
 fn pipeline_ignores_running_elements_between_boxes_on_one_named_page() {
     // A running element generates no box where it stands, so the boxes on
     // page `b` around it share one page and the second stays beside the
