@@ -719,9 +719,17 @@ fn compute_ifc_root(
     // block's height only when that height does not depend on content. A
     // height fixed by the parent is border-box; one from the box's own
     // `height` follows `box-sizing`.
+    // A horizontal scrollbar reserves its gutter from the block axis.
+    let horizontal_gutter = if style.overflow.x == taffy::Overflow::Scroll {
+        style.scrollbar_width
+    } else {
+        0.0
+    };
     let border_box_insets = top_inset
         + ifc_edge(style.padding.bottom, parent_inline_size)
-        + ifc_edge(style.border.bottom, parent_inline_size);
+        + ifc_edge(style.border.bottom, parent_inline_size)
+        + horizontal_gutter;
+    let border_box = style.box_sizing == taffy::BoxSizing::BorderBox;
     measure.definite_height = inputs
         .known_dimensions
         .height
@@ -740,18 +748,30 @@ fn compute_ifc_root(
                 inputs.parent_size.height,
             )
             .map(|height| {
-                if style.box_sizing == taffy::BoxSizing::BorderBox {
+                if border_box {
                     (height - border_box_insets).max(0.0)
                 } else {
                     height
                 }
             })
-            // `min-height` and `max-height` clamp the used height.
-            .map(|height| {
-                height
-                    .min(measure.height_bounds.1)
-                    .max(measure.height_bounds.0)
-            })
+        })
+        // `min-height` and `max-height` clamp the used height; a percentage
+        // bound against an indefinite containing block does not apply.
+        .map(|height| {
+            let (min, max) = if inputs.parent_size.height.is_some() {
+                measure.height_bounds
+            } else {
+                ifc_content_axis_bounds(
+                    ifc_length_only(style.min_size.height),
+                    ifc_length_only(style.max_size.height),
+                    style.box_sizing,
+                    [style.padding.top, style.padding.bottom],
+                    [style.border.top, style.border.bottom],
+                    None,
+                    parent_inline_size,
+                )
+            };
+            height.min(max).max(min)
         });
     let mut output =
         compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
@@ -816,6 +836,17 @@ fn ifc_content_width_bounds(
         parent_width,
         parent_inline_size,
     )
+}
+
+/// Drops a percentage or `calc()` bound, which cannot resolve against an
+/// indefinite containing block (CSS 2.1 §10.7).
+fn ifc_length_only(value: taffy::LengthPercentageAuto) -> taffy::LengthPercentageAuto {
+    let raw = value.into_raw();
+    if !raw.is_calc() && raw.tag() == taffy::CompactLength::LENGTH_TAG {
+        value
+    } else {
+        taffy::LengthPercentageAuto::auto()
+    }
 }
 
 fn ifc_content_height_bounds(

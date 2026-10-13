@@ -8428,18 +8428,44 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
     );
     // Without `avoid` the box breaks where it falls.
     assert_eq!(nested_avoiding_block("", ""), (60.0, 60.0, 2));
-    // An ancestor bounded by `min-height` keeps its used size.
+    // An ancestor bounded by `min-height` keeps its used size, and one
+    // bounded by `max-height` does not grow past it.
     assert_eq!(
         nested_avoiding_block("min-height:100px", "break-inside:avoid"),
         (100.0, 100.0, 2)
     );
-    // Items of a multi-column grid do not follow each other in block flow.
+    assert_eq!(
+        nested_avoiding_block("max-height:60px", "break-inside:avoid"),
+        (100.0, 60.0, 2)
+    );
+    // Bounds the content already satisfies do not stop the growth.
+    for wrapper in ["min-height:10px", "max-height:500px"] {
+        assert_eq!(
+            nested_avoiding_block(wrapper, "break-inside:avoid"),
+            (100.0, 100.0, 2),
+            "{wrapper}"
+        );
+    }
+    // Neither do the wrapper's bottom padding and border.
+    assert_eq!(
+        nested_avoiding_block(
+            "padding-bottom:5px;border-bottom:5px solid",
+            "break-inside:avoid"
+        ),
+        (100.0, 110.0, 2)
+    );
+    // Items of a multi-column grid or a row flex container do not follow
+    // each other in block flow.
     assert_eq!(
         nested_avoiding_block(
             "display:grid;grid-template-columns:50px 50px",
             "break-inside:avoid"
         ),
         (60.0, 60.0, 2)
+    );
+    assert_eq!(
+        nested_avoiding_block("display:inline-flex", "break-inside:avoid").0,
+        60.0
     );
 }
 
@@ -10449,6 +10475,27 @@ fn a_later_float_below_a_moved_float_keeps_its_place() {
 }
 
 #[test]
+fn a_clearing_float_stays_below_the_moved_floats_bottom_margin() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;margin-bottom:10px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 170.0], "{ys:?}");
+}
+
+#[test]
 fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
     let mut float = 0;
     let (doc, _) = paged_body(|doc, body| {
@@ -10580,6 +10627,91 @@ fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
         avoiding_row_group("break-inside:avoid", &[(20.0, ""), (30.0, "")], Some("")),
         100.0
     );
+}
+
+/// Appends `table > tbody(break-inside:avoid)` to `parent` and returns the
+/// row group.
+fn append_avoiding_table(doc: &mut Document, parent: usize) -> usize {
+    let table = doc.append_element(
+        Some(parent),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px;border-spacing:2px"),
+    );
+    doc.append_element(
+        Some(table),
+        "tbody",
+        Style::default(),
+        Some("display:table-row-group;break-inside:avoid"),
+    )
+}
+
+fn append_row(doc: &mut Document, group: usize, row_css: &str, height: f32) -> (usize, usize) {
+    let row = doc.append_element(
+        Some(group),
+        "tr",
+        Style::default(),
+        Some(&format!("display:table-row;{row_css}")),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some(&format!("display:table-cell;padding:0;height:{height}px")),
+    );
+    (row, cell)
+}
+
+#[test]
+fn an_avoiding_row_group_of_a_wrapped_table_keeps_its_table_spacing() {
+    let mut first_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let group = append_avoiding_table(doc, wrapper);
+        first_cell = append_row(doc, group, "", 20.0).1;
+        append_row(doc, group, "", 30.0);
+    });
+    assert_eq!(page_flow_y(&doc, first_cell), 102.0);
+}
+
+#[test]
+fn a_nested_table_does_not_hide_a_forced_break_after_its_row() {
+    let mut first_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let group = append_avoiding_table(doc, body);
+        let (_, cell) = append_row(doc, group, "break-after:page", 0.0);
+        first_cell = cell;
+        let inner = doc.append_element(
+            Some(cell),
+            "table",
+            Style::default(),
+            Some("display:table;width:50px"),
+        );
+        let inner_group = doc.append_element(
+            Some(inner),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        append_row(doc, inner_group, "", 10.0);
+        append_row(doc, group, "", 30.0);
+    });
+    // The forced break after the outer row ends the group, whose first part
+    // fits on the page.
+    assert_eq!(page_flow_y(&doc, first_cell), 62.0);
 }
 
 #[test]
