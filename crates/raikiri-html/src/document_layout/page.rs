@@ -327,19 +327,17 @@ impl<'a> Page<'a> {
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
         let (url, content) = self.document.page_generated_image(self.index(), image)?;
+        let owner = usize::try_from(image.owner.0).ok();
+        let pseudo = match image.kind {
+            crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
+            _ => raikiri_style::PseudoElem::Before,
+        };
         // An image that replaces its pseudo-element is drawn at its
         // `object-fit` rectangle, clipped to its box.
-        let object = usize::try_from(image.owner.0)
-            .ok()
+        let object = owner
             .and_then(|owner| {
-                self.document.content_image_object_rect(
-                    owner,
-                    match image.kind {
-                        crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
-                        _ => raikiri_style::PseudoElem::Before,
-                    },
-                    image.index,
-                )
+                self.document
+                    .content_image_object_rect(owner, pseudo, image.index)
             })
             .unwrap_or(PaintRect::new(0.0, 0.0, content.width, content.height));
         let rect = PaintRect::new(
@@ -356,14 +354,18 @@ impl<'a> Page<'a> {
         {
             return None;
         }
-        let pixels = source.get_decoded_at_size(
-            url,
-            raikiri_traits::ImageRasterSize {
+        // The size layout prepared the pixels at, which stays bounded when
+        // `object-fit` makes the object far larger than its box.
+        let raster = owner
+            .and_then(|owner| {
+                self.document
+                    .content_image_raster_size(owner, pseudo, image.index)
+            })
+            .unwrap_or(raikiri_traits::ImageRasterSize {
                 width: rect.width,
                 height: rect.height,
-            },
-            None,
-        )?;
+            });
+        let pixels = source.get_decoded_at_size(url, raster, None)?;
         let bytes = (pixels.width as usize)
             .checked_mul(pixels.height as usize)?
             .checked_mul(4)?;

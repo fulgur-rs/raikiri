@@ -292,6 +292,8 @@ struct PreparedImage {
     /// whole box, or the `object-fit` rectangle of an image that replaces
     /// its pseudo-element. Drawing is clipped to the box.
     object: raikiri_traits::PaintRect,
+    /// The raster size the pixels were requested at.
+    raster: raikiri_traits::ImageRasterSize,
 }
 
 /// DOM Document (root plus a Vec-backed node arena).
@@ -2976,6 +2978,7 @@ impl Document {
                     pixels: image,
                     size,
                     object: raikiri_traits::PaintRect::new(0.0, 0.0, size.width, size.height),
+                    raster: size,
                 },
             );
         }
@@ -3071,24 +3074,21 @@ impl Document {
                 // part.
                 let object_area = f64::from(object.width) * f64::from(object.height);
                 let box_area = f64::from(size.width) * f64::from(size.height);
-                let Some(image) = decode(
-                    &url,
-                    raikiri_traits::ImageRasterSize {
-                        width: object.width,
-                        height: object.height,
-                    },
-                )
-                .or_else(|| {
-                    (object_area > box_area).then_some(())?;
-                    let scale = (box_area / object_area).sqrt() as f32;
-                    decode(
-                        &url,
-                        raikiri_traits::ImageRasterSize {
+                let full = raikiri_traits::ImageRasterSize {
+                    width: object.width,
+                    height: object.height,
+                };
+                let Some((image, raster)) =
+                    decode(&url, full).map(|image| (image, full)).or_else(|| {
+                        (object_area > box_area).then_some(())?;
+                        let scale = (box_area / object_area).sqrt() as f32;
+                        let bounded = raikiri_traits::ImageRasterSize {
                             width: (object.width * scale).max(1.0),
                             height: (object.height * scale).max(1.0),
-                        },
-                    )
-                }) else {
+                        };
+                        decode(&url, bounded).map(|image| (image, bounded))
+                    })
+                else {
                     continue;
                 };
                 self.content_images.insert(
@@ -3098,6 +3098,7 @@ impl Document {
                         pixels: image,
                         size,
                         object,
+                        raster,
                     },
                 );
             }
@@ -3166,6 +3167,21 @@ impl Document {
     ) -> Option<raikiri_traits::PaintRect> {
         self.content_image_entry(element, pseudo, index)
             .map(|image| image.object)
+    }
+
+    /// The raster size the pixels of a prepared content image were
+    /// requested at: the size of its [`Self::content_image_object_rect`],
+    /// or a smaller one of the same aspect ratio when that raster did not
+    /// fit the image budget. Request pixels at this size to get the same
+    /// raster.
+    pub fn content_image_raster_size(
+        &self,
+        element: usize,
+        pseudo: raikiri_style::PseudoElem,
+        index: usize,
+    ) -> Option<raikiri_traits::ImageRasterSize> {
+        self.content_image_entry(element, pseudo, index)
+            .map(|image| image.raster)
     }
 
     fn content_image_entry(

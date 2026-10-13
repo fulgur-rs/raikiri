@@ -844,4 +844,9 @@ fn a_covering_content_image_too_large_for_the_budget_is_rastered_at_its_box_area
         .content_image_object_rect(p, PseudoElem::Before, 0)
         .unwrap();
     assert_eq!((object.width, object.height), (40.0, 40.0));
+    let raster = doc
+        .content_image_raster_size(p, PseudoElem::Before, 0)
+        .unwrap();
+    assert!((raster.width - 160f32.sqrt()).abs() < 1e-4);
+    assert!((raster.height - 160f32.sqrt()).abs() < 1e-4);
 }

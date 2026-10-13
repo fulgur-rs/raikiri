@@ -495,3 +495,60 @@ fn object_fit_places_a_replacing_image_in_its_box() {
         image("p::before{content:url(icon.png) 'B';width:40px;height:40px;object-fit:contain}");
     assert_eq!(mixed.rect, mixed.clip.rect);
 }
+
+/// A covering image whose `object-fit` rectangle is far larger than its box
+/// is rastered at the size layout prepared it at, not at the whole object.
+#[test]
+fn a_covering_image_is_rastered_at_its_prepared_size() {
+    /// A square image whose rasters above 10000 pixels are refused, as an
+    /// image budget would.
+    struct Bounded;
+    impl ImagePixelSource for Bounded {
+        fn get_decoded(&self, _: &Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+        fn intrinsic_size(&self, _: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(1.0),
+                height: Some(1.0),
+                aspect_ratio: Some(1.0),
+            })
+        }
+        fn get_decoded_at_size(
+            &self,
+            _: &Url,
+            size: raikiri_traits::ImageRasterSize,
+            _: Option<u64>,
+        ) -> Option<Arc<DecodedImage>> {
+            let width = size.width.ceil() as u32;
+            let height = size.height.ceil() as u32;
+            (width * height <= 10_000).then(|| {
+                Arc::new(DecodedImage {
+                    width,
+                    height,
+                    rgba: vec![0; (width * height * 4) as usize],
+                })
+            })
+        }
+    }
+    // The 200x2 box holds a 200x200 object.
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:url(icon.svg);width:200px;height:2px;object-fit:cover}",
+        &Bounded,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let ids: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => Some(*image),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 1);
+    let image = page.raster_generated_image(ids[0], &Bounded).unwrap();
+    assert_eq!((image.rect.width, image.rect.height), (200.0, 200.0));
+    assert_eq!((image.pixels.width, image.pixels.height), (20, 20));
+}
