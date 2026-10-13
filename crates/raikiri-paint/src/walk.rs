@@ -772,27 +772,14 @@ fn paint_page_background_layer(
         _ => return,
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
-    // `@page` paint/position areas with nonzero margins/borders (CSS Page 3
-    // page box plus CSS Backgrounds 3 sections 2.7-2.8): `area` is the page
-    // border box (full paper for the page background). Origin insets it to the
-    // positioning box; clip insets it to the painting box. `border-area`/`text`
-    // clips are explicitly rejected with a warning instead of silently
-    // omitting pixels.
+    // `@page` positioning area with nonzero margins/borders (CSS Page 3 page
+    // box plus CSS Backgrounds 3 section 2.8): `area` is the page border box
+    // (full paper for the page background), and origin insets it to the
+    // positioning box. The page background painting area covers the whole
+    // page box regardless of `background-clip` (CSS Page 3, "Page Backgrounds
+    // and Painting Order"), so every layer paints over all of `area`.
     let positioning = origin_inset_rect(area, layer.origin, border, padding, url, warnings);
-    let Some(painting) = clip_inset_rect(area, layer.clip, border, padding) else {
-        let what = if url.is_some() { "image" } else { "gradient" };
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: url.map(redacted_image_url),
-            },
-            node_id: None,
-            details: format!(
-                "page background-clip has an unsupported visual box; the {what} was skipped"
-            ),
-        });
-        return;
-    };
+    let painting = area;
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }

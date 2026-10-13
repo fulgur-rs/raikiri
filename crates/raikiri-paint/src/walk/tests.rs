@@ -2472,7 +2472,7 @@ fn background_page_clip_and_origin_explicit_values() {
 }
 
 #[test]
-fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
+fn background_page_images_ignore_clip_and_empty_area_skips() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -2489,31 +2489,44 @@ fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
         }
     }
     let source = RedPixels;
-    let (document, cascade) = canvas_fixture(
-        Some(
-            "@page { background-image: url('https://example.test/red.png'); background-clip: text; }",
-        ),
-        None,
-    );
-    let mut scene = Scene::new();
-    let mut warnings = Vec::new();
-    paint_page_background_image(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
-        Some(&source),
-        &mut warnings,
-    );
-    assert!(!warnings.is_empty());
-    assert_eq!(background_fill_count(&scene), 0);
+    let area = kurbo::Rect::new(0.0, 0.0, 100.0, 50.0);
+    // The page background painting area is the whole page box whatever
+    // `background-clip` says, unsupported clips included.
+    for clip in ["text", "border-area text", "content-box, padding-box"] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ background-image: url('https://example.test/red.png'), url('https://example.test/red.png'); background-clip: {clip}; border: 4px solid black; padding: 3px; }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            area,
+            Some(&source),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{clip}: {warnings:?}");
+        let clips: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(layer) => {
+                    Some(kurbo::Shape::bounding_box(&layer.clip))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(clips, vec![area, area], "{clip}");
+    }
 
-    // Empty painting area (tiny area with large borders) skips without warning.
-    let (_, empty_cascade) = canvas_fixture(
-        Some(
-            "@page { background-image: url('https://example.test/red.png'); border: 20px solid black; background-clip: padding-box; }",
-        ),
+    // An empty page area skips without warning.
+    let (document, empty_cascade) = canvas_fixture(
+        Some("@page { background-image: url('https://example.test/red.png'); }"),
         None,
     );
     let mut empty_scene = Scene::new();
@@ -2523,10 +2536,11 @@ fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
         &mut empty_scene,
         &document,
         &empty_cascade,
-        kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
         Some(&source),
         &mut empty_warnings,
     );
+    assert!(empty_warnings.is_empty());
     assert_eq!(background_fill_count(&empty_scene), 0);
 }
 
