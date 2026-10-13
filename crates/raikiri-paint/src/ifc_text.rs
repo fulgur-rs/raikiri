@@ -26,7 +26,7 @@ use std::convert::TryFrom;
 use std::sync::Arc;
 
 mod typographic;
-pub(crate) use typographic::BackgroundSlice;
+pub(crate) use typographic::{BackgroundSlice, Paragraph, enclosing_inline_opacities};
 
 /// Content-box origin of an ifc root in page coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -115,10 +115,16 @@ pub(crate) fn draw_ifc_lines_with_resources(
     let root_node = document
         .ifc_layout_node(root_id)
         .expect("positioned lines require an existing IFC root");
-    // One set of groups serves every line, so a pseudo-element split over
-    // lines composites its complete paint at once (CSS Color 4 §3.3).
+    // One set of groups serves every line, so an element or pseudo-element
+    // split over lines composites its complete paint at once (CSS Color 4
+    // §3.3).
     let all_pieces: Vec<_> = pieces_by_line.iter().flatten().cloned().collect();
-    let mut paint = typographic::TypographicPaint::new(root_node, &all_pieces, cascade);
+    let paragraph = typographic::Paragraph {
+        document,
+        cascade,
+        root_id,
+    };
+    let mut paint = typographic::TypographicPaint::new(paragraph, root_node, &all_pieces);
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
         let line = positioned_line.line;
@@ -181,7 +187,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             let group = paint.piece_group(piece);
             crate::walk::paint_inline_box(
                 image_cache,
-                paint.target(group),
+                paint.box_target(group, piece),
                 cv,
                 piece,
                 (!vertical)
@@ -259,10 +265,8 @@ pub(crate) fn draw_ifc_lines_with_resources(
         }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
-                paint.target(None),
-                document,
-                cascade,
-                root_id,
+                &mut paint,
+                paragraph,
                 line_index,
                 line,
                 hit_layout,
@@ -296,7 +300,17 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 })
                 .collect();
             let offset = positioned_run.offset;
-            let group = paint.nearest(positioned_run.style_owner, positioned_run.owner);
+            let paint_box = paint_box(
+                document,
+                cascade,
+                positioned_run.owner,
+                positioned_run.style_owner,
+            );
+            // Text outside every typographic box is in the groups of the
+            // inline elements around it.
+            let group = paint
+                .nearest(positioned_run.style_owner, positioned_run.owner)
+                .or_else(|| paint.element_group(paragraph, paint_box));
             runs.push(RunDraw {
                 run,
                 style: cv,
@@ -305,12 +319,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 decorations,
                 offset,
                 group,
-                paint_box: paint_box(
-                    document,
-                    cascade,
-                    positioned_run.owner,
-                    positioned_run.style_owner,
-                ),
+                paint_box,
             });
         }
         // Consecutive runs of one box paint in phases: every shadow, then
@@ -492,10 +501,8 @@ fn physical_glyph_transform(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_custom_highlights(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    root_id: usize,
+    paint: &mut typographic::TypographicPaint,
+    paragraph: Paragraph<'_>,
     line_index: usize,
     line: &shodo::Line,
     hit_layout: &LineLayout<'_>,
@@ -503,6 +510,11 @@ fn draw_custom_highlights(
     offsets: &[(usize, (f32, f32))],
     custom_highlights: &[crate::TextHighlightRange],
 ) {
+    let Paragraph {
+        document,
+        cascade,
+        root_id,
+    } = paragraph;
     let line_range = line.text_range();
     let Some(offset_mapping) = line.offset_mapping() else {
         return;
@@ -552,6 +564,13 @@ fn draw_custom_highlights(
         }
         let color = css_color_to_peniko(color);
         let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
+        // The highlight paints with its text, in the groups of the inline
+        // elements around it.
+        let group = paint.element_group(
+            paragraph,
+            paint_box(document, cascade, highlight.node, highlight.node),
+        );
+        let scene = paint.target(group);
         for selected in selection {
             let rect = Rect::new(
                 f64::from(position.x + offset_x + selected.inline_start),

@@ -9,7 +9,7 @@
 
 use cssparser::{Parser, ParserInput, Token};
 
-use super::calc_serialize::format_css_number;
+use super::calc_serialize::{format_css_number, serialize_calc_number};
 use super::css_component_values_are_bounded;
 use super::parse::next_numeric_stable;
 
@@ -54,11 +54,19 @@ pub fn serialize_alpha_value(name: &str, raw_value: &str) -> Option<String> {
         }
         _ => return None,
     };
-    // A result that is not finite as an `f32` (including one past its range)
-    // keeps its source text rather than reading back as a clamped number.
+    // A result past the `f32` range overflows to infinity (CSS Values 4
+    // §"Range Checking"); non-finite results read back as the canonical
+    // `infinity` / `-infinity` / `NaN` keywords rather than a clamped number.
     let folded = value.0 as f32;
     if !folded.is_finite() {
-        return None;
+        let keyword = serialize_calc_number(f64::from(folded));
+        // A non-finite dimension keeps its type as a product with one unit
+        // (CSS Values 4 §"Serialization").
+        return Some(if value.1 {
+            format!("calc({keyword} * 1%)")
+        } else {
+            format!("calc({keyword})")
+        });
     }
     Some(if value.1 {
         format!("calc({}%)", format_css_number(folded))
@@ -164,8 +172,7 @@ fn leaf(input: &mut Parser<'_, '_>, depth: usize) -> Option<Typed> {
     match next_numeric_stable(input).ok()? {
         Token::Number { value, .. } => Some((f64::from(value), false)),
         Token::Percentage { unit_value, .. } => Some((f64::from(unit_value) * 100.0, true)),
-        // Math constants. The non-finite ones fold to a value that keeps the
-        // source text, like any other non-finite result.
+        // Math constants, matched ASCII case-insensitively.
         Token::Ident(ident) => {
             let value = match ident.to_ascii_lowercase().as_str() {
                 "e" => std::f64::consts::E,

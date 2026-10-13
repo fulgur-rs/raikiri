@@ -1614,3 +1614,153 @@ fn calc_sums_and_content_read_back_in_canonical_form() {
         ""
     );
 }
+
+#[test]
+fn page_rule_selector_text_setter_replaces_only_a_valid_prelude() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page :first { margin: 1px; @top-left { content: \"a\" } } p { color: red }'; \
+         document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0]; \
+         pageRule.selectorText = 'named:LEFT';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.selectorText === 'named:left' && \
+         styleElement.textContent === '@page named:left { margin: 1px; @top-left { content: \"a\" } } p { color: red }' && \
+         pageRule.style.margin === '1px' && pageRule.cssRules.length === 1",
+    );
+    rt.evaluate("pageRule.selectorText = 'p { color: blue'; pageRule.selectorText = '::first';")
+        .unwrap();
+    ok(&mut rt, "pageRule.selectorText === 'named:left'");
+    rt.evaluate("pageRule.selectorText = 'Named:First';")
+        .unwrap();
+    ok(&mut rt, "pageRule.selectorText === 'Named:first'");
+    rt.evaluate("pageRule.selectorText = '';").unwrap();
+    ok(
+        &mut rt,
+        "pageRule.selectorText === '' && styleElement.sheet.cssRules.length === 2 && \
+         styleElement.textContent.startsWith('@page { margin: 1px;')",
+    );
+    // A style rule's selectorText stays read-only here.
+    rt.evaluate("var styleRule = styleElement.sheet.cssRules[1]; styleRule.selectorText = 'div';")
+        .unwrap();
+    ok(&mut rt, "styleRule.selectorText === 'p'");
+}
+
+#[test]
+fn page_rule_style_exposes_descriptor_attributes() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { size: a4; page-orientation: rotate-left } p { color: red }'; \
+         document.head.appendChild(styleElement); var style = styleElement.sheet.cssRules[0].style;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "style.size === 'a4' && style.pageOrientation === 'rotate-left' && \
+         style['page-orientation'] === 'rotate-left' && style.marks === '' && style.bleed === ''",
+    );
+    rt.evaluate(
+        "style.size = 'letter landscape'; style.pageOrientation = 'rotate-right'; \
+         style.marks = 'crop'; style.bleed = '6pt'; style.size = 'nonsense';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "style.getPropertyValue('size') === 'letter landscape' && \
+         style.getPropertyValue('page-orientation') === 'rotate-right' && \
+         style.marks === 'crop' && style.bleed === '6pt' && \
+         !Object.getOwnPropertyNames(Object.getPrototypeOf(style)).includes('pageOrientation') && \
+         !('size' in styleElement.sheet.cssRules[1].style)",
+    );
+}
+
+#[test]
+fn margin_rule_style_reads_and_writes_its_own_block() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { margin: 1px; @top-left { content: \"a\"; color: red } @bottom-center { color: blue } }'; \
+         document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0]; \
+         var topLeft = pageRule.cssRules[0]; var style = topLeft.style;",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules[0] === topLeft && topLeft.style === style && \
+         style.parentRule === topLeft && style.length === 2 && \
+         style.content === '\"a\"' && style.color === 'red' && style.margin === '' && \
+         pageRule.cssRules[1].style.color === 'blue'",
+    );
+    rt.evaluate("style.content = '\"b\"'; style.removeProperty('color');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "style.content === '\"b\"' && style.color === '' && topLeft.cssText.indexOf('\"b\"') > 0 && \
+         pageRule.style.margin === '1px' && pageRule.cssRules[1].style.color === 'blue' && \
+         pageRule.cssRules.length === 2",
+    );
+    rt.evaluate("style.cssText = 'color: green';").unwrap();
+    ok(
+        &mut rt,
+        "style.cssText === 'color: green;' && style.content === '' && \
+         topLeft.name === 'top-left' && pageRule.cssRules[1].name === 'bottom-center'",
+    );
+}
+
+#[test]
+fn stale_page_and_margin_rule_objects_do_not_rewrite_other_rules() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style');          styleElement.textContent = '@page { @top-left { color: red } }';          document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0];          var style = pageRule.cssRules[0].style; pageRule.deleteRule(0);          var threw = false; try { style.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }          styleElement.textContent = 'p { color: red }'; pageRule.selectorText = ':first';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "threw && style.color === '' && styleElement.textContent === 'p { color: red }'",
+    );
+}
+
+#[test]
+fn margin_rule_style_assignment_forwards_to_css_text() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "'use strict'; var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         document.head.appendChild(styleElement); var marginRule = styleElement.sheet.cssRules[0].cssRules[0]; \
+         var style = marginRule.style; marginRule.style = 'color: blue';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "marginRule.style === style && style.color === 'blue'",
+    );
+}
+
+#[test]
+fn margin_rules_are_rebuilt_when_their_page_rule_is_replaced() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         document.head.appendChild(styleElement); \
+         var before = styleElement.sheet.cssRules[0].cssRules[0]; var beforeStyle = before.style; \
+         styleElement.textContent = 'p {}'; styleElement.sheet.cssRules[0]; \
+         styleElement.textContent = '@page { @top-left { color: blue } }'; \
+         var after = styleElement.sheet.cssRules[0].cssRules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "after !== before && after.style !== beforeStyle && after.style.color === 'blue'",
+    );
+}

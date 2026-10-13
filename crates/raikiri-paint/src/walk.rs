@@ -28,6 +28,7 @@ use raikiri_style::property::{
     GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
     ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
     PropertyValue, Sides, TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
+    ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -1891,6 +1892,12 @@ pub(crate) fn paint_document_impl(
         /// deferred, then drop the layer.
         EndDeferral,
         PopClip,
+        /// Open the opacity group of a translucent inline element around a
+        /// box laid out beside its paragraph's lines.
+        PushOpacity {
+            node_id: usize,
+            alpha: f32,
+        },
         /// Close an element opacity group after its complete subtree.
         PopOpacity,
         /// Paint an originating element's `::after` pseudo after its real
@@ -2285,6 +2292,25 @@ pub(crate) fn paint_document_impl(
                     t.push(crate::PaintTraceEvent::PopClip);
                 }
                 scene.pop_layer();
+                continue;
+            }
+            PaintFrame::PushOpacity { node_id, alpha } => {
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PushOpacity(node_id, alpha));
+                }
+                scene.scene.push_layer(
+                    Mix::Normal,
+                    alpha,
+                    Affine::IDENTITY,
+                    &Rect::new(
+                        0.0,
+                        0.0,
+                        f64::from(page_box.width.max(0.0)),
+                        f64::from(page_box.height.max(0.0)),
+                    ),
+                    None,
+                    None,
+                );
                 continue;
             }
             PaintFrame::PopOpacity => {
@@ -3603,6 +3629,7 @@ pub(crate) fn paint_document_impl(
                         && !fixed_in_viewport;
                 // Frames of the children, last child first.
                 let mut child_frames = Vec::new();
+                let mut below_lines_frames = Vec::new();
                 for child in children.into_iter().rev() {
                     if let Some(cell) = document
                         .ifc_layout_node(child)
@@ -3668,7 +3695,35 @@ pub(crate) fn paint_document_impl(
                             (*offset_child == child).then_some(*offset)
                         })
                         .unwrap_or(0.0);
-                    child_frames.push(PaintFrame::Visit {
+                    // A box beside the lines inside translucent inline
+                    // elements paints inside their opacity. Each box gets
+                    // layers of its own, apart from the group the elements'
+                    // text composites in.
+                    let inline_opacities = if node.is_ifc_root() {
+                        crate::ifc_text::enclosing_inline_opacities(
+                            crate::ifc_text::Paragraph {
+                                document,
+                                cascade,
+                                root_id: node_id,
+                            },
+                            child,
+                        )
+                    } else {
+                        Vec::new()
+                    };
+                    // A box with a negative stack level paints below the
+                    // paragraph's lines (CSS 2.1 Appendix E steps 3 and 7).
+                    let frames = if node.is_ifc_root()
+                        && cascade.computed.get(child).is_some_and(|child_cv| {
+                            child_cv.position != PositionValue::Static
+                                && matches!(child_cv.z_index, ZIndexValue::Integer(level) if level < 0)
+                        }) {
+                        &mut below_lines_frames
+                    } else {
+                        &mut child_frames
+                    };
+                    frames.extend(inline_opacities.iter().map(|_| PaintFrame::PopOpacity));
+                    frames.push(PaintFrame::Visit {
                         node_id: child,
                         parent_abs_x: child_parent_x
                             + generated_text_shift
@@ -3691,9 +3746,16 @@ pub(crate) fn paint_document_impl(
                             || establishes_fixed_containing_block,
                         decorations: child_decorations.clone(),
                     });
+                    frames.extend(
+                        inline_opacities
+                            .iter()
+                            .rev()
+                            .map(|&(node_id, alpha)| PaintFrame::PushOpacity { node_id, alpha }),
+                    );
                 }
                 if defers && node.is_ifc_root() {
                     if let Some(pending) = deferral_scopes.last_mut() {
+                        pending.extend(below_lines_frames.into_iter().rev());
                         pending.extend(lines_frame);
                         pending.extend(child_frames.into_iter().rev());
                         // A standalone `::after` still follows the content
@@ -3711,6 +3773,7 @@ pub(crate) fn paint_document_impl(
                     }
                     stack.extend(child_frames);
                     stack.extend(lines_frame);
+                    stack.extend(below_lines_frames);
                 }
             }
             NodeKind::Text => {
