@@ -40,9 +40,30 @@ impl MarkerText {
         self.shaped.lines().len()
     }
 
-    /// How far the marker's line moves down from the item's border edge.
-    pub(super) fn offset_y(&self) -> f32 {
-        self.offset_y
+    /// The top of the marker's line for an item whose border edge is at
+    /// `top` on a page whose content ends at `page_bottom`.
+    ///
+    /// The marker is drawn only on its item's first page. When the line it
+    /// aligns with starts on a later page, the marker stays at the bottom of
+    /// this one rather than past its edge.
+    pub(super) fn line_top(&self, top: f32, page_bottom: f32) -> f32 {
+        let height = self
+            .shaped
+            .lines()
+            .first()
+            .map_or(0.0, |line| line.block_size());
+        let aligned = top + self.offset_y;
+        // The aligned line's page is decided by its middle, as it is for the
+        // line itself; without one, by the marker's top.
+        let next_page = match self.line_center {
+            Some(center) => top + center >= page_bottom - 0.001,
+            None => aligned >= page_bottom,
+        };
+        if next_page {
+            (page_bottom - height).max(top)
+        } else {
+            aligned
+        }
     }
 }
 
@@ -1099,27 +1120,7 @@ fn marker_runs<'a>(
         } else {
             page.content_origin_y
         };
-    // The marker is drawn only on its item's first page. When the line it
-    // aligns with starts on a later page, keep the marker at the bottom of
-    // this one rather than past its edge.
-    let height = marker
-        .shaped
-        .lines()
-        .first()
-        .map_or(0.0, |line| line.block_size());
-    let page_bottom = page.content_box.y + page.content_box.height;
-    let aligned = top + marker.offset_y;
-    // The aligned line's page is decided by its middle, as it is for the
-    // line itself; without one, by the marker's top.
-    let next_page = match marker.line_center {
-        Some(center) => top + center >= page_bottom - 0.001,
-        None => aligned >= page_bottom,
-    };
-    let y = if next_page {
-        (page_bottom - height).max(top)
-    } else {
-        aligned
-    };
+    let y = marker.line_top(top, page.content_box.y + page.content_box.height);
     standalone_runs(
         &marker.shaped,
         (x, y),

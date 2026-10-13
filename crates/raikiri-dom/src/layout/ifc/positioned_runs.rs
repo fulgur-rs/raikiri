@@ -395,9 +395,20 @@ pub fn cumulative_offset(
 /// The characters are the ones that no glyph run covers, in logical order.
 /// When every glyph run's bidi level has the parity of the line's direction,
 /// logical order runs from the line's inline start, so the objects sorted by
-/// inline position take the characters in turn. A line that mixes
-/// directions, or whose counts disagree, yields `None`.
+/// inline position take the characters in turn. Objects have no bidi level
+/// of their own, so an embedding, override or isolate opened up to the end
+/// of the line could reorder them unseen. A line that mixes directions, may
+/// hold such reordering, or whose counts disagree, yields `None`.
 fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
+    let range = line.text_range();
+    if line.text().get(..range.end)?.chars().any(|c| {
+        matches!(
+            c,
+            '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        )
+    }) {
+        return None;
+    }
     let rtl = u8::from(line.used_direction() == shodo::geometry::Direction::Rtl);
     let mut covered = Vec::new();
     let mut objects = Vec::new();
@@ -414,7 +425,6 @@ fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
             _ => {}
         }
     }
-    let range = line.text_range();
     let text = line.text().get(range.clone())?;
     let slots: Vec<usize> = text
         .match_indices('\u{FFFC}')

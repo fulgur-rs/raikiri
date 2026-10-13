@@ -1056,6 +1056,22 @@ fn assert_cases_match_paint(cases: &[(&str, &str)]) {
     }
 }
 
+/// A marker whose item's first line starts on the next page stays at the
+/// bottom of the item's first page, in the painter as in the page's runs.
+#[test]
+fn a_marker_whose_first_line_moves_on_matches_paint() {
+    assert_cases_match_paint(&[
+        (
+            "<ol><li style=\"padding-top: 145px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        (
+            "<ol><li style=\"padding-top: 150px; line-height: 30px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+    ]);
+}
+
 #[test]
 fn relatively_positioned_text_matches_paint() {
     let words = vec!["word"; 40].join(" ");

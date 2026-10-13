@@ -422,6 +422,25 @@ fn images_order_with_generated_text_by_text_offset() {
         .collect();
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0].1, None);
+    // Images alone in an override have no runs to show their reordering.
+    let document = lay_out(
+        "<p><span></span>X</p>",
+        "span{unicode-bidi:bidi-override;direction:rtl}\
+         span::before{content:url(a.png) url(b.png)}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let offsets: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => page.generated_image_text_position(image),
+            _ => None,
+        })
+        .map(|(_, offset)| offset)
+        .collect();
+    assert_eq!(offsets, [None, None]);
 }
 
 #[test]
@@ -437,6 +456,15 @@ fn a_relative_pseudo_element_moves_its_images() {
     assert_eq!(images[0].rect, PaintRect::new(10.0, 15.0, 8.0, 4.0));
     // The offset moves the pseudo-element alone, not the text after it.
     assert_eq!(run(&runs, "AB").origin.0, 8.0);
+    // With `display: contents` there is no box for the offset to move.
+    let document = lay_out(
+        "<p>AB</p>",
+        "p::before{content:url(icon.png);display:contents;position:relative;left:10px;top:3px}",
+        &pixels,
+    );
+    let (images, _) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect, PaintRect::new(0.0, 12.0, 8.0, 4.0));
 }
 
 /// An image alone in `content` replaces its pseudo-element, so `object-fit`

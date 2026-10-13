@@ -388,6 +388,27 @@ fn a_first_letter_box_follows_the_box_of_its_inline_source() {
     assert!(span < letters[0].0);
 }
 
+/// A first letter taken from `::after` text is painted above that
+/// pseudo-element's background, as its box nests inside it.
+#[test]
+fn a_first_letter_box_follows_the_after_box_it_comes_from() {
+    let document = lay_out(
+        "<p><span></span></p>",
+        "p{margin:0}span::after{content:'A';background:blue}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    let after = events
+        .iter()
+        .position(|event| {
+            matches!(event, PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::After)
+        })
+        .unwrap();
+    assert!(after < letters[0].0);
+}
+
 /// A relatively positioned `::before` moves its own text and box, as a
 /// relatively positioned inline element does (CSS 2.1 §9.4.3).
 #[test]

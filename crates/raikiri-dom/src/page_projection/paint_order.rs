@@ -1123,7 +1123,8 @@ fn push_paragraph<'a>(
     }
     elements.push((first, Some(GeneratedKind::Before)));
     // A `::first-letter` box wraps letters inside the element they come
-    // from, so it follows that element's box and `::before` box.
+    // from, so it follows that element's box and `::before` box, or its
+    // `::after` box when the letters are that pseudo-element's.
     elements.push((first, Some(GeneratedKind::FirstLetter)));
     let mut nested = Vec::new();
     let mut texts = Vec::new();
@@ -1175,7 +1176,7 @@ fn push_paragraph<'a>(
         .filter(|&&(id, kind)| kind.is_none() && id != first)
         .map(|&(id, _)| id)
         .collect();
-    let letters: Vec<(usize, usize, &super::generated_boxes::BoxPiece)> = items
+    let letters: Vec<(usize, bool, usize, &super::generated_boxes::BoxPiece)> = items
         .generated_boxes
         .into_iter()
         .flat_map(|boxes| {
@@ -1187,14 +1188,15 @@ fn push_paragraph<'a>(
         .filter(|((_, _, kind), _)| *kind == GeneratedKind::FirstLetter)
         .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
         .filter_map(|(owner, piece)| {
-            let anchor = first_letter_anchor(document, root, piece);
+            let (anchor, after) = first_letter_anchor(document, root, piece)
+                .map_or((None, false), |(anchor, after)| (Some(anchor), after));
             let held = anchor
                 .and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor));
             (held == group).then(|| {
                 let anchor = anchor
                     .filter(|anchor| listed.contains(anchor))
                     .unwrap_or(first);
-                (anchor, owner, piece)
+                (anchor, after, owner, piece)
             })
         })
         .collect();
@@ -1210,23 +1212,27 @@ fn push_paragraph<'a>(
             }
             None => {}
             Some(kind) => {
-                let pieces: Vec<(usize, &super::generated_boxes::BoxPiece)> =
-                    if kind == GeneratedKind::FirstLetter {
-                        letters
-                            .iter()
-                            .filter(|&&(anchor, _, _)| anchor == node_id)
-                            .map(|&(_, owner, piece)| (owner, piece))
-                            .collect()
-                    } else {
-                        items
-                            .generated_boxes
-                            .and_then(|boxes| boxes.get(&(root, node_id, kind)))
-                            .into_iter()
-                            .flatten()
-                            .map(|piece| (node_id, piece))
-                            .collect()
-                    };
-                for (owner, piece) in pieces {
+                let own = items
+                    .generated_boxes
+                    .and_then(|boxes| boxes.get(&(root, node_id, kind)))
+                    .into_iter()
+                    .flatten()
+                    .filter(|_| kind != GeneratedKind::FirstLetter)
+                    .map(|piece| (node_id, kind, piece));
+                // The first letters held by this element's text, or by its
+                // `::after` text, which come after the `::after` box.
+                let held = letters
+                    .iter()
+                    .filter(|&&(anchor, after, _, _)| {
+                        anchor == node_id
+                            && match kind {
+                                GeneratedKind::FirstLetter => !after,
+                                GeneratedKind::After => after,
+                                _ => false,
+                            }
+                    })
+                    .map(|&(_, _, owner, piece)| (owner, GeneratedKind::FirstLetter, piece));
+                for (owner, kind, piece) in own.chain(held) {
                     let owner_id = NodeId::new(owner as u64);
                     let Some(style) = root_node_ifc
                         .and_then(|node| column_projection_style(node, items.cascade, piece))
@@ -1282,22 +1288,23 @@ fn push_paragraph<'a>(
 
 /// The element of paragraph `root` whose letters a `::first-letter` piece
 /// wraps: the parent of the text, or the originating element of the
-/// `::before` or `::after` text, they come from.
+/// `::before` or `::after` text, they come from; and whether they are its
+/// `::after` text.
 fn first_letter_anchor(
     document: &Document,
     root: usize,
     piece: &super::generated_boxes::BoxPiece,
-) -> Option<usize> {
+) -> Option<(usize, bool)> {
     let source = document
         .ifc_layout_node(root)?
         .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
         .1;
-    if let Some((element, _)) = crate::generated_content::generated_origin(source) {
-        return Some(element);
+    if let Some((element, pseudo)) = crate::generated_content::generated_origin(source) {
+        return Some((element, pseudo == PseudoElem::After));
     }
     match document.get_node(source)?.kind() {
-        NodeKind::Text => document.parent_of(source),
-        _ => Some(source),
+        NodeKind::Text => document.parent_of(source).map(|parent| (parent, false)),
+        _ => Some((source, false)),
     }
 }
 

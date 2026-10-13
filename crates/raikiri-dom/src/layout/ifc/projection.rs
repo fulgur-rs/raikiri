@@ -357,7 +357,11 @@ fn push_generated(
     let id = NodeId(generated_node_id(element, pseudo) as u64);
     // The pseudo-element's own relative offset moves its text and images
     // like those of a relatively positioned inline element (CSS 2.1 §9.4.3).
-    if pseudo != PseudoElem::Marker && cv.position == PositionValue::Relative {
+    // With `display: contents` it generates no box for the offset to move.
+    if pseudo != PseudoElem::Marker
+        && cv.display != DisplayValue::Contents
+        && cv.position == PositionValue::Relative
+    {
         images
             .offsets
             .push((id.0 as usize, style::relative_offset_in_lines(cv)));

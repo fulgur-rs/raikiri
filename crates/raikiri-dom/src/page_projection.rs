@@ -114,16 +114,18 @@ impl Document {
         ))
     }
 
-    /// How far down from its list item's border edge an outside text marker
-    /// is drawn so its baseline meets the item's first line, as in
-    /// [`crate::PositionedGlyphRun`]s of the page. `None` when layout
-    /// prepared no text marker for `owner`.
+    /// The top of an outside text marker's line, for a list item whose
+    /// border edge is at `top` on a page whose content ends at
+    /// `page_bottom`, as in [`crate::PositionedGlyphRun`]s of the page: its
+    /// baseline meets the item's first line, and it stays on the page when
+    /// that line starts on a later one. `None` when layout prepared no text
+    /// marker for `owner`.
     #[doc(hidden)]
-    pub fn list_marker_text_offset_y(&self, owner: usize) -> Option<f32> {
+    pub fn list_marker_text_top(&self, owner: usize, top: f32, page_bottom: f32) -> Option<f32> {
         self.page_projection
             .markers
             .get(&owner)
-            .map(|marker| marker.offset_y())
+            .map(|marker| marker.line_top(top, page_bottom))
     }
 
     /// The line holding one image of `::before` or `::after` content placed
