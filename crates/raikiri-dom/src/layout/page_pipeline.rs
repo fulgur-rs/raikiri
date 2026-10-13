@@ -2517,7 +2517,10 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
         let mut float_after_break = false;
-        let mut previous_page_name = None;
+        // Generated `::before` content is not an arena child; like text, it
+        // takes the parent's page.
+        let mut previous_page_name =
+            generates_before_content(cascade, parent).then(|| inherited.clone());
         for item in child_boxes(document, parent) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
@@ -2586,6 +2589,24 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         document.forced_break_clearance = cleared;
         document.layout_dirty = true;
     }
+}
+
+/// Whether `node_id` generates nonempty `::before` content.
+fn generates_before_content(cascade: &CascadeResult, node_id: usize) -> bool {
+    cascade
+        .pseudo
+        .get(&(
+            raikiri_style::StyleNodeId::new(node_id as u64),
+            raikiri_style::PseudoElem::Before,
+        ))
+        .is_some_and(|pseudo| {
+            pseudo.display != DisplayValue::None
+                && !pseudo.content.is_empty()
+                && !pseudo
+                    .content
+                    .iter()
+                    .any(|part| matches!(part, raikiri_style::property::ContentComponent::None))
+        })
 }
 
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
