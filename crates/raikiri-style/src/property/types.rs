@@ -8592,48 +8592,43 @@ impl Contain {
     }
 }
 
-/// Specified and computed value of `will-change`, reduced to the effects
-/// the named properties would have.
+/// Specified and computed value of `will-change`, reduced to the named
+/// properties that can make a box a containing block.
 ///
 /// CSS Will Change 1 §3 "Hinting at Future Behavior: the will-change
 /// property" <https://www.w3.org/TR/css-will-change-1/#will-change>.
 /// Grammar: `auto | <animateable-feature>#`. **Non-inherited**. Naming a
 /// property whose non-initial value would make the box a containing block
-/// for absolutely or fixed positioned descendants does so now.
+/// for absolutely or fixed positioned descendants does so now, where that
+/// property applies to the box.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WillChange(u8);
 
 impl WillChange {
     /// `auto`, the initial value, or features with no effect here.
     pub const AUTO: Self = Self(0);
-    /// A named property makes the box the containing block of its
-    /// absolutely positioned descendants (`position`).
-    pub const ABSOLUTE_CONTAINING_BLOCK: Self = Self(1);
-    /// A named property makes the box the containing block of its
-    /// absolutely and fixed positioned descendants (`transform`, `filter`,
-    /// `contain` and the like).
-    pub const FIXED_CONTAINING_BLOCK: Self = Self(1 << 1);
+    /// `position`, which makes the box the containing block of its
+    /// absolutely positioned descendants.
+    pub const POSITION: Self = Self(1);
+    /// `transform`, `translate`, `rotate`, `scale` or `perspective`, which
+    /// make a transformable box the containing block of its absolutely and
+    /// fixed positioned descendants.
+    pub const TRANSFORM: Self = Self(1 << 1);
+    /// `filter` or `backdrop-filter`, which make the box the containing
+    /// block of its absolutely and fixed positioned descendants.
+    pub const FILTER: Self = Self(1 << 2);
+    /// `contain`, which makes a box that layout containment applies to the
+    /// containing block of its absolutely and fixed positioned descendants.
+    pub const CONTAIN: Self = Self(1 << 3);
 
-    /// Whether every effect of `other` is on.
+    /// Whether every feature of `other` is named.
     pub const fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }
 
-    /// The effects of both values.
+    /// The features of both values.
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
-    }
-
-    /// Whether the box is the containing block of its absolutely positioned
-    /// descendants.
-    pub const fn contains_absolute_descendants(self) -> bool {
-        self.0 != 0
-    }
-
-    /// Whether the box is the containing block of its fixed positioned
-    /// descendants.
-    pub const fn contains_fixed_descendants(self) -> bool {
-        self.contains(Self::FIXED_CONTAINING_BLOCK)
     }
 }
 

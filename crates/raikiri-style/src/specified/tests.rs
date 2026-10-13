@@ -575,7 +575,7 @@ fn parent_fixture() -> ComputedValues {
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Containment 2 §2 / CSS Will Change 1 §3: non-inherited.
         contain: crate::property::Contain::CONTENT,
-        will_change: crate::property::WillChange::FIXED_CONTAINING_BLOCK,
+        will_change: crate::property::WillChange::TRANSFORM,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited; set values other than the
         // initial `none`.
         mask_image: MaskImage::Url("mask.svg".into()),

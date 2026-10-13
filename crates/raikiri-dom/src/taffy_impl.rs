@@ -923,15 +923,22 @@ fn measure_ifc_root(
         return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
     };
     // A fixed box shrinks to fit against its containing block, the page area
-    // (CSS 2.1 10.1), while taffy hands it its parent's room.
+    // (CSS 2.1 10.1), while taffy hands it its parent's room. A min-content or
+    // max-content measure is not a room to fit, and is kept.
     let page_width = tree.ifc.as_ref().and_then(|state| state.page_width);
     let available = match page_width {
-        Some(page_width) if fixed && !measure.stretched_width => Size {
-            width: AvailableSpace::Definite(
-                (page_width - measure.edges.0 - measure.edges.1).max(0.0),
-            ),
-            ..available
-        },
+        Some(page_width)
+            if fixed
+                && !measure.stretched_width
+                && matches!(available.width, AvailableSpace::Definite(_)) =>
+        {
+            Size {
+                width: AvailableSpace::Definite(
+                    (page_width - measure.edges.0 - measure.edges.1).max(0.0),
+                ),
+                ..available
+            }
+        }
         _ => available,
     };
     // Take the engine state only around the calls into the engine: laying

@@ -22,14 +22,31 @@
 //! ancestor has the initial containing block as its containing block (CSS 2.1
 //! §10.1), which in paged media has the size of the page area and starts at
 //! the root's border box origin like the page area of the first page. Taffy
-//! places such a box against its parent too, so one nested below a static
-//! block is laid out again here the same way.
+//! places such a box against its parent too, so it is laid out again here
+//! the same way.
 
 use super::*;
+use raikiri_style::property::WillChange;
 use taffy::util::{MaybeMath, MaybeResolve, ResolveOrZero};
 use taffy::{
     AlignContentKeyword, AlignItemsKeyword, AlignmentSafety, Line, Position as TaffyPosition,
 };
+
+/// Whether the element generates a non-atomic inline box: an inline box that
+/// was not blockified.
+fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    // spec: https://www.w3.org/TR/css-display-3/#transformations
+    // Out-of-flow boxes and flex and grid items are blockified.
+    cv.display == DisplayValue::Inline
+        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+        && cv.float == FloatValue::None
+        && !document.taffy_parent_of(id).is_some_and(|parent| {
+            matches!(
+                document.nodes[parent].style.display,
+                Display::Flex | Display::Grid
+            )
+        })
+}
 
 /// Whether the element's `transform` applies to it.
 fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
@@ -39,7 +56,7 @@ fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     !matches!(
         cv.display,
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && (cv.display != DisplayValue::Inline
+    ) && (!generates_inline_box(document, id, cv)
         || node.is_inline_svg_root()
         || matches!(
             node.tag_name(),
@@ -48,21 +65,20 @@ fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
 }
 
 /// Whether layout and paint containment apply to the element.
-fn containable(cv: &ComputedValues) -> bool {
+fn containable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
     // They have no effect on internal table boxes other than cells, and on
     // non-atomic inline boxes.
     !matches!(
         cv.display,
-        DisplayValue::Inline
-            | DisplayValue::Contents
+        DisplayValue::Contents
             | DisplayValue::TableRow
             | DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup
             | DisplayValue::TableColumn
             | DisplayValue::TableColumnGroup
-    )
+    ) && !generates_inline_box(document, id, cv)
 }
 
 /// Whether `id` is the containing block of its fixed-position descendants.
@@ -71,10 +87,17 @@ fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &Compu
     // spec: https://drafts.fxtf.org/filter-effects-1/#FilterProperty
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
     // spec: https://www.w3.org/TR/css-will-change-1/#will-change
-    (transformable(document, id, cv) && !cv.transform.is_empty())
-        || !cv.filter.is_empty()
-        || (containable(cv) && cv.contain.contains_positioned_descendants())
-        || cv.will_change.contains_fixed_descendants()
+    // A box that is not generated contains nothing (CSS Display 3 §2.5).
+    let transformable = transformable(document, id, cv);
+    let containable = containable(document, id, cv);
+    cv.display != DisplayValue::Contents
+        && ((transformable
+            && (!cv.transform.is_empty() || cv.will_change.contains(WillChange::TRANSFORM)))
+            || !cv.filter.is_empty()
+            || cv.will_change.contains(WillChange::FILTER)
+            || (containable
+                && (cv.contain.contains_positioned_descendants()
+                    || cv.will_change.contains(WillChange::CONTAIN))))
 }
 
 /// Whether `id` is the containing block of its absolutely positioned
@@ -85,8 +108,9 @@ fn establishes_absolute_containing_block(
     cv: &ComputedValues,
 ) -> bool {
     // spec: https://www.w3.org/TR/CSS21/visudet.html#containing-block-details
-    cv.position != PositionValue::Static
-        || cv.will_change.contains_absolute_descendants()
+    // spec: https://www.w3.org/TR/css-display-3/#box-generation
+    (cv.display != DisplayValue::Contents
+        && (cv.position != PositionValue::Static || cv.will_change.contains(WillChange::POSITION)))
         || establishes_fixed_containing_block(document, id, cv)
 }
 
@@ -154,9 +178,9 @@ fn visit_page_fixed_boxes(
         // A transformed or filtered body contains its fixed descendants.
         return;
     }
-    // Taffy already places the absolutely positioned children of the root
-    // against the root, which stands in for the initial containing block.
-    // Below them, only boxes that no ancestor contains are placed again.
+    // Taffy places absolutely positioned boxes against their taffy parent;
+    // those that no ancestor contains are placed again against the initial
+    // containing block, which the page area stands in for.
     let root_contains_absolute = std::iter::successors(Some(root), |&id| document.parent_of(id))
         .any(|id| {
             cascade
@@ -185,9 +209,7 @@ fn visit_page_fixed_boxes(
         let out_of_flow = node.style.position == TaffyPosition::Absolute;
         if out_of_flow
             && (cv.position == PositionValue::Fixed
-                || (cv.position == PositionValue::Absolute
-                    && uncontained
-                    && document.parent_of(id) != Some(root)))
+                || (cv.position == PositionValue::Absolute && uncontained))
         {
             visit(document, id, parent_origin);
         }
@@ -439,13 +461,32 @@ fn place_fixed_box(
     };
     let old_margin_box = margin_box(current.size, current.margin);
     let new_margin_box = margin_box(final_size, resolved_margin);
-    let alignment = static_position_alignment(tree, id, new_margin_box);
+    // The margin box sits at `alignment * (space - margin box)` from the
+    // start of the space its parent aligns it in; the alignment itself may
+    // change when the new size overflows that space.
+    let (old_alignment, space) = static_position_alignment(tree, id, old_margin_box);
+    let (new_alignment, _) = static_position_alignment(tree, id, new_margin_box);
+    let shift = |space: f32, old: f32, new: f32, old_alignment: f32, new_alignment: f32| {
+        new_alignment * (space - new) - old_alignment * (space - old)
+    };
     let static_x = current.location.x - current.margin.left
         + resolved_margin.left
-        + alignment.width * (old_margin_box.width - new_margin_box.width);
+        + shift(
+            space.width,
+            old_margin_box.width,
+            new_margin_box.width,
+            old_alignment.width,
+            new_alignment.width,
+        );
     let static_y = current.location.y - current.margin.top
         + resolved_margin.top
-        + alignment.height * (old_margin_box.height - new_margin_box.height);
+        + shift(
+            space.height,
+            old_margin_box.height,
+            new_margin_box.height,
+            old_alignment.height,
+            new_alignment.height,
+        );
     let location = Point {
         x: page_x.map_or(static_x, |x| x - parent_origin.x),
         y: page_y.map_or(static_y, |y| y - parent_origin.y),
@@ -601,13 +642,17 @@ fn resolve_sizing_keywords(
     }
 }
 
-/// The share of a change in the margin box size of the absolutely positioned
-/// box `id` that moves its static position left and up, in each axis: 0
-/// keeps its start edge, 1 its end edge and 0.5 its center. `margin_box` is
-/// its new margin box size.
-fn static_position_alignment(tree: &Document, id: usize, margin_box: Size<f32>) -> Size<f32> {
+/// How the parent of the absolutely positioned box `id` aligns a margin box
+/// of size `margin_box` at its static position, in each axis: the share of
+/// the free space before the box (0 at the start edge, 1 at the end edge and
+/// 0.5 centered) and the space the box is aligned in.
+fn static_position_alignment(
+    tree: &Document,
+    id: usize,
+    margin_box: Size<f32>,
+) -> (Size<f32>, Size<f32>) {
     let Some(parent) = tree.taffy_parent_of(id) else {
-        return Size::ZERO;
+        return (Size::ZERO, Size::ZERO); // cov:ignore: a placed box has a parent
     };
     let parent_style = &tree.nodes[parent].style;
     let rtl = parent_style.direction == TaffyDirection::Rtl;
@@ -618,7 +663,9 @@ fn static_position_alignment(tree: &Document, id: usize, margin_box: Size<f32>) 
         height: 0.0,
     };
     if parent_style.display != Display::Flex {
-        return block;
+        // The alignment does not depend on the size, so neither does the
+        // shift.
+        return (block, Size::ZERO);
     }
     // CSS Flexbox 1 §4.1: the static position of an absolutely positioned
     // child of a flex container is that of the sole flex item, aligned by
@@ -635,13 +682,48 @@ fn static_position_alignment(tree: &Document, id: usize, margin_box: Size<f32>) 
     let main_reversed = reverse ^ main_is_rtl;
     let cross_reversed = (parent_style.flex_wrap == TaffyFlexWrap::WrapReverse) ^ cross_is_rtl;
     let flex = |end: bool, reversed: bool| if end ^ reversed { 1.0 } else { 0.0 };
+    let layout = tree.nodes[parent].unrounded_layout;
+    let insets = (layout.padding + layout.border).sum_axes();
+    let space = Size {
+        width: layout.size.width - insets.width,
+        height: layout.size.height - insets.height,
+    };
+    let (main_space, main_size, cross_space, cross_size) = if is_row {
+        (
+            space.width,
+            margin_box.width,
+            space.height,
+            margin_box.height,
+        )
+    } else {
+        (
+            space.height,
+            margin_box.height,
+            space.width,
+            margin_box.width,
+        )
+    };
+    // CSS Box Alignment 3 §4.4: safe alignment that would overflow the
+    // container aligns as start, and so do the distributed values, whose
+    // fallback is safe, for an overflowing box.
+    // spec: https://www.w3.org/TR/css-align-3/#overflow-values
+    // spec: https://www.w3.org/TR/css-align-3/#distribution-values
+    let justify = parent_style
+        .justify_content
+        .unwrap_or(TaffyAlignContent::FLEX_START);
     // `start` and `end` follow the writing mode; `flex-start`, `flex-end`
     // and the fallbacks of the distributed values follow the flex direction.
-    let main = match parent_style
-        .justify_content
-        .unwrap_or(TaffyAlignContent::FLEX_START)
-        .keyword()
-    {
+    let main_overflows = main_size > main_space;
+    let main_keyword = match justify.keyword() {
+        AlignContentKeyword::SpaceAround | AlignContentKeyword::SpaceEvenly if main_overflows => {
+            AlignContentKeyword::Start
+        }
+        _ if justify.safety == AlignmentSafety::Safe && main_overflows => {
+            AlignContentKeyword::Start
+        }
+        keyword => keyword,
+    };
+    let main = match main_keyword {
         AlignContentKeyword::Start => flex(false, main_is_rtl),
         AlignContentKeyword::End => flex(true, main_is_rtl),
         AlignContentKeyword::Center
@@ -660,15 +742,6 @@ fn static_position_alignment(tree: &Document, id: usize, margin_box: Size<f32>) 
     // `self-start` and `self-end` follow the box's own direction where the
     // cross axis is its inline axis.
     let flip = !is_row && style.direction != parent_style.direction;
-    let layout = tree.nodes[parent].unrounded_layout;
-    let insets = (layout.padding + layout.border).sum_axes();
-    let (cross_space, cross_size) = if is_row {
-        (layout.size.height - insets.height, margin_box.height)
-    } else {
-        (layout.size.width - insets.width, margin_box.width)
-    };
-    // CSS Box Alignment 3 §4.4: safe alignment that would overflow the
-    // container aligns as start.
     let keyword = if align.safety == AlignmentSafety::Safe && cross_size > cross_space {
         AlignItemsKeyword::Start
     } else {
@@ -683,7 +756,7 @@ fn static_position_alignment(tree: &Document, id: usize, margin_box: Size<f32>) 
         AlignItemsKeyword::FlexEnd => flex(true, cross_reversed),
         AlignItemsKeyword::FlexStart | AlignItemsKeyword::Stretch => flex(false, cross_reversed),
     };
-    if is_row {
+    let alignment = if is_row {
         Size {
             width: main,
             height: cross,
@@ -693,7 +766,8 @@ fn static_position_alignment(tree: &Document, id: usize, margin_box: Size<f32>) 
             width: cross,
             height: main,
         }
-    }
+    };
+    (alignment, space)
 }
 
 #[cfg(test)]

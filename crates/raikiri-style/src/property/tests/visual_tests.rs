@@ -2415,11 +2415,14 @@ fn will_change_reduces_features_to_containing_block_effects() {
         ("auto", WillChange::AUTO),
         ("scroll-position, contents", WillChange::AUTO),
         ("opacity", WillChange::AUTO),
-        ("position", WillChange::ABSOLUTE_CONTAINING_BLOCK),
-        ("Transform", WillChange::FIXED_CONTAINING_BLOCK),
+        ("position", WillChange::POSITION),
+        ("Transform", WillChange::TRANSFORM),
+        ("perspective", WillChange::TRANSFORM),
+        ("backdrop-filter", WillChange::FILTER),
+        ("contain", WillChange::CONTAIN),
         (
             "position, filter",
-            WillChange::ABSOLUTE_CONTAINING_BLOCK.union(WillChange::FIXED_CONTAINING_BLOCK),
+            WillChange::POSITION.union(WillChange::FILTER),
         ),
     ] {
         assert_eq!(
@@ -2428,9 +2431,9 @@ fn will_change_reduces_features_to_containing_block_effects() {
             "{source}"
         );
     }
-    assert!(WillChange::ABSOLUTE_CONTAINING_BLOCK.contains_absolute_descendants());
-    assert!(!WillChange::ABSOLUTE_CONTAINING_BLOCK.contains_fixed_descendants());
-    assert!(WillChange::FIXED_CONTAINING_BLOCK.contains_fixed_descendants());
+    let both = WillChange::POSITION.union(WillChange::CONTAIN);
+    assert!(both.contains(WillChange::CONTAIN));
+    assert!(!both.contains(WillChange::TRANSFORM));
 }
 
 #[test]

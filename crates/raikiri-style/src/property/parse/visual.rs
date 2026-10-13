@@ -2193,9 +2193,12 @@ pub(super) fn parse_will_change(input: &mut Parser<'_, '_>) -> Option<WillChange
             }
             // spec: https://www.w3.org/TR/css-will-change-1/#valdef-will-change-custom-ident
             Ok(match name.as_str() {
-                "position" => WillChange::ABSOLUTE_CONTAINING_BLOCK,
-                "transform" | "translate" | "rotate" | "scale" | "perspective" | "filter"
-                | "backdrop-filter" | "contain" => WillChange::FIXED_CONTAINING_BLOCK,
+                "position" => WillChange::POSITION,
+                "transform" | "translate" | "rotate" | "scale" | "perspective" => {
+                    WillChange::TRANSFORM
+                }
+                "filter" | "backdrop-filter" => WillChange::FILTER,
+                "contain" => WillChange::CONTAIN,
                 _ => WillChange::AUTO,
             })
         })

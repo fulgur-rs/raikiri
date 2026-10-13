@@ -3986,7 +3986,7 @@ property_key_samples! {
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
     // CSS Containment 2 §2 / CSS Will Change 1 §3 — non-initial.
     Contain => PropertyValue::Contain(crate::property::Contain::CONTENT),
-    WillChange => PropertyValue::WillChange(crate::property::WillChange::FIXED_CONTAINING_BLOCK),
+    WillChange => PropertyValue::WillChange(crate::property::WillChange::TRANSFORM),
     // CSS Masking Level 1 §7.1 — non-initial (`Url`, not `None`).
     MaskImage => PropertyValue::MaskImage(MaskImage::Url("mask.svg".into())),
     // CSS Masking Level 1 §5.1 — non-initial (`GeometryBox`, not

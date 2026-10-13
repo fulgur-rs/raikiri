@@ -1,7 +1,7 @@
 use super::*;
 use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
-use taffy::Style;
+use taffy::{AlignItems, Style};
 
 /// `html > body(margin:0) > div(parent_css) > div(wrapper_css) > div(fixed_css)`
 /// laid out on an 800x600 page with no margins. Returns the document and the
@@ -491,6 +491,20 @@ fn static_positions_keep_the_flex_alignment_of_the_parent() {
         "position:fixed;width:50%;height:10px",
     );
     assert_eq!(absolute_rect(&doc, fixed), (-100.0, 50.0, 400.0, 10.0));
+    // A distributed alignment falls back to start once the box overflows.
+    let (doc, fixed) = laid_out(
+        "margin-left:100px;width:200px",
+        "display:flex;justify-content:space-around",
+        "position:fixed;width:50%;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
+    // So does a safe alignment.
+    let (doc, fixed) = laid_out(
+        "margin-left:100px;width:200px",
+        "display:flex;justify-content:safe center",
+        "position:fixed;width:50%;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (100.0, 50.0, 400.0, 10.0));
     // The default start alignment keeps the left edge.
     let (doc, fixed) = laid_out(
         "margin-left:100px;width:200px",
@@ -543,4 +557,310 @@ fn contained_and_will_change_ancestors_contain_absolute_boxes() {
         "position:fixed;left:5px;top:6px;width:20px;height:10px",
     );
     assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
+}
+
+/// [`laid_out`] with a fixed box holding ten 100px Ahem words, so that its
+/// min-content width is 100px and its max-content width 1090px.
+fn laid_out_with_words(fixed_css: &str) -> (Document, usize) {
+    let (mut doc, fixed) = laid_out("margin-left:30px;width:200px", "", fixed_css);
+    doc.append_text(fixed, ["XXXXXXXXXX"; 10].join(" "));
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    (doc, fixed)
+}
+
+#[test]
+fn sizing_keywords_resolve_against_the_containing_block() {
+    let width = |style: Dimension| match resolve_sizing_keyword(style, 300.0, 800.0) {
+        Some(KeywordSize::Measure(AvailableSpace::Definite(width))) => Some(("measure", width)),
+        Some(KeywordSize::Measure(AvailableSpace::MinContent)) => Some(("min", 0.0)),
+        Some(KeywordSize::Measure(AvailableSpace::MaxContent)) => Some(("max", 0.0)),
+        Some(KeywordSize::Exact(width)) => Some(("exact", width)),
+        None => None,
+    };
+    assert_eq!(width(Dimension::min_content()), Some(("min", 0.0)));
+    assert_eq!(width(Dimension::max_content()), Some(("max", 0.0)));
+    assert_eq!(
+        width(Dimension::fit_content_px(120.0)),
+        Some(("measure", 120.0))
+    );
+    assert_eq!(
+        width(Dimension::fit_content_percent(0.25)),
+        Some(("measure", 200.0))
+    );
+    assert_eq!(width(Dimension::fit_content()), Some(("measure", 300.0)));
+    assert_eq!(width(Dimension::stretch()), Some(("exact", 300.0)));
+    assert_eq!(width(Dimension::length(10.0)), None);
+    assert_eq!(width(Dimension::auto()), None);
+}
+
+#[test]
+fn sizing_keywords_measure_the_box_in_each_axis() {
+    let (mut doc, fixed) = laid_out_with_words("position:absolute;left:5px;top:6px;font:10px Ahem");
+    let area = Size {
+        width: 800.0,
+        height: 600.0,
+    };
+    let inset = Rect {
+        left: Some(5.0),
+        right: None,
+        top: Some(6.0),
+        bottom: None,
+    };
+    let margin = Rect {
+        left: Some(0.0),
+        right: Some(0.0),
+        top: Some(0.0),
+        bottom: Some(0.0),
+    };
+    let mut resolve = |width: Dimension, height: Dimension, known: Size<Option<f32>>| {
+        let mut known = known;
+        doc.nodes[fixed].style.size = Size { width, height };
+        resolve_sizing_keywords(
+            &mut doc,
+            fixed,
+            &mut known,
+            Size { width, height },
+            area,
+            inset,
+            margin,
+        );
+        known
+    };
+    // Both axes measured together: the min-content width of one word and
+    // one 10px line per word.
+    assert_eq!(
+        resolve(
+            Dimension::min_content(),
+            Dimension::max_content(),
+            Size::NONE
+        ),
+        Size {
+            width: Some(100.0),
+            height: Some(100.0),
+        }
+    );
+    // `fit-content` measures the box in the 795px stretch size.
+    assert_eq!(
+        resolve(
+            Dimension::fit_content(),
+            Dimension::length(10.0),
+            Size::NONE
+        )
+        .width,
+        Some(795.0)
+    );
+    // A stretched width and a measured height wrap at the stretch size.
+    assert_eq!(
+        resolve(Dimension::stretch(), Dimension::max_content(), Size::NONE),
+        Size {
+            width: Some(795.0),
+            height: Some(20.0),
+        }
+    );
+    assert_eq!(
+        resolve(Dimension::auto(), Dimension::stretch(), Size::NONE),
+        Size {
+            width: None,
+            height: Some(594.0),
+        }
+    );
+    // Known sizes are kept.
+    let known = Size {
+        width: Some(300.0),
+        height: Some(40.0),
+    };
+    assert_eq!(
+        resolve(Dimension::min_content(), Dimension::min_content(), known),
+        known
+    );
+}
+
+#[test]
+fn static_position_alignment_follows_the_flex_container() {
+    let alignment = |wrapper_css: &str, fixed_css: &str| {
+        let (doc, fixed) = laid_out(
+            "width:200px;height:100px",
+            &format!("display:flex;height:100px;{wrapper_css}"),
+            &format!("position:fixed;width:20px;height:10px;{fixed_css}"),
+        );
+        let (alignment, _) = static_position_alignment(
+            &doc,
+            fixed,
+            Size {
+                width: 100.0,
+                height: 50.0,
+            },
+        );
+        (alignment.width, alignment.height)
+    };
+    assert_eq!(alignment("", ""), (0.0, 0.0));
+    assert_eq!(alignment("flex-direction:row-reverse", ""), (1.0, 0.0));
+    assert_eq!(alignment("flex-direction:column-reverse", ""), (0.0, 1.0));
+    assert_eq!(alignment("justify-content:end", ""), (1.0, 0.0));
+    assert_eq!(
+        alignment("justify-content:start;direction:rtl", ""),
+        (1.0, 0.0)
+    );
+    assert_eq!(alignment("justify-content:flex-end", ""), (1.0, 0.0));
+    assert_eq!(alignment("justify-content:space-around", ""), (0.5, 0.0));
+    assert_eq!(alignment("justify-content:space-between", ""), (0.0, 0.0));
+    assert_eq!(alignment("align-items:center", ""), (0.0, 0.5));
+    assert_eq!(alignment("", "align-self:end"), (0.0, 1.0));
+    assert_eq!(alignment("", "align-self:flex-end"), (0.0, 1.0));
+    assert_eq!(alignment("", "align-self:baseline"), (0.0, 0.0));
+    assert_eq!(alignment("flex-wrap:wrap-reverse", ""), (0.0, 1.0));
+    assert_eq!(
+        alignment("flex-direction:column;direction:rtl", ""),
+        (1.0, 0.0)
+    );
+    // Taffy styles the cascade does not produce: safe alignment and the
+    // `self-*` keywords.
+    let with_align_self = |flex_direction: &str, direction: &str, align: AlignItems| {
+        let (mut doc, fixed) = laid_out(
+            "width:200px;height:100px",
+            &format!("display:flex;height:100px;width:100px;flex-direction:{flex_direction}"),
+            &format!("position:fixed;width:20px;height:10px;direction:{direction}"),
+        );
+        doc.nodes[fixed].style.align_self = Some(align);
+        let (alignment, _) = static_position_alignment(
+            &doc,
+            fixed,
+            Size {
+                width: 50.0,
+                height: 50.0,
+            },
+        );
+        (alignment.width, alignment.height)
+    };
+    let align = |keyword, safety| AlignItems { keyword, safety };
+    // Safe alignment that would overflow the container aligns as start.
+    assert_eq!(
+        with_align_self(
+            "row",
+            "ltr",
+            align(AlignItemsKeyword::End, AlignmentSafety::Safe)
+        ),
+        (0.0, 1.0)
+    );
+    assert_eq!(
+        with_align_self(
+            "column",
+            "ltr",
+            align(AlignItemsKeyword::End, AlignmentSafety::Safe)
+        ),
+        (1.0, 0.0)
+    );
+    let (doc, fixed) = laid_out(
+        "width:200px;height:100px",
+        "display:flex;height:100px;width:100px",
+        "position:fixed;width:20px;height:10px",
+    );
+    let mut doc = doc;
+    doc.nodes[fixed].style.align_self = Some(align(AlignItemsKeyword::End, AlignmentSafety::Safe));
+    let (alignment, _) = static_position_alignment(
+        &doc,
+        fixed,
+        Size {
+            width: 20.0,
+            height: 200.0,
+        },
+    );
+    assert_eq!((alignment.width, alignment.height), (0.0, 0.0));
+    // `self-start` and `self-end` follow the box's own direction where the
+    // cross axis is its inline axis.
+    for (flex_direction, direction, keyword, expected) in [
+        ("row", "rtl", AlignItemsKeyword::SelfStart, (0.0, 0.0)),
+        ("row", "rtl", AlignItemsKeyword::SelfEnd, (0.0, 1.0)),
+        ("column", "ltr", AlignItemsKeyword::SelfEnd, (1.0, 0.0)),
+        ("column", "rtl", AlignItemsKeyword::SelfStart, (1.0, 0.0)),
+        ("column", "rtl", AlignItemsKeyword::SelfEnd, (0.0, 0.0)),
+    ] {
+        assert_eq!(
+            with_align_self(
+                flex_direction,
+                direction,
+                align(keyword, AlignmentSafety::Unsafe)
+            ),
+            expected,
+            "{flex_direction} {direction} {keyword:?}"
+        );
+    }
+    // Block containers keep the start edge in the inline direction.
+    let (doc, fixed) = laid_out("", "direction:rtl", "position:fixed");
+    let (alignment, _) = static_position_alignment(&doc, fixed, Size::ZERO);
+    assert_eq!((alignment.width, alignment.height), (1.0, 0.0));
+}
+
+#[test]
+fn boxes_that_containment_does_not_apply_to_do_not_contain() {
+    let fixed_css = "position:fixed;left:5px;top:6px;width:20px;height:10px";
+    for wrapper_css in [
+        "display:inline;contain:layout",
+        "display:inline;will-change:transform",
+        "display:inline;will-change:contain",
+        "display:table-row;contain:paint",
+        "display:contents;contain:layout",
+        "display:contents;will-change:filter",
+    ] {
+        let (doc, fixed) = laid_out("margin-left:30px", wrapper_css, fixed_css);
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (5.0, 6.0, 20.0, 10.0),
+            "{wrapper_css}"
+        );
+    }
+    // Flex items are blockified, so containment applies to them.
+    for wrapper_css in [
+        "display:inline;contain:layout",
+        "display:inline;will-change:transform",
+        "display:inline;will-change:filter",
+    ] {
+        let (doc, fixed) = laid_out("margin-left:30px;display:flex", wrapper_css, fixed_css);
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (35.0, 56.0, 20.0, 10.0),
+            "{wrapper_css}"
+        );
+    }
+}
+
+#[test]
+fn positioned_boxes_that_are_not_generated_do_not_contain() {
+    let (doc, abspos) = laid_out(
+        "margin-left:30px",
+        "display:contents;position:relative",
+        "position:absolute;left:5px;top:6px;width:20px;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, abspos), (5.0, 6.0, 20.0, 10.0));
+}
+
+#[test]
+fn the_body_border_does_not_move_uncontained_absolute_children() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;border:30px solid"),
+    );
+    let abspos = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;left:5px;top:6px;width:50%;height:10px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, abspos), (5.0, 6.0, 400.0, 10.0));
+}
+
+#[test]
+fn min_content_fixed_paragraphs_take_their_longest_word() {
+    let (doc, fixed) =
+        laid_out_with_words("position:fixed;left:5px;top:6px;font:10px Ahem;width:min-content");
+    assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 100.0, 100.0));
 }
