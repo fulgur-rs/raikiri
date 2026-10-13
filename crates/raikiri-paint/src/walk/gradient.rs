@@ -181,17 +181,23 @@ pub(super) fn paint_gradient_layer(
             // painting area keep their own edges.
             let snap = |edge: f64, snaps: bool| if snaps { edge.round() } else { edge };
             let (snap_x, snap_y) = (repeat_x && tiles.x.len() > 1, repeat_y && tiles.y.len() > 1);
-            let shape = Rect::new(
+            let snapped = Rect::new(
                 snap(*tile_x, snap_x),
                 snap(*tile_y, snap_y),
                 snap(tile_x + tiles.width, snap_x),
                 snap(tile_y + tiles.height, snap_y),
-            )
-            .intersect(painting);
+            );
+            let shape = snapped.intersect(painting);
             if shape.width() <= 0.0 || shape.height() <= 0.0 {
                 continue;
             }
-            let offset = Affine::translate((*tile_x, *tile_y));
+            // The brush is stretched onto the snapped tile, so every copy
+            // shows the whole gradient from its first color to its last.
+            let offset = Affine::translate((snapped.x0, snapped.y0))
+                * Affine::scale_non_uniform(
+                    snapped.width() / tiles.width,
+                    snapped.height() / tiles.height,
+                );
             match &fill {
                 GradientFill::Brush(brush, brush_transform) => scene.fill(
                     Fill::NonZero,
@@ -630,7 +636,7 @@ fn lerp_color(
 /// of neighboring stops contributes the mean of its two colors, weighted by
 /// the distance between them, in premultiplied sRGB. Stops that share one
 /// position are spread evenly, so each pair weighs the same.
-fn average_color(stops: &[(f64, CssColor)]) -> Color {
+pub(super) fn average_color(stops: &[(f64, CssColor)]) -> Color {
     let premultiplied: Vec<[f64; 4]> = stops.iter().map(|(_, color)| premultiply(*color)).collect();
     let period = match stops {
         [first, .., last] => last.0 - first.0,

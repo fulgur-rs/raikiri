@@ -985,3 +985,170 @@ fn a_lone_round_tile_keeps_its_fractional_edge() {
         .collect();
     assert_eq!(shapes, [area]);
 }
+
+/// Paint a layer of `style` over `area`, painted inside `painting`.
+fn layer_scene(style: &str, area: Rect, painting: Rect, clip: Option<&BezPath>) -> Scene {
+    let cv = computed_for(style);
+    let mut scene = Scene::new();
+    assert!(gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        painting,
+        clip,
+        &cv.background_size,
+        &cv.background_position,
+        &cv.background_repeat,
+        cv.color,
+    ));
+    scene
+}
+
+#[test]
+fn snapped_tiles_stretch_the_brush_over_the_whole_tile() {
+    // 2.5px tiles: the tile at x = 2.5 snaps to 3..5, and its brush starts
+    // at 3 so the tile still begins with red.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red, blue); \
+         background-size: 2.5px 10px; background-repeat: repeat-x",
+        10,
+        10,
+    );
+    let [r, _, b, _] = pixel(&rgba, 10, 3, 5);
+    assert!(r > b, "the tile starts red: {r} {b}");
+}
+
+#[test]
+fn calc_sizes_and_empty_layers() {
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let size = raikiri_style::ComputedBackgroundSize::Explicit {
+        width: raikiri_style::ComputedLengthPercentageOrAuto::Calc(
+            raikiri_style::property::CalcLengthPercentage {
+                percent: 50.0,
+                px: 10.0,
+            },
+        ),
+        height: raikiri_style::ComputedLengthPercentageOrAuto::Px(20.0),
+    };
+    assert_eq!(
+        gradient::gradient_image_size(&size, area),
+        Some((60.0, 20.0))
+    );
+    // A zero-size tile or an empty painting area paints nothing.
+    let empty = layer_scene(
+        "background-image: linear-gradient(red, blue); background-size: 0px 10px",
+        area,
+        area,
+        None,
+    );
+    assert!(empty.commands.is_empty());
+    let empty = layer_scene(
+        "background-image: linear-gradient(red, blue)",
+        area,
+        Rect::new(0.0, 0.0, 0.0, 100.0),
+        None,
+    );
+    assert!(empty.commands.is_empty());
+}
+
+#[test]
+fn the_tile_fallback_fills_solid_tiles_inside_a_clip() {
+    let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+    let clip = kurbo::Shape::to_path(&area, 0.1);
+    let scene = layer_scene(
+        "background-image: repeating-linear-gradient(red 10px, blue 10px); \
+         background-size: 1px 1px",
+        area,
+        area,
+        Some(&clip),
+    );
+    assert!(
+        scene.commands.len() < 10,
+        "{} commands",
+        scene.commands.len()
+    );
+}
+
+#[test]
+fn the_tile_fallback_pads_after_the_last_stop() {
+    // Blue from 50% to 100% weighs three times the red-to-blue half.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, red 0%, blue 50%); \
+         background-size: 1px 1px",
+        1000,
+        10,
+    );
+    let [r, _, b, _] = pixel(&rgba, 1000, 5, 5);
+    assert!(b > r, "{r} {b}");
+}
+
+#[test]
+fn side_directions_point_left_and_up() {
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to left, red 50%, blue 50%)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 20), BLUE);
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to top, red 50%, blue 50%)",
+        40,
+        40,
+    );
+    assert_eq!(pixel(&rgba, 40, 20, 5), BLUE);
+}
+
+#[test]
+fn degenerate_shapes_and_lengths_still_resolve() {
+    let area = Rect::new(0.0, 0.0, 100.0, 100.0);
+    let fill = |style: &str, area: Rect| {
+        let cv = computed_for(style);
+        gradient::gradient_fill(&gradient_of(&cv), area, cv.color)
+    };
+    // A corner-sized ellipse centered on an edge has no side extent.
+    assert!(
+        fill(
+            "background-image: radial-gradient(ellipse closest-corner at 0 50%, red, blue)",
+            area
+        )
+        .is_some()
+    );
+    // A repeating radial gradient with one stop position is its average.
+    assert!(matches!(
+        fill(
+            "background-image: repeating-radial-gradient(red 10px, blue 10px)",
+            area
+        ),
+        Some(gradient::GradientFill::Solid(_))
+    ));
+    // Font-relative stops resolve; a gradient line of no length collapses.
+    assert!(
+        fill(
+            "background-image: linear-gradient(to right, red 1em, blue 2em)",
+            area
+        )
+        .is_some()
+    );
+    assert!(matches!(
+        fill(
+            "background-image: repeating-linear-gradient(to right, red 0%, blue 10px)",
+            Rect::new(0.0, 0.0, 0.0, 100.0)
+        ),
+        Some(gradient::GradientFill::Solid(_))
+    ));
+}
+
+#[test]
+fn average_colors_of_few_or_transparent_stops() {
+    let red = CssColor::from_hex("ff0000").unwrap();
+    let clear = CssColor::from_hex("00000000").unwrap();
+    assert_eq!(gradient::average_color(&[]), Color::TRANSPARENT);
+    assert_eq!(
+        gradient::average_color(&[(0.0, red)]),
+        Color::from_rgba8(255, 0, 0, 255)
+    );
+    assert_eq!(
+        gradient::average_color(&[(0.0, clear), (1.0, clear)]),
+        Color::from_rgba8(0, 0, 0, 0)
+    );
+}

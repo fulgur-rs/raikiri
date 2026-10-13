@@ -291,6 +291,19 @@ fn round_tiles_bound_degenerate_counts() {
     )
     .expect("repeated tiles");
     assert_eq!((tiles.x.len(), tiles.y.len()), (794, 1_123));
+    // A vertical `round` axis gives up tiles the same way.
+    let mut vertical = repeated;
+    vertical.y = BackgroundRepeatKeyword::Round;
+    let tiles = background_tiles(
+        (0.0, 0.0, 2_000.0, 20_000.0),
+        (0.0, 0.0, 2_000.0, 20_000.0),
+        (1.0, 1.0),
+        &position,
+        &vertical,
+    )
+    .expect("round tiles");
+    assert_eq!(tiles.x.len(), 2_000);
+    assert!(tiles.x.len() * tiles.y.len() <= 1 << 22);
     // Repeated tiny tiles over a far larger area paint nothing.
     assert!(
         background_tiles(
