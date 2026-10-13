@@ -1519,7 +1519,8 @@ fn page_rules_need_a_valid_page_selector() {
     let mut rt = DomRuntime::new(host).unwrap();
     rt.evaluate(
         "var s = document.createElement('style'); \
-         s.textContent = '@page :bogus { margin: 1px } @page named:first { margin: 2px }'; \
+         s.textContent = '@page :bogus { margin: 1px } @page named:first { margin: 2px } \
+         @page f/**/oo { margin: 3px }'; \
          document.head.appendChild(s);",
     )
     .unwrap();
@@ -1528,7 +1529,8 @@ fn page_rules_need_a_valid_page_selector() {
         "Object.prototype.toString.call(s.sheet.cssRules[0]) !== '[object CSSPageRule]' && \
          s.sheet.cssRules[0].style === undefined && \
          Object.prototype.toString.call(s.sheet.cssRules[1]) === '[object CSSPageRule]' && \
-         s.sheet.cssRules[1].selectorText === 'named:first'",
+         s.sheet.cssRules[1].selectorText === 'named:first' && \
+         Object.prototype.toString.call(s.sheet.cssRules[2]) !== '[object CSSPageRule]'",
     );
 }
 

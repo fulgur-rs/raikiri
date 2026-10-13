@@ -58,8 +58,18 @@ pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
 /// sees them (ASCII case-insensitive), and the selector must parse as the
 /// cascade requires; a rule the cascade drops gets no `CSSPageRule`.
 pub(crate) fn is_page_prelude(prelude: &str) -> bool {
-    page_selector_text(prelude)
-        .is_some_and(|selector| raikiri_style::is_valid_page_selector(&selector))
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    if !matches!(
+        parser.next_including_whitespace(),
+        Ok(Token::AtKeyword(name)) if name.eq_ignore_ascii_case("page")
+    ) {
+        return false;
+    }
+    // Validate the source after the at-keyword rather than a re-serialization,
+    // so comments keep separating tokens exactly as they do for the cascade.
+    let selector = &prelude[parser.position().byte_index()..];
+    raikiri_style::is_valid_page_selector(selector)
 }
 
 /// The page selector list of an `@page` prelude, serialized from its tokens:
