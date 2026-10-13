@@ -2041,6 +2041,40 @@ fn border_images_of_elements_and_pseudo_elements_are_preloaded() {
 }
 
 #[test]
+fn images_of_pseudo_elements_without_a_box_are_not_preloaded() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let html = br#"<!doctype html><style>
+        p::before { content:none; background-image:url(https://images.test/none.svg) }
+        p::after { content:normal; border-image:url(https://images.test/normal.svg) 1 }
+        p::marker { background-image:url(https://images.test/marker.svg) }
+        li::before { content:''; background-image:url(https://images.test/empty.svg) }
+        li::marker { background-image:url(https://images.test/item.svg) }
+        </style><p></p><ul><li></li></ul>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_slice(), &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = Default::default();
+    let mut attempts = 0;
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    let mut requested: Vec<_> = provider
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(url, _)| url.path().to_owned())
+        .collect();
+    requested.sort();
+    assert_eq!(requested, ["/empty.svg", "/item.svg"]);
+    assert_eq!(attempts, 2);
+}
+
+#[test]
 fn cache_keeps_svg_rasters_of_several_sizes_within_the_budget() {
     let budget = Arc::new(ProcessImageBudget::new(1024 * 1024, 4));
     let mut cache = DecodedImageCache::new(Arc::clone(&budget));
