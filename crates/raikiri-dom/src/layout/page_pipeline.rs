@@ -90,7 +90,10 @@ fn content_overflow_end(
         } else {
             parent_y + node.unrounded_layout.location.y
         };
-        let bottom = if node_id == body_id {
+        // A `display: contents` body has no box of its own to measure.
+        let bottom = if node_id == body_id && computed.display == DisplayValue::Contents {
+            f32::NEG_INFINITY
+        } else if node_id == body_id {
             y + body_border_box_end(
                 document,
                 cascade,
@@ -207,15 +210,15 @@ fn body_border_box_end(
     } else {
         f32::NEG_INFINITY
     };
-    // Without block-end edges an auto-height body ends with its content,
-    // which the flow already paginated. Text of the body's own paragraph is
-    // located by its lines, which are not measured here.
-    if edges_bottom <= 0.0 || body.is_ifc_root() {
+    // Without block-end edges or a `min-height` an auto-height body ends
+    // with its content, which the flow already paginated. Text of the body's
+    // own paragraph is located by its lines, which are not measured here.
+    if (edges_bottom <= 0.0 && min_height <= 0.0) || body.is_ifc_root() {
         return min_end;
     }
-    // In-flow children are in page coordinates already; with block-end
-    // edges their block-end margins, negative ones included, stay inside the
-    // body.
+    // In-flow children are in page coordinates already; block-end edges or
+    // a `min-height` keep their block-end margins, negative ones included,
+    // inside the body.
     // The children of a `display: contents` element take part as the body's
     // own, and a relative offset moves a box without moving the flow.
     let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);

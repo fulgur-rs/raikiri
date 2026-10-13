@@ -1451,3 +1451,23 @@ fn pipeline_caps_a_border_box_auto_body_by_max_height() {
         assert_eq!(run(&doc).slices.len(), pages, "{sizing}");
     }
 }
+
+#[test]
+fn pipeline_keeps_the_last_margin_of_a_body_with_min_height() {
+    // A `min-height` keeps the child's block-end margin inside the body.
+    for (min_height, pages) in [("80px", 2), ("0", 1)] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;min-height:{min_height}}}</style>\
+             <div style='height:20px;margin-bottom:100px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{min_height}");
+    }
+}
+
+#[test]
+fn pipeline_does_not_measure_a_display_contents_body() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{display:contents;height:1000px}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
