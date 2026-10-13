@@ -69,14 +69,18 @@ fn deferred_value_capture_rejects_bad_url_before_important() {
 
 #[test]
 fn deferred_value_capture_rejects_excessive_component_nesting() {
-    let depth = 129;
-    let source = format!("{}var(--x){}", "[".repeat(depth), "]".repeat(depth));
-    assert!(parse(&source, "width").is_none());
+    // The var() function itself occupies one component-value level.
+    for (open, close) in [("(", ")"), ("[", "]"), ("{", "}")] {
+        let bounded = format!("{}var(--x){}", open.repeat(74), close.repeat(74));
+        assert!(parse(&bounded, "width").is_some());
+        let excessive = format!("{}var(--x){}", open.repeat(75), close.repeat(75));
+        assert!(parse(&excessive, "width").is_none());
+    }
 }
 
 #[test]
 fn deferred_value_capture_does_not_nest_unquoted_url_contents() {
-    let depth = 129;
+    let depth = 76;
     let source = format!(
         "var(--image) url(data:image/svg+xml,{}{}x{}{})",
         "[".repeat(depth),

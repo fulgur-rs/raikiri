@@ -5,7 +5,7 @@ use super::*;
 #[test]
 fn contextual_color_resolution_rejects_excessive_function_nesting() {
     let mut source = String::from("currentcolor");
-    for _ in 0..MAX_COLOR_MIX_NESTING_DEPTH {
+    for _ in 0..75 {
         source = format!("color-mix(in srgb,{source},currentcolor)");
     }
     assert_eq!(
@@ -74,7 +74,7 @@ fn color_recursion_depth_bounds_every_recursive_wrapper() {
 
 #[test]
 fn color_recursion_preserves_boundary_and_ordinary_controls() {
-    let boundary = nested_color_wrapper("contrast-color(", ")", MAX_COLOR_MIX_NESTING_DEPTH);
+    let boundary = nested_color_wrapper("contrast-color(", ")", 75);
     assert!(parse_color_entire(&boundary).is_some());
     assert!(!contains_deferred_function_in_source(&boundary));
     for source in [
