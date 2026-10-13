@@ -2887,3 +2887,75 @@ fn atomic_inlines_past_the_ellipsis_are_not_painted() {
     // dropped with the text after it instead of showing under the ellipsis.
     assert_eq!(blue_boxes("aaaa"), 0);
 }
+
+/// Fills and glyph runs as `(kind, color)` in command order, where kind is
+/// `"line"` for a thin decoration fill and `"text"` for a glyph run.
+fn line_and_text_order(scene: &Scene) -> Vec<(&'static str, String)> {
+    use kurbo::Shape;
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if fill.shape.bounding_box().height() <= 3.0 => {
+                Some(("line", format!("{:?}", fill.brush)))
+            }
+            RenderCommand::GlyphRun(run) => Some(("text", format!("{:?}", run.brush))),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_text_shadow_covers_the_decoration_lines() {
+    let on = painted_root(
+        "width:100px;color:black;text-decoration:underline;text-shadow:2px 3px red",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    let red = format!("{:?}", solid(255, 0, 0));
+    let black = format!("{:?}", solid(0, 0, 0));
+    assert_eq!(
+        line_and_text_order(&on),
+        [
+            ("line", red.clone()),
+            ("text", red),
+            ("line", black.clone()),
+            ("text", black),
+        ],
+        "the shadow's underline and glyphs go below the underline and the text"
+    );
+    let lines = decoration_fills(&on);
+    assert_eq!(lines.len(), 2);
+    let (shadow, line) = if fills_with(&on, &solid(255, 0, 0))[0][0] == lines[0].0 {
+        (lines[0], lines[1])
+    } else {
+        (lines[1], lines[0])
+    };
+    assert_eq!(
+        (shadow.0 - line.0, shadow.1 - line.1, shadow.2 - line.2),
+        (px(2), px(3), px(2)),
+        "the shadow's underline moves by the shadow offset"
+    );
+}
+
+#[test]
+fn a_line_through_shadow_is_drawn_below_the_text() {
+    let on = painted_root(
+        "width:100px;color:black;text-decoration:line-through;text-shadow:1px 1px blue",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    let blue = format!("{:?}", solid(0, 0, 255));
+    let black = format!("{:?}", solid(0, 0, 0));
+    assert_eq!(
+        line_and_text_order(&on),
+        [
+            ("text", blue.clone()),
+            ("line", blue),
+            ("text", black.clone()),
+            ("line", black),
+        ]
+    );
+}

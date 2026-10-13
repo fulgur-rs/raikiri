@@ -13,11 +13,13 @@ use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
 use crate::{
     Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneStyle, StandaloneText,
+    TextShadow,
 };
 use raikiri_style::property::{
     BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
     CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, PropertyKey, PropertyValue,
-    QuoteKeyword, Sides, StringFetchMode, TextAlign, VerticalAlign, VisualBox, WritingMode,
+    QuoteKeyword, Sides, StringFetchMode, TextAlign, TextShadowColor, TextShadowLength,
+    VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength, ComputedValues,
@@ -228,6 +230,9 @@ pub struct MarginBox {
     pub content: String,
     /// Text color.
     pub color: CssColor,
+    /// Used `text-shadow` list of the box text, in declaration order, with
+    /// `currentcolor` resolved to [`Self::color`].
+    pub text_shadows: Vec<TextShadow>,
     /// Background color, `None` when transparent.
     pub background_color: Option<CssColor>,
     /// Background image layer.
@@ -266,6 +271,7 @@ impl MarginBox {
             rect,
             content: String::new(),
             color: CssColor::BLACK,
+            text_shadows: Vec::new(),
             background_color: None,
             background_image: None,
             borders: [None; 4],
@@ -352,7 +358,7 @@ impl MarginBox {
             &text.shaped,
             text.origin,
             self.color,
-            &[],
+            &self.text_shadows,
             root,
             RunSource::MarginBox(self.slot),
             &mut out,
@@ -418,6 +424,7 @@ struct MarginBoxSpec {
     width: Option<f32>,
     height: Option<f32>,
     text_color: CssColor,
+    text_shadows: Vec<TextShadow>,
     text_style: StandaloneStyle,
     alignment: StandaloneAlign,
     vertical_align: MarginTextVerticalAlign,
@@ -538,6 +545,54 @@ fn inherited_margin_box_color(
     root_computed(document, cascade)
         .map(|computed| computed.color)
         .unwrap_or_else(|| CssColor::BLACK)
+}
+
+/// The used `text-shadow` of a margin box. The property is inherited
+/// (CSS Text Decoration 3 §4), so a box without its own value takes the
+/// page context's, and a page context without one takes the root element's.
+/// `currentcolor` is the box's own text color.
+fn inherited_margin_box_text_shadows(
+    document: &Document,
+    cascade: &CascadeResult,
+    page: &PageCascadeResult,
+    rule: &PageMarginBoxCascadeResult,
+    font_size: f32,
+    color: CssColor,
+) -> Vec<TextShadow> {
+    let shadow_color = |value: TextShadowColor| match value {
+        TextShadowColor::Resolved(resolved) => resolved,
+        _ => color,
+    };
+    let declared = margin_box_property(rule, PropertyKey::TextShadow)
+        .or_else(|| page_property(page, PropertyKey::TextShadow));
+    if let Some(PropertyValue::TextShadow(items)) = declared {
+        // Page-context lengths are already absolute; a margin box's own
+        // `em` lengths resolve against its font size.
+        let px = |length: TextShadowLength| match length {
+            TextShadowLength::Length(length) => length_to_px(length, 0.0, font_size),
+            TextShadowLength::Calc { px, em } => px + em * font_size,
+            _ => 0.0,
+        };
+        return items
+            .iter()
+            .map(|item| TextShadow {
+                offset: (px(item.offset_x), px(item.offset_y)),
+                blur_radius: px(item.blur_radius).max(0.0),
+                color: shadow_color(item.color),
+            })
+            .collect();
+    }
+    root_computed(document, cascade).map_or_else(Vec::new, |computed| {
+        computed
+            .text_shadow
+            .iter()
+            .map(|shadow| TextShadow {
+                offset: (shadow.offset_x.px(), shadow.offset_y.px()),
+                blur_radius: shadow.blur_radius.px().max(0.0),
+                color: shadow_color(shadow.color),
+            })
+            .collect()
+    })
 }
 
 fn inherited_margin_box_font(
@@ -1265,6 +1320,7 @@ fn margin_box_spec(
     });
     let (content, deferred) = margin_box_content(document, cascade, page, rule, context, values)?;
     let (font_size, font_family) = inherited_margin_box_font(document, cascade, page, rule);
+    let text_color = inherited_margin_box_color(document, cascade, page, rule);
     let margin = margin_box_margins(rule, width_basis, height_basis, font_size);
     let padding = margin_box_padding(rule, width_basis, font_size);
     let background = match margin_box_property(rule, PropertyKey::BackgroundColor) {
@@ -1406,7 +1462,10 @@ fn margin_box_spec(
         padding,
         width,
         height,
-        text_color: inherited_margin_box_color(document, cascade, page, rule),
+        text_color,
+        text_shadows: inherited_margin_box_text_shadows(
+            document, cascade, page, rule, font_size, text_color,
+        ),
         text_style,
         alignment,
         vertical_align,
@@ -1486,6 +1545,7 @@ fn place_margin_box(
         content: spec.content.clone(),
         deferred: spec.deferred.clone(),
         color: spec.text_color,
+        text_shadows: spec.text_shadows.clone(),
         background_color: spec.background,
         background_image: spec
             .background_image_url

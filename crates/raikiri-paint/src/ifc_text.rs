@@ -50,9 +50,11 @@ struct RunDraw<'a> {
 
 /// Draw the glyph runs of an ifc root.
 ///
-/// Per line, underlines and overlines of every run come first, then the
-/// glyphs, then the line-throughs (CSS Text Decoration 3 §3: underlines and
-/// overlines below the text, line-throughs over it).
+/// Runs are drawn in line order. Each run paints its text shadows, then its
+/// underlines and overlines, then its glyphs and emphasis marks, then its
+/// line-throughs (CSS Text Decoration 3 §3 and §4: shadows below the text
+/// and its decorations, underlines and overlines below the text,
+/// line-throughs over it).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_ifc_lines_with_resources(
     image_cache: &crate::walk::ImageBrushCache,
@@ -251,38 +253,19 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 group,
             });
         }
-        if !vertical {
-            for draw in &runs {
-                draw_decorations(
-                    paint.target(draw.group),
-                    std::slice::from_ref(draw),
-                    DecorationPhase::BeforeGlyphs,
-                );
-            }
-        }
         for draw in &runs {
             let Some(font) = draw.run.font_data() else {
                 continue;
             };
             let owner_style = draw.style;
-            paint.start_glyphs(draw.group);
-            let scene = paint.target(draw.group);
             let font_size = draw.run.font_size();
-            // shodo's normalized coordinates are `F2Dot14` newtypes; the scene
-            // takes the raw `i16` bits.
-            let coords: Vec<i16> = draw
-                .run
-                .normalized_coords()
-                .iter()
-                .map(|coord| coord.to_bits())
-                .collect();
+            let coords = normalized_coords(&draw.run);
             let glyph_transform =
                 physical_glyph_transform(&converter, draw.run.glyph_transform(), draw.run.skew());
-            let run_transform =
-                transform * Affine::translate((f64::from(draw.offset.0), f64::from(draw.offset.1)));
+            let run_transform = run_transform(transform, draw);
             if !vertical {
                 draw_shadows(
-                    scene,
+                    paint.target(draw.group),
                     &ShadowRun {
                         draw,
                         font: &font,
@@ -298,7 +281,14 @@ pub(crate) fn draw_ifc_lines_with_resources(
                     },
                     size,
                 );
+                draw_resolved_decoration_phase(
+                    paint.target(draw.group),
+                    &draw.decorations,
+                    DecorationPhase::BeforeGlyphs,
+                );
             }
+            paint.start_glyphs(draw.group);
+            let scene = paint.target(draw.group);
             scene.draw_glyphs(
                 &font,
                 font_size,
@@ -331,13 +321,9 @@ pub(crate) fn draw_ifc_lines_with_resources(
                     owner_style,
                     draw.color,
                 );
-            }
-        }
-        if !vertical {
-            for draw in &runs {
-                draw_decorations(
-                    paint.target(draw.group),
-                    std::slice::from_ref(draw),
+                draw_resolved_decoration_phase(
+                    scene,
+                    &draw.decorations,
                     DecorationPhase::AfterGlyphs,
                 );
             }
@@ -486,6 +472,21 @@ fn draw_custom_highlights(
     }
 }
 
+/// shodo's normalized coordinates are `F2Dot14` newtypes; the scene takes
+/// the raw `i16` bits.
+fn normalized_coords(run: &shodo::GlyphRunView<'_>) -> Vec<i16> {
+    run.normalized_coords()
+        .iter()
+        .map(|coord| coord.to_bits())
+        .collect()
+}
+
+/// The line transform moved by the relative offsets of the run's inline
+/// ancestors.
+fn run_transform(line: Affine, draw: &RunDraw<'_>) -> Affine {
+    line * Affine::translate((f64::from(draw.offset.0), f64::from(draw.offset.1)))
+}
+
 /// A glyph run with the font data the scene needs to draw it again.
 struct ShadowRun<'a, 'b> {
     draw: &'a RunDraw<'b>,
@@ -494,12 +495,14 @@ struct ShadowRun<'a, 'b> {
     glyph_transform: Option<Affine>,
 }
 
-/// Draw the text shadows of one run, behind its glyphs.
+/// Draw the text shadows of one run, behind its glyphs and decorations.
 ///
 /// CSS Text Decoration 3 §4 paints the shadows below the text, the first one
-/// on top, so the list is drawn in reverse. A blurred shadow is drawn inside a
-/// filter layer clipped to the lines grown by three times the blur radius,
-/// which isolates the blur from the rest of the page.
+/// on top, so the list is drawn in reverse. Each shadow is the run's glyphs
+/// and its decoration lines, in their paint order, filled with the shadow
+/// color. A blurred shadow is drawn inside a filter layer clipped to the
+/// lines grown by three times the blur radius, which isolates the blur from
+/// the rest of the page.
 fn draw_shadows(
     scene: &mut impl PaintScene,
     run: &ShadowRun<'_, '_>,
@@ -540,6 +543,23 @@ fn draw_shadows(
                 None,
             );
         }
+        let decorations: Vec<_> = run
+            .draw
+            .decorations
+            .iter()
+            .map(|line| {
+                let mut line = line.clone();
+                let (dx, dy) = (dx as f32, dy as f32);
+                line.x_start += dx;
+                line.x_end += dx;
+                line.pattern_origin_x += dx;
+                line.pattern_end_x += dx;
+                line.y += dy;
+                line.color = color;
+                line
+            })
+            .collect();
+        draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
         scene.draw_glyphs(
             run.font,
             font_size,
@@ -553,15 +573,10 @@ fn draw_shadows(
             run.glyph_transform,
             run.draw.glyphs.clone().into_iter(),
         );
+        draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::AfterGlyphs);
         if use_blur_layer {
             scene.pop_layer();
         }
-    }
-}
-
-fn draw_decorations(scene: &mut impl PaintScene, runs: &[RunDraw<'_>], phase: DecorationPhase) {
-    for draw in runs {
-        draw_resolved_decoration_phase(scene, &draw.decorations, phase);
     }
 }
 

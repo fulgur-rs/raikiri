@@ -1458,6 +1458,14 @@ fn paint_margin_box(
     if let Some(text) = &margin_box.text {
         scene.push_clip_layer(Affine::IDENTITY, &rect);
         let (text_x, text_y) = text.origin();
+        crate::standalone_text::draw_shadows(
+            scene,
+            text.shaped(),
+            text_x,
+            text_y,
+            &margin_box.text_shadows,
+            rect,
+        );
         crate::standalone_text::draw(
             scene,
             text.shaped(),

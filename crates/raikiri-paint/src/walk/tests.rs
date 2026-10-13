@@ -3221,6 +3221,69 @@ fn a_vertical_margin_box_is_drawn_down_its_column() {
     assert_eq!(glyphs[1].1 - glyphs[0].1, 10.0);
 }
 
+#[test]
+fn margin_box_text_shadows_are_drawn_below_the_text() {
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "@page { margin: 40px; @top-left { content: 'a'; font-family: Ahem; \
+           font-size: 10px; color: black; text-shadow: 2px 3px red, 1px 1px 4px blue } }",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_margin_boxes(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &doc,
+        &cascade,
+        PageBox::A4,
+        0,
+        1,
+        false,
+        None,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let runs: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some((
+                run.transform.translation()
+                    + kurbo::Vec2::new(f64::from(run.glyphs[0].x), f64::from(run.glyphs[0].y)),
+                run.brush.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    let brushes: Vec<_> = runs.iter().map(|(_, brush)| brush.clone()).collect();
+    assert_eq!(
+        brushes,
+        [
+            anyrender::Paint::Solid(Color::from_rgba8(0, 0, 255, 255)),
+            anyrender::Paint::Solid(Color::from_rgba8(255, 0, 0, 255)),
+            anyrender::Paint::Solid(Color::from_rgba8(0, 0, 0, 255)),
+        ],
+        "the last shadow first, the text on top"
+    );
+    let text = runs[2].0;
+    assert_eq!(runs[1].0 - text, kurbo::Vec2::new(2.0, 3.0));
+    assert_eq!(runs[0].0 - text, kurbo::Vec2::new(1.0, 1.0));
+    let filtered = scene
+        .commands
+        .iter()
+        .filter(
+            |command| matches!(command, RenderCommand::PushLayer(layer) if layer.filter.is_some()),
+        )
+        .count();
+    assert_eq!(filtered, 1, "only the blurred shadow uses a filter layer");
+}
+
 struct NoImages;
 impl raikiri_traits::ImagePixelSource for NoImages {
     fn get_decoded(&self, _url: &url::Url) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {

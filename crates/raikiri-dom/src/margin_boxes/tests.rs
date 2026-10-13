@@ -174,6 +174,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         width: Some(100.0),
         height: None,
         text_color: CssColor::BLACK,
+        text_shadows: Vec::new(),
         text_style: text_style(16.0, &[]),
         alignment: StandaloneAlign::Start,
         vertical_align: MarginTextVerticalAlign::Top,
@@ -523,6 +524,35 @@ fn margin_box_text_runs_sit_inside_the_box() {
     // below the line top.
     assert_eq!(run.origin, (40.0, 15.0 + 8.0));
     assert_eq!(run.advance, 30.0);
+}
+
+#[test]
+fn margin_box_text_runs_carry_the_text_shadow() {
+    let (doc, cascade) = page_cascade_fixture(
+        "html { text-shadow: 1px 1px blue } \
+         @page { margin: 40px; \
+           @top-left { content: 'abc'; font-size: 10px; color: red; \
+                       text-shadow: 0.2em 3px 2px, 1px 1px lime } \
+           @top-right { content: 'abc' } }",
+    );
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [left, right] = boxes.as_slice() else {
+        panic!("two boxes: {boxes:?}");
+    };
+    let shadows = &left.text_runs()[0].shadows;
+    assert_eq!(shadows.len(), 2);
+    assert_eq!(shadows[0].offset, (2.0, 3.0), "em resolves against the box");
+    assert_eq!(shadows[0].blur_radius, 2.0);
+    assert_eq!(
+        (shadows[0].color.r, shadows[0].color.b),
+        (255, 0),
+        "currentcolor is the box's text color"
+    );
+    assert_eq!(shadows[1].color.g, 255);
+    let inherited = &right.text_runs()[0].shadows;
+    assert_eq!(inherited.len(), 1, "inherited from the root element");
+    assert_eq!(inherited[0].offset, (1.0, 1.0));
+    assert_eq!(inherited[0].color.b, 255);
 }
 
 #[test]
