@@ -8754,14 +8754,19 @@ fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
         avoiding_block_in_wrapper("height:200px", "max-height:30%", "display:block"),
         (100.0, 260.0, 60.0)
     );
-    // A bound that does not resolve to a length keeps the wrapper's size.
+    // A bound that does not resolve to a length does not hold the wrapper
+    // (CSS 2.1 §10.7).
     assert_eq!(
         avoiding_block_in_wrapper(
             "height:200px",
             "max-height:calc(50% + 10px)",
             "display:block"
         ),
-        (100.0, 260.0, 60.0)
+        (100.0, 260.0, 100.0)
+    );
+    assert_eq!(
+        avoiding_block_in_wrapper("", "min-height:10%;max-height:50%", "display:block"),
+        (100.0, 160.0, 100.0)
     );
     // A moved float does not lengthen the block around it.
     assert_eq!(
@@ -10797,6 +10802,69 @@ fn a_clearing_float_stays_below_the_moved_floats_bottom_margin() {
 }
 
 #[test]
+fn a_clearing_block_stays_below_the_moved_floats_bottom() {
+    for (side, clear) in [
+        ("left", "left"),
+        ("left", "both"),
+        ("right", "right"),
+        ("right", "left"),
+    ] {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            for css in [
+                format!("float:{side};width:40px;height:60px;break-inside:avoid"),
+                format!("display:block;clear:{clear};height:10px"),
+            ] {
+                ids.push(doc.append_element(Some(body), "div", Style::default(), Some(&css)));
+            }
+        });
+        let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+        // A block clearing only the other side keeps its place.
+        let expected = if side == "right" && clear == "left" {
+            60.0
+        } else {
+            160.0
+        };
+        assert_eq!(
+            ys,
+            vec![100.0, expected],
+            "float:{side} clear:{clear} {ys:?}"
+        );
+    }
+}
+
+#[test]
+fn an_opposite_side_float_moves_only_to_the_moved_floats_top() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:right;width:40px;height:10px",
+            "display:block;height:80px",
+            "float:right;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // A float on the other side may sit beside the moved float, so it only
+    // keeps from rising above that float's top; one already lower stays.
+    assert_eq!(ys, vec![100.0, 100.0, 60.0, 140.0], "{ys:?}");
+}
+
+#[test]
 fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
     let mut float = 0;
     let (doc, _) = paged_body(|doc, body| {
@@ -11044,4 +11112,259 @@ fn break_inside_avoid_does_not_move_an_inline_box() {
         });
         assert_eq!(page_flow_y(&doc, inner), expected, "{display}");
     }
+}
+
+#[test]
+fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
+    let (mut wrapper, mut after) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;min-height:100px;font:10px/10px monospace"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        doc.append_text(wrapper, "x");
+        after = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+    });
+    // The block moves 40px, and the line after it now ends 110px into the
+    // wrapper, past its `min-height`.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 110.0);
+    assert_eq!(page_flow_y(&doc, after), 170.0);
+}
+
+#[test]
+fn a_percentage_bound_resolves_against_a_percentage_height() {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let fixed = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px"),
+        );
+        let half = doc.append_element(
+            Some(fixed),
+            "div",
+            Style::default(),
+            Some("display:block;height:50%"),
+        );
+        wrapper = doc.append_element(
+            Some(half),
+            "div",
+            Style::default(),
+            Some("display:block;max-height:70%"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    // The wrapper grows only up to 70% of its 100px containing block.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 70.0);
+}
+
+#[test]
+fn a_contained_negative_margin_shortens_the_grown_content() {
+    // The moved box's margin box still ends 80px into the flow root, so its
+    // `min-height` keeps holding it and the block after it stays.
+    assert_eq!(
+        avoiding_block_in_wrapper(
+            "",
+            "display:flow-root;min-height:80px",
+            "display:block;margin-bottom:-20px"
+        ),
+        (100.0, 140.0, 80.0)
+    );
+}
+
+#[test]
+fn leaving_two_bounded_shifts_returns_to_the_wrappers_page() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        for css in [
+            "display:block;height:80px",
+            "display:block;height:40px;break-inside:avoid",
+            "display:block;height:90px;break-inside:avoid",
+        ] {
+            ids.push(doc.append_element(Some(wrapper), "div", Style::default(), Some(css)));
+        }
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // Both avoiding children move inside the fixed-height wrapper, which
+    // stays on the first page, so the block after it still crosses that
+    // page's end and moves.
+    assert_eq!(ys, vec![0.0, 100.0, 200.0, 100.0], "{ys:?}");
+}
+
+/// `body > outer(outer_css; 10px lines) > [text?, wrapper > avoiding 60px,
+/// text?]` after a 60px block. Returns the outer box's height.
+fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) -> f32 {
+    let mut outer = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;font:10px/10px monospace;{outer_css}"
+            )),
+        );
+        if text_before {
+            doc.append_text(outer, "x");
+        }
+        let wrapper =
+            doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        if text_after {
+            doc.append_text(outer, "x");
+        }
+    });
+    doc.nodes[outer].unrounded_layout.size.height
+}
+
+#[test]
+fn the_lines_around_a_grown_box_bound_its_bounded_ancestor() {
+    // A line before the grown wrapper does not move: the avoiding block
+    // moves 30px, and the wrapper below the line now ends 100px in.
+    assert_eq!(
+        bounded_box_with_lines("min-height:95px", true, false),
+        100.0
+    );
+    // A line after the grown wrapper follows its 40px growth, 110px in.
+    assert_eq!(
+        bounded_box_with_lines("min-height:100px", false, true),
+        110.0
+    );
+}
+
+#[test]
+fn a_margin_after_collapsed_white_space_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            doc.append_text(body, "\n  ");
+            let second = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, second]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_margin_after_a_box_inside_a_contents_element_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+            let first = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let second = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, second]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;padding-top:1px"),
+            );
+            let nested = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, wrapper, nested]
+        },
+        &[],
+    );
+    // The nested box keeps its margin, 31px into the wrapper.
+    assert_eq!(ys, [0.0, 80.0, 31.0]);
 }

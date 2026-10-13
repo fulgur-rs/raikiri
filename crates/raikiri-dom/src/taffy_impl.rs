@@ -748,7 +748,15 @@ fn compute_ifc_root(
                 inputs.parent_size.height,
             )
             // A `height` of its own follows `box-sizing`.
-            .map(|height| (height - if border_box { border_box_insets } else { 0.0 }).max(0.0))
+            .map(|height| {
+                (height
+                    - if border_box {
+                        border_box_insets
+                    } else {
+                        horizontal_gutter
+                    })
+                .max(0.0)
+            })
         })
         // `min-height` and `max-height` clamp the used height; a percentage
         // bound against an indefinite containing block does not apply.

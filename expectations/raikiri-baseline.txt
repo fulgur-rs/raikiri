@@ -1609,7 +1609,7 @@ css/mediaqueries/relative-units-001.html
 css/mediaqueries/relative-units-002.html
 css/mediaqueries/relative-units-003.html
 css/mediaqueries/relative-units-004.html
-# --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
+# --- CSS2 pagination break-inside: avoid PASS-only (+10) ---
 css/CSS2/pagination/block-page-break-inside-avoid-12-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-13-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-4-print.html
@@ -1620,6 +1620,7 @@ css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-5-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-7-print.html
+# --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
 css/CSS2/positioning/position-relative-004.xht
 css/CSS2/positioning/position-relative-005.xht
 css/CSS2/positioning/position-relative-006.xht
