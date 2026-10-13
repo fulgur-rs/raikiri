@@ -15,8 +15,8 @@ use smol_str::SmolStr;
 use crate::property::{
     AbsoluteFontSize, AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
-    BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxSizing,
-    BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
+    BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxDecorationBreak,
+    BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent, CssColor,
     Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue,
     FloatValue, FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning,
@@ -1847,6 +1847,11 @@ pub struct ComputedValues {
     /// [`crate::specified::SpecifiedValues::isolation`] (same shape as
     /// [`Self::object_fit`]).
     pub isolation: Isolation,
+    /// `box-decoration-break`. **non-inherited**, initial:
+    /// [`BoxDecorationBreak::Slice`] (CSS Fragmentation 3 §5.4
+    /// <https://www.w3.org/TR/css-break-3/#break-decoration>). Always a
+    /// keyword, passed through from the specified value.
+    pub box_decoration_break: BoxDecorationBreak,
     /// `mix-blend-mode`. **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1
     /// §3.4.1 "Mix Blend Mode: the mix-blend-mode property"
@@ -2356,6 +2361,7 @@ impl ComputedValues {
             // CSS Compositing and Blending 1 §3.4.2: initial isolation
             // is `auto`.
             isolation: Isolation::Auto,
+            box_decoration_break: BoxDecorationBreak::Slice,
             // CSS Compositing and Blending 1 §3.4.1: initial
             // mix-blend-mode is `normal`.
             mix_blend_mode: MixBlendMode::Normal,

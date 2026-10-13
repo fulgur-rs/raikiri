@@ -224,8 +224,9 @@ pub struct PositionedGlyphRun<'a> {
     pub decorations: Vec<crate::DecorationLine>,
     /// Used `text-shadow` list of the run's text (CSS Text Decoration 3 §4),
     /// in declaration order: the first shadow is painted on top, and every
-    /// shadow is painted below the run's glyphs. Empty for `none` and for
-    /// page-margin box text.
+    /// shadow is painted below the run's glyphs and decorations. A shadow
+    /// covers the glyphs and [`Self::decorations`] alike, moved by its
+    /// offset and filled with its color. Empty for `none`.
     pub shadows: Vec<TextShadow>,
 }
 

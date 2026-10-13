@@ -570,6 +570,9 @@ fn parent_fixture() -> ComputedValues {
         // CSS Compositing and Blending Level 1 §3.4.2: non-inherited; set a value other than the
         // initial `auto`.
         isolation: Isolation::Isolate,
+        // CSS Fragmentation 3 §5.4: non-inherited; set a value other than the
+        // initial `slice`.
+        box_decoration_break: crate::property::BoxDecorationBreak::Clone,
         // CSS Compositing and Blending Level 1 §3.4.1: non-inherited; set a value other than the
         // initial `normal`.
         mix_blend_mode: MixBlendMode::Multiply,

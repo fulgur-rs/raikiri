@@ -7381,6 +7381,7 @@ impl DeferredValue {
                 | PropertyKey::BorderImageWidth
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
+                | PropertyKey::BoxDecorationBreak
         ) {
             return None;
         }
@@ -8544,6 +8545,28 @@ pub enum Isolation {
 css_keywords!(Isolation {
     Auto => "auto",
     Isolate => "isolate",
+});
+
+/// Specified value of `box-decoration-break`.
+///
+/// CSS Fragmentation 3 §5.4 "Fragmented Borders and Backgrounds: the
+/// box-decoration-break property"
+/// <https://www.w3.org/TR/css-break-3/#break-decoration>. Grammar:
+/// `slice | clone`. **Non-inherited**. Computed value = specified keyword.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoxDecorationBreak {
+    /// `slice` — the initial value. The box is drawn as if unbroken and cut
+    /// at the breaks; backgrounds and border images span the joined box.
+    Slice,
+    /// `clone` — each fragment is drawn as a whole box with its own borders,
+    /// padding, background and border image.
+    Clone,
+}
+
+css_keywords!(BoxDecorationBreak {
+    Slice => "slice",
+    Clone => "clone",
 });
 
 /// Specified and computed value of `contain`.
@@ -10616,6 +10639,10 @@ pub enum PropertyValue {
     /// Compositing and Blending Level 1 §3.4.2; see [`Isolation`]). Appended
     /// as a new 1:1 disjoint field under the placement rule in [`PropertyKey`].
     Isolation(Isolation),
+    /// `box-decoration-break` — **non-inherited**, initial:
+    /// [`BoxDecorationBreak::Slice`] (CSS Fragmentation 3 §5.4; see
+    /// [`BoxDecorationBreak`]).
+    BoxDecorationBreak(BoxDecorationBreak),
     /// `contain` — **non-inherited**, initial: [`Contain::NONE`] (CSS
     /// Containment 2 §2; see [`Contain`]). Appended as a new 1:1 disjoint
     /// field under the placement rule in [`PropertyKey`].
@@ -11315,6 +11342,7 @@ pub enum PropertyKey {
     // existing fields.
     Isolation,
     MixBlendMode,
+    BoxDecorationBreak,
     // contain (CSS Containment 2 §2) / will-change (CSS Will Change 1 §3),
     // semantics on the matching PropertyValue variants. Appended for the
     // same reason as background-repeat.
@@ -11725,6 +11753,7 @@ impl PropertyValue {
             PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
             PropertyValue::Opacity(_) => PropertyKey::Opacity,
             PropertyValue::Isolation(_) => PropertyKey::Isolation,
+            PropertyValue::BoxDecorationBreak(_) => PropertyKey::BoxDecorationBreak,
             PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
             PropertyValue::Contain(_) => PropertyKey::Contain,
             PropertyValue::WillChange(_) => PropertyKey::WillChange,
@@ -12813,6 +12842,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "object-position" => PropertyKey::ObjectPosition,
         "opacity" => PropertyKey::Opacity,
         "isolation" => PropertyKey::Isolation,
+        "box-decoration-break" => PropertyKey::BoxDecorationBreak,
         "mix-blend-mode" => PropertyKey::MixBlendMode,
         "contain" => PropertyKey::Contain,
         "will-change" => PropertyKey::WillChange,

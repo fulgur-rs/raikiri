@@ -27,6 +27,7 @@ fn keyword_tables_round_trip_through_their_parsers() {
         BreakBetween,
         BreakInside,
         CaptionSideValue,
+        BoxDecorationBreak,
         ClearValue,
         ColumnFillValue,
         ColumnSpanValue,

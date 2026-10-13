@@ -2220,6 +2220,14 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     (keyword == CssWideKeyword::Inherit).then_some(&inherited.border_image),
                 );
             }
+            crate::property::PropertyKey::BoxDecorationBreak => {
+                // Non-inherited: only `inherit` takes the parent's value.
+                return PropertyValue::BoxDecorationBreak(if keyword == CssWideKeyword::Inherit {
+                    inherited.box_decoration_break
+                } else {
+                    crate::property::BoxDecorationBreak::Slice
+                });
+            }
             crate::property::PropertyKey::ListStyleImage => {
                 return PropertyValue::ListStyleImage(if initial {
                     crate::property::BackgroundImage::None
@@ -2856,6 +2864,7 @@ pub(crate) fn resolve_against_inherited(
         // payloads with no phase-2 dependency, same shape as `ObjectFit`
         // above.
         | PropertyValue::Isolation(_)
+        | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
         | PropertyValue::Contain(_)
         | PropertyValue::WillChange(_)
@@ -3381,6 +3390,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::Opacity(v) => target.opacity = v,
         PropertyValue::Isolation(v) => target.isolation = v,
+        PropertyValue::BoxDecorationBreak(v) => target.box_decoration_break = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::Contain(v) => target.contain = v,
         PropertyValue::WillChange(v) => target.will_change = v,

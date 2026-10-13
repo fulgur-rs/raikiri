@@ -202,6 +202,7 @@ impl PageMarginBoxCascadeResult {
                         | PropertyKey::PaddingRight
                         | PropertyKey::PaddingBottom
                         | PropertyKey::PaddingLeft
+                        | PropertyKey::TextShadow
                 )
             {
                 resolve_page_deferred_value(deferred, custom_properties.as_ref())

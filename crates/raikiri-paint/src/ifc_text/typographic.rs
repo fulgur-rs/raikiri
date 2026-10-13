@@ -12,21 +12,33 @@ pub(crate) struct BackgroundSlice {
     pub(crate) content: raikiri_dom::BoxRect,
 }
 
-pub(super) fn background_slices(pieces: &[InlineBoxPiece]) -> Vec<Option<BackgroundSlice>> {
+/// `rtl` tells whether an element's inline base direction is right-to-left.
+pub(super) fn background_slices(
+    pieces: &[InlineBoxPiece],
+    rtl: impl Fn(usize) -> bool,
+) -> Vec<Option<BackgroundSlice>> {
     let mut groups = HashMap::<usize, Vec<usize>>::new();
     for (index, piece) in pieces.iter().enumerate() {
-        if raikiri_dom::generated_content::generated_origin(piece.node)
-            .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
-        {
-            groups.entry(piece.node).or_default().push(index);
-        }
+        groups.entry(piece.node).or_default().push(index);
     }
     let mut slices = vec![None; pieces.len()];
-    for indices in groups.values_mut() {
-        // Join the boxes in visual order, excluding their owners' margins.
-        // Keep each fragment's own height and move the virtual composite
-        // origin so its slice aligns with the fragment's physical position.
-        indices.sort_by(|&a, &b| pieces[a].border_box.x.total_cmp(&pieces[b].border_box.x));
+    for (&node, indices) in groups.iter_mut() {
+        if indices.len() < 2 {
+            continue;
+        }
+        // Join the boxes line after line, each line's in visual order,
+        // excluding their owners' margins (CSS Fragmentation 3 §5.4
+        // `box-decoration-break: slice`). The first line's fragment sits at
+        // the inline start of the joined box, so right-to-left boxes join
+        // later lines to its left. Keep each fragment's own height and move
+        // the virtual composite origin so its slice aligns with the
+        // fragment's physical position.
+        let rtl = rtl(node);
+        indices.sort_by(|&a, &b| {
+            let lines = pieces[a].line.cmp(&pieces[b].line);
+            if rtl { lines.reverse() } else { lines }
+                .then(pieces[a].border_box.x.total_cmp(&pieces[b].border_box.x))
+        });
         let first = &pieces[indices[0]];
         let last = &pieces[*indices.last().expect("nonempty pseudo fragment group")];
         let left = first.content_box.x - first.border_box.x;

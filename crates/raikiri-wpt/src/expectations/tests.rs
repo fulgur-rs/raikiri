@@ -825,7 +825,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + Sweep passes that survive the vacuous-PASS audit (+2,567).
     // - Pins that matched only while gradients painted their first color (-14).
     // + Named-page break candidates and forced-break margins in css-page (+11).
-    assert_eq!(set.baseline.entries.len(), 3930);
+    // + background-clip: border-area images clipped to the border shape (+3).
+    assert_eq!(set.baseline.entries.len(), 3933);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

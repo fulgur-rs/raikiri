@@ -2309,6 +2309,26 @@ fn opacity_key_maps_to_opacity_property_key() {
     assert_eq!(v.key(), PropertyKey::Opacity);
 }
 
+// ── box-decoration-break (CSS Fragmentation 3 §5.4) ─────────────────
+
+#[test]
+fn box_decoration_break_parse_keywords() {
+    assert_eq!(
+        parse("slice", "box-decoration-break"),
+        Some(PropertyValue::BoxDecorationBreak(
+            crate::property::BoxDecorationBreak::Slice
+        ))
+    );
+    assert_eq!(
+        parse("clone", "box-decoration-break"),
+        Some(PropertyValue::BoxDecorationBreak(
+            crate::property::BoxDecorationBreak::Clone
+        ))
+    );
+    assert_eq!(parse("copy", "box-decoration-break"), None);
+    assert_eq!(parse_entire("slice clone", "box-decoration-break"), None);
+}
+
 // ── isolation (CSS Compositing and Blending Level 1 §3.4.2) ─────────
 
 #[test]

@@ -1222,6 +1222,22 @@ fn a_blurred_shadow_is_drawn_inside_a_filter_layer() {
     });
     assert!(layers(&on) >= 1);
     assert_eq!(layers(&on), 1);
+    // The Gaussian's standard deviation is half the blur radius (CSS
+    // Backgrounds 3 §7.1).
+    let filters: Vec<_> = on
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            RenderCommand::PushLayer(layer) => layer.filter.as_deref().cloned(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        filters,
+        [anyrender::filters::Filter::single(
+            anyrender::filters::FilterEffect::blur(1.5)
+        )]
+    );
     assert_eq!(
         format!("{:?}", runs_in_order(&on)),
         "[(67, 64, 576, \"Solid(AlphaColor { components: [1.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\"), (68, 704, 576, \"Solid(AlphaColor { components: [1.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\"), (67, 0, 512, \"Solid(AlphaColor { components: [0.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\"), (68, 640, 512, \"Solid(AlphaColor { components: [0.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\")]"
@@ -2886,4 +2902,244 @@ fn atomic_inlines_past_the_ellipsis_are_not_painted() {
     // The box would end past the ellipsis, inside the 50px box: it is
     // dropped with the text after it instead of showing under the ellipsis.
     assert_eq!(blue_boxes("aaaa"), 0);
+}
+
+/// Fills and glyph runs as `(kind, color)` in command order, where kind is
+/// `"line"` for a thin decoration fill and `"text"` for a glyph run.
+fn line_and_text_order(scene: &Scene) -> Vec<(&'static str, String)> {
+    use kurbo::Shape;
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) if fill.shape.bounding_box().height() <= 3.0 => {
+                Some(("line", format!("{:?}", fill.brush)))
+            }
+            RenderCommand::GlyphRun(run) => Some(("text", format!("{:?}", run.brush))),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_text_shadow_covers_the_decoration_lines() {
+    let on = painted_root(
+        "width:100px;color:black;text-decoration:underline;text-shadow:2px 3px red",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    let red = format!("{:?}", solid(255, 0, 0));
+    let black = format!("{:?}", solid(0, 0, 0));
+    assert_eq!(
+        line_and_text_order(&on),
+        [
+            ("line", red.clone()),
+            ("text", red),
+            ("line", black.clone()),
+            ("text", black),
+        ],
+        "the shadow's underline and glyphs go below the underline and the text"
+    );
+    let lines = decoration_fills(&on);
+    assert_eq!(lines.len(), 2);
+    let (shadow, line) = if fills_with(&on, &solid(255, 0, 0))[0][0] == lines[0].0 {
+        (lines[0], lines[1])
+    } else {
+        (lines[1], lines[0])
+    };
+    assert_eq!(
+        (shadow.0 - line.0, shadow.1 - line.1, shadow.2 - line.2),
+        (px(2), px(3), px(2)),
+        "the shadow's underline moves by the shadow offset"
+    );
+}
+
+#[test]
+fn a_line_through_shadow_is_drawn_below_the_text() {
+    let on = painted_root(
+        "width:100px;color:black;text-decoration:line-through;text-shadow:1px 1px blue",
+        |doc, root| {
+            doc.append_text(root, "ab");
+        },
+    );
+    let blue = format!("{:?}", solid(0, 0, 255));
+    let black = format!("{:?}", solid(0, 0, 0));
+    assert_eq!(
+        line_and_text_order(&on),
+        [
+            ("text", blue.clone()),
+            ("line", blue),
+            ("text", black.clone()),
+            ("line", black),
+        ]
+    );
+}
+
+#[test]
+fn the_runs_of_one_box_paint_decorations_in_line_wide_phases() {
+    let on = painted_root(
+        "width:200px;color:black;text-decoration:underline line-through",
+        |doc, root| {
+            // Mixed directions split one text node into several runs.
+            doc.append_text(root, "ab \u{5d0}\u{5d1} cd");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let texts = kinds.iter().filter(|kind| **kind == "text").count();
+    assert!(texts > 1, "several runs: {kinds:?}");
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "underlines come before every run's glyphs and line-throughs after: {kinds:?}"
+    );
+}
+
+#[test]
+fn each_shadow_layer_covers_every_run_of_the_box_before_the_next() {
+    let on = painted_root(
+        "width:200px;color:black;text-shadow:1px 1px red,2px 2px blue",
+        |doc, root| {
+            // Mixed directions split one text node into several runs.
+            doc.append_text(root, "ab \u{5d0}\u{5d1} cd");
+        },
+    );
+    let red = format!("{:?}", solid(255, 0, 0));
+    let blue = format!("{:?}", solid(0, 0, 255));
+    let colors: Vec<String> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(_, color)| color)
+        .collect();
+    let last_blue = colors.iter().rposition(|color| *color == blue).unwrap();
+    let first_red = colors.iter().position(|color| *color == red).unwrap();
+    assert!(colors.len() > 3, "several runs: {colors:?}");
+    assert!(
+        last_blue < first_red,
+        "the back shadow is drawn for every run before the front one: {colors:?}"
+    );
+}
+
+#[test]
+fn a_text_shadow_covers_the_emphasis_marks() {
+    let (mut doc, cascade, root) = paragraph(
+        "line-height:40px;color:black;text-emphasis:dot;text-shadow:2px 3px rgb(0,0,255)",
+        |doc, root| {
+            doc.append_text(root, "aa");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let placed = glyphs(&draw_root(&doc, &cascade, root));
+    let blue = solid(0, 0, 255);
+    let black = solid(0, 0, 0);
+    // Two letters and two marks, each in the text color and the shadow's.
+    let shadow: Vec<_> = placed.iter().filter(|g| g.3 == blue).collect();
+    let own: Vec<_> = placed.iter().filter(|g| g.3 == black).collect();
+    assert_eq!((shadow.len(), own.len()), (4, 4), "{placed:?}");
+    for (shadow, own) in shadow.iter().zip(&own) {
+        let (dx, dy) = (shadow.1 - own.1, shadow.2 - own.2);
+        assert!(
+            (dx - 2.0).abs() < 0.01 && (dy - 3.0).abs() < 0.01,
+            "{dx},{dy}"
+        );
+    }
+}
+
+#[test]
+fn the_text_nodes_of_one_box_share_its_decoration_phases() {
+    let on = painted_root(
+        "width:200px;color:black;text-decoration:underline line-through",
+        |doc, root| {
+            doc.append_text(root, "ab ");
+            doc.append_text(root, "cd");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(last_text > first_text, "two runs: {kinds:?}");
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "{kinds:?}"
+    );
+}
+
+#[test]
+fn text_inside_a_contents_element_shares_the_enclosing_box_phases() {
+    let on = painted_root(
+        "width:200px;color:black;text-decoration:underline line-through",
+        |doc, root| {
+            doc.append_text(root, "ab ");
+            let wrapper =
+                doc.append_element(Some(root), "i", Style::default(), Some("display:contents"));
+            doc.append_text(wrapper, "cd ");
+            doc.append_text(root, "ef");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(last_text > first_text, "several runs: {kinds:?}");
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "{kinds:?}"
+    );
+}
+
+#[test]
+fn a_contents_element_paints_its_own_shadow_within_the_enclosing_box() {
+    let on = painted_root("width:200px;color:black", |doc, root| {
+        doc.append_text(root, "a");
+        let wrapper = doc.append_element(
+            Some(root),
+            "i",
+            Style::default(),
+            Some("display:contents;text-shadow:2px 2px red"),
+        );
+        doc.append_text(wrapper, "b");
+    });
+    let shadows = runs_in_order(&on)
+        .into_iter()
+        .filter(|run| run.3.contains("[1.0, 0.0, 0.0, 1.0]"))
+        .count();
+    assert_eq!(shadows, 1, "{:?}", runs_in_order(&on));
+}
+
+#[test]
+fn an_ellipsis_shares_the_paragraph_decoration_phases() {
+    let on = painted_root(
+        "width:35px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;\
+         color:black;text-decoration:underline line-through",
+        |doc, root| {
+            doc.append_text(root, "abcdefgh");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(last_text > first_text, "text and ellipsis runs: {kinds:?}");
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "{kinds:?}"
+    );
 }

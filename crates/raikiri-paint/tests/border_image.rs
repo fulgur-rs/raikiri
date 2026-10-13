@@ -1,14 +1,14 @@
 //! Border images replace the border styles where they apply.
 
-use anyrender::{PaintScene, Scene};
+use anyrender::{PaintScene, Scene, recording::RenderCommand};
 use kurbo::Affine;
 use raikiri_html::{
     FontCollectionBuilder, LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults,
     RenderResources, layout, parse_html_with_resources,
 };
 
-/// Render `body` on a 50×50 page and return the RGBA pixels.
-fn raster(css: &str, body: &str) -> Vec<u8> {
+/// Paint `body` on a 50×50 page.
+fn painted(css: &str, body: &str) -> Scene {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
             "Ahem",
@@ -35,6 +35,12 @@ fn raster(css: &str, body: &str) -> Vec<u8> {
     let mut scene = Scene::new();
     raikiri_paint::paint_single_page_with_origin(&mut scene, doc, cascade, page_box, origin)
         .unwrap();
+    scene
+}
+
+/// Render `body` on a 50×50 page and return the RGBA pixels.
+fn raster(css: &str, body: &str) -> Vec<u8> {
+    let scene = painted(css, body);
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| out.append_scene(scene, Affine::IDENTITY),
         50,
@@ -157,4 +163,28 @@ fn a_line_break_cut_shows_no_border_image_side() {
     );
     assert_eq!(pixel(&pixels, 2, 10), LIME);
     assert_ne!(pixel(&pixels, 22, 10), LIME);
+}
+
+#[test]
+fn each_fragment_draws_only_the_joined_border_image_tiles_it_shows() {
+    // A 49% slice leaves thin edge slices of the box-sized gradient, so the
+    // edges of the joined box repeat many small tiles.
+    let fills = |words: usize| {
+        let body = format!("<div><span>{}</span></div>", vec!["X"; words].join(" "));
+        painted(
+            "div{width:10px;font:2px/4px Ahem}\
+             span{border:1px solid blue;\
+             border-image:linear-gradient(lime,lime) 49% / 1px repeat}",
+            &body,
+        )
+        .commands
+        .iter()
+        .filter(|command| matches!(command, RenderCommand::Fill(_)))
+        .count()
+    };
+    let (few, many) = (fills(4), fills(16));
+    // The joined box, and so its tile count, grows with the lines. Each
+    // fragment repeating every tile of it would make the fills grow with
+    // the square of the lines instead.
+    assert!(many < few * 4, "{few} fills for 4 lines, {many} for 16");
 }

@@ -82,6 +82,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::BorderImageWidth
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
+                | PropertyKey::BoxDecorationBreak
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -1247,6 +1248,10 @@ pub(crate) fn parse_property_grammar(
         // <https://www.w3.org/TR/compositing-1/#isolation>. Grammar:
         // `auto | isolate`.
         "isolation" => parse_isolation(input).map(PropertyValue::Isolation),
+        // CSS Fragmentation 3 §5.4. Grammar: `slice | clone`.
+        "box-decoration-break" => {
+            parse_box_decoration_break(input).map(PropertyValue::BoxDecorationBreak)
+        }
         // CSS Compositing and Blending Level 1 §3.4.1
         // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
         // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.

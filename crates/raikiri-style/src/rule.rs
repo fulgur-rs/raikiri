@@ -432,6 +432,7 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | ObjectPosition
         | Opacity
         | Isolation
+        | BoxDecorationBreak
         | MixBlendMode
         | Contain
         | WillChange
@@ -942,6 +943,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         // isolation / mix-blend-mode (CSS Compositing and Blending Level 1
         // §3.4.2/§3.4.1) — same shape as object-fit/opacity above.
         | PropertyValue::Isolation(_)
+        | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
         | PropertyValue::Contain(_)
         | PropertyValue::WillChange(_)
