@@ -1615,3 +1615,31 @@ fn pipeline_clears_the_box_after_a_nested_break_after() {
         assert_eq!(xs, vec![300.0], "page {page}");
     }
 }
+
+#[test]
+fn pipeline_clears_a_float_right_after_a_forced_break() {
+    // The float right after the break goes to the new page clear of the
+    // earlier page's float, and the block after it follows it there.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div style='break-after:page'>a</div>\
+         <div class='f'></div><div style='height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let floats: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(floats, vec![300.0]);
+    assert!(
+        document
+            .page_fragments(1)
+            .any(|fragment| fragment.rect().height == 50.0),
+        "the block follows the float onto the new page"
+    );
+}
