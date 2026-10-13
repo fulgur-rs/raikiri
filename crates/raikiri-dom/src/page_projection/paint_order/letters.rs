@@ -20,7 +20,7 @@ use std::sync::Arc;
 pub(super) struct LetterGroups {
     /// Each fragment's own group, when it is translucent, and the innermost
     /// group around it, by box and the node its letters come from.
-    fragments: HashMap<(usize, usize), (Option<usize>, Option<usize>)>,
+    pub(super) fragments: HashMap<(usize, usize), (Option<usize>, Option<usize>)>,
     /// Each group's opacity and the innermost group around it.
     groups: HashMap<usize, (f32, Option<usize>)>,
 }
@@ -97,8 +97,12 @@ impl Document {
         let Some(node) = self.ifc_layout_node(root) else {
             return table; // cov:ignore: paragraph roots come from the arena
         };
-        // The groups of each box so far, by opacity and the group around.
-        let mut numbered: HashMap<usize, Vec<(u32, Option<usize>)>> = HashMap::new();
+        // The group of each box so far, by box, opacity and the group
+        // around, and the number of groups each box has.
+        let mut numbered: HashMap<(usize, u32, Option<usize>), Option<usize>> = HashMap::new();
+        let mut counts: HashMap<usize, usize> = HashMap::new();
+        // The last group each box numbered inside each group around it.
+        let mut last: HashMap<(usize, Option<usize>), usize> = HashMap::new();
         // The innermost group of each fragment resolved so far, its own
         // included.
         let mut nearest: HashMap<(usize, usize), Option<usize>> = HashMap::new();
@@ -126,27 +130,31 @@ impl Document {
             for key in path.into_iter().rev() {
                 let retained = node.ifc_typographic_style_for_owner(key.0, key.1);
                 let own =
-                    paint_rules::letter_opacity_layer(cascade, key.0, retained).map(|alpha| {
-                        let groups = numbered.entry(key.0).or_default();
-                        let index = groups
-                            .iter()
-                            .position(|&entry| entry == (alpha.to_bits(), group))
-                            .unwrap_or_else(|| {
-                                groups.push((alpha.to_bits(), group));
-                                groups.len() - 1
-                            });
-                        // Beyond the groups an id can name, fragments share the
-                        // last one.
-                        let id = generated_content::generated_origin(key.0)
-                            .and_then(|(element, _)| {
-                                generated_content::first_letter_group_id(
-                                    element,
-                                    index.min(generated_content::MAX_LETTER_GROUPS - 1),
-                                )
+                    paint_rules::letter_opacity_layer(cascade, key.0, retained).and_then(|alpha| {
+                        *numbered
+                            .entry((key.0, alpha.to_bits(), group))
+                            .or_insert_with(|| {
+                                let count = counts.entry(key.0).or_default();
+                                let index = *count;
+                                *count += 1;
+                                let id = generated_content::generated_origin(key.0).map_or(
+                                    Some(key.0),
+                                    |(element, _)| {
+                                        generated_content::first_letter_group_id(element, index)
+                                    },
+                                );
+                                match id {
+                                    Some(id) => {
+                                        table.groups.entry(id).or_insert((alpha, group));
+                                        last.insert((key.0, group), id);
+                                        Some(id)
+                                    }
+                                    // Beyond the groups an id can name, fragments
+                                    // share a group inside the same group around
+                                    // them, so no group is opened in two places.
+                                    None => last.get(&(key.0, group)).copied(),
+                                }
                             })
-                            .unwrap_or(key.0);
-                        table.groups.entry(id).or_insert((alpha, group));
-                        id
                     });
                 table.fragments.entry(key).or_insert((own, group));
                 group = own.or(group);

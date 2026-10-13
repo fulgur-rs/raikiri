@@ -165,8 +165,9 @@ fn an_untraceable_event_source_walks_every_node() {
     assert!(document.page_paint_nodes(&items, 0, None).is_none());
 }
 
-#[test]
-fn run_groups_share_one_letter_table_per_paragraph() {
+/// A paragraph whose `::first-letter` takes the leading quote of each of
+/// `spans` translucent spans, laid out and projected on one page.
+fn first_letter_spans(spans: usize) -> (Document, raikiri_style::CascadeResult) {
     let mut document = Document::new();
     let style = document.append_element(
         Some(0),
@@ -187,7 +188,7 @@ fn run_groups_share_one_letter_table_per_paragraph() {
         taffy::Style::default(),
         Some("display:block;margin:0"),
     );
-    for _ in 0..3 {
+    for _ in 0..spans {
         let span = document.append_element(
             Some(paragraph),
             "span",
@@ -213,6 +214,12 @@ fn run_groups_share_one_letter_table_per_paragraph() {
     document
         .project_pages(&cascade, page_box, &slices, &[])
         .unwrap();
+    (document, cascade)
+}
+
+#[test]
+fn run_groups_share_one_letter_table_per_paragraph() {
+    let (document, cascade) = first_letter_spans(3);
     let runs = document.page_text_runs(&cascade, 0);
     assert!(runs.iter().any(|run| run.letter_box.is_some()), "{runs:?}");
     for run in &runs {
@@ -228,4 +235,31 @@ fn run_groups_share_one_letter_table_per_paragraph() {
         &table,
         &document.cached_letter_groups(&cascade, root)
     ));
+}
+
+#[test]
+fn letter_groups_past_the_id_limit_stay_inside_one_parent_group() {
+    let spans = crate::generated_content::MAX_LETTER_GROUPS + 1;
+    let (document, cascade) = first_letter_spans(spans);
+    let runs = document.page_text_runs(&cascade, 0);
+    let root = usize::try_from(runs[0].line.root.0).unwrap();
+    let table = document.letter_groups(&cascade, root);
+    assert_eq!(table.fragments.len(), spans + 1);
+    let mut parents = HashMap::new();
+    for &(own, held) in table.fragments.values() {
+        if let Some(own) = own {
+            assert_eq!(table.around(own), held);
+            assert_eq!(*parents.entry(own).or_insert(held), held);
+        }
+    }
+    // The last span's quote and the paragraph's own letter come past the
+    // limit, each with no group of its own inside its parent to share.
+    assert_eq!(
+        table
+            .fragments
+            .values()
+            .filter(|(own, _)| own.is_none())
+            .count(),
+        2
+    );
 }

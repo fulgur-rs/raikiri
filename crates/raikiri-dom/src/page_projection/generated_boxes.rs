@@ -127,27 +127,29 @@ pub(super) fn prepare(
         let offsets = layout_node.map_or(&[][..], |node| node.ifc_relative_offsets());
         // Fixed-position roots and repeated table headers can land on any page.
         let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
-        let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
-            Box::new(pages.iter())
+        // Each page with the pieces it can hold. A piece in the flow goes only
+        // to the pages around its own line, so a box split over many lines
+        // and pages is not checked against every page of its paragraph.
+        let candidates: Vec<(&PageFragment, &[_])> = if repeated {
+            pages.iter().map(|page| (page, *pieces)).collect()
         } else {
-            let mut centers = pieces
-                .iter()
-                .map(|&(_, _, _, offset, _, top, height)| {
-                    // The arithmetic of `line_center_on_page`, so rounding at
-                    // large coordinates cannot prune the owning page.
-                    let top = root.y + offset.1 + top;
-                    (top + (top + height)) * 0.5
-                })
-                .filter(|center| center.is_finite());
-            let Some(first) = centers.next() else {
-                continue;
-            };
-            let (low, high) = centers.fold((first, first), |(low, high), center| {
-                (low.min(center), high.max(center))
-            });
-            Box::new(flow_pages.around(low, high))
+            let mut candidates = Vec::new();
+            for (index, &(_, _, _, offset, _, top, height)) in pieces.iter().enumerate() {
+                // The arithmetic of `line_center_on_page`, so rounding at
+                // large coordinates cannot prune the owning page.
+                let top = root.y + offset.1 + top;
+                let center = (top + (top + height)) * 0.5;
+                if !center.is_finite() {
+                    continue;
+                }
+                for page in flow_pages.around(center, center) {
+                    work.charge(1)?;
+                    candidates.push((page, &pieces[index..=index]));
+                }
+            }
+            candidates
         };
-        for page in candidates {
+        for (page, pieces) in candidates {
             work.charge(1)?;
             let mut root = *root;
             if let Some(shift) = document
@@ -160,7 +162,7 @@ pub(super) fn prepare(
                 root.is_repeat = true;
             }
             let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
-            for &(owner, kind, piece, offset, shift, top, height) in *pieces {
+            for &(owner, kind, piece, offset, shift, top, height) in pieces {
                 work.charge(1)?;
                 if !root.is_repeat
                     && !crate::layout::line_center_on_page(
