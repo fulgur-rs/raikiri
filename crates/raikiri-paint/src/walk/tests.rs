@@ -3309,14 +3309,21 @@ fn margin_box_text_shadows_are_drawn_below_the_text() {
     let text = runs[2].0;
     assert_eq!(runs[1].0 - text, kurbo::Vec2::new(2.0, 3.0));
     assert_eq!(runs[0].0 - text, kurbo::Vec2::new(1.0, 1.0));
-    let filtered = scene
+    let filters: Vec<_> = scene
         .commands
         .iter()
-        .filter(
-            |command| matches!(command, RenderCommand::PushLayer(layer) if layer.filter.is_some()),
-        )
-        .count();
-    assert_eq!(filtered, 1, "only the blurred shadow uses a filter layer");
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => layer.filter.as_deref().cloned(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        filters,
+        [anyrender::filters::Filter::single(
+            anyrender::filters::FilterEffect::blur(2.0)
+        )],
+        "only the blurred shadow uses a filter layer, with a standard deviation of half its radius"
+    );
 }
 
 struct NoImages;

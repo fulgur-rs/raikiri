@@ -51,7 +51,8 @@ pub(crate) fn style(font_size: f32, font_family: &[FontFamilyName]) -> Standalon
 /// CSS Text Decoration 3 §4 paints the first shadow on top, so the list is
 /// drawn in reverse. A blurred shadow is drawn inside a filter layer clipped
 /// to `bounds` moved by the shadow offset and grown by three times the blur
-/// radius, which isolates the blur from the rest of the page.
+/// radius, which isolates the blur from the rest of the page. The Gaussian's
+/// standard deviation is half the blur radius (CSS Backgrounds 3 §7.1).
 pub(crate) fn draw_shadows(
     scene: &mut impl PaintScene,
     shaped: &StandaloneText,
@@ -73,7 +74,7 @@ pub(crate) fn draw_shadows(
                 1.0,
                 Affine::IDENTITY,
                 &clip,
-                Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
+                Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
                 None,
             );
         }

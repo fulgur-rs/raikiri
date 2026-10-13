@@ -271,13 +271,12 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 decorations,
                 offset,
                 group,
-                paint_box: if positioned_run.style_owner == positioned_run.owner {
-                    document
-                        .parent_of(positioned_run.owner)
-                        .unwrap_or(positioned_run.owner)
-                } else {
-                    positioned_run.style_owner
-                },
+                paint_box: paint_box(
+                    document,
+                    cascade,
+                    positioned_run.owner,
+                    positioned_run.style_owner,
+                ),
             });
         }
         // Consecutive runs of one box paint in phases: every shadow, then
@@ -536,6 +535,31 @@ fn draw_custom_highlights(
 
 /// shodo's normalized coordinates are `F2Dot14` newtypes; the scene takes
 /// the raw `i16` bits.
+/// The box a run's text is painted as part of: a typographic pseudo's box,
+/// or else the nearest element above the text node that generates a box.
+/// A `display: contents` element generates none, so its text belongs to the
+/// box of its nearest boxed ancestor (CSS Display 3 §2.5).
+fn paint_box(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    style_owner: usize,
+) -> usize {
+    if style_owner != owner {
+        return style_owner;
+    }
+    let mut node = document.parent_of(owner).unwrap_or(owner);
+    while computed_for_id(cascade, node)
+        .is_some_and(|cv| cv.display == raikiri_style::property::DisplayValue::Contents)
+    {
+        let Some(parent) = document.parent_of(node) else {
+            break;
+        };
+        node = parent;
+    }
+    node
+}
+
 fn normalized_coords(run: &shodo::GlyphRunView<'_>) -> Vec<i16> {
     run.normalized_coords()
         .iter()
@@ -576,7 +600,8 @@ fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>)
 /// and its decoration lines, in their paint order, filled with the shadow
 /// color. A blurred shadow is drawn inside a filter layer clipped to the
 /// lines grown by three times the blur radius, which isolates the blur from
-/// the rest of the page.
+/// the rest of the page. The Gaussian's standard deviation is half the blur
+/// radius (CSS Backgrounds 3 §7.1).
 fn draw_shadow(
     scene: &mut impl PaintScene,
     run: &ShadowRun<'_, '_>,
@@ -613,7 +638,7 @@ fn draw_shadow(
             1.0,
             Affine::IDENTITY,
             &clip,
-            Some(Arc::new(Filter::single(FilterEffect::blur(blur)))),
+            Some(Arc::new(Filter::single(FilterEffect::blur(blur / 2.0)))),
             None,
         );
     }

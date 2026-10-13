@@ -1222,6 +1222,22 @@ fn a_blurred_shadow_is_drawn_inside_a_filter_layer() {
     });
     assert!(layers(&on) >= 1);
     assert_eq!(layers(&on), 1);
+    // The Gaussian's standard deviation is half the blur radius (CSS
+    // Backgrounds 3 §7.1).
+    let filters: Vec<_> = on
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            RenderCommand::PushLayer(layer) => layer.filter.as_deref().cloned(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        filters,
+        [anyrender::filters::Filter::single(
+            anyrender::filters::FilterEffect::blur(1.5)
+        )]
+    );
     assert_eq!(
         format!("{:?}", runs_in_order(&on)),
         "[(67, 64, 576, \"Solid(AlphaColor { components: [1.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\"), (68, 704, 576, \"Solid(AlphaColor { components: [1.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\"), (67, 0, 512, \"Solid(AlphaColor { components: [0.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\"), (68, 640, 512, \"Solid(AlphaColor { components: [0.0, 0.0, 0.0, 1.0], cs: PhantomData<color::colorspace::Srgb> })\")]"
@@ -3050,6 +3066,33 @@ fn the_text_nodes_of_one_box_share_its_decoration_phases() {
     let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
     let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
     assert!(last_text > first_text, "two runs: {kinds:?}");
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "{kinds:?}"
+    );
+}
+
+#[test]
+fn text_inside_a_contents_element_shares_the_enclosing_box_phases() {
+    let on = painted_root(
+        "width:200px;color:black;text-decoration:underline line-through",
+        |doc, root| {
+            doc.append_text(root, "ab ");
+            let wrapper =
+                doc.append_element(Some(root), "i", Style::default(), Some("display:contents"));
+            doc.append_text(wrapper, "cd ");
+            doc.append_text(root, "ef");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(last_text > first_text, "several runs: {kinds:?}");
     assert!(
         kinds[first_text..=last_text]
             .iter()
