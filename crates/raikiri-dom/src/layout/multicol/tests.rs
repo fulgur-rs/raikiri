@@ -913,6 +913,25 @@ fn multicol_metrics_resolves_normal_gap_against_the_container_font_size() {
 }
 
 #[test]
+fn multicol_metrics_adds_both_terms_of_a_calc_gap() {
+    // 10 percent of a 200px container plus 5px gives a 25px gap and
+    // (200 - 25) / 2 = 87.5px columns.
+    let metrics = multicol_gap_fixture_metrics(
+        "display:block;column-count:2;width:200px;column-gap:calc(10% + 5px)",
+    );
+    assert!(
+        (metrics.column_gap - 25.0).abs() < 0.01,
+        "metrics={:?}",
+        metrics
+    );
+    assert!(
+        (metrics.column_width - 87.5).abs() < 0.01,
+        "metrics={:?}",
+        metrics
+    );
+}
+
+#[test]
 fn multicol_metrics_keeps_explicit_length_and_percentage_gaps() {
     // Length and percentage arms are unchanged by the normal fix: 20px stays
     // 20px, and 10 percent of a 200px container resolves to 20px. Both give

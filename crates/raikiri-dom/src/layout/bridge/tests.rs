@@ -2236,6 +2236,26 @@ fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
 }
 
 #[test]
+fn multicol_style_keeps_both_terms_of_a_calc_gap() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:200px;column-gap:calc(10% + 5px)"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let style = multicol_style_from_computed(&cascade.computed[container]).expect("multicol style");
+    assert!((style.gap - 5.0).abs() < 0.01, "{style:?}");
+    assert_eq!(style.gap_percent, Some(10.0));
+}
+
+#[test]
 fn multicol_style_resolves_normal_gap_to_one_em() {
     // CSS Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
     // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules

@@ -1354,17 +1354,6 @@ fn author_mixed_calc_gap_computes_through_cascade() {
             }
         )
     );
-    // Gaps are non-negative (CSS Box Alignment 3 §8.1).
-    assert_eq!(
-        crate::resolve::ComputedLengthPercentageOrNormal::Calc(
-            crate::property::CalcLengthPercentage {
-                percent: 50.0,
-                px: -20.0,
-            }
-        )
-        .resolve(20.0),
-        Some(0.0)
-    );
 }
 
 #[test]

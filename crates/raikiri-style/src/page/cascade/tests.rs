@@ -2873,6 +2873,10 @@ fn absolutize_in_page_context_covers_flex_basis_and_gap_arms() {
     for gap in [
         LengthOrNormal::Normal,
         LengthOrNormal::Length(Length::Percent(25.0)),
+        LengthOrNormal::Calc(LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 5.0,
+        })),
     ] {
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.

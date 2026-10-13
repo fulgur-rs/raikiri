@@ -608,19 +608,6 @@ pub enum ComputedLengthPercentageOrNormal {
     Calc(CalcLengthPercentage),
 }
 
-impl ComputedLengthPercentageOrNormal {
-    /// The used length against the percentage `basis`, or `None` for `normal`,
-    /// whose meaning depends on the layout mode. Gaps are never negative.
-    pub fn resolve(self, basis: f32) -> Option<f32> {
-        match self {
-            Self::Px(px) => Some(px.max(0.0)),
-            Self::Percent(percent) => Some((basis * percent / 100.0).max(0.0)),
-            Self::Calc(calc) => Some((calc.px + basis * calc.percent / 100.0).max(0.0)),
-            Self::Normal => None,
-        }
-    }
-}
-
 /// Computed `<track-breadth>` / `<inflexible-breadth>` (CSS Grid Layout
 /// Module Level 1 §7.2.1).
 ///
