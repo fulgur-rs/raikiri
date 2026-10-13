@@ -1257,3 +1257,57 @@ fn deeply_nested_values_do_not_overflow_the_stack() {
          text === 'color: red;' && s.cssText === ''",
     );
 }
+
+#[test]
+fn page_rules_expose_style_and_margin_rule_insertion() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page :first { margin: 1px; @top-left { content: \"a\" } } p { color: red; }'; \
+         document.head.appendChild(styleElement); \
+         var sheet = styleElement.sheet; var pageRule = sheet.rules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheet === document.styleSheets[0] && sheet.rules === sheet.cssRules && \
+         Object.prototype.toString.call(pageRule) === '[object CSSPageRule]' && \
+         Object.prototype.toString.call(sheet.rules[1]) === '[object CSSStyleRule]' && \
+         sheet.rules[1].insertRule === undefined && \
+         pageRule.selectorText === ':first' && pageRule.style.margin === '1px' && \
+         document.createElement('style').sheet === null && \
+         Object.prototype.toString.call(styleElement) === '[object HTMLStyleElement]'",
+    );
+
+    rt.evaluate(
+        "pageRule.style.setProperty('margin', '50px 0 0'); \
+         pageRule.insertRule('@bottom-center { content: \"b\" }', 1); \
+         pageRule.insertRule(' @top-center { content: \"c\" } ');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.margin === '50px 0px 0px' && \
+         styleElement.textContent.includes('@top-left { content: \"a\" }') && \
+         styleElement.textContent.indexOf('@top-center') < styleElement.textContent.indexOf('@top-left') && \
+         styleElement.textContent.indexOf('@top-left') < styleElement.textContent.indexOf('@bottom-center')",
+    );
+
+    rt.evaluate("pageRule.deleteRule(1);").unwrap();
+    ok(
+        &mut rt,
+        "!styleElement.textContent.includes('@top-left') && \
+         styleElement.textContent.includes('@bottom-center') && \
+         sheet.rules[1].selectorText === 'p'",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { pageRule.insertRule('p { color: red }'); return false; } \
+           catch (e) { return e.name === 'SyntaxError'; } })() && \
+         (function() { try { pageRule.insertRule('@top-left {}', 9); return false; } \
+           catch (e) { return e.name === 'IndexSizeError'; } })() && \
+         (function() { try { pageRule.deleteRule(9); return false; } \
+           catch (e) { return e.name === 'IndexSizeError'; } })()",
+    );
+}

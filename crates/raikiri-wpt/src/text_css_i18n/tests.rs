@@ -1408,10 +1408,11 @@ fn computed_style_property_ignores_unsupported_names_without_flushing() {
         r#"<!doctype html><html><body><div id="box"></div></body></html>"#,
         root.path(),
     );
-    assert_eq!(computed(&mut rt, "box", "color"), "");
+    assert_eq!(computed(&mut rt, "box", "z-index"), "");
     assert_eq!(flushes.get(), 0);
     assert_eq!(computed(&mut rt, "box", "WORD-WRAP"), "normal");
     assert_eq!(flushes.get(), 1);
+    assert_eq!(computed(&mut rt, "box", "Color"), "rgb(0, 0, 0)");
 }
 
 #[test]

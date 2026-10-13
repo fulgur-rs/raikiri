@@ -187,6 +187,8 @@ pub(crate) enum PageBodyItem {
     Marks(PageMarksDeclaration),
     /// A `bleed:` declaration.
     Bleed(PageBleedDeclaration),
+    /// A `page-orientation:` declaration.
+    PageOrientation(PageRotationDeclaration),
     /// A margin-box at-rule (`@top-left { … }` etc.).
     MarginBox(PageMarginBoxRule),
 }
@@ -247,6 +249,14 @@ impl<'i> DeclarationParser<'i> for PageDeclParser<'_> {
             let value = parse_page_marks_value(input)?;
             let important = parse_important_and_exhaust(input)?;
             return Ok(PageBodyItem::Marks(PageMarksDeclaration {
+                value,
+                important,
+            }));
+        }
+        if name.eq_ignore_ascii_case("page-orientation") {
+            let value = parse_page_rotation_value(input)?;
+            let important = parse_important_and_exhaust(input)?;
+            return Ok(PageBodyItem::PageOrientation(PageRotationDeclaration {
                 value,
                 important,
             }));
@@ -422,6 +432,7 @@ pub(crate) struct PageBlockBody {
     pub(crate) size_declarations: Vec<PageSizeDeclaration>,
     pub(crate) marks_declarations: Vec<PageMarksDeclaration>,
     pub(crate) bleed_declarations: Vec<PageBleedDeclaration>,
+    pub(crate) page_orientation_declarations: Vec<PageRotationDeclaration>,
     pub(crate) margin_box_rules: Vec<PageMarginBoxRule>,
 }
 
@@ -470,6 +481,7 @@ pub(crate) fn parse_page_declaration_block(
     let mut size_declarations = Vec::new();
     let mut marks_declarations = Vec::new();
     let mut bleed_declarations = Vec::new();
+    let mut page_orientation_declarations = Vec::new();
     let mut margin_box_rules = Vec::new();
     let mut body = RuleBodyParser::new(input, &mut parser);
     while let Some(item) = body.next() {
@@ -491,6 +503,10 @@ pub(crate) fn parse_page_declaration_block(
                 bleed_declarations.push(decl);
                 1
             }
+            Ok(PageBodyItem::PageOrientation(decl)) => {
+                page_orientation_declarations.push(decl);
+                1
+            }
             // A margin box counted itself and its declarations as it was
             // parsed.
             Ok(PageBodyItem::MarginBox(rule)) => {
@@ -508,8 +524,24 @@ pub(crate) fn parse_page_declaration_block(
         size_declarations,
         marks_declarations,
         bleed_declarations,
+        page_orientation_declarations,
         margin_box_rules,
     }
+}
+
+/// Parse the `page-orientation` descriptor's value: `upright |
+/// rotate-left | rotate-right` (CSS Paged Media Level 3 §7.4).
+pub(crate) fn parse_page_rotation_value<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<PageRotation, ParseError<'i, ()>> {
+    let location = input.current_source_location();
+    let ident = input.expect_ident()?.clone();
+    Ok(match_ignore_ascii_case! { &ident,
+        "upright" => PageRotation::Upright,
+        "rotate-left" => PageRotation::RotateLeft,
+        "rotate-right" => PageRotation::RotateRight,
+        _ => return Err(location.new_custom_error(())),
+    })
 }
 
 /// Parse the `size` descriptor's value grammar — CSS Paged Media Level 3

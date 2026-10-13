@@ -80,8 +80,9 @@ pub mod page;
 pub use page::{
     PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery, PageInheritance,
     PageMarginBoxCascadeResult, PageMarginBoxRule, PageMarginBoxSlot, PageMarks,
-    PageMarksDeclaration, PageOrientation, PagePseudo, PageRule, PageSelector, PageSelectorEntry,
-    PageSize, PageSizeDeclaration, PageSizeKeyword, cascade_page, cascade_page_with_media_context,
+    PageMarksDeclaration, PageOrientation, PagePseudo, PageRotation, PageRotationDeclaration,
+    PageRule, PageSelector, PageSelectorEntry, PageSize, PageSizeDeclaration, PageSizeKeyword,
+    cascade_page, cascade_page_with_media_context,
 };
 
 pub mod ruletree;

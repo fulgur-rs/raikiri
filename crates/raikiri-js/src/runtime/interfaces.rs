@@ -41,6 +41,7 @@ pub(crate) struct Protos {
     pub element: JsObject,
     pub html_element: JsObject,
     pub html_canvas_element: JsObject,
+    pub html_style_element: JsObject,
     pub canvas_rendering_context_2d: JsObject,
     pub character_data: JsObject,
     pub text: JsObject,
@@ -373,6 +374,13 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let canvas_members = [&canvas::HTML_CANVAS_ELEMENT_MEMBERS];
     let html_canvas_element =
         derived(context, "HTMLCanvasElement", &html_element, &canvas_members)?;
+    let style_element_members = [&super::stylesheet::HTML_STYLE_ELEMENT_MEMBERS];
+    let html_style_element = derived(
+        context,
+        "HTMLStyleElement",
+        &html_element,
+        &style_element_members,
+    )?;
     let canvas_2d_members = [&canvas::CANVAS_RENDERING_CONTEXT_2D_MEMBERS];
     let canvas_2d_result = interface(
         context,
@@ -582,6 +590,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         element: element.prototype,
         html_element: html_element.prototype,
         html_canvas_element: html_canvas_element.prototype,
+        html_style_element: html_style_element.prototype,
         canvas_rendering_context_2d: canvas_2d.prototype,
         character_data: character_data.prototype,
         text: text.prototype,
@@ -649,16 +658,19 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html, canvas) = with_state(context, |s| {
+    let (kind, html, canvas, style) = with_state(context, |s| {
         let doc = s.host.document();
-        let kind = doc.get_node(index).map(|n| n.kind());
+        let node = doc.get_node(index);
+        let kind = node.map(|n| n.kind());
         let html = doc.element_namespace_uri(index) == Some(HTML_NS);
         let canvas = doc.is_canvas_element(index);
-        (kind, html, canvas)
+        let style = html && node.and_then(|n| n.tag_name()) == Some("style");
+        (kind, html, canvas, style)
     })?;
     let p = protos(context);
     Ok(match kind {
         Some(NodeKind::Element) if canvas => p.html_canvas_element.clone(),
+        Some(NodeKind::Element) if style => p.html_style_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),

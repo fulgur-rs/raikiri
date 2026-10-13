@@ -392,6 +392,43 @@ pub enum PageBleed {
     Length(Length),
 }
 
+/// Parsed value of the `page-orientation` descriptor (CSS Paged Media
+/// Level 3 §7.4 "Page orientation: the page-orientation descriptor",
+/// <https://drafts.csswg.org/css-page-3/#page-orientation-prop>).
+///
+/// Grammar (spec verbatim): `upright | rotate-left | rotate-right`. The
+/// descriptor does not change layout: it only rotates the laid-out page
+/// when it is presented.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PageRotation {
+    /// `upright` — no rotation (initial value).
+    #[default]
+    Upright,
+    /// `rotate-left` — rotate the page 90° counter-clockwise for display.
+    RotateLeft,
+    /// `rotate-right` — rotate the page 90° clockwise for display.
+    RotateRight,
+}
+
+/// One `page-orientation:` declaration from an `@page` block, in source
+/// order — same shape and rationale as [`PageSizeDeclaration`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PageRotationDeclaration {
+    /// The parsed `page-orientation` value, read through [`Self::value`].
+    pub(crate) value: PageRotation,
+    /// `!important` flag.
+    pub important: bool,
+}
+
+impl PageRotationDeclaration {
+    /// The parsed `page-orientation` value.
+    pub fn value(&self) -> PageRotation {
+        self.value
+    }
+}
+
 /// One `bleed:` declaration from an `@page` block, in source order — same
 /// shape and rationale as [`PageSizeDeclaration`] (see that type's doc for
 /// why this is a `Vec<PageBleedDeclaration>` rather than a single resolved
@@ -642,6 +679,9 @@ pub struct PageRule {
     /// `pub` surface analysis
     /// ([`PageRule::declarations`]'s doc).
     pub bleed_declarations: Vec<PageBleedDeclaration>,
+    /// `page-orientation:` declarations from the block body, in source
+    /// order — see [`PageRotationDeclaration`]. Cascaded like `marks`.
+    pub page_orientation_declarations: Vec<PageRotationDeclaration>,
     /// Margin-box at-rules (`@top-left { … }` etc.) nested in the block
     /// body, in source order — see [`PageMarginBoxRule`] for the value shape
     /// and its doc's "Scope" section for the geometry work deliberately

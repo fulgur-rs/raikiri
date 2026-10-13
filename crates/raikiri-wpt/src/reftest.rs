@@ -2414,9 +2414,12 @@ fn page_box_from_cascade(
         .and_then(|value| page_descriptor_dimension(value, base.height));
     match (width, height) {
         (Some(width), Some(height)) => {
+            // Like any box, the page box adds its border and padding around
+            // the page area that `width`/`height` size.
+            let insets = raikiri_dom::page_content_insets_for_page(page, base);
             let mut page_box = raikiri_traits::PageBox::new();
-            page_box.width = width + margins.left + margins.right;
-            page_box.height = height + margins.top + margins.bottom;
+            page_box.width = width + insets.left + insets.right + margins.left + margins.right;
+            page_box.height = height + insets.top + insets.bottom + margins.top + margins.bottom;
             page_box
         }
         _ => base,
@@ -3306,13 +3309,50 @@ pub(crate) fn render_raikiri_pages_with_resources(
             page_height,
         );
         paint_result?;
-        pages.push(RenderedImage {
-            width: page_width,
-            height: page_height,
-            rgba,
-        });
+        pages.push(rotate_presented_page(
+            RenderedImage {
+                width: page_width,
+                height: page_height,
+                rgba,
+            },
+            cascade.page.page_orientation(),
+        ));
     }
     Ok(RenderedDocument { pages })
+}
+
+/// Rotate a laid-out page for presentation per its `page-orientation`
+/// descriptor (CSS Paged Media 3 §7.4): the page is laid out unrotated and
+/// only turned by a quarter when it is output.
+fn rotate_presented_page(
+    page: RenderedImage,
+    rotation: Option<raikiri_style::PageRotation>,
+) -> RenderedImage {
+    let clockwise = match rotation {
+        Some(raikiri_style::PageRotation::RotateRight) => true,
+        Some(raikiri_style::PageRotation::RotateLeft) => false,
+        _ => return page,
+    };
+    let (width, height) = (page.width as usize, page.height as usize);
+    let mut rgba = vec![0; page.rgba.len()];
+    for y in 0..height {
+        for x in 0..width {
+            // The rotated image is `height` pixels wide and `width` tall.
+            let (rx, ry) = if clockwise {
+                (height - 1 - y, x)
+            } else {
+                (y, width - 1 - x)
+            };
+            let from = (y * width + x) * 4;
+            let to = (ry * height + rx) * 4;
+            rgba[to..to + 4].copy_from_slice(&page.rgba[from..from + 4]);
+        }
+    }
+    RenderedImage {
+        width: page.height,
+        height: page.width,
+        rgba,
+    }
 }
 /// Load `@font-face` `src: url(...)` bytes from the WPT tree.
 ///

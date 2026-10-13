@@ -867,6 +867,7 @@ impl RuleTree {
                         size_declarations,
                         marks_declarations,
                         bleed_declarations,
+                        page_orientation_declarations,
                         margin_box_rules,
                     } = body;
                     let index = self.page_rules.len();
@@ -876,6 +877,7 @@ impl RuleTree {
                         size_declarations,
                         marks_declarations,
                         bleed_declarations,
+                        page_orientation_declarations,
                         margin_box_rules,
                         source_order: page_order,
                         layer: None,
@@ -2229,6 +2231,7 @@ fn add_group_items(
                     size_declarations,
                     marks_declarations,
                     bleed_declarations,
+                    page_orientation_declarations,
                     margin_box_rules,
                 } = body;
                 let index = sink.page_rules.len();
@@ -2238,6 +2241,7 @@ fn add_group_items(
                     size_declarations,
                     marks_declarations,
                     bleed_declarations,
+                    page_orientation_declarations,
                     margin_box_rules,
                     source_order: *sink.page_order,
                     layer: sink.layer,
