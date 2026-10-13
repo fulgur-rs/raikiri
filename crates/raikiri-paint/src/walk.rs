@@ -614,10 +614,8 @@ fn paint_page_background_image(
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
     let initial = ComputedValues::initial();
-    let root_font_size = find_html(document)
-        .and_then(|node_id| cascade.computed.get(node_id))
-        .map(|computed| computed.font_size)
-        .unwrap_or(initial.font_size);
+    let root = find_html(document).and_then(|node_id| cascade.computed.get(node_id));
+    let root_font_size = root.map_or(initial.font_size, |computed| computed.font_size);
     let page_font_size = match page_property(cascade, PropertyKey::FontSize) {
         Some(PropertyValue::FontSize(Length::Px(px))) => ComputedLength(*px),
         _ => root_font_size,
@@ -692,9 +690,10 @@ fn paint_page_background_image(
             else {
                 return;
             };
+            // The page context inherits `color` from the root element.
             let current_color = match page_property(cascade, PropertyKey::Color) {
                 Some(PropertyValue::Color(color)) => *color,
-                _ => CssColor::BLACK,
+                _ => root.map_or(initial.color, |computed| computed.color),
             };
             gradient::paint_gradient_layer(
                 scene,

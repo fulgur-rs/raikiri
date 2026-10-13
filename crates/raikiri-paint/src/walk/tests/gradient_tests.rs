@@ -835,6 +835,37 @@ fn page_gradients_resolve_font_lengths_with_the_page_font() {
 }
 
 #[test]
+fn page_gradients_inherit_current_color_from_the_root() {
+    let (document, cascade) = canvas_fixture(
+        Some(
+            "html { color: blue } @page { size: 20px 20px; margin: 0; \
+             background-image: linear-gradient(currentColor, currentColor) }",
+        ),
+        None,
+    );
+    let mut page_box = PageBox::A4;
+    page_box.width = 20.0;
+    page_box.height = 20.0;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_canvas_background(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &document,
+        &cascade,
+        page_box,
+        None,
+        &mut warnings,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        20,
+        20,
+    );
+    assert_eq!(pixel(&rgba, 20, 10, 10), BLUE);
+}
+
+#[test]
 fn short_periods_in_long_gradients_still_repeat() {
     let cv = computed_for(
         "background-image: repeating-linear-gradient(to right in srgb, red 0, blue 5px); \
