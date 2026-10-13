@@ -85,6 +85,10 @@ pub(crate) struct ProjectedIfc {
     /// overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
+    /// The opacity of the translucent `::first-line` boxes around the
+    /// paragraph's first line, multiplied (see
+    /// [`crate::paint_rules::first_line_opacity_layer`]).
+    pub(crate) first_line_opacity: Option<f32>,
 }
 
 /// Whether `node` or one of its ancestors has an authored vertical writing
@@ -587,6 +591,10 @@ pub(crate) struct ProjectedBuilder {
     /// overflows the space there.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<LetterStyle>,
+    /// The opacity of the translucent `::first-line` boxes around the
+    /// paragraph's first line, multiplied (see
+    /// [`crate::paint_rules::first_line_opacity_layer`]).
+    pub(crate) first_line_opacity: Option<f32>,
 }
 
 impl ProjectedBuilder {
@@ -616,6 +624,7 @@ impl ProjectedBuilder {
             nowrap: self.nowrap,
             text_nowrap: self.text_nowrap,
             letter_styles: self.letter_styles,
+            first_line_opacity: self.first_line_opacity,
         })
     }
 }
@@ -720,6 +729,8 @@ pub(crate) fn project_ifc_text_builder(
             cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
         )])),
         letter_styles: Vec::new(),
+        // An anonymous item has no first formatted line of an element.
+        first_line_opacity: None,
     })
 }
 
@@ -1228,7 +1239,40 @@ fn project_children_builder(
         nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
         text_nowrap: Arc::new(text_nowrap),
         letter_styles: first_letter.styles,
+        first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
     })
+}
+
+/// The product of the opacities below one of the `::first-line` boxes
+/// around the first line of paragraph `root`, if any. The blocks whose first
+/// formatted line it is are found only when one of them has a translucent
+/// `::first-line`, as that takes a walk over the whole document, shared by
+/// the paragraphs of one pass.
+fn first_line_opacity(
+    doc: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    predecessors: &super::first_letter::PredecessorCache,
+) -> Option<f32> {
+    let translucent = |id: usize| {
+        cascade
+            .pseudo
+            .get(&(
+                raikiri_style::StyleNodeId::new(id as u64),
+                PseudoElem::FirstLine,
+            ))
+            .filter(|cv| cv.opacity < 1.0)
+            .map(|cv| cv.opacity)
+    };
+    let ancestors = std::iter::successors(doc.parent_of(root), |&id| doc.parent_of(id))
+        .any(|id| translucent(id).is_some());
+    if !ancestors && translucent(root).is_none() {
+        return None;
+    }
+    let (_, origins) =
+        super::first_letter::typographic_origins(doc, cascade, root, predecessors, ancestors);
+    let opacity: f32 = origins.into_iter().filter_map(translucent).product();
+    (opacity < 1.0).then_some(opacity)
 }
 
 #[cfg(test)]

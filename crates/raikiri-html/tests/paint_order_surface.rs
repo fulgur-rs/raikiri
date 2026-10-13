@@ -567,7 +567,7 @@ fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
     );
 }
 
-/// Like [`content_order`], with each group's opacity and each text line's
+/// Like `content_order`, with each group's opacity and each text line's
 /// index: `push <alpha>`, `text <line>` and `text <id> <line>`.
 fn line_order(body: &str, style: &str) -> Vec<String> {
     let result = lay_out_with_font(body, &format!("p {{margin:0}} {style}"));

@@ -440,7 +440,7 @@ impl Document {
                     // The supplied runs tell the first line apart; text
                     // fragments cover all the lines of a text node.
                     let first_line = lines.is_some()
-                        && paint_rules::first_line_opacity_layer(self, cascade, node_id).is_some();
+                        && paint_rules::first_line_opacity_layer(self, node_id).is_some();
                     let part = if first_line {
                         LinePart::Rest
                     } else {
@@ -480,8 +480,7 @@ impl Document {
                     // text, inline boxes and generated content, and the
                     // first-line parts of the groups on it. The boxes laid
                     // out beside the lines stay with the rest.
-                    let Some(alpha) = paint_rules::first_line_opacity_layer(self, cascade, root)
-                    else {
+                    let Some(alpha) = paint_rules::first_line_opacity_layer(self, root) else {
                         continue; // cov:ignore: the frame is listed only for a translucent first line
                     };
                     let mut content = Vec::new();

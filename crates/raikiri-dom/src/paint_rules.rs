@@ -260,50 +260,17 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
 /// line of each ancestor block it starts, so their `::first-line` boxes
 /// nest around the same content, and their opacities multiply. A paragraph
 /// that starts with a block child has no first line of its own.
-pub fn first_line_opacity_layer(
-    document: &Document,
-    cascade: &CascadeResult,
-    root: usize,
-) -> Option<f32> {
+pub fn first_line_opacity_layer(document: &Document, root: usize) -> Option<f32> {
     let node = document.get_node(root)?;
     if node.kind() != NodeKind::Element || !node.is_ifc_root() {
         return None;
     }
-    let translucent = |id: usize| {
-        cascade
-            .pseudo
-            .get(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))
-            .is_some_and(|cv| cv.opacity < 1.0)
-    };
-    // Most paragraphs are under no translucent `::first-line`. Finding the
-    // ancestor blocks whose first line this is takes a walk over the whole
-    // document, needed only when one of them is translucent.
-    let ancestors = std::iter::successors(document.parent_of(root), |&id| document.parent_of(id))
-        .any(translucent);
-    if !ancestors && !translucent(root) {
-        return None;
-    }
-    let lines = node.ifc.as_ref()?.lines.as_ref()?;
+    let ifc = node.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
     if lines.lines.is_empty() || lines.block_line_starts.iter().any(|&(_, line)| line == 0) {
         return None;
     }
-    let (_, origins) = crate::layout::ifc::first_letter::typographic_origins(
-        document,
-        cascade,
-        root,
-        &crate::layout::ifc::first_letter::PredecessorCache::default(),
-        ancestors,
-    );
-    let opacity: f32 = origins
-        .into_iter()
-        .filter_map(|id| {
-            cascade
-                .pseudo
-                .get(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))
-        })
-        .map(|cv| cv.opacity)
-        .product();
-    (opacity < 1.0).then_some(opacity)
+    ifc.first_line_opacity
 }
 
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]

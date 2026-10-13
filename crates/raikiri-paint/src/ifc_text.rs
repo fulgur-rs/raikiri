@@ -124,8 +124,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     // as one group. It splits the inline elements on that line from their
     // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
     // own.
-    let first_line_opacity =
-        raikiri_dom::paint_rules::first_line_opacity_layer(document, cascade, root_id);
+    let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
     let mut first_line = first_line_opacity.map(|opacity| {
         let pieces = pieces_by_line.first().map_or(&[][..], Vec::as_slice);
         (
