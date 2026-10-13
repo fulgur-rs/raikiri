@@ -4211,12 +4211,12 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let page = page_index_for_y(effective_y);
                     // Preceding content that overflowed past the current
                     // page (a tall box, or floats it contains) has put this
-                    // box partway down a later page. A forced break sits
+                    // box partway down a later page. A page-type change sits
                     // after all of that content, so it opens the page after
                     // the one the box's margin box starts on, unless that
                     // margin box is already at the top of a page.
                     let margin_box_y = effective_y - margin_top.max(0.0);
-                    if forced_transition && page > current_page && margin_box_y.is_finite() {
+                    if named_page_change && page > current_page && margin_box_y.is_finite() {
                         let margin_box_page = page_index_for_y(margin_box_y.max(0.0));
                         if (margin_box_y - page_origin(margin_box_page)).abs() <= 0.001 {
                             margin_box_page
