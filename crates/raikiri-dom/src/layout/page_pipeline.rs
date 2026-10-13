@@ -175,18 +175,41 @@ fn layout_relative_offset_y(
     node_id: usize,
 ) -> f32 {
     let computed = &cascade.computed[node_id];
+    // A `display: contents` element generates no box to offset.
     if !matches!(
         computed.position,
         PositionValue::Relative | PositionValue::Sticky
-    ) {
+    ) || matches!(
+        computed.display,
+        DisplayValue::Contents | DisplayValue::None
+    ) || relative_offset_is_painted(document, cascade, body_id, node_id)
+    {
         return 0.0;
     }
-    let offset = match (computed.top, computed.bottom) {
-        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
-        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
-        _ => 0.0,
+    // Percentages resolve against the containing block's height when it
+    // is definite, and otherwise act as `auto` (CSS 2.1 §9.3.2).
+    let basis = document.layout_parent_of(node_id).and_then(|parent| {
+        matches!(
+            cascade.computed[parent].height,
+            ComputedLengthPercentageOrAuto::Px(_)
+        )
+        .then(|| {
+            let layout = &document.nodes[parent].unrounded_layout;
+            layout.size.height
+                - layout.padding.top
+                - layout.padding.bottom
+                - layout.border.top
+                - layout.border.bottom
+        })
+    });
+    let resolve = |value: ComputedLengthPercentageOrAuto| match (value, basis) {
+        (ComputedLengthPercentageOrAuto::Px(px), _) => Some(px),
+        (value, Some(basis)) => used_computed_length_percentage_or_auto(value, basis),
+        (_, None) => None,
     };
-    offset - painted_relative_offset_y(document, cascade, body_id, node_id)
+    resolve(computed.top)
+        .or_else(|| resolve(computed.bottom).map(|bottom| -bottom))
+        .unwrap_or(0.0)
 }
 
 /// The relative offsets that layout applied to `node_id` and to its
@@ -215,9 +238,27 @@ fn painted_relative_offset_y(
     body_id: usize,
     node_id: usize,
 ) -> f32 {
+    if !relative_offset_is_painted(document, cascade, body_id, node_id) {
+        return 0.0;
+    }
+    let computed = &cascade.computed[node_id];
+    match (computed.top, computed.bottom) {
+        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
+        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
+        _ => 0.0,
+    }
+}
+
+/// Whether layout leaves the relative offset of `node_id` to the painter.
+fn relative_offset_is_painted(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> bool {
     let computed = &cascade.computed[node_id];
     if !matches!(computed.position, PositionValue::Relative) {
-        return 0.0;
+        return false;
     }
     let float = matches!(computed.float, FloatValue::Left | FloatValue::Right)
         && document.layout_parent_of(node_id).is_none_or(|parent| {
@@ -246,16 +287,8 @@ fn painted_relative_offset_y(
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup
     );
-    let painted = ((node_id == body_id || float || table_part) && !inline_level)
-        || document.nodes[node_id].needs_relative_block_paint_offset();
-    if !painted {
-        return 0.0;
-    }
-    match (computed.top, computed.bottom) {
-        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
-        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
-        _ => 0.0,
-    }
+    ((node_id == body_id || float || table_part) && !inline_level)
+        || document.nodes[node_id].needs_relative_block_paint_offset()
 }
 
 /// The block-end edge of the body's border box in page coordinates.
@@ -3992,7 +4025,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                     )
                     // Grid items in other tracks do not follow a moved item
                     // in block flow, so grid content keeps its own handling.
-                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id);
+                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id)
+                    // A clipping ancestor of bounded height keeps its clip
+                    // where it is, so moving the box would only hide it.
+                    && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
                 // A nested float follows an earlier float that moved in its
                 // formatting context (CSS 2.1 §9.5.1), and a nested block
                 // that clears one stays below it (§9.5.2), so both are
@@ -4008,7 +4044,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree
-                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id);
+                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id)
+                    // A clipping ancestor of bounded height keeps its clip
+                    // where it is, so moving the box would only hide it.
+                    && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
                 let is_break_candidate = !is_body
                     && computed.display != DisplayValue::Contents
                     && !inside_float
@@ -4630,6 +4669,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                             &mut later_float_edges,
                             float_context,
                             FloatEdge {
+                                node: node_id,
                                 side: index,
                                 top: top - layout.margin.top,
                                 bottom: top + layout.size.height + layout.margin.bottom,
@@ -5358,6 +5398,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 &mut later_float_edges,
                                 context,
                                 FloatEdge {
+                                    node: node_id,
                                     side: index,
                                     top: outer_top,
                                     bottom: outer_bottom,
@@ -5819,14 +5860,15 @@ fn grown_auto_height(
     // context of the box's own, keeps the last child's margin inside it
     // (CSS 2.1 §8.3.1).
     let edges_below = layout.padding.bottom + layout.border.bottom;
-    let contains_margins = edges_below > 0.0
-        || matches!(
-            cascade.computed[parent].display,
-            DisplayValue::FlowRoot | DisplayValue::InlineBlock
-        )
-        || establishes_containment_context(&cascade.computed[parent])
+    // A formatting context of the box's own also holds its floats (CSS 2.1
+    // §10.6.7).
+    let contains_floats = matches!(
+        cascade.computed[parent].display,
+        DisplayValue::FlowRoot | DisplayValue::InlineBlock
+    ) || establishes_containment_context(&cascade.computed[parent])
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container();
+    let contains_margins = edges_below > 0.0 || contains_floats;
     let mut before = f32::NEG_INFINITY;
     let mut after = f32::NEG_INFINITY;
     let mut shifted = false;
@@ -5843,11 +5885,30 @@ fn grown_auto_height(
         if child_node.kind() == NodeKind::Text
             || cascade.computed[child].display == DisplayValue::None
             || child_node.style.position == taffy::Position::Absolute
-            || is_floating_box_for_pagination(document, cascade, child)
         {
             continue;
         }
         let child_layout = &child_node.unrounded_layout;
+        if is_floating_box_for_pagination(document, cascade, child) {
+            if contains_floats {
+                // A float's margin box ends the content.
+                let bottom =
+                    pagination_child_parent_y(document, parent, child, child_layout.location.y)
+                        + child_layout.size.height
+                        + child_layout.margin.bottom;
+                let (old_bottom, new_bottom) = if child == moved {
+                    shifted = true;
+                    (bottom - delta, bottom)
+                } else if shifted {
+                    (bottom, bottom + delta)
+                } else {
+                    (bottom, bottom)
+                };
+                before = before.max(old_bottom);
+                after = after.max(new_bottom);
+            }
+            continue;
+        }
         let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
         let bottom = pagination_child_parent_y(document, parent, child, child_layout.location.y)
             + child_layout.size.height
@@ -6077,15 +6138,19 @@ fn grow_ancestors_for_shift(
 /// float.
 #[derive(Clone, Copy, PartialEq)]
 struct FloatEdge {
+    node: usize,
     side: usize,
     top: f32,
     bottom: f32,
     width: f32,
 }
 
-/// Adds a moved float to the floats of its formatting context.
+/// Adds a moved float to the floats of its formatting context. A float
+/// that moves again replaces its earlier place.
 fn record_float_edge(edges: &mut HashMap<usize, Vec<FloatEdge>>, context: usize, edge: FloatEdge) {
-    edges.entry(context).or_default().push(edge);
+    let edges = edges.entry(context).or_default();
+    edges.retain(|earlier| earlier.node != edge.node);
+    edges.push(edge);
 }
 
 /// The box whose block formatting context places the floats and clearance
@@ -6166,6 +6231,33 @@ fn clears_float_side(clear: ClearValue, side: FloatValue) -> bool {
 /// Whether a grid, flex or multi-column container contains `node_id`, up to
 /// and including `body_id`: moving such a box would also displace the boxes
 /// beside it.
+/// Whether an ancestor of `node_id` inside the body clips its overflow in
+/// the block axis and has a definite or maximum height, so it does not grow
+/// with a moved descendant.
+fn has_bounded_clipping_ancestor(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+) -> bool {
+    let mut current = document.parent_of(node_id);
+    while let Some(id) = current {
+        if id == body_id {
+            break;
+        }
+        let computed = &cascade.computed[id];
+        if !matches!(computed.overflow.y, OverflowValue::Visible)
+            && crate::paint_rules::clips_element_overflow(document, cascade, id)
+            && (computed.height != ComputedLengthPercentageOrAuto::Auto
+                || computed.max_height != ComputedLengthPercentageOrAuto::Auto)
+        {
+            return true;
+        }
+        current = document.parent_of(id);
+    }
+    false
+}
+
 fn has_side_by_side_ancestor(
     document: &Document,
     cascade: &CascadeResult,

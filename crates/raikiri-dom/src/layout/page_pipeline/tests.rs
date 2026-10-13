@@ -12669,3 +12669,151 @@ fn a_float_stays_below_moved_floats_whose_combined_width_leaves_no_room() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 100.0, 160.0]);
 }
+
+#[test]
+fn a_display_contents_ancestor_adds_no_relative_offset() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        let contents = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:contents;position:relative;top:30px"),
+        );
+        let parent = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block"),
+        );
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 100.0);
+}
+
+#[test]
+fn a_calc_relative_offset_does_not_move_a_box_that_fits_in_flow() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:calc(10% + 20px);height:60px;break-inside:avoid"),
+        );
+    });
+    // The 30px offset is not part of the flow, so the box fits at 20px.
+    assert_eq!(page_flow_y(&doc, id), 50.0);
+}
+
+#[test]
+fn a_float_moved_twice_keeps_only_its_last_place_in_the_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:60px;height:60px;break-inside:avoid",
+            "float:left;width:60px;height:60px;break-inside:avoid",
+            "float:right;width:30px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 200.0, 200.0]);
+}
+
+#[test]
+fn a_box_in_a_bounded_clipping_ancestor_does_not_move() {
+    let mut id = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:40px;overflow:hidden"),
+        );
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!((page_flow_y(&doc, id), pages), (60.0, 1));
+}
+
+#[test]
+fn a_formatting_context_does_not_grow_past_a_float_that_still_holds_the_moved_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root"),
+        );
+        ids.push(root);
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:150px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The moved box ends at 160px, inside the float's 210px end.
+    assert_eq!(ys, vec![60.0, 210.0]);
+}
