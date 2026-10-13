@@ -29,6 +29,8 @@ pub(super) struct MarkerText {
     color: CssColor,
     shadows: Vec<TextShadow>,
     first_page: Option<u32>,
+    /// The flow origin of [`Self::first_page`].
+    first_page_origin: Option<f32>,
     /// The middle of the item's first line from its border edge, when the
     /// marker is aligned with one.
     line_center: Option<f32>,
@@ -38,6 +40,14 @@ impl MarkerText {
     /// Number of stable line identities in the prepared standalone marker.
     pub(super) fn line_count(&self) -> usize {
         self.shaped.lines().len()
+    }
+
+    /// Whether the page whose flow starts at `content_origin_y` is the
+    /// item's first page, the one page that draws the marker. Unknown when
+    /// the item has no fragment on any page.
+    pub(super) fn is_on_page(&self, content_origin_y: f32) -> bool {
+        self.first_page_origin
+            .is_none_or(|origin| (origin - content_origin_y).abs() < 0.001)
     }
 
     /// The top of the marker's line for an item whose border edge is at
@@ -110,7 +120,7 @@ pub(super) fn prepare_markers(
             if item.fragment_index == 0 {
                 first_pages
                     .entry(item.node_id.0 as usize)
-                    .or_insert(page.page_index);
+                    .or_insert((page.page_index, page.content_origin_y));
             }
         }
     }
@@ -167,7 +177,8 @@ pub(super) fn prepare_markers(
                     offset_y,
                     color: style.color,
                     shadows: text_shadows(style),
-                    first_page: first_pages.get(&owner).copied(),
+                    first_page: first_pages.get(&owner).map(|&(index, _)| index),
+                    first_page_origin: first_pages.get(&owner).map(|&(_, origin)| origin),
                     line_center: item_line.map(|line| line.center),
                 },
             );
@@ -1024,7 +1035,8 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 .filter(|&&child| in_flow(child))
                 .find_map(|&child| {
                     let line = first_line(document, cascade, child)?;
-                    let top = document.nodes[child].unrounded_layout.location.y;
+                    let top = document.nodes[child].unrounded_layout.location.y
+                        - layout_applied_relative_offset_y(document, cascade, child);
                     ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
                 })
                 .unwrap_or(baseline);
@@ -1060,13 +1072,23 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         };
         // A relative offset moves the child, not the item's marker, so the
         // offset that layout already applied is taken back out.
-        let relative = if document.nodes[child].needs_relative_block_paint_offset() {
-            0.0
-        } else {
-            layout_relative_offset_y(&cascade.computed[child])
-        };
-        y += document.nodes[child].unrounded_layout.location.y - relative;
+        y += document.nodes[child].unrounded_layout.location.y
+            - layout_applied_relative_offset_y(document, cascade, child);
         id = child;
+    }
+}
+
+/// The vertical relative offset that layout already applied to `id`'s
+/// location; the painter applies the others.
+fn layout_applied_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> f32 {
+    if document.nodes[id].needs_relative_block_paint_offset() {
+        0.0
+    } else {
+        layout_relative_offset_y(&cascade.computed[id])
     }
 }
 

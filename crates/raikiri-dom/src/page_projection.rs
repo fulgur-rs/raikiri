@@ -114,18 +114,26 @@ impl Document {
         ))
     }
 
-    /// The top of an outside text marker's line, for a list item whose
-    /// border edge is at `top` on a page whose content ends at
-    /// `page_bottom`, as in [`crate::PositionedGlyphRun`]s of the page: its
-    /// baseline meets the item's first line, and it stays on the page when
-    /// that line starts on a later one. `None` when layout prepared no text
-    /// marker for `owner`.
+    /// Where an outside text marker is drawn on the page whose flow starts
+    /// at `content_origin_y`, as in [`crate::PositionedGlyphRun`]s of the
+    /// page: `Some(None)` on any page but the item's first, else the top of
+    /// the marker's line for a list item whose border edge is at `top` on a
+    /// page whose content ends at `page_bottom`. Its baseline meets the
+    /// item's first line, and it stays on the page when that line starts on
+    /// a later one. `None` when layout prepared no text marker for `owner`.
     #[doc(hidden)]
-    pub fn list_marker_text_top(&self, owner: usize, top: f32, page_bottom: f32) -> Option<f32> {
-        self.page_projection
-            .markers
-            .get(&owner)
-            .map(|marker| marker.line_top(top, page_bottom))
+    pub fn list_marker_text_top(
+        &self,
+        owner: usize,
+        content_origin_y: f32,
+        top: f32,
+        page_bottom: f32,
+    ) -> Option<Option<f32>> {
+        self.page_projection.markers.get(&owner).map(|marker| {
+            marker
+                .is_on_page(content_origin_y)
+                .then(|| marker.line_top(top, page_bottom))
+        })
     }
 
     /// The line holding one image of `::before` or `::after` content placed

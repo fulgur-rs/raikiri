@@ -232,6 +232,16 @@ fn a_flex_first_line_follows_the_order_of_the_items() {
     assert_eq!(line.center, 7.0 + 12.0 + 10.0);
 }
 
+/// A relative offset moves the item's box, not the line the flex layout
+/// aligned, so the item still supplies the line's middle.
+#[test]
+fn a_flex_first_line_ignores_the_relative_offset_of_its_item() {
+    let (document, cascade, flex) = flex_items(&["line-height:50px;position:relative;top:9px"]);
+    let line = first_line(&document, &cascade, flex).unwrap();
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
+}
+
 /// Two Ahem paragraphs, one X per 10px line: 25 lines, then 3 lines below.
 fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
     let mut document = Document::new();

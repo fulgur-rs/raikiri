@@ -1232,7 +1232,7 @@ fn paint_list_marker(
         width,
         height,
         padding_left,
-        (f32::NEG_INFINITY, f32::INFINITY),
+        (0.0, f32::INFINITY),
         &snapshots,
         None,
     );
@@ -1251,7 +1251,7 @@ fn paint_list_marker_with_snapshots(
     width: f32,                  // cov:ignore: signature line has no executable mapping
     height: f32,                 // cov:ignore: signature line has no executable mapping
     padding_left: f32,           // cov:ignore: signature line has no executable mapping
-    page_extent: (f32, f32),     // cov:ignore: signature line has no executable mapping
+    page_flow: (f32, f32),       // cov:ignore: signature line has no executable mapping
     snapshots: &[CounterSnapshot],
     pixel_source: Option<&dyn ImagePixelSource>,
 ) {
@@ -1330,14 +1330,13 @@ fn paint_list_marker_with_snapshots(
     };
     // The marker's baseline meets the item's first line (CSS Lists 3
     // §3.1), where the page's text runs place it. It belongs to the item's
-    // first page, so an item that started on an earlier page draws none.
-    let (page_top, page_bottom) = page_extent;
-    if paint_y < page_top {
-        return;
-    }
-    let top = document
-        .list_marker_text_top(node_id, paint_y, page_bottom)
-        .unwrap_or(paint_y);
+    // first page, so the item's later pages draw none.
+    let (content_origin_y, page_bottom) = page_flow;
+    let top = match document.list_marker_text_top(node_id, content_origin_y, paint_y, page_bottom) {
+        Some(Some(top)) => top,
+        Some(None) => return,
+        None => paint_y,
+    };
     crate::standalone_text::draw(
         scene,
         &shaped,
@@ -3143,15 +3142,7 @@ pub(crate) fn paint_document_impl(
                             marker_width,
                             marker_height,
                             layout.padding.left,
-                            (
-                                // The first page has no earlier one.
-                                if page_top > 0.0 {
-                                    page_offset_y + page_top - 0.001
-                                } else {
-                                    f32::NEG_INFINITY
-                                },
-                                page_offset_y + page_bottom,
-                            ),
+                            (content_origin_y, page_offset_y + page_bottom),
                             counter_snapshots,
                             pixel_source,
                         );

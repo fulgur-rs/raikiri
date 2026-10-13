@@ -4271,7 +4271,7 @@ fn inside_ruby_multicol_markers_paint_on_the_legacy_path() {
             100.0,
             100.0,
             item_layout.padding.left,
-            (f32::NEG_INFINITY, f32::INFINITY),
+            (0.0, f32::INFINITY),
             &[],
             Some(&Pixels),
         );
@@ -4354,7 +4354,7 @@ fn explicit_marker_content_suppresses_legacy_image_paint() {
             100.0,
             30.0,
             0.0,
-            (f32::NEG_INFINITY, f32::INFINITY),
+            (0.0, f32::INFINITY),
             &[],
             Some(&Pixels),
         );

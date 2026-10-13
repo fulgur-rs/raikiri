@@ -1069,6 +1069,13 @@ fn a_marker_whose_first_line_moves_on_matches_paint() {
             "<ol><li style=\"padding-top: 150px; line-height: 30px\">A</li></ol>",
             "body { margin: 0 }",
         ),
+        // An item that starts on a later page keeps its marker there when a
+        // relative offset moves it above the page's top.
+        (
+            "<div style=\"height: 165px\"></div>\
+             <ol><li style=\"position: relative; top: -20px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
     ]);
 }
 
