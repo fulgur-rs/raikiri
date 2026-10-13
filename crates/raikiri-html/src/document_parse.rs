@@ -10,12 +10,9 @@
 //! `parse_html_with_limits` reads [`RenderLimits::max_input_bytes`] and bounds
 //! input reads. This closes SEC-HIGH: an unbounded-read DoS in `parse_html`
 //! where attacker-supplied HTML of arbitrary size could exhaust memory.
-//! Input is parsed as it is read, in chunks, and the reader is wrapped in
-//! `Read::take(cap + 1)` with a byte counter. As soon as more than `cap`
-//! bytes have been read, parsing stops and the call returns
-//! `RenderError::LimitExceeded { kind: LimitKind::InputBytes, .. }`.
-//! A plain `take(cap)` would not detect the limit because html5ever silently
-//! accepts truncated input.
+//! Input is parsed as it is read, in chunks, and the parser probes at most
+//! `cap + 1` bytes. As soon as more than `cap` bytes are observed, parsing
+//! stops and the call returns `RenderError::LimitExceeded`.
 //!
 //! Initially, a hard-coded `INPUT_BYTES_CAP` and reused
 //! `LimitKind::AggregateBytes` were a stopgap for SEC-HIGH. These were later
@@ -30,9 +27,8 @@
 
 use std::io::Read;
 
-use crate::{
-    ParseOptions, RaikiriTreeSink, UncascadedDocument, effective_document_base_url, parse_with_sink,
-};
+use crate::parse::parse_with_budgets;
+use crate::{ParseOptions, UncascadedDocument, effective_document_base_url};
 use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 
 use raikiri_style::{CascadeOptions, PageContextQuery};
@@ -94,8 +90,8 @@ pub fn parse_html<R: Read>(
 /// byte cap, this does not stop early. Excess errors are dropped, and one
 /// synthetic warning is added instead.
 ///
-/// [`RenderLimits::max_dom_nodes`] is checked after parsing and before rule-tree
-/// construction or cascading. `None` disables this check.
+/// [`RenderLimits::max_dom_nodes`] is enforced before each DOM node allocation.
+/// `None` disables this check.
 /// The rule tree is built within [`RenderLimits::rule_tree_limits`], the
 /// `max_style_*` fields, and the first-page cascade runs within
 /// [`RenderLimits::cascade_limits`], the `max_cascade_*` fields. Other
@@ -105,11 +101,10 @@ pub fn parse_html<R: Read>(
 /// # Implementation
 ///
 /// Input is not buffered as a whole: it is read in chunks and each chunk is
-/// passed to html5ever as soon as it arrives. With `Some(cap)`, the reader is
-/// wrapped in `take(cap + 1)` and every byte read is counted; reading byte
-/// `cap + 1` stops the parse. A plain `Read::take(cap)` truncates silently at
-/// the cap, and html5ever parses truncated input without warning; this
-/// "+1 probe" is needed to detect an over-limit input.
+/// passed to html5ever as soon as it arrives. With `Some(cap)`, at most
+/// `cap + 1` bytes are read; the first byte over the cap stops the parse. The
+/// parser also stops reading at the next chunk boundary after the DOM node cap
+/// is reached.
 ///
 /// With `None`, the input is read to its end without a limit.
 ///
@@ -126,8 +121,8 @@ pub fn parse_html<R: Read>(
 ///   the configured cap; `actual` only establishes that the cap was exceeded.
 ///   The true input size is unknown because detection stops just past the cap.
 /// - `RenderError::LimitExceeded { kind: LimitKind::DomNodes, limit, actual }`:
-///   the parsed DOM node count exceeded `limits.max_dom_nodes.unwrap()`.
-///   `actual` is the full arena node count, including the virtual root.
+///   the next DOM node allocation would exceed `limits.max_dom_nodes.unwrap()`.
+///   `actual` is the first arena node count beyond the cap, including the virtual root.
 /// - `RenderError::LimitExceeded { kind: LimitKind::Style*, .. }`: the
 ///   document's stylesheets passed one of [`RenderLimits::rule_tree_limits`];
 ///   `actual` is the count parsing stopped at.
@@ -142,32 +137,11 @@ pub fn parse_html_with_limits<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    // Construct the sink explicitly: the crate::parse thin-wrapper path
-    // always uses `RaikiriTreeSink::default()`, so it cannot consult
-    // `limits.max_parse_warnings`.
-    let sink = RaikiriTreeSink::new(limits.max_parse_warnings);
-    let uncascaded = match limits.max_input_bytes {
-        Some(cap) => {
-            let mut capped = CappedInput::new(input, cap);
-            let parsed = parse_with_sink(&mut capped, sink, options);
-            if let Some(actual) = capped.exceeded() {
-                return Err(RenderError::LimitExceeded {
-                    kind: LimitKind::InputBytes,
-                    limit: cap,
-                    actual,
-                });
-            }
-            parsed
-        }
-        // The consumer explicitly disabled the cap (the fail-closed default
-        // is 32 MiB; this branch is reached only through opt-out).
-        None => parse_with_sink(input, sink, options),
-    }
-    .map_err(RenderError::Parse)?;
+    let uncascaded = parse_with_budgets(input, options, &limits)?;
     assemble_document(uncascaded, options, &limits)
 }
 
-/// Check the DOM node cap on a parsed document and run its first-page
+/// Check the DOM node cap as a defensive postcondition and run its first-page
 /// cascade.
 pub(crate) fn assemble_document(
     uncascaded: UncascadedDocument,
@@ -206,42 +180,4 @@ pub(crate) fn assemble_document(
         font_faces,
         effective_base_url,
     })
-}
-
-/// Reader that stops with an error once more than `cap` bytes were read.
-///
-/// The inner reader is limited to `cap + 1` bytes, so the reported count is
-/// exactly `cap + 1` when the cap is exceeded, and nothing past that byte is
-/// ever requested from the caller's reader.
-struct CappedInput<R> {
-    inner: std::io::Take<R>,
-    cap: u64,
-    read: u64,
-}
-
-impl<R: Read> CappedInput<R> {
-    fn new(input: R, cap: u64) -> Self {
-        // Use saturating_add to avoid overflow when cap == u64::MAX.
-        Self {
-            inner: input.take(cap.saturating_add(1)),
-            cap,
-            read: 0,
-        }
-    }
-
-    /// The number of bytes read, if it exceeded the cap.
-    fn exceeded(&self) -> Option<u64> {
-        (self.read > self.cap).then_some(self.read)
-    }
-}
-
-impl<R: Read> Read for CappedInput<R> {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.inner.read(buf)?;
-        self.read += read as u64;
-        if self.read > self.cap {
-            return Err(std::io::Error::other("input byte cap exceeded"));
-        }
-        Ok(read)
-    }
 }

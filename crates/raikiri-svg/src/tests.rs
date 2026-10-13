@@ -45,6 +45,7 @@ fn styled_svg_source_preserves_inherited_opacity_without_rasterizing() {
 }
 
 fn preflight_initial_svg(source: &str) -> Result<(), SvgError> {
+    super::preflight_initial_svg_xml(source)?;
     let xml = roxmltree::Document::parse(source).expect("test SVG is valid XML");
     preflight_initial_svg_selectors(&xml)
 }
@@ -263,33 +264,126 @@ fn initial_svg_preflight_stops_recursive_use_expansion_and_excessive_depth() {
     nested.push_str(&"</g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
     nested.push_str("</svg>");
     let error = preflight_initial_svg(&nested).unwrap_err();
-    assert!(matches!(error, SvgError::InvalidDocument(ref message)
-        if message.contains("selector matching resource limit")));
+    assert!(matches!(error, SvgError::XmlDepthLimitExceeded { .. }));
 }
 
 #[test]
-fn initial_xml_depth_scanner_skips_non_element_markup_and_enforces_limit() {
-    super::ensure_initial_svg_xml_depth_bounded(
+fn selector_free_use_expansion_is_bounded_before_the_backend_parse() {
+    let levels = 19;
+    let mut source = String::from("<svg><defs><g id=\"g0\"><rect/></g>");
+    for level in 1..=levels {
+        let previous = level - 1;
+        source.push_str(&format!(
+            "<g id=\"g{level}\"><use href=\"#g{previous}\"/><use href=\"#g{previous}\"/></g>"
+        ));
+    }
+    source.push_str(&format!("</defs><use href=\"#g{levels}\"/></svg>"));
+
+    let error = match preflight_initial_svg(&source) {
+        Ok(()) => panic!("selector-free use expansion must stop at its node budget"),
+        Err(error) => error,
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("selector matching resource limit")
+    );
+}
+
+#[test]
+fn initial_xml_preflight_skips_non_element_markup_and_enforces_depth_limit() {
+    super::preflight_initial_svg_xml(
         "<svg><!-- <g> --><![CDATA[<rect/>]]><?probe <use/> ?><g title=\">\"/></svg>",
     )
     .unwrap();
-    super::ensure_initial_svg_xml_depth_bounded("<svg/> ").unwrap();
-    super::ensure_initial_svg_xml_depth_bounded("<!DOCTYPE svg><svg/>").unwrap();
-    super::ensure_initial_svg_xml_depth_bounded("<svg").unwrap();
-    super::ensure_initial_svg_xml_depth_bounded("<svg><!-- unfinished").unwrap();
-    super::ensure_initial_svg_xml_depth_bounded("</orphan><svg/>").unwrap();
+    super::preflight_initial_svg_xml("<svg/> ").unwrap();
+    super::preflight_initial_svg_xml("<!DOCTYPE svg><svg/>").unwrap();
+    super::preflight_initial_svg_xml("<svg").unwrap();
+    super::preflight_initial_svg_xml("<svg><!-- unfinished").unwrap();
+    super::preflight_initial_svg_xml("</orphan><svg/>").unwrap();
 
     let mut nested = "<svg>".to_owned();
     nested.push_str(&"<g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH - 1));
     nested.push_str(&"</g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH - 1));
     nested.push_str("</svg>");
-    assert!(super::ensure_initial_svg_xml_depth_bounded(&nested).is_ok());
+    assert!(super::preflight_initial_svg_xml(&nested).is_ok());
 
     let mut excessive = "<svg>".to_owned();
     excessive.push_str(&"<g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
     excessive.push_str(&"</g>".repeat(MAX_INITIAL_PARSE_XML_DEPTH));
     excessive.push_str("</svg>");
-    assert!(super::ensure_initial_svg_xml_depth_bounded(&excessive).is_err());
+    assert!(matches!(
+        super::preflight_initial_svg_xml(&excessive),
+        Err(SvgError::XmlDepthLimitExceeded { .. })
+    ));
+}
+
+#[test]
+fn initial_xml_preflight_enforces_a_node_budget_for_all_documents() {
+    let selector_free = "<svg><g/><g/></svg>";
+    super::preflight_initial_svg_xml_with_limits(selector_free, 128, 4, 128).unwrap();
+
+    let text_nodes = "<svg>a<!-- split -->b</svg>";
+    super::preflight_initial_svg_xml_with_limits(text_nodes, 128, 5, 128).unwrap();
+    assert!(matches!(
+        super::preflight_initial_svg_xml_with_limits(text_nodes, 128, 4, 128),
+        Err(SvgError::XmlNodeLimitExceeded { nodes: 5, limit: 4 })
+    ));
+
+    let selector_bearing = "<svg><style>g { fill:red }</style><g/></svg>";
+    super::preflight_initial_svg_xml_with_limits(selector_bearing, 128, 5, 128).unwrap();
+    assert!(matches!(
+        super::preflight_initial_svg_xml_with_limits(
+            "<svg><style>g { fill:red }</style>a<!-- split -->b</svg>",
+            128,
+            6,
+            128
+        ),
+        Err(SvgError::XmlNodeLimitExceeded { nodes: 7, limit: 6 })
+    ));
+}
+
+#[test]
+fn initial_xml_preflight_bounds_roxmltree_preallocation_markers() {
+    assert!(matches!(
+        super::preflight_initial_svg_xml_with_limits("<svg><!-- <<<<< --></svg>", 128, 4, 128),
+        Err(SvgError::XmlPreallocationLimitExceeded {
+            marker: '<',
+            limit: 4,
+            ..
+        })
+    ));
+    assert!(matches!(
+        super::preflight_initial_svg_xml_with_limits("<svg><!-- ==== --></svg>", 128, 3, 128),
+        Err(SvgError::XmlPreallocationLimitExceeded {
+            marker: '=',
+            limit: 3,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn initial_xml_preflight_ignores_xml_declaration_bom_and_merges_text_runs() {
+    for source in [
+        "<?xml version=\"1.0\"?><svg/>",
+        "\u{feff}<?xml version=\"1.0\"?><svg/>",
+        " \n<svg/>\n ",
+    ] {
+        super::preflight_initial_svg_xml_with_limits(source, 128, 2, 128).unwrap();
+    }
+
+    super::preflight_initial_svg_xml_with_limits("<svg>a<![CDATA[b]]>c</svg>", 128, 3, 128)
+        .unwrap();
+}
+
+#[test]
+fn initial_xml_preflight_enforces_byte_budget_before_tree_parsing() {
+    assert!(matches!(
+        super::preflight_initial_svg_xml_with_limits("<svg/>", 5, 10, 10),
+        Err(SvgError::InputLimitExceeded { bytes: 6, limit: 5 })
+    ));
 }
 
 #[test]

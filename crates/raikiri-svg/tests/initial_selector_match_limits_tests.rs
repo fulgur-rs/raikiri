@@ -1,6 +1,6 @@
 //! Public API regressions for selector matching during initial SVG parsing.
 
-use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
+use raikiri_svg::{SvgDocument, SvgError, SvgRootStyle, SvgViewport};
 
 const SVG_NAMESPACE: &str = "http://www.w3.org/2000/svg";
 
@@ -73,11 +73,13 @@ fn initial_parse_rejects_excessive_xml_nesting_before_recursive_parser() {
         Err(error) => error,
     };
 
-    assert!(
-        error
-            .to_string()
-            .contains("selector matching resource limit")
-    );
+    assert!(matches!(
+        error,
+        SvgError::XmlDepthLimitExceeded {
+            depth: 129,
+            limit: 128
+        }
+    ));
 }
 
 #[test]

@@ -175,10 +175,14 @@ fn feed_reader_retries_interrupted_reads() {
     }
 
     let mut feed = Utf8Feed::new(Recorder::default());
-    feed.feed_reader(Interrupting {
-        interrupted: false,
-        rest: b"hello",
-    })
+    feed.feed_reader_limited(
+        Interrupting {
+            interrupted: false,
+            rest: b"hello",
+        },
+        None,
+        |_| true,
+    )
     .expect("interrupted read is retried");
     assert_eq!(feed.finish().unwrap().0, "hello");
 }
