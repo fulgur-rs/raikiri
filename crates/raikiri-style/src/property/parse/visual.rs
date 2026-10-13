@@ -2405,6 +2405,9 @@ pub(crate) fn parse_background_shorthand(
 /// Backgrounds 4 §2.10). With two boxes, the first sets
 /// origin and the second clip, except that a clip-only keyword always
 /// lands on clip; two clip-only boxes are invalid.
+///
+/// `layer_text` in `background_longhands.rs` recognizes the same
+/// components again to keep their source text; keep the two in step.
 #[allow(clippy::type_complexity)]
 fn parse_background_layer(
     input: &mut Parser<'_, '_>,

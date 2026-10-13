@@ -20,6 +20,8 @@ use super::webidl::{
     throw_dom_exception, with_state,
 };
 
+mod shorthand;
+
 // ---- inline style text ---------------------------------------------------
 
 /// One declaration of a `style` attribute or rule body as written: the
@@ -199,32 +201,30 @@ fn is_page_descriptor(name: &str) -> bool {
 /// The declaration text a declaration object reads -- a margin rule's
 /// block, its rule's block, or the element's `style` attribute -- and
 /// whether that text belongs to an `@page` rule, whose descriptors are valid
-/// alongside its properties. A rule's declaration object that is detached
-/// from its sheet reads no text.
+/// alongside its properties. A rule detached from its sheet keeps reading
+/// its own text.
 fn declared_text(state: &mut super::State, source: &StyleSource) -> (Option<String>, bool) {
-    let index = source.index;
     let Some(slot) = &source.rule else {
         return (
             state
                 .host
                 .document()
-                .element_attribute(index, "style")
+                .element_attribute(source.index, "style")
                 .map(str::to_owned),
             false,
         );
     };
-    let location = slot.location(state);
-    let document = state.host.document();
-    match location {
-        Some((rule, Some(margin))) => (
-            super::stylesheet::stylesheet_margin_rule_body(document, index, rule, margin),
+    let (sheet, rule, margin) = slot.location(state);
+    let text = super::stylesheet::sheet_text(state, sheet);
+    match margin {
+        Some(margin) => (
+            super::stylesheet::margin_rule_body(&text, rule, margin),
             false,
         ),
-        Some((rule, None)) => (
-            super::stylesheet::stylesheet_rule_body(document, index, rule),
-            super::stylesheet::is_page_rule(document, index, rule),
+        None => (
+            super::stylesheet::rule_body(&text, rule),
+            super::stylesheet::is_page_rule(&text, rule),
         ),
-        None => (None, false),
     }
 }
 
@@ -243,9 +243,9 @@ struct ValidatedDeclaration {
 /// raw text becomes `important`, not part of `value`). Duplicates collapse
 /// to the last occurrence (removed then re-pushed, so the survivor sits at
 /// the last position), matching [`with_inline_style_property`]'s write path.
-/// Shorthands are kept as specified (a single entry, not expanded into
-/// longhands); expanding `margin: 0` into four longhands for reads remains
-/// future work.
+/// A shorthand that [`shorthand::expand`] splits becomes its longhands,
+/// in place; other shorthands are kept as specified (a single entry);
+/// expanding `margin: 0` into four longhands for reads remains future work.
 ///
 /// In an `@page` rule's block (`page`), its descriptors are kept as well.
 fn validated_inline_declarations(
@@ -270,14 +270,58 @@ fn validated_inline_declarations(
         if stored.trim().is_empty() {
             continue;
         }
-        out.retain(|d| !same_property(&d.name, &name));
-        out.push(ValidatedDeclaration {
-            name,
-            value: stored,
-            important,
-        });
+        if let Some(longhands) = shorthand::longhands_of(&name) {
+            out.retain(|d| !same_property(&d.name, &name) && !longhands.contains(&d.name.as_str()));
+        }
+        let declarations =
+            shorthand::expand(&name, &stored, page).unwrap_or_else(|| vec![(name, stored)]);
+        for (name, value) in declarations {
+            out.retain(|d| !same_property(&d.name, &name));
+            out.push(ValidatedDeclaration {
+                name,
+                value,
+                important,
+            });
+        }
     }
     out
+}
+
+/// The declaration of `property` in `declarations`, the validated view of a
+/// block. A shorthand the block holds as its longhands is assembled from
+/// them when they are all declared with the same priority.
+fn find_declaration(
+    declarations: &[ValidatedDeclaration],
+    property: &str,
+) -> Option<(String, bool)> {
+    if let Some(d) = declarations
+        .iter()
+        .rev()
+        .find(|d| same_property(&d.name, property))
+    {
+        return Some((d.value.clone(), d.important));
+    }
+    assembled_shorthand(declarations, property)
+}
+
+/// The shorthand `property` assembled from its longhands in
+/// `declarations`, when the block holds it as longhands and they are all
+/// declared with the same priority.
+fn assembled_shorthand(
+    declarations: &[ValidatedDeclaration],
+    property: &str,
+) -> Option<(String, bool)> {
+    let longhands = shorthand::longhands_of(property)?;
+    let found: Vec<&ValidatedDeclaration> = longhands
+        .iter()
+        .map(|longhand| declarations.iter().find(|d| d.name == *longhand))
+        .collect::<Option<_>>()?;
+    let important = found[0].important;
+    if found.iter().any(|d| d.important != important) {
+        return None;
+    }
+    let values: Vec<&str> = found.iter().map(|d| d.value.as_str()).collect();
+    shorthand::assemble(property, &values).map(|value| (value, important))
 }
 
 /// CSSOM shorthand names among
@@ -356,11 +400,8 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str, page:
     } else {
         trimmed.to_ascii_lowercase()
     };
-    validated_inline_declarations(style_attr, page)
-        .into_iter()
-        .rev()
-        .find(|d| same_property(&d.name, &lookup))
-        .map(|d| d.value)
+    find_declaration(&validated_inline_declarations(style_attr, page), &lookup)
+        .map(|(value, _)| value)
         .unwrap_or_default()
 }
 
@@ -524,8 +565,32 @@ pub(crate) fn with_inline_style_property(
     value: &str,
     important: bool,
 ) -> String {
+    with_style_property(style_attr, property, value, important, false)
+}
+
+/// [`with_inline_style_property`] for a declaration block that belongs to
+/// an `@page` rule when `page` is set, which keeps a shorthand split and
+/// rejoined under the same validation the block is read with.
+fn with_style_property(
+    style_attr: Option<&str>,
+    property: &str,
+    value: &str,
+    important: bool,
+    page: bool,
+) -> String {
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
+    let shorthand = shorthand::shorthand_of(property);
+    if let Some(shorthand) = shorthand {
+        split_raw_shorthand(&mut declarations, shorthand, page);
+    }
+    if let Some(longhands) = shorthand::longhands_of(property) {
+        declarations.retain(|d| {
+            !longhands
+                .iter()
+                .any(|longhand| same_property(&d.name, longhand))
+        });
+    }
     if !property.is_empty() {
         declarations.retain(|d| !same_property(&d.name, property));
         if !value.trim().is_empty() {
@@ -536,11 +601,70 @@ pub(crate) fn with_inline_style_property(
             });
         }
     }
+    if let Some(shorthand) = shorthand {
+        join_raw_shorthand(&mut declarations, shorthand, page);
+    }
+    serialize_raw(&declarations)
+}
+
+fn serialize_raw(declarations: &[RawDeclaration]) -> String {
     serialize_declarations(
         declarations
             .iter()
             .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
     )
+}
+
+/// Writes the longhands of `shorthand` in `declarations` back as one
+/// declaration of it, where the first of them was, when they make it up,
+/// so a block a script edited one longhand at a time reads as written.
+fn join_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str, page: bool) {
+    let validated = validated_inline_declarations(Some(&serialize_raw(declarations)), page);
+    let Some((value, important)) = assembled_shorthand(&validated, shorthand) else {
+        return;
+    };
+    let is_longhand = |d: &RawDeclaration| shorthand::shorthand_of(&d.name) == Some(shorthand);
+    let first = declarations
+        .iter()
+        .position(is_longhand)
+        .unwrap_or_default();
+    declarations.retain(|d| !is_longhand(d));
+    declarations.insert(
+        first,
+        RawDeclaration {
+            name: shorthand.to_owned(),
+            value,
+            important,
+        },
+    );
+}
+
+/// Replaces each declaration of `shorthand` in `declarations` with the
+/// longhand declarations it sets, so one of them can change on its own. A
+/// value the block would not split stays as written. Each longhand replaces
+/// any earlier declaration of it, as setting a declaration does, so the
+/// longhands stay where the declaration that sets them is.
+fn split_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str, page: bool) {
+    let mut split = Vec::with_capacity(declarations.len());
+    for d in std::mem::take(declarations) {
+        let longhands = same_property(&d.name, shorthand)
+            .then(|| declaration_value(shorthand, &d.value, page))
+            .flatten()
+            .and_then(|value| shorthand::expand(shorthand, &value, page));
+        let Some(longhands) = longhands else {
+            split.push(d);
+            continue;
+        };
+        for (name, value) in longhands {
+            split.retain(|earlier: &RawDeclaration| !same_property(&earlier.name, &name));
+            split.push(RawDeclaration {
+                name,
+                value,
+                important: d.important,
+            });
+        }
+    }
+    *declarations = split;
 }
 
 /// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
@@ -560,12 +684,8 @@ fn property_priority(style_attr: Option<&str>, property: &str, page: bool) -> &'
     } else {
         trimmed.to_ascii_lowercase()
     };
-    match validated_inline_declarations(style_attr, page)
-        .into_iter()
-        .rev()
-        .find(|d| same_property(&d.name, &lookup))
-    {
-        Some(d) if d.important => "important",
+    match find_declaration(&validated_inline_declarations(style_attr, page), &lookup) {
+        Some((_, true)) => "important",
         _ => "",
     }
 }
@@ -633,9 +753,10 @@ impl StyleSource {
         let Some(slot) = &self.rule else {
             return Ok(false);
         };
-        let index = self.index;
         with_state(context, |s| match slot.location(s) {
-            Some((rule, None)) => super::stylesheet::is_page_rule(s.host.document(), index, rule),
+            (sheet, rule, None) => {
+                super::stylesheet::is_page_rule(&super::stylesheet::sheet_text(s, sheet), rule)
+            }
             _ => false,
         })
     }
@@ -648,7 +769,8 @@ impl StyleSource {
     /// ([`validated_inline_declarations`]) in declaration order (last
     /// occurrence wins, survivor at the last position): unsupported names
     /// and unparseable values are dropped, duplicates collapse to one.
-    /// Shorthands are kept as specified (not expanded into longhands).
+    /// `background` enumerates as its longhands ([`shorthand`]); other
+    /// shorthands are kept as specified (not expanded into longhands).
     ///
     /// A computed declaration enumerates supported longhands only (see
     /// [`is_computed_shorthand`]), in the sorted order
@@ -890,7 +1012,8 @@ fn write_declared(
     }
     if let Some(slot) = &source.rule {
         let text = with_state(context, |s| declared_text(s, source).0.unwrap_or_default())?;
-        let next = with_inline_style_property(Some(&text), property, value, important);
+        let page = source.is_page_rule(context)?;
+        let next = with_style_property(Some(&text), property, value, important, page);
         return write_rule_body(context, slot, &next);
     }
     with_state(context, |s| {
@@ -908,23 +1031,14 @@ fn write_declared(
 }
 
 /// Replaces the declarations of the rule (or margin rule) `slot` points at.
-/// A detached rule's declarations no longer reach its former sheet.
+/// A detached rule's declarations change its own text, not its former
+/// sheet.
 fn write_rule_body(context: &mut Context, slot: &RuleSlot, body: &str) -> JsResult<()> {
-    let style_element = slot.style_element;
     match with_state(context, |s| slot.location(s))? {
-        Some((rule, Some(margin))) => super::stylesheet::write_stylesheet_margin_rule_body(
-            context,
-            style_element,
-            rule,
-            margin,
-            body,
-        ),
-        Some((rule, None)) => {
-            super::stylesheet::write_stylesheet_rule_body(context, style_element, rule, body)
+        (sheet, rule, Some(margin)) => {
+            super::stylesheet::write_margin_rule_body(context, sheet, rule, margin, body)
         }
-        None => Err(JsNativeError::typ()
-            .with_message("CSS rule no longer exists")
-            .into()),
+        (sheet, rule, None) => super::stylesheet::write_rule_body(context, sheet, rule, body),
     }
 }
 
@@ -1131,13 +1245,40 @@ fn style_remove_property(
     Ok(JsValue::from(JsString::from(previous)))
 }
 
-/// Serialize one validated declaration, re-attaching `!important` when the
-/// raw block carried it.
+/// Serialize validated declarations, re-attaching `!important` when the
+/// raw block carried it. Longhands that make up a whole shorthand are
+/// written as that shorthand, where the first of them was (CSSOM "serialize
+/// a CSS declaration block").
 fn serialize_validated(declarations: &[ValidatedDeclaration]) -> String {
+    let mut entries: Vec<(&str, String, bool)> = Vec::with_capacity(declarations.len());
+    // Each shorthand is assembled once: `Some` once written, `None` when
+    // its longhands do not make it up.
+    let mut assembled: Vec<(&str, Option<(String, bool)>)> = Vec::new();
+    for d in declarations {
+        if let Some(shorthand) = shorthand::shorthand_of(&d.name) {
+            let index = assembled
+                .iter()
+                .position(|(name, _)| *name == shorthand)
+                .unwrap_or_else(|| {
+                    let value = assembled_shorthand(declarations, shorthand);
+                    entries.extend(
+                        value
+                            .clone()
+                            .map(|(value, important)| (shorthand, value, important)),
+                    );
+                    assembled.push((shorthand, value));
+                    assembled.len() - 1
+                });
+            if assembled[index].1.is_some() {
+                continue;
+            }
+        }
+        entries.push((d.name.as_str(), d.value.clone(), d.important));
+    }
     serialize_declarations(
-        declarations
+        entries
             .iter()
-            .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
+            .map(|(name, value, important)| (*name, value.as_str(), *important)),
     )
 }
 
@@ -1393,7 +1534,8 @@ fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// The declaration object over the block of the rule (or margin rule)
 /// `slot` points at.
 pub(crate) fn rule_style_object(context: &mut Context, slot: Rc<RuleSlot>) -> JsResult<JsObject> {
-    style_object(context, slot.style_element, false, Some(slot))
+    // A rule's declarations are found through `slot`, not an element.
+    style_object(context, 0, false, Some(slot))
 }
 
 /// Defines on an `@page` rule's declaration object the attributes of its

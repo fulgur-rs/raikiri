@@ -30,6 +30,7 @@ fn content_items(source: &str) -> Vec<ContentComponent> {
     }
 }
 
+mod background_longhands_tests;
 mod box_model_tests;
 mod color_tests;
 mod common_tests;

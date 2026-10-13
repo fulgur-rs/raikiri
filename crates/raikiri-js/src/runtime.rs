@@ -74,14 +74,19 @@ pub(crate) struct State {
     pub style_sheets: HashMap<usize, JsObject>,
     /// Per-style-element live `CSSRuleList` wrappers.
     pub css_rule_lists: HashMap<usize, JsObject>,
-    /// Per-style-rule `CSSStyleRule` wrappers.
-    pub css_style_rules: HashMap<(usize, usize), JsObject>,
+    /// Per-style-rule `CSSStyleRule` wrappers, keyed by sheet and rule index.
+    pub css_style_rules: HashMap<(stylesheet::SheetKey, usize), JsObject>,
     /// Per-margin-rule `CSSMarginRule` wrappers, keyed by sheet, page rule,
     /// and margin rule index.
-    pub css_margin_rules: HashMap<(usize, usize, usize), JsObject>,
-    /// Per-style-element sheet text and generation the rule objects above
-    /// were handed out for.
+    pub css_margin_rules: HashMap<(stylesheet::SheetKey, usize, usize), JsObject>,
+    /// Per-style-element sheet text the rule objects above were handed out
+    /// for.
     pub css_sheet_versions: HashMap<usize, stylesheet::SheetVersion>,
+    /// The text of each rule detached from its sheet, which its rule
+    /// objects keep reading and writing.
+    pub css_detached_rules: HashMap<u64, String>,
+    /// The key the next detached rule text is stored under.
+    pub next_detached_rule: u64,
     /// Per-element `getComputedStyle` objects so
     /// `getComputedStyle(el) === getComputedStyle(el)`.
     pub computed_style_objects: HashMap<usize, JsObject>,
@@ -339,6 +344,8 @@ impl DomRuntime {
             css_style_rules: HashMap::new(),
             css_margin_rules: HashMap::new(),
             css_sheet_versions: HashMap::new(),
+            css_detached_rules: HashMap::new(),
+            next_detached_rule: 0,
             computed_style_objects: HashMap::new(),
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),

@@ -4,6 +4,7 @@ use cssparser::{ParseError, Parser, ParserInput, Token};
 
 use super::types::*;
 
+mod background_longhands;
 mod border_image;
 mod box_model;
 mod color;
@@ -13,6 +14,7 @@ mod layout;
 mod text;
 mod visual;
 
+pub use background_longhands::{BACKGROUND_LONGHANDS, background_longhand_texts};
 pub(crate) use border_image::*;
 pub(crate) use box_model::*;
 pub use color::*;
