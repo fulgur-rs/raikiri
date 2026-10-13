@@ -226,7 +226,8 @@ pub(crate) fn compute_multicol_layout(
             }
         });
         // A row flex container or a grid container stretches an auto-height
-        // item to its line or area, and an absolutely positioned box with
+        // item to its line or area, a column flex container grows or bases
+        // it on its flex properties, and an absolutely positioned box with
         // both block insets fills its containing block; the columns then
         // take that height. Other known heights come from the item's own
         // content and are rebalanced here.
@@ -238,17 +239,25 @@ pub(crate) fn compute_multicol_layout(
             && (inset_height
                 || tree.parent_of(index).is_some_and(|parent| {
                     let container = &tree.nodes[parent].style;
-                    let align = tree.nodes[index].style.align_self.or(container.align_items);
-                    let block_axis_cross = match container.display {
-                        Display::Flex => matches!(
-                            container.flex_direction,
-                            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-                        ),
-                        Display::Grid => true,
+                    let item = &tree.nodes[index].style;
+                    let stretched = matches!(
+                        item.align_self.or(container.align_items),
+                        None | Some(taffy::AlignItems::STRETCH)
+                    );
+                    match container.display {
+                        Display::Flex => match container.flex_direction {
+                            taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse => {
+                                stretched
+                            }
+                            taffy::FlexDirection::Column | taffy::FlexDirection::ColumnReverse => {
+                                item.flex_grow > 0.0 || item.flex_basis != Dimension::auto()
+                            }
+                        },
+                        Display::Grid => stretched,
                         _ => false,
-                    };
-                    block_axis_cross && matches!(align, None | Some(taffy::AlignItems::STRETCH))
+                    }
                 }));
+        let lineless_definite = available_height.is_some() || stretched_height;
         let used_height = if let Some(children) = &lineless_children {
             lineless::layout(
                 tree,
@@ -259,7 +268,8 @@ pub(crate) fn compute_multicol_layout(
                 content_origin,
                 block_end_inset,
                 minimum,
-                fragmentainer_height.is_some() || stretched_height,
+                lineless_definite,
+                fragmentainer_height,
             )
             .unwrap_or(output.size.height)
         } else if let Some(chain) = constrained_chain {
@@ -278,7 +288,9 @@ pub(crate) fn compute_multicol_layout(
                 block_end_inset,
             )
         };
-        if fragmentainer_height.is_none() {
+        // Balanced columns size an auto-height container even under a
+        // maximum height, which only bounds the balanced columns.
+        if fragmentainer_height.is_none() || (lineless_children.is_some() && !lineless_definite) {
             output.size.height = used_height.max(minimum);
             for fragment in &mut tree.fragment_tree.fragments {
                 if fragment.node_id == index && fragment.parent.is_none() {

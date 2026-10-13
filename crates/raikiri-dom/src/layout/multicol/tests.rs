@@ -2180,3 +2180,52 @@ fn an_inset_positioned_multicol_keeps_its_containing_block_height() {
         vec![(0, 0.0, 0.0, 200.0)]
     );
 }
+
+#[test]
+fn a_maximum_height_only_bounds_balanced_columns_of_blocks_without_lines() {
+    // A maximum that does not bind leaves the columns balanced.
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:100px;max-height:300px;columns:2;column-gap:0",
+        &["display:block;height:200px"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![(0, 0.0, 0.0, 100.0), (1, 50.0, 0.0, 100.0)]
+    );
+    // A binding maximum shortens them.
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:100px;max-height:50px;columns:2;column-gap:0",
+        &["display:block;height:200px"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 50.0);
+    assert_eq!(fragment_rects(&doc, children[0])[0], (0, 0.0, 0.0, 50.0));
+}
+
+#[test]
+fn a_column_flex_item_keeps_its_flexed_height() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column;height:200px"),
+    );
+    let parent = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:1;width:100px;columns:2;column-gap:0"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:200px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
+    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+}
