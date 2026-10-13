@@ -20,6 +20,8 @@ use super::webidl::{
     throw_dom_exception, with_state,
 };
 
+mod shorthand;
+
 // ---- inline style text ---------------------------------------------------
 
 /// One declaration of a `style` attribute or rule body as written: the
@@ -241,9 +243,9 @@ struct ValidatedDeclaration {
 /// raw text becomes `important`, not part of `value`). Duplicates collapse
 /// to the last occurrence (removed then re-pushed, so the survivor sits at
 /// the last position), matching [`with_inline_style_property`]'s write path.
-/// Shorthands are kept as specified (a single entry, not expanded into
-/// longhands); expanding `margin: 0` into four longhands for reads remains
-/// future work.
+/// A shorthand that [`shorthand::expand`] splits becomes its longhands,
+/// in place; other shorthands are kept as specified (a single entry);
+/// expanding `margin: 0` into four longhands for reads remains future work.
 ///
 /// In an `@page` rule's block (`page`), its descriptors are kept as well.
 fn validated_inline_declarations(
@@ -268,14 +270,58 @@ fn validated_inline_declarations(
         if stored.trim().is_empty() {
             continue;
         }
-        out.retain(|d| !same_property(&d.name, &name));
-        out.push(ValidatedDeclaration {
-            name,
-            value: stored,
-            important,
-        });
+        if let Some(longhands) = shorthand::longhands_of(&name) {
+            out.retain(|d| !longhands.contains(&d.name.as_str()));
+        }
+        let declarations =
+            shorthand::expand(&name, &stored, page).unwrap_or_else(|| vec![(name, stored)]);
+        for (name, value) in declarations {
+            out.retain(|d| !same_property(&d.name, &name));
+            out.push(ValidatedDeclaration {
+                name,
+                value,
+                important,
+            });
+        }
     }
     out
+}
+
+/// The declaration of `property` in `declarations`, the validated view of a
+/// block. A shorthand the block holds as its longhands is assembled from
+/// them when they are all declared with the same priority.
+fn find_declaration(
+    declarations: &[ValidatedDeclaration],
+    property: &str,
+) -> Option<(String, bool)> {
+    if let Some(d) = declarations
+        .iter()
+        .rev()
+        .find(|d| same_property(&d.name, property))
+    {
+        return Some((d.value.clone(), d.important));
+    }
+    assembled_shorthand(declarations, property)
+}
+
+/// The shorthand `property` assembled from its longhands in
+/// `declarations`, when the block holds it as longhands and they are all
+/// declared with the same priority.
+fn assembled_shorthand(
+    declarations: &[ValidatedDeclaration],
+    property: &str,
+) -> Option<(String, bool)> {
+    let longhands = shorthand::longhands_of(property)?;
+    let found: Vec<&ValidatedDeclaration> = longhands
+        .iter()
+        .map(|longhand| declarations.iter().find(|d| d.name == *longhand))
+        .collect::<Option<_>>()?;
+    let important = found[0].important;
+    if found.iter().any(|d| d.important != important) {
+        return None;
+    }
+    let values: Vec<&str> = found.iter().map(|d| d.value.as_str()).collect();
+    shorthand::assemble(property, &values).map(|value| (value, important))
 }
 
 /// CSSOM shorthand names among
@@ -354,11 +400,8 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str, page:
     } else {
         trimmed.to_ascii_lowercase()
     };
-    validated_inline_declarations(style_attr, page)
-        .into_iter()
-        .rev()
-        .find(|d| same_property(&d.name, &lookup))
-        .map(|d| d.value)
+    find_declaration(&validated_inline_declarations(style_attr, page), &lookup)
+        .map(|(value, _)| value)
         .unwrap_or_default()
 }
 
@@ -524,6 +567,16 @@ pub(crate) fn with_inline_style_property(
 ) -> String {
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
+    if let Some(shorthand) = shorthand::shorthand_of(property) {
+        split_raw_shorthand(&mut declarations, shorthand);
+    }
+    if let Some(longhands) = shorthand::longhands_of(property) {
+        declarations.retain(|d| {
+            !longhands
+                .iter()
+                .any(|longhand| same_property(&d.name, longhand))
+        });
+    }
     if !property.is_empty() {
         declarations.retain(|d| !same_property(&d.name, property));
         if !value.trim().is_empty() {
@@ -539,6 +592,32 @@ pub(crate) fn with_inline_style_property(
             .iter()
             .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
     )
+}
+
+/// Replaces each declaration of `shorthand` in `declarations` with the
+/// longhand declarations it sets, so one of them can change on its own. A
+/// value the block would not split stays as written.
+fn split_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str) {
+    *declarations = std::mem::take(declarations)
+        .into_iter()
+        .flat_map(|d| {
+            let longhands = same_property(&d.name, shorthand)
+                .then(|| declaration_value(shorthand, &d.value, false))
+                .flatten()
+                .and_then(|value| shorthand::expand(shorthand, &value, false));
+            match longhands {
+                Some(longhands) => longhands
+                    .into_iter()
+                    .map(|(name, value)| RawDeclaration {
+                        name,
+                        value,
+                        important: d.important,
+                    })
+                    .collect(),
+                None => vec![d],
+            }
+        })
+        .collect();
 }
 
 /// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
@@ -558,12 +637,8 @@ fn property_priority(style_attr: Option<&str>, property: &str, page: bool) -> &'
     } else {
         trimmed.to_ascii_lowercase()
     };
-    match validated_inline_declarations(style_attr, page)
-        .into_iter()
-        .rev()
-        .find(|d| same_property(&d.name, &lookup))
-    {
-        Some(d) if d.important => "important",
+    match find_declaration(&validated_inline_declarations(style_attr, page), &lookup) {
+        Some((_, true)) => "important",
         _ => "",
     }
 }
@@ -1121,13 +1196,29 @@ fn style_remove_property(
     Ok(JsValue::from(JsString::from(previous)))
 }
 
-/// Serialize one validated declaration, re-attaching `!important` when the
-/// raw block carried it.
+/// Serialize validated declarations, re-attaching `!important` when the
+/// raw block carried it. Longhands that make up a whole shorthand are
+/// written as that shorthand, where the first of them was (CSSOM "serialize
+/// a CSS declaration block").
 fn serialize_validated(declarations: &[ValidatedDeclaration]) -> String {
+    let mut entries: Vec<(&str, String, bool)> = Vec::with_capacity(declarations.len());
+    let mut written: Vec<&str> = Vec::new();
+    for d in declarations {
+        if let Some(shorthand) = shorthand::shorthand_of(&d.name)
+            && let Some((value, important)) = assembled_shorthand(declarations, shorthand)
+        {
+            if !written.contains(&shorthand) {
+                written.push(shorthand);
+                entries.push((shorthand, value, important));
+            }
+            continue;
+        }
+        entries.push((d.name.as_str(), d.value.clone(), d.important));
+    }
     serialize_declarations(
-        declarations
+        entries
             .iter()
-            .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
+            .map(|(name, value, important)| (*name, value.as_str(), *important)),
     )
 }
 

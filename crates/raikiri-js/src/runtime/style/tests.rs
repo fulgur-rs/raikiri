@@ -2165,3 +2165,142 @@ fn comment_data_writes_keep_rule_objects_attached() {
     .unwrap();
     ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
 }
+
+#[test]
+fn background_is_held_as_its_longhands() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var e = document.createElement('div'); var s = e.style; \
+         s.background = 'url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box, \
+         rgb(5, 6, 7) url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s.length === 8 && s[0] === 'background-image' && s[7] === 'background-color' && \
+         s.backgroundImage === 'url(\"a.png\"), url(\"a.png\")' && \
+         s.backgroundPosition === '1px 2px, 1px 2px' && s.backgroundSize === '3px 4px, 3px 4px' && \
+         s.backgroundRepeat === 'space round, space round' && \
+         s.backgroundAttachment === 'local, local' && s.backgroundOrigin === 'padding-box, padding-box' && \
+         s.backgroundClip === 'content-box, content-box' && s.backgroundColor === 'rgb(5, 6, 7)' && \
+         s.background === 'url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box, \
+rgb(5, 6, 7) url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box' && \
+         s.cssText === 'background: ' + s.background + ';' && s.getPropertyPriority('background') === ''",
+    );
+
+    // Changing one longhand splits the written shorthand; the rest stay.
+    rt.evaluate("s.background = 'red'; s.backgroundImage = 'url(\"b.png\")';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.length === 8 && s.backgroundColor === 'red' && \
+         s.background === 'red url(\"b.png\")' && \
+         e.getAttribute('style').indexOf('background-color: red') >= 0",
+    );
+    rt.evaluate("s.removeProperty('background-color');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.length === 7 && s.background === '' && s.cssText.indexOf('background:') < 0 && \
+         s.backgroundImage === 'url(\"b.png\")'",
+    );
+    rt.evaluate("s.removeProperty('background');").unwrap();
+    ok(&mut rt, "s.length === 0 && e.getAttribute('style') === ''");
+
+    // A priority shared by every longhand is the shorthand's.
+    rt.evaluate("s.setProperty('background', 'none', 'important');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.background === 'none' && s.getPropertyPriority('background') === 'important' && \
+         s.cssText === 'background: none !important;'",
+    );
+    rt.evaluate("s.setProperty('background-color', 'blue');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.background === '' && s.getPropertyPriority('background') === '' && \
+         s.backgroundColor === 'blue'",
+    );
+}
+
+#[test]
+fn background_longhands_assemble_to_the_shortest_layers() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var s = document.createElement('div').style;")
+        .unwrap();
+    for (value, expected) in [
+        ("none", "none"),
+        ("border-area", "border-area"),
+        ("content-box", "content-box"),
+        ("border-box padding-box", "border-box padding-box"),
+        ("0% 0% / 10px", "0% 0% / 10px auto"),
+        ("left top no-repeat fixed", "left top no-repeat fixed"),
+        ("inherit", "inherit"),
+    ] {
+        ok(
+            &mut rt,
+            &format!("s.background = '{value}'; s.background === '{expected}'"),
+        );
+    }
+    ok(
+        &mut rt,
+        "s.background = 'none'; s.backgroundOrigin = 'padding-box'; s.backgroundClip = 'text'; \
+         s.background === 'padding-box text'",
+    );
+    // Lists of different lengths, and a CSS-wide keyword mixed with values,
+    // make no `background`.
+    ok(
+        &mut rt,
+        "s.background = 'none'; s.backgroundImage = 'none, none'; s.background === ''",
+    );
+    ok(
+        &mut rt,
+        "s.background = 'none'; s.backgroundColor = 'inherit'; s.background === ''",
+    );
+    ok(
+        &mut rt,
+        "s.background = 'inherit'; s.backgroundColor = 'initial'; s.background === ''",
+    );
+}
+
+#[test]
+fn background_with_a_substitution_function_stays_one_declaration() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var e = document.createElement('div'); var s = e.style; \
+         e.setAttribute('style', 'background-color: red; background: var(--b)');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s.length === 1 && s.background === 'var(--b)' && s.backgroundColor === '' && \
+         s.cssText === 'background: var(--b);'",
+    );
+    rt.evaluate("s.backgroundColor = 'blue';").unwrap();
+    ok(
+        &mut rt,
+        "s.length === 2 && s.background === 'var(--b)' && s.backgroundColor === 'blue'",
+    );
+}
+
+#[test]
+fn rule_declarations_hold_background_as_longhands() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { background: red }'; \
+         document.head.appendChild(styleElement); var style = styleElement.sheet.cssRules[0].style; \
+         style.backgroundColor = 'blue';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "style.length === 8 && style.background === 'blue' && \
+         styleElement.textContent.indexOf('background-color: blue') >= 0",
+    );
+}
