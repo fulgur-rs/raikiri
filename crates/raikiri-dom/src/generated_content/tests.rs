@@ -148,3 +148,34 @@ fn pseudo_counter_view_matches_directive_application_without_cloning_the_map() {
         );
     }
 }
+
+#[test]
+fn first_letter_group_ids_round_trip_and_stay_apart_from_other_ids() {
+    let largest = usize::MAX >> (3 + LETTER_GROUP_BITS);
+    for element in [0, 1, 42, largest] {
+        assert_eq!(
+            first_letter_group_id(element, 0),
+            Some(generated_node_id(element, PseudoElem::FirstLetter))
+        );
+        let mut seen = std::collections::HashSet::new();
+        for index in [1, 2, MAX_LETTER_GROUPS - 1] {
+            let id = first_letter_group_id(element, index).unwrap();
+            assert!(seen.insert(id));
+            assert_eq!(
+                generated_origin(id),
+                Some((element, PseudoElem::FirstLetter))
+            );
+            assert_eq!(generated_image_origin(id), None);
+            for pseudo in [
+                PseudoElem::Before,
+                PseudoElem::After,
+                PseudoElem::Marker,
+                PseudoElem::FirstLetter,
+            ] {
+                assert_ne!(id, generated_node_id(element, pseudo));
+            }
+        }
+    }
+    assert_eq!(first_letter_group_id(1, MAX_LETTER_GROUPS), None);
+    assert_eq!(first_letter_group_id(largest + 1, 1), None);
+}

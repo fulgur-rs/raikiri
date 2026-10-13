@@ -2957,3 +2957,43 @@ fn first_line_of_ancestor_blocks() {
         ["fill", "glyphs 2", "push 0.5", "glyphs 1", "pop"]
     );
 }
+
+/// The fragments of a `::first-letter` composite with the opacity of the
+/// style they retain for the text they wrap; one resolving it to 1 is no
+/// group, even when the pseudo-element's own opacity is below one.
+#[test]
+fn first_letter_fragments_composite_with_their_retained_opacity() {
+    let painted = |css: &str| {
+        let html = format!(
+            "<html><head><style>p{{--o:.5}}{css}p::first-letter{{background:red;opacity:var(--o)}}</style></head>\
+             <body><p><span id=a>'</span><span id=b>AB</span></p></body></html>"
+        );
+        command_kinds(&painted_html(html.as_bytes()))
+    };
+    assert_eq!(
+        painted("#a{--o:0}#b{--o:1}"),
+        [
+            "fill", "fill", "clip", "pop", "glyphs 1", "glyphs 1", "push 0", "fill", "clip", "pop",
+            "glyphs 1", "pop"
+        ]
+    );
+    assert_eq!(
+        painted("#a{--o:.25}#b{--o:.75}"),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.25",
+            "fill",
+            "clip",
+            "pop",
+            "glyphs 1",
+            "pop",
+            "push 0.75",
+            "fill",
+            "clip",
+            "pop",
+            "glyphs 1",
+            "pop"
+        ]
+    );
+}

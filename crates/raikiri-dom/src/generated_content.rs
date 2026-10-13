@@ -37,6 +37,15 @@ const IMAGE_INDEX_BITS: u32 = 5;
 /// represent nothing.
 pub const MAX_GENERATED_IMAGES: usize = 1 << IMAGE_INDEX_BITS;
 
+/// Low bits of the id of an opacity group of a `::first-letter` other than
+/// its first one, that number the group among the groups of the
+/// pseudo-element in its paragraph.
+const LETTER_GROUP_BITS: u32 = 8;
+
+/// The number of opacity groups one `::first-letter` can form in its
+/// paragraph; fragments of later groups share the last one.
+pub const MAX_LETTER_GROUPS: usize = 1 << LETTER_GROUP_BITS;
+
 /// The node id the inline engine gives the `pseudo` of `element`.
 pub fn generated_node_id(element: usize, pseudo: PseudoElem) -> usize {
     GENERATED_ID_BIT
@@ -72,6 +81,28 @@ pub fn generated_image_node_id(element: usize, pseudo: PseudoElem, index: usize)
     )
 }
 
+/// The id of opacity group `index` of the `::first-letter` of `element`.
+///
+/// The fragments of one `::first-letter` keep the style they were given for
+/// the text they wrap, so where its letters come from text with different
+/// inherited values, the fragments can have different opacities, or lie in
+/// different inline opacity groups, and so composite as separate groups.
+/// Group 0 is named by the pseudo-element's own id of [`generated_node_id`];
+/// the others by ids of their own, which [`generated_origin`] maps back to
+/// the `::first-letter` of `element`. `None` for an index of
+/// [`MAX_LETTER_GROUPS`] or more, or an element too far into the arena to
+/// encode.
+pub fn first_letter_group_id(element: usize, index: usize) -> Option<usize> {
+    if index == 0 {
+        return Some(generated_node_id(element, PseudoElem::FirstLetter));
+    }
+    if index >= MAX_LETTER_GROUPS || element >= 1 << (usize::BITS - 3 - LETTER_GROUP_BITS) {
+        return None;
+    }
+    let kind_bit = 1 << (usize::BITS - 1);
+    Some(kind_bit | GENERATED_ID_BIT | IMAGE_ID_BIT | (element << LETTER_GROUP_BITS) | index)
+}
+
 /// The element, pseudo-element and image index an id of
 /// [`generated_image_node_id`] stands for; `None` for any other id.
 pub fn generated_image_origin(id: usize) -> Option<(usize, PseudoElem, usize)> {
@@ -89,8 +120,9 @@ pub fn generated_image_origin(id: usize) -> Option<(usize, PseudoElem, usize)> {
     Some((raw >> (IMAGE_INDEX_BITS + 1), pseudo, index))
 }
 
-/// The element and pseudo-element an id of [`generated_node_id`] or
-/// [`generated_image_node_id`] stands for; `None` for a document node id.
+/// The element and pseudo-element an id of [`generated_node_id`],
+/// [`generated_image_node_id`] or [`first_letter_group_id`] stands for;
+/// `None` for a document node id.
 pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
     if id & GENERATED_ID_BIT == 0 {
         return None;
@@ -99,6 +131,11 @@ pub fn generated_origin(id: usize) -> Option<(usize, PseudoElem)> {
         return Some((element, pseudo));
     }
     let kind_bit = 1 << (usize::BITS - 1);
+    let letter_group = kind_bit | GENERATED_ID_BIT | IMAGE_ID_BIT;
+    if id & letter_group == letter_group {
+        let raw = id & !letter_group;
+        return Some((raw >> LETTER_GROUP_BITS, PseudoElem::FirstLetter));
+    }
     let raw = id & !(GENERATED_ID_BIT | kind_bit);
     let pseudo = if id & kind_bit != 0 {
         if raw & 1 == 1 {

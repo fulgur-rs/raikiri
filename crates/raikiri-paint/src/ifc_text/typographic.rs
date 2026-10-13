@@ -158,15 +158,11 @@ impl TypographicPaint {
                             .map(|owner| key.parent(owner))
                     })
             });
-            if let Some((cv, _)) = root.ifc_typographic_fragment(
-                piece.node,
-                piece.source_container,
-                piece.source_owner,
-            ) && cv.opacity < 1.0
-            {
-                opacities.insert(key, cv.opacity);
-            } else if let Some(opacity) =
-                raikiri_dom::paint_rules::pseudo_opacity_layer(cascade, piece.node)
+            let retained = root
+                .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)
+                .map(|(cv, _)| cv);
+            if let Some(opacity) =
+                raikiri_dom::paint_rules::letter_opacity_layer(cascade, piece.node, retained)
             {
                 opacities.insert(key, opacity);
             }

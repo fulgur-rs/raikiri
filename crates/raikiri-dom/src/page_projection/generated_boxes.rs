@@ -37,6 +37,27 @@ pub struct GeneratedBox<'a> {
     pub has_end_edge: bool,
 }
 
+/// One line's piece of the box of a non-atomic inline element: its
+/// background, borders and outline on that line.
+///
+/// Coordinates and edge ownership come from the same line pieces the native
+/// painter uses.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct LineBox<'a> {
+    /// The element's box on the page, whose node and style the piece paints.
+    pub fragment: crate::Fragment<'a>,
+    /// Paragraph line the piece is on.
+    pub line: crate::TextLineId,
+    /// Border box of the piece in page-local CSS pixels, in the coordinates
+    /// of the paragraph's lines, like [`GeneratedBox::rect`].
+    pub rect: PaintRect,
+    /// The piece contains the inline start edge of the element's box.
+    pub has_start_edge: bool,
+    /// The piece contains the inline end edge of the element's box.
+    pub has_end_edge: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct BoxPiece {
     /// The inline engine's node id of the box, with the ids that select the
@@ -53,6 +74,10 @@ pub(super) struct BoxPiece {
 /// Page, paragraph root, originating element, and the pseudo-element.
 pub(super) type PageGeneratedBoxes = BTreeMap<(usize, usize, GeneratedKind), Vec<BoxPiece>>;
 pub(super) type GeneratedBoxes = BTreeMap<u32, PageGeneratedBoxes>;
+/// Page, paragraph root and inline element: the line pieces of the inline
+/// elements a translucent `::first-line` splits.
+pub(super) type PageInlineBoxes = BTreeMap<(usize, usize), Vec<BoxPiece>>;
+pub(super) type InlineBoxes = BTreeMap<u32, PageInlineBoxes>;
 
 pub(super) fn prepare(
     document: &Document,
@@ -61,13 +86,14 @@ pub(super) fn prepare(
     pages: &[PageFragment],
     paragraphs: &crate::layout::ParagraphCache,
     work: &mut crate::layout::ProjectionWork<'_, '_>,
-) -> Result<GeneratedBoxes, raikiri_traits::LayoutError> {
+) -> Result<(GeneratedBoxes, InlineBoxes), raikiri_traits::LayoutError> {
     let mut prepared = Vec::new();
     let context = RunContext::new(document, roots, pages);
     let mut eligible = HashMap::new();
     for root in roots {
         work.check()?;
-        // Only paragraphs that laid out a generated box are visited.
+        // Only paragraphs that laid out a generated box, or an inline
+        // element split by a translucent `::first-line`, are visited.
         let pieces = paragraphs
             .get(&root.node)
             .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));
@@ -94,33 +120,35 @@ pub(super) fn prepare(
     }
     let flow_pages = FlowPages::new(pages);
     let mut result = GeneratedBoxes::new();
+    let mut inline = InlineBoxes::new();
     for (root, paint_shift, pieces) in &prepared {
         let source = document.ifc_source_owner(root.node);
         let layout_node = document.ifc_layout_node(root.node);
         let offsets = layout_node.map_or(&[][..], |node| node.ifc_relative_offsets());
         // Fixed-position roots and repeated table headers can land on any page.
         let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
-        let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
-            Box::new(pages.iter())
+        // Each page with the pieces it can hold. A piece in the flow goes only
+        // to the pages around its own line, so a box split over many lines
+        // and pages is not checked against every page of its paragraph.
+        let candidates: Vec<(&PageFragment, &[_])> = if repeated {
+            pages.iter().map(|page| (page, *pieces)).collect()
         } else {
-            let mut centers = pieces
-                .iter()
-                .map(|&(_, _, _, offset, _, top, height)| {
-                    // The arithmetic of `line_center_on_page`, so rounding at
-                    // large coordinates cannot prune the owning page.
-                    let top = root.y + offset.1 + top;
-                    (top + (top + height)) * 0.5
-                })
-                .filter(|center| center.is_finite());
-            let Some(first) = centers.next() else {
-                continue;
-            };
-            let (low, high) = centers.fold((first, first), |(low, high), center| {
-                (low.min(center), high.max(center))
+            let mut candidates = Vec::new();
+            let centers = pieces.iter().map(|&(_, _, _, offset, _, top, height)| {
+                // The arithmetic of `line_center_on_page`, so rounding at
+                // large coordinates cannot prune the owning page.
+                let top = root.y + offset.1 + top;
+                (top + (top + height)) * 0.5
             });
-            Box::new(flow_pages.around(low, high))
+            for (index, center) in centers.enumerate().filter(|(_, center)| center.is_finite()) {
+                for page in flow_pages.around(center, center) {
+                    work.charge(1)?;
+                    candidates.push((page, &pieces[index..=index]));
+                }
+            }
+            candidates
         };
-        for page in candidates {
+        for (page, pieces) in candidates {
             work.charge(1)?;
             let mut root = *root;
             if let Some(shift) = document
@@ -133,7 +161,7 @@ pub(super) fn prepare(
                 root.is_repeat = true;
             }
             let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
-            for &(owner, kind, piece, offset, shift, top, height) in *pieces {
+            for &(owner, kind, piece, offset, shift, top, height) in pieces {
                 work.charge(1)?;
                 if !root.is_repeat
                     && !crate::layout::line_center_on_page(
@@ -160,39 +188,46 @@ pub(super) fn prepare(
                     })
                     .map_or(piece.node, |(_, owner)| owner);
                 let relative = crate::cumulative_offset(document, root.node, offsets, source);
-                result
-                    .entry(page.page_index)
-                    .or_default()
-                    .entry((root.node, owner, kind))
-                    .or_default()
-                    .push(BoxPiece {
-                        node: piece.node,
-                        source_container: piece.source_container,
-                        source_owner: piece.source_owner,
-                        line: piece.line,
-                        rect: PaintRect::new(
-                            page.content_box.x
-                                + root.x
-                                + paint_shift.0
-                                + relative.0
-                                + offset.0
-                                + rect.x,
-                            page.content_box.y
-                                + root.y
-                                + paint_shift.1
-                                + relative.1
-                                + offset.1
-                                + rect.y
-                                - shift
-                                - if root.is_repeat { 0.0 } else { start },
-                            rect.width,
-                            rect.height,
-                        ),
-                        has_start_edge: piece.has_start_edge,
-                        has_end_edge: piece.has_end_edge,
-                    });
+                let pieces = match kind {
+                    Some(kind) => result
+                        .entry(page.page_index)
+                        .or_default()
+                        .entry((root.node, owner, kind))
+                        .or_default(),
+                    None => inline
+                        .entry(page.page_index)
+                        .or_default()
+                        .entry((root.node, owner))
+                        .or_default(),
+                };
+                pieces.push(BoxPiece {
+                    node: piece.node,
+                    source_container: piece.source_container,
+                    source_owner: piece.source_owner,
+                    line: piece.line,
+                    rect: PaintRect::new(
+                        page.content_box.x
+                            + root.x
+                            + paint_shift.0
+                            + relative.0
+                            + offset.0
+                            + rect.x,
+                        page.content_box.y
+                            + root.y
+                            + paint_shift.1
+                            + relative.1
+                            + offset.1
+                            + rect.y
+                            - shift
+                            - if root.is_repeat { 0.0 } else { start },
+                        rect.width,
+                        rect.height,
+                    ),
+                    has_start_edge: piece.has_start_edge,
+                    has_end_edge: piece.has_end_edge,
+                });
             }
         }
     }
-    Ok(result)
+    Ok((result, inline))
 }
