@@ -8428,6 +8428,19 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
     );
     // Without `avoid` the box breaks where it falls.
     assert_eq!(nested_avoiding_block("", ""), (60.0, 60.0, 2));
+    // An ancestor bounded by `min-height` keeps its used size.
+    assert_eq!(
+        nested_avoiding_block("min-height:100px", "break-inside:avoid"),
+        (100.0, 100.0, 2)
+    );
+    // Items of a multi-column grid do not follow each other in block flow.
+    assert_eq!(
+        nested_avoiding_block(
+            "display:grid;grid-template-columns:50px 50px",
+            "break-inside:avoid"
+        ),
+        (60.0, 60.0, 2)
+    );
 }
 
 #[test]
@@ -10413,6 +10426,29 @@ fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
 }
 
 #[test]
+fn a_later_float_below_a_moved_float_keeps_its_place() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "display:block;height:150px",
+            "float:left;clear:left;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The last float already starts below the moved float's new bottom.
+    assert_eq!(ys, vec![100.0, 60.0, 210.0], "{ys:?}");
+}
+
+#[test]
 fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
     let mut float = 0;
     let (doc, _) = paged_body(|doc, body| {
@@ -10435,14 +10471,14 @@ fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
 /// `body > div(60px) > table > [caption] > tbody(group_css) > rows`, each
 /// row holding one cell of the given height. Returns the first cell's
 /// page-flow y.
-fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: bool) -> f32 {
+fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: Option<&str>) -> f32 {
     let mut first_cell = None;
     let (doc, _) = paged_body(|doc, body| {
         doc.append_element(
             Some(body),
             "div",
             Style::default(),
-            Some(if caption {
+            Some(if caption == Some("") {
                 "display:block;height:40px"
             } else {
                 "display:block;height:60px"
@@ -10454,12 +10490,12 @@ fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: bool) -> f
             Style::default(),
             Some("display:table;width:100px;border-spacing:2px"),
         );
-        if caption {
+        if let Some(caption_css) = caption {
             let caption = doc.append_element(
                 Some(table),
                 "caption",
                 Style::default(),
-                Some("display:table-caption"),
+                Some(&format!("display:table-caption;{caption_css}")),
             );
             doc.append_element(
                 Some(caption),
@@ -10498,16 +10534,13 @@ fn an_avoiding_row_group_starts_the_next_page_with_its_table_spacing() {
     let rows = [(20.0, ""), (30.0, "")];
     // Without `avoid` the first row stays after the 60px block and the
     // table's 2px spacing.
-    assert_eq!(avoiding_row_group("", &rows, false), 62.0);
+    assert_eq!(avoiding_row_group("", &rows, None), 62.0);
     // The group would cross the page edge, so it moves as a whole; the
     // spacing above the table's first row moves with it.
-    assert_eq!(
-        avoiding_row_group("break-inside:avoid", &rows, false),
-        102.0
-    );
+    assert_eq!(avoiding_row_group("break-inside:avoid", &rows, None), 102.0);
     // A group that fits stays where it is.
     assert_eq!(
-        avoiding_row_group("break-inside:avoid", &[(20.0, "")], false),
+        avoiding_row_group("break-inside:avoid", &[(20.0, "")], None),
         62.0
     );
 }
@@ -10520,13 +10553,31 @@ fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
         avoiding_row_group(
             "break-inside:avoid",
             &[(20.0, ""), (30.0, "break-before:page")],
-            false
+            None
         ),
         62.0
     );
+    // So does a forced break after the first row.
+    assert_eq!(
+        avoiding_row_group(
+            "break-inside:avoid",
+            &[(20.0, "break-after:page"), (30.0, "")],
+            None
+        ),
+        62.0
+    );
+    // A caption below the grid leaves the table's spacing with the row.
+    assert_eq!(
+        avoiding_row_group(
+            "break-inside:avoid",
+            &[(20.0, ""), (30.0, "")],
+            Some("caption-side:bottom")
+        ),
+        102.0
+    );
     // With a caption above the grid, the row starts at the top of the page.
     assert_eq!(
-        avoiding_row_group("break-inside:avoid", &[(20.0, ""), (30.0, "")], true),
+        avoiding_row_group("break-inside:avoid", &[(20.0, ""), (30.0, "")], Some("")),
         100.0
     );
 }

@@ -725,6 +725,7 @@ fn compute_ifc_root(
     measure.definite_height = inputs
         .known_dimensions
         .height
+        .filter(|_| inputs.known_dimensions_are_definite.height)
         .map(|height| (height - border_box_insets).max(0.0))
         .or_else(|| {
             if style.size.height.is_auto()
@@ -744,6 +745,12 @@ fn compute_ifc_root(
                 } else {
                     height
                 }
+            })
+            // `min-height` and `max-height` clamp the used height.
+            .map(|height| {
+                height
+                    .min(measure.height_bounds.1)
+                    .max(measure.height_bounds.0)
             })
         });
     let mut output =

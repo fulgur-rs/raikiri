@@ -3641,7 +3641,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                         computed.break_inside,
                         raikiri_style::property::BreakInside::Avoid
                             | raikiri_style::property::BreakInside::AvoidPage
-                    );
+                    )
+                    // Grid items in other tracks do not follow a moved item
+                    // in block flow, so grid content keeps its own handling.
+                    && !has_grid_ancestor(document, cascade, node_id, body_id);
                 let is_break_candidate = !is_body
                     && computed.display != DisplayValue::Contents
                     && !inside_float
@@ -3777,7 +3780,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     );
     // A table row group with `break-inside: avoid` starts on the next page
     // when it would cross the current one. Its first row carries the block
-    // end of the group's rows up to the first forced break among them (a
+    // end of the group's rows up to the first forced break between them (a
     // forced break already splits the group), and, when it is the table's
     // first row of a table without a caption, its offset below the table's
     // top: the table's spacing and borders above it move with it.
@@ -3789,8 +3792,20 @@ pub fn layout_pages_with_page_geometry_and_control(
             .collect();
         let mut tables_with_rows = HashSet::<usize>::new();
         let mut group_first_rows = HashMap::<usize, Option<usize>>::new();
+        let mut previous_row: Option<usize> = None;
         for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
             let row = candidate.node_id;
+            let forced_before =
+                page_break_is_forced(document, row, cascade.computed[row].break_before)
+                    || previous_row.is_some_and(|previous| {
+                        parent_of[previous] == parent_of[row]
+                            && page_break_is_forced(
+                                document,
+                                previous,
+                                cascade.computed[previous].break_after,
+                            )
+                    });
+            previous_row = Some(row);
             let mut table = parent_of[row];
             while let Some(id) = table
                 && !matches!(
@@ -3823,6 +3838,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                             first_in_table
                                 && !document.nodes[table].children.iter().any(|&child| {
                                     cascade.computed[child].display == DisplayValue::TableCaption
+                                        && cascade.computed[child].caption_side
+                                            == raikiri_style::property::CaptionSideValue::Top
                                 })
                         })
                         .and_then(|table| candidate_y.get(&table))
@@ -3836,7 +3853,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             let Some(first) = first else {
                 continue;
             };
-            if page_break_is_forced(document, row, cascade.computed[row].break_before) {
+            if forced_before {
                 group_first_rows.insert(group, None);
                 continue;
             }
@@ -3928,6 +3945,9 @@ pub fn layout_pages_with_page_geometry_and_control(
     // The page the flow was on before the float moved is restored with it.
     let mut pending_float_shift: Option<(usize, f32, u32)> = None;
     let mut later_float_shift = 0.0_f32;
+    // The page-flow bottom of the last moved float: a later float needs to
+    // move only as far as it would otherwise start above it.
+    let mut later_float_bottom = f32::NEG_INFINITY;
     // Unpaginated border-box bottom of the last in-flow block-level child
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
@@ -4088,8 +4108,12 @@ pub fn layout_pages_with_page_geometry_and_control(
             && pending_float_shift.is_none()
             && is_floating_box_for_pagination(document, cascade, node_id)
         {
-            flow_shift += later_float_shift;
-            pending_float_shift = Some((node_id, later_float_shift, current_page));
+            let shift =
+                (later_float_bottom - (candidate.raw_y + flow_shift)).clamp(0.0, later_float_shift);
+            if shift > 0.0 {
+                flow_shift += shift;
+                pending_float_shift = Some((node_id, shift, current_page));
+            }
         }
         if document.get_node(node_id).is_none() {
             continue;
@@ -4486,7 +4510,8 @@ pub fn layout_pages_with_page_geometry_and_control(
             computed.break_inside,
             raikiri_style::property::BreakInside::Avoid
                 | raikiri_style::property::BreakInside::AvoidPage
-        ) && computed.display != DisplayValue::Inline
+        ) && (computed.display != DisplayValue::Inline
+            || page_applies_to_box(document, cascade, node_id))
             // A float already at the top of its page would break inside on
             // any page, so moving it would only leave a blank page.
             && (!is_floating_box_for_pagination(document, cascade, node_id)
@@ -4706,8 +4731,13 @@ pub fn layout_pages_with_page_geometry_and_control(
                     if page_overflow && !candidate.is_direct_body_element && node_delta > 0.0 {
                         let mut child = node_id;
                         while let Some(parent) = parent_of[child] {
+                            // An ancestor whose height is fixed or bounded by
+                            // `min-height` / `max-height` keeps its used size.
+                            let parent_style = &document.nodes[parent].style;
                             if parent == body_id
-                                || !document.nodes[parent].style.size.height.is_auto()
+                                || !parent_style.size.height.is_auto()
+                                || !parent_style.min_size.height.is_auto()
+                                || !parent_style.max_size.height.is_auto()
                             {
                                 break;
                             }
@@ -4750,6 +4780,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 (delta, page)
                             });
                         pending_float_shift = Some((node_id, inherited + node_delta, flow_page));
+                        later_float_bottom = node_target_y + height;
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
@@ -5122,6 +5153,28 @@ mod tests;
 
 /// Whether `display` makes a block-level box in the normal flow, whose
 /// block-start margin can adjoin a page break between siblings.
+/// Whether a grid container lies between `node_id` and `body_id`.
+fn has_grid_ancestor(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    body_id: usize,
+) -> bool {
+    let mut current = document.parent_of(node_id);
+    while let Some(id) = current
+        && id != body_id
+    {
+        if matches!(
+            cascade.computed[id].display,
+            DisplayValue::Grid | DisplayValue::InlineGrid
+        ) {
+            return true;
+        }
+        current = document.parent_of(id);
+    }
+    false
+}
+
 fn is_block_level_flow_box(display: DisplayValue) -> bool {
     matches!(
         display,
