@@ -78,11 +78,11 @@ pub use media::{MediaContext, MediaType};
 
 pub mod page;
 pub use page::{
-    PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery, PageInheritance,
-    PageMarginBoxCascadeResult, PageMarginBoxRule, PageMarginBoxSlot, PageMarks,
+    PAGE_DESCRIPTOR_NAMES, PageBleed, PageBleedDeclaration, PageCascadeResult, PageContextQuery,
+    PageInheritance, PageMarginBoxCascadeResult, PageMarginBoxRule, PageMarginBoxSlot, PageMarks,
     PageMarksDeclaration, PageOrientation, PagePseudo, PageRotation, PageRotationDeclaration,
     PageRule, PageSelector, PageSelectorEntry, PageSize, PageSizeDeclaration, PageSizeKeyword,
-    cascade_page, cascade_page_with_media_context,
+    cascade_page, cascade_page_with_media_context, is_valid_page_descriptor,
 };
 
 pub mod ruletree;

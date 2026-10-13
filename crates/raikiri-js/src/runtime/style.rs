@@ -163,7 +163,7 @@ fn same_property(declared: &str, property: &str) -> bool {
 /// unsupported non-custom name (which the caller drops); otherwise the name
 /// to store and enumerate -- ASCII-lowercased for non-custom names, exactly
 /// as given (trimmed) for custom names.
-fn validated_property_name(raw_name: &str) -> Option<String> {
+fn validated_property_name(raw_name: &str, page: bool) -> Option<String> {
     let trimmed = raw_name.trim();
     if trimmed.is_empty() {
         return None;
@@ -175,10 +175,46 @@ fn validated_property_name(raw_name: &str) -> Option<String> {
         return Some(trimmed.to_owned());
     }
     let lower = trimmed.to_ascii_lowercase();
-    if !raikiri_style::property::is_supported_property_name(&lower) {
+    if !is_known_name(&lower, page) {
         return None;
     }
     Some(lower)
+}
+
+/// Whether the lowercased non-custom `name` is a supported property, or,
+/// in an `@page` rule's declarations (`page`), one of its descriptors.
+fn is_known_name(name: &str, page: bool) -> bool {
+    raikiri_style::property::is_supported_property_name(name)
+        || (page && raikiri_style::PAGE_DESCRIPTOR_NAMES.contains(&name))
+}
+
+/// Whether `name` is an `@page` descriptor that is not also a property.
+fn is_page_descriptor(name: &str) -> bool {
+    raikiri_style::PAGE_DESCRIPTOR_NAMES
+        .iter()
+        .any(|descriptor| descriptor.eq_ignore_ascii_case(name))
+}
+
+/// The declaration text a declaration object reads -- its rule's block, or
+/// the element's `style` attribute -- and whether that text belongs to an
+/// `@page` rule, whose descriptors are valid alongside its properties.
+fn declared_text(
+    document: &raikiri_dom::Document,
+    index: usize,
+    rule: Option<usize>,
+) -> (Option<String>, bool) {
+    match rule {
+        Some(rule) => (
+            super::stylesheet::stylesheet_rule_body(document, index, rule),
+            super::stylesheet::is_page_rule(document, index, rule),
+        ),
+        None => (
+            document
+                .element_attribute(index, "style")
+                .map(str::to_owned),
+            false,
+        ),
+    }
 }
 
 /// One validated inline declaration: `value` without any trailing
@@ -199,20 +235,25 @@ struct ValidatedDeclaration {
 /// Shorthands are kept as specified (a single entry, not expanded into
 /// longhands); expanding `margin: 0` into four longhands for reads remains
 /// future work.
-fn validated_inline_declarations(style_attr: Option<&str>) -> Vec<ValidatedDeclaration> {
+///
+/// In an `@page` rule's block (`page`), its descriptors are kept as well.
+fn validated_inline_declarations(
+    style_attr: Option<&str>,
+    page: bool,
+) -> Vec<ValidatedDeclaration> {
     let Some(style) = style_attr else {
         return Vec::new();
     };
     let mut out: Vec<ValidatedDeclaration> = Vec::new();
     for raw in parse_inline_style(style) {
-        let Some(name) = validated_property_name(&raw.name) else {
+        let Some(name) = validated_property_name(&raw.name, page) else {
             continue;
         };
         let important = raw.important;
         if raw.value.is_empty() {
             continue;
         }
-        let Some(stored) = declaration_value(&name, &raw.value) else {
+        let Some(stored) = declaration_value(&name, &raw.value, page) else {
             continue;
         };
         if stored.trim().is_empty() {
@@ -290,7 +331,8 @@ pub(crate) fn computed_longhand_names() -> Vec<&'static str> {
 /// Reads through the validated view ([`validated_inline_declarations`]), so
 /// an unsupported name or an unparseable value reads as `""` rather than
 /// the raw text.
-pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> String {
+/// `page` is as for [`validated_inline_declarations`].
+pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str, page: bool) -> String {
     let trimmed = property.trim();
     if trimmed.is_empty() {
         return String::new();
@@ -303,7 +345,7 @@ pub(crate) fn inline_style_value(style_attr: Option<&str>, property: &str) -> St
     } else {
         trimmed.to_ascii_lowercase()
     };
-    validated_inline_declarations(style_attr)
+    validated_inline_declarations(style_attr, page)
         .into_iter()
         .rev()
         .find(|d| same_property(&d.name, &lookup))
@@ -494,7 +536,7 @@ pub(crate) fn with_inline_style_property(
 /// validated declaration for `property` carries `!important`, otherwise
 /// `""` -- including when `property` is not declared at all, is unsupported,
 /// or holds an unparseable value (all dropped from the validated view).
-fn property_priority(style_attr: Option<&str>, property: &str) -> &'static str {
+fn property_priority(style_attr: Option<&str>, property: &str, page: bool) -> &'static str {
     let trimmed = property.trim();
     if trimmed.is_empty() {
         return "";
@@ -507,7 +549,7 @@ fn property_priority(style_attr: Option<&str>, property: &str) -> &'static str {
     } else {
         trimmed.to_ascii_lowercase()
     };
-    match validated_inline_declarations(style_attr)
+    match validated_inline_declarations(style_attr, page)
         .into_iter()
         .rev()
         .find(|d| same_property(&d.name, &lookup))
@@ -573,6 +615,17 @@ struct StyleSource {
 }
 
 impl StyleSource {
+    /// Whether this declaration object belongs to an `@page` rule.
+    fn is_page_rule(&self, context: &mut Context) -> JsResult<bool> {
+        let Some(rule) = self.rule else {
+            return Ok(false);
+        };
+        let index = self.index;
+        with_state(context, |s| {
+            super::stylesheet::is_page_rule(s.host.document(), index, rule)
+        })
+    }
+
     /// The declared property name at `index` -- the WebIDL "supported
     /// property indices" this object exposes (CSSOM §6.7's `item()` and
     /// indexed access).
@@ -597,17 +650,8 @@ impl StyleSource {
         let index_ = self.index;
         let rule = self.rule;
         with_state(context, |s| {
-            let text = match rule {
-                Some(rule) => {
-                    super::stylesheet::stylesheet_rule_body(s.host.document(), index_, rule)
-                }
-                None => s
-                    .host
-                    .document()
-                    .element_attribute(index_, "style")
-                    .map(str::to_owned),
-            };
-            validated_inline_declarations(text.as_deref())
+            let (text, page) = declared_text(s.host.document(), index_, rule);
+            validated_inline_declarations(text.as_deref(), page)
                 .into_iter()
                 .nth(index)
                 .map(|d| d.name)
@@ -621,17 +665,8 @@ impl StyleSource {
         let index_ = self.index;
         let rule = self.rule;
         with_state(context, |s| {
-            let text = match rule {
-                Some(rule) => {
-                    super::stylesheet::stylesheet_rule_body(s.host.document(), index_, rule)
-                }
-                None => s
-                    .host
-                    .document()
-                    .element_attribute(index_, "style")
-                    .map(str::to_owned),
-            };
-            validated_inline_declarations(text.as_deref()).len()
+            let (text, page) = declared_text(s.host.document(), index_, rule);
+            validated_inline_declarations(text.as_deref(), page).len()
         })
     }
 }
@@ -655,17 +690,8 @@ fn this_style(this: &JsValue, context: &mut Context) -> JsResult<Rc<StyleSource>
 
 fn read_declared(context: &mut Context, source: &StyleSource, property: &str) -> JsResult<String> {
     with_state(context, |s| {
-        let text = match source.rule {
-            Some(rule) => {
-                super::stylesheet::stylesheet_rule_body(s.host.document(), source.index, rule)
-            }
-            None => s
-                .host
-                .document()
-                .element_attribute(source.index, "style")
-                .map(str::to_owned),
-        };
-        inline_style_value(text.as_deref(), property)
+        let (text, page) = declared_text(s.host.document(), source.index, source.rule);
+        inline_style_value(text.as_deref(), property, page)
     })
 }
 
@@ -734,8 +760,14 @@ fn css_wide_keyword(value: &str) -> Option<&'static str> {
 /// A parsed value is stored in its canonical serialization where
 /// `raikiri_style` can produce one, and as given otherwise. CSS-wide
 /// keywords serialize ASCII-lowercased.
-fn declaration_value(property: &str, value: &str) -> Option<String> {
+fn declaration_value(property: &str, value: &str, page: bool) -> Option<String> {
     let is_custom = property.starts_with("--");
+    if page && is_page_descriptor(property) {
+        // Descriptors take neither CSS-wide keywords nor `!important` in
+        // the value; they are stored as given once their grammar accepts them.
+        return raikiri_style::is_valid_page_descriptor(property, value)
+            .then(|| value.trim().to_owned());
+    }
     if !is_custom && !raikiri_style::property::is_supported_property_name(property) {
         return None;
     }
@@ -772,7 +804,8 @@ fn set_declaration(
     if value.trim().is_empty() {
         return write_declared(context, source, property, "", false);
     }
-    let Some(stored) = declaration_value(property.trim(), value) else {
+    let page = source.is_page_rule(context)?;
+    let Some(stored) = declaration_value(property.trim(), value, page) else {
         return Ok(());
     };
     write_declared(context, source, property, &stored, important)
@@ -935,17 +968,8 @@ fn style_get_property_priority(
         let index = source.index;
         let rule = source.rule;
         with_state(context, |s| {
-            let text = match rule {
-                Some(rule) => {
-                    super::stylesheet::stylesheet_rule_body(s.host.document(), index, rule)
-                }
-                None => s
-                    .host
-                    .document()
-                    .element_attribute(index, "style")
-                    .map(str::to_owned),
-            };
-            property_priority(text.as_deref(), &name).to_owned()
+            let (text, page) = declared_text(s.host.document(), index, rule);
+            property_priority(text.as_deref(), &name, page).to_owned()
         })?
     };
     Ok(JsValue::from(JsString::from(priority)))
@@ -995,7 +1019,7 @@ fn style_set_property(
     }
     if !trimmed_name.is_empty()
         && !trimmed_name.starts_with("--")
-        && !raikiri_style::property::is_supported_property_name(&trimmed_name)
+        && !is_known_name(&trimmed_name, source.is_page_rule(context)?)
     {
         return Ok(JsValue::undefined());
     }
@@ -1046,15 +1070,8 @@ fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
     let index = source.index;
     let rule = source.rule;
     let text = with_state(context, |s| {
-        let style_text = match rule {
-            Some(rule) => super::stylesheet::stylesheet_rule_body(s.host.document(), index, rule),
-            None => s
-                .host
-                .document()
-                .element_attribute(index, "style")
-                .map(str::to_owned),
-        };
-        serialize_validated(&validated_inline_declarations(style_text.as_deref()))
+        let (style_text, page) = declared_text(s.host.document(), index, rule);
+        serialize_validated(&validated_inline_declarations(style_text.as_deref(), page))
     })?;
     Ok(JsValue::from(JsString::from(text)))
 }
@@ -1075,7 +1092,8 @@ fn style_css_text_set(
         return Err(no_modification_allowed(context));
     }
     let text = dom_string(args, 0, context)?;
-    let validated = serialize_validated(&validated_inline_declarations(Some(&text)));
+    let page = source.is_page_rule(context)?;
+    let validated = serialize_validated(&validated_inline_declarations(Some(&text), page));
     if let Some(rule) = source.rule {
         super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, &validated)?;
     } else {

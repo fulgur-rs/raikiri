@@ -1,5 +1,5 @@
 use cssparser::{
-    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserState,
+    AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
     QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, Token, match_ignore_ascii_case,
 };
 
@@ -529,6 +529,26 @@ pub(crate) fn parse_page_declaration_block(
     }
 }
 
+/// The `@page` descriptors that are not CSS properties (CSS Paged Media
+/// Level 3 §7): they are only valid inside a page rule's declaration block.
+pub const PAGE_DESCRIPTOR_NAMES: [&str; 4] = ["size", "marks", "bleed", "page-orientation"];
+
+/// Whether `value` is a valid value for the `@page` descriptor `name`
+/// (ASCII case-insensitive), with no trailing `!important`. Any name outside
+/// [`PAGE_DESCRIPTOR_NAMES`] is not a descriptor and yields `false`.
+pub fn is_valid_page_descriptor(name: &str, value: &str) -> bool {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    let parsed = match name.to_ascii_lowercase().as_str() {
+        "size" => parse_page_size_value(&mut parser).is_ok(),
+        "marks" => parse_page_marks_value(&mut parser).is_ok(),
+        "bleed" => parse_page_bleed_value(&mut parser).is_ok(),
+        "page-orientation" => parse_page_rotation_value(&mut parser).is_ok(),
+        _ => false,
+    };
+    parsed && parser.expect_exhausted().is_ok()
+}
+
 /// Parse the `page-orientation` descriptor's value: `upright |
 /// rotate-left | rotate-right` (CSS Paged Media Level 3 §7.4).
 pub(crate) fn parse_page_rotation_value<'i>(
@@ -768,3 +788,6 @@ pub(crate) fn parse_page_bleed_value<'i>(
     let length = parse_length_allow_negative(input).ok_or_else(|| input.new_custom_error(()))?;
     Ok(PageBleed::Length(length))
 }
+
+#[cfg(test)]
+mod tests;

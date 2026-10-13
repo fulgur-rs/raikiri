@@ -10,7 +10,7 @@ use boa_engine::{
 };
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
-    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser,
+    QualifiedRuleParser, RuleBodyItemParser, RuleBodyParser, StyleSheetParser, ToCss, Token,
 };
 use raikiri_dom::{Document, NodeKind};
 
@@ -53,15 +53,34 @@ pub(crate) fn parse_css_rules(source: &str) -> Vec<CssRuleInfo> {
     out
 }
 
-/// Whether `prelude` is an `@page` rule's prelude (ASCII case-insensitive).
+/// Whether `prelude` is an `@page` rule's prelude. The at-keyword is
+/// compared after tokenization, so escaped spellings match like the cascade
+/// sees them (ASCII case-insensitive).
 pub(crate) fn is_page_prelude(prelude: &str) -> bool {
-    let Some(rest) = prelude.strip_prefix('@') else {
-        return false;
-    };
-    let name_end = rest
-        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '-' || c == '_'))
-        .unwrap_or(rest.len());
-    rest[..name_end].eq_ignore_ascii_case("page")
+    page_selector_text(prelude).is_some()
+}
+
+/// The page selector list of an `@page` prelude, serialized from its tokens:
+/// comments dropped, whitespace runs collapsed to one space, and the result
+/// trimmed. `None` when `prelude` does not start with the `page` at-keyword.
+fn page_selector_text(prelude: &str) -> Option<String> {
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    match parser.next_including_whitespace() {
+        Ok(Token::AtKeyword(name)) if name.eq_ignore_ascii_case("page") => {}
+        _ => return None,
+    }
+    let mut out = String::new();
+    while let Ok(token) = parser.next_including_whitespace() {
+        if matches!(token, Token::WhiteSpace(_)) {
+            if !out.is_empty() && !out.ends_with(' ') {
+                out.push(' ');
+            }
+        } else {
+            out.push_str(&token.to_css_string());
+        }
+    }
+    Some(out.trim_end().to_owned())
 }
 
 /// The page margin box names (CSS Paged Media 3 §4.2) that `insertRule` on a
@@ -476,6 +495,9 @@ struct CssStyleRuleData {
     style_element: usize,
     #[unsafe_ignore_trace]
     rule_index: usize,
+    /// Whether the object was built as a `CSSPageRule`.
+    #[unsafe_ignore_trace]
+    is_page: bool,
 }
 
 fn define_getter(
@@ -580,17 +602,31 @@ pub(crate) fn css_style_rule_object(
     rule_index: usize,
 ) -> JsResult<JsObject> {
     let key = (style_element, rule_index);
-    if let Some(existing) = with_state(context, |state| state.css_style_rules.get(&key).cloned())? {
-        return Ok(existing);
-    }
     let is_page = rule_info(context, style_element, rule_index)
         .is_ok_and(|(_, rule)| is_page_prelude(&rule.prelude));
+    let cached = with_state(context, |state| state.css_style_rules.get(&key).cloned())?;
+    if let Some(existing) = cached {
+        let same_kind = existing
+            .downcast_ref::<CssStyleRuleData>()
+            .is_some_and(|data| data.is_page == is_page);
+        if same_kind {
+            return Ok(existing);
+        }
+        // The sheet text was replaced and the rule at this index changed
+        // between a style rule and a page rule: build a fresh object of the
+        // right interface, with a fresh declaration object.
+        with_state(context, |state| {
+            state.css_style_rules.remove(&key);
+            state.css_rule_styles.remove(&key);
+        })?;
+    }
     let prototype = context.intrinsics().constructors().object().prototype();
     let object = JsObject::from_proto_and_data(
         Some(prototype),
         CssStyleRuleData {
             style_element,
             rule_index,
+            is_page,
         },
     );
     define_getter(&object, "cssText", css_rule_text, context)?;
@@ -599,6 +635,27 @@ pub(crate) fn css_style_rule_object(
     if is_page {
         define_method(&object, "insertRule", 1, page_rule_insert_rule, context)?;
         define_method(&object, "deleteRule", 1, page_rule_delete_rule, context)?;
+        let prototype = list_prototype(
+            context,
+            "CSSRuleList",
+            margin_rule_list_length,
+            margin_rule_list_item,
+        )?; // cov:ignore: The fresh realm's built-in object prototype accepts these fixed list members.
+        let list = indexed_object(
+            context,
+            prototype,
+            MarginRuleListSource {
+                style_element,
+                rule_index,
+            },
+        )?;
+        let descriptor = PropertyDescriptor::builder()
+            .value(list)
+            .writable(false)
+            .enumerable(true)
+            .configurable(true)
+            .build();
+        object.define_property_or_throw(js_string!("cssRules"), descriptor, context)?;
     }
     let tag = if is_page {
         "CSSPageRule"
@@ -664,9 +721,9 @@ fn css_rule_text(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResu
 fn css_rule_selector(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let (style_element, rule_index) = css_rule_data(this)?;
     let (_, rule) = rule_info(context, style_element, rule_index)?;
-    if is_page_prelude(&rule.prelude) {
-        // A `CSSPageRule`'s selector is the page selector list after `@page`.
-        return Ok(JsValue::from(JsString::from(rule.prelude[5..].trim())));
+    // A `CSSPageRule`'s selector is the page selector list after `@page`.
+    if let Some(selector) = page_selector_text(&rule.prelude) {
+        return Ok(JsValue::from(JsString::from(selector)));
     }
     Ok(JsValue::from(JsString::from(rule.prelude)))
 }
@@ -694,6 +751,15 @@ pub(crate) fn parent_rule(
     rule_index: usize,
 ) -> JsResult<JsValue> {
     Ok(css_style_rule_object(context, style_element, rule_index)?.into())
+}
+
+/// Whether the top-level rule `rule_index` of `style_element`'s sheet is an
+/// `@page` rule.
+pub(crate) fn is_page_rule(document: &Document, style_element: usize, rule_index: usize) -> bool {
+    let text = stylesheet_text(document, style_element);
+    parse_css_rules(&text)
+        .get(rule_index)
+        .is_some_and(|rule| is_page_prelude(&rule.prelude))
 }
 
 pub(crate) fn stylesheet_rule_body(
@@ -841,6 +907,120 @@ fn page_rule_delete_rule(
     };
     splice_rule_body(context, style_element, body.start, range, "")?;
     Ok(JsValue::undefined())
+}
+
+/// The live `cssRules` of a `CSSPageRule`: its nested margin rules, in
+/// source order.
+struct MarginRuleListSource {
+    style_element: usize,
+    rule_index: usize,
+}
+
+impl IndexedSource for MarginRuleListSource {
+    fn length(&self, context: &mut Context) -> JsResult<usize> {
+        Ok(margin_rule_texts(context, self.style_element, self.rule_index)?.len())
+    }
+
+    fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
+        if index >= self.length(context)? {
+            return Ok(None);
+        }
+        let object = JsObject::from_proto_and_data(
+            Some(context.intrinsics().constructors().object().prototype()),
+            MarginRuleData {
+                style_element: self.style_element,
+                rule_index: self.rule_index,
+                margin_index: index,
+            },
+        );
+        define_getter(&object, "name", margin_rule_name, context)?;
+        define_getter(&object, "cssText", margin_rule_text, context)?;
+        super::interfaces::set_to_string_tag(&object, "CSSMarginRule", context)?;
+        Ok(Some(object.into()))
+    }
+}
+
+#[derive(Trace, Finalize, JsData)]
+struct MarginRuleData {
+    #[unsafe_ignore_trace]
+    style_element: usize,
+    #[unsafe_ignore_trace]
+    rule_index: usize,
+    #[unsafe_ignore_trace]
+    margin_index: usize,
+}
+
+/// The source text of each margin rule nested in the page rule
+/// `rule_index`; empty once that rule is gone or no longer an `@page` rule.
+fn margin_rule_texts(
+    context: &mut Context,
+    style_element: usize,
+    rule_index: usize,
+) -> JsResult<Vec<String>> {
+    let Ok((text, rule)) = rule_info(context, style_element, rule_index) else {
+        return Ok(Vec::new());
+    };
+    let Some(body) = rule.body.filter(|_| is_page_prelude(&rule.prelude)) else {
+        return Ok(Vec::new());
+    };
+    let body = &text[body];
+    Ok(nested_at_rule_ranges(body)
+        .into_iter()
+        .map(|range| body[range].to_owned())
+        .collect())
+}
+
+fn margin_rule_list_length(
+    this: &JsValue,
+    _: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_indexed::<MarginRuleListSource>(this, context, "CSSRuleList")?;
+    Ok(JsValue::from(source.length(context)? as u32))
+}
+
+fn margin_rule_list_item(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_indexed::<MarginRuleListSource>(this, context, "CSSRuleList")?;
+    let index = arg_unsigned_long(args, 0, context)?;
+    Ok(source.item(index, context)?.unwrap_or_else(JsValue::null))
+}
+
+/// The current text of the margin rule `this` names, or `""` once it is gone.
+fn this_margin_rule_text(this: &JsValue, context: &mut Context) -> JsResult<String> {
+    let (style_element, rule_index, margin_index) = this
+        .as_object()
+        .and_then(|object| {
+            object
+                .downcast_ref::<MarginRuleData>()
+                .map(|data| (data.style_element, data.rule_index, data.margin_index))
+        })
+        .ok_or_else(|| JsNativeError::typ().with_message("'this' is not a CSSMarginRule"))?;
+    Ok(margin_rule_texts(context, style_element, rule_index)?
+        .into_iter()
+        .nth(margin_index)
+        .unwrap_or_default())
+}
+
+/// `CSSMarginRule.name`: the margin rule's at-keyword, ASCII-lowercased.
+fn margin_rule_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let text = this_margin_rule_text(this, context)?;
+    let mut input = ParserInput::new(&text);
+    let mut parser = Parser::new(&mut input);
+    let name = match parser.next() {
+        Ok(Token::AtKeyword(name)) => name.to_ascii_lowercase(),
+        _ => String::new(),
+    };
+    Ok(JsValue::from(JsString::from(name)))
+}
+
+fn margin_rule_text(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    Ok(JsValue::from(JsString::from(this_margin_rule_text(
+        this, context,
+    )?)))
 }
 
 #[cfg(test)]
