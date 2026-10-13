@@ -48,6 +48,14 @@ fn content_overflow_end(
     root_flow_offset: f32,
 ) -> f32 {
     use raikiri_style::property::OverflowValue;
+    // The body's overflow, or the root's, clips at the viewport, which
+    // stays within the paginated flow.
+    if std::iter::once(body_id)
+        .chain(document.parent_of(body_id))
+        .any(|id| !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible))
+    {
+        return f32::NEG_INFINITY;
+    }
     let mut end = f32::NEG_INFINITY;
     let mut stack = vec![(body_id, 0.0_f32)];
     while let Some((node_id, parent_y)) = stack.pop() {
@@ -90,16 +98,10 @@ fn content_overflow_end(
             end = end.max(bottom);
         }
         // A `display: contents` element generates no box and clips nothing,
-        // as in painting. The body's overflow, or the root's, clips at the
-        // viewport, which stays within the paginated flow.
-        let clips = if node_id == body_id {
-            std::iter::once(body_id)
-                .chain(document.parent_of(body_id))
-                .any(|id| !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible))
-        } else {
-            !matches!(computed.overflow.y, OverflowValue::Visible)
-                && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
-        };
+        // as in painting.
+        let clips = node_id != body_id
+            && !matches!(computed.overflow.y, OverflowValue::Visible)
+            && crate::paint_rules::clips_element_overflow(document, cascade, node_id);
         if clips || node.multicol.is_some() {
             continue;
         }
@@ -130,6 +132,9 @@ fn body_border_box_end(
             .parent_of(body_id)
             .and_then(|root| match cascade.computed[root].height {
                 ComputedLengthPercentageOrAuto::Px(height) => Some(height.max(0.0)),
+                ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => {
+                    Some(calc.px.max(0.0))
+                }
                 _ => None,
             });
     let used = |value: ComputedLengthPercentageOrAuto| {
@@ -143,30 +148,38 @@ fn body_border_box_end(
         }
         .map(|value| value.max(0.0))
     };
-    let height = used(computed.height).unwrap_or(0.0);
-    let height = used(computed.max_height).map_or(height, |max| height.min(max));
-    let content = height.max(used(computed.min_height).unwrap_or(0.0));
     let body = &document.nodes[body_id];
     let layout = &body.unrounded_layout;
     let edges_top = layout.padding.top + layout.border.top;
     let edges_bottom = layout.padding.bottom + layout.border.bottom;
     let top = root_flow_offset + document.body_block_start_margin;
-    if content > 0.0 {
-        let border_box = if matches!(
+    let border_box_end = |content: f32| {
+        top + if matches!(
             computed.box_sizing,
             raikiri_style::property::BoxSizing::BorderBox
         ) {
             content.max(edges_top + edges_bottom)
         } else {
             content + edges_top + edges_bottom
-        };
-        return top + border_box;
+        }
+    };
+    let min_height = used(computed.min_height).unwrap_or(0.0);
+    // A definite height, even zero, fixes the border box; content
+    // overflowing it is measured on its own.
+    if let Some(height) = used(computed.height) {
+        let height = used(computed.max_height).map_or(height, |max| height.min(max));
+        return border_box_end(height.max(min_height));
     }
-    // Without block-end edges the body ends with its content, which the
-    // flow already paginated. Text of the body's own paragraph is located
-    // by its lines, which are not measured here.
+    let min_end = if min_height > 0.0 {
+        border_box_end(min_height)
+    } else {
+        f32::NEG_INFINITY
+    };
+    // Without block-end edges an auto-height body ends with its content,
+    // which the flow already paginated. Text of the body's own paragraph is
+    // located by its lines, which are not measured here.
     if edges_bottom <= 0.0 || body.is_ifc_root() {
-        return f32::NEG_INFINITY;
+        return min_end;
     }
     // In-flow children are in page coordinates already; with block-end
     // edges their block-end margins stay inside the body.
@@ -189,7 +202,7 @@ fn body_border_box_end(
             layout.location.y + layout.size.height + layout.margin.bottom.max(0.0)
         })
         .fold(top + edges_top, f32::max);
-    content_end + edges_bottom
+    min_end.max(content_end + edges_bottom)
 }
 
 // Cache the nearest column context for each visited source node. Row flex

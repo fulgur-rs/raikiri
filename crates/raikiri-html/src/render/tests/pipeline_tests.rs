@@ -1274,3 +1274,29 @@ fn pipeline_names_continuation_pages_after_the_innermost_box() {
         "{names:?}"
     );
 }
+
+#[test]
+fn pipeline_keeps_a_definite_zero_body_height_before_its_padding() {
+    // The 50px border box and the 80px child both fit the first page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;height:0;padding-bottom:50px}</style>\
+         <div style='height:80px'>x</div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_does_not_count_a_body_clipped_by_the_viewport() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{overflow:hidden} body{margin:0;height:1000px}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_resolves_body_percentage_height_against_a_calc_root() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{height:calc(500px)} body{margin:0;height:100%}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 5);
+}
