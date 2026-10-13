@@ -23,6 +23,16 @@ mkdir -p "$out_dir"
 
 "$SCRIPT_DIR/fetch.sh"
 wpt_sha="$(git -C target/wpt rev-parse HEAD)"
+raikiri_sha="$(git rev-parse HEAD)"
+# meta.txt names commits, so both trees must match them exactly.
+require_clean() {
+  if ! git -C "$1" diff --quiet HEAD --; then
+    echo "$1 has uncommitted changes; the audit would not match its commit" >&2
+    exit 1
+  fi
+}
+require_clean "$REPO_ROOT"
+require_clean target/wpt
 
 "$SCRIPT_DIR/list-runnable-reftests.sh" "$out_dir/runnable.txt" target/wpt
 
@@ -66,12 +76,14 @@ cargo run --release --locked -p raikiri-wpt --bin audit-vacuous-passes -- \
   --output "$out_dir/audit.tsv"
 
 awk -F '\t' '$2 == "KEEP" { print $1 }' "$out_dir/audit.tsv" | sort > "$out_dir/keep.txt"
-if [[ "$(git -C target/wpt rev-parse HEAD)" != "$wpt_sha" ]]; then
-  echo "WPT checkout moved from $wpt_sha during the audit; rerun it" >&2
+require_clean "$REPO_ROOT"
+require_clean target/wpt
+if [[ "$(git -C target/wpt rev-parse HEAD)" != "$wpt_sha" || "$(git rev-parse HEAD)" != "$raikiri_sha" ]]; then
+  echo "a checkout moved during the audit; rerun it" >&2
   exit 1
 fi
 {
   echo "wpt_sha=$wpt_sha"
-  echo "raikiri_sha=$(git rev-parse HEAD)"
+  echo "raikiri_sha=$raikiri_sha"
 } > "$out_dir/meta.txt"
 echo "$(wc -l < "$out_dir/keep.txt") KEEP ids written to $out_dir/keep.txt"
