@@ -41,6 +41,12 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
 /// block-axis overflow contributes its own border box but not its content.
 /// Inline elements are located by their paragraph's lines, which take part
 /// in pagination directly, so only the boxes inside them are measured.
+///
+/// The in-flow content of a multicol container is projected into columns,
+/// so its unfragmented layout position says nothing about the page it paints
+/// on. An absolutely positioned box in it whose containing block is the
+/// container or one of its ancestors is not projected, though: it paints at
+/// its laid-out position and is measured there.
 fn content_overflow_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -58,8 +64,11 @@ fn content_overflow_end(
         return f32::NEG_INFINITY;
     }
     let mut end = f32::NEG_INFINITY;
-    let mut stack = vec![(body_id, 0.0_f32)];
-    while let Some((node_id, parent_y)) = stack.pop() {
+    // `Some(true)` marks the in-flow content of a multicol container where an
+    // absolutely positioned box still takes its containing block from
+    // outside the columns, `Some(false)` content where it does not.
+    let mut stack = vec![(body_id, 0.0_f32, None::<bool>)];
+    while let Some((node_id, parent_y, in_columns)) = stack.pop() {
         let node = &document.nodes[node_id];
         if !node.is_in_document()
             || node.is_display_none()
@@ -72,17 +81,34 @@ fn content_overflow_end(
         // which take part in pagination directly, and the boxes inside it are
         // located from the paragraph's root, so only its children are walked,
         // in the root's coordinate space.
+        let computed = &cascade.computed[node_id];
         if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
-            stack.extend(node.children.iter().map(|&child| (child, parent_y)));
+            let in_columns = in_columns.map(|outside| {
+                outside
+                    && !super::fixed::establishes_absolute_containing_block(
+                        document, node_id, computed,
+                    )
+            });
+            stack.extend(
+                node.children
+                    .iter()
+                    .map(|&child| (child, parent_y, in_columns)),
+            );
             continue;
         }
-        let computed = &cascade.computed[node_id];
         if matches!(
             computed.position,
             PositionValue::Fixed | PositionValue::Running(_)
         ) {
             continue;
         }
+        // Inside columns only an absolutely positioned box placed against a
+        // containing block outside them is measured, with its subtree.
+        let in_columns = match in_columns {
+            Some(true) if computed.position == PositionValue::Absolute => None,
+            Some(false) if computed.position == PositionValue::Absolute => continue,
+            other => other,
+        };
         // Layout places some boxes without their relative offset, which
         // the painter adds to the box and its subtree.
         let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
@@ -102,7 +128,7 @@ fn content_overflow_end(
                 root_flow_offset,
                 page_area_height,
             )
-        } else if node.unrounded_layout.size.height > 0.0 {
+        } else if in_columns.is_none() && node.unrounded_layout.size.height > 0.0 {
             y + node.unrounded_layout.size.height
         } else {
             f32::NEG_INFINITY
@@ -115,10 +141,22 @@ fn content_overflow_end(
         let clips = node_id != body_id
             && !matches!(computed.overflow.y, OverflowValue::Visible)
             && crate::paint_rules::clips_element_overflow(document, cascade, node_id);
-        if clips || node.multicol.is_some() {
+        if clips {
             continue;
         }
-        stack.extend(node.children.iter().map(|&child| (child, y)));
+        let in_columns = if let Some(outside) = in_columns {
+            Some(
+                outside
+                    && !super::fixed::establishes_absolute_containing_block(
+                        document, node_id, computed,
+                    ),
+            )
+        } else if node.multicol.is_some() {
+            Some(true)
+        } else {
+            None
+        };
+        stack.extend(node.children.iter().map(|&child| (child, y, in_columns)));
     }
     end
 }
@@ -1498,7 +1536,10 @@ pub(crate) fn project_slices_with_control(
             .then_some((page_start, page_end));
     }
 
-    let mut work = ProjectionWork::new(control, document.fragment_tree.limit);
+    let mut work = ProjectionWork::new(
+        control,
+        document.fragment_tree.work_limit(document.nodes.len()),
+    );
     work.check()?;
     let mut text_roots = Vec::new();
     let Some(body_id) = find_body(document) else {
@@ -2913,13 +2954,11 @@ pub fn layout_pages_with_page_geometry_and_control(
     // Page heights are known here, after source layout has established each
     // owner's position. Retain page-local column placements before collecting
     // paragraph and fragment projections, including the changed following flow.
+    let work_limit = document.fragment_tree.work_limit(document.nodes.len());
     let mut column_work = ProjectionWork::with_remaining(
         control,
-        document.fragment_tree.limit,
-        document
-            .fragment_tree
-            .limit
-            .saturating_sub(document.fragment_tree.break_flow_work_used),
+        work_limit,
+        work_limit.saturating_sub(document.fragment_tree.break_flow_work_used),
     );
     // Each owner's position walks its ancestors; find it once per owner
     // rather than once per comparison.
@@ -2982,8 +3021,7 @@ pub fn layout_pages_with_page_geometry_and_control(
     }
     sibling_shifts.apply_all(document, &mut fragment_edits);
     fragment_edits.finish(document, &mut column_work)?;
-    document.fragment_tree.break_flow_work_used =
-        document.fragment_tree.limit - column_work.remaining();
+    document.fragment_tree.break_flow_work_used = work_limit - column_work.remaining();
     document.fragment_tree.finalize();
     document.column_rules = crate::column_rules::prepare(document, cascade)?;
 

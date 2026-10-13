@@ -1,5 +1,6 @@
 mod break_flow;
 mod constrained_chain;
+mod lineless;
 mod paged_spanning;
 mod paragraph_group;
 mod spanning;
@@ -85,6 +86,16 @@ pub(crate) fn compute_multicol_layout(
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
+    // Children that hold no lines are sliced at the column edges. Only an
+    // outermost container takes this path; a nested one is fragmented by its
+    // outer context as well.
+    let lineless_children = (inputs.run_mode == RunMode::PerformLayout
+        && !span_scope
+        && style.horizontal
+        && tree.fragmentation_stack.is_empty())
+    .then(|| lineless::supported(tree, index))
+    .flatten();
+    let custom_scope = custom_scope && lineless_children.is_none();
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);
     let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
@@ -145,10 +156,12 @@ pub(crate) fn compute_multicol_layout(
             .fold(0.0_f32, f32::max);
         output.size.height = output.size.height.min(min_child_height);
     }
-    let break_flow_scope = !span_scope && break_flow::supports(tree, index, context);
+    let break_flow_scope =
+        !span_scope && lineless_children.is_none() && break_flow::supports(tree, index, context);
     let constrained_chain = (inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
+        && lineless_children.is_none()
         && available_height.is_some_and(|height| height > 0.0)
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index))
@@ -160,11 +173,16 @@ pub(crate) fn compute_multicol_layout(
     let plain_block_scope = inputs.run_mode == RunMode::PerformLayout
         && !custom_scope
         && !break_flow_scope
+        && lineless_children.is_none()
         && available_height.is_some_and(|height| height > 0.0)
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index)
         && multicol_has_plain_paragraph_chain(tree, index);
-    if (custom_scope || break_flow_scope || plain_block_scope || constrained_chain.is_some())
+    if (custom_scope
+        || break_flow_scope
+        || plain_block_scope
+        || constrained_chain.is_some()
+        || lineless_children.is_some())
         && inputs.run_mode == RunMode::PerformLayout
     {
         // Taffy's input width is normally already the content width for this
@@ -188,7 +206,18 @@ pub(crate) fn compute_multicol_layout(
         };
         let block_end_inset = multicol_resolve_inset(tree, css.padding.bottom, basis)
             + multicol_resolve_inset(tree, css.border.bottom, basis);
-        let used_height = if let Some(chain) = constrained_chain {
+        let used_height = if let Some(children) = &lineless_children {
+            lineless::layout(
+                tree,
+                index,
+                children,
+                resolved,
+                output.size,
+                content_origin,
+                block_end_inset,
+            )
+            .unwrap_or(output.size.height)
+        } else if let Some(chain) = constrained_chain {
             constrained_chain::layout(tree, index, &chain, resolved, output.size, content_origin)
                 .unwrap_or(output.size.height)
         } else if break_flow_scope {

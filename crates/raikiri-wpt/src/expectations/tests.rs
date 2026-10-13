@@ -829,7 +829,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + Page count from nested abspos, body height and contain:size overflow,
     //   and a header repeated over anonymous cells (+5).
     // + Parsing tests passing with canonical position, alpha, sizing, flex and font-family serialization (+13).
-    assert_eq!(set.baseline.entries.len(), 3951);
+    // + Multicol blocks without lines sliced at column edges (+14).
+    // - Pins that matched only while blocks without lines were not fragmented (-3).
+    assert_eq!(set.baseline.entries.len(), 3962);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

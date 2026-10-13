@@ -108,7 +108,7 @@ fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &Compu
 
 /// Whether `id` is the containing block of its absolutely positioned
 /// descendants.
-fn establishes_absolute_containing_block(
+pub(super) fn establishes_absolute_containing_block(
     document: &Document,
     id: usize,
     cv: &ComputedValues,

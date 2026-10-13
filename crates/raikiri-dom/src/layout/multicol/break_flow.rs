@@ -371,7 +371,7 @@ fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
         .saturating_sub(tree.fragment_tree.fragments.len())
         .min(
             tree.fragment_tree
-                .limit
+                .work_limit(tree.nodes.len())
                 .saturating_sub(tree.fragment_tree.break_flow_work_used),
         );
     let mut remaining = available;

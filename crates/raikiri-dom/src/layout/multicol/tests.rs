@@ -728,7 +728,9 @@ fn relayout_nested_multicol_children_column_places_a_block_sibling_of_an_empty_d
         Some(container),
         "div",
         Style::default(),
-        Some("display:block;height:30px"),
+        // A scroll container is monolithic, so it is not sliced into the
+        // columns and keeps the strategy this test covers.
+        Some("display:block;height:30px;overflow:hidden"),
     );
     let _text = doc.append_text(container, "");
 
@@ -1795,4 +1797,122 @@ fn column_forces_a_boundary_even_when_the_current_column_has_room() {
             (50.0, 0.0, 50.0)
         ]
     );
+}
+
+fn lineless_fixture(container_css: &str, children_css: &[&str]) -> (Document, usize, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+    let children = children_css
+        .iter()
+        .map(|css| doc.append_element(Some(parent), "div", Style::default(), Some(*css)))
+        .collect();
+    layout_nested_flex_float_fixture(&mut doc);
+    (doc, parent, children)
+}
+
+fn fragment_rects(doc: &Document, node: usize) -> Vec<(usize, f32, f32, f32)> {
+    doc.fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == node)
+        .map(|fragment| {
+            (
+                fragment.fragmentainer,
+                fragment.rect.x,
+                fragment.rect.y,
+                fragment.rect.height,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_block_without_lines_is_sliced_into_definite_height_columns() {
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
+        &["display:block;height:400px"],
+    );
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![
+            (0, 0.0, 0.0, 100.0),
+            (1, 25.0, 0.0, 100.0),
+            (2, 50.0, 0.0, 100.0),
+            (3, 75.0, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn blocks_without_lines_are_balanced_and_keep_break_avoidance() {
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:200px;columns:2;column-gap:0",
+        &["display:block;height:150px", "display:block;height:50px"],
+    );
+    // 200px of content balances into two 100px columns.
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![(0, 0.0, 0.0, 100.0), (1, 100.0, 0.0, 50.0)]
+    );
+    assert_eq!(
+        fragment_rects(&doc, children[1]),
+        vec![(1, 100.0, 50.0, 50.0)]
+    );
+
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:300px;columns:3;column-gap:0",
+        &[
+            "display:block;height:40px;break-inside:avoid",
+            "display:block;height:40px;break-inside:avoid",
+        ],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 40.0);
+    assert_eq!(
+        fragment_rects(&doc, children[1]),
+        vec![(1, 100.0, 0.0, 40.0)]
+    );
+}
+
+#[test]
+fn containers_with_content_or_replaced_children_keep_other_strategies() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;columns:2"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:100px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(lineless::supported(&doc, parent).is_some());
+    doc.append_text(child, "text");
+    assert!(lineless::supported(&doc, parent).is_none());
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;columns:2"),
+    );
+    doc.append_element(
+        Some(parent),
+        "input",
+        Style::default(),
+        Some("display:block;height:100px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(lineless::supported(&doc, parent).is_none());
 }
