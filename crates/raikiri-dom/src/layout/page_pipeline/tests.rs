@@ -8467,6 +8467,90 @@ fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
         nested_avoiding_block("display:inline-flex", "break-inside:avoid").0,
         60.0
     );
+    // Nor do boxes in different columns of a multi-column container.
+    assert_eq!(
+        nested_avoiding_block("columns:2;column-gap:0", "break-inside:avoid").0,
+        nested_avoiding_block("columns:2;column-gap:0", "").0
+    );
+}
+
+/// `body > [div(60px), div(outer_css) > div(wrapper_css) > div(avoid_css,
+/// 60px), div(10px)]`. Returns the page-flow y of the avoiding box and the
+/// block after the outer one, and the wrapper's height.
+fn avoiding_block_in_wrapper(
+    outer_css: &str,
+    wrapper_css: &str,
+    avoid_css: &str,
+) -> (f32, f32, f32) {
+    let (mut wrapper, mut avoiding, mut after) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{outer_css}")),
+        );
+        wrapper = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{wrapper_css}")),
+        );
+        avoiding = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "width:40px;height:60px;break-inside:avoid;{avoid_css}"
+            )),
+        );
+        after = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+    });
+    (
+        page_flow_y(&doc, avoiding),
+        page_flow_y(&doc, after),
+        doc.nodes[wrapper].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
+    // Auto-height ancestors grow with the moved box and push the block after
+    // them down; a fixed-height wrapper keeps its size, so the box overflows
+    // it and the block after it keeps its place.
+    assert_eq!(
+        avoiding_block_in_wrapper("", "", "display:block"),
+        (100.0, 160.0, 100.0)
+    );
+    assert_eq!(
+        avoiding_block_in_wrapper("", "height:60px", "display:block"),
+        (100.0, 120.0, 60.0)
+    );
+    // A percentage bound resolves against the fixed-height block around it.
+    assert_eq!(
+        avoiding_block_in_wrapper("height:200px", "max-height:100%", "display:block"),
+        (100.0, 260.0, 100.0)
+    );
+    assert_eq!(
+        avoiding_block_in_wrapper("height:200px", "max-height:30%", "display:block"),
+        (100.0, 260.0, 60.0)
+    );
+    // A moved float does not lengthen the block around it.
+    assert_eq!(
+        avoiding_block_in_wrapper("", "", "float:left"),
+        (100.0, 60.0, 60.0)
+    );
 }
 
 #[test]
