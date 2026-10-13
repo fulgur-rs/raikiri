@@ -63,70 +63,11 @@ impl FirstLetter {
         limits: &shodo::limits::Limits,
         predecessors: &PredecessorCache,
     ) -> Self {
-        let mut origins = Vec::new();
-        let mut line_origins = Vec::new();
-        let mut current = cascade.has_first_letter_styles().then_some(origin);
-        while let Some(id) = current {
-            let cv = &cascade.computed[id];
-            let transparent =
-                cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
-            if !transparent
-                && (!matches!(
-                    cv.display,
-                    DisplayValue::Block
-                        | DisplayValue::FlowRoot
-                        | DisplayValue::ListItem
-                        | DisplayValue::InlineBlock
-                        | DisplayValue::TableCell
-                        | DisplayValue::TableCaption
-                        | DisplayValue::Inline
-                        | DisplayValue::Contents
-                ) || !super::assign::can_be_ifc_root(doc, cascade, id))
-            {
-                break;
-            }
-            if !transparent
-                && cascade
-                    .pseudo
-                    .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))
-            {
-                line_origins.push(id);
-            }
-            if !transparent
-                && cascade
-                    .pseudo
-                    .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLetter))
-            {
-                origins.push(id);
-            }
-            // Atomic/BFC roots do not contribute their text to an ancestor's
-            // first formatted line. A first block child can contribute it.
-            if !transparent
-                && (matches!(
-                    cv.display,
-                    DisplayValue::InlineBlock | DisplayValue::TableCell
-                ) || outside_ancestor_line(cv))
-            {
-                break;
-            }
-            let Some(parent) = doc.parent_of(id) else {
-                break; // cov:ignore: eligible IFC element roots have a document parent; the document root is not a block-container cascade node.
-            };
-            if crate::generated_content::is_in_flow_generated_text(
-                cascade,
-                parent,
-                PseudoElem::Before,
-            ) {
-                break;
-            }
-            let blocked = predecessors.has_preceding(doc, cascade, id);
-            if blocked {
-                break;
-            }
-            current = Some(parent);
-        }
-        origins.reverse();
-        line_origins.reverse();
+        let (origins, line_origins) = if cascade.has_first_letter_styles() {
+            typographic_origins(doc, cascade, origin, predecessors, true)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         Self {
             origin,
             pending: !origins.is_empty(),
@@ -590,6 +531,85 @@ impl FirstLetter {
 
 #[cfg(test)]
 mod tests;
+
+/// The blocks whose `::first-letter` and whose `::first-line` reach the
+/// first formatted line of paragraph `origin`, outermost first: `origin`
+/// itself, then each ancestor block whose first formatted line it is
+/// (CSS Pseudo 4 §2.1.1 and §2.2.1). Without `ancestors`, the walk stops
+/// at `origin`.
+pub(crate) fn typographic_origins(
+    doc: &Document,
+    cascade: &CascadeResult,
+    origin: usize,
+    predecessors: &PredecessorCache,
+    ancestors: bool,
+) -> (Vec<usize>, Vec<usize>) {
+    let mut origins = Vec::new();
+    let mut line_origins = Vec::new();
+    let mut current = Some(origin);
+    while let Some(id) = current {
+        let cv = &cascade.computed[id];
+        let transparent =
+            cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
+        if !transparent
+            && (!matches!(
+                cv.display,
+                DisplayValue::Block
+                    | DisplayValue::FlowRoot
+                    | DisplayValue::ListItem
+                    | DisplayValue::InlineBlock
+                    | DisplayValue::TableCell
+                    | DisplayValue::TableCaption
+                    | DisplayValue::Inline
+                    | DisplayValue::Contents
+            ) || !super::assign::can_be_ifc_root(doc, cascade, id))
+        {
+            break;
+        }
+        if !transparent
+            && cascade
+                .pseudo
+                .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLine))
+        {
+            line_origins.push(id);
+        }
+        if !transparent
+            && cascade
+                .pseudo
+                .contains_key(&(StyleNodeId::new(id as u64), PseudoElem::FirstLetter))
+        {
+            origins.push(id);
+        }
+        // Atomic/BFC roots do not contribute their text to an ancestor's
+        // first formatted line. A first block child can contribute it.
+        if !transparent
+            && (matches!(
+                cv.display,
+                DisplayValue::InlineBlock | DisplayValue::TableCell
+            ) || outside_ancestor_line(cv))
+        {
+            break;
+        }
+        if !ancestors {
+            break;
+        }
+        let Some(parent) = doc.parent_of(id) else {
+            break; // cov:ignore: eligible IFC element roots have a document parent; the document root is not a block-container cascade node.
+        };
+        if crate::generated_content::is_in_flow_generated_text(cascade, parent, PseudoElem::Before)
+        {
+            break;
+        }
+        let blocked = predecessors.has_preceding(doc, cascade, id);
+        if blocked {
+            break;
+        }
+        current = Some(parent);
+    }
+    origins.reverse();
+    line_origins.reverse();
+    (origins, line_origins)
+}
 
 /// Immutable eligibility data shared by all roots in one projection pass.
 /// Each source node and sibling edge takes bounded work, including transparent

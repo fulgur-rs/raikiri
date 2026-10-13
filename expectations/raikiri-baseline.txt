@@ -1682,6 +1682,10 @@ css/css-break/break-between-avoid-014.html
 # --- orthogonal vertical block size 2026-10-12 ---
 css/css-flexbox/webkit-box-vertical-writing-mode.html
 
+# --- ::first-line opacity group (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-13) ---
+# KEEP in two audit-vacuous-passes runs.
+css/css-pseudo/first-line-opacity-001.html
+
 # --- vacuity-audited sweep promotion (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-12) ---
 # Every id passed and was KEEP in two audit-vacuous-passes runs (see README.md).
 css/CSS2/abspos/between-float-and-text.html

@@ -328,11 +328,16 @@ impl TypographicPaint {
         }
     }
 
+    /// Composite the groups into `scene`. `first_line` is the paint of the
+    /// paragraph's first line when a translucent `::first-line` wraps it,
+    /// with that opacity: a group composited before the others of the
+    /// paragraph, as it comes first in tree order.
     pub(super) fn finish(
         mut self,
         scene: &mut impl PaintScene,
         clip: Rect,
         paint_transform: Affine,
+        first_line: Option<(Self, f32)>,
     ) {
         // The enclosing TransformScene transforms recorded commands on replay.
         // Counter-transform only the opacity clip so it remains in page space.
@@ -343,6 +348,18 @@ impl TypographicPaint {
             // A singular ancestor transform has no drawable two-dimensional ink.
             Affine::IDENTITY
         };
+        let mut roots = Vec::new();
+        if let Some((first_line, opacity)) = first_line {
+            let mut content = Scene::new();
+            first_line.finish(&mut content, clip, paint_transform, None);
+            if !content.commands.is_empty() {
+                let mut composite = Scene::new();
+                composite.push_layer(Mix::Normal, opacity, clip_transform, &clip, None, None);
+                composite.append_scene(content, Affine::IDENTITY);
+                composite.pop_layer();
+                roots.push((self.normal.commands.len(), 0, 0, composite));
+            }
+        }
         let mut remaining = vec![0; self.groups.len()];
         for group in &self.groups {
             if let Some(parent) = group.parent {
@@ -354,7 +371,6 @@ impl TypographicPaint {
             .enumerate()
             .filter_map(|(index, &children)| (children == 0).then_some(index))
             .collect();
-        let mut roots = Vec::new();
         while let Some(index) = order.pop() {
             let group = &mut self.groups[index];
             let mut content = std::mem::take(&mut group.boxes);
@@ -393,8 +409,8 @@ impl TypographicPaint {
                 self.target(parent).commands.len()
             };
             // Groups at the same place paint by stack level, then in tree
-            // order.
-            let child = (insertion, level, index, composite);
+            // order, after a first line's group.
+            let child = (insertion, level, index + 1, composite);
             match parent {
                 Some(parent) => {
                     self.groups[parent].children.push(child);
