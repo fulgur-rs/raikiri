@@ -3119,3 +3119,27 @@ fn a_contents_element_paints_its_own_shadow_within_the_enclosing_box() {
         .count();
     assert_eq!(shadows, 1, "{:?}", runs_in_order(&on));
 }
+
+#[test]
+fn an_ellipsis_shares_the_paragraph_decoration_phases() {
+    let on = painted_root(
+        "width:35px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;\
+         color:black;text-decoration:underline line-through",
+        |doc, root| {
+            doc.append_text(root, "abcdefgh");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(last_text > first_text, "text and ellipsis runs: {kinds:?}");
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "{kinds:?}"
+    );
+}

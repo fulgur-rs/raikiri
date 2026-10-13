@@ -549,7 +549,12 @@ fn paint_box(
     owner: usize,
     style_owner: usize,
 ) -> usize {
-    if style_owner != owner {
+    // A typographic pseudo's run, and a `text-overflow` ellipsis (owned by
+    // the paragraph itself), already name their box.
+    let is_text = document
+        .get_node(owner)
+        .is_some_and(|node| node.text_content().is_some());
+    if style_owner != owner || !is_text {
         return style_owner;
     }
     let mut node = document.parent_of(owner).unwrap_or(owner);
