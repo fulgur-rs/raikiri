@@ -166,7 +166,9 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
                     .host
                     .document_mut()
                     .set_element_text_content(index, &value);
-                super::stylesheet::note_child_list_change(s, index);
+                if result.is_ok() {
+                    super::stylesheet::note_child_list_change(s, index);
+                }
                 result
             })?;
             if result.is_err() {
@@ -195,7 +197,9 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
             // DOM §4.4 textContent setter, CharacterData branch: replace data outright.
             let result = with_state(context, |s| {
                 let result = s.host.document_mut().set_character_data(index, &value);
-                super::stylesheet::note_character_data_change(s, index);
+                if result.is_ok() {
+                    super::stylesheet::note_character_data_change(s, index);
+                }
                 result
             })?;
             if result.is_err() {

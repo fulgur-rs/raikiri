@@ -1996,3 +1996,19 @@ fn rule_objects_are_detached_when_the_same_child_is_removed_and_reinserted() {
          stable === fifth && firstStyle.color === '' && fifth.style.color === 'red'",
     );
 }
+
+#[test]
+fn failed_tree_mutations_keep_rule_objects_attached() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         var stray = document.createElement('span'); \
+         try { styleElement.insertBefore(document.createTextNode('x'), stray); } catch (e) {} \
+         try { styleElement.removeChild(stray); } catch (e) {}",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
+}

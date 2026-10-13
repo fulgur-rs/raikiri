@@ -313,7 +313,9 @@ fn set_node_value(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     if is_character_data {
         let result = with_state(context, |s| {
             let result = s.host.document_mut().set_character_data(index, &value);
-            super::stylesheet::note_character_data_change(s, index);
+            if result.is_ok() {
+                super::stylesheet::note_character_data_change(s, index);
+            }
             result
         })?;
         if result.is_err() {
@@ -332,7 +334,9 @@ fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let before = arg_required_node_or_null(args, 1, context)?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_insert(parent, node, before);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -345,7 +349,9 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let node = arg_node(args, 0, context)?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_insert(parent, node, None);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -358,7 +364,9 @@ fn remove_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let child = arg_node(args, 0, context)?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_remove(parent, child);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -372,7 +380,9 @@ fn replace_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let child = arg_node(args, 1, context)?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().replace_child(parent, node, child);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -491,7 +501,9 @@ fn append(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_insert(parent, node, None);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -511,7 +523,9 @@ fn prepend(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
     })?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_insert(parent, node, before);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -595,7 +609,9 @@ fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     })?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_insert(parent, node, reference);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -616,7 +632,9 @@ fn after(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_insert(parent, node, viable_next);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -649,7 +667,9 @@ fn replace_with(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         } else {
             s.host.document_mut().pre_insert(parent, node, viable_next)
         };
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
@@ -664,7 +684,9 @@ fn remove(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVa
     };
     let result = with_state(context, |s| {
         let result = s.host.document_mut().pre_remove(parent, index);
-        super::stylesheet::note_child_list_change(s, parent);
+        if result.is_ok() {
+            super::stylesheet::note_child_list_change(s, parent);
+        }
         result
     })?;
     if let Err(error) = result {
@@ -763,7 +785,9 @@ fn set_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
     };
     let result = with_state(context, |s| {
         let result = s.host.document_mut().set_character_data(index, &value);
-        super::stylesheet::note_character_data_change(s, index);
+        if result.is_ok() {
+            super::stylesheet::note_character_data_change(s, index);
+        }
         result
     })?;
     if result.is_err() {
@@ -802,7 +826,9 @@ fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     let updated = current + &addition;
     let result = with_state(context, |s| {
         let result = s.host.document_mut().set_character_data(index, &updated);
-        super::stylesheet::note_character_data_change(s, index);
+        if result.is_ok() {
+            super::stylesheet::note_character_data_change(s, index);
+        }
         result
     })?;
     if result.is_err() {
