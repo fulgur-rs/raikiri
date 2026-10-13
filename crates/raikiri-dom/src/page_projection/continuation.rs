@@ -294,6 +294,21 @@ impl Document {
             })
     }
 
+    /// Give the next paged layouts clearance at forced page breaks by the
+    /// page values `values` rather than the cascade's, or by the cascade's
+    /// again with `None`.
+    ///
+    /// A layout that ignores page names to measure a relayout uses this to
+    /// keep the clearance that changes of named page give, so it places
+    /// boxes where the layout with the names does.
+    #[doc(hidden)]
+    pub fn set_clearance_page_values(
+        &mut self,
+        values: Option<Vec<raikiri_style::property::PageValue>>,
+    ) {
+        self.clearance_page_values = values;
+    }
+
     /// Insert a forced line break before byte `offset` of text node `text`
     /// in the next layout, or remove it with `None`.
     ///

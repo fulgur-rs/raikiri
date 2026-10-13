@@ -324,3 +324,32 @@ fn a_float_below_its_block_does_not_spill_onto_a_relaid_out_page() {
     assert_eq!(floats, 0);
     assert_eq!(page_lines(&out, 2), vec![vec!["last".to_owned()]]);
 }
+
+#[test]
+fn a_named_page_after_text_beside_a_float_is_laid_out_at_its_own_width() {
+    // The named page's box clears the tall float beside the text before it.
+    // The measurement keeps that clearance, so the box still continues at
+    // the named page's width.
+    let out = run("<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0; font: 10px/10px Ahem }\
+        </style><div style='float:right;width:50px;height:150px'></div>first\
+        <div style='page:wide'>second</div>");
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
+    assert_eq!(out.continuations.len(), 1);
+    let (document, _) = out.layout_for_page(1);
+    let widths: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+        .filter(|fragment| {
+            document
+                .get_node(fragment.node().0 as usize)
+                .and_then(|node| node.tag_name())
+                == Some("div")
+        })
+        .map(|fragment| fragment.rect().width)
+        .collect();
+    assert_eq!(widths, vec![400.0]);
+}

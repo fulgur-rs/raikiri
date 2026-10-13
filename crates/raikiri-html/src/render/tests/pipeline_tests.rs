@@ -1718,6 +1718,28 @@ fn pipeline_clears_a_named_page_after_leading_generated_content() {
 }
 
 #[test]
+fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
+    // The wrapper generates no box, but its `::before` content still takes
+    // the body's page before the box on page `b`.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .w { display: contents } .w::before { content: 'x' }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div class='w'><div style='page:b'><div class='f'></div></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
 fn pipeline_clears_a_float_with_its_own_break_before() {
     // The float's own break moves it to the new page, clear of the earlier
     // page's float.

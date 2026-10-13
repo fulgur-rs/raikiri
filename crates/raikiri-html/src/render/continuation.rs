@@ -220,13 +220,16 @@ fn relayout_from(
     // Measure where the copy places the page start, on one page tall
     // enough to hold everything before it. Page names would force a break
     // before the token, such as the change to its own named page, and move
-    // it off the measuring page, so the measurement ignores them. The page
-    // the measurement ends then starts at that break, which the later
-    // layout, with the names, places there again.
+    // it off the measuring page, so the measurement ignores them for
+    // breaking. The page the measurement ends then starts at that break,
+    // which the later layout, with the names, places there again.
     let page_values = std::mem::replace(
         &mut cascade.page_values,
         vec![PageValue::Auto; document.node_count()],
     );
+    // The changes of named page still give the boxes after them clearance,
+    // as in the later layout.
+    document.set_clearance_page_values(Some(page_values.clone()));
     let measure_control = PageLayoutControl::for_geometry_discovery(inputs.max_pages)
         .with_abort_check(inputs.abort_check);
     let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
@@ -252,6 +255,7 @@ fn relayout_from(
         &measure_geometries,
         &measure_control,
     )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
+    document.set_clearance_page_values(None);
     cascade.page_values = page_values;
     // The token was found on the earlier layout's page, and the copy breaks
     // no line or box before it, so the measuring page holds it too.

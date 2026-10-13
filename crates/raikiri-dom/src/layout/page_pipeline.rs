@@ -650,7 +650,13 @@ fn layout_single_page_with_table_projection(
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
     apply_computed_to_style(document, cascade)?;
     if paged {
-        clear_floats_at_forced_breaks(document, cascade);
+        if let Some(values) = document.clearance_page_values.clone() {
+            let mut named = cascade.clone();
+            named.page_values = values;
+            clear_floats_at_forced_breaks(document, &named);
+        } else {
+            clear_floats_at_forced_breaks(document, cascade);
+        }
     } else if !document.forced_break_clearance.is_empty() {
         document.forced_break_clearance.clear();
         document.layout_dirty = true;
@@ -2469,13 +2475,18 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
     // in its place.
     let child_boxes = |document: &Document, parent: usize| {
         let mut boxes = Vec::new();
-        let mut pending: Vec<usize> = document.nodes[parent]
+        // `None` stands for the `::before` content of a flattened element.
+        let mut pending: Vec<Option<usize>> = document.nodes[parent]
             .children
             .iter()
             .rev()
-            .copied()
+            .map(|&child| Some(child))
             .collect();
-        while let Some(child) = pending.pop() {
+        while let Some(item) = pending.pop() {
+            let Some(child) = item else {
+                boxes.push(None);
+                continue;
+            };
             let node = &document.nodes[child];
             if let crate::node::NodeData::Text(text) = &node.data {
                 if node.is_in_document() && !text.text_content.trim().is_empty() {
@@ -2485,7 +2496,10 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 && node.is_in_document()
                 && cascade.computed[child].display == DisplayValue::Contents
             {
-                pending.extend(node.children.iter().rev().copied());
+                pending.extend(node.children.iter().rev().map(|&child| Some(child)));
+                if generates_before_content(cascade, child) {
+                    pending.push(None);
+                }
             } else if in_flow(document, child) {
                 boxes.push(Some(child));
             }
