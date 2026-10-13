@@ -72,12 +72,24 @@ impl HeaderRepeats {
                 .expect("table preparation records every rendered table");
             // This pass refreshes row and cell boxes, explicit or anonymous
             // (an anonymous row is marked by its first anonymous cell).
-            // Cells flattened out of a `display: contents` row keep the
-            // existing table projection instead.
+            // Only the header may hold an anonymous row: body rows are the
+            // break points the header is repeated at, and an anonymous body
+            // row is not one. Cells flattened out of a `display: contents`
+            // row keep the existing table projection instead.
             let anonymous = |id: usize| id >= document.nodes.len();
+            let owned_by_header = |cell: usize| {
+                document
+                    .table_objects
+                    .cells
+                    .get(cell.wrapping_sub(document.table_objects.arena_len))
+                    .is_some_and(|cell| cell.owner == header)
+            };
             if !grid_rows.iter().all(|row| {
                 if anonymous(row.marker) {
-                    return row.cells.iter().all(|&cell| anonymous(cell));
+                    return row
+                        .cells
+                        .iter()
+                        .all(|&cell| anonymous(cell) && owned_by_header(cell));
                 }
                 document.nodes[row.marker].display == DisplayValue::TableRow
                     && row.cells.iter().all(|&cell| {

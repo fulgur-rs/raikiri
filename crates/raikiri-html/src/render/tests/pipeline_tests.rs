@@ -1195,3 +1195,40 @@ fn pipeline_names_pages_opened_by_absolute_boxes_after_the_flow() {
             .all(|slice| slice.page_name.as_deref() == Some("wide"))
     );
 }
+
+#[test]
+fn pipeline_counts_the_body_after_the_root_margin() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{margin-top:60px} body{margin:0;height:60px}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_counts_the_block_end_padding_of_an_auto_height_body() {
+    for content in ["", "<div style='height:20px'>x</div>"] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:150px}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), 2, "{content:?}");
+    }
+}
+
+#[test]
+fn pipeline_named_page_after_paper_fit_box_ignores_absolute_boxes() {
+    // The 90px box overflows the 80px page area into the page padding but
+    // fits the paper, so it stays on the first page without opening the
+    // second. An absolutely positioned box reaching that page must not make
+    // the flow look as if it did.
+    let page_count = |absolute: &str| {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0;padding:10px}}\
+             @page wide{{size:200px 100px;margin:0;padding:10px}} body{{margin:0}}</style>{absolute}\
+             <div style='height:90px'>first</div><div style='page:wide;height:10px'>wide</div>"
+        ));
+        run(&doc).slices.len()
+    };
+    let without = page_count("");
+    let with = page_count("<div style='position:absolute;top:0;height:150px;width:10px'></div>");
+    assert_eq!(with, without);
+}

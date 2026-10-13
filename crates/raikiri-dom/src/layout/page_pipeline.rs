@@ -41,7 +41,12 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
 /// block-axis overflow contributes its own border box but not its content.
 /// Inline elements are located by their paragraph's lines, which take part
 /// in pagination directly, so only the boxes inside them are measured.
-fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
+fn content_overflow_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root_flow_offset: f32,
+) -> f32 {
     use raikiri_style::property::OverflowValue;
     let mut end = f32::NEG_INFINITY;
     let mut stack = vec![(body_id, 0.0_f32)];
@@ -74,13 +79,15 @@ fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: u
         } else {
             parent_y + node.unrounded_layout.location.y
         };
-        let height = if node_id == body_id {
-            body_border_box_height(document, cascade, body_id)
+        let bottom = if node_id == body_id {
+            body_border_box_end(document, cascade, body_id, root_flow_offset)
+        } else if node.unrounded_layout.size.height > 0.0 {
+            y + node.unrounded_layout.size.height
         } else {
-            node.unrounded_layout.size.height
+            f32::NEG_INFINITY
         };
-        if height > 0.0 && (y + height).is_finite() {
-            end = end.max(y + height);
+        if bottom.is_finite() {
+            end = end.max(bottom);
         }
         let clips = !matches!(computed.overflow.y, OverflowValue::Visible);
         if clips || node.multicol.is_some() {
@@ -91,13 +98,21 @@ fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: u
     end
 }
 
-/// The body's border-box height from its own `height`, `max-height` and
-/// `min-height`.
+/// The block-end edge of the body's border box in page coordinates.
 ///
 /// Layout sizes the body to the page content box, so its laid-out height
-/// says nothing about the height the author gave it. Percentages resolve
-/// against the root's auto height and so behave as `auto`.
-fn body_border_box_height(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
+/// says nothing about the height the author gave it. A definite `height`,
+/// clamped by `max-height` and `min-height`, gives the content height;
+/// percentages resolve against the root's auto height and so behave as
+/// `auto`. An auto-height body ends with its last in-flow child, followed by
+/// its own block-end padding and border. The body's border box starts after
+/// the root's margin (`root_flow_offset`) and its own block-start margin.
+fn body_border_box_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root_flow_offset: f32,
+) -> f32 {
     let computed = &cascade.computed[body_id];
     let px = |value: &ComputedLengthPercentageOrAuto| match value {
         ComputedLengthPercentageOrAuto::Px(value) => value.max(0.0),
@@ -108,21 +123,50 @@ fn body_border_box_height(document: &Document, cascade: &CascadeResult, body_id:
         _ => px(&computed.height),
     };
     let content = height.max(px(&computed.min_height));
-    if content <= 0.0 {
-        return 0.0;
+    let body = &document.nodes[body_id];
+    let layout = &body.unrounded_layout;
+    let edges_top = layout.padding.top + layout.border.top;
+    let edges_bottom = layout.padding.bottom + layout.border.bottom;
+    let top = root_flow_offset + document.body_block_start_margin;
+    if content > 0.0 {
+        let border_box = if matches!(
+            computed.box_sizing,
+            raikiri_style::property::BoxSizing::BorderBox
+        ) {
+            content.max(edges_top + edges_bottom)
+        } else {
+            content + edges_top + edges_bottom
+        };
+        return top + border_box;
     }
-    let layout = &document.nodes[body_id].unrounded_layout;
-    let edges =
-        layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
-    let border_box = if matches!(
-        computed.box_sizing,
-        raikiri_style::property::BoxSizing::BorderBox
-    ) {
-        content.max(edges)
-    } else {
-        content + edges
-    };
-    document.body_block_start_margin + border_box
+    // Without block-end edges the body ends with its content, which the
+    // flow already paginated. Text of the body's own paragraph is located
+    // by its lines, which are not measured here.
+    if edges_bottom <= 0.0 || body.is_ifc_root() {
+        return f32::NEG_INFINITY;
+    }
+    // In-flow children are in page coordinates already; with block-end
+    // edges their block-end margins stay inside the body.
+    let content_end = body
+        .children
+        .iter()
+        .filter(|&&child| {
+            let node = &document.nodes[child];
+            node.is_in_document()
+                && !node.is_display_none()
+                && node.kind() == NodeKind::Element
+                && matches!(
+                    cascade.computed[child].position,
+                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                )
+                && !super::page::is_floating_box_for_pagination(document, cascade, child)
+        })
+        .map(|&child| {
+            let layout = &document.nodes[child].unrounded_layout;
+            layout.location.y + layout.size.height + layout.margin.bottom.max(0.0)
+        })
+        .fold(top + edges_top, f32::max);
+    content_end + edges_bottom
 }
 
 // Cache the nearest column context for each visited source node. Row flex
@@ -3572,6 +3616,10 @@ pub fn layout_pages_with_page_geometry_and_control(
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut max_page = 0_u32;
+    // The last page the normal flow (floats included) has reached, apart
+    // from absolutely positioned boxes and footnotes, which paint in
+    // parallel flows.
+    let mut flow_max_page = 0_u32;
     // Keep a break-after attached to its source box until its descendants
     // have been visited.  Applying it to the first flex child would turn a
     // break-after on the flex container into an extra blank page.
@@ -3982,6 +4030,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             }
             page_names[current_page as usize] = current_page_name.clone();
             max_page = max_page.max(current_page);
+            if !candidate.is_out_of_flow_descendant {
+                flow_max_page = flow_max_page.max(current_page);
+            }
             if name_participates_in_flow && height > 0.0 {
                 let context = enclosing_column_context(
                     node_id,
@@ -4004,6 +4055,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let end_page = page_index_for_end(end);
                     control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
+                    if !candidate.is_out_of_flow_descendant {
+                        flow_max_page = flow_max_page.max(end_page);
+                    }
                     // The pages a box continues onto keep the page type it
                     // started on until a later box names another.
                     if page_names.len() <= end_page as usize {
@@ -4246,7 +4300,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let margin_box_y = effective_y - margin_top.max(0.0);
                     if named_page_change
                         && page > current_page
-                        && max_page >= page
+                        && flow_max_page >= page
                         && margin_box_y.is_finite()
                     {
                         let margin_box_page = page_index_for_y(margin_box_y.max(0.0));
@@ -4474,6 +4528,9 @@ pub fn layout_pages_with_page_geometry_and_control(
         page_names[current_page as usize] = current_page_name.clone();
 
         max_page = max_page.max(current_page);
+        if !candidate.is_out_of_flow_descendant {
+            flow_max_page = flow_max_page.max(current_page);
+        }
         if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
             // A box ending exactly at a page edge belongs to the preceding
             // page.  `f32::EPSILON` is too small at ordinary CSS coordinates
@@ -4500,6 +4557,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let end_page = page_index_for_end(end);
                     control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
+                    if !candidate.is_out_of_flow_descendant {
+                        flow_max_page = flow_max_page.max(end_page);
+                    }
                     // The pages a box continues onto keep the page type it
                     // started on until a later box names another.
                     if page_names.len() <= end_page as usize {
@@ -4545,7 +4605,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         // Pagination materialized the moved boxes in page coordinates, which
         // already include `root_flow_offset`; boxes it left alone paint where
         // their own coordinates put them.
-        let end = content_overflow_end(document, cascade, body_id);
+        let end = content_overflow_end(document, cascade, body_id, root_flow_offset);
         if end.is_finite() && end > 0.0 {
             let end_page = page_index_for_end(end);
             control.check_discovery_page_index(end_page)?;
