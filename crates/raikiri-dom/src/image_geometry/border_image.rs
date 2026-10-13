@@ -202,16 +202,25 @@ pub fn border_image_geometry(
             has_natural_width,
         ),
     };
-    // Opposite widths that overlap are scaled down together.
+    // Opposite widths that overlap are scaled down together. Scaling leaves
+    // the inner edges of the corners at fractions of a pixel even for
+    // whole-pixel widths; those edges round to whole pixels, so neighbouring
+    // parts share an edge instead of both half-covering one pixel and
+    // letting the background bleed through the seam. Rounding keeps the
+    // edges in order, and edges that met before still meet.
     let factor = (area_w / (widths.left + widths.right))
         .min(area_h / (widths.top + widths.bottom))
         .min(1.0);
     if factor < 1.0 {
+        let inner_left = (area_x + widths.left * factor).round();
+        let inner_right = (area_x + area_w - widths.right * factor).round();
+        let inner_top = (area_y + widths.top * factor).round();
+        let inner_bottom = (area_y + area_h - widths.bottom * factor).round();
         widths = Sides {
-            top: widths.top * factor,
-            right: widths.right * factor,
-            bottom: widths.bottom * factor,
-            left: widths.left * factor,
+            top: (inner_top - area_y).clamp(0.0, area_h),
+            right: (area_x + area_w - inner_right).clamp(0.0, area_w),
+            bottom: (area_y + area_h - inner_bottom).clamp(0.0, area_h),
+            left: (inner_left - area_x).clamp(0.0, area_w),
         };
     }
 

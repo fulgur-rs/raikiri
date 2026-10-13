@@ -2233,7 +2233,6 @@ css/css-flexbox/dynamic-change-simplified-layout-002.html
 css/css-flexbox/dynamic-change-simplified-layout.html
 css/css-flexbox/dynamic-isize-change-002.html
 css/css-flexbox/dynamic-isize-change-003.html
-css/css-flexbox/dynamic-isize-change-004.html
 css/css-flexbox/dynamic-stretch-change.html
 css/css-flexbox/fit-content-item-001.html
 css/css-flexbox/fit-content-item-002.html

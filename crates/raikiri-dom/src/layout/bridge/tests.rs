@@ -1590,7 +1590,7 @@ fn bridge_gap_collapses_normal_to_zero() {
     assert_eq!(cv.column_gap, ComputedLengthPercentageOrNormal::Normal);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut diag);
+    bridge_gap(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.gap,
         Size {
@@ -1598,6 +1598,29 @@ fn bridge_gap_collapses_normal_to_zero() {
             height: LengthPercentage::length(0.0),
         }
     );
+}
+
+#[test]
+fn bridge_gap_hands_a_mixed_calc_to_taffy() {
+    // `column-gap: calc(10% + 5px)` keeps both terms and resolves against
+    // the container's inner size once it is known.
+    let mut cv = ComputedValues::initial();
+    cv.column_gap =
+        ComputedLengthPercentageOrNormal::Calc(raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 5.0,
+        });
+    let mut style = Style::default();
+    let mut calc_values = Vec::new();
+    let mut diag = Vec::new();
+    bridge_gap(&mut style, &cv, &mut calc_values, &mut diag);
+    let raw = style.gap.width.into_raw();
+    assert!(raw.is_calc());
+    assert_eq!(
+        crate::taffy_impl::resolve_calc(raw.calc_value(), 200.0),
+        25.0
+    );
+    assert_eq!(style.gap.height, LengthPercentage::length(0.0));
 }
 
 #[test]
@@ -1614,7 +1637,7 @@ fn bridge_gap_absolutizes_percent_gap() {
     cv.column_gap = ComputedLengthPercentageOrNormal::Percent(10.0);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut diag);
+    bridge_gap(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.gap,
         Size {

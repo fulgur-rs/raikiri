@@ -394,3 +394,28 @@ fn an_infinite_outset_of_a_zero_border_extends_nothing() {
     assert!(x < 0.0 && x.is_finite());
     assert!(w.is_finite() && h == 90.0);
 }
+
+#[test]
+fn scaled_down_widths_meet_on_whole_pixels() {
+    // Overlapping widths scaled by 2/3 put the inner edges at 66.67px and
+    // 133.33px; they round so neighbouring parts share an edge.
+    let mut image = image(27.0, BorderImageRepeatKeyword::Stretch);
+    let px = |px| BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(px));
+    image.width = Sides {
+        top: px(100.0),
+        right: px(100.0),
+        bottom: px(200.0),
+        left: px(150.0),
+    };
+    let geometry = border_image_geometry(
+        (0.0, 0.0, 200.0, 200.0),
+        Sides::all(100.0),
+        &image,
+        natural(81.0, 81.0),
+    )
+    .expect("geometry");
+    part(&geometry, (0.0, 0.0, 100.0, 67.0));
+    part(&geometry, (0.0, 67.0, 100.0, 133.0));
+    part(&geometry, (133.0, 0.0, 67.0, 67.0));
+    part(&geometry, (100.0, 67.0, 33.0, 133.0));
+}

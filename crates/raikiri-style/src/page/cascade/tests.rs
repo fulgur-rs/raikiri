@@ -4757,6 +4757,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
         match l {
             LengthOrNormal::Normal => None,
             LengthOrNormal::Length(l) => length(l),
+            LengthOrNormal::Calc(c) => length_percentage_or_calc(c),
         }
     }
     fn letter_spacing(l: LetterSpacingValue) -> Option<&'static str> {

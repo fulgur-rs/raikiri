@@ -191,6 +191,9 @@ impl PageLengthBasis<'_> {
             ComputedLengthPercentageOrNormal::Percent(p) => {
                 LengthOrNormal::Length(Length::Percent(p))
             }
+            ComputedLengthPercentageOrNormal::Calc(calc) => {
+                LengthOrNormal::Calc(LengthPercentageOrCalc::Calc(calc))
+            }
         }
     }
     /// `grid-template-columns` / `grid-template-rows` — round-trips through

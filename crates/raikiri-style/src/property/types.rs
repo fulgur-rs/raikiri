@@ -1216,6 +1216,9 @@ pub enum LengthOrNormal {
     Length(Length),
     /// `normal` keyword. Its semantics are property-specific.
     Normal,
+    /// A mixed-unit `calc()` that keeps its percentage until used-value
+    /// time. Only the gap properties parse one.
+    Calc(LengthPercentageOrCalc),
 }
 
 /// Four-sided box-model value. Field order matches CSS Box 3 §4.2’s

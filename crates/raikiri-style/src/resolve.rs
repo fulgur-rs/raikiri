@@ -603,6 +603,22 @@ pub enum ComputedLengthPercentageOrNormal {
     Percent(f32),
     /// The `normal` keyword — the specified initial value.
     Normal,
+    /// A percentage with an absolute-length offset, resolved against the
+    /// percentage basis at used-value time and clamped to zero there.
+    Calc(CalcLengthPercentage),
+}
+
+impl ComputedLengthPercentageOrNormal {
+    /// The used length against the percentage `basis`, or `None` for `normal`,
+    /// whose meaning depends on the layout mode. Gaps are never negative.
+    pub fn resolve(self, basis: f32) -> Option<f32> {
+        match self {
+            Self::Px(px) => Some(px.max(0.0)),
+            Self::Percent(percent) => Some((basis * percent / 100.0).max(0.0)),
+            Self::Calc(calc) => Some((calc.px + basis * calc.percent / 100.0).max(0.0)),
+            Self::Normal => None,
+        }
+    }
 }
 
 /// Computed `<track-breadth>` / `<inflexible-breadth>` (CSS Grid Layout
@@ -2099,7 +2115,9 @@ pub fn resolve_length_or_normal(
     ctx: &ResolveContext,
 ) -> ComputedLength {
     match specified {
-        LengthOrNormal::Normal => ComputedLength::ZERO,
+        // Only the gap properties parse a mixed `calc()`, and they resolve
+        // through [`resolve_length_percentage_or_normal`].
+        LengthOrNormal::Normal | LengthOrNormal::Calc(_) => ComputedLength::ZERO,
         LengthOrNormal::Length(l) => resolve_length(l, font_size, own_line_height, ctx),
     }
 }
@@ -3164,6 +3182,22 @@ pub fn resolve_length_percentage_or_normal(
                 ComputedLengthPercentage::Px(v) => ComputedLengthPercentageOrNormal::Px(v),
                 ComputedLengthPercentage::Percent(p) => {
                     ComputedLengthPercentageOrNormal::Percent(p)
+                }
+            }
+        }
+        LengthOrNormal::Calc(calc) => {
+            match resolve_non_negative_length_percentage_or_calc(
+                calc,
+                font_size,
+                own_line_height,
+                ctx,
+            ) {
+                ComputedLengthPercentageOrCalc::Px(v) => ComputedLengthPercentageOrNormal::Px(v),
+                ComputedLengthPercentageOrCalc::Percent(p) => {
+                    ComputedLengthPercentageOrNormal::Percent(p)
+                }
+                ComputedLengthPercentageOrCalc::Calc(c) => {
+                    ComputedLengthPercentageOrNormal::Calc(c)
                 }
             }
         }
