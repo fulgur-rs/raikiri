@@ -71,6 +71,11 @@ pub struct PositionedContentImage {
     /// glyphs, it leaves the relative offsets of the pseudo-element's inline
     /// ancestors to the caller.
     pub rect: PaintRect,
+    /// UTF-8 offset of the image's object replacement character in the
+    /// line's processed text, comparable with the text offsets of the line's
+    /// glyph runs. `None` when the line mixes bidi directions, where the
+    /// line's visual order does not give the logical one.
+    pub text_offset: Option<usize>,
 }
 
 /// One line of an ifc root and the runs drawn on it.
@@ -232,7 +237,8 @@ impl<'a> PositionedLines<'a> {
         let mut runs = Vec::new();
         let mut markers = Vec::new();
         let mut content_images = Vec::new();
-        for fragment in line.fragments() {
+        let mut object_offsets = None;
+        for (fragment_index, fragment) in line.fragments().enumerate() {
             if let Fragment::Atomic(atomic) = fragment {
                 if let Some((owner, pseudo, index)) = usize::try_from(atomic.node.0)
                     .ok()
@@ -245,11 +251,21 @@ impl<'a> PositionedLines<'a> {
                         let mut logical = atomic.border_rect;
                         logical.block_start += line.block_offset();
                         let rect = converter.rect(logical);
+                        let text_offset = object_offsets
+                            .get_or_insert_with(|| object_text_offsets(line))
+                            .as_ref()
+                            .and_then(|offsets: &Vec<(usize, usize)>| {
+                                offsets
+                                    .iter()
+                                    .find(|(fragment, _)| *fragment == fragment_index)
+                                    .map(|&(_, offset)| offset)
+                            });
                         content_images.push(PositionedContentImage {
                             owner,
                             pseudo,
                             index,
                             rect: PaintRect::new(rect.x, rect.y, rect.width, rect.height),
+                            text_offset,
                         });
                     }
                     continue;
@@ -367,3 +383,49 @@ pub fn cumulative_offset(
 
 #[cfg(test)]
 mod tests;
+
+/// The UTF-8 offsets in `line`'s processed text of the object replacement
+/// characters that stand for its atomic inlines and out-of-flow anchors, by
+/// the index of their fragment in [`shodo::Line::fragments`].
+///
+/// The characters are the ones that no glyph run covers, in logical order.
+/// When every glyph run's bidi level has the parity of the line's direction,
+/// logical order runs from the line's inline start, so the objects sorted by
+/// inline position take the characters in turn. A line that mixes
+/// directions, or whose counts disagree, yields `None`.
+fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
+    let rtl = u8::from(line.used_direction() == shodo::geometry::Direction::Rtl);
+    let mut covered = Vec::new();
+    let mut objects = Vec::new();
+    for (index, fragment) in line.fragments().enumerate() {
+        match fragment {
+            Fragment::GlyphRun(run) => {
+                if run.bidi_level() % 2 != rtl {
+                    return None;
+                }
+                covered.push(run.text_range());
+            }
+            Fragment::Atomic(atomic) => objects.push((atomic.border_rect.inline_start, index)),
+            Fragment::OutOfFlowAnchor(anchor) => objects.push((anchor.inline_position, index)),
+            _ => {}
+        }
+    }
+    let range = line.text_range();
+    let text = line.text().get(range.clone())?;
+    let slots: Vec<usize> = text
+        .match_indices('\u{FFFC}')
+        .map(|(offset, _)| range.start + offset)
+        .filter(|offset| !covered.iter().any(|run| run.contains(offset)))
+        .collect();
+    if slots.len() != objects.len() {
+        return None;
+    }
+    objects.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+    Some(
+        objects
+            .into_iter()
+            .zip(slots)
+            .map(|((_, fragment), offset)| (fragment, offset))
+            .collect(),
+    )
+}

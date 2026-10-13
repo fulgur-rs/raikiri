@@ -114,6 +114,31 @@ impl Document {
         ))
     }
 
+    /// The line holding one image of `::before` or `::after` content placed
+    /// on one page, and the UTF-8 offset of the image in that line's
+    /// processed text when it is known. The offset orders the image among
+    /// the line's glyph runs by [`crate::PositionedGlyphRun::text_offset`],
+    /// in logical (reading) order.
+    #[doc(hidden)]
+    pub fn page_generated_image_text_position(
+        &self,
+        page_index: u32,
+        image: generated_images::GeneratedImageId,
+    ) -> Option<(crate::TextLineId, Option<usize>)> {
+        let placement = self
+            .page_projection
+            .generated_images
+            .get(&page_index)?
+            .get(&image.key()?)?;
+        Some((
+            crate::TextLineId {
+                root: NodeId::new(placement.root as u64),
+                index: placement.line,
+            },
+            placement.text_offset,
+        ))
+    }
+
     /// Prepared URL and rectangle of one image of `::before` or `::after`
     /// content placed on one page.
     #[doc(hidden)]

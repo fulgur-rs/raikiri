@@ -1,5 +1,6 @@
 use super::{
     DomView, Fragment, GeneratedImageId, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun,
+    TextLineId,
 };
 use crate::RenderError;
 use raikiri_style::property::StringFetchMode;
@@ -293,6 +294,24 @@ impl<'a> Page<'a> {
             clip: raikiri_traits::PaintClip::new(rect),
             clip_owner,
         })
+    }
+
+    /// Where an image of `::before` or `::after` content from
+    /// [`PaintEvent::GeneratedImage`] sits in the text: the line holding it,
+    /// and its UTF-8 offset in that line's processed text when known.
+    ///
+    /// Within one line, the image and the glyph runs of [`Self::text_runs`]
+    /// follow the logical (reading) order of the offsets, compared with
+    /// [`PositionedGlyphRun::text_offset`]. This orders the text and images
+    /// of one `content` list, such as `'Note: ' url(icon.png) ' end'`,
+    /// although paint lists the images before the line's text. The offset is
+    /// `None` on a line that mixes bidi directions.
+    pub fn generated_image_text_position(
+        &self,
+        image: GeneratedImageId,
+    ) -> Option<(TextLineId, Option<usize>)> {
+        self.document
+            .page_generated_image_text_position(self.index(), image)
     }
 
     /// Cached raster pixels of an image of `::before` or `::after` content

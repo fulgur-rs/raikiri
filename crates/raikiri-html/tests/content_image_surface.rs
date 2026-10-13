@@ -370,3 +370,56 @@ fn content_images_project_onto_long_documents() {
         assert_eq!(images, 1, "page {index}");
     }
 }
+
+/// The images of a `content` list carry their place in the line's text, so
+/// a consumer can read them in order with the generated text although paint
+/// lists the images first.
+#[test]
+fn images_order_with_generated_text_by_text_offset() {
+    let pixels = Pixels::new();
+    let check = |css: &str, expected: &[&str]| {
+        let document = lay_out("<p>X</p>", css, &pixels);
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        let mut items: Vec<(usize, usize, String)> = runs
+            .iter()
+            .map(|run| (run.line.index, run.text_offset, run.text.to_owned()))
+            .collect();
+        for event in page.paint_order_for_text_runs(&runs) {
+            if let PaintEvent::GeneratedImage(image) = event {
+                let (line, offset) = page.generated_image_text_position(image).unwrap();
+                items.push((line.index, offset.unwrap(), format!("img{}", image.index)));
+            }
+        }
+        items.sort_by_key(|&(line, offset, _)| (line, offset));
+        let order: Vec<_> = items.iter().map(|(_, _, text)| text.as_str()).collect();
+        assert_eq!(order, expected, "{css}");
+    };
+    check(
+        "p::before{content:'N ' url(a.png) ' E'}",
+        &["N ", "img0", " E", "X"],
+    );
+    check(
+        "p::after{content:url(a.png) 'M' url(b.png)}",
+        &["X", "img0", "M", "img1"],
+    );
+    // Left-to-right text in a right-to-left line mixes directions, where
+    // the visual order does not give the logical one.
+    let document = lay_out(
+        "<p>X</p>",
+        "p{direction:rtl}p::before{content:'N' url(a.png) 'E'}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let positions: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => page.generated_image_text_position(image),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].1, None);
+}

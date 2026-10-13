@@ -210,6 +210,11 @@ pub struct PositionedGlyphRun<'a> {
     /// The run's part of the processed text: after white-space collapsing
     /// and text transformation, as it was shaped.
     pub text: &'a str,
+    /// UTF-8 offset of [`Self::text`] in the processed text of its line.
+    /// Within one line, runs and the images of generated content (see
+    /// `page_generated_image_text_position`) follow the logical (reading)
+    /// order of these offsets, whatever their visual order.
+    pub text_offset: usize,
     /// The glyphs, left to right.
     pub glyphs: Vec<Glyph>,
     /// Maps the run's positions, decorations and shadows to the page, where
@@ -1204,6 +1209,7 @@ pub(crate) fn standalone_runs<'a>(
                 advance: run.inline_size(),
                 ascent: metrics.ascent,
                 descent: metrics.descent,
+                text_offset: text_range.start,
                 text: line.text().get(text_range).unwrap_or_default(),
                 glyphs,
                 color,
@@ -1374,6 +1380,7 @@ fn glyph_run<'a>(
         advance: run.inline_size(),
         ascent: metrics.ascent,
         descent: metrics.descent,
+        text_offset: text_range.start,
         text,
         glyphs,
         color,

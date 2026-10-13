@@ -62,6 +62,8 @@ pub(super) struct ImagePlacement {
     /// Image rectangle in page-local CSS pixels, in the coordinates of the
     /// paragraph's lines.
     pub rect: PaintRect,
+    /// Offset of the image in its line's processed text, when known.
+    pub text_offset: Option<usize>,
 }
 
 /// Element, whether the pseudo-element is `::after`, and image index.
@@ -189,6 +191,7 @@ pub(super) fn prepare(
                             image.rect.width,
                             image.rect.height,
                         ),
+                        text_offset: image.text_offset,
                     },
                 );
             }
