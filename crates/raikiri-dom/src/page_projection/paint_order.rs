@@ -1751,7 +1751,7 @@ fn first_letter_anchor(
         NodeKind::Text => document
             .parent_of(source)
             .map(|parent| (parent, None, source)),
-        _ => Some((source, None, source)),
+        _ => Some((source, None, source)), // cov:ignore: letters come from text or generated content
     }
 }
 

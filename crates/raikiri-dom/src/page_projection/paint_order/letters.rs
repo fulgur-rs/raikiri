@@ -176,7 +176,7 @@ impl Document {
         }
         let anchor = match self.get_node(owner)?.kind() {
             NodeKind::Text => self.parent_of(owner)?,
-            _ => owner,
+            _ => owner, // cov:ignore: letters come from text or generated content
         };
         self.inline_opacity_group(cascade, root, anchor)
     }
