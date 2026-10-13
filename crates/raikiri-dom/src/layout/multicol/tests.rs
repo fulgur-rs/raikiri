@@ -2041,3 +2041,99 @@ fn a_minimum_height_makes_definite_columns_of_blocks_without_lines_taller() {
         vec![(0, 0.0, 0.0, 200.0)]
     );
 }
+
+#[test]
+fn an_inherited_vertical_writing_mode_keeps_blocks_without_lines_whole() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("margin:0;writing-mode:vertical-rl"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:200px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(lineless::supported(&doc, parent).is_none());
+    assert!(fragment_rects(&doc, child).len() <= 1);
+}
+
+#[test]
+fn blocks_without_lines_fill_the_used_height_of_the_container() {
+    // A maximum below the authored height limits the columns.
+    let (doc, parent, children) = lineless_fixture(
+        "display:block;width:100px;height:200px;max-height:100px;columns:2;column-gap:0;column-fill:auto",
+        &["display:block;height:150px"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    assert_eq!(
+        fragment_rects(&doc, children[0]),
+        vec![(0, 0.0, 0.0, 100.0), (1, 50.0, 0.0, 50.0)]
+    );
+    // A flex item stretched by its container keeps the stretched height.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;height:200px"),
+    );
+    let parent = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;columns:2;column-gap:0"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:200px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
+    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
+}
+
+#[test]
+fn a_decorated_block_too_long_for_the_budget_falls_back_whole() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:1px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:100000px;background-image:linear-gradient(red,blue)"),
+    );
+    doc.fragment_tree.limit = 64;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+    assert!(fragment_rects(&doc, child).len() <= 1);
+}

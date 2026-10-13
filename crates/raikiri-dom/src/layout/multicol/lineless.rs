@@ -23,7 +23,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
     let container = &tree.nodes[parent];
     if container.ifc.is_some()
         || container.style.direction != TaffyDirection::Ltr
-        || !is_horizontal(container)
+        || !inherits_horizontal(tree, parent)
         || container.has_before_or_after_content
     {
         return None;
@@ -78,6 +78,19 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
                 || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
         })
         .then_some(children)
+}
+
+/// Whether the used writing mode of `id`, declared on it or inherited from
+/// the nearest ancestor that declares one, is horizontal.
+fn inherits_horizontal(tree: &Document, id: usize) -> bool {
+    let mut current = Some(id);
+    while let Some(id) = current {
+        if tree.nodes[id].authored_writing_mode.is_some() {
+            return is_horizontal(&tree.nodes[id]);
+        }
+        current = tree.parent_of(id);
+    }
+    true
 }
 
 fn is_horizontal(node: &crate::Node) -> bool {
@@ -338,7 +351,12 @@ pub(super) fn layout(
     origin: Point<f32>,
     block_end_inset: f32,
     minimum: f32,
+    definite: bool,
 ) -> Option<f32> {
+    // A definite container uses the content height layout gave it, which
+    // already reflects min/max constraints and stretching by its parent.
+    let definite_height =
+        definite.then(|| (border_box.height - origin.y - block_end_inset).max(0.0));
     let mut sizes = Vec::with_capacity(children.len());
     for &child in children {
         tree.nodes[child].cache.clear();
@@ -358,7 +376,7 @@ pub(super) fn layout(
                 },
                 parent_size: Size {
                     width: Some(context.column_width),
-                    height: context.available_height,
+                    height: definite_height,
                 },
                 available_space: Size {
                     width: AvailableSpace::Definite(context.column_width),
@@ -397,11 +415,17 @@ pub(super) fn layout(
         .limit
         .saturating_sub(tree.fragment_tree.fragments.len())
         .saturating_sub(1);
-    let column_height = match context.available_height {
+    // A box that may not be cut falls back to the other strategies whole, so
+    // running out of fragments while cutting it is not a layout failure.
+    let unsliceable = children.iter().any(|&child| {
+        let node = &tree.nodes[child];
+        has_block_edge_decorations(node) || node.paints_whole_box_effects
+    });
+    let column_height = match definite_height {
         Some(height) => height,
         None if context.column_fill == ColumnFillValue::Auto => {
             let Some(height) = stacked_height(&items, max_pieces) else {
-                tree.fragment_tree.limit_exceeded = true;
+                tree.fragment_tree.limit_exceeded |= !unsliceable;
                 return None;
             };
             height
@@ -416,7 +440,7 @@ pub(super) fn layout(
         return None;
     }
     let Some(placements) = place(&items, column_height, max_pieces) else {
-        tree.fragment_tree.limit_exceeded = true;
+        tree.fragment_tree.limit_exceeded |= !unsliceable;
         return None;
     };
     // Painting draws every fragment's decorations whole, so a box with
@@ -436,7 +460,7 @@ pub(super) fn layout(
         return None;
     }
     tree.fragment_tree.retire_previous_roots(parent);
-    let used_height = if context.available_height.is_some() {
+    let used_height = if definite_height.is_some() {
         border_box.height
     } else {
         origin.y + column_height + block_end_inset
