@@ -3988,6 +3988,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let end_page = page_index_for_end(end);
                     control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
+                    // The pages a box continues onto keep the page type it
+                    // started on until a later box names another.
+                    if page_names.len() <= end_page as usize {
+                        page_names.resize(end_page as usize + 1, current_page_name.clone());
+                    }
                 }
             }
             if consumes_pending_break {
@@ -4196,8 +4201,31 @@ pub fn layout_pages_with_page_geometry_and_control(
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
+                // CSS Fragmentation 3 §5.2: margins adjoining an unforced
+                // break are truncated, while a forced break keeps the
+                // block-start margin of the box after it.
+                let forced_transition = pending_break_applies
+                    || (forced_before && !forced_break_at_page_start)
+                    || named_page_change;
                 let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                    page_index_for_y(effective_y)
+                    let page = page_index_for_y(effective_y);
+                    // Preceding content that overflowed past the current
+                    // page (a tall box, or floats it contains) has put this
+                    // box partway down a later page. A forced break sits
+                    // after all of that content, so it opens the page after
+                    // the one the box's margin box starts on, unless that
+                    // margin box is already at the top of a page.
+                    let margin_box_y = effective_y - margin_top.max(0.0);
+                    if forced_transition && page > current_page && margin_box_y.is_finite() {
+                        let margin_box_page = page_index_for_y(margin_box_y.max(0.0));
+                        if (margin_box_y - page_origin(margin_box_page)).abs() <= 0.001 {
+                            margin_box_page
+                        } else {
+                            margin_box_page.saturating_add(1)
+                        }
+                    } else {
+                        page
+                    }
                 } else {
                     current_page
                 };
@@ -4210,12 +4238,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // this box at the underflowed coordinate.  This is the
                 // `underflow-from-next-page` case from CSS Break.
                 let underflow_y = target_y + margin_top;
-                // CSS Fragmentation 3 §5.2: margins adjoining an unforced
-                // break are truncated, while a forced break keeps the
-                // block-start margin of the box after it.
-                let forced_transition = pending_break_applies
-                    || (forced_before && !forced_break_at_page_start)
-                    || named_page_change;
                 let node_target_y =
                     if forced_transition && margin_top < 0.0 && underflow_y < target_y {
                         underflow_y
@@ -4446,6 +4468,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let end_page = page_index_for_end(end);
                     control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
+                    // The pages a box continues onto keep the page type it
+                    // started on until a later box names another.
+                    if page_names.len() <= end_page as usize {
+                        page_names.resize(end_page as usize + 1, current_page_name.clone());
+                    }
                 }
             }
         }
