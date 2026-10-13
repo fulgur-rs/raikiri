@@ -2307,3 +2307,142 @@ fn padded_dotted_page_border_stays_inside_the_right_page_margin() {
         "page border must span x=50..350, got {border_bounds:?}"
     );
 }
+
+/// A translucent `::before` composites its background and its text as one
+/// group (CSS Color 4 §3.3), after the rest of the paragraph, as a stacking
+/// context with `z-index: auto`.
+#[test]
+fn translucent_before_groups_its_box_and_text() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><head><style>p::before{content:'X';opacity:.5;background:red}</style></head><body><p>abc</p></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
+
+    let push = scene
+        .commands
+        .iter()
+        .position(|command| {
+            matches!(command, RenderCommand::PushLayer(layer) if (layer.alpha - 0.5).abs() < f32::EPSILON)
+        })
+        .expect("the pseudo-element opens an opacity group");
+    let pop = push
+        + scene.commands[push..]
+            .iter()
+            .position(|command| matches!(command, RenderCommand::PopLayer))
+            .expect("the group closes");
+    let glyphs = |range: &[RenderCommand]| -> Vec<usize> {
+        range
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::GlyphRun(run) => Some(run.glyphs.len()),
+                _ => None,
+            })
+            .collect()
+    };
+    let inside = &scene.commands[push..pop];
+    assert!(
+        inside
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Fill(_)))
+    );
+    assert_eq!(glyphs(inside), [1]);
+    assert_eq!(glyphs(&scene.commands[..push]), [3]);
+}
+
+/// The scene of `html` laid out and painted on an A4 page.
+fn painted_html(html: &[u8]) -> Scene {
+    use raikiri_html::{ParseOptions, parse};
+
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(html, &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
+    scene
+}
+
+/// The commands of `scene`, as `push`, `pop`, `fill` and the glyph count of
+/// each glyph run.
+fn command_kinds(scene: &Scene) -> Vec<String> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(format!("push {}", layer.alpha)),
+            RenderCommand::PushClipLayer(_) => Some("clip".into()),
+            RenderCommand::PopLayer => Some("pop".into()),
+            RenderCommand::Fill(_) => Some("fill".into()),
+            RenderCommand::GlyphRun(run) => Some(format!("glyphs {}", run.glyphs.len())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A translucent `::before` split over lines is one opacity group.
+#[test]
+fn translucent_before_over_several_lines_is_one_group() {
+    let scene = painted_html(
+        br#"<html><head><style>p{width:40px} p::before{content:'aaaa bbbb cccc';opacity:.5}</style></head><body><p>d</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill", "glyphs 1", "push 0.5", "clip", "pop", "glyphs 5", "clip", "pop", "glyphs 5",
+            "clip", "pop", "glyphs 4", "pop"
+        ]
+    );
+}
+
+/// A first letter taken from a translucent `::before` paints inside that
+/// pseudo-element's group.
+#[test]
+fn first_letter_of_a_translucent_before_paints_in_its_group() {
+    let scene = painted_html(
+        br#"<html><head><style>p::before{content:'AB';opacity:.5} p::first-letter{background:red}</style></head><body><p>c</p></body></html>"#,
+    );
+    let kinds = command_kinds(&scene);
+    let push = kinds.iter().position(|kind| kind == "push 0.5").unwrap();
+    let pop = push + kinds[push..].iter().position(|kind| kind == "pop").unwrap();
+    assert_eq!(
+        kinds[push + 1..pop],
+        ["fill", "glyphs 1", "glyphs 1"],
+        "{kinds:?}"
+    );
+}
+
+/// Translucent pseudo-elements composite by stack level, not tree order.
+#[test]
+fn translucent_pseudo_groups_follow_their_stack_level() {
+    let scene = painted_html(
+        br#"<html><head><style>p::before{content:'AB';position:relative;z-index:2;opacity:.5} p::after{content:'C';position:relative;z-index:1;opacity:.25}</style></head><body><p>c</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.25",
+            "glyphs 1",
+            "pop",
+            "push 0.5",
+            "glyphs 2",
+            "pop"
+        ]
+    );
+}

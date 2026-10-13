@@ -230,6 +230,64 @@ fn image_fills(scene: &Scene) -> Vec<&anyrender::recording::FillCommand> {
         .collect()
 }
 
+/// A translucent `::before` with only an image composites that image as one
+/// group.
+#[test]
+fn translucent_image_only_before_is_a_group() {
+    struct ContentPixels;
+    impl raikiri_traits::ImagePixelSource for ContentPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 1,
+                height: 1,
+                rgba: vec![0, 0, 255, 255],
+            }))
+        }
+    }
+    let (mut doc, cascade, root) = paragraph("", |doc, root| {
+        let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+        doc.append_text(
+            style,
+            "div::before{content:url(https://images.test/a.png);opacity:.5}",
+        );
+        doc.append_text(root, "a");
+    });
+    doc.prepare_list_marker_images(&cascade, &ContentPixels, None);
+    lay_out(&mut doc, &cascade);
+    let mut scene = Scene::new();
+    draw_ifc_lines(
+        &mut scene,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    let kinds: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushLayer(layer) => Some(format!("push {}", layer.alpha)),
+            RenderCommand::PopLayer => Some("pop".into()),
+            RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)) => {
+                Some("image".into())
+            }
+            RenderCommand::GlyphRun(_) => Some("glyphs".into()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, ["glyphs", "push 0.5", "image", "pop"]);
+}
+
 #[test]
 fn before_content_image_scales_raster_pixels_into_its_line_rect() {
     struct ContentPixels;

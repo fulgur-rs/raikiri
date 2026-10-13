@@ -33,5 +33,11 @@ pub use serialize_alpha::serialize_alpha_value;
 mod serialize_position;
 pub use serialize_position::serialize_position_value;
 
+mod serialize_content;
+pub use serialize_content::serialize_content_value;
+
+mod serialize_math_sum;
+pub use serialize_math_sum::serialize_math_sums;
+
 #[cfg(test)]
 mod tests;

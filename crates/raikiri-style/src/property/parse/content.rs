@@ -156,7 +156,10 @@ pub fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentComponent>> 
     let mut parser = Parser::new(&mut input);
     parser
         .parse_entirely(|parser| {
-            let items = parse_content(parser).ok_or_else(|| parser.new_custom_error(()))?;
+            // Consumer text has no alternative text.
+            let items = parse_content_with_alt(parser)
+                .and_then(|(items, alt)| alt.is_none().then_some(items))
+                .ok_or_else(|| parser.new_custom_error(()))?;
             Ok::<_, ParseError<'_, ()>>(items)
         })
         .ok()
@@ -175,24 +178,73 @@ pub fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentComponent>> 
 /// caller's `expect_exhausted` (rule.rs) sees the leftover token and drops the
 /// entire declaration.
 ///
-/// `alt text` (spec `... [/ <string>...]?`) is out of scope for now. Return
-/// `/` and subsequent tokens unconsumed to the caller (currently rule.rs
-/// drops the declaration via `expect_exhausted`; extend this function when
-/// adding alt-text support).
+/// The alternative text after a `/` is accepted and dropped here: nothing
+/// downstream reads it yet. [`parse_content_with_alt`] returns it.
 pub(crate) fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
+    parse_content_with_alt(input).map(|(items, _alt)| items)
+}
+
+/// Parse `content` like [`parse_content`], also returning the alternative
+/// text: `[ <content-replacement> | <content-list> ] [ / [ <string> |
+/// <counter> | <attr()> ]+ ]?` (CSS Content 3 §1
+/// <https://www.w3.org/TR/css-content-3/#content-property>). `normal` and
+/// `none` take no alternative text.
+pub(crate) fn parse_content_with_alt(
+    input: &mut Parser<'_, '_>,
+) -> Option<(Vec<ContentComponent>, Option<Vec<ContentComponent>>)> {
     // `normal` / `none` = empty list (top-level alternative).
     if input
         .try_parse(|i| i.expect_ident_matching("normal"))
         .is_ok()
     {
-        return Some(Vec::new());
+        return Some((Vec::new(), None));
     }
     if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
-        return Some(vec![ContentComponent::None]);
+        return Some((vec![ContentComponent::None], None));
     }
 
     let items = parse_content_list_items(input, ContentListMode::CssContent3);
-    if items.is_empty() { None } else { Some(items) }
+    if items.is_empty() {
+        return None;
+    }
+    if input.try_parse(|i| i.expect_delim('/')).is_err() {
+        return Some((items, None));
+    }
+    let alt = parse_content_alt_items(input);
+    if alt.is_empty() {
+        return None;
+    }
+    Some((items, Some(alt)))
+}
+
+/// The items of `content`'s alternative text: `<string>`, `<counter>`
+/// (`counter()` / `counters()`) and `attr()`. Stops at the first other
+/// token, which the caller's `expect_exhausted` rejects.
+fn parse_content_alt_items(input: &mut Parser<'_, '_>) -> Vec<ContentComponent> {
+    let mut items = Vec::new();
+    loop {
+        if let Ok(s) = input.try_parse(|i| i.expect_string_cloned()) {
+            items.push(ContentComponent::Literal(SmolStr::new(s.as_ref())));
+            continue;
+        }
+        let parsed = input.try_parse(|i| -> Result<ContentComponent, ParseError<'_, ()>> {
+            let name = i.expect_function()?.clone();
+            i.parse_nested_block(|inner| {
+                let item = match name.to_ascii_lowercase().as_str() {
+                    "counter" => parse_counter_fn(inner),
+                    "counters" => parse_counters_fn(inner),
+                    "attr" => parse_attr_fn(inner),
+                    _ => None,
+                };
+                item.ok_or_else(|| inner.new_custom_error(()))
+            })
+        });
+        match parsed {
+            Ok(item) => items.push(item),
+            Err(_) => break,
+        }
+    }
+    items
 }
 
 /// The items+ loop for `<content-list>`.

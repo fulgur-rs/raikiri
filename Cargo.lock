@@ -1413,6 +1413,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "harfrust"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86aa776d6d32b072119e1f1650f4db843ff4382a4aaa6a2c9c4e35703cd377cb"
+dependencies = [
+ "bitflags",
+ "bytemuck",
+ "read-fonts 0.45.0",
+ "smallvec",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2199,7 +2211,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22d2ff88bd3f7d68d1d9b09c7e6209f9a8e8c05088295140a2bcf2e9b17038c5"
 dependencies = [
  "fontique",
- "harfrust",
+ "harfrust 0.12.0",
  "hashbrown 0.17.1",
  "icu_normalizer",
  "icu_properties",
@@ -3175,13 +3187,13 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shodo"
-version = "0.0.27"
+version = "0.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567242d112f1e3e5720d092bb5af7484bec607ff1340eff98b64b336a46731e9"
+checksum = "77ec6b5f91fd2db5d27654277cd9e321a94787862f9639a1a6fe49c2c77e8e77"
 dependencies = [
  "foldhash",
  "fontique",
- "harfrust",
+ "harfrust 0.14.0",
  "icu_casemap",
  "icu_locale_core",
  "icu_normalizer",
@@ -3981,7 +3993,7 @@ dependencies = [
  "data-url",
  "flate2",
  "fontdb",
- "harfrust",
+ "harfrust 0.12.0",
  "imagesize",
  "kurbo",
  "log",

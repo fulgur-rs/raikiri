@@ -486,3 +486,294 @@ fn relative_pseudo_elements_move_their_text_and_box() {
         .unwrap();
     assert_eq!(piece.rect, PaintRect::new(20.0, 5.0, 20.0, 20.0));
 }
+
+/// One paint event summarized by what a painter composites: the opacity
+/// groups, the generated boxes and the text each line event draws.
+fn composited(page: &raikiri_html::Page<'_>) -> Vec<String> {
+    let runs = page.text_runs();
+    let mut drawn = vec![0; runs.len()];
+    let mut order = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(alpha) => order.push(format!("push {alpha}")),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::GeneratedBox(piece) => order.push(format!("box {:?}", piece.kind)),
+            PaintEvent::GeneratedImage(_) => order.push("image".into()),
+            PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
+                let group = match event {
+                    PaintEvent::GroupTextLine(_, group) => Some(group),
+                    _ => None,
+                };
+                let mut text = String::new();
+                for (index, run) in runs.iter().enumerate() {
+                    if run.line == line && page.text_run_opacity_group(run) == group {
+                        drawn[index] += 1;
+                        text.push_str(run.text);
+                    }
+                }
+                order.push(format!("text {text}"));
+            }
+            _ => {}
+        }
+    }
+    assert!(drawn.iter().all(|&count| count == 1), "{drawn:?}");
+    order
+}
+
+/// A `::before` with opacity below one composites its decoration and its
+/// text as one group (CSS Color 4 §3.3), after the rest of its paragraph.
+#[test]
+fn a_translucent_before_is_an_opacity_group() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B';background:red;opacity:.5}div::after{content:'C';background:blue}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "box After",
+            "text AC",
+            "push 0.5",
+            "box Before",
+            "text B",
+            "pop"
+        ]
+    );
+    let runs = page.text_runs();
+    let generated = runs.iter().find(|run| run.text == "B").unwrap();
+    let group = page.text_run_opacity_group(generated).unwrap();
+    assert!(page.dom().attr(group, "id").is_none());
+}
+
+/// The images of a translucent `::after` stay inside its group, above its
+/// decoration.
+#[test]
+fn a_translucent_after_holds_its_images() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::after{content:'C' url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E);\
+         background:blue;opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        ["text A", "push 0.25", "box After", "image", "text C", "pop"]
+    );
+}
+
+/// A translucent `::after` groups only the page that holds it; the
+/// paragraph's earlier page paints no group.
+#[test]
+fn a_translucent_after_groups_only_its_page() {
+    let document = lay_out(
+        "<p>AAAA BBBB CCCC DDDD</p>",
+        "p{margin:0}p::after{content:'E';opacity:.5}",
+    );
+    assert_eq!(
+        composited(&document.page(0).unwrap()),
+        ["text AAAA ", "text BBBB ", "text CCCC "]
+    );
+    assert_eq!(
+        composited(&document.page(1).unwrap()),
+        ["text DDDD", "push 0.5", "box After", "text E", "pop"]
+    );
+}
+
+/// A translucent `::after` composites after a translucent element that
+/// comes before it in tree order.
+#[test]
+fn a_translucent_after_follows_an_earlier_inline_group() {
+    let document = lay_out(
+        "<p>A<span>B</span>C</p>",
+        "p{margin:0}span{opacity:.5}p::after{content:'D';opacity:.25}",
+    );
+    assert_eq!(
+        composited(&document.page(0).unwrap()),
+        [
+            "text AC",
+            "push 0.5",
+            "text B",
+            "pop",
+            "push 0.25",
+            "box After",
+            "text D",
+            "pop"
+        ]
+    );
+}
+
+/// A translucent `::first-letter` composites its background and its letter
+/// as one group, as the built-in painter does.
+#[test]
+fn a_translucent_first_letter_is_an_opacity_group() {
+    let document = lay_out(
+        "<p>AB</p>",
+        "p{margin:0}p::first-letter{background:red;opacity:.5}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        ["text B", "push 0.5", "box FirstLetter", "text A", "pop"]
+    );
+}
+
+/// A translucent `::first-letter` is nested in the inline group its letter
+/// comes from.
+#[test]
+fn a_translucent_first_letter_nests_in_its_source_group() {
+    let document = lay_out(
+        "<p><span>AB</span>C</p>",
+        "p{margin:0}span{opacity:.5}p::first-letter{opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text C",
+            "push 0.5",
+            "text B",
+            "push 0.25",
+            "box FirstLetter",
+            "text A",
+            "pop",
+            "pop"
+        ]
+    );
+}
+
+/// A first letter taken from a translucent `::before` is painted inside that
+/// group, and a translucent one nests there as a group of its own.
+#[test]
+fn first_letters_of_a_translucent_before_stay_in_its_group() {
+    let document = lay_out(
+        "<p>C</p>",
+        "p{margin:0}p::before{content:'AB';background:blue;opacity:.5}\
+         p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text C",
+            "push 0.5",
+            "box Before",
+            "box FirstLetter",
+            "text AB",
+            "pop"
+        ]
+    );
+    let document = lay_out(
+        "<p>C</p>",
+        "p{margin:0}p::before{content:'AB';background:blue;opacity:.5}\
+         p::first-letter{background:red;opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text C",
+            "push 0.5",
+            "box Before",
+            "text B",
+            "push 0.25",
+            "box FirstLetter",
+            "text A",
+            "pop",
+            "pop"
+        ]
+    );
+}
+
+/// A translucent `::after` follows the groups of its element's descendants
+/// in tree order, and a positioned one keeps its z-index level.
+#[test]
+fn translucent_pseudo_groups_follow_tree_order_and_z_index() {
+    let document = lay_out(
+        "<p>A<span>B</span></p>",
+        "p{margin:0}span{opacity:.5}p::after{content:'C';opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text A",
+            "push 0.5",
+            "text B",
+            "pop",
+            "push 0.25",
+            "box After",
+            "text C",
+            "pop"
+        ]
+    );
+    let document = lay_out(
+        "<p>A<span>B</span></p>",
+        "p{margin:0}span{opacity:.5;position:relative;z-index:2}\
+         p::after{content:'C';opacity:.25;position:relative;z-index:1}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text A",
+            "push 0.25",
+            "box After",
+            "text C",
+            "pop",
+            "push 0.5",
+            "text B",
+            "pop"
+        ]
+    );
+}
+
+/// Without supplied runs, a translucent `::before` still groups its
+/// decoration and images.
+#[test]
+fn a_translucent_before_groups_its_boxes_without_runs() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B' url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E);\
+         background:red;opacity:.5}",
+    );
+    let page = document.page(0).unwrap();
+    let order: Vec<String> = page
+        .paint_order()
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::PushOpacity(alpha) => Some(format!("push {alpha}")),
+            PaintEvent::PopOpacity => Some("pop".into()),
+            PaintEvent::GeneratedBox(piece) => Some(format!("box {:?}", piece.kind)),
+            PaintEvent::GeneratedImage(_) => Some("image".into()),
+            PaintEvent::Text(_) => Some("text".into()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(order, ["text", "push 0.5", "box Before", "image", "pop"]);
+}
+
+/// The translucent first letter of a block nests inside the translucent
+/// first letter of the block around it, which wraps the same letters.
+#[test]
+fn nested_translucent_first_letters_nest_their_groups() {
+    let document = lay_out(
+        "<div><p>AB</p></div>",
+        "p{margin:0}div::first-letter{background:red;opacity:.5}\
+         p::first-letter{background:blue;opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text B",
+            "push 0.5",
+            "box FirstLetter",
+            "push 0.25",
+            "box FirstLetter",
+            "text A",
+            "pop",
+            "pop"
+        ]
+    );
+}
