@@ -728,6 +728,14 @@ impl<'a> PageLayoutControl<'a> {
         Ok(())
     }
 
+    /// `page_index` bounded by the page limit, for per-page records that a
+    /// discovery pass truncating at the limit would otherwise grow without
+    /// bound.
+    fn capped_page_index(&self, page_index: u32) -> u32 {
+        self.max_pages
+            .map_or(page_index, |limit| page_index.min(limit.saturating_sub(1)))
+    }
+
     fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
         match self.check_page_index(page_index) {
             Err(LayoutError::PageLimitExceeded { .. }) if self.truncate_at_page_limit => {
@@ -4084,11 +4092,13 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // The pages a box continues onto keep the page type it
                     // started on until a later box names another, even when
                     // an enclosing box running onto them named them first.
-                    if page_names.len() <= end_page as usize {
-                        page_names.resize(end_page as usize + 1, current_page_name.clone());
+                    let names_end = control.capped_page_index(end_page);
+                    if page_names.len() <= names_end as usize {
+                        page_names.resize(names_end as usize + 1, current_page_name.clone());
                     }
-                    if !candidate.is_out_of_flow_descendant && end_page > current_page {
-                        for name in &mut page_names[current_page as usize + 1..=end_page as usize] {
+                    if !candidate.is_out_of_flow_descendant && names_end > current_page {
+                        for name in &mut page_names[current_page as usize + 1..=names_end as usize]
+                        {
                             name.clone_from(&current_page_name);
                         }
                     }
@@ -4592,11 +4602,13 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // The pages a box continues onto keep the page type it
                     // started on until a later box names another, even when
                     // an enclosing box running onto them named them first.
-                    if page_names.len() <= end_page as usize {
-                        page_names.resize(end_page as usize + 1, current_page_name.clone());
+                    let names_end = control.capped_page_index(end_page);
+                    if page_names.len() <= names_end as usize {
+                        page_names.resize(names_end as usize + 1, current_page_name.clone());
                     }
-                    if !candidate.is_out_of_flow_descendant && end_page > current_page {
-                        for name in &mut page_names[current_page as usize + 1..=end_page as usize] {
+                    if !candidate.is_out_of_flow_descendant && names_end > current_page {
+                        for name in &mut page_names[current_page as usize + 1..=names_end as usize]
+                        {
                             name.clone_from(&current_page_name);
                         }
                     }
@@ -4652,8 +4664,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             max_page = max_page.max(end_page);
             // Pages opened only by these boxes keep the page type the flow
             // ended on.
-            if page_names.len() <= end_page as usize {
-                page_names.resize(end_page as usize + 1, current_page_name.clone());
+            let names_end = control.capped_page_index(end_page);
+            if page_names.len() <= names_end as usize {
+                page_names.resize(names_end as usize + 1, current_page_name.clone());
             }
         }
     }
