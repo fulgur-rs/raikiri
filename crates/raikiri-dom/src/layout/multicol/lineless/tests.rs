@@ -1,8 +1,9 @@
-use super::{Item, balanced_height, place};
+use super::{Item, balanced_height, place, stacked_height};
 
 fn shape(items: &[Item], height: f32) -> Vec<Vec<(usize, f32, f32)>> {
     place(items, height, usize::MAX)
         .unwrap()
+        .pieces
         .iter()
         .map(|pieces| {
             pieces
@@ -118,6 +119,8 @@ fn placement_stops_at_the_piece_budget() {
     assert!(place(&[split(1_000_000_000.0)], 1.0, 8).is_none());
     assert!(place(&[avoid(10.0), avoid(10.0)], 10.0, 1).is_none());
     assert!(place(&[split(4.0)], 1.0, 4).is_some());
+    // Columns too short to hold any of the box count against the budget.
+    assert!(place(&[split(1.0)], 0.0005, 8).is_none());
 }
 
 #[test]
@@ -131,4 +134,27 @@ fn balancing_ignores_margins_truncated_at_the_break() {
         ..avoid(40.0)
     };
     assert_eq!(balanced_height(&[first, second], 2, usize::MAX), 40.0);
+}
+
+#[test]
+fn the_trailing_margin_stays_inside_the_container() {
+    let item = Item {
+        margin_bottom: 20.0,
+        ..split(40.0)
+    };
+    assert_eq!(balanced_height(&[item], 1, usize::MAX), 60.0);
+    assert_eq!(stacked_height(&[item], usize::MAX), Some(60.0));
+}
+
+#[test]
+fn the_stacked_height_collapses_adjoining_margins() {
+    let first = Item {
+        margin_bottom: 20.0,
+        ..avoid(40.0)
+    };
+    let second = Item {
+        margin_top: 10.0,
+        ..avoid(40.0)
+    };
+    assert_eq!(stacked_height(&[first, second], usize::MAX), Some(100.0));
 }

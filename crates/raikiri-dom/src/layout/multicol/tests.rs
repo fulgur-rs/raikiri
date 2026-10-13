@@ -1916,3 +1916,21 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
     layout_nested_flex_float_fixture(&mut doc);
     assert!(lineless::supported(&doc, parent).is_none());
 }
+
+#[test]
+fn an_orthogonal_block_without_lines_is_not_sliced() {
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
+        &["display:block;height:400px;writing-mode:vertical-rl"],
+    );
+    assert!(fragment_rects(&doc, children[0]).len() <= 1);
+}
+
+#[test]
+fn the_trailing_margin_of_blocks_without_lines_stays_in_the_container() {
+    let (doc, parent, _) = lineless_fixture(
+        "display:block;width:100px;columns:1",
+        &["display:block;height:40px;margin-bottom:20px"],
+    );
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 60.0);
+}

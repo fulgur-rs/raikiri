@@ -23,6 +23,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
     let container = &tree.nodes[parent];
     if container.ifc.is_some()
         || container.style.direction != TaffyDirection::Ltr
+        || !is_horizontal(container)
         || container.has_before_or_after_content
     {
         return None;
@@ -41,6 +42,8 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         let defaults: taffy::Style = taffy::Style::default();
         if node.display != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
+            // An orthogonal flow is monolithic in the column's block axis.
+            || !is_horizontal(node)
             || node.style.position != TaffyPosition::Relative
                 && node.style.position != defaults.position
             || node.style.float.is_floated()
@@ -75,6 +78,11 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
                 || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
         })
         .then_some(children)
+}
+
+fn is_horizontal(node: &crate::Node) -> bool {
+    node.authored_writing_mode
+        .is_none_or(|mode| mode == raikiri_style::property::WritingMode::HorizontalTb)
 }
 
 /// The block-start and block-end margins of a child, when they are
@@ -124,15 +132,23 @@ struct Item {
 
 const EPSILON: f32 = 0.001;
 
+/// The pieces of every child, and where the stream ends.
+struct Placement {
+    pieces: Vec<Vec<Piece>>,
+    /// Block offset in the last column after the last child's block-end
+    /// margin, which stays inside the multicol container.
+    end: f32,
+}
+
 /// Fill columns of `column_height` with `items` in order. A splittable box
 /// continues at the top of the next column; a box that avoids breaks moves
 /// to the next column when it does not fit below earlier content, and
 /// overflows a column it starts at the top of (CSS Fragmentation 3, 4.4).
 /// Adjoining sibling margins collapse, and a margin at a break is truncated
 /// (CSS Fragmentation 3, 5.2). Returns `None` once more than `max_pieces`
-/// pieces would be needed, so a tall box in short columns cannot allocate
-/// past the fragment budget.
-fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Vec<Vec<Piece>>> {
+/// pieces or skipped columns would be needed, so a tall box in short columns
+/// cannot allocate or loop past the fragment budget.
+fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placement> {
     let mut column = 0usize;
     let mut cursor = 0.0_f32;
     let mut pending_margin = 0.0_f32;
@@ -160,6 +176,10 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Vec<Ve
                 // A gap that fills the column leaves no room for the box,
                 // which then starts in the next column.
                 if room < -EPSILON || (room <= EPSILON && left > EPSILON) {
+                    piece_count += 1;
+                    if piece_count > max_pieces {
+                        return None;
+                    }
                     column += 1;
                     cursor = 0.0;
                     continue;
@@ -200,25 +220,47 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Vec<Ve
         }
         placements.push(pieces);
     }
-    Some(placements)
+    Some(Placement {
+        pieces: placements,
+        end: cursor + pending_margin,
+    })
 }
 
-fn columns_used(placements: &[Vec<Piece>]) -> usize {
-    placements
-        .iter()
-        .flatten()
-        .map(|piece| piece.column + 1)
-        .max()
-        .unwrap_or(0)
+impl Placement {
+    fn columns_used(&self) -> usize {
+        self.pieces
+            .iter()
+            .flatten()
+            .map(|piece| piece.column + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// The tallest column, counting the trailing margin of the stream.
+    fn extent(&self) -> f32 {
+        self.pieces
+            .iter()
+            .flatten()
+            .map(|piece| piece.top + piece.height)
+            .fold(self.end, f32::max)
+    }
+}
+
+/// The block size of the stream in one column of unlimited height, with
+/// adjoining margins collapsed.
+fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
+    place(items, f32::INFINITY, max_pieces).map(|placement| placement.end)
 }
 
 /// The smallest column height that fits `items` in `column_count` columns.
 /// Content that may break anywhere shares the columns equally; boxes that
 /// avoid breaks can need taller columns (CSS Multi-column 1, 7.1).
 fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f32 {
+    // The last column also holds the trailing margin.
     let fits = |height: f32| {
-        place(items, height, max_pieces)
-            .is_some_and(|placements| columns_used(&placements) <= column_count)
+        place(items, height, max_pieces).is_some_and(|placement| {
+            placement.columns_used() <= column_count && placement.end <= height + EPSILON
+        })
     };
     // Margins collapse and are truncated at breaks, so only the boxes
     // themselves bound the height from below.
@@ -232,10 +274,9 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     if low > 0.0 && fits(low) {
         return low;
     }
-    let mut high: f32 = items
-        .iter()
-        .map(|item| item.height + item.margin_top + item.margin_bottom)
-        .sum();
+    let Some(mut high) = stacked_height(items, max_pieces) else {
+        return low;
+    };
     // Each probe places the children once; the bound keeps the search linear
     // in the number of children.
     for _ in 0..24 {
@@ -248,12 +289,7 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     }
     // The search stops near the answer; the content extent of the columns
     // it found is the exact height when that still fits.
-    let extent = place(items, high, max_pieces)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|piece| piece.top + piece.height)
-        .fold(0.0_f32, f32::max);
+    let extent = place(items, high, max_pieces).map_or(0.0, |placement| placement.extent());
     if extent > 0.0 && fits(extent) {
         extent
     } else {
@@ -325,10 +361,6 @@ pub(super) fn layout(
             }
         })
         .collect();
-    let total: f32 = items
-        .iter()
-        .map(|item| item.height + item.margin_top + item.margin_bottom)
-        .sum();
     // One fragment for the container, the rest for the child pieces.
     let max_pieces = tree
         .fragment_tree
@@ -337,10 +369,10 @@ pub(super) fn layout(
         .saturating_sub(1);
     let column_height = match context.available_height {
         Some(height) => height,
-        None if context.column_fill == ColumnFillValue::Auto => total,
+        None if context.column_fill == ColumnFillValue::Auto => stacked_height(&items, max_pieces)?,
         None => balanced_height(&items, context.column_count, max_pieces),
     };
-    if !column_height.is_finite() || column_height <= 0.0 || !total.is_finite() {
+    if !column_height.is_finite() || column_height <= 0.0 {
         return None;
     }
     let Some(placements) = place(&items, column_height, max_pieces) else {
@@ -370,7 +402,7 @@ pub(super) fn layout(
         line_end: None,
     })?;
     let mut previous_column = 0usize;
-    for (order, (&child, pieces)) in children.iter().zip(&placements).enumerate() {
+    for (order, (&child, pieces)) in children.iter().zip(&placements.pieces).enumerate() {
         let size = sizes[order];
         let first = pieces.first()?;
         // A break between two children is a resumable point of the flow.
