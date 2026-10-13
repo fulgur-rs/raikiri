@@ -1851,9 +1851,15 @@ impl LayoutGridContainer for Document {
         let grid_column_count = detailed_grid_info.columns.positions.len();
         debug_assert_eq!(children.len(), detailed_grid_info.items.len());
         self.nodes[parent].grid_item_row_starts = children
+            .iter()
+            .zip(detailed_grid_info.items.iter())
+            .map(|(&child, item)| (child, item.row_start))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        self.nodes[parent].grid_item_column_starts = children
             .into_iter()
             .zip(detailed_grid_info.items.iter())
-            .map(|(child, item)| (child, item.row_start))
+            .map(|(child, item)| (child, item.column_start))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.nodes[parent].grid_column_count = grid_column_count;

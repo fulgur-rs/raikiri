@@ -1062,14 +1062,17 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 center: y + baseline,
             });
         }
-        if node.style.display == taffy::Display::Grid {
-            let line = grid_first_line(document, cascade, id, &laid_out)?;
+        // A text node keeps Taffy's default display, which is not its own;
+        // its lines are found below.
+        let is_text = node.kind() == NodeKind::Text;
+        if !is_text && node.style.display == taffy::Display::Grid {
+            let line = grid_first_line(document, cascade, id)?;
             return Some(FirstLine {
                 baseline: y + line.baseline,
                 center: y + line.center,
             });
         }
-        if node.style.display == taffy::Display::Flex {
+        if !is_text && node.style.display == taffy::Display::Flex {
             // A flex container orders its items itself, and its layout
             // records the first baseline they give it. The middle of that
             // line comes from the first item, in layout order, whose first
@@ -1127,55 +1130,75 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
 
 /// A grid container's first line, from its border edge (CSS Grid 1 §11.5).
 ///
-/// The line comes from the items whose areas start in the first row that
-/// holds any: the first of them, in order-modified grid order, that takes
-/// part in baseline alignment, or else the first of them. An item with no
-/// line of its own gives the bottom of its border box (CSS Box Alignment 3
-/// §9.1).
-fn grid_first_line(
-    document: &Document,
-    cascade: &CascadeResult,
-    grid: usize,
-    laid_out: &impl Fn(usize) -> bool,
-) -> Option<FirstLine> {
+/// Among the items in the first row that holds any, in grid order (by
+/// column, then in order-modified document order), the first one that takes
+/// part in baseline alignment gives the line, or else the first one. An
+/// item with no line of its own gives the bottom of its border box (CSS Box
+/// Alignment 3 §9.1). Text directly in the grid is an anonymous item of its
+/// own.
+fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) -> Option<FirstLine> {
     let node = document.nodes.get(grid)?;
-    let row_of = |child: usize| {
-        node.grid_item_row_starts
-            .iter()
-            .find(|&&(item, _)| item == child)
-            .map(|&(_, row)| row)
+    let is_item = |id: usize| {
+        document.nodes.get(id).is_some_and(|item| {
+            item.is_in_document()
+                && item.style.display != taffy::Display::None
+                && item.style.position != taffy::Position::Absolute
+                && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
+        })
     };
     let first_row = node
         .grid_item_row_starts
         .iter()
-        .filter(|&&(item, _)| laid_out(item))
+        .filter(|&&(item, _)| is_item(item))
         .map(|&(_, row)| row)
         .min()?;
+    let column_of = |child: usize| {
+        node.grid_item_column_starts
+            .iter()
+            .find(|&&(item, _)| item == child)
+            .map_or(0, |&(_, column)| column)
+    };
     let mut first_row_items = node
         .layout_children()
         .iter()
         .copied()
-        .filter(|&child| laid_out(child) && row_of(child) == Some(first_row));
-    let first = first_row_items.clone().next()?;
+        .filter(|&child| {
+            is_item(child)
+                && node
+                    .grid_item_row_starts
+                    .iter()
+                    .any(|&(item, row)| item == child && row == first_row)
+        })
+        .collect::<Vec<_>>();
+    // A stable sort keeps the order-modified document order within a column.
+    first_row_items.sort_by_key(|&child| column_of(child));
     let item = first_row_items
+        .iter()
+        .copied()
         .find(|&child| aligns_by_baseline(&node.style, &document.nodes[child].style))
-        .unwrap_or(first);
+        .or_else(|| first_row_items.first().copied())?;
     // A relative offset moves the item's box, not the line the grid
     // takes its baseline from.
-    let item_layout = document.nodes[item].unrounded_layout;
+    let item_node = &document.nodes[item];
+    let item_layout = item_node.unrounded_layout;
     let top = item_layout.location.y - layout_applied_relative_offset_y(document, cascade, item);
+    let bottom = item_layout.size.height;
     Some(match first_line(document, cascade, item) {
-        Some(line) => FirstLine {
-            baseline: top + line.baseline,
-            center: top + line.center,
-        },
-        None => {
-            let bottom = top + item_layout.size.height;
+        Some(mut line) => {
+            // A scroll container's baseline stays within its border box
+            // (CSS Box Alignment 3 §9.1).
+            if item_node.style.overflow.y.is_scroll_container() {
+                line.baseline = line.baseline.clamp(0.0, bottom);
+            }
             FirstLine {
-                baseline: bottom,
-                center: bottom,
+                baseline: top + line.baseline,
+                center: top + line.center,
             }
         }
+        None => FirstLine {
+            baseline: top + bottom,
+            center: top + bottom,
+        },
     })
 }
 

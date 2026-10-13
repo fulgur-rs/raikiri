@@ -448,3 +448,61 @@ fn a_grid_first_line_skips_items_placed_in_later_rows() {
     assert_eq!(line.baseline, 7.0 + 15.0 + 8.0);
     assert_eq!(line.center, 7.0 + 20.0);
 }
+
+/// Grid order runs along the first row by column, so an item placed in the
+/// first column gives the line before one earlier in the source.
+#[test]
+fn a_grid_first_line_follows_the_columns_of_the_first_row() {
+    let (document, cascade, grid) = grid_items(
+        "grid-template-columns:50px 50px",
+        &[
+            "grid-row:1;grid-column:2;padding-top:20px",
+            "grid-row:1;grid-column:1;line-height:40px",
+        ],
+    );
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 15.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 20.0);
+}
+
+/// The line of a scrolling item that lies below its box is clamped to the
+/// bottom of the box.
+#[test]
+fn a_grid_first_line_clamps_the_baseline_of_a_scrolling_item() {
+    let (document, cascade, grid) = grid_items("", &["overflow:auto;height:10px;padding-top:20px"]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 30.0);
+    assert_eq!(line.center, 7.0 + 20.0 + 10.0);
+}
+
+/// Text directly in a grid is an anonymous item that gives its own line.
+#[test]
+fn a_grid_first_line_includes_text_directly_in_the_grid() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let grid = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:grid;padding-top:7px;font:10px/20px Ahem"),
+    );
+    document.append_text(grid, "X".to_string());
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 10.0);
+}
