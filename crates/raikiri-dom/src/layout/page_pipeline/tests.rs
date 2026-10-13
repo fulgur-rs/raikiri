@@ -11560,3 +11560,19 @@ fn a_margin_after_a_comment_is_truncated() {
     );
     assert_eq!(ys, [0.0, 100.0]);
 }
+
+#[test]
+fn a_smaller_follower_shift_keeps_the_moved_floats_floor() {
+    // The second right float only moves 20px to the moved left float's
+    // top; the clearing left float after it still needs the full 40px to
+    // stay below the moved float.
+    assert_eq!(
+        floats_after_a_moved_float(&[
+            "float:right;width:40px;height:20px",
+            "float:left;width:60px;height:60px;break-inside:avoid",
+            "float:right;width:40px;height:30px",
+            "float:left;clear:left;width:40px;height:30px",
+        ]),
+        vec![60.0, 100.0, 100.0, 160.0]
+    );
+}

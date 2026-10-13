@@ -4131,7 +4131,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             flow_shift -= delta;
             current_page = flow_page;
             pending_float_shift = None;
-            later_float_shift = delta;
+            // A follower shifted less than the float before it keeps the
+            // larger budget, which the other side's floor may still need.
+            later_float_shift = later_float_shift.max(delta);
         }
         if later_float_shift != 0.0 && pending_float_shift.is_none() {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
