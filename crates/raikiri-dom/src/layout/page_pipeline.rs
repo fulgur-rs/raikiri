@@ -3688,9 +3688,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // in block flow, so grid content keeps its own handling.
                     && !has_side_by_side_ancestor(document, cascade, node_id, body_id);
                 // A nested float follows an earlier float that moved in its
-                // formatting context (CSS 2.1 §9.5.1), so it is a candidate
-                // like a float that is the body's child.
-                let nested_float_candidate = is_float
+                // formatting context (CSS 2.1 §9.5.1), and a nested block
+                // that clears one stays below it (§9.5.2), so both are
+                // candidates like the body's children.
+                let nested_float_candidate = (is_float
+                    || (!inline_level
+                        && is_block_level_flow_box(computed.display)
+                        && [FloatValue::Left, FloatValue::Right]
+                            .into_iter()
+                            .any(|side| clears_float_side(computed.clear, side))))
                     && participates_in_flow
                     && !direct_body_child
                     && !inside_table
@@ -4269,6 +4275,19 @@ pub fn layout_pages_with_page_geometry_and_control(
                             top + layout.size.height + layout.margin.bottom,
                         );
                     }
+                }
+                if !floating && !candidate.is_direct_body_element {
+                    // The ancestors of a nested clearing box grow to hold it.
+                    grow_ancestors_for_shift(
+                        document,
+                        cascade,
+                        node_id,
+                        shift,
+                        body_id,
+                        &parent_of,
+                        &mut pending_bounded_shifts,
+                        current_page,
+                    );
                 }
                 // The box may now start on a later page than the flow.
                 current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
@@ -4888,48 +4907,22 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // moved content.
                     // A float does not lengthen the block around it; its
                     // own shift ends with its subtree.
+                    let mut moved_in_bounded_ancestor = false;
                     if page_overflow
                         && !candidate.is_direct_body_element
                         && node_delta > 0.0
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
-                        let mut child = node_id;
-                        let mut delta = node_delta;
-                        let mut next = parent_of[child];
-                        while let Some(parent) = next
-                            && parent != body_id
-                        {
-                            next = parent_of[parent];
-                            // A `display: contents` element has no box to
-                            // grow; its parent lays the moved box out.
-                            if cascade.computed[parent].display == DisplayValue::Contents {
-                                continue;
-                            }
-                            let height = document.nodes[parent].unrounded_layout.size.height;
-                            let absorbed = grown_auto_height(
-                                document,
-                                cascade,
-                                parent,
-                                child,
-                                delta,
-                                child == node_id,
-                                body_id,
-                            )
-                            .map_or(0.0, |grown| (grown - height).clamp(0.0, delta));
-                            if absorbed < delta - 0.001 {
-                                pending_bounded_shifts.push((
-                                    parent,
-                                    delta - absorbed,
-                                    page_before_candidate,
-                                ));
-                            }
-                            if absorbed <= 0.001 {
-                                break;
-                            }
-                            document.nodes[parent].unrounded_layout.size.height += absorbed;
-                            delta = absorbed;
-                            child = parent;
-                        }
+                        moved_in_bounded_ancestor = grow_ancestors_for_shift(
+                            document,
+                            cascade,
+                            node_id,
+                            node_delta,
+                            body_id,
+                            &parent_of,
+                            &mut pending_bounded_shifts,
+                            page_before_candidate,
+                        );
                     }
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
@@ -4977,8 +4970,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
-                        later_float_shift = 0.0;
-                        later_float_edges.clear();
+                        // In-flow content that opened a page ends the floors
+                        // of its formatting context: later floats there start
+                        // below it anyway. A box that moved inside an
+                        // ancestor that cannot grow leaves the outer flow
+                        // where it was, so the floors stay.
+                        if !moved_in_bounded_ancestor {
+                            later_float_edges
+                                .remove(&float_context_root(document, cascade, node_id, body_id));
+                            if later_float_edges.is_empty() {
+                                later_float_shift = 0.0;
+                            }
+                        }
                     }
                     effective_y += node_delta;
                 }
@@ -5590,6 +5593,59 @@ fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize
             .find_map(|&id| last_in_flow_box(document, cascade, id));
     }
     Some(node_id)
+}
+
+/// Grows the auto-height ancestors of `node_id`, which moved down by
+/// `delta`, to hold it. The part of the shift an ancestor cannot absorb is
+/// recorded in `pending_bounded_shifts` with `flow_page`, the page the
+/// flow returns to past that ancestor. Returns whether any was recorded.
+#[allow(clippy::too_many_arguments)]
+fn grow_ancestors_for_shift(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    delta: f32,
+    body_id: usize,
+    parent_of: &[Option<usize>],
+    pending_bounded_shifts: &mut Vec<(usize, f32, u32)>,
+    flow_page: u32,
+) -> bool {
+    let mut bounded = false;
+    let mut child = node_id;
+    let mut delta = delta;
+    let mut next = parent_of[child];
+    while let Some(parent) = next
+        && parent != body_id
+    {
+        next = parent_of[parent];
+        // A `display: contents` element has no box to grow; its parent lays
+        // the moved box out.
+        if cascade.computed[parent].display == DisplayValue::Contents {
+            continue;
+        }
+        let height = document.nodes[parent].unrounded_layout.size.height;
+        let absorbed = grown_auto_height(
+            document,
+            cascade,
+            parent,
+            child,
+            delta,
+            child == node_id,
+            body_id,
+        )
+        .map_or(0.0, |grown| (grown - height).clamp(0.0, delta));
+        if absorbed < delta - 0.001 {
+            pending_bounded_shifts.push((parent, delta - absorbed, flow_page));
+            bounded = true;
+        }
+        if absorbed <= 0.001 {
+            break;
+        }
+        document.nodes[parent].unrounded_layout.size.height += absorbed;
+        delta = absorbed;
+        child = parent;
+    }
+    bounded
 }
 
 /// No moved float on either side.

@@ -11838,3 +11838,87 @@ fn a_nested_float_follows_a_moved_float_in_its_context() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 160.0]);
 }
+
+#[test]
+fn a_nested_clearing_block_follows_a_moved_float_and_grows_its_parent() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        ids.push(wrapper);
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;clear:left;height:20px"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The clearing block stays below the moved float's new bottom, and the
+    // wrapper grows from 60 to 180 to hold it.
+    assert_eq!(ys, vec![100.0, 60.0, 160.0, 180.0]);
+    assert_eq!(doc.nodes[ids[1]].unrounded_layout.size.height, 120.0);
+}
+
+#[test]
+fn a_box_moving_inside_a_fixed_height_context_keeps_the_outer_float_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;height:30px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        ids.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;clear:left;width:20px;height:20px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
+}
