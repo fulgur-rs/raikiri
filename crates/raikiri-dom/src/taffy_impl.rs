@@ -11,9 +11,9 @@
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
     AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
-    DetailedGridInfo, Display, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
-    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
-    Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
+    DetailedGridInfo, Display, ExpandedDimension, Layout, LayoutBlockContainer,
+    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
+    NodeId, Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
     compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
     compute_leaf_layout,
 };
@@ -684,6 +684,7 @@ fn compute_ifc_root(
                 + ifc_edge(style.border.bottom, parent_inline_size)
                 == 0.0,
         column_height: None,
+        definite_height: None,
     };
     let mut content_baseline = None;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
@@ -713,6 +714,37 @@ fn compute_ifc_root(
                 0.0
             };
             (height - insets).max(0.0)
+        });
+    // CSS 2.1 §10.5: a percentage height resolves against the containing
+    // block's height only when that height does not depend on content. A
+    // height fixed by the parent is border-box; one from the box's own
+    // `height` follows `box-sizing`.
+    let border_box_insets = top_inset
+        + ifc_edge(style.padding.bottom, parent_inline_size)
+        + ifc_edge(style.border.bottom, parent_inline_size);
+    measure.definite_height = inputs
+        .known_dimensions
+        .height
+        .map(|height| (height - border_box_insets).max(0.0))
+        .or_else(|| {
+            if style.size.height.is_auto()
+                || (inputs.parent_size.height.is_none()
+                    && !matches!(style.size.height.expand(), ExpandedDimension::Length(_)))
+            {
+                return None;
+            }
+            crate::layout::multicol_definite_dimension(
+                tree,
+                style.size.height,
+                inputs.parent_size.height,
+            )
+            .map(|height| {
+                if style.box_sizing == taffy::BoxSizing::BorderBox {
+                    (height - border_box_insets).max(0.0)
+                } else {
+                    height
+                }
+            })
         });
     let mut output =
         compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
@@ -895,6 +927,9 @@ struct IfcMeasure {
     /// The content-box height of a multicol root with a definite height:
     /// the height of its columns.
     column_height: Option<f32>,
+    /// The root's definite content-box height, when it has one: the basis
+    /// for the percentage heights of its floats and atomic inlines.
+    definite_height: Option<f32>,
 }
 
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
@@ -1075,6 +1110,9 @@ fn measure_ifc_root(
     };
     let axes = IfcAxes::new(writing_mode, direction);
     let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+    if !vertical {
+        geometry.definite_height = measure.definite_height;
+    }
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;

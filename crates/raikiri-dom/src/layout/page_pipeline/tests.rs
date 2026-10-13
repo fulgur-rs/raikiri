@@ -8368,6 +8368,68 @@ fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
     page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
 }
 
+/// `body > div(60px) > div(wrapper_css) > div(avoid, 60px)` on 100px pages.
+/// Returns the avoiding box's page-flow y, the wrapper's height and the
+/// page count.
+fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:60px"),
+    );
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;width:100px;{wrapper_css}")),
+    );
+    let avoiding = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;width:100px;height:60px;{avoid_css}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let wrapper_layout = doc.get_node(wrapper).unwrap().unrounded_layout;
+    (
+        wrapper_layout.location.y + doc.get_node(avoiding).unwrap().unrounded_layout.location.y,
+        wrapper_layout.size.height,
+        pages.len(),
+    )
+}
+
+#[test]
+fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
+    // The avoiding box would cross the page edge at 100px, so it starts the
+    // second page; the wrapper grows by the distance it moved.
+    assert_eq!(
+        nested_avoiding_block("", "break-inside:avoid"),
+        (100.0, 100.0, 2)
+    );
+    // Without `avoid` the box breaks where it falls.
+    assert_eq!(nested_avoiding_block("", ""), (60.0, 60.0, 2));
+}
+
 #[test]
 fn automatic_overflow_keeps_each_avoiding_block_intact() {
     assert_eq!(

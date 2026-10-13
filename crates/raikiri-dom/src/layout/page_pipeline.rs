@@ -3624,12 +3624,31 @@ pub fn layout_pages_with_page_geometry_and_control(
                             _ => false,
                         }
                     });
+                // `break-inside: avoid` applies to block-level boxes at any
+                // depth (CSS Fragmentation 3 §3.2), not only to the body's
+                // children. A nested avoiding block is a candidate so the
+                // pass can move it to the next page intact; its descendants
+                // follow it. Tables and flex containers keep their own
+                // item-level candidates.
+                let nested_avoid_candidate = participates_in_flow
+                    && !direct_body_child
+                    && !inline_level
+                    && !inside_table
+                    && !inside_flex
+                    && !out_of_flow_subtree
+                    && is_block_level_flow_box(computed.display)
+                    && matches!(
+                        computed.break_inside,
+                        raikiri_style::property::BreakInside::Avoid
+                            | raikiri_style::property::BreakInside::AvoidPage
+                    );
                 let is_break_candidate = !is_body
                     && computed.display != DisplayValue::Contents
                     && !inside_float
                     && ((participates_in_flow
                         && direct_body_child
                         && (explicit_page_name.is_none() || inline_level))
+                        || nested_avoid_candidate
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -3756,6 +3775,76 @@ pub fn layout_pages_with_page_geometry_and_control(
         page_step,
         |id| root_flow_offset + current_abs_y(document, id, &parent_of),
     );
+    // A table row group with `break-inside: avoid` starts on the next page
+    // when it would cross the current one. Its first row carries the block
+    // end of the group's rows up to the first forced break among them (a
+    // forced break already splits the group), and, when it is the table's
+    // first row of a table without a caption, its offset below the table's
+    // top: the table's spacing and borders above it move with it.
+    let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
+    {
+        let candidate_y: HashMap<usize, f32> = candidates
+            .iter()
+            .map(|candidate| (candidate.node_id, candidate.raw_y))
+            .collect();
+        let mut tables_with_rows = HashSet::<usize>::new();
+        let mut group_first_rows = HashMap::<usize, Option<usize>>::new();
+        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
+            let row = candidate.node_id;
+            let mut table = parent_of[row];
+            while let Some(id) = table
+                && !matches!(
+                    cascade.computed[id].display,
+                    DisplayValue::Table | DisplayValue::InlineTable
+                )
+            {
+                table = parent_of[id];
+            }
+            let first_in_table = table.is_some_and(|table| tables_with_rows.insert(table));
+            let Some(group) = parent_of[row] else {
+                continue;
+            };
+            if !matches!(
+                cascade.computed[group].display,
+                DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
+            ) || !matches!(
+                cascade.computed[group].break_inside,
+                raikiri_style::property::BreakInside::Avoid
+                    | raikiri_style::property::BreakInside::AvoidPage
+            ) {
+                continue;
+            }
+            let entry = group_first_rows.entry(group);
+            let first = match entry {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    // A caption above the grid stays on the current page.
+                    let lead = table
+                        .filter(|&table| {
+                            first_in_table
+                                && !document.nodes[table].children.iter().any(|&child| {
+                                    cascade.computed[child].display == DisplayValue::TableCaption
+                                })
+                        })
+                        .and_then(|table| candidate_y.get(&table))
+                        .map_or(0.0, |table_y| (candidate.raw_y - table_y).max(0.0));
+                    avoided_row_groups.insert(row, (candidate.raw_y + candidate.height, lead));
+                    slot.insert(Some(row));
+                    continue;
+                }
+                std::collections::hash_map::Entry::Occupied(slot) => *slot.get(),
+            };
+            let Some(first) = first else {
+                continue;
+            };
+            if page_break_is_forced(document, row, cascade.computed[row].break_before) {
+                group_first_rows.insert(group, None);
+                continue;
+            }
+            if let Some((end, _)) = avoided_row_groups.get_mut(&first) {
+                *end = end.max(candidate.raw_y + candidate.height);
+            }
+        }
+    }
     // Connected class-A sibling runs have a legal break before their first
     // box. Move a run only when it fits in one page, otherwise relax its
     // avoidance constraints so an oversized run still makes progress.
@@ -3831,6 +3920,13 @@ pub fn layout_pages_with_page_geometry_and_control(
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
+    // A float moved to a later page carries its own content with it, but
+    // the in-flow content after it in the source sits beside or above it,
+    // so the shift ends where the float's subtree does. A later float may
+    // not start above an earlier one (CSS 2.1 §9.5.1), so it keeps the
+    // shift of the last moved float until in-flow content opens a page.
+    let mut pending_float_shift: Option<(usize, f32)> = None;
+    let mut later_float_shift = 0.0_f32;
     // Unpaginated border-box bottom of the last in-flow block-level child
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
@@ -3978,6 +4074,20 @@ pub fn layout_pages_with_page_geometry_and_control(
         {
             flow_shift += correction;
             pending_underflow = None;
+        }
+        if let Some((float_id, delta)) = pending_float_shift
+            && !is_descendant_or_self(document, node_id, float_id, &parent_of)
+        {
+            flow_shift -= delta;
+            pending_float_shift = None;
+            later_float_shift = delta;
+        }
+        if later_float_shift != 0.0
+            && pending_float_shift.is_none()
+            && is_floating_box_for_pagination(document, cascade, node_id)
+        {
+            flow_shift += later_float_shift;
+            pending_float_shift = Some((node_id, later_float_shift));
         }
         if document.get_node(node_id).is_none() {
             continue;
@@ -4366,11 +4476,20 @@ pub fn layout_pages_with_page_geometry_and_control(
                 && effective_y < page_origin(current_page) + page_height
                 && effective_y + run_height > page_origin(current_page) + page_height
         });
+        // `break-inside` does not apply to inline boxes (CSS Fragmentation 3
+        // §3.2): the block boxes inside an avoiding inline box break as they
+        // would without it. An atomic inline, such as an inline table, is a
+        // single box in its line and still moves as a whole.
         let page_overflow = matches!(
             computed.break_inside,
             raikiri_style::property::BreakInside::Avoid
                 | raikiri_style::property::BreakInside::AvoidPage
-        ) && effective_y.is_finite()
+        ) && computed.display != DisplayValue::Inline
+            // A float already at the top of its page would break inside on
+            // any page, so moving it would only leave a blank page.
+            && (!is_floating_box_for_pagination(document, cascade, node_id)
+                || effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001)
+            && effective_y.is_finite()
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height + margin_bottom
@@ -4435,6 +4554,16 @@ pub fn layout_pages_with_page_geometry_and_control(
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
+        // A row group that is not already at the top of its page moves as a
+        // whole, even when it is taller than a page and breaks there.
+        let row_group = avoided_row_groups.get(&node_id).copied();
+        let row_group_overflow = row_group.is_some_and(|(end, _)| {
+            let page_end = page_origin(current_page) + page_step_at(current_page);
+            effective_y.is_finite()
+                && effective_y > page_origin(current_page) + 0.001
+                && effective_y < page_end
+                && effective_y + (end - raw_y) > page_end
+        });
         // A trailing flex item may extend into the containing flex box's
         // continuation at the page edge. Earlier items still move intact when
         // they would cross a fragmentainer, preserving the existing column
@@ -4486,6 +4615,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 || page_overflow
                 || avoided_run_overflow
                 || table_row_overflow
+                || row_group_overflow
                 || flex_item_overflow
                 || grid_item_overflow);
         if saw_child {
@@ -4543,6 +4673,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // The forced break is before the box's margin box, so a
                         // positive block-start margin remains on the new page.
                         target_y + margin_top.max(0.0)
+                    } else if row_group_overflow {
+                        target_y + row_group.map_or(0.0, |(_, lead)| lead)
                     } else {
                         target_y
                     };
@@ -4565,6 +4697,22 @@ pub fn layout_pages_with_page_geometry_and_control(
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
                     follow_moved_ifc_block(document, node_id, node_delta);
+                    // A nested avoiding block that moves to the next page
+                    // lengthens the ancestors whose content box holds it, so
+                    // their continuation (and any `overflow` clip) reaches the
+                    // moved content.
+                    if page_overflow && !candidate.is_direct_body_element && node_delta > 0.0 {
+                        let mut child = node_id;
+                        while let Some(parent) = parent_of[child] {
+                            if parent == body_id
+                                || !document.nodes[parent].style.size.height.is_auto()
+                            {
+                                break;
+                            }
+                            document.nodes[parent].unrounded_layout.size.height += node_delta;
+                            child = parent;
+                        }
+                    }
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
@@ -4592,6 +4740,16 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // A kept margin moves the box's descendants and its
                         // later siblings along with the box.
                         flow_shift += node_delta;
+                    }
+                    if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
+                        let inherited = pending_float_shift
+                            .filter(|(float_id, _)| *float_id == node_id)
+                            .map_or(0.0, |(_, delta)| delta);
+                        pending_float_shift = Some((node_id, inherited + node_delta));
+                    } else if !candidate.is_float_descendant
+                        && !is_floating_box_for_pagination(document, cascade, node_id)
+                    {
+                        later_float_shift = 0.0;
                     }
                     effective_y += node_delta;
                 }

@@ -34,6 +34,10 @@ pub(crate) struct FlowGeometry {
     pub(crate) edges: (f32, f32),
     /// Border plus padding above the content box.
     pub(crate) top_edge: f32,
+    /// The root's definite content-box height, the basis for the percentage
+    /// heights of its floats and atomic inlines (CSS 2.1 §10.5). `None` when
+    /// the root's height depends on its content.
+    pub(crate) definite_height: Option<f32>,
 }
 
 impl FlowGeometry {
@@ -45,6 +49,7 @@ impl FlowGeometry {
             insets,
             edges: (insets.left, insets.right),
             top_edge: insets.top,
+            definite_height: None,
         }
     }
 

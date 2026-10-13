@@ -990,11 +990,14 @@ fn resolved_margins(tree: &Document, node: usize, basis: f32) -> taffy::Rect<f32
 /// Lay a child of the root out the way taffy's block algorithm lays out a
 /// float: no known size, the root's content width as the percentage basis,
 /// and `available` as the width it may take. It is also how an atomic inline
-/// is sized: shrink-to-fit within the line's content width.
+/// is sized: shrink-to-fit within the line's content width. Percentage
+/// heights resolve against `height_basis`, the root's definite content
+/// height, and behave as `auto` without one.
 fn perform_box_layout(
     tree: &mut Document,
     node: usize,
     basis: f32,
+    height_basis: Option<f32>,
     available: f32,
 ) -> taffy::LayoutOutput {
     // What taffy's `perform_child_layout` does; that helper is private to
@@ -1012,7 +1015,7 @@ fn perform_box_layout(
             },
             parent_size: Size {
                 width: Some(basis),
-                height: None,
+                height: height_basis,
             },
             available_space: Size {
                 width: AvailableSpace::Definite(available),
@@ -1030,7 +1033,13 @@ fn perform_box_layout(
 fn measure_float(tree: &mut Document, node: usize, geometry: FlowGeometry) -> TentativeFloat {
     let margin = resolved_margins(tree, node, geometry.width);
     let available = (geometry.width - margin.left - margin.right).max(0.0);
-    let output = perform_box_layout(tree, node, geometry.width, available);
+    let output = perform_box_layout(
+        tree,
+        node,
+        geometry.width,
+        geometry.definite_height,
+        available,
+    );
     let style = &tree.nodes[node].style;
     TentativeFloat {
         node,
@@ -1075,7 +1084,13 @@ pub(crate) fn measure_atomics(
         // A child's percentages resolve against the paragraph's content width.
         let margin = resolved_margins(tree, node, geometry.width);
         let available = (geometry.width - margin.left - margin.right).max(0.0);
-        let output = perform_box_layout(tree, node, geometry.width, available);
+        let output = perform_box_layout(
+            tree,
+            node,
+            geometry.width,
+            geometry.definite_height,
+            available,
+        );
         let id = shodo::node::NodeId(node as u64);
         // Only the alphabetic baseline is supplied (horizontal lines). shodo
         // measures it from the margin-box top and falls back to the margin
@@ -1203,7 +1218,7 @@ fn layout_block_child(
         },
         parent_size: Size {
             width: Some(geometry.width),
-            height: None,
+            height: geometry.definite_height,
         },
         available_space: Size {
             width: AvailableSpace::Definite(width),
@@ -1454,7 +1469,7 @@ fn layout_formatting_context_child(
         },
         parent_size: Size {
             width: Some(geometry.width),
-            height: None,
+            height: geometry.definite_height,
         },
         available_space: Size {
             width: AvailableSpace::Definite(stretch),

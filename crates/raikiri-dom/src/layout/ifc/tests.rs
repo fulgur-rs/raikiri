@@ -11,7 +11,9 @@ use crate::Document;
 use crate::fonts::{FontFaceLoader, build_inline_document_fonts};
 use crate::layout::layout_single_page;
 use crate::layout::test_support::with_ahem;
-use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
+use crate::layout::test_support::{
+    ahem_paragraph, ahem_paragraph_with, ifc_ahem_fonts, page_box_800x600,
+};
 use raikiri_style::FontFaceRegistry;
 
 const CANVAS_TEST: &[u8] = include_bytes!(concat!(
@@ -606,4 +608,35 @@ fn a_stretched_vertical_paragraph_is_still_measured_for_intrinsic_widths() {
         ahem_paragraph("AAAA BBBB", "writing-mode:vertical-rl;height:60px");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(intrinsic_measurements(&doc) > 0);
+}
+
+#[test]
+fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
+    // CSS 2.1 §10.5: a percentage height resolves against the containing
+    // block's height when that height does not depend on content, and
+    // behaves as `auto` otherwise. The paragraph is that containing block
+    // for its floats, atomic inlines and block children.
+    let cases = [
+        ("float:left;width:10px;height:50%", 50.0),
+        ("display:inline-block;width:10px;height:50%", 50.0),
+        ("display:block;height:25%", 25.0),
+    ];
+    for (child_css, expected) in cases {
+        for (root_css, height) in [("height:100px", expected), ("", 10.0)] {
+            let mut child = None;
+            let (mut doc, cascade, _root) = ahem_paragraph_with(root_css, |doc, root| {
+                doc.append_text(root, "AA");
+                let id =
+                    doc.append_element(Some(root), "div", taffy::Style::default(), Some(child_css));
+                doc.append_text(id, "B");
+                child = Some(id);
+            });
+            layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+            let child = child.expect("child appended");
+            assert_eq!(
+                doc.nodes[child].unrounded_layout.size.height, height,
+                "{child_css} in a paragraph with {root_css:?}"
+            );
+        }
+    }
 }
