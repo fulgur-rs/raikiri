@@ -353,3 +353,24 @@ fn a_named_page_after_text_beside_a_float_is_laid_out_at_its_own_width() {
         .collect();
     assert_eq!(widths, vec![400.0]);
 }
+
+#[test]
+fn a_float_continuing_onto_a_page_counts_as_content_before_its_start() {
+    // The float starts on the first page and continues onto the second,
+    // which starts with the paragraph's later lines.
+    let out = run(&format!(
+        "<style>@page {{ size: 200px 200px; margin: 0 }} body {{ margin: 0 }}\
+         p {{ margin: 0; font: 10px/10px Ahem }}</style>\
+         <div style='float:right;width:50px;height:300px'></div><p>{}</p>",
+        words(120).join(" ")
+    ));
+    assert!(out.slices.len() >= 2);
+    let (document, cascade) = out.layout_for_page(1);
+    let start = document.page_start(cascade, 1).expect("a page start");
+    let before = document.page_content_before(cascade, 1, start.token);
+    let floats: Vec<_> = before
+        .iter()
+        .filter(|&&node| document.get_node(node).and_then(|node| node.tag_name()) == Some("div"))
+        .collect();
+    assert_eq!(floats.len(), 1, "{before:?}");
+}

@@ -226,14 +226,21 @@ impl Document {
         std::iter::successors(Some(node), |&id| self.parent_of(id)).any(|id| id == ancestor)
     }
 
-    /// The nodes whose content starts on projected page `page_index` but
-    /// come before `token` in source order, apart from the token's
-    /// ancestors, in source order.
+    /// The nodes whose content starts on projected page `page_index`, or
+    /// continues onto it outside the normal flow, such as a float that
+    /// starts on an earlier page, but come before `token` in source order,
+    /// apart from the token's ancestors, in source order. `cascade` is the
+    /// one the document was laid out with.
     ///
     /// A relayout that resumes at the token compares these with the earlier
     /// layout's, so that content the earlier layout ended before the page,
     /// such as a float hanging below its block, does not spill onto it.
-    pub fn page_content_before(&self, page_index: u32, token: PageStartToken) -> Vec<usize> {
+    pub fn page_content_before(
+        &self,
+        cascade: &CascadeResult,
+        page_index: u32,
+        token: PageStartToken,
+    ) -> Vec<usize> {
         let Some(page) = self
             .page_projection
             .pages
@@ -249,7 +256,11 @@ impl Document {
             .iter()
             .filter(|item| !item.is_repeat && !item.is_table_header_repeat)
             // An empty box shows nothing wherever it lands.
-            .filter(|item| item.fragment_index == 0 && item.rect.height > 0.0)
+            .filter(|item| {
+                item.rect.height > 0.0
+                    && (item.fragment_index == 0
+                        || outside_normal_flow(self, cascade, item.node_id.0 as usize))
+            })
             .map(|item| item.node_id.0 as usize)
             .filter(|&node| order[node] < order[target] && !self.is_ancestor_or_self(node, target))
             .collect();

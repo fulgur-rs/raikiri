@@ -156,9 +156,10 @@ fn continue_from(
             break;
         };
         let page = page as usize;
-        let before = segment
-            .document
-            .page_content_before(page as u32, start.token);
+        let before =
+            segment
+                .document
+                .page_content_before(segment.cascade, page as u32, start.token);
         // Continue no box from the earlier layout. The body then has no
         // fragment on the resumed page when it starts above it, as after a
         // resumed stream, whose shorter dropped page would otherwise leave
@@ -364,7 +365,7 @@ fn relayout_from(
         if content_before.is_some_and(|earlier| {
             let earlier: std::collections::HashSet<usize> = earlier.iter().copied().collect();
             let copy: std::collections::HashSet<usize> = document
-                .page_content_before(page as u32, start.token)
+                .page_content_before(&cascade, page as u32, start.token)
                 .into_iter()
                 .collect();
             copy != earlier

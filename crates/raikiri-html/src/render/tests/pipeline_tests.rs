@@ -1781,6 +1781,27 @@ fn pipeline_ignores_forced_breaks_on_inline_boxes() {
 }
 
 #[test]
+fn pipeline_clears_a_forced_break_on_a_block_inside_an_inline_box() {
+    // Pagination breaks before the block inside the inline box, so the block
+    // starts the new page clear of the earlier page's float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <span><div style='break-before:page'><div class='f'></div></div></span>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
 fn pipeline_clears_a_float_with_its_own_break_before() {
     // The float's own break moves it to the new page, clear of the earlier
     // page's float.

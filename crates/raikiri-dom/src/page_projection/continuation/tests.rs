@@ -64,8 +64,8 @@ fn page_start_names_the_line_a_page_begins_with() {
     assert_eq!(start.offset, 0.0);
     assert_eq!(doc.page_token_offset(1, start.token), Some(0.0));
     // The paragraph itself starts on the first page, before the token.
-    assert!(doc.page_content_before(1, start.token).is_empty());
-    assert!(doc.page_content_before(5, start.token).is_empty());
+    assert!(doc.page_content_before(&cascade, 1, start.token).is_empty());
+    assert!(doc.page_content_before(&cascade, 5, start.token).is_empty());
     // The first page starts with the paragraph's own box.
     let first = doc.page_start(&cascade, 0).expect("a page start");
     assert!(matches!(first.token, PageStartToken::Node(_)));

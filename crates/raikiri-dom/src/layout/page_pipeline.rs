@@ -2494,8 +2494,14 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 }
             } else if node.kind() == NodeKind::Element
                 && node.is_in_document()
-                && cascade.computed[child].display == DisplayValue::Contents
+                && (cascade.computed[child].display == DisplayValue::Contents
+                    || cascade.computed[child].display == DisplayValue::Inline
+                        && in_flow(document, child)
+                        && !is_float(document, child))
             {
+                // An inline box is content of its parent's line, so its own
+                // break properties do not apply, but pagination still breaks
+                // at the blocks inside it.
                 pending.extend(node.children.iter().rev().map(|&child| Some(child)));
                 if crate::generated_content::is_in_flow_generated_text(
                     cascade,
@@ -2505,12 +2511,11 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                     pending.push(None);
                 }
             } else if in_flow(document, child) {
-                // An inline-level box is content of its parent's line, which
-                // pagination does not break around.
+                // An atomic inline box is content of its parent's line, which
+                // pagination does not break around or inside.
                 let inline_level = matches!(
                     cascade.computed[child].display,
-                    DisplayValue::Inline
-                        | DisplayValue::InlineBlock
+                    DisplayValue::InlineBlock
                         | DisplayValue::InlineFlex
                         | DisplayValue::InlineGrid
                         | DisplayValue::InlineTable
