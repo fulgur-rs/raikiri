@@ -428,6 +428,11 @@ pub fn relayout_text_for_width(document: &mut Document, cascade: &CascadeResult,
 /// Correct the static position of grid abspos items whose placement is `auto`.
 /// Taffy handles explicit grid-area placement, but its static-position fallback
 /// uses the border edge instead of the grid content box.
+///
+/// The margin box is aligned in the content box by the item's `justify-self`
+/// and `align-self`, whose `auto` takes the container's `justify-items` and
+/// `align-items` (CSS Grid 2 §10.2).
+// spec: https://www.w3.org/TR/css-grid-2/#static-position
 fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &CascadeResult) {
     fn align_offset(value: AlignSelfValue, parent: SelfAlignmentValue, free: f32) -> f32 {
         let value = match value {
@@ -493,19 +498,28 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
         let content_height =
             (parent_size.height - border_top - border_bottom - padding_top - padding_bottom)
                 .max(0.0);
-        let child_size = document.nodes[child_id].unrounded_layout.size;
-        let x = border_left + padding_left;
+        let child_layout = document.nodes[child_id].unrounded_layout;
+        let margin = child_layout.margin;
+        let free_width = content_width - child_layout.size.width - margin.left - margin.right;
+        let justify = align_offset(child.justify_self, parent.justify_items, free_width);
+        // The inline start of a right-to-left container is its right edge.
+        let justify = if parent.direction == Direction::Rtl {
+            free_width - justify
+        } else {
+            justify
+        };
+        let x = border_left + padding_left + margin.left + justify;
         let y = border_top
             + padding_top
+            + margin.top
             + align_offset(
                 child.align_self,
                 parent.align_items,
-                content_height - child_size.height,
+                content_height - child_layout.size.height - margin.top - margin.bottom,
             );
         let child_layout = &mut document.nodes[child_id].unrounded_layout;
         child_layout.location.x = x;
         child_layout.location.y = y;
-        let _ = content_width; // horizontal normal alignment is start in this fallback.
     }
 }
 

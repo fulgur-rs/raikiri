@@ -341,6 +341,60 @@ fn grid_abspos_static_positions_survive_the_fixed_relayout() {
 }
 
 #[test]
+fn grid_static_positions_follow_justify_self_after_the_fixed_relayout() {
+    // Centered in the 200px grid starting at x=100: 400px wide against the
+    // page area, the margin box starts at x=0.
+    for (grid_css, item_css, expected_x) in [
+        ("justify-items:center", "", 0.0),
+        // `justify-self` overrides `justify-items`; the right edge stays at
+        // x=300.
+        ("justify-items:center", "justify-self:end", -100.0),
+        ("justify-items:end", "justify-self:start", 100.0),
+        ("justify-items:end", "justify-self:center", 0.0),
+        // A right-to-left grid starts at its right edge.
+        ("direction:rtl", "", -100.0),
+        ("direction:rtl;justify-items:end", "", 100.0),
+        // The margin box is aligned.
+        ("justify-items:end", "margin-right:20px", -120.0),
+    ] {
+        let (doc, fixed) = laid_out(
+            "margin-left:100px;width:200px",
+            &format!("display:grid;{grid_css}"),
+            &format!("position:fixed;width:50%;height:10px;{item_css}"),
+        );
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (expected_x, 50.0, 400.0, 10.0),
+            "{grid_css};{item_css}"
+        );
+    }
+}
+
+#[test]
+fn grid_static_positions_follow_justify_self_without_a_relayout() {
+    // An absolutely positioned item contained by the grid keeps its size.
+    for (grid_css, item_css, expected_x) in [
+        ("justify-items:center", "", 175.0),
+        ("justify-items:center", "justify-self:end", 250.0),
+        ("", "justify-self:center", 175.0),
+        ("justify-items:end", "justify-self:auto", 250.0),
+        ("justify-items:stretch", "", 100.0),
+        ("justify-items:center", "margin-left:10px", 180.0),
+    ] {
+        let (doc, item) = laid_out(
+            "margin-left:100px;width:200px",
+            &format!("display:grid;position:relative;{grid_css}"),
+            &format!("position:absolute;width:50px;height:10px;{item_css}"),
+        );
+        assert_eq!(
+            absolute_rect(&doc, item),
+            (expected_x, 50.0, 50.0, 10.0),
+            "{grid_css};{item_css}"
+        );
+    }
+}
+
+#[test]
 fn paginated_margin_truncation_preserves_fixed_boxes_and_their_grid_children() {
     for (wrapper_css, fixed_css, expected_y) in [
         ("", "top:5px", 5.0),
