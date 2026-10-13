@@ -10775,9 +10775,9 @@ fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     // The avoiding float starts the second page and the clearing float
     // stays below it; the in-flow block after them keeps its place. The
-    // avoiding block then opens the third page, and the float after it
-    // follows only that block.
-    assert_eq!(ys, vec![100.0, 160.0, 60.0, 100.0, 150.0], "{ys:?}");
+    // avoiding block then moves to 100, and the last float, which fits
+    // beside the clearing float, starts no higher than that float's top.
+    assert_eq!(ys, vec![100.0, 160.0, 60.0, 100.0, 160.0], "{ys:?}");
     assert_eq!(pages, 2);
 }
 
@@ -12471,4 +12471,115 @@ fn a_box_moved_inside_an_offset_ancestor_keeps_the_offset() {
         );
     });
     assert_eq!(page_flow_y(&doc, child), 110.0);
+}
+
+#[test]
+fn a_float_on_a_grid_item_moves_with_the_grid_flow() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px"),
+        );
+        ids.push(doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("float:left;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("height:20px;background:red"),
+        ));
+    });
+    // `float` does not apply to a grid item, so the next row follows it.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_relative_table_does_not_move_a_row_group_that_fits_in_flow() {
+    let mut cells = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:0;position:relative;top:30px"),
+        );
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group;break-inside:avoid"),
+        );
+        cells.push(append_row(doc, group, "", 40.0).1);
+        cells.push(append_row(doc, group, "", 40.0).1);
+    });
+    // The rows' normal-flow range is 20..100; only the offset draws them
+    // past the page end.
+    let ys: Vec<f32> = cells.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![50.0, 90.0]);
+}
+
+#[test]
+fn a_followers_negative_margin_keeps_the_moved_floats_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:10px;margin-bottom:-20px",
+            "display:block;clear:left;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    // The follower's margin box ends at 150, but the moved float still
+    // reaches 160.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 160.0]);
+}
+
+#[test]
+fn a_float_too_wide_to_sit_beside_a_moved_float_stays_below_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "display:block;height:30px;margin-top:20px;break-inside:avoid",
+            "float:left;width:70px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
 }

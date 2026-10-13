@@ -1125,9 +1125,14 @@ pub(crate) fn is_floating_box_for_pagination(
         DisplayValue::None | DisplayValue::Contents
     ) && (matches!(computed.float, FloatValue::Footnote)
         || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
+            // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
+            // Grid 1 §6.1).
             matches!(
                 cascade.computed[parent].display,
-                DisplayValue::Flex | DisplayValue::InlineFlex
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
             )
         }))
 }
