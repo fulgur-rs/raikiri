@@ -2119,7 +2119,11 @@ fn background_shorthand_border_area_sets_border_box_origin() {
         boxes("border-area text"),
         (VisualBox::BorderBox, VisualBox::BorderAreaText)
     );
-    assert_eq!(boxes("text"), (VisualBox::PaddingBox, VisualBox::Text));
+    assert_eq!(boxes("text"), (VisualBox::BorderBox, VisualBox::Text));
+    assert_eq!(
+        boxes("url(a.png) text"),
+        (VisualBox::BorderBox, VisualBox::Text)
+    );
     assert_eq!(
         boxes("content-box border-area"),
         (VisualBox::ContentBox, VisualBox::BorderArea)

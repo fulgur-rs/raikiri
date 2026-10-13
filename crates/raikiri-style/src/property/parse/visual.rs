@@ -2401,8 +2401,8 @@ pub(crate) fn parse_background_shorthand(
 /// With no box, origin and clip keep their initial values (`padding-box`
 /// and `border-box`). One plain `<visual-box>` sets both. A lone
 /// `border-area`, `text` or `border-area text` can only be a clip: it sets
-/// background-clip, and `border-area` also sets background-origin to
-/// `border-box` (CSS Backgrounds 4 §2.10). With two boxes, the first sets
+/// background-clip and sets background-origin to `border-box` (CSS
+/// Backgrounds 4 §2.10). With two boxes, the first sets
 /// origin and the second clip, except that a clip-only keyword always
 /// lands on clip; two clip-only boxes are invalid.
 #[allow(clippy::type_complexity)]
@@ -2501,8 +2501,9 @@ fn parse_background_layer(
     let (origin, clip) = match visual_boxes.as_slice() {
         [] => (initial.origin, initial.clip),
         [one] if is_origin(*one) => (*one, *one),
-        [VisualBox::Text] => (initial.origin, VisualBox::Text),
-        // `border-area` and `border-area text`.
+        // A value valid only for `background-clip` (`text`, `border-area`,
+        // `border-area text`) sets the origin to `border-box` (CSS
+        // Backgrounds 4 §2.12).
         [one] => (VisualBox::BorderBox, *one),
         [first, second] if is_origin(*first) => (*first, *second),
         [first, second] if is_origin(*second) => (*second, *first),

@@ -2569,24 +2569,39 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
     assert!(warnings.is_empty());
     assert!(!scene.commands.is_empty());
 
-    // Unsupported canvas clip warns and skips.
-    let (_, text_cascade) = canvas_fixture(
-        Some("@page { margin: 5px; }"),
-        Some("background-image: url('https://example.test/red.png'); background-clip: text;"),
-    );
-    let mut text_scene = Scene::new();
-    let mut text_warnings = Vec::new();
-    paint_canvas_background_image(
-        &crate::walk::ImageBrushCache::default(),
-        &mut text_scene,
-        &document,
-        &text_cascade,
-        area,
-        Some(&source),
-        &mut text_warnings,
-    );
-    assert!(!text_warnings.is_empty());
-    assert_eq!(background_fill_count(&text_scene), 0);
+    // `background-clip` has no effect on a propagated background: every
+    // layer paints over the whole canvas area, whatever its clip.
+    for clip in ["text", "content-box, border-box"] {
+        let (_, clip_cascade) = canvas_fixture(
+            Some("@page { margin: 5px; }"),
+            Some(&format!(
+                "background-image: url('https://example.test/red.png'), url('https://example.test/red.png'); background-clip: {clip}; border: 4px solid black; padding: 2px;"
+            )),
+        );
+        let mut clip_scene = Scene::new();
+        let mut clip_warnings = Vec::new();
+        paint_canvas_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut clip_scene,
+            &document,
+            &clip_cascade,
+            area,
+            Some(&source),
+            &mut clip_warnings,
+        );
+        assert!(clip_warnings.is_empty(), "{clip}: {clip_warnings:?}");
+        let clips: Vec<_> = clip_scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(layer) => {
+                    Some(kurbo::Shape::bounding_box(&layer.clip))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(clips, vec![area, area], "{clip}");
+    }
 }
 
 #[test]
@@ -2906,6 +2921,62 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
 }
 
 #[test]
+fn margin_box_color_is_clipped_by_the_bottom_layer() {
+    let mut margin_box = fixed_margin_box();
+    margin_box.borders = [Some(raikiri_dom::MarginBoxBorder::new(4.0, CssColor::BLACK)); 4];
+    margin_box.padding = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
+    margin_box.background_clip = VisualBox::ContentBox;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let color = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .expect("the color is painted");
+    assert_eq!(color, kurbo::Rect::new(6.0, 6.0, 94.0, 44.0));
+
+    // A clip that leaves no area paints no color.
+    let mut empty = fixed_margin_box();
+    empty.padding = PaintInsets::new(30.0, 30.0, 30.0, 30.0);
+    empty.background_clip = VisualBox::ContentBox;
+    let mut empty_scene = Scene::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut empty_scene,
+        &empty,
+        None,
+        &mut Vec::new(),
+    );
+    assert_eq!(background_fill_count(&empty_scene), 0);
+
+    // An unsupported clip skips the color with a warning.
+    let mut text = fixed_margin_box();
+    text.background_clip = VisualBox::Text;
+    let mut text_scene = Scene::new();
+    let mut text_warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut text_scene,
+        &text,
+        None,
+        &mut text_warnings,
+    );
+    assert_eq!(background_fill_count(&text_scene), 0);
+    assert_eq!(text_warnings.len(), 1);
+}
+
+#[test]
 fn margin_box_without_area_paints_nothing() {
     let mut margin_box = fixed_margin_box();
     margin_box.rect = PaintRect::new(0.0, 0.0, 0.0, 50.0);
@@ -3045,7 +3116,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
     let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
     assert!((pl - 23.0).abs() < 0.001);
 
-    // Empty canvas painting (tiny area with large borders) skips silently.
+    // An empty canvas area skips silently.
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -3064,9 +3135,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
     let source = RedPixels;
     let (document, cascade) = canvas_fixture(
         Some("@page { margin: 5px; }"),
-        Some(
-            "background-image: url('https://example.test/red.png'); border: 20px solid black; background-clip: padding-box;",
-        ),
+        Some("background-image: url('https://example.test/red.png'); border: 20px solid black;"),
     );
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
@@ -3075,7 +3144,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
         &mut scene,
         &document,
         &cascade,
-        kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
         Some(&source),
         &mut warnings,
     );

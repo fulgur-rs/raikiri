@@ -118,6 +118,22 @@ pub struct MarginBoxBackgroundImage {
     pub clip: VisualBox,
 }
 
+/// The `background-clip` of the bottom background layer a margin box rule
+/// declares. The `background-image` list sets the number of layers and the
+/// clip list repeats to that length (CSS Backgrounds 3 §2.1).
+fn margin_box_background_clip(rule: &PageMarginBoxCascadeResult) -> VisualBox {
+    let layers = match margin_box_property(rule, PropertyKey::BackgroundImage) {
+        Some(PropertyValue::BackgroundImage(images)) => images.len().max(1),
+        _ => 1,
+    };
+    match margin_box_property(rule, PropertyKey::BackgroundClip) {
+        Some(PropertyValue::BackgroundClip(clips)) if !clips.is_empty() => {
+            clips[(layers - 1) % clips.len()]
+        }
+        _ => BackgroundLayerSpec::initial().clip,
+    }
+}
+
 /// The `url()` background layers a margin box rule declares, top first.
 /// Every per-layer list is reconciled to the number of `background-image`
 /// items (CSS Backgrounds 3 §2.1): a shorter list repeats, extra items are
@@ -308,6 +324,9 @@ pub struct MarginBox {
     pub text_shadows: Vec<TextShadow>,
     /// Background color, `None` when transparent.
     pub background_color: Option<CssColor>,
+    /// `background-clip` of the bottom layer, which also clips
+    /// [`Self::background_color`] (CSS Backgrounds 3 §2.1).
+    pub background_clip: VisualBox,
     /// The `url()` background image layers, top first (CSS Backgrounds 3
     /// §2.1: the first layer in the list is painted on top). Layers without
     /// a URL image are left out.
@@ -348,6 +367,7 @@ impl MarginBox {
             color: CssColor::BLACK,
             text_shadows: Vec::new(),
             background_color: None,
+            background_clip: VisualBox::BorderBox,
             background_layers: Vec::new(),
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
@@ -478,6 +498,7 @@ struct MarginBoxSpec {
     content: String,
     deferred: Vec<DeferredSlot>,
     background: Option<CssColor>,
+    background_clip: VisualBox,
     background_layers: Vec<MarginBoxBackgroundImage>,
     background_image_lime: bool,
     content_image_lime: bool,
@@ -1474,6 +1495,7 @@ fn margin_box_spec(
         Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(*value),
         _ => None,
     };
+    let background_clip = margin_box_background_clip(rule);
     let background_layers =
         margin_box_background_layers(rule, ComputedLength(font_size), &resolve_context);
     let background_image_lime = background_layers
@@ -1561,6 +1583,7 @@ fn margin_box_spec(
         content,
         deferred,
         background,
+        background_clip,
         background_layers,
         background_image_lime,
         content_image_lime,
@@ -1658,6 +1681,7 @@ fn place_margin_box(
         color: spec.text_color,
         text_shadows: spec.text_shadows.clone(),
         background_color: spec.background,
+        background_clip: spec.background_clip,
         background_layers: spec.background_layers.clone(),
         borders: [
             border(spec.border_top),

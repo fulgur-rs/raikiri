@@ -904,12 +904,13 @@ fn paint_canvas_background_layer(
     let Some(url) = image_cache.image_url(raw_url) else {
         return;
     };
-    // Canvas paint/position areas with nonzero page margins and root borders
-    // (CSS Backgrounds 3 section 2.11 propagation plus sections 2.7-2.8):
-    // `area` is the canvas border box (page content area inside margins, or
-    // full paper when margins are zero). Origin/clip inset it by the canvas
-    // owner's border and padding. Unsupported clips warn instead of silently
-    // omitting pixels.
+    // Canvas positioning area with nonzero page margins and root borders
+    // (CSS Backgrounds 3 section 2.11 propagation plus section 2.8): `area`
+    // is the canvas border box (page content area inside margins, or full
+    // paper when margins are zero). Origin insets it by the canvas owner's
+    // border and padding. `background-clip` has no effect on a propagated
+    // background (CSS Backgrounds 3 §2.11.1), so the image paints over the
+    // whole of `area`, as the gradient path does.
     let border = (
         computed.border.left.width().px() as f64,
         computed.border.top.width().px() as f64,
@@ -918,19 +919,7 @@ fn paint_canvas_background_layer(
     );
     let padding = canvas_used_padding(computed, area.width());
     let positioning = origin_inset_rect(area, layer.origin, border, padding, Some(&url), warnings);
-    let Some(painting) = clip_inset_rect(area, layer.clip, border, padding) else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: Some(redacted_image_url(&url)),
-            },
-            node_id: None,
-            details: "canvas background-clip has an unsupported visual box; the image was skipped"
-                .into(),
-        });
-        return;
-    };
-    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
+    if area.x1 <= area.x0 || area.y1 <= area.y0 {
         return;
     }
     paint_background_from_source(
@@ -938,7 +927,7 @@ fn paint_canvas_background_layer(
         scene,
         &url,
         positioning,
-        painting,
+        area,
         &layer.size,
         &layer.position,
         &layer.repeat,
@@ -1502,16 +1491,48 @@ fn paint_margin_box(
         return;
     }
     let rect = Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64);
-    if let Some(color) = margin_box.background_color {
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            css_color(color),
-            None,
-            &rect,
-        );
-    }
     let borders = margin_box.border_widths();
+    // Margin-box paint/position areas honor `background-origin`/`background-clip`
+    // like elements (border box is `rect`). Unsupported `text`/`border-area`
+    // clips warn and skip the color or image instead of silently omitting pixels.
+    let border = (
+        borders.left as f64,
+        borders.top as f64,
+        borders.right as f64,
+        borders.bottom as f64,
+    );
+    let padding = (
+        margin_box.padding.left as f64,
+        margin_box.padding.top as f64,
+        margin_box.padding.right as f64,
+        margin_box.padding.bottom as f64,
+    );
+    if let Some(color) = margin_box.background_color {
+        // The bottom layer's clip also clips the color (CSS Backgrounds 3 §2.1).
+        match clip_inset_rect(rect, margin_box.background_clip, border, padding) {
+            Some(painting) => {
+                if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        css_color(color),
+                        None,
+                        &painting,
+                    );
+                }
+            }
+            None => warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: None,
+                },
+                node_id: None,
+                details:
+                    "margin-box background-clip has an unsupported visual box; the color was skipped"
+                        .into(),
+            }),
+        }
+    }
     if let Some(source) = pixel_source.filter(|_| !margin_box.background_layers.is_empty()) {
         // CSS Backgrounds 3 §2.1: the first layer is on top.
         let layers = painted_background_layers(&margin_box.background_layers, warnings);
@@ -1519,21 +1540,6 @@ fn paint_margin_box(
             let Some(url) = image_cache.image_url(&image.url) else {
                 continue;
             };
-            // Margin-box paint/position areas honor `background-origin`/`background-clip`
-            // like elements (border box is `rect`). Unsupported `text`/`border-area`
-            // clips warn and skip the image instead of silently omitting pixels.
-            let border = (
-                borders.left as f64,
-                borders.top as f64,
-                borders.right as f64,
-                borders.bottom as f64,
-            );
-            let padding = (
-                margin_box.padding.left as f64,
-                margin_box.padding.top as f64,
-                margin_box.padding.right as f64,
-                margin_box.padding.bottom as f64,
-            );
             let positioning =
                 origin_inset_rect(rect, image.origin, border, padding, Some(&url), warnings);
             match clip_inset_rect(rect, image.clip, border, padding) {
