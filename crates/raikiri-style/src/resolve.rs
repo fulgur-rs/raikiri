@@ -1621,9 +1621,10 @@ impl ResolveContext {
     /// `root_font_size` is the `font-size` initial value (16px), identical to
     /// [`crate::computed::ComputedValues::initial`]'s `font_size`.
     /// `root_line_height` is unresolved (`None`) too. Root line-height follows
-    /// the same no-parent rule and uses its initial value (`normal`); `rlh`
-    /// therefore cannot be resolved under this context (see below and
-    /// [`SpecifiedValues::finalize_as_root`]).
+    /// the same no-parent rule and uses its initial value (`normal`), which
+    /// only a font measurer can resolve;
+    /// [`crate::specified::SpecifiedValues::finalize_as_root_in_viewport_with`] sets it from
+    /// one (see below).
     ///
     /// The root element's own **`font-size: Nrem`** also uses this basis.
     /// CSS Values 4 §6.1.1 "Font-relative Lengths"
@@ -1855,7 +1856,8 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// to resolve [`Length::Lh`] (see the `Nlh` row below). The caller first
 /// converts it to an absolute length via
 /// [`used_line_height_length`]`(parent.line_height, parent.font_size)`.
-/// Pass `None` if `normal` cannot be resolved or there is no parent (root).
+/// For a parentless root, pass the initial font's measured `normal` line
+/// height. Pass `None` if `normal` cannot be resolved.
 /// Its name matches the corresponding argument of [`resolve_line_height`]:
 /// both are parent bases for self-referential `lh`. The caller's local may
 /// still be named `parent_line_height_basis`: caller and callee names need not
@@ -1903,13 +1905,13 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// - `rlh` refers to "the lh unit on the root element", a tree-global value
 ///   independent of where it is declared. It is self-referential only when
 ///   declared on the root. [`crate::specified::SpecifiedValues::finalize_as_root`]
-///   handles that case by passing [`ResolveContext::initial`] as `ctx`, so
-///   `ctx.root_line_height` is `None`. On a **non-root** element,
+///   handles that case by setting `ctx.root_line_height` to the initial
+///   font's measured `normal` line height, or `None`. On a **non-root** element,
 ///   `font-size: 1rlh` refers to the separately resolved root node and is not
 ///   self-referential. Like `rlh` on box properties (see [`resolve_length`]),
 ///   it reads `ctx.root_line_height`, not `self_reference_basis`.
 ///
-/// If the basis is `None` (unresolvable `normal`, or no parent for the root),
+/// If the basis is `None` (unresolvable `normal`),
 /// fall back to **the `font-size` initial value itself** (`medium` =
 /// [`INITIAL_FONT_SIZE_PX`]; CSS Fonts 4 `font-size` propdef: "Initial: medium").
 /// This matches [`resolve_line_height`], whose unresolvable `Length::Lh` falls
@@ -1951,8 +1953,9 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// the entire tree would make `html { font-size: 2rem }` (likewise `2rex` /
 /// `2rch` / `2ric`) self-referential. Under the parent-metrics clause of CSS
 /// Values 4 §6.1.1, a parentless root instead uses initial values.
-/// **Also pass `None` for `self_reference_basis`**: the parentless root's basis
-/// is the initial `line-height: normal`, which cannot be resolved.
+/// **Also pass the initial font's measured `normal` line height (or `None`)
+/// for `self_reference_basis`**: the parentless root's basis is the initial
+/// `line-height: normal`.
 ///
 /// In the cascade pipeline, [`SpecifiedValues::finalize_as_root`] honors this
 /// contract. Three end-to-end checks in [`mod@crate::cascade`] are
@@ -2737,14 +2740,33 @@ fn resolve_relative_calc(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> Option<ComputedLengthPercentageOrAuto> {
+    resolve_relative_calc_with(
+        value,
+        font_size,
+        own_line_height,
+        ctx,
+        |coefficient, basis| resolve_lh_multiplier(coefficient, basis).map(ComputedLength::px),
+    )
+}
+
+/// [`resolve_relative_calc`] with `lh_term` resolving each `lh` / `rlh`
+/// coefficient against its basis; `None` from it makes the whole result
+/// `None`.
+fn resolve_relative_calc_with(
+    value: RelativeCalcLengthPercentage,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+    lh_term: impl Fn(f32, Option<ComputedLength>) -> Option<f32>,
+) -> Option<ComputedLengthPercentageOrAuto> {
     let viewport = |length: Length| ctx.viewport_length(length).unwrap_or(0.0);
     let mut px = value.px;
     for (unit, coefficient) in value.relative_terms() {
         px += match unit {
             RelativeCalcUnit::Em => coefficient * font_size.0,
             RelativeCalcUnit::Rem => coefficient * ctx.root_font_size.0,
-            RelativeCalcUnit::Lh => resolve_lh_multiplier(coefficient, own_line_height)?.px(),
-            RelativeCalcUnit::Rlh => resolve_lh_multiplier(coefficient, ctx.root_line_height)?.px(),
+            RelativeCalcUnit::Lh => lh_term(coefficient, own_line_height)?,
+            RelativeCalcUnit::Rlh => lh_term(coefficient, ctx.root_line_height)?,
             RelativeCalcUnit::Vw => viewport(Length::Vw(coefficient)),
             RelativeCalcUnit::Vh => viewport(Length::Vh(coefficient)),
             RelativeCalcUnit::Vi => viewport(Length::Vi(coefficient)),
@@ -2792,12 +2814,21 @@ fn resolve_css_position_offset(
             ctx,
         )),
         CssPositionOffset::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
-        CssPositionOffset::RelativeCalc(calc) => match resolve_length_percentage_or_auto(
-            LengthOrAuto::RelativeCalc(calc),
+        // An `lh` term without a basis falls back to zero, as for a plain
+        // `lh` offset. Only that term is dropped: an end-edge offset was
+        // folded to `100% - offset` at parse time, and its percentage keeps
+        // it on the end edge.
+        CssPositionOffset::RelativeCalc(calc) => match resolve_relative_calc_with(
+            calc,
             font_size,
             own_line_height,
             ctx,
-        ) {
+            |coefficient, basis| {
+                Some(resolve_lh_multiplier(coefficient, basis).map_or(0.0, ComputedLength::px))
+            },
+        )
+        .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0))
+        {
             ComputedLengthPercentageOrAuto::Px(px) => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(px))
             }
@@ -2805,8 +2836,7 @@ fn resolve_css_position_offset(
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(percent))
             }
             ComputedLengthPercentageOrAuto::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
-            // An `lh` term without a basis falls back to zero, as for a plain
-            // `lh` offset.
+            // Not produced by a relative calc.
             ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0))
             }
@@ -3422,8 +3452,8 @@ pub fn resolve_margin_length_or_auto(
 ///
 /// The caller has already absolutized the **parent's** line-height with
 /// [`used_line_height_length`] and passed it as `self_reference_basis`. For a
-/// parentless root, pass `None`: the initial `line-height: normal` cannot be
-/// resolved (see [`ResolveContext::initial`]). If the basis is `None`, return
+/// parentless root, pass the initial font's measured `normal` line height, or
+/// `None` when it cannot be measured. If the basis is `None`, return
 /// line-height's own initial, **`normal`** ([`ComputedLineHeight::Normal`]).
 /// As with the 0px fallback in [`resolve_length_percentage`], treat an
 /// unresolvable declaration like an absent one, using line-height's own
@@ -3436,9 +3466,9 @@ pub fn resolve_margin_length_or_auto(
 /// is "Equal to the value of the lh unit **on the root element**", a tree-global
 /// constant independent of the declaring node. A cycle can arise only when
 /// the declaration is on the root itself. The root case is handled by
-/// [`crate::specified::SpecifiedValues::finalize_as_root`], which passes
-/// [`ResolveContext::initial`] as `ctx`, necessarily setting
-/// `ctx.root_line_height` to `None`. On a **non-root** node,
+/// [`crate::specified::SpecifiedValues::finalize_as_root`], whose `ctx`
+/// sets `root_line_height` to the initial font's measured `normal` line
+/// height (or `None`), the same basis as for `lh`. On a **non-root** node,
 /// `line-height: 1rlh` simply refers to the already resolved root node.
 /// Like `rlh` in a box property, use `ctx.root_line_height` directly;
 /// `self_reference_basis` is the **parent's** line-height and would contradict

@@ -1233,6 +1233,38 @@ fn resolve_css_position_absolutizes_each_offset() {
     );
 }
 
+/// An end-edge `calc()` offset was folded to `100% - offset` when parsed.
+/// Without an `lh` basis, only the `lh` term falls back to zero, so the
+/// offset stays on the end edge as a plain `right 1lh` does.
+#[test]
+fn resolve_css_position_relative_calc_drops_only_an_unresolvable_lh_term() {
+    let full = RelativeCalcLengthPercentage::from_unit(100.0, "%").unwrap();
+    let lh = relative_calc_plus_1px(1.0, "lh");
+    let specified = CssPosition {
+        horizontal: CssPositionOffset::RelativeCalc(full.add_scaled(lh, -1.0).unwrap()),
+        vertical: CssPositionOffset::RelativeCalc(relative_calc_plus_1px(1.0, "rlh")),
+    };
+    assert_eq!(
+        resolve_css_position(specified, ComputedLength(16.0), None, &CTX),
+        ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::Calc(CalcLengthPercentage {
+                percent: 100.0,
+                px: -1.0,
+            }),
+            vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(1.0)),
+        }
+    );
+    // A sum that overflows falls back to zero.
+    let overflow = CssPosition {
+        horizontal: CssPositionOffset::RelativeCalc(relative_calc_plus_1px(2.0, "em")),
+        vertical: CssPositionOffset::Start(Length::Px(0.0)),
+    };
+    assert_eq!(
+        resolve_css_position(overflow, ComputedLength(f32::MAX), None, &CTX).horizontal,
+        ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)),
+    );
+}
+
 /// `resolve_background_size` absolutizes each axis via the same
 /// `<length-percentage> | auto` shape `width`/`height` use, and passes
 /// `cover`/`contain` straight through untouched.

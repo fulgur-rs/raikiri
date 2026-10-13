@@ -10624,3 +10624,25 @@ mod border_image_tests;
 mod column_rule_tests;
 mod column_span_tests;
 mod limit_tests;
+
+/// With no parent, a self-referential `lh` / `rlh` on the root resolves
+/// against the initial font's `normal` line, not the root's own font.
+#[test]
+fn root_self_referential_lh_uses_the_initial_fonts_normal_line() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size: 40px; line-height: 1lh"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    assert_eq!(
+        r.computed[html].line_height,
+        ComputedLineHeight::Length(ComputedLength(20.0))
+    );
+
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size: 2lh; line-height: 2rlh"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    assert_eq!(r.computed[html].font_size, ComputedLength(40.0));
+    assert_eq!(
+        r.computed[html].line_height,
+        ComputedLineHeight::Length(ComputedLength(40.0))
+    );
+}

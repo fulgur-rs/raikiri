@@ -1716,22 +1716,41 @@ impl SpecifiedValues {
         // section says this result explicitly. The `FontSize` arm of
         // `cascade::resolve_against_inherited` makes the same distinction for pages. All three
         // units consequently use 16px here. For `lh`, the root has no parent, so its
-        // self-reference is always `None` ("initial values" = `line-height: normal`, which cannot
-        // be resolved), as with phase 2.5 below. `rlh` likewise sees `root_line_height: None`
-        // from `ResolveContext::initial()`: `font-size: 1rlh` on the root refers to itself under
-        // the ordinary definition of `rlh` (only the root can be its own referent; see the
-        // `resolve_font_size` docs).
-        let initial = ResolveContext::initial()
-            .with_viewport(width, height)
-            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
+        // self-reference uses the initial values: `line-height: normal` in the initial font,
+        // measured by `normal_line_height` (`None` when it cannot be measured), as with phase 2.5
+        // below. `rlh` on the root refers to itself under the ordinary definition of `rlh` (only
+        // the root can be its own referent; see the `resolve_font_size` docs), so it takes the
+        // same basis through `root_line_height`.
+        let initial_font_size = ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX);
+        // Measured only when a self-referential `lh` / `rlh` needs it.
+        let self_referential = |length: &Length| matches!(length, Length::Lh(_) | Length::Rlh(_));
+        let initial_line_height = normal_line_height
+            .filter(|_| {
+                self_referential(&self.font_size)
+                    || matches!(&self.line_height, LineHeight::Length(l) if self_referential(l))
+            })
+            .and_then(|measurer| {
+                measurer.normal_line_height(&ChFontKey {
+                    family: initial_font_family(),
+                    size: initial_font_size,
+                    weight: 400.0,
+                    style: FontStyle::Normal,
+                })
+            });
+        let initial = ResolveContext {
+            root_line_height: initial_line_height,
+            ..ResolveContext::initial()
+        }
+        .with_viewport(width, height)
+        .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
         // The root's parent is the initial style, whose `font-family` is
         // `initial_font_family()`.
         let font_size = match self.keyword_font_size(&initial_font_family()) {
             Some(size) => size,
             None => resolve_font_size(
                 self.font_size,
-                ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
-                None,
+                initial_font_size,
+                initial_line_height,
                 &initial,
             ),
         };
@@ -1743,11 +1762,12 @@ impl SpecifiedValues {
             TextAlign::InternalCenter => TextAlign::Center,
             other => other,
         };
-        // Phase 2.5: with no parent, `lh` / `rlh` in the value of `line-height` itself always use
-        // the self-reference basis `None` ("initial values" = `normal`; see above). Other
+        // Phase 2.5: with no parent, `lh` / `rlh` in the value of `line-height` itself use the
+        // initial values' line height as their self-reference basis (see above). Other
         // font-relative units, such as `em`, still use this element's own font size through the
         // same `resolve_line_height` call as in `finalize`.
-        let line_height = resolve_line_height(self.line_height, font_size, None, &initial);
+        let line_height =
+            resolve_line_height(self.line_height, font_size, initial_line_height, &initial);
         // Phase 3 context: `rem` uses the root element's computed font size (its own); `rlh`
         // similarly uses its resolved line height. Box properties are outside the self-reference
         // rule above. `used_line_height_length` derives the same value as the `child_ctx` that

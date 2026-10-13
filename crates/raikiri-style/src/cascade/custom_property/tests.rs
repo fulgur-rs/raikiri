@@ -2441,10 +2441,10 @@ fn mixed_calc_in_a_position_is_measured_from_the_start_edge() {
             ComputedLengthPercentage::Percent(20.0),
         ),
         // An `lh` that `line-height: normal` leaves unresolved falls back to
-        // zero, as for a plain `lh` offset.
+        // zero, as for a plain `lh` offset; the other terms stay.
         (
             "line-height: normal; background-position: calc(10% + 1lh) top",
-            ComputedLengthPercentage::Px(0.0),
+            ComputedLengthPercentage::Percent(10.0),
         ),
     ] {
         let cv = cascade_doc("", "div", Some(declarations));
