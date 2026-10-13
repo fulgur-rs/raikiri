@@ -2634,3 +2634,77 @@ fn negative_sticky_inline_group_paints_below_the_text() {
         ["fill", "push 0.5", "glyphs 1", "pop", "glyphs 1"]
     );
 }
+
+/// The trace records the opacity of a translucent inline element around a
+/// box laid out beside its paragraph's lines.
+#[test]
+fn trace_records_inline_opacity_around_an_atomic_inline() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    let span = doc.append_element(
+        Some(p),
+        "span",
+        Style::default(),
+        Some("display:inline;opacity:.5"),
+    );
+    let atomic = doc.append_element(
+        Some(span),
+        "i",
+        Style::default(),
+        Some("display:inline-block;width:5px;height:5px;background:blue"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+
+    let trace = crate::trace_paint_order(&doc, &cr, PageBox::A4, 0.0, None).expect("trace");
+    let kinds: Vec<&'static str> = trace
+        .iter()
+        .filter_map(|e| match e {
+            PaintTraceEvent::PushOpacity(id, alpha) if *id == span && *alpha == 0.5 => {
+                Some("PushOpacity(span)")
+            }
+            PaintTraceEvent::Box(id) if *id == atomic => Some("Box(atomic)"),
+            PaintTraceEvent::PopOpacity => Some("PopOpacity"),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(kinds, ["PushOpacity(span)", "Box(atomic)", "PopOpacity"]);
+}
+
+/// A positioned inline element with `z-index: auto` composites at level 0,
+/// in tree order with the other groups.
+#[test]
+fn positioned_inline_group_with_auto_z_index_keeps_tree_order() {
+    let scene = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;position:relative">B</span><span style="opacity:.25">C</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.5",
+            "glyphs 1",
+            "pop",
+            "push 0.25",
+            "glyphs 1",
+            "pop"
+        ]
+    );
+}
+
+/// A paragraph that paints its content in place also paints a box with a
+/// negative stack level below its text.
+#[test]
+fn negative_atomic_inline_paints_below_the_text_of_a_clipping_paragraph() {
+    let scene = painted_html(
+        br#"<html><body><p style="overflow:hidden">A<i style="display:inline-block;width:5px;height:5px;position:relative;z-index:-1;background:red"></i>B</p></body></html>"#,
+    );
+    let kinds = command_kinds(&scene);
+    let first_glyphs = kinds.iter().position(|kind| kind.starts_with("glyphs"));
+    let last_fill = kinds.iter().rposition(|kind| kind == "fill");
+    assert!(last_fill < first_glyphs, "{kinds:?}");
+}
