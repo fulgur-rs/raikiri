@@ -111,3 +111,19 @@ fn a_cloned_fragment_lays_out_the_image_over_its_own_box() {
         assert_eq!(pixel(&pixels, 37, y), [0, 0, 255], "right end at y={y}");
     }
 }
+
+#[test]
+fn a_right_to_left_box_joins_later_lines_to_the_left() {
+    let pixels = paint(
+        "display:inline;direction:rtl;background-image:url(file:///two-color.png);\
+         background-size:100% 100%;background-repeat:no-repeat",
+    );
+    // The first line's fragment is the inline start, the right end of the
+    // joined box, so it shows the blue pixel and the second line the red.
+    for x in [30, 37] {
+        assert_eq!(pixel(&pixels, x, 5), [0, 0, 255], "first line at x={x}");
+    }
+    for x in [2, 10] {
+        assert_eq!(pixel(&pixels, x, 25), [255, 0, 0], "second line at x={x}");
+    }
+}

@@ -46,6 +46,8 @@ struct RunDraw<'a> {
     /// The relative offsets of the run's inline ancestors.
     offset: (f32, f32),
     group: Option<usize>,
+    /// The node whose style the run uses.
+    style_owner: usize,
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -85,7 +87,12 @@ pub(crate) fn draw_ifc_lines_with_resources(
         .unwrap_or_default();
     // A box split across lines is sliced from one joined box, which spans
     // every line of the paragraph, including those on other pages.
-    let all_slices = typographic::background_slices(&pieces);
+    let all_slices = typographic::background_slices(&pieces, |node| {
+        cascade
+            .computed
+            .get(node)
+            .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl)
+    });
     let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
     let mut slices_by_line = vec![Vec::new(); positioned.all_lines().len()];
     for (piece, slice) in pieces.into_iter().zip(all_slices) {
@@ -259,81 +266,109 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 decorations,
                 offset,
                 group,
+                style_owner: positioned_run.style_owner,
             });
         }
-        for draw in &runs {
-            let Some(font) = draw.run.font_data() else {
-                continue;
-            };
-            let owner_style = draw.style;
-            let font_size = draw.run.font_size();
-            let coords = normalized_coords(&draw.run);
-            let glyph_transform =
-                physical_glyph_transform(&converter, draw.run.glyph_transform(), draw.run.skew());
-            let run_transform = run_transform(transform, draw);
+        // Consecutive runs of one box paint in phases: every shadow, then
+        // every underline and overline, then the glyphs, then every
+        // line-through (CSS 2.2 Appendix E; CSS Text Decoration 3 §4).
+        // Different boxes keep their tree order, so a later box's shadow
+        // still covers an earlier box's text.
+        for segment in runs.chunk_by(|a, b| a.style_owner == b.style_owner) {
             if !vertical {
-                draw_shadows(
-                    paint.target(draw.group),
-                    &ShadowRun {
-                        draw,
-                        font: &font,
-                        coords: &coords,
-                        glyph_transform,
-                    },
-                    owner_style,
-                    run_transform,
-                    IfcPosition {
-                        x: position.x + draw.offset.0,
-                        y: position.y + draw.offset.1,
-                        shift_y: position.shift_y,
-                    },
-                    size,
-                );
-                draw_resolved_decoration_phase(
-                    paint.target(draw.group),
-                    &draw.decorations,
-                    DecorationPhase::BeforeGlyphs,
-                );
+                for draw in segment {
+                    let Some(font) = draw.run.font_data() else {
+                        continue;
+                    };
+                    let coords = normalized_coords(&draw.run);
+                    let glyph_transform = physical_glyph_transform(
+                        &converter,
+                        draw.run.glyph_transform(),
+                        draw.run.skew(),
+                    );
+                    draw_shadows(
+                        paint.target(draw.group),
+                        &ShadowRun {
+                            draw,
+                            font: &font,
+                            coords: &coords,
+                            glyph_transform,
+                        },
+                        draw.style,
+                        run_transform(transform, draw),
+                        IfcPosition {
+                            x: position.x + draw.offset.0,
+                            y: position.y + draw.offset.1,
+                            shift_y: position.shift_y,
+                        },
+                        size,
+                    );
+                }
+                for draw in segment {
+                    draw_resolved_decoration_phase(
+                        paint.target(draw.group),
+                        &draw.decorations,
+                        DecorationPhase::BeforeGlyphs,
+                    );
+                }
             }
-            paint.start_glyphs(draw.group);
-            let scene = paint.target(draw.group);
-            scene.draw_glyphs(
-                &font,
-                font_size,
-                true,
-                &coords,
-                synthetic_embolden(draw.run.embolden(), font_size),
-                Fill::NonZero,
-                draw.color,
-                1.0,
-                run_transform,
-                glyph_transform,
-                draw.glyphs.clone().into_iter(),
-            );
-            // Emphasis marks sit over or under their characters; vertical
-            // runs need rotated placement, which is not drawn yet.
-            if !vertical {
-                crate::emphasis::draw_marks(
-                    scene,
-                    document,
-                    &draw.run,
-                    &draw.glyphs,
-                    (
-                        position.x + draw.offset.0,
-                        position.y
-                            + position.shift_y
-                            + draw.offset.1
-                            + line.block_offset()
-                            + draw.run.baseline(),
-                    ),
-                    owner_style,
+            for draw in segment {
+                let Some(font) = draw.run.font_data() else {
+                    continue;
+                };
+                let owner_style = draw.style;
+                let font_size = draw.run.font_size();
+                let coords = normalized_coords(&draw.run);
+                let glyph_transform = physical_glyph_transform(
+                    &converter,
+                    draw.run.glyph_transform(),
+                    draw.run.skew(),
+                );
+                let run_transform = run_transform(transform, draw);
+                paint.start_glyphs(draw.group);
+                let scene = paint.target(draw.group);
+                scene.draw_glyphs(
+                    &font,
+                    font_size,
+                    true,
+                    &coords,
+                    synthetic_embolden(draw.run.embolden(), font_size),
+                    Fill::NonZero,
                     draw.color,
+                    1.0,
+                    run_transform,
+                    glyph_transform,
+                    draw.glyphs.clone().into_iter(),
                 );
-                draw_resolved_decoration_phase(
-                    scene,
-                    &draw.decorations,
-                    DecorationPhase::AfterGlyphs,
-                );
+                // Emphasis marks sit over or under their characters; vertical
+                // runs need rotated placement, which is not drawn yet.
+                if !vertical {
+                    crate::emphasis::draw_marks(
+                        scene,
+                        document,
+                        &draw.run,
+                        &draw.glyphs,
+                        (
+                            position.x + draw.offset.0,
+                            position.y
+                                + position.shift_y
+                                + draw.offset.1
+                                + line.block_offset()
+                                + draw.run.baseline(),
+                        ),
+                        owner_style,
+                        draw.color,
+                    );
+                }
+            }
+            if !vertical {
+                for draw in segment {
+                    draw_resolved_decoration_phase(
+                        paint.target(draw.group),
+                        &draw.decorations,
+                        DecorationPhase::AfterGlyphs,
+                    );
+                }
             }
         }
         paint.finish(

@@ -480,6 +480,10 @@ fn page_property(page: &PageCascadeResult, key: PropertyKey) -> Option<&Property
 }
 
 fn length_to_px(length: Length, basis: f32, font_size: f32) -> f32 {
+    signed_length_to_px(length, basis, font_size).max(0.0)
+}
+
+fn signed_length_to_px(length: Length, basis: f32, font_size: f32) -> f32 {
     let value = match length {
         Length::Px(value) => value,
         Length::Percent(value) => basis * value / 100.0,
@@ -497,11 +501,7 @@ fn length_to_px(length: Length, basis: f32, font_size: f32) -> f32 {
         Length::Pc(value) => value * 96.0 / 6.0,
         _ => 0.0,
     };
-    if value.is_finite() {
-        value.max(0.0)
-    } else {
-        0.0
-    }
+    if value.is_finite() { value } else { 0.0 }
 }
 
 fn length_or_auto_to_px(value: LengthOrAuto, basis: f32, font_size: f32) -> Option<f32> {
@@ -612,9 +612,10 @@ fn inherited_margin_box_text_shadows(
         .or_else(|| page_property(page, PropertyKey::TextShadow));
     if let Some(PropertyValue::TextShadow(items)) = declared {
         // Page-context lengths are already absolute; a margin box's own
-        // `em` lengths resolve against its font size.
+        // `em` lengths resolve against its font size. Offsets may be
+        // negative, so only the blur radius is clamped.
         let px = |length: TextShadowLength| match length {
-            TextShadowLength::Length(length) => length_to_px(length, 0.0, font_size),
+            TextShadowLength::Length(length) => signed_length_to_px(length, 0.0, font_size),
             TextShadowLength::Calc { px, em } => px + em * font_size,
             _ => 0.0,
         };

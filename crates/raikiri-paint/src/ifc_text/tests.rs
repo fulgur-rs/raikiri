@@ -2959,3 +2959,28 @@ fn a_line_through_shadow_is_drawn_below_the_text() {
         ]
     );
 }
+
+#[test]
+fn the_runs_of_one_box_paint_decorations_in_line_wide_phases() {
+    let on = painted_root(
+        "width:200px;color:black;text-decoration:underline line-through",
+        |doc, root| {
+            // Mixed directions split one text node into several runs.
+            doc.append_text(root, "ab \u{5d0}\u{5d1} cd");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let texts = kinds.iter().filter(|kind| **kind == "text").count();
+    assert!(texts > 1, "several runs: {kinds:?}");
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "underlines come before every run's glyphs and line-throughs after: {kinds:?}"
+    );
+}
