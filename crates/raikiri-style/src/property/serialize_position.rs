@@ -63,6 +63,15 @@ fn canonical_position(source: &str) -> Option<String> {
         let keyword = match parser.next().ok()? {
             Token::Ident(ident) => Some(ident.to_ascii_lowercase()),
             Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => None,
+            // A substitution function may stand for any number of
+            // components, so no axis can be inferred before substitution.
+            Token::Function(name)
+                if ["var", "env", "attr"]
+                    .iter()
+                    .any(|function| name.eq_ignore_ascii_case(function)) =>
+            {
+                return None;
+            }
             Token::Function(_) => {
                 parser
                     .parse_nested_block(|block| {

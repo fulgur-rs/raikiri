@@ -51,3 +51,10 @@ fn mixed_types_unknown_tokens_and_deep_nesting_are_left_alone() {
     let shallow = format!("{}1{}", "calc(".repeat(4), ")".repeat(4));
     assert_eq!(opacity(&shallow).as_deref(), Some("calc(1)"));
 }
+
+#[test]
+fn zero_mantissa_exponents_read_back_as_zero() {
+    assert_eq!(opacity("0e999").as_deref(), Some("0"));
+    assert_eq!(opacity("0e999%").as_deref(), Some("0"));
+    assert_eq!(opacity("calc(0e999 + 0.5)").as_deref(), Some("calc(0.5)"));
+}

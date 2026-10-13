@@ -11,6 +11,7 @@ use cssparser::{Parser, ParserInput, Token};
 
 use super::calc_serialize::format_css_number;
 use super::css_component_values_are_bounded;
+use super::parse::next_numeric_stable;
 
 /// Serializes `raw_value` for `opacity`, or `None` for other properties and
 /// for text whose math cannot be folded here (callers keep the source text).
@@ -24,7 +25,9 @@ pub fn serialize_alpha_value(name: &str, raw_value: &str) -> Option<String> {
     }
     let mut input = ParserInput::new(raw_value);
     let mut parser = Parser::new(&mut input);
-    let token = parser.next().ok()?.clone();
+    // Numeric tokens go through the same NaN recovery as the property
+    // parser, so `0e999` reads back as `0`.
+    let token = next_numeric_stable(&mut parser).ok()?;
     let value = match token {
         Token::Number { value, .. } => {
             parser.expect_exhausted().ok()?;
@@ -145,7 +148,7 @@ fn product(input: &mut Parser<'_, '_>, depth: usize) -> Option<Typed> {
 }
 
 fn leaf(input: &mut Parser<'_, '_>, depth: usize) -> Option<Typed> {
-    match input.next().ok()?.clone() {
+    match next_numeric_stable(input).ok()? {
         Token::Number { value, .. } => Some((f64::from(value), false)),
         Token::Percentage { unit_value, .. } => Some((f64::from(unit_value) * 100.0, true)),
         Token::ParenthesisBlock => input

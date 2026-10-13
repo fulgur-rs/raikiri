@@ -1569,3 +1569,20 @@ fn page_rule_insert_rule_closes_blocks_left_open_at_eof() {
          s.sheet.cssRules[1].selectorText === 'p'",
     );
 }
+
+#[test]
+fn folded_math_functions_keep_a_calc_wrapper() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var d = document.createElement('div'); \
+         d.style.width = 'calc(10px + 20px)'; d.style.marginTop = 'MIN(1px, 2px)'; \
+         d.style.height = '10px'; d.style.maxWidth = 'calc(10px + 5%)';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "d.style.width === 'calc(30px)' && d.style.marginTop === 'calc(1px)' && \
+         d.style.height === '10px' && d.style.maxWidth === 'calc(10px + 5%)'",
+    );
+}

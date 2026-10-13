@@ -101,3 +101,17 @@ fn object_position_and_odd_gradient_arguments() {
     assert_eq!(image("radial-gradient(at, red, blue)"), None);
     assert_eq!(image("radial-gradient(at middle, red, blue)"), None);
 }
+
+#[test]
+fn substitution_functions_are_left_alone() {
+    assert_eq!(position("var(--p)"), None);
+    assert_eq!(position("left VAR(--y)"), None);
+    assert_eq!(position("env(--x) top"), None);
+    assert_eq!(
+        serialize_position_value(
+            "background-image",
+            "radial-gradient(at var(--p), red, blue)"
+        ),
+        None
+    );
+}
