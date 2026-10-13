@@ -83,6 +83,9 @@ pub(crate) struct State {
     pub css_margin_rules: HashMap<(usize, usize, usize), JsObject>,
     /// Per-margin-rule `CSSStyleDeclaration` wrappers.
     pub css_margin_rule_styles: HashMap<(usize, usize, usize), JsObject>,
+    /// Per-style-element sheet text and generation the rule objects above
+    /// were handed out for.
+    pub css_sheet_versions: HashMap<usize, stylesheet::SheetVersion>,
     /// Per-element `getComputedStyle` objects so
     /// `getComputedStyle(el) === getComputedStyle(el)`.
     pub computed_style_objects: HashMap<usize, JsObject>,
@@ -341,6 +344,7 @@ impl DomRuntime {
             css_rule_styles: HashMap::new(),
             css_margin_rules: HashMap::new(),
             css_margin_rule_styles: HashMap::new(),
+            css_sheet_versions: HashMap::new(),
             computed_style_objects: HashMap::new(),
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
