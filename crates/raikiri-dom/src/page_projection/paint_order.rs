@@ -105,6 +105,9 @@ enum Frame {
     EndDeferral,
     /// An inline opacity group of a paragraph, by paragraph root and element.
     InlineGroup(usize, usize),
+    /// List the paragraph content held at this index, after the stacking
+    /// contexts with negative stack levels painted below it.
+    HeldContent(usize),
     PopClip,
     PopOpacity,
     PopTransform,
@@ -363,6 +366,9 @@ impl Document {
             .flatten();
 
         let mut events = Vec::new();
+        // Paragraph content that waits for the stacking contexts painted
+        // below it, by `Frame::HeldContent` index.
+        let mut held = Vec::new();
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
         let mut stack = vec![Frame::EndDeferral, Frame::Visit(root)];
@@ -406,26 +412,21 @@ impl Document {
                     continue;
                 }
                 Frame::Content(node_id) => {
+                    let mut content = Vec::new();
                     if self.has_inline_marker_image(cascade, page_index, node_id) {
-                        events.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
+                        content.push(PaintEvent::MarkerImage(NodeId::new(node_id as u64)));
                     }
-                    let groups = push_paragraph(self, &items, node_id, None, lines, &mut events);
+                    let groups = push_paragraph(self, &items, node_id, None, lines, &mut content);
                     let boxes = self.ifc_boxes_in_group(cascade, node_id, None);
-                    stack.extend(
-                        self.paragraph_frames(cascade, node_id, boxes, groups)
-                            .into_iter()
-                            .rev(),
-                    );
+                    let frames = self.paragraph_frames(cascade, node_id, boxes, groups);
+                    list_paragraph(content, 0, frames, &mut events, &mut held, &mut stack);
                     continue;
                 }
                 Frame::Paragraph(key) => {
-                    let groups = push_paragraph(self, &items, key, None, lines, &mut events);
-                    stack.extend(
-                        groups
-                            .into_iter()
-                            .rev()
-                            .map(|group| Frame::InlineGroup(key, group)),
-                    );
+                    let mut content = Vec::new();
+                    let groups = push_paragraph(self, &items, key, None, lines, &mut content);
+                    let frames = self.paragraph_frames(cascade, key, Vec::new(), groups);
+                    list_paragraph(content, 0, frames, &mut events, &mut held, &mut stack);
                     continue;
                 }
                 Frame::InlineGroup(root, group) => {
@@ -440,14 +441,19 @@ impl Document {
                     };
                     events.push(PaintEvent::PushOpacity(alpha));
                     stack.push(Frame::PopOpacity);
+                    let mut content = Vec::new();
                     let nested =
-                        push_paragraph(self, &items, root, Some(group), lines, &mut events);
+                        push_paragraph(self, &items, root, Some(group), lines, &mut content);
                     let boxes = self.ifc_boxes_in_group(cascade, root, Some(group));
-                    stack.extend(
-                        self.paragraph_frames(cascade, root, boxes, nested)
-                            .into_iter()
-                            .rev(),
-                    );
+                    let frames = self.paragraph_frames(cascade, root, boxes, nested);
+                    // The group's own boxes are its background, below the
+                    // stacking contexts nested in it.
+                    let own = own_box_events(group, &content);
+                    list_paragraph(content, own, frames, &mut events, &mut held, &mut stack);
+                    continue;
+                }
+                Frame::HeldContent(index) => {
+                    events.append(&mut held[index]);
                     continue;
                 }
                 Frame::PopClip => {
@@ -883,13 +889,17 @@ impl Document {
     /// painted at the level of positioned boxes with `z-index: auto` or `0`,
     /// in tree order with them: after the floats and in-flow atomic inlines,
     /// and before positive z-index boxes.
+    ///
+    /// The frames are split at the paragraph's own inline content: the
+    /// stacking contexts with negative stack levels paint below it, the rest
+    /// above it (CSS 2.1 Appendix E steps 3 and 7).
     fn paragraph_frames(
         &self,
         cascade: &CascadeResult,
         root: usize,
         boxes: Vec<usize>,
         groups: Vec<usize>,
-    ) -> Vec<Frame> {
+    ) -> ParagraphFrames {
         let display = cascade
             .computed
             .get(root)
@@ -929,6 +939,7 @@ impl Document {
                             | Frame::PopOpacity
                             | Frame::PopTransform
                             | Frame::Content(_)
+                            | Frame::HeldContent(_)
                             | Frame::EndDeferral => false, // cov:ignore: never listed here
                         })
                         .unwrap_or(entries.len())
@@ -950,7 +961,12 @@ impl Document {
             }
         }
         entries.sort_by_key(|(key, _)| *key);
-        entries.into_iter().map(|(_, frame)| frame).collect()
+        let split = entries.partition_point(|(((bucket, _), _, _), _)| *bucket == 0);
+        let above = entries.split_off(split);
+        ParagraphFrames {
+            below: entries.into_iter().map(|(_, frame)| frame).collect(),
+            above: above.into_iter().map(|(_, frame)| frame).collect(),
+        }
     }
 
     /// Where opacity group `group` stands in the tree order of a paragraph
@@ -1705,6 +1721,60 @@ fn generated_image_line(items: &PageItems<'_>, image: GeneratedImageId) -> Optio
         root: NodeId::new(placement.root as u64),
         index: placement.line,
     })
+}
+
+/// The frames listed around a paragraph's own inline content.
+struct ParagraphFrames {
+    /// Stacking contexts with negative stack levels, listed before it.
+    below: Vec<Frame>,
+    /// Everything else, listed after it.
+    above: Vec<Frame>,
+}
+
+/// List a paragraph's own inline content, `content`, between the frames
+/// below and above it. The first `own` events, the boxes of the opacity
+/// group being listed, go first. Without frames below, the content is
+/// listed at once.
+fn list_paragraph<'a>(
+    mut content: Vec<PaintEvent<'a>>,
+    own: usize,
+    frames: ParagraphFrames,
+    events: &mut Vec<PaintEvent<'a>>,
+    held: &mut Vec<Vec<PaintEvent<'a>>>,
+    stack: &mut Vec<Frame>,
+) {
+    stack.extend(frames.above.into_iter().rev());
+    if frames.below.is_empty() {
+        events.append(&mut content);
+    } else {
+        let rest = content.split_off(own);
+        events.append(&mut content);
+        stack.push(Frame::HeldContent(held.len()));
+        held.push(rest);
+        stack.extend(frames.below.into_iter().rev());
+    }
+}
+
+/// How many of the first events of `content`, the content of opacity group
+/// `group`, are the group's own boxes.
+fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
+    let origin = crate::generated_content::generated_origin(group);
+    content
+        .iter()
+        .take_while(|event| match (event, origin) {
+            (PaintEvent::Box(fragment), None) => fragment.node() == NodeId::new(group as u64),
+            (PaintEvent::GeneratedBox(generated), Some((owner, pseudo))) => {
+                generated.owner == NodeId::new(owner as u64)
+                    && matches!(
+                        (generated.kind, pseudo),
+                        (GeneratedKind::Before, PseudoElem::Before)
+                            | (GeneratedKind::After, PseudoElem::After)
+                            | (GeneratedKind::FirstLetter, PseudoElem::FirstLetter)
+                    )
+            }
+            _ => false,
+        })
+        .count()
 }
 
 /// Whether an element inside a paragraph composites its fragments on the
