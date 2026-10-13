@@ -1471,3 +1471,40 @@ fn pipeline_does_not_measure_a_display_contents_body() {
     );
     assert_eq!(run(&doc).slices.len(), 1);
 }
+
+#[test]
+fn pipeline_measures_the_auto_body_from_its_collapsed_flow_and_enclosed_floats() {
+    // Sibling margins collapse before the body's padding follows the last
+    // child; a flow-root body also ends after its floats.
+    for (css, content, pages) in [
+        (
+            "body{margin:0;padding-bottom:10px}",
+            "<div style='height:20px;margin-bottom:200px'>x</div><div style='height:10px;margin-top:-200px'>y</div>",
+            1,
+        ),
+        (
+            "body{margin:0;padding-bottom:40px;display:flow-root}",
+            "<div style='float:left;width:10px;height:80px'></div><div style='height:1px'></div>",
+            2,
+        ),
+        (
+            "body{margin:0;padding-bottom:40px}",
+            "<div style='float:left;width:10px;height:80px'></div><div style='height:1px'></div>",
+            1,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} {css}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{css} {content}");
+    }
+}
+
+#[test]
+fn pipeline_counts_the_pages_a_relatively_positioned_float_paints_on() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='float:left;position:relative;top:150px;width:10px;height:20px'></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}

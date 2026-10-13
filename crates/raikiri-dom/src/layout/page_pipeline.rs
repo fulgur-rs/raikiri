@@ -83,12 +83,13 @@ fn content_overflow_end(
         ) {
             continue;
         }
-        // Layout places the body without its relative offset, which the
-        // painter adds to the body and its subtree.
+        // Layout places some boxes without their relative offset, which
+        // the painter adds to the box and its subtree.
+        let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
         let y = if node_id == body_id {
-            body_paint_offset_y(computed)
+            paint_offset
         } else {
-            parent_y + node.unrounded_layout.location.y
+            parent_y + node.unrounded_layout.location.y + paint_offset
         };
         // A `display: contents` body has no box of its own to measure.
         let bottom = if node_id == body_id && computed.display == DisplayValue::Contents {
@@ -122,10 +123,50 @@ fn content_overflow_end(
     end
 }
 
-/// The block offset the painter gives a relatively positioned body: `top`
-/// over `-bottom`, where an inset that is not a length counts as `auto`.
-fn body_paint_offset_y(computed: &raikiri_style::ComputedValues) -> f32 {
+/// The block offset of a relatively positioned box that layout leaves to
+/// the painter: that of the body, of floats and of table parts, and of boxes
+/// placed by manual column placement. The painter takes `top` over
+/// `-bottom`, where an inset that is not a length counts as `auto`.
+fn painted_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let computed = &cascade.computed[node_id];
     if !matches!(computed.position, PositionValue::Relative) {
+        return 0.0;
+    }
+    let float = matches!(computed.float, FloatValue::Left | FloatValue::Right)
+        && document.layout_parent_of(node_id).is_none_or(|parent| {
+            !matches!(
+                cascade.computed[parent].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        });
+    let inline_level = matches!(
+        computed.display,
+        DisplayValue::Inline
+            | DisplayValue::InlineBlock
+            | DisplayValue::InlineFlex
+            | DisplayValue::InlineGrid
+            | DisplayValue::InlineTable
+    );
+    let table_part = matches!(
+        computed.display,
+        DisplayValue::TableCaption
+            | DisplayValue::TableCell
+            | DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    );
+    let painted = ((node_id == body_id || float || table_part) && !inline_level)
+        || document.nodes[node_id].needs_relative_block_paint_offset();
+    if !painted {
         return 0.0;
     }
     match (computed.top, computed.bottom) {
@@ -216,14 +257,24 @@ fn body_border_box_end(
     if (edges_bottom <= 0.0 && min_height <= 0.0) || body.is_ifc_root() {
         return min_end;
     }
-    // In-flow children are in page coordinates already; block-end edges or
-    // a `min-height` keep their block-end margins, negative ones included,
-    // inside the body.
+    // In-flow children are in page coordinates already, with the margins
+    // between them collapsed, so the content ends at the block-end margin
+    // edge of the last one; block-end edges or a `min-height` keep that
+    // margin, negative or not, inside the body. A body that establishes a
+    // formatting context of its own also encloses its floats.
     // The children of a `display: contents` element take part as the body's
     // own, and a relative offset moves a box without moving the flow.
+    let encloses_floats = computed.display == DisplayValue::FlowRoot;
     let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
     let mut content_end = top + edges_top;
-    let mut children: Vec<(usize, f32)> = body.children.iter().map(|&child| (child, 0.0)).collect();
+    let mut last_flow_end = None;
+    // Popped in document order.
+    let mut children: Vec<(usize, f32)> = body
+        .children
+        .iter()
+        .rev()
+        .map(|&child| (child, 0.0))
+        .collect();
     while let Some((child, offset)) = children.pop() {
         let node = &document.nodes[child];
         let child_computed = &cascade.computed[child];
@@ -233,14 +284,27 @@ fn body_border_box_end(
         let layout = &node.unrounded_layout;
         if child_computed.display == DisplayValue::Contents {
             let offset = offset + layout.location.y;
-            children.extend(node.children.iter().map(|&grandchild| (grandchild, offset)));
+            children.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&grandchild| (grandchild, offset)),
+            );
             continue;
         }
         if !matches!(
             child_computed.position,
             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-        ) || super::page::is_floating_box_for_pagination(document, cascade, child)
-        {
+        ) {
+            continue;
+        }
+        if super::page::is_floating_box_for_pagination(document, cascade, child) {
+            // The painter adds a float's relative offset; its layout box is
+            // where the float sits in the flow.
+            let end = offset + layout.location.y + layout.size.height + layout.margin.bottom;
+            if encloses_floats && end.is_finite() {
+                content_end = content_end.max(end);
+            }
             continue;
         }
         // Layout resolves the insets of relative and sticky boxes alike,
@@ -259,8 +323,11 @@ fn body_border_box_end(
         let end =
             offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
         if end.is_finite() {
-            content_end = content_end.max(end);
+            last_flow_end = Some(end);
         }
+    }
+    if let Some(end) = last_flow_end {
+        content_end = content_end.max(end);
     }
     // `max-height` caps the auto height, measured as `box-sizing` says;
     // `min-height` still wins over it.
