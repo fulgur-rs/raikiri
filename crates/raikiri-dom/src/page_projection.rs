@@ -47,6 +47,9 @@ pub(crate) struct PageProjection {
     /// The line pieces of the inline elements split by a translucent
     /// `::first-line`, by page.
     inline_boxes: generated_boxes::InlineBoxes,
+    /// The `::first-letter` opacity groups of the paragraphs, built when
+    /// first read.
+    letter_groups: paint_order::LetterGroupCache,
     column_rules: crate::column_rules::PageColumnRules,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
@@ -69,6 +72,7 @@ impl PageProjection {
         self.generated_images.clear();
         self.generated_boxes.clear();
         self.inline_boxes.clear();
+        self.letter_groups.clear();
         self.column_rules.clear();
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
@@ -350,6 +354,7 @@ impl Document {
             generated_images,
             generated_boxes,
             inline_boxes,
+            letter_groups: Default::default(),
             column_rules,
             overflow_clips,
             placement_overflow_clips,

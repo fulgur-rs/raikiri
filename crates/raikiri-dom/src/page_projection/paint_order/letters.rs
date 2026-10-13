@@ -3,7 +3,9 @@
 use crate::{Document, GeneratedKind, generated_content, paint_rules};
 use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::NodeKind;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// The opacity groups the `::first-letter` fragments of one paragraph
 /// composite in.
@@ -14,7 +16,7 @@ use std::collections::HashMap;
 /// inherited values. Fragments of one box share a group when their opacity
 /// and the group around them agree, as in the built-in painter. Each group
 /// is named by an id of [`generated_content::first_letter_group_id`].
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub(super) struct LetterGroups {
     /// Each fragment's own group, when it is translucent, and the innermost
     /// group around it, by box and the node its letters come from.
@@ -52,7 +54,42 @@ impl LetterGroups {
     }
 }
 
+/// The [`LetterGroups`] of the paragraphs built so far, by root, with the
+/// element generation of the cascade they were built for.
+///
+/// Every run of a paragraph is classified against the same table, so it is
+/// built once per paragraph rather than once per run.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct LetterGroupCache(pub(super) RefCell<(u64, HashMap<usize, Arc<LetterGroups>>)>);
+
+impl LetterGroupCache {
+    /// Forgets every table, as for a new projection.
+    pub(crate) fn clear(&mut self) {
+        *self.0.get_mut() = Default::default();
+    }
+}
+
 impl Document {
+    /// The [`LetterGroups`] of paragraph `root`, built on first use for
+    /// `cascade` and shared by later calls.
+    pub(super) fn cached_letter_groups(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+    ) -> Arc<LetterGroups> {
+        let generation = cascade.element_generation();
+        let mut cache = self.page_projection.letter_groups.0.borrow_mut();
+        if cache.0 != generation {
+            *cache = (generation, HashMap::new());
+        }
+        Arc::clone(
+            cache
+                .1
+                .entry(root)
+                .or_insert_with(|| Arc::new(self.letter_groups(cascade, root))),
+        )
+    }
+
     /// The opacity groups of the `::first-letter` fragments of paragraph
     /// `root`, numbered in the order the paragraph retains the fragments.
     pub(super) fn letter_groups(&self, cascade: &CascadeResult, root: usize) -> LetterGroups {

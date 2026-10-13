@@ -14,6 +14,7 @@ use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,6 +163,7 @@ struct TextLines {
 
 mod letters;
 
+pub(super) use letters::LetterGroupCache;
 use letters::LetterGroups;
 
 /// The elements of a paragraph with inline boxes on its first line and on
@@ -187,20 +189,12 @@ struct PageItems<'a> {
     /// the first, by paragraph root, built when a paragraph is first split
     /// by line.
     line_boxes: RefCell<HashMap<usize, Rc<LineBoxes>>>,
-    /// The `::first-letter` opacity groups, by paragraph root, built when a
-    /// paragraph's first letters are first listed.
-    letter_groups: RefCell<HashMap<usize, Rc<LetterGroups>>>,
 }
 
 impl<'a> PageItems<'a> {
     /// The `::first-letter` opacity groups of paragraph `root`.
-    fn letter_groups(&self, root: usize) -> Rc<LetterGroups> {
-        Rc::clone(
-            self.letter_groups
-                .borrow_mut()
-                .entry(root)
-                .or_insert_with(|| Rc::new(self.document.letter_groups(self.cascade, root))),
-        )
+    fn letter_groups(&self, root: usize) -> Arc<LetterGroups> {
+        self.document.cached_letter_groups(self.cascade, root)
     }
 
     /// The elements of paragraph `root` with inline boxes on the first line
@@ -271,9 +265,8 @@ impl Document {
     ) -> Vec<PaintEvent<'a>> {
         let mut lines = TextLines::default();
         let mut seen = HashSet::new();
-        let mut letter_groups = HashMap::new();
         for run in runs {
-            let group = self.run_opacity_group(cascade, run, &mut letter_groups);
+            let group = self.text_run_opacity_group(cascade, run);
             // The letters of a `::first-letter` group, its own or that of an
             // ancestor block's first letter around them.
             if let (Some(_), Some(Ok(group)), Ok(root)) = (
@@ -283,12 +276,10 @@ impl Document {
             ) && crate::generated_content::generated_origin(group)
                 .is_some_and(|(_, pseudo)| pseudo == PseudoElem::FirstLetter)
             {
-                lines.letters.entry((root, group)).or_insert_with(|| {
-                    letter_groups
-                        .entry(root)
-                        .or_insert_with(|| self.letter_groups(cascade, root))
-                        .around(group)
-                });
+                lines
+                    .letters
+                    .entry((root, group))
+                    .or_insert_with(|| self.cached_letter_groups(cascade, root).around(group));
             }
             if seen.insert((run.line, group)) {
                 match group {
@@ -332,24 +323,11 @@ impl Document {
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
-        self.run_opacity_group(cascade, run, &mut HashMap::new())
-    }
-
-    /// [`Self::text_run_opacity_group`], with the `::first-letter` groups of
-    /// the paragraphs built so far, by root.
-    fn run_opacity_group(
-        &self,
-        cascade: &CascadeResult,
-        run: &PositionedGlyphRun<'_>,
-        letter_groups: &mut HashMap<usize, LetterGroups>,
-    ) -> Option<NodeId> {
         // The paragraph retains the fragment of every run a letter box
         // holds.
         if let Some((letter, owner)) = run.letter_box
             && let Some(group) = usize::try_from(run.line.root.0).ok().and_then(|root| {
-                letter_groups
-                    .entry(root)
-                    .or_insert_with(|| self.letter_groups(cascade, root))
+                self.cached_letter_groups(cascade, root)
                     .nearest(letter, owner)
             })
         {
@@ -444,7 +422,6 @@ impl Document {
             document: self,
             page,
             line_boxes: RefCell::default(),
-            letter_groups: RefCell::default(),
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {

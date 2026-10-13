@@ -111,7 +111,6 @@ fn skipping_subtrees_without_events_keeps_every_page_order() {
             document: &document,
             page: fragment,
             line_boxes: Default::default(),
-            letter_groups: Default::default(),
         };
         for item in &fragment.items {
             items
@@ -162,7 +161,71 @@ fn an_untraceable_event_source_walks_every_node() {
         document: &document,
         page: fragment,
         line_boxes: Default::default(),
-        letter_groups: Default::default(),
     };
     assert!(document.page_paint_nodes(&items, 0, None).is_none());
+}
+
+#[test]
+fn run_groups_share_one_letter_table_per_paragraph() {
+    let mut document = Document::new();
+    let style = document.append_element(
+        Some(0),
+        "style",
+        taffy::Style::default(),
+        Some("display:none"),
+    );
+    document.append_text(style, "p::first-letter{opacity:.5}");
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/10px Ahem"),
+    );
+    let paragraph = document.append_element(
+        Some(body),
+        "p",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    for _ in 0..3 {
+        let span = document.append_element(
+            Some(paragraph),
+            "span",
+            taffy::Style::default(),
+            Some("opacity:.5"),
+        );
+        document.append_text(span, "\"");
+    }
+    document.append_text(paragraph, "X X");
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let mut page_box = PageBox::new();
+    page_box.width = 300.0;
+    page_box.height = 100.0;
+    let slices = layout_pages(&mut document, &cascade, page_box).unwrap();
+    document
+        .project_pages(&cascade, page_box, &slices, &[])
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    assert!(runs.iter().any(|run| run.letter_box.is_some()), "{runs:?}");
+    for run in &runs {
+        document.text_run_opacity_group(&cascade, run);
+    }
+    let root = usize::try_from(runs[0].line.root.0).unwrap();
+    let cache = document.page_projection.letter_groups.0.borrow();
+    assert_eq!(cache.0, cascade.element_generation());
+    assert_eq!(cache.1.len(), 1);
+    let table = Arc::clone(&cache.1[&root]);
+    drop(cache);
+    assert!(Arc::ptr_eq(
+        &table,
+        &document.cached_letter_groups(&cascade, root)
+    ));
 }
