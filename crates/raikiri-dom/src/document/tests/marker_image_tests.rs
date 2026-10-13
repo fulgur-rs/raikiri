@@ -794,3 +794,54 @@ fn content_images_of_unrendered_owners_are_not_decoded_or_charged() {
     }
     assert!(doc.content_image(visible, PseudoElem::Before, 0).is_some());
 }
+
+#[test]
+fn a_covering_content_image_too_large_for_the_budget_is_rastered_at_its_box_area() {
+    struct BoundedVector;
+    impl ImagePixelSource for BoundedVector {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
+            Some(ImageIntrinsicSize {
+                width: Some(1.0),
+                height: Some(1.0),
+                aspect_ratio: Some(1.0),
+            })
+        }
+        fn get_decoded_at_size(
+            &self,
+            _: &url::Url,
+            size: ImageRasterSize,
+            limit: Option<u64>,
+        ) -> Option<Arc<DecodedImage>> {
+            let width = size.width.ceil() as u32;
+            let height = size.height.ceil() as u32;
+            let bytes = u64::from(width) * u64::from(height) * 4;
+            if limit.is_some_and(|limit| bytes > limit) {
+                return None;
+            }
+            Some(Arc::new(DecodedImage {
+                width,
+                height,
+                rgba: vec![0; bytes as usize],
+            }))
+        }
+    }
+    // The 40x4 box covered by a square image holds a 40x40 object, which
+    // costs 6400 bytes; the budget only holds a raster of the box's area.
+    let (mut doc, cascade, p) = content_image_document(
+        "p::before{content:url(https://images.test/a.svg);width:40px;height:4px;object-fit:cover}",
+    );
+    doc.prepare_list_marker_images_with_budget(&cascade, &BoundedVector, None, 1000);
+    use raikiri_style::PseudoElem;
+    let image = doc
+        .content_image(p, PseudoElem::Before, 0)
+        .expect("the image still exists");
+    assert_eq!((image.width, image.height), (13, 13));
+    // It is still drawn over the whole object.
+    let object = doc
+        .content_image_object_rect(p, PseudoElem::Before, 0)
+        .unwrap();
+    assert_eq!((object.width, object.height), (40.0, 40.0));
+}

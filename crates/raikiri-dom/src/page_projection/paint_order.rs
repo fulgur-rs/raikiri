@@ -1176,7 +1176,10 @@ fn push_paragraph<'a>(
         .filter(|&&(id, kind)| kind.is_none() && id != first)
         .map(|&(id, _)| id)
         .collect();
-    let letters: Vec<(usize, bool, usize, &super::generated_boxes::BoxPiece)> = items
+    // Each first-letter piece with the element it is listed under, whether
+    // its letters come from `::after`, its owner, and the element that holds
+    // its letters, which clips it.
+    let letters: Vec<(usize, bool, usize, usize, &super::generated_boxes::BoxPiece)> = items
         .generated_boxes
         .into_iter()
         .flat_map(|boxes| {
@@ -1193,10 +1196,11 @@ fn push_paragraph<'a>(
             let held = anchor
                 .and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor));
             (held == group).then(|| {
+                let clip = anchor.unwrap_or(owner);
                 let anchor = anchor
                     .filter(|anchor| listed.contains(anchor))
                     .unwrap_or(first);
-                (anchor, after, owner, piece)
+                (anchor, after, owner, clip, piece)
             })
         })
         .collect();
@@ -1218,12 +1222,12 @@ fn push_paragraph<'a>(
                     .into_iter()
                     .flatten()
                     .filter(|_| kind != GeneratedKind::FirstLetter)
-                    .map(|piece| (node_id, kind, piece));
+                    .map(|piece| (node_id, kind, node_id, piece));
                 // The first letters held by this element's text, or by its
                 // `::after` text, which come after the `::after` box.
                 let held = letters
                     .iter()
-                    .filter(|&&(anchor, after, _, _)| {
+                    .filter(|&&(anchor, after, _, _, _)| {
                         anchor == node_id
                             && match kind {
                                 GeneratedKind::FirstLetter => !after,
@@ -1231,8 +1235,10 @@ fn push_paragraph<'a>(
                                 _ => false,
                             }
                     })
-                    .map(|&(_, _, owner, piece)| (owner, GeneratedKind::FirstLetter, piece));
-                for (owner, kind, piece) in own.chain(held) {
+                    .map(|&(_, _, owner, clip, piece)| {
+                        (owner, GeneratedKind::FirstLetter, clip, piece)
+                    });
+                for (owner, kind, clip, piece) in own.chain(held) {
                     let owner_id = NodeId::new(owner as u64);
                     let Some(style) = root_node_ifc
                         .and_then(|node| column_projection_style(node, items.cascade, piece))
@@ -1248,7 +1254,7 @@ fn push_paragraph<'a>(
                         kind,
                         rect: piece.rect,
                         style,
-                        clip_owner: owner_id,
+                        clip_owner: NodeId::new(clip as u64),
                         has_start_edge: piece.has_start_edge,
                         has_end_edge: piece.has_end_edge,
                     }));

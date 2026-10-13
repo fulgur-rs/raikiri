@@ -388,6 +388,34 @@ fn a_first_letter_box_follows_the_box_of_its_inline_source() {
     assert!(span < letters[0].0);
 }
 
+/// A first letter that an ancestor's `::first-letter` takes from a
+/// descendant block is clipped by that block, which holds its letters.
+#[test]
+fn a_first_letter_box_is_clipped_by_the_block_holding_its_letters() {
+    let document = lay_out(
+        "<div><p>AB</p></div>",
+        "p{margin:0;overflow:hidden}div::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::FirstLetter => {
+                Some(piece)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(letters.len(), 1);
+    let letter = letters[0];
+    assert_ne!(letter.clip_owner, letter.owner);
+    assert_eq!(
+        page.computed(letter.clip_owner).unwrap().overflow.x,
+        raikiri_html::computed::OverflowValue::Hidden
+    );
+}
+
 /// A first letter taken from `::after` text is painted above that
 /// pseudo-element's background, as its box nests inside it.
 #[test]

@@ -3064,13 +3064,31 @@ impl Document {
                     size.width,
                     size.height,
                 ));
+                // `object-fit: cover` or `none` can make the object far
+                // larger than its box, which clips it. When that raster does
+                // not fit the budget, the image is requested again at the
+                // box's area so its existence does not depend on the clipped
+                // part.
+                let object_area = f64::from(object.width) * f64::from(object.height);
+                let box_area = f64::from(size.width) * f64::from(size.height);
                 let Some(image) = decode(
                     &url,
                     raikiri_traits::ImageRasterSize {
                         width: object.width,
                         height: object.height,
                     },
-                ) else {
+                )
+                .or_else(|| {
+                    (object_area > box_area).then_some(())?;
+                    let scale = (box_area / object_area).sqrt() as f32;
+                    decode(
+                        &url,
+                        raikiri_traits::ImageRasterSize {
+                            width: (object.width * scale).max(1.0),
+                            height: (object.height * scale).max(1.0),
+                        },
+                    )
+                }) else {
                     continue;
                 };
                 self.content_images.insert(
