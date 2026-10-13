@@ -61,8 +61,9 @@ impl ParsingFileOutcome {
 /// Why [`run_parsing_invalid_file`] could not produce an outcome.
 #[derive(Debug)]
 pub enum ParsingFileError {
-    /// The file's inline script has neither a `test_invalid_value(` nor a
-    /// `test_valid_value(` call, so there is nothing for this runner to run.
+    /// The file's inline script has no `test_invalid_value(`,
+    /// `test_valid_value(`, or bare `test(` call, so there is nothing for this
+    /// runner to run.
     NoParsingTestCalls,
     /// Reading the test file failed.
     Io(String),
@@ -80,7 +81,7 @@ impl std::fmt::Display for ParsingFileError {
             ParsingFileError::NoParsingTestCalls => {
                 write!(
                     f,
-                    "no test_invalid_value( or test_valid_value( calls in this file's inline script"
+                    "no test_invalid_value(, test_valid_value(, or test( calls in this file's inline script"
                 )
             }
             ParsingFileError::Io(msg) => write!(f, "I/O error: {msg}"),
@@ -139,13 +140,28 @@ pub fn run_parsing_invalid_file(
     let html = fs::read_to_string(wpt_root.join(relative_path))
         .map_err(|e| ParsingFileError::Io(e.to_string()))?;
     let script = inline_scripts(&html);
-    if !script.contains("test_invalid_value(") && !script.contains("test_valid_value(") {
+    if !script.contains("test_invalid_value(")
+        && !script.contains("test_valid_value(")
+        && !calls_test_directly(&script)
+    {
         return Err(ParsingFileError::NoParsingTestCalls);
     }
     let outcomes = run_page_after_control(wpt_root, relative_path, POSITIVE_CONTROL_JS)?;
     Ok(ParsingFileOutcome {
         test_id: path_to_test_id(relative_path),
         outcomes,
+    })
+}
+
+/// Whether `script` registers a test with a bare `test(` call, as the
+/// serialization pages under `parsing/` do when they set a declaration and
+/// assert on its read-back value themselves instead of through a helper.
+fn calls_test_directly(script: &str) -> bool {
+    script.match_indices("test(").any(|(start, _)| {
+        !script[..start]
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
     })
 }
 

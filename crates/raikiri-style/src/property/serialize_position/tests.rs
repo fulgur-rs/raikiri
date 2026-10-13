@@ -134,3 +134,24 @@ fn substitution_functions_are_left_alone() {
         None
     );
 }
+
+#[test]
+fn background_image_urls_serialize_as_quoted_strings() {
+    let image = |raw| serialize_position_value("background-image", raw);
+    assert_eq!(
+        image("url(/favicon.ico)").as_deref(),
+        Some(r#"url("/favicon.ico")"#)
+    );
+    assert_eq!(
+        image(r#"url('a"b.png'), none, URL(c.png)"#).as_deref(),
+        Some(r#"url("a\"b.png"), none, url("c.png")"#)
+    );
+    assert_eq!(
+        image("url(a.png), radial-gradient(at top left, red, blue)").as_deref(),
+        Some(r#"url("a.png"), radial-gradient(at left top, red, blue)"#)
+    );
+    // Already canonical, or not a lone URL string: kept as written.
+    assert_eq!(image(r#"url("a.png")"#), None);
+    assert_eq!(image(r#"url("a.png" foo)"#), None);
+    assert_eq!(image(r#"light-dark(url(a.png), none)"#), None);
+}

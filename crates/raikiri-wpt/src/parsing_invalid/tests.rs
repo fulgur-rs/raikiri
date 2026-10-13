@@ -94,6 +94,27 @@ fn run_parsing_invalid_file_reports_no_parsing_test_calls() {
 }
 
 #[test]
+fn calls_test_directly_ignores_helpers_and_methods() {
+    assert!(calls_test_directly("test(() => {}, \"a\");"));
+    assert!(calls_test_directly("x;\n  test((t) => {});"));
+    assert!(!calls_test_directly("test_valid_selector(\"div\");"));
+    assert!(!calls_test_directly(
+        "async_test(t => {}); promise_test(f);"
+    ));
+    assert!(!calls_test_directly("re.test(s); $test(1);"));
+}
+
+#[test]
+fn run_parsing_invalid_file_runs_a_page_with_bare_test_calls() {
+    let dir = fixture(
+        "<script>test(() => { const d = document.createElement('div'); \
+         d.style.color = 'red'; assert_equals(d.style.color, 'red'); }, 'direct');</script>",
+    );
+    let outcome = run_parsing_invalid_file(dir.path(), Path::new(FIXTURE_PATH)).unwrap();
+    assert!(outcome.all_passed(), "{outcome:?}");
+}
+
+#[test]
 fn run_parsing_invalid_file_reports_a_missing_page_as_io() {
     let dir = tempfile::tempdir().unwrap();
     let error = run_parsing_invalid_file(dir.path(), Path::new(FIXTURE_PATH)).unwrap_err();
@@ -187,7 +208,7 @@ fn positive_control_catches_an_inert_style_binding() {
 fn display_names_each_error_kind() {
     assert_eq!(
         ParsingFileError::NoParsingTestCalls.to_string(),
-        "no test_invalid_value( or test_valid_value( calls in this file's inline script"
+        "no test_invalid_value(, test_valid_value(, or test( calls in this file's inline script"
     );
     assert_eq!(
         ParsingFileError::PositiveControl("Error: bad".into()).to_string(),

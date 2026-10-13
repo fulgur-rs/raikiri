@@ -75,6 +75,7 @@ css/css-backgrounds/parsing/background-position-valid.html
 css/css-backgrounds/parsing/background-position-x-invalid.html
 css/css-backgrounds/parsing/background-position-y-invalid.html
 css/css-backgrounds/parsing/background-repeat-valid.html
+css/css-backgrounds/parsing/background-shorthand-serialization.html
 css/css-backgrounds/parsing/background-size-valid.html
 css/css-backgrounds/parsing/border-color-invalid.html
 css/css-backgrounds/parsing/border-image-invalid.html
