@@ -2708,3 +2708,55 @@ fn negative_atomic_inline_paints_below_the_text_of_a_clipping_paragraph() {
     let last_fill = kinds.iter().rposition(|kind| kind == "fill");
     assert!(last_fill < first_glyphs, "{kinds:?}");
 }
+
+/// A custom highlight of text inside a translucent inline element paints in
+/// that element's group, below its text.
+#[test]
+fn custom_highlight_in_a_translucent_inline_element_paints_in_its_group() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "::highlight(sample) { background-color: rgb(0, 255, 255); }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    doc.append_text(paragraph, "a");
+    let span = doc.append_element(
+        Some(paragraph),
+        "span",
+        Style::default(),
+        Some("display:inline;opacity:.5"),
+    );
+    let text = doc.append_text(span, "b!");
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
+        &mut scene,
+        &doc,
+        &cr,
+        PageBox::A4,
+        0.0,
+        0,
+        1,
+        false,
+        None,
+        None,
+        PageBox::A4.width,
+        &[TextHighlightRange {
+            name: "sample".to_owned(),
+            node: text,
+            start_byte: 1,
+            end_byte: 2,
+        }],
+    )
+    .expect("paint succeeds");
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "glyphs 1", "push 0.5", "fill", "glyphs 2", "pop"]
+    );
+}

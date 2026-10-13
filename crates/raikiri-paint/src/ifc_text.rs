@@ -265,10 +265,8 @@ pub(crate) fn draw_ifc_lines_with_resources(
         }
         if !vertical && let Some(hit_layout) = hit_layout.as_ref() {
             draw_custom_highlights(
-                paint.target(None),
-                document,
-                cascade,
-                root_id,
+                &mut paint,
+                paragraph,
                 line_index,
                 line,
                 hit_layout,
@@ -503,10 +501,8 @@ fn physical_glyph_transform(
 
 #[allow(clippy::too_many_arguments)]
 fn draw_custom_highlights(
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    root_id: usize,
+    paint: &mut typographic::TypographicPaint,
+    paragraph: Paragraph<'_>,
     line_index: usize,
     line: &shodo::Line,
     hit_layout: &LineLayout<'_>,
@@ -514,6 +510,11 @@ fn draw_custom_highlights(
     offsets: &[(usize, (f32, f32))],
     custom_highlights: &[crate::TextHighlightRange],
 ) {
+    let Paragraph {
+        document,
+        cascade,
+        root_id,
+    } = paragraph;
     let line_range = line.text_range();
     let Some(offset_mapping) = line.offset_mapping() else {
         return;
@@ -563,6 +564,13 @@ fn draw_custom_highlights(
         }
         let color = css_color_to_peniko(color);
         let (offset_x, offset_y) = cumulative_offset(document, root_id, offsets, highlight.node);
+        // The highlight paints with its text, in the groups of the inline
+        // elements around it.
+        let group = paint.element_group(
+            paragraph,
+            paint_box(document, cascade, highlight.node, highlight.node),
+        );
+        let scene = paint.target(group);
         for selected in selection {
             let rect = Rect::new(
                 f64::from(position.x + offset_x + selected.inline_start),
