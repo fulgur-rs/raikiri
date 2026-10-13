@@ -222,6 +222,19 @@ available):
         --basic-reftest-count 12 \
         --output docs/wpt-dashboard.html
 
+`scripts/wpt/list-runnable-reftests.sh OUTPUT.txt` writes the id list the
+sweep runs, without running it.
+
+## Finding new non-vacuous passes
+
+`scripts/wpt/vacuity-sweep.sh [OUTPUT_DIR]` runs `audit-vacuous-passes` over
+every runnable reftest id that no expectations file lists, and writes the ids
+with the `KEEP` verdict to `OUTPUT_DIR/keep.txt` (default
+`target/wpt-vacuity`). It never edits an expectations file. The
+`WPT vacuity sweep` workflow runs it weekly and on manual dispatch, lists the
+`KEEP` ids in its job summary, and uploads the full audit as an artifact.
+Promote ids as described in `expectations/README.md`.
+
 
 ## Reviewing meta-assert-only tests
 

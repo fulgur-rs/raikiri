@@ -23,6 +23,12 @@ these files, and runs `run-baseline-report --strict` over the pass baseline and
 every expected-failure id on Linux with the bundled WPT fonts. A new `FAIL`,
 `XPASS`, or `ERROR` fails the run; the job summary lists them.
 
+The `WPT vacuity sweep` workflow
+(`.github/workflows/wpt-vacuity-sweep.yml`) runs weekly and on manual
+dispatch. It audits every runnable reftest that none of these files lists with
+`audit-vacuous-passes` (see "Promoting sweep passes") and lists the `KEEP` ids
+in its job summary. It only reports; promotion stays a reviewed change.
+
 ## Interpreting baseline PASS
 
 The pass baseline records reproducible output equality or parsing assertions,
