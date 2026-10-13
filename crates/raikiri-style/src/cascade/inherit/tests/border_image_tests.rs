@@ -185,3 +185,21 @@ fn border_image_literal_negative_numbers_stay_invalid() {
         BorderImageWidthSide::Number(2.0)
     );
 }
+
+#[test]
+fn border_image_math_functions_in_range_keep_their_value() {
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("border-image-slice: calc(1 + 1) calc(25% * 2); border-image-outset: calc(1px + 1em)"),
+    );
+    let image = &values.border_image;
+    assert_eq!(image.slice.offsets.top, BorderImageSliceOffset::Number(2.0));
+    assert_eq!(
+        image.slice.offsets.right,
+        BorderImageSliceOffset::Percent(50.0)
+    );
+    // The outset grammar keeps no mixed-unit calc, so a math function that
+    // does not fold to one value leaves the initial outset.
+    assert_eq!(image.outset.top, BorderImageOutsetSide::Number(0.0));
+}

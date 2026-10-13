@@ -67,33 +67,35 @@ fn clamped_math_source<'i>(input: &mut Parser<'i, '_>) -> Result<String, ParseEr
         .ok_or_else(|| location.new_custom_error(()))?;
     let mut token_input = ParserInput::new(&simplified);
     let mut parser = Parser::new(&mut token_input);
-    let token = next_numeric_stable(&mut parser).ok();
+    let token = next_numeric_stable(&mut parser)
+        .ok()
+        .filter(|token| {
+            matches!(
+                token,
+                Token::Number { .. } | Token::Percentage { .. } | Token::Dimension { .. }
+            ) && parser.expect_exhausted().is_ok()
+        })
+        .ok_or_else(|| location.new_custom_error(()))?;
     let clamped = match token {
-        _ if parser.expect_exhausted().is_err() => None,
-        Some(Token::Number { value, .. }) if value < 0.0 => Some(Token::Number {
+        Token::Number { value, .. } if value < 0.0 => Token::Number {
             has_sign: false,
             value: 0.0,
             int_value: Some(0),
-        }),
-        Some(Token::Percentage { unit_value, .. }) if unit_value < 0.0 => Some(Token::Percentage {
+        },
+        Token::Percentage { unit_value, .. } if unit_value < 0.0 => Token::Percentage {
             has_sign: false,
             unit_value: 0.0,
             int_value: Some(0),
-        }),
-        Some(Token::Dimension { value, unit, .. }) if value < 0.0 => Some(Token::Dimension {
+        },
+        Token::Dimension { value, unit, .. } if value < 0.0 => Token::Dimension {
             has_sign: false,
             value: 0.0,
             int_value: Some(0),
             unit,
-        }),
-        Some(
-            token @ (Token::Number { .. } | Token::Percentage { .. } | Token::Dimension { .. }),
-        ) => Some(token),
-        _ => None,
+        },
+        token => token,
     };
-    clamped
-        .map(|token| token.to_css_string())
-        .ok_or_else(|| location.new_custom_error(()))
+    Ok(clamped.to_css_string())
 }
 
 /// Parse `source`, a value from [`clamped_math_source`], with `item`.
