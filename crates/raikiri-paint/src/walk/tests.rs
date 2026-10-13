@@ -1032,6 +1032,10 @@ fn a_root_with_display_none_paints_blank_paper() {
     .expect("paint succeeds");
     assert!(warnings.is_empty());
     assert_eq!(scene.commands.len(), 1, "only the paper is painted");
+
+    let events = crate::trace_paint_order(&document, &cascade, PageBox::A4, 0.0, None)
+        .expect("trace succeeds");
+    assert!(events.is_empty(), "the trace walks no boxes: {events:?}");
 }
 
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {

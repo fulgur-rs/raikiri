@@ -521,6 +521,10 @@ pub fn trace_paint_order(
     content_origin_y: f32,
     active_page_name: Option<Option<&str>>,
 ) -> Result<Vec<PaintTraceEvent>, raikiri_traits::RenderError> {
+    // A root with `display: none` paints nothing beyond blank paper.
+    if root_generates_no_box(cascade) {
+        return Ok(Vec::new());
+    }
     let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let mut scene = anyrender::Scene::new();
     let mut warnings = Vec::new();

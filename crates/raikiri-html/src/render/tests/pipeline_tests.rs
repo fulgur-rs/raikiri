@@ -1740,6 +1740,27 @@ fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
 }
 
 #[test]
+fn pipeline_clears_a_named_page_after_a_float_on_the_parent_page() {
+    // The float between the boxes on page `b` takes the body's page, so the
+    // second box on page `b` starts a new page clear of it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'>a</div><div class='f'></div>\
+         <div style='page:b'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 3);
+    let (document, _) = out.layout_for_page(2);
+    let xs: Vec<f32> = document
+        .page_fragments(2)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
 fn pipeline_clears_a_float_with_its_own_break_before() {
     // The float's own break moves it to the new page, clear of the earlier
     // page's float.

@@ -10366,3 +10366,71 @@ fn a_hidden_root_prints_one_page_without_laying_out_its_body() {
     let slices = layout_pages(&mut doc, &cascade, page).expect("a hidden root needs no layout");
     assert_eq!(slices.len(), 1);
 }
+
+#[test]
+fn a_hidden_root_drops_the_projection_of_an_earlier_layout() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let build = |root_style: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some(root_style));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        (doc, cascade)
+    };
+    let (mut doc, visible) = build("display:block");
+    // The same tree with its root hidden, as a later cascade would give.
+    let (_, hidden) = build("display:none");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let slices = layout_pages(&mut doc, &visible, page).expect("layout succeeds");
+    doc.project_pages(&visible, page, &slices, &[])
+        .expect("projection succeeds");
+    assert!(doc.page_fragments(0).count() > 0);
+
+    let slices = layout_pages(&mut doc, &hidden, page).expect("a hidden root needs no layout");
+    assert_eq!(slices.len(), 1);
+    assert_eq!(doc.page_fragments(0).count(), 0);
+}
+
+#[test]
+fn only_in_flow_generated_content_takes_the_parent_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    for (before, cleared) in [
+        ("float:left", false),
+        ("position:absolute", false),
+        ("", true),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+        let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+        doc.append_text(style, format!("body::before {{ content: 'x'; {before} }}"));
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+        let named = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;page:b;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade Ok");
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+
+        layout_pages(&mut doc, &cascade, page).expect("layout succeeds");
+        let expected = if cleared { vec![named] } else { Vec::new() };
+        assert_eq!(doc.forced_break_clearance, expected, "{before:?}");
+    }
+}

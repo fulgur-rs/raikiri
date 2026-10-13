@@ -2497,7 +2497,11 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 && cascade.computed[child].display == DisplayValue::Contents
             {
                 pending.extend(node.children.iter().rev().map(|&child| Some(child)));
-                if generates_before_content(cascade, child) {
+                if crate::generated_content::is_in_flow_generated_text(
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::Before,
+                ) {
                     pending.push(None);
                 }
             } else if in_flow(document, child) {
@@ -2524,8 +2528,8 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             _ => break name,
         }
     };
-    // Walk the boxes with the page value each inherits. Floats take no part
-    // in named page transitions, and their insides are not walked.
+    // Walk the boxes with the page value each inherits. Floats take their
+    // parent's page, and their insides are not walked.
     let mut cleared = Vec::new();
     let mut pending = vec![(0_usize, None::<String>)];
     while let Some((parent, inherited)) = pending.pop() {
@@ -2533,8 +2537,12 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         let mut float_after_break = false;
         // Generated `::before` content is not an arena child; like text, it
         // takes the parent's page.
-        let mut previous_page_name =
-            generates_before_content(cascade, parent).then(|| inherited.clone());
+        let mut previous_page_name = crate::generated_content::is_in_flow_generated_text(
+            cascade,
+            parent,
+            raikiri_style::PseudoElem::Before,
+        )
+        .then(|| inherited.clone());
         for item in child_boxes(document, parent) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
@@ -2549,8 +2557,16 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 // after it line up beside it. The break still carries on to
                 // the next in-flow box, which pagination would otherwise leave
                 // on the earlier page. A float's own forced breaks move it
-                // and the boxes after it to the next page the same way.
-                if page_break_is_forced(document, child, cascade.computed[child].break_before) {
+                // and the boxes after it to the next page the same way, and so
+                // does a change of named page: pagination puts a float on its
+                // parent's page.
+                let named_break = previous_page_name
+                    .as_ref()
+                    .is_some_and(|previous| *previous != inherited);
+                previous_page_name = Some(inherited.clone());
+                if named_break
+                    || page_break_is_forced(document, child, cascade.computed[child].break_before)
+                {
                     after_forced_break = true;
                     float_after_break = false;
                 }
@@ -2603,24 +2619,6 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         document.forced_break_clearance = cleared;
         document.layout_dirty = true;
     }
-}
-
-/// Whether `node_id` generates nonempty `::before` content.
-fn generates_before_content(cascade: &CascadeResult, node_id: usize) -> bool {
-    cascade
-        .pseudo
-        .get(&(
-            raikiri_style::StyleNodeId::new(node_id as u64),
-            raikiri_style::PseudoElem::Before,
-        ))
-        .is_some_and(|pseudo| {
-            pseudo.display != DisplayValue::None
-                && !pseudo.content.is_empty()
-                && !pseudo
-                    .content
-                    .iter()
-                    .any(|part| matches!(part, raikiri_style::property::ContentComponent::None))
-        })
 }
 
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
@@ -2966,6 +2964,8 @@ pub fn layout_pages_with_page_geometry_and_control(
     // lay out or break into later pages: the document prints as a single
     // blank page.
     if cascade.root_element_computed().display == DisplayValue::None {
+        // A projection of an earlier layout no longer applies.
+        document.page_projection.clear();
         return Ok(vec![PageSlice {
             page_index: 0,
             content_origin_y: 0.0,
