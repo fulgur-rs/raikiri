@@ -1508,3 +1508,51 @@ fn pipeline_counts_the_pages_a_relatively_positioned_float_paints_on() {
     );
     assert_eq!(run(&doc).slices.len(), 2);
 }
+
+#[test]
+fn pipeline_places_floats_after_a_forced_break_clear_of_earlier_pages() {
+    // Each page starts with a right float; the floats of earlier pages do
+    // not reach the later ones, so every float sits at the right edge.
+    let block = "<div style='break-before:page'>\
+                 <div class='f' style='float:right;width:100px;height:100px'></div></div>";
+    let doc = parse(&format!(
+        "<style>@page {{ size: 400px 400px; margin: 0 }} body {{ margin: 0 }}</style>\
+         <div><div class='f' style='float:right;width:100px;height:100px'></div></div>{}",
+        block.repeat(2)
+    ));
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 3);
+    for page in 0..3 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}
+
+#[test]
+fn pipeline_places_floats_after_a_named_page_change_clear_of_earlier_pages() {
+    // A change of named page forces the break, so the floats before it do
+    // not reach the next page either.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:a'><div class='f'></div></div>\
+         <div style='page:b'><div class='f'></div></div>\
+         <div style='page:c'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 3);
+    for page in 0..3 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}

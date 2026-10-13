@@ -569,7 +569,7 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
-    layout_single_page_with_table_projection(document, cascade, page_box, false)
+    layout_single_page_with_table_projection(document, cascade, page_box, false, false)
 }
 
 /// The error a layout pass recorded on `document` while taffy ran: a
@@ -593,6 +593,7 @@ fn layout_single_page_with_table_projection(
     cascade: &CascadeResult,
     page_box: PageBox,
     project_explicit_table_parts: bool,
+    paged: bool,
 ) -> Result<(), LayoutError> {
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
@@ -648,6 +649,9 @@ fn layout_single_page_with_table_projection(
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
     apply_computed_to_style(document, cascade)?;
+    if paged {
+        clear_floats_at_forced_breaks(document, cascade);
+    }
     document.table_objects.project_explicit_parts = project_explicit_table_parts;
 
     // Step 2: resolve the paper/content split before shaping.  Text wrapping
@@ -2426,6 +2430,89 @@ fn finite_nonnegative(value: f32) -> f32 {
     }
 }
 
+/// Give the box after each forced page break clearance past the floats
+/// before it.
+///
+/// The box starts a new page, which the floats placed before the break do not
+/// reach. Layout places the whole flow in one pass and pagination then moves
+/// the box down to its page, so without clearance the earlier floats would
+/// still narrow the box and push its own floats aside on the new page
+/// (CSS Fragmentation 3, 3.1: content after a forced break goes to the next
+/// fragmentainer). A change of named page between siblings forces a break
+/// too (CSS Paged Media 3, 4.1).
+fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResult) {
+    let in_flow = |document: &Document, id: usize| {
+        let node = &document.nodes[id];
+        let computed = &cascade.computed[id];
+        node.kind() == NodeKind::Element
+            && node.is_in_document()
+            && !node.is_non_rendered_html_element()
+            && !matches!(
+                computed.display,
+                DisplayValue::None | DisplayValue::Contents
+            )
+            && !matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            && !is_floating_box_for_pagination(document, cascade, id)
+    };
+    // The page value a box ends with: that of its last in-flow child, down
+    // to the deepest one.
+    let end_page_name = |document: &Document, mut id: usize, mut name: Option<String>| loop {
+        if page_applies_to_box(document, cascade, id) {
+            name = selected_page_name(cascade, id).or(name);
+        }
+        let last = document.nodes[id]
+            .children
+            .iter()
+            .rev()
+            .copied()
+            .find(|&child| in_flow(document, child));
+        match last {
+            Some(child) => id = child,
+            None => break name,
+        }
+    };
+    // Walk the boxes with the page value each inherits, leaving floats out:
+    // their page values do not take part in pagination.
+    let mut pending = vec![(0_usize, None::<String>)];
+    while let Some((parent, inherited)) = pending.pop() {
+        let mut after_forced_break = false;
+        let mut previous_page_name = None;
+        for index in 0..document.nodes[parent].children.len() {
+            let child = document.nodes[parent].children[index];
+            if !in_flow(document, child) {
+                continue;
+            }
+            let computed = &cascade.computed[child];
+            let start_page_name =
+                match propagated_start_page_name(document, cascade, child, inherited.as_deref()) {
+                    (true, name) => name,
+                    (false, _) => inherited.clone(),
+                };
+            let named_break = previous_page_name
+                .as_ref()
+                .is_some_and(|previous| *previous != start_page_name);
+            let forced = after_forced_break
+                || named_break
+                || page_break_is_forced(document, child, computed.break_before);
+            after_forced_break = page_break_is_forced(document, child, computed.break_after);
+            previous_page_name = Some(end_page_name(document, child, inherited.clone()));
+            let own_page_name = if page_applies_to_box(document, cascade, child) {
+                selected_page_name(cascade, child).or_else(|| inherited.clone())
+            } else {
+                inherited.clone()
+            };
+            pending.push((child, own_page_name));
+            let style = &mut document.nodes[child].style;
+            if forced && style.clear == taffy::Clear::None {
+                style.clear = taffy::Clear::Both;
+            }
+        }
+    }
+}
+
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
     if matches!(value, BreakBetween::Page) {
         return true;
@@ -2765,7 +2852,7 @@ pub fn layout_pages_with_page_geometry_and_control(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
-    layout_single_page_with_table_projection(document, cascade, page_box, true)?;
+    layout_single_page_with_table_projection(document, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
