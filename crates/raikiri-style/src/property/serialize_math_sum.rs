@@ -119,6 +119,10 @@ impl Terms {
         if self.is_number() {
             return None;
         }
+        // Terms that cancel out drop away as long as another term remains.
+        if self.0.iter().any(|(_, value)| *value != 0.0) {
+            self.0.retain(|(_, value)| *value != 0.0);
+        }
         self.0.sort_by(|(left, _), (right, _)| {
             (left != "%", left.as_str()).cmp(&(right != "%", right.as_str()))
         });

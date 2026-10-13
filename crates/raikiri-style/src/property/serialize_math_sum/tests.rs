@@ -27,6 +27,15 @@ fn like_units_combine_and_absolute_lengths_become_px() {
 }
 
 #[test]
+fn canceled_terms_drop_unless_nothing_else_remains() {
+    assert_eq!(
+        sums("calc(1em - 1em + 10px)").as_deref(),
+        Some("calc(10px)")
+    );
+    assert_eq!(sums("calc(1em - 1em)").as_deref(), Some("calc(0em)"));
+}
+
+#[test]
 fn products_and_nested_sums_fold() {
     assert_eq!(
         sums("calc(2 * (1em - 3px) / 4)").as_deref(),
