@@ -1259,14 +1259,18 @@ fn push_paragraph<'a>(
                         has_end_edge: piece.has_end_edge,
                     }));
                 }
+                // The `::before` images wait for the first-letter slot that
+                // always follows, so that first-letter boxes come first.
                 let after = match kind {
-                    GeneratedKind::Before => false,
+                    GeneratedKind::FirstLetter => false,
                     GeneratedKind::After => true,
                     _ => continue,
                 };
                 // The images are replaced content inside the pseudo-element's
-                // inline box, painted above its decoration (CSS 2.1 Appendix
-                // E, inline-level content in tree order).
+                // inline box, painted above its decoration and above the
+                // first-letter boxes wrapping its letters, as the inline
+                // boxes of a line are painted before its replaced content
+                // (CSS 2.1 Appendix E, inline-level content in tree order).
                 events.extend(
                     items
                         .generated_images

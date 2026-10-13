@@ -388,6 +388,27 @@ fn a_first_letter_box_follows_the_box_of_its_inline_source() {
     assert!(span < letters[0].0);
 }
 
+/// A first letter taken from `::before` text is painted below that
+/// pseudo-element's images, as a line's inline boxes are painted before its
+/// replaced content.
+#[test]
+fn a_first_letter_box_precedes_the_images_of_its_before_source() {
+    let document = lay_out(
+        "<p>B</p>",
+        "p{margin:0}p::before{content:'A' url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E)}\
+         p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    let image = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::GeneratedImage(_)))
+        .expect("the image is listed");
+    assert!(letters[0].0 < image);
+}
+
 /// A first letter that an ancestor's `::first-letter` takes from a
 /// descendant block is clipped by that block, which holds its letters.
 #[test]
