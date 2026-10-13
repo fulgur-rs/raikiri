@@ -769,8 +769,10 @@ impl crate::resolve::NormalLineHeight for ScaledNormal {
 
 fn cascade_measuring_normal(doc: &TestDoc) -> (crate::CascadeResult, Arc<ScaledNormal>) {
     let measurer = Arc::new(ScaledNormal(Default::default()));
-    let mut options = crate::CascadeOptions::default();
-    options.normal_line_height = Some(crate::NormalLineHeightSource(measurer.clone()));
+    let options = crate::CascadeOptions {
+        normal_line_height: Some(crate::NormalLineHeightSource(measurer.clone())),
+        ..Default::default()
+    };
     let tree = build_rule_tree(doc);
     let result = crate::cascade_with_options(
         doc,

@@ -1775,7 +1775,7 @@ impl SpecifiedValues {
     /// described under "Why this takes no arguments" above.
     ///
     /// Similarly, `line_height` is **this node's** [`ComputedLineHeight`],
-    /// resolved by the caller in phase 2.5. [`used_line_height_length`]
+    /// resolved by the caller in phase 2.5. [`used_line_height_length`](crate::resolve::used_line_height_length)
     /// converts it to the absolute `own_line_height` used to resolve `lh` on
     /// padding, margin, border, width and height. The caller computes it
     /// first (rather than calling `resolve_line_height` here) because
