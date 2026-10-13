@@ -779,14 +779,14 @@ fn serialize_value_writes_border_image_longhands() {
 fn serialize_value_formats_sizing_lengths() {
     let length = Length::Px(0.0);
     for value in [
-        PropertyValue::Width(LengthOrAuto::Length(length.clone())),
-        PropertyValue::Height(LengthOrAuto::Length(length.clone())),
-        PropertyValue::MinWidth(LengthOrAuto::Length(length.clone())),
-        PropertyValue::MinHeight(LengthOrAuto::Length(length.clone())),
-        PropertyValue::MaxWidth(LengthOrAuto::Length(length.clone())),
-        PropertyValue::MaxHeight(LengthOrAuto::Length(length.clone())),
-        PropertyValue::InlineSize(LengthOrAuto::Length(length.clone())),
-        PropertyValue::BlockSize(LengthOrAuto::Length(length.clone())),
+        PropertyValue::Width(LengthOrAuto::Length(length)),
+        PropertyValue::Height(LengthOrAuto::Length(length)),
+        PropertyValue::MinWidth(LengthOrAuto::Length(length)),
+        PropertyValue::MinHeight(LengthOrAuto::Length(length)),
+        PropertyValue::MaxWidth(LengthOrAuto::Length(length)),
+        PropertyValue::MaxHeight(LengthOrAuto::Length(length)),
+        PropertyValue::InlineSize(LengthOrAuto::Length(length)),
+        PropertyValue::BlockSize(LengthOrAuto::Length(length)),
     ] {
         assert_eq!(serialize_value(&value).as_deref(), Some("0px"), "{value:?}");
     }
