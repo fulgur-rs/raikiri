@@ -10375,12 +10375,20 @@ fn a_hidden_root_drops_the_projection_of_an_earlier_layout() {
         let mut doc = Document::new();
         let html = doc.append_element(Some(0), "html", Style::default(), Some(root_style));
         let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-        doc.append_element(
+        let columns = doc.append_element(
             Some(body),
             "div",
             Style::default(),
-            Some("display:block;height:10px"),
+            Some("display:block;column-count:2;width:100px"),
         );
+        for _ in 0..4 {
+            doc.append_element(
+                Some(columns),
+                "div",
+                Style::default(),
+                Some("display:block;height:10px"),
+            );
+        }
         let rules = build_rule_tree(&doc);
         let cascade = cascade(&doc, &rules).expect("cascade Ok");
         (doc, cascade)
@@ -10396,10 +10404,12 @@ fn a_hidden_root_drops_the_projection_of_an_earlier_layout() {
     doc.project_pages(&visible, page, &slices, &[])
         .expect("projection succeeds");
     assert!(doc.page_fragments(0).count() > 0);
+    assert!(!doc.layout_fragments().is_empty());
 
     let slices = layout_pages(&mut doc, &hidden, page).expect("a hidden root needs no layout");
     assert_eq!(slices.len(), 1);
     assert_eq!(doc.page_fragments(0).count(), 0);
+    assert!(doc.layout_fragments().is_empty());
 }
 
 #[test]

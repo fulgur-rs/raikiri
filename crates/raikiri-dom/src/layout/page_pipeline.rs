@@ -3002,7 +3002,9 @@ pub fn layout_pages_with_page_geometry_and_control(
     // lay out or break into later pages: the document prints as a single
     // blank page.
     if cascade.root_element_computed().display == DisplayValue::None {
-        // A projection of an earlier layout no longer applies.
+        // Fragments and a projection of an earlier layout no longer apply.
+        document.fragment_tree.clear();
+        document.column_rules.clear();
         document.page_projection.clear();
         return Ok(vec![PageSlice {
             page_index: 0,
