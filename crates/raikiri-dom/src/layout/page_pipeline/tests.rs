@@ -11588,16 +11588,16 @@ fn an_earlier_childs_collapsed_margin_does_not_grow_the_box() {
 
 #[test]
 fn a_relative_offset_does_not_grow_a_bounded_box() {
-    // The box, drawn 30px low, crosses the page end and moves 20px; its
-    // flow position then ends 80px into the wrapper, under the minimum
-    // height, as the offset does not count.
+    // The box's flow position 50..110 crosses the page end and moves 50px;
+    // it then ends 110px into the wrapper. The 30px offset it is drawn
+    // with does not count.
     assert_eq!(
         bounded_wrapper_height(
             50.0,
             "min-height:100px",
             &["position:relative;top:30px;height:60px;break-inside:avoid"],
         ),
-        100.0
+        110.0
     );
 }
 
@@ -11949,9 +11949,11 @@ fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
                 )),
             );
         });
-        // The 30px inset moves the box but not the flow it ends.
+        // The box's flow position 50..110 crosses the page end, so it moves
+        // 50px and ends 110px into the wrapper. The 30px inset moves the box
+        // but not the flow it ends.
         assert_eq!(
-            doc.nodes[wrapper].unrounded_layout.size.height, 100.0,
+            doc.nodes[wrapper].unrounded_layout.size.height, 110.0,
             "{position}"
         );
     }
@@ -12054,5 +12056,129 @@ fn a_float_in_a_containment_context_ignores_a_moved_float() {
         // formatting context (CSS Containment 2 §3.1, §3.3).
         let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
         assert_eq!(ys, vec![100.0, 60.0], "{contain}");
+    }
+}
+
+#[test]
+fn a_containment_context_keeps_the_moved_boxs_margin_when_it_grows() {
+    for contain in ["layout", "paint"] {
+        assert_eq!(
+            nested_avoiding_block(
+                &format!("contain:{contain};min-height:100px"),
+                "break-inside:avoid;margin-bottom:20px"
+            ),
+            (100.0, 120.0, 2),
+            "{contain}"
+        );
+    }
+}
+
+#[test]
+fn a_relative_offset_does_not_move_a_box_that_fits_in_flow() {
+    let mut wrapper = 0;
+    let mut child = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        child = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:30px;height:60px;break-inside:avoid"),
+        );
+    });
+    // Its normal-flow range is 20..80; only the painted box crosses 100.
+    assert_eq!(page_flow_y(&doc, child), 50.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 60.0);
+}
+
+#[test]
+fn a_moved_relative_box_keeps_its_offset() {
+    for nested in [false, true] {
+        let mut id = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            let parent = if nested {
+                doc.append_element(Some(body), "div", Style::default(), Some("display:block"))
+            } else {
+                body
+            };
+            id = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;position:relative;top:10px;height:60px;break-inside:avoid"),
+            );
+        });
+        assert_eq!(page_flow_y(&doc, id), 110.0, "nested={nested}");
+    }
+}
+
+#[test]
+fn a_logical_float_moves_like_an_in_flow_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;float:inline-start;width:40px;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    // Layout floats only `left` and `right`, so the box stays in flow and
+    // the next block follows it.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn an_empty_box_between_two_blocks_keeps_their_margin_adjoining() {
+    for nested in [false, true] {
+        let mut id = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let parent = if nested {
+                doc.append_element(Some(body), "div", Style::default(), Some("display:block"))
+            } else {
+                body
+            };
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px;break-inside:avoid"),
+            );
+            doc.append_element(Some(parent), "div", Style::default(), Some("display:block"));
+            id = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
+            );
+        });
+        // The margin collapses through the empty box and is truncated at
+        // the break.
+        assert_eq!(page_flow_y(&doc, id), 100.0, "nested={nested}");
     }
 }

@@ -165,6 +165,30 @@ fn content_overflow_end(
     end
 }
 
+/// The block offset that layout applied to a relatively positioned or
+/// sticky box. It moves the box but not the flow around it (CSS 2.1
+/// §9.4.3), and fragmentation happens before it (CSS Fragmentation 3 §5.5).
+fn layout_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let computed = &cascade.computed[node_id];
+    if !matches!(
+        computed.position,
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
+        return 0.0;
+    }
+    let offset = match (computed.top, computed.bottom) {
+        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
+        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
+        _ => 0.0,
+    };
+    offset - painted_relative_offset_y(document, cascade, body_id, node_id)
+}
+
 /// The block offset of a relatively positioned box that layout leaves to
 /// the painter: that of the body, of floats and of table parts, and of boxes
 /// placed by manual column placement. The painter takes `top` over
@@ -4680,6 +4704,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                 && effective_y < page_origin(current_page) + page_height
                 && effective_y + run_height > page_origin(current_page) + page_height
         });
+        // Whether the box fits is decided at its normal-flow position,
+        // before any relative offset.
+        let relative_offset = layout_relative_offset_y(document, cascade, body_id, node_id);
+        let flow_y = effective_y - relative_offset;
         // `break-inside` does not apply to inline boxes (CSS Fragmentation 3
         // §3.2): the block boxes inside an avoiding inline box break as they
         // would without it. An atomic inline, such as an inline table, is a
@@ -4692,11 +4720,11 @@ pub fn layout_pages_with_page_geometry_and_control(
             || page_applies_to_box(document, cascade, node_id))
             // A box already at the top of its page would break inside on
             // any page, so moving it would only leave a blank page.
-            && effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
-            && effective_y.is_finite()
-            && effective_y >= page_origin(current_page)
-            && effective_y < page_origin(current_page) + page_step_at(current_page)
-            && effective_y + height + margin_bottom
+            && flow_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
+            && flow_y.is_finite()
+            && flow_y >= page_origin(current_page)
+            && flow_y < page_origin(current_page) + page_step_at(current_page)
+            && flow_y + height + margin_bottom
                 > page_origin(current_page) + page_step_at(current_page);
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
@@ -4880,7 +4908,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                     } else if row_group_overflow {
                         target_y + row_group.map_or(0.0, |(_, lead)| lead)
                     } else {
-                        target_y
+                        // A relative offset moves with the box to the page
+                        // it starts on.
+                        target_y + relative_offset
                     };
                 // The candidate was materialized to `effective_y` above,
                 // so this is the additional movement for this boundary.
@@ -5033,7 +5063,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // Only a margin between adjoining siblings is
                         // truncated; a box that is not a candidate may lie
                         // between two nested candidates.
-                        && previous_in_flow_sibling(document, cascade, node_id) == Some(previous)
+                        && adjoins_previous_sibling(document, cascade, node_id, previous)
                     {
                         // A forced break that already coincides with this
                         // page edge sits before the margin, which therefore
@@ -5432,6 +5462,7 @@ fn grown_auto_height(
             cascade.computed[parent].display,
             DisplayValue::FlowRoot | DisplayValue::InlineBlock
         )
+        || establishes_containment_context(&cascade.computed[parent])
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container();
     let mut before = f32::NEG_INFINITY;
@@ -5455,23 +5486,7 @@ fn grown_auto_height(
             continue;
         }
         let child_layout = &child_node.unrounded_layout;
-        // A relative offset that layout applied moves the box but not the
-        // flow around it (CSS 2.1 §9.4.3). Layout offsets a sticky box by
-        // its insets the same way.
-        let computed = &cascade.computed[child];
-        let relative_offset = if matches!(
-            computed.position,
-            PositionValue::Relative | PositionValue::Sticky
-        ) {
-            let offset = match (computed.top, computed.bottom) {
-                (ComputedLengthPercentageOrAuto::Px(top), _) => top,
-                (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
-                _ => 0.0,
-            };
-            offset - painted_relative_offset_y(document, cascade, body_id, child)
-        } else {
-            0.0
-        };
+        let relative_offset = layout_relative_offset_y(document, cascade, body_id, child);
         let bottom = pagination_child_parent_y(document, parent, child, child_layout.location.y)
             + child_layout.size.height
             - relative_offset;
@@ -5560,31 +5575,61 @@ fn box_parent(document: &Document, node_id: usize) -> Option<usize> {
     Some(parent)
 }
 
-/// The in-flow box laid out just before `node_id` among its parent's boxes,
-/// skipping collapsed white space and out-of-flow boxes. `display: contents`
-/// elements generate no box, so their children stand in their place.
-fn previous_in_flow_sibling(
+/// Whether `previous` is the in-flow box laid out just before `node_id`
+/// among its parent's boxes, or an empty box between them that their
+/// margins collapse through (CSS 2.1 §8.3.1). Collapsed white space and
+/// out-of-flow boxes are skipped. `display: contents` elements generate no
+/// box, so their children stand in their place.
+fn adjoins_previous_sibling(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
-) -> Option<usize> {
+    previous: usize,
+) -> bool {
     let mut current = node_id;
     loop {
-        let parent = document.parent_of(current)?;
+        let Some(parent) = document.parent_of(current) else {
+            return false;
+        };
         let siblings = &document.nodes[parent].children;
-        let index = siblings.iter().position(|&id| id == current)?;
-        if let Some(found) = siblings[..index]
+        let Some(index) = siblings.iter().position(|&id| id == current) else {
+            return false;
+        };
+        for found in siblings[..index]
             .iter()
             .rev()
-            .find_map(|&id| last_in_flow_box(document, cascade, id))
+            .filter_map(|&id| last_in_flow_box(document, cascade, id))
         {
-            return Some(found);
+            if found == previous {
+                return true;
+            }
+            if !margins_collapse_through(document, cascade, found) {
+                return false;
+            }
         }
         if cascade.computed[parent].display != DisplayValue::Contents {
-            return None;
+            return false;
         }
         current = parent;
     }
+}
+
+/// Whether `node_id` is an empty block box whose block-start and block-end
+/// margins collapse together (CSS 2.1 §8.3.1).
+fn margins_collapse_through(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    let layout = &node.unrounded_layout;
+    node.kind() == NodeKind::Element
+        && matches!(
+            cascade.computed[node_id].display,
+            DisplayValue::Block | DisplayValue::ListItem
+        )
+        && !establishes_containment_context(&cascade.computed[node_id])
+        && !node.style.overflow.x.is_scroll_container()
+        && !node.style.overflow.y.is_scroll_container()
+        && layout.size.height <= 0.001
+        && layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+            <= 0.0
 }
 
 /// `node_id` when it is an in-flow box, or the last such box that a
@@ -5702,21 +5747,29 @@ fn float_context_root(
                 computed.display,
                 DisplayValue::Block | DisplayValue::ListItem | DisplayValue::Inline
             )
-            || !matches!(computed.float, FloatValue::None)
+            || matches!(computed.float, FloatValue::Left | FloatValue::Right)
             || matches!(style.position, taffy::Position::Absolute)
             || style.overflow.x.is_scroll_container()
             || style.overflow.y.is_scroll_container()
             || document.nodes[parent].multicol.is_some()
-            // Layout and paint containment establish an independent
-            // formatting context (CSS Containment 2 §3.1, §3.3).
-            || computed.contain.contains(raikiri_style::property::Contain::LAYOUT)
-            || computed.contain.contains(raikiri_style::property::Contain::PAINT)
+            || establishes_containment_context(computed)
         {
             return parent;
         }
         current = parent;
     }
     body_id
+}
+
+/// Whether layout or paint containment makes the box an independent
+/// formatting context (CSS Containment 2 §3.1, §3.3).
+fn establishes_containment_context(computed: &raikiri_style::ComputedValues) -> bool {
+    computed
+        .contain
+        .contains(raikiri_style::property::Contain::LAYOUT)
+        || computed
+            .contain
+            .contains(raikiri_style::property::Contain::PAINT)
 }
 
 /// The index of a float side in the per-side float edges.
