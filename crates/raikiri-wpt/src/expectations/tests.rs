@@ -825,8 +825,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + Sweep passes that survive the vacuous-PASS audit (+2,567).
     // - Pins that matched only while gradients painted their first color (-14).
     // + Named-page break candidates and forced-break margins in css-page (+11).
-    // + Page count from nested abspos and a header repeated over anonymous cells (+4).
-    assert_eq!(set.baseline.entries.len(), 3934);
+    // + Page count from nested abspos, body height and contain:size overflow,
+    //   and a header repeated over anonymous cells (+5).
+    assert_eq!(set.baseline.entries.len(), 3935);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

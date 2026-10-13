@@ -1158,3 +1158,40 @@ fn many_columns_with_generated_decoration_prepare_one_source_piece() {
         1
     );
 }
+
+#[test]
+fn pipeline_counts_absolute_boxes_inside_inline_elements_as_pages() {
+    // The box inside the span is located from the paragraph's root, so it
+    // still extends the document onto a third page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='position:relative'><span>text\
+         <span style='position:absolute;top:250px;width:10px;height:10px'></span></span></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 3);
+}
+
+#[test]
+fn pipeline_clamps_body_height_by_max_height_when_counting_pages() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;height:500px;max-height:150px}</style>\
+         <div>text</div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_names_pages_opened_by_absolute_boxes_after_the_flow() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page wide{size:300px 100px;margin:0} body{margin:0}</style>\
+         <div style='page:wide;position:relative'>text\
+         <div style='position:absolute;top:150px;height:10px'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    assert!(
+        out.slices
+            .iter()
+            .all(|slice| slice.page_name.as_deref() == Some("wide"))
+    );
+}

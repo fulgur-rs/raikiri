@@ -39,8 +39,8 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
 /// Fixed boxes repeat on every page and running elements leave the flow, so
 /// their subtrees do not extend the document. A box that clips its
 /// block-axis overflow contributes its own border box but not its content.
-/// Inline content is located by its paragraph's lines, which take part in
-/// pagination directly, so inline-level subtrees are not walked.
+/// Inline elements are located by their paragraph's lines, which take part
+/// in pagination directly, so only the boxes inside them are measured.
 fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: usize) -> f32 {
     use raikiri_style::property::OverflowValue;
     let mut end = f32::NEG_INFINITY;
@@ -51,8 +51,15 @@ fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: u
             || node.is_display_none()
             || node.is_non_rendered_html_element()
             || node.kind() != NodeKind::Element
-            || node.flags.contains(NodeFlags::IN_IFC_SUBTREE)
         {
+            continue;
+        }
+        // An inline element of a paragraph is placed by the paragraph's lines,
+        // which take part in pagination directly, and the boxes inside it are
+        // located from the paragraph's root, so only its children are walked,
+        // in the root's coordinate space.
+        if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+            stack.extend(node.children.iter().map(|&child| (child, parent_y)));
             continue;
         }
         let computed = &cascade.computed[node_id];
@@ -84,7 +91,8 @@ fn content_overflow_end(document: &Document, cascade: &CascadeResult, body_id: u
     end
 }
 
-/// The body's border-box height from its own `height` and `min-height`.
+/// The body's border-box height from its own `height`, `max-height` and
+/// `min-height`.
 ///
 /// Layout sizes the body to the page content box, so its laid-out height
 /// says nothing about the height the author gave it. Percentages resolve
@@ -95,7 +103,11 @@ fn body_border_box_height(document: &Document, cascade: &CascadeResult, body_id:
         ComputedLengthPercentageOrAuto::Px(value) => value.max(0.0),
         _ => 0.0,
     };
-    let content = px(&computed.height).max(px(&computed.min_height));
+    let height = match computed.max_height {
+        ComputedLengthPercentageOrAuto::Px(max) => px(&computed.height).min(max.max(0.0)),
+        _ => px(&computed.height),
+    };
+    let content = height.max(px(&computed.min_height));
     if content <= 0.0 {
         return 0.0;
     }
@@ -4174,7 +4186,9 @@ pub fn layout_pages_with_page_geometry_and_control(
         // next page, would cross a page edge wherever it went: pushing it
         // only leaves a blank page behind (CSS Fragmentation 3 §4.4 lets
         // monolithic content overflow a fresh fragmentainer).
-        let item_can_move = effective_y > page_origin(current_page) + 0.001
+        // The page top is judged by the margin box, since a block-start margin
+        // already at the page top would stay with the item.
+        let item_can_move = effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
             && height <= page_step_at(current_page.saturating_add(1)) + 0.001;
         let flex_item_overflow = candidate.is_flex_item
             && !flex_item_is_last
@@ -4536,6 +4550,11 @@ pub fn layout_pages_with_page_geometry_and_control(
             let end_page = page_index_for_end(end);
             control.check_discovery_page_index(end_page)?;
             max_page = max_page.max(end_page);
+            // Pages opened only by these boxes keep the page type the flow
+            // ended on.
+            if page_names.len() <= end_page as usize {
+                page_names.resize(end_page as usize + 1, current_page_name.clone());
+            }
         }
     }
 
