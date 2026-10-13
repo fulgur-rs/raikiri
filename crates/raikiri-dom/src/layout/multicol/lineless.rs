@@ -34,11 +34,11 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         if !node.is_in_document() || node.style.display == Display::None {
             continue;
         }
-        match &node.data {
-            NodeData::Text(text) if text.text_content.trim().is_empty() => continue,
-            NodeData::Element(_) => {}
-            _ => return None,
-        }
+        // Text that renders gives the container lines, refused above, so any
+        // other node here is collapsible white space.
+        let NodeData::Element(_) = &node.data else {
+            continue;
+        };
         let defaults: taffy::Style = taffy::Style::default();
         if node.display != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
@@ -363,9 +363,9 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     if low > 0.0 && fits(low) {
         return low;
     }
-    let Some(mut high) = stacked_height(items, usize::MAX) else {
-        return low;
-    };
+    // One unbounded column takes a piece per box, which the unlimited
+    // budget always allows.
+    let mut high = stacked_height(items, usize::MAX).unwrap_or(low);
     // Each probe places the children once; the bound keeps the search linear
     // in the number of children.
     for _ in 0..24 {
@@ -437,12 +437,6 @@ pub(super) fn layout(
                 vertical_margins_are_collapsible: TaffyLine::FALSE,
             },
         );
-        if tree.fragment_tree.limit_exceeded
-            || !output.size.width.is_finite()
-            || !output.size.height.is_finite()
-        {
-            return None;
-        }
         sizes.push(output.size);
     }
     let items: Vec<Item> = children

@@ -249,3 +249,26 @@ fn a_box_that_must_stay_whole_stops_the_placement_only_when_cut() {
     );
     assert!(place(&[whole(1.0), split(3.0)], 1.0, 8).is_ok());
 }
+
+#[test]
+fn self_collapsing_boxes_and_skipped_columns_count_toward_the_limits() {
+    // Every box takes a piece, even one with no block size.
+    assert_eq!(
+        place(&[split(0.0), split(0.0)], 1.0, 1).err(),
+        Some(super::Stop::Exhausted)
+    );
+    // A gap taller than the column moves the box to a column past the limit.
+    let gapped = Item {
+        margin_top: 5.0,
+        ..split(1.0)
+    };
+    assert_eq!(
+        super::place_within(&[gapped], 1.0, usize::MAX, 1, true).err(),
+        Some(super::Stop::Exhausted)
+    );
+}
+
+#[test]
+fn balancing_boxes_with_no_block_size_gives_empty_columns() {
+    assert_eq!(balanced_height(&[split(0.0)], 2, usize::MAX), 0.0);
+}

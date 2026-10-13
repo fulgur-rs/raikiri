@@ -2358,3 +2358,66 @@ fn a_shrunk_column_flex_item_bounds_its_columns_inside_its_padding() {
         .collect();
     assert_eq!(heights, vec![80.0, 80.0, 80.0, 60.0]);
 }
+
+#[test]
+fn blocks_without_lines_skip_children_that_generate_no_box() {
+    let lineless_children = |children: &[&str], text: Option<&str>| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:100px;columns:2;column-gap:0"),
+        );
+        doc.append_comment(Some(parent), "skipped");
+        if let Some(text) = text {
+            doc.append_text(parent, text);
+        }
+        let ids: Vec<usize> = children
+            .iter()
+            .map(|style| doc.append_element(Some(parent), "div", Style::default(), Some(*style)))
+            .collect();
+        layout_nested_flex_float_fixture(&mut doc);
+        (super::lineless::supported(&doc, parent), ids)
+    };
+    // A box with no display and a comment are skipped, and a minimum height
+    // makes the other block one without lines.
+    let (found, ids) = lineless_children(&["display:none", "display:block;min-height:10px"], None);
+    assert_eq!(found, Some(vec![ids[1]]));
+    // An absolutely positioned child is placed outside the column stream.
+    let (found, _) = lineless_children(
+        &[
+            "display:block;height:10px",
+            "display:block;position:absolute;height:10px",
+        ],
+        None,
+    );
+    assert_eq!(found, None);
+    // Text that renders keeps the other strategies.
+    let (found, _) = lineless_children(&["display:block;height:10px"], Some("text"));
+    assert_eq!(found, None);
+}
+
+#[test]
+fn a_zero_height_multicol_keeps_its_blocks_without_lines_unsliced() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;columns:2;column-gap:0"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 0.0);
+    assert!(fragment_rects(&doc, child).len() <= 1);
+}
