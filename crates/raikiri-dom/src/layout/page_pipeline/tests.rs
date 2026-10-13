@@ -11732,3 +11732,109 @@ fn a_float_in_another_formatting_context_ignores_a_moved_float() {
     // is not held below it.
     assert_eq!(ys, vec![100.0, 60.0]);
 }
+
+#[test]
+fn an_avoiding_header_group_that_is_not_repeated_moves_as_a_whole() {
+    let mut cells = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:70px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:0"),
+        );
+        let head = doc.append_element(
+            Some(table),
+            "thead",
+            Style::default(),
+            Some("display:table-header-group;break-inside:avoid"),
+        );
+        cells.push(append_row(doc, head, "", 20.0).1);
+        cells.push(append_row(doc, head, "", 20.0).1);
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        cells.push(append_row(doc, group, "", 20.0).1);
+    });
+    // The 40px header is too tall to repeat on 100px pages.
+    let ys: Vec<f32> = cells.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 120.0, 140.0]);
+}
+
+#[test]
+fn a_float_after_a_moved_float_in_another_context_keeps_the_first_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:50px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:10px;height:60px;break-inside:avoid"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;clear:left;width:20px;height:20px"),
+        ));
+    });
+    // The flow-root's moved float does not replace the body float's edges.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_nested_float_follows_a_moved_float_in_its_context() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("float:left;clear:left;width:20px;height:20px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}

@@ -1612,13 +1612,14 @@ css/mediaqueries/relative-units-001.html
 css/mediaqueries/relative-units-002.html
 css/mediaqueries/relative-units-003.html
 css/mediaqueries/relative-units-004.html
-# --- CSS2 pagination break-inside: avoid PASS-only (+10) ---
+# --- CSS2 pagination break-inside: avoid PASS-only (+11) ---
 css/CSS2/pagination/block-page-break-inside-avoid-12-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-13-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-4-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-7-print.html
 css/CSS2/pagination/block-page-break-inside-avoid-8-print.html
 css/CSS2/pagination/float-page-break-inside-avoid-7-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-5-print.html

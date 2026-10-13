@@ -3687,6 +3687,16 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // Grid items in other tracks do not follow a moved item
                     // in block flow, so grid content keeps its own handling.
                     && !has_side_by_side_ancestor(document, cascade, node_id, body_id);
+                // A nested float follows an earlier float that moved in its
+                // formatting context (CSS 2.1 §9.5.1), so it is a candidate
+                // like a float that is the body's child.
+                let nested_float_candidate = is_float
+                    && participates_in_flow
+                    && !direct_body_child
+                    && !inside_table
+                    && !inside_flex
+                    && !out_of_flow_subtree
+                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id);
                 let is_break_candidate = !is_body
                     && computed.display != DisplayValue::Contents
                     && !inside_float
@@ -3694,6 +3704,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         && direct_body_child
                         && (explicit_page_name.is_none() || inline_level))
                         || nested_avoid_candidate
+                        || nested_float_candidate
                         || is_tall_direct_absolute
                         || table_row_candidate
                         || flex_item_candidate
@@ -3827,15 +3838,19 @@ pub fn layout_pages_with_page_geometry_and_control(
     // first row of a table without a caption, its offset below the table's
     // top: the table's spacing and borders above it move with it.
     let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
+    // A header group repeated on each page is placed by the repetition
+    // path; any other header group avoids breaks like a body group.
     let avoiding_row_group = |group: usize| {
-        matches!(
+        (matches!(
             cascade.computed[group].display,
             DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
-        ) && matches!(
-            cascade.computed[group].break_inside,
-            raikiri_style::property::BreakInside::Avoid
-                | raikiri_style::property::BreakInside::AvoidPage
-        )
+        ) || (cascade.computed[group].display == DisplayValue::TableHeaderGroup
+            && !table_headers.headers.contains_key(&group)))
+            && matches!(
+                cascade.computed[group].break_inside,
+                raikiri_style::property::BreakInside::Avoid
+                    | raikiri_style::property::BreakInside::AvoidPage
+            )
     };
     if candidates.iter().any(|candidate| {
         candidate.is_table_row && parent_of[candidate.node_id].is_some_and(avoiding_row_group)
@@ -4016,13 +4031,12 @@ pub fn layout_pages_with_page_geometry_and_control(
     let mut pending_float_shift: Option<(usize, f32, u32)> = None;
     let mut later_float_shift = 0.0_f32;
     // The page-flow outer top and bottom of the last moved float on each
-    // side (left, right): a later float needs to move only as far as it
-    // would otherwise start above the bottom of one on its own side, or
-    // above the top of one on the other side unless it clears that side.
-    let mut later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
-    // The formatting context those floats are placed in: only floats and
-    // clearance in the same one keep below them.
-    let mut later_float_context = body_id;
+    // side (left, right), for each formatting context the floats were
+    // placed in: a later float in the same context needs to move only as
+    // far as it would otherwise start above the bottom of one on its own
+    // side, or above the top of one on the other side unless it clears
+    // that side. Floats in other contexts do not interact.
+    let mut later_float_edges: HashMap<usize, [(f32, f32); 2]> = HashMap::new();
     // A nested box that moved inside an ancestor whose height cannot grow
     // to hold it overflows that ancestor: the part of the shift the
     // ancestor did not absorb ends where its subtree does, and the page the
@@ -4200,10 +4214,15 @@ pub fn layout_pages_with_page_geometry_and_control(
             // larger budget, which the other side's floor may still need.
             later_float_shift = later_float_shift.max(delta);
         }
-        if later_float_shift != 0.0
-            && pending_float_shift.is_none()
-            && float_context_root(document, cascade, node_id, body_id) == later_float_context
-        {
+        let float_edges = (later_float_shift != 0.0 && pending_float_shift.is_none())
+            .then(|| {
+                let context = float_context_root(document, cascade, node_id, body_id);
+                later_float_edges
+                    .get(&context)
+                    .map(|edges| (context, *edges))
+            })
+            .flatten();
+        if let Some((float_context, float_edges)) = float_edges {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
             let computed = &cascade.computed[node_id];
             // A later float's outer top stays below a float on its own side
@@ -4212,7 +4231,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             // (CSS 2.1 §9.5.2).
             let floor = [FloatValue::Left, FloatValue::Right]
                 .into_iter()
-                .zip(later_float_edges)
+                .zip(float_edges)
                 .filter_map(|(side, (top, bottom))| {
                     let clears = clears_float_side(computed.clear, side);
                     if floating {
@@ -4243,7 +4262,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                     if let Some(index) = float_side_index(cascade.computed[node_id].float) {
                         let layout = &document.nodes[node_id].unrounded_layout;
                         let top = candidate.raw_y + flow_shift;
-                        later_float_edges[index] = (
+                        later_float_edges
+                            .entry(float_context)
+                            .or_insert(NO_FLOAT_EDGES)[index] = (
                             top - layout.margin.top,
                             top + layout.size.height + layout.margin.bottom,
                         );
@@ -4948,11 +4969,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // A clearing follower stays below the margin box.
                         if let Some(index) = float_side_index(computed.float) {
                             let context = float_context_root(document, cascade, node_id, body_id);
-                            if context != later_float_context {
-                                later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
-                                later_float_context = context;
-                            }
-                            later_float_edges[index] = (
+                            later_float_edges.entry(context).or_insert(NO_FLOAT_EDGES)[index] = (
                                 node_target_y - margin_top,
                                 node_target_y + height + margin_bottom,
                             );
@@ -4961,7 +4978,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
                         later_float_shift = 0.0;
-                        later_float_edges = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
+                        later_float_edges.clear();
                     }
                     effective_y += node_delta;
                 }
@@ -5574,6 +5591,9 @@ fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize
     }
     Some(node_id)
 }
+
+/// No moved float on either side.
+const NO_FLOAT_EDGES: [(f32, f32); 2] = [(f32::NEG_INFINITY, f32::NEG_INFINITY); 2];
 
 /// The box whose block formatting context places the floats and clearance
 /// of `node_id`: its nearest ancestor that establishes an independent one
