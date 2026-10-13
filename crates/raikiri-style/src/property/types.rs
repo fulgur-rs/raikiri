@@ -3519,6 +3519,31 @@ pub enum FlexBasisValue {
     /// `<length-percentage [0,∞]>` — the same non-negative constraint as `width`
     /// (see the [`parse_flex_basis`] doc).
     Length(Length),
+    /// A mixed-unit `calc()` such as `calc(50% - 10px)`, kept until the flex
+    /// container's inner main size is known and clamped to `[0,∞]` there.
+    Calc(CalcLengthPercentage),
+    /// A mixed-unit `calc()` with font-relative or viewport terms, absolutized
+    /// at computed-value time into [`Self::Calc`]'s computed counterpart.
+    RelativeCalc(RelativeCalcLengthPercentage),
+}
+
+impl FlexBasisValue {
+    /// The value of a mixed-unit `calc()`. A math function is clamped to the
+    /// `[0,∞]` range rather than rejected (CSS Values 4 "Range Checking",
+    /// <https://www.w3.org/TR/css-values-4/#calc-range>); one that still
+    /// depends on a percentage basis, a font or a viewport is clamped when it
+    /// is resolved.
+    pub(crate) fn from_non_negative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match LengthOrAuto::from_relative_calc(value) {
+            LengthOrAuto::Length(Length::Px(px)) => Self::Length(Length::Px(px.max(0.0))),
+            LengthOrAuto::Length(Length::Percent(percent)) => {
+                Self::Length(Length::Percent(percent.max(0.0)))
+            }
+            LengthOrAuto::Length(length) => Self::Length(length),
+            LengthOrAuto::Calc(calc) => Self::Calc(calc),
+            _ => Self::RelativeCalc(value),
+        }
+    }
 }
 
 /// The specified value of the `flex` shorthand.

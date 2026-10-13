@@ -125,6 +125,7 @@ impl PageLengthBasis<'_> {
             ComputedFlexBasis::FitContent => FlexBasisValue::FitContent,
             ComputedFlexBasis::Px(v) => FlexBasisValue::Length(Length::Px(v)),
             ComputedFlexBasis::Percent(p) => FlexBasisValue::Length(Length::Percent(p)),
+            ComputedFlexBasis::Calc(calc) => FlexBasisValue::Calc(calc),
         }
     }
     /// `background-size: <bg-size>` — same round-trip as [`Self::lpa`], applied

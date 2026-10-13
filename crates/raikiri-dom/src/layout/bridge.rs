@@ -281,7 +281,7 @@ pub(crate) fn apply_computed_to_style(
         bridge_min_max_size(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
-        bridge_flex(style, cv, &mut doc.layout_warnings);
+        bridge_flex(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_alignment(style, cv);
         bridge_gap(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_grid(style, cv, &mut doc.layout_warnings);
@@ -854,7 +854,12 @@ fn bridge_box_sizing(style: &mut taffy::Style, cv: &ComputedValues) {
 ///
 /// - `Content` → [`taffy::Dimension::content`] (the 0.14 flex-basis-specific
 ///   keyword, mapped without changing its meaning).
-fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
+fn bridge_flex(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
     style.flex_direction = match cv.flex_direction {
         FlexDirectionValue::Row => TaffyFlexDirection::Row,
         FlexDirectionValue::RowReverse => TaffyFlexDirection::RowReverse,
@@ -896,6 +901,9 @@ fn bridge_flex(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
         ComputedFlexBasis::Px(v) => taffy::Dimension::length(sanitize_taffy(v, "flex-basis", diag)),
         ComputedFlexBasis::Percent(p) => {
             taffy::Dimension::percent(sanitize_taffy(p / 100.0, "flex-basis", diag))
+        }
+        ComputedFlexBasis::Calc(value) => {
+            taffy::Dimension::calc(crate::taffy_impl::push_calc(calc_values, value, true))
         }
     };
 }

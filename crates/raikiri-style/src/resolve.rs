@@ -584,6 +584,9 @@ pub enum ComputedFlexBasis {
     MaxContent,
     /// The bare `fit-content` keyword — same approximation.
     FitContent,
+    /// A mixed percentage and length, resolved against the flex container's
+    /// inner main size at used-value time.
+    Calc(CalcLengthPercentage),
 }
 
 /// Computed `row-gap` / `column-gap`.
@@ -2990,19 +2993,33 @@ pub fn resolve_flex_basis(
         FlexBasisValue::FitContent => ComputedFlexBasis::FitContent,
         FlexBasisValue::Auto => ComputedFlexBasis::Auto,
         FlexBasisValue::Length(len) => {
-            match resolve_length_percentage_or_auto(
-                LengthOrAuto::Length(len),
-                font_size,
-                own_line_height,
-                ctx,
-            ) {
-                ComputedLengthPercentageOrAuto::Auto => ComputedFlexBasis::Auto,
-                ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
-                ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p),
-                ComputedLengthPercentageOrAuto::Calc(_)
-                | ComputedLengthPercentageOrAuto::MinContent => ComputedFlexBasis::Auto, // cov:ignore: only the width / inline-size parser produces min-content
-            }
+            computed_flex_basis(LengthOrAuto::Length(len), font_size, own_line_height, ctx)
         }
+        FlexBasisValue::Calc(calc) => {
+            computed_flex_basis(LengthOrAuto::Calc(calc), font_size, own_line_height, ctx)
+        }
+        FlexBasisValue::RelativeCalc(calc) => computed_flex_basis(
+            LengthOrAuto::RelativeCalc(calc),
+            font_size,
+            own_line_height,
+            ctx,
+        ),
+    }
+}
+
+/// The `<'width'>` branch of [`resolve_flex_basis`].
+fn computed_flex_basis(
+    specified: LengthOrAuto,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedFlexBasis {
+    match resolve_size_length_percentage_or_auto(specified, font_size, own_line_height, ctx) {
+        ComputedLengthPercentageOrAuto::Auto => ComputedFlexBasis::Auto,
+        ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
+        ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p),
+        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedFlexBasis::Calc(calc),
+        ComputedLengthPercentageOrAuto::MinContent => ComputedFlexBasis::Auto, // cov:ignore: only the width / inline-size parser produces min-content
     }
 }
 

@@ -1121,7 +1121,7 @@ fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
         cv.flex_direction = direction;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut diag);
+        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
@@ -1139,7 +1139,7 @@ fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
         cv.flex_wrap = wrap;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut diag);
+        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
         assert_eq!(style.flex_wrap, expected, "flex-wrap: {wrap:?}");
     }
 }
@@ -1155,7 +1155,7 @@ fn bridge_flex_absolutizes_flex_basis_px_and_percent() {
     cv.flex_basis = ComputedFlexBasis::Px(40.0);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_flex(&mut style, &cv, &mut diag);
+    bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(style.flex_basis, Dimension::length(40.0));
 
     // `ComputedFlexBasis::Percent` holds the authored number (`50.0`
@@ -1167,7 +1167,7 @@ fn bridge_flex_absolutizes_flex_basis_px_and_percent() {
     cv.flex_basis = ComputedFlexBasis::Percent(50.0);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_flex(&mut style, &cv, &mut diag);
+    bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(style.flex_basis, Dimension::percent(0.5));
 }
 
@@ -1186,7 +1186,7 @@ fn bridge_flex_maps_intrinsic_basis_keywords_to_taffy_dimensions() {
         cv.flex_basis = value;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut diag);
+        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
         assert_eq!(style.flex_basis, expected);
         assert!(diag.is_empty());
     }

@@ -4746,6 +4746,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | FlexBasisValue::MinContent
             | FlexBasisValue::MaxContent
             | FlexBasisValue::FitContent => None,
+            FlexBasisValue::Calc(_) => Some("calc()"),
+            FlexBasisValue::RelativeCalc(_) => Some("FlexBasisValue::RelativeCalc"),
             FlexBasisValue::Length(l) => length(l),
         }
     }
