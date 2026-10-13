@@ -5528,14 +5528,14 @@ fn float_side_index(side: FloatValue) -> Option<usize> {
     }
 }
 
-/// Whether `clear` requires a box to start below a float on `side`. The
-/// logical values are taken as clearing either side.
+/// Whether `clear` requires a box to start below a float on `side`. Layout
+/// does not apply the logical values, so neither does pagination.
 fn clears_float_side(clear: ClearValue, side: FloatValue) -> bool {
     match clear {
-        ClearValue::None => false,
         ClearValue::Left => side == FloatValue::Left,
         ClearValue::Right => side == FloatValue::Right,
-        _ => true,
+        ClearValue::Both => true,
+        _ => false,
     }
 }
 

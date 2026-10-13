@@ -10808,6 +10808,9 @@ fn a_clearing_block_stays_below_the_moved_floats_bottom() {
         ("left", "both"),
         ("right", "right"),
         ("right", "left"),
+        ("left", "inline-start"),
+        ("right", "inline-start"),
+        ("right", "inline-end"),
     ] {
         let mut ids = Vec::new();
         let (doc, _) = paged_body(|doc, body| {
@@ -10825,8 +10828,9 @@ fn a_clearing_block_stays_below_the_moved_floats_bottom() {
             }
         });
         let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
-        // A block clearing only the other side keeps its place.
-        let expected = if side == "right" && clear == "left" {
+        // A block clearing only the other side keeps its place, and so does
+        // one with a logical `clear`, which layout does not apply either.
+        let expected = if side == "right" && clear == "left" || clear.starts_with("inline") {
             60.0
         } else {
             160.0
