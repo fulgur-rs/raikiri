@@ -216,6 +216,23 @@ fn build_page_scene_populates_metadata_from_hello_world() {
     assert_eq!(scene.page_metadata.orientation, Orientation::Portrait);
 }
 
+/// A root hidden by a later cascade generates no boxes, so the scene leaves
+/// out what an earlier layout placed under it.
+#[test]
+fn build_page_scene_is_empty_for_a_hidden_root() {
+    let (dom, _) = hello_world_post_layout();
+    let opts = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let hidden = parse(&b"<html style='display:none'><p>Hi</p>"[..], &opts).expect("parse Ok");
+    let cascade = build_cascaded(&hidden).expect("the cascade succeeds");
+    let scene = build_page_scene(&dom, &cascade, PageBox::A4);
+    assert!(scene.node_ids.is_empty());
+    assert!(scene.fragments.is_empty());
+}
+
 /// Check that build_page_scene populates `drawables` with Element node →
 /// `BlockEntry` and Text node → `ParagraphEntry` mappings. Regression
 /// check: it also verifies that the production path exercises the

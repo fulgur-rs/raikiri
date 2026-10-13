@@ -467,7 +467,11 @@ pub fn build_page_scene_for_page_named(
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
     let mut drawables = PageDrawables::default();
 
-    if let Some(body_idx) = body_arena_idx {
+    // A root with `display: none` generates no boxes, whatever an earlier
+    // layout left on its descendants.
+    let root_generates_box =
+        cascade.root_element_computed().display != raikiri_style::property::DisplayValue::None;
+    if let Some(body_idx) = body_arena_idx.filter(|_| root_generates_box) {
         // DFS from body, matching paint_document's traversal order.  Absolute
         // y stays in the shared document coordinate space until the fragment
         // is committed, which makes page intersection independent of nesting.

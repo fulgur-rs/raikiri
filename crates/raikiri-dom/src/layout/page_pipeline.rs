@@ -2494,6 +2494,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 }
             } else if node.kind() == NodeKind::Element
                 && node.is_in_document()
+                && !node.is_non_rendered_html_element()
                 && (cascade.computed[child].display == DisplayValue::Contents
                     || cascade.computed[child].display == DisplayValue::Inline
                         && in_flow(document, child)

@@ -1761,6 +1761,50 @@ fn pipeline_clears_a_named_page_after_a_float_on_the_parent_page() {
 }
 
 #[test]
+fn pipeline_clears_a_named_page_after_a_non_rendered_element() {
+    // A `style` element is never rendered, even as `display: contents`, so
+    // the box after it still changes page from page `b` and starts the new
+    // page clear of the float escaping page `b`.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'><div class='f'></div>a</div>\
+         <style style='display:contents'>x</style>\
+         <div style='display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
+fn pipeline_ignores_running_elements_between_boxes_on_one_named_page() {
+    // A running element generates no box where it stands, so the boxes on
+    // page `b` around it share one page and the second stays beside the
+    // first one's float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'><div class='f'></div>a</div>\
+         <div style='position:running(header)'>h</div>\
+         <div style='page:b; display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let block = document
+        .page_fragments(0)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the page");
+    assert_eq!(block.rect().width, 300.0);
+}
+
+#[test]
 fn pipeline_ignores_forced_breaks_on_inline_boxes() {
     // Pagination does not break after an inline box, so the block after it
     // stays beside the float on the same page.
