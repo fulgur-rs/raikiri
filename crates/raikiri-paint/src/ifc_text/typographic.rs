@@ -67,9 +67,14 @@ pub(super) fn background_slices(
 struct Group {
     scene: Scene,
     opacity: f32,
+    level: i32,
     parent: Option<usize>,
-    children: Vec<(usize, usize, Scene)>,
+    children: Vec<Child>,
 }
+
+/// A composited group placed in its parent's paint: the parent command it
+/// precedes, its stack level, its allocation order, and its commands.
+type Child = (usize, i32, usize, Scene);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 struct FragmentKey {
@@ -175,6 +180,9 @@ impl TypographicPaint {
                             paint.groups.push(Group {
                                 scene: Scene::new(),
                                 opacity,
+                                level: raikiri_dom::paint_rules::pseudo_stack_level(
+                                    cascade, key.node,
+                                ),
                                 parent: group,
                                 children: Vec::new(),
                             });
@@ -297,8 +305,11 @@ impl TypographicPaint {
             // the other stacking contexts with `z-index: auto` of the
             // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8).
             let parent = group.parent;
+            let level = group.level;
             let insertion = self.target(parent).commands.len();
-            let child = (insertion, index, composite);
+            // Groups at the same place paint by stack level, then in tree
+            // order.
+            let child = (insertion, level, index, composite);
             match parent {
                 Some(parent) => {
                     self.groups[parent].children.push(child);
@@ -342,25 +353,25 @@ fn cached_group(
     group
 }
 
-fn merge_children(scene: Scene, mut children: Vec<(usize, usize, Scene)>) -> Scene {
+fn merge_children(scene: Scene, mut children: Vec<Child>) -> Scene {
     if children.is_empty() {
         return scene;
     }
-    children.sort_by_key(|(position, order, _)| (*position, *order));
+    children.sort_by_key(|(position, level, order, _)| (*position, *level, *order));
     let mut children = children.into_iter().peekable();
     let mut result = Scene::new();
     for (index, command) in scene.commands.into_iter().enumerate() {
         while children
             .peek()
-            .is_some_and(|(position, _, _)| *position == index)
+            .is_some_and(|(position, _, _, _)| *position == index)
         {
-            if let Some((_, _, child)) = children.next() {
+            if let Some((_, _, _, child)) = children.next() {
                 result.commands.extend(child.commands);
             }
         }
         result.commands.push(command);
     }
-    for (_, _, child) in children {
+    for (_, _, _, child) in children {
         result.commands.extend(child.commands);
     }
     result

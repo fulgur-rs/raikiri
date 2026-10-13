@@ -249,6 +249,19 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
     .flatten()
 }
 
+/// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
+/// composites at among the other groups of its paragraph: the `z-index` of a
+/// relatively positioned pseudo-element, and 0 otherwise, the level of the
+/// non-positioned groups (CSS 2.1 §9.9.1, Appendix E steps 8 and 9).
+pub fn pseudo_stack_level(cascade: &CascadeResult, id: usize) -> i32 {
+    crate::generated_content::computed_for_id(cascade, id).map_or(0, |cv| {
+        match (&cv.position, cv.z_index) {
+            (PositionValue::Relative, ZIndexValue::Integer(level)) => level,
+            _ => 0,
+        }
+    })
+}
+
 /// Whether an in-flow block's inline content (its lines and the atomic
 /// inlines and floats laid out beside them) waits for the enclosing layer.
 ///

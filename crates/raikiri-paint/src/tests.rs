@@ -2425,3 +2425,24 @@ fn first_letter_of_a_translucent_before_paints_in_its_group() {
         "{kinds:?}"
     );
 }
+
+/// Translucent pseudo-elements composite by stack level, not tree order.
+#[test]
+fn translucent_pseudo_groups_follow_their_stack_level() {
+    let scene = painted_html(
+        br#"<html><head><style>p::before{content:'AB';position:relative;z-index:2;opacity:.5} p::after{content:'C';position:relative;z-index:1;opacity:.25}</style></head><body><p>c</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.25",
+            "glyphs 1",
+            "pop",
+            "push 0.5",
+            "glyphs 2",
+            "pop"
+        ]
+    );
+}
