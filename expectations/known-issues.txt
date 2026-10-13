@@ -60,6 +60,7 @@ css/css-backgrounds/background-clip/clip-text-flex.html | background-clip:text g
 css/css-backgrounds/background-clip/clip-text-fragmentation.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-inline-block-child.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-inline.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
+css/css-backgrounds/background-clip/clip-text-multi-line.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-multiline-background-image.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-multiline-linebreak.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
 css/css-backgrounds/background-clip/clip-text-on-body-not-propagated-to-root.html | background-clip:text glyph-outline clipping not implemented (CSS Backgrounds 4 §2.6, requires skrifa→BezPath→push_clip_layer)
@@ -357,3 +358,48 @@ css/css-grid/parsing/grid-auto-flow-valid.html | 4/7 assertions passed; remainin
 css/css-grid/parsing/grid-column-shorthand.html | Static parsing runner collects no computed-style helper calls; requires live testharness execution
 css/css-grid/parsing/grid-row-shorthand.html | Static parsing runner collects no computed-style helper calls; requires live testharness execution
 css/css-grid/parsing/grid-template-areas-valid.html | 6/9 assertions passed; remaining serialization/value support needs triage
+
+# --- Font-dependent reftests under the bundled WPT fonts (2026-10-13) ---
+# The harness maps every generic family to the bundled fonts, with Ahem
+# first. These tests size boxes in em but rely on a proportional default
+# font: with Ahem, a word such as "three" is 5em wide, so its min-content
+# size exceeds the box the reference draws. Chromium at the same WPT pin,
+# with fontconfig limited to the bundled fonts and Ahem first, produces the
+# same pixel mismatches (2,432 to 15,360 pixels), while it matches with its
+# usual system fonts. The mismatch is therefore the font, not the layout.
+css/css-text/text-align/text-align-last-010.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-text/text-align/text-align-last-011.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+# With Ahem, the 80px sentence in these two tests wraps to more lines than
+# fit on the 800x600 page, so the paged render has a second page that the
+# one-page reference lacks. Chromium's viewport screenshot matches.
+css/css-backgrounds/background-clip/clip-text-on-body-propagated-to-root.html | Font-dependent: with Ahem the text overflows onto a second page the reference does not have
+css/css-backgrounds/background-clip/clip-text-on-root.html | Font-dependent: with Ahem the text overflows onto a second page the reference does not have
+css/css-flexbox/abspos/position-absolute-005.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-0-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-0-N.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-1-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-1-N.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-1-Npercent-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-1-auto-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-N-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-N-N.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-N-Npercent-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-N-auto-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-0-auto.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-0-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-1-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-1-Npercent-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-1-auto-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-N-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-N-Npercent-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-1-N-auto-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-0-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-1-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-1-Npercent-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-1-auto-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-N-N-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-N-Npercent-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-N-N-auto-shrink.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-flexbox/flexbox_flex-initial.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-text/white-space/text-wrap-nowrap-001.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
+css/css-text/letter-spacing/letter-spacing-bengali-yaphala-001.html | Font-dependent: mismatches in Chromium too when the default font is Ahem
