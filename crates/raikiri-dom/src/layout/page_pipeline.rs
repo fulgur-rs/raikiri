@@ -499,7 +499,21 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
             (parent_size.height - border_top - border_bottom - padding_top - padding_bottom)
                 .max(0.0);
         let child_layout = document.nodes[child_id].unrounded_layout;
-        let margin = child_layout.margin;
+        // With every inset `auto`, auto margins are zero (CSS 2.1 §10.3.7,
+        // §10.6.4).
+        let auto = |side: &ComputedLengthPercentageOrAuto, used: f32| {
+            if matches!(side, ComputedLengthPercentageOrAuto::Auto) {
+                0.0
+            } else {
+                used
+            }
+        };
+        let margin = taffy::Rect {
+            left: auto(&child.margin.left, child_layout.margin.left),
+            right: auto(&child.margin.right, child_layout.margin.right),
+            top: auto(&child.margin.top, child_layout.margin.top),
+            bottom: auto(&child.margin.bottom, child_layout.margin.bottom),
+        };
         let free_width = content_width - child_layout.size.width - margin.left - margin.right;
         let justify = align_offset(child.justify_self, parent.justify_items, free_width);
         // The inline start of a right-to-left container is its right edge.

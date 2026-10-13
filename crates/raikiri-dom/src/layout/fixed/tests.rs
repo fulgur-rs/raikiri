@@ -424,6 +424,8 @@ fn grid_static_positions_follow_justify_self_without_a_relayout() {
         ("justify-items:end", "justify-self:auto", 250.0),
         ("justify-items:stretch", "", 100.0),
         ("justify-items:center", "margin-left:10px", 180.0),
+        // Auto margins are zero when every inset is auto.
+        ("", "margin-left:auto", 100.0),
     ] {
         let (doc, item) = laid_out(
             "margin-left:100px;width:200px",
