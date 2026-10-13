@@ -594,12 +594,7 @@ fn cascade_page_for_query(
     media_context: &MediaContext,
     query: &PageContextQuery,
 ) -> PageCascadeResult {
-    cascade_page_with_media_context(
-        tree,
-        query,
-        PageInheritance::FromRoot(base.root_element_computed()),
-        media_context,
-    )
+    base.cascade_page_from_root(tree, query, media_context)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

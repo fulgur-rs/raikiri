@@ -36,7 +36,7 @@ use crate::counter_style::CounterStyleRegistry;
 use crate::error::CascadeError;
 use crate::media::MediaContext;
 use crate::page::{
-    PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_media_context,
+    PageCascadeResult, PageContextQuery, PageInheritance, cascade_page_with_normal_line_height,
 };
 use crate::property::{CssColor, PropertyKey, WritingMode};
 use crate::ruletree::RuleTree;
@@ -215,6 +215,24 @@ impl CascadeResult {
         self.normal_line_height.as_ref().map(|source| &*source.0)
     }
 
+    /// The `@page` cascade for `query`, inheriting from this result's root
+    /// element and measuring `line-height: normal` with the measurer this
+    /// cascade ran with.
+    pub fn cascade_page_from_root(
+        &self,
+        rule_tree: &RuleTree,
+        query: &PageContextQuery,
+        media_context: &MediaContext,
+    ) -> PageCascadeResult {
+        cascade_page_with_normal_line_height(
+            rule_tree,
+            query,
+            PageInheritance::FromRoot(self.root_element_computed()),
+            media_context,
+            self.normal_line_height(),
+        )
+    }
+
     /// Explicit SVG paint properties after winner selection and defaulting.
     ///
     /// Read concrete values from [`Self::computed`]. Properties marked
@@ -269,9 +287,7 @@ impl CascadeResult {
     /// back to the Document node's own computed values. The element cascade
     /// does not depend on the page query, so a caller holding the same
     /// [`RuleTree`] and [`MediaContext`] can cascade another page query with
-    /// [`cascade_page_with_media_context`] and
-    /// `PageInheritance::FromRoot(result.root_element_computed())` instead of
-    /// rerunning the whole cascade.
+    /// [`Self::cascade_page_from_root`] instead of rerunning the whole cascade.
     ///
     /// # Panics
     ///
@@ -283,8 +299,7 @@ impl CascadeResult {
     /// Replace the `@page` cascade with one for another page query.
     ///
     /// The element results are unchanged; `page` is expected to come from
-    /// [`cascade_page_with_media_context`] inheriting from
-    /// [`Self::root_element_computed`] with the same [`RuleTree`] and
+    /// [`Self::cascade_page_from_root`] with the same [`RuleTree`] and
     /// [`MediaContext`]. The page context is a layout input, so the result
     /// gets a fresh [`Self::generation`] and generation-keyed caches treat it
     /// as a new cascade.
@@ -485,7 +500,14 @@ pub fn cascade_with_options<D: StyleDom>(
             ..WalkOptions::default()
         },
     )?;
-    let mut result = finish(dom, rule_tree, page_query, media_context, outputs);
+    let mut result = finish(
+        dom,
+        rule_tree,
+        page_query,
+        media_context,
+        outputs,
+        options.normal_line_height.as_ref().map(|source| &*source.0),
+    );
     result.normal_line_height = options.normal_line_height.clone();
     Ok(result)
 }
@@ -504,13 +526,15 @@ fn finish<D: StyleDom>(
     page_query: &PageContextQuery,
     media_context: &MediaContext,
     outputs: WalkOutputs,
+    normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
 ) -> CascadeResult {
     let root_element_index = page_inheritance_root_index(dom, outputs.computed.len());
-    let page = cascade_page_with_media_context(
+    let page = cascade_page_with_normal_line_height(
         rule_tree,
         page_query,
         PageInheritance::FromRoot(&outputs.computed[root_element_index]),
         media_context,
+        normal_line_height,
     );
     let generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     CascadeResult {

@@ -1642,8 +1642,65 @@ fn cascade_page_lh_scales_the_roots_measured_normal_line_height() {
 #[test]
 fn cascade_page_lh_leaves_normal_unmeasured_for_another_font() {
     let root = root_with_measured_normal();
-    let result = page("@page { font-family: serif; padding: 1lh }", &root);
+    let result = page("@page { font-family: monospace; padding: 1lh }", &root);
     assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
+}
+
+/// A page font declared with the root's resolved values is the root's font,
+/// so the root's measured `normal` still applies.
+#[test]
+fn cascade_page_lh_keeps_the_roots_normal_for_a_font_declared_equal() {
+    let root = root_with_measured_normal();
+    for css in [
+        "@page { font-family: inherit; padding: 1lh }",
+        "@page { font-family: serif; padding: 1lh }",
+        "@page { font-weight: normal; font-style: inherit; padding: 1lh }",
+    ] {
+        let result = page(css, &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(24.0)), "{css}");
+    }
+}
+
+/// Measures `line-height: normal` as 1.5 times the font size, or 2 times
+/// for a bold font.
+struct PageNormal;
+
+impl NormalLineHeight for PageNormal {
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<ComputedLength> {
+        let factor = if font.weight >= 700.0 { 2.0 } else { 1.5 };
+        Some(ComputedLength(font.size.0 * factor))
+    }
+}
+
+fn page_measuring_normal(css: &str, root: &ComputedValues) -> PageCascadeResult {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(css, Origin::Author);
+    cascade_page_with_normal_line_height(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(root),
+        &MediaContext::default(),
+        Some(&PageNormal),
+    )
+}
+
+#[test]
+fn cascade_page_lh_measures_normal_for_another_font() {
+    let root = root_with_measured_normal();
+    let result = page_measuring_normal("@page { font-weight: bold; padding: 1lh }", &root);
+    assert_eq!(padding_top_of(&result), Some(Length::Px(40.0)));
+}
+
+/// A root with a non-`normal` line height has no measured `normal`, so a page
+/// context that switches back to `normal` measures the root's font itself.
+#[test]
+fn cascade_page_lh_measures_normal_when_the_root_uses_another_line_height() {
+    let root = ComputedValues {
+        line_height: ComputedLineHeight::Number(2.0),
+        ..root_with_font_size(20.0)
+    };
+    let result = page_measuring_normal("@page { line-height: normal; padding: 1lh }", &root);
+    assert_eq!(padding_top_of(&result), Some(Length::Px(30.0)));
 }
 
 /// Regression pin, `@page` path:

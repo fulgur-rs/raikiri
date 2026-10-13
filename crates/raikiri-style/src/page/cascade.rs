@@ -6,7 +6,7 @@ use smol_str::SmolStr;
 use crate::Atom;
 use crate::cascade::{
     ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_css_wide_color_font,
-    resolve_custom_property_environment, resolve_page_deferred_value,
+    resolve_custom_property_environment, resolve_page_deferred_value, resolve_relative_weight,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::media::MediaContext;
@@ -15,7 +15,8 @@ use crate::property::{
     OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
 };
 use crate::resolve::{
-    ComputedLength, ResolveContext, resolve_length, resolve_line_height, used_line_height_length_or,
+    ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
+    resolve_line_height, used_line_height_length_or,
 };
 use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
@@ -916,6 +917,19 @@ pub fn cascade_page_with_media_context(
     inheritance: PageInheritance<'_>,
     media_context: &MediaContext,
 ) -> PageCascadeResult {
+    cascade_page_with_normal_line_height(rule_tree, query, inheritance, media_context, None)
+}
+
+/// [`cascade_page_with_media_context`], measuring `line-height: normal` with
+/// `normal_line_height` for the page context's `lh` unit when the page
+/// context's font differs from the root's.
+pub(crate) fn cascade_page_with_normal_line_height(
+    rule_tree: &RuleTree,
+    query: &PageContextQuery,
+    inheritance: PageInheritance<'_>,
+    media_context: &MediaContext,
+    normal_line_height: Option<&dyn NormalLineHeight>,
+) -> PageCascadeResult {
     let layers = rule_tree.layer_order(media_context);
     // Candidate: (value, important, origin, specificity, source_order).
     // Shape mirrors `cascade::CascadedDecl` per the sibling convention, with
@@ -1427,7 +1441,8 @@ pub fn cascade_page_with_media_context(
     // The page context's own `lh` basis — mirrors
     // `font_size` above: `1lh` in `padding`/`margin`/`border-*-width` needs
     // the page context's *own* resolved line-height, not the root's.
-    let own_line_height = page_context_line_height_basis(&resolved, inherited, font_size, &ctx);
+    let own_line_height =
+        page_context_line_height_basis(&resolved, inherited, font_size, &ctx, normal_line_height);
     let margin_box_inheritance = MarginBoxInheritance {
         background_color_expression,
         color: match resolved
@@ -1557,15 +1572,14 @@ fn page_context_font_size(
 /// `cascade_page_padding_lh_uses_page_context_own_font_size_for_inherited_number`.
 ///
 /// The result is then converted to an absolute length via
-/// [`used_line_height_length_or`]. `normal` takes the root's measured
-/// [`ComputedValues::normal_line_height`] scaled to the page context's font
-/// size when the page context keeps the root's font, and is otherwise `None`
-/// (no font metrics — the same wall as `cap`/`rcap`).
+/// [`used_line_height_length_or`]. `normal` is measured by
+/// [`page_context_normal_line_height`].
 pub(super) fn page_context_line_height_basis(
     declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
     inherited: &ComputedValues,
     font_size: ComputedLength,
     ctx: &ResolveContext,
+    measurer: Option<&dyn NormalLineHeight>,
 ) -> Option<ComputedLength> {
     // CSS Paged Media 3 §6: the page context's self-reference "parent" (CSS
     // Values 4 §6.1.1) is the root element.
@@ -1579,20 +1593,68 @@ pub(super) fn page_context_line_height_basis(
         }
         _ => inherited.line_height,
     };
-    // The page context has no measurer of its own. With the root's font, a
-    // `normal` line height scales with the font size like the font's metrics.
-    let same_font = [
-        PropertyKey::FontFamily,
-        PropertyKey::FontWeight,
-        PropertyKey::FontStyle,
-    ]
-    .iter()
-    .all(|key| !declarations.contains_key(key));
-    let normal = inherited
-        .normal_line_height
-        .filter(|_| same_font && inherited.font_size.0 > 0.0)
-        .map(|normal| ComputedLength(normal.0 * font_size.0 / inherited.font_size.0));
+    let normal = if line_height == ComputedLineHeight::Normal {
+        page_context_normal_line_height(declarations, inherited, font_size, measurer)
+    } else {
+        None
+    };
     used_line_height_length_or(line_height, font_size, normal)
+}
+
+/// The used length of `line-height: normal` for the page context's first
+/// available font, or `None` when it cannot be measured.
+///
+/// The page context's font is its resolved `font-family`, `font-weight` and
+/// `font-style`, each the root's value unless the page declares its own. When
+/// that font is the root's and the root measured its `normal` line, the
+/// measure scales with the font size like the font's metrics. Otherwise
+/// `measurer` measures the page context's font.
+fn page_context_normal_line_height(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+    inherited: &ComputedValues,
+    font_size: ComputedLength,
+    measurer: Option<&dyn NormalLineHeight>,
+) -> Option<ComputedLength> {
+    let family = match declarations
+        .get(&PropertyKey::FontFamily)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontFamily(family)) => family.clone(),
+        _ => inherited.font_family.clone(),
+    };
+    let weight = match declarations
+        .get(&PropertyKey::FontWeight)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontWeight(weight)) => {
+            resolve_relative_weight(*weight, inherited.font_weight)
+        }
+        _ => inherited.font_weight,
+    };
+    let style = match declarations
+        .get(&PropertyKey::FontStyle)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontStyle(style)) => *style,
+        _ => inherited.font_style,
+    };
+    let same_font = weight == inherited.font_weight
+        && style == inherited.font_style
+        && (Arc::ptr_eq(&family, &inherited.font_family) || family == inherited.font_family);
+    if same_font
+        && let Some(normal) = inherited.normal_line_height
+        && inherited.font_size.0 > 0.0
+    {
+        return Some(ComputedLength(
+            normal.0 * font_size.0 / inherited.font_size.0,
+        ));
+    }
+    measurer?.normal_line_height(&crate::ChFontKey {
+        family,
+        size: font_size,
+        weight,
+        style,
+    })
 }
 
 /// The page context's computed `border-*-style` per side — the gate input for

@@ -164,7 +164,7 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
     let mut output = Counter::new(limits.max_output_bytes, CascadeLimitKind::OutputBytes);
     output.add(outputs.counts.output_bytes)?;
     let query = PageContextQuery::default();
-    let normal = finish(dom, rule_tree, &query, media, outputs);
+    let normal = finish(dom, rule_tree, &query, media, outputs, None);
     let error = |id: StyleNodeId| CascadeError::Internal {
         message: format!(
             "unsupported first-line node {} (one block with inline descendants required)",
