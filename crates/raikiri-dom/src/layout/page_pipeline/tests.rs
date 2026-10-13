@@ -11536,3 +11536,27 @@ fn a_relative_offset_does_not_grow_a_bounded_box() {
         100.0
     );
 }
+
+#[test]
+fn a_margin_after_a_comment_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            doc.append_comment(Some(body), "note");
+            let second = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, second]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}

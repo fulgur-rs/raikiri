@@ -5477,7 +5477,9 @@ fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize
             text.chars()
                 .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
         });
-    if collapsed_text
+    // Comments and other non-element, non-text nodes generate no box.
+    if !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
+        || collapsed_text
         || cascade.computed[node_id].display == DisplayValue::None
         || node.style.position == taffy::Position::Absolute
         || is_floating_box_for_pagination(document, cascade, node_id)
