@@ -129,11 +129,14 @@ const EPSILON: f32 = 0.001;
 /// to the next column when it does not fit below earlier content, and
 /// overflows a column it starts at the top of (CSS Fragmentation 3, 4.4).
 /// Adjoining sibling margins collapse, and a margin at a break is truncated
-/// (CSS Fragmentation 3, 5.2).
-fn place(items: &[Item], column_height: f32) -> Vec<Vec<Piece>> {
+/// (CSS Fragmentation 3, 5.2). Returns `None` once more than `max_pieces`
+/// pieces would be needed, so a tall box in short columns cannot allocate
+/// past the fragment budget.
+fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Vec<Vec<Piece>>> {
     let mut column = 0usize;
     let mut cursor = 0.0_f32;
     let mut pending_margin = 0.0_f32;
+    let mut piece_count = 0usize;
     let mut placements = Vec::with_capacity(items.len());
     for item in items {
         let mut pieces = Vec::new();
@@ -154,6 +157,17 @@ fn place(items: &[Item], column_height: f32) -> Vec<Vec<Piece>> {
             let mut left = item.height;
             loop {
                 let room = column_height - cursor;
+                // A gap that fills the column leaves no room for the box,
+                // which then starts in the next column.
+                if room < -EPSILON || (room <= EPSILON && left > EPSILON) {
+                    column += 1;
+                    cursor = 0.0;
+                    continue;
+                }
+                piece_count += 1;
+                if piece_count > max_pieces {
+                    return None;
+                }
                 if left <= room + EPSILON {
                     pieces.push(Piece {
                         column,
@@ -173,6 +187,10 @@ fn place(items: &[Item], column_height: f32) -> Vec<Vec<Piece>> {
                 cursor = 0.0;
             }
         } else {
+            piece_count += 1;
+            if piece_count > max_pieces {
+                return None;
+            }
             pieces.push(Piece {
                 column,
                 top: cursor,
@@ -182,7 +200,7 @@ fn place(items: &[Item], column_height: f32) -> Vec<Vec<Piece>> {
         }
         placements.push(pieces);
     }
-    placements
+    Some(placements)
 }
 
 fn columns_used(placements: &[Vec<Piece>]) -> usize {
@@ -197,32 +215,50 @@ fn columns_used(placements: &[Vec<Piece>]) -> usize {
 /// The smallest column height that fits `items` in `column_count` columns.
 /// Content that may break anywhere shares the columns equally; boxes that
 /// avoid breaks can need taller columns (CSS Multi-column 1, 7.1).
-fn balanced_height(items: &[Item], column_count: usize) -> f32 {
-    let total: f32 = items
-        .iter()
-        .map(|item| item.height + item.margin_top + item.margin_bottom)
-        .sum();
+fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f32 {
+    let fits = |height: f32| {
+        place(items, height, max_pieces)
+            .is_some_and(|placements| columns_used(&placements) <= column_count)
+    };
+    // Margins collapse and are truncated at breaks, so only the boxes
+    // themselves bound the height from below.
+    let content: f32 = items.iter().map(|item| item.height).sum();
     let tallest = items
         .iter()
         .filter(|item| !item.splittable)
         .map(|item| item.height)
         .fold(0.0_f32, f32::max);
-    let mut low = (total / column_count as f32).max(tallest);
-    if columns_used(&place(items, low)) <= column_count {
+    let mut low = (content / column_count as f32).max(tallest);
+    if low > 0.0 && fits(low) {
         return low;
     }
-    let mut high = total;
+    let mut high: f32 = items
+        .iter()
+        .map(|item| item.height + item.margin_top + item.margin_bottom)
+        .sum();
     // Each probe places the children once; the bound keeps the search linear
     // in the number of children.
     for _ in 0..24 {
         let middle = (low + high) / 2.0;
-        if columns_used(&place(items, middle)) <= column_count {
+        if fits(middle) {
             high = middle;
         } else {
             low = middle;
         }
     }
-    high
+    // The search stops near the answer; the content extent of the columns
+    // it found is the exact height when that still fits.
+    let extent = place(items, high, max_pieces)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|piece| piece.top + piece.height)
+        .fold(0.0_f32, f32::max);
+    if extent > 0.0 && fits(extent) {
+        extent
+    } else {
+        high
+    }
 }
 
 /// Lay out `children` (from [`supported`]) as one stream cut into columns.
@@ -293,28 +329,24 @@ pub(super) fn layout(
         .iter()
         .map(|item| item.height + item.margin_top + item.margin_bottom)
         .sum();
+    // One fragment for the container, the rest for the child pieces.
+    let max_pieces = tree
+        .fragment_tree
+        .limit
+        .saturating_sub(tree.fragment_tree.fragments.len())
+        .saturating_sub(1);
     let column_height = match context.available_height {
         Some(height) => height,
         None if context.column_fill == ColumnFillValue::Auto => total,
-        None => balanced_height(&items, context.column_count),
+        None => balanced_height(&items, context.column_count, max_pieces),
     };
     if !column_height.is_finite() || column_height <= 0.0 || !total.is_finite() {
         return None;
     }
-    let placements = place(&items, column_height);
-    let fragment_count = placements
-        .iter()
-        .map(Vec::len)
-        .try_fold(1usize, usize::checked_add)?;
-    if fragment_count
-        > tree
-            .fragment_tree
-            .limit
-            .saturating_sub(tree.fragment_tree.fragments.len())
-    {
+    let Some(placements) = place(&items, column_height, max_pieces) else {
         tree.fragment_tree.limit_exceeded = true;
         return None;
-    }
+    };
     tree.fragment_tree.retire_previous_roots(parent);
     let used_height = if context.available_height.is_some() {
         border_box.height
@@ -389,101 +421,4 @@ pub(super) fn layout(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{Item, balanced_height, place};
-
-    fn shape(items: &[Item], height: f32) -> Vec<Vec<(usize, f32, f32)>> {
-        place(items, height)
-            .iter()
-            .map(|pieces| {
-                pieces
-                    .iter()
-                    .map(|piece| (piece.column, piece.top, piece.height))
-                    .collect()
-            })
-            .collect()
-    }
-
-    fn split(height: f32) -> Item {
-        Item {
-            height,
-            margin_top: 0.0,
-            margin_bottom: 0.0,
-            splittable: true,
-        }
-    }
-
-    fn avoid(height: f32) -> Item {
-        Item {
-            splittable: false,
-            ..split(height)
-        }
-    }
-
-    #[test]
-    fn splittable_boxes_continue_in_the_next_column() {
-        assert_eq!(
-            shape(&[split(50.0), split(270.0)], 100.0),
-            vec![
-                vec![(0, 0.0, 50.0)],
-                vec![
-                    (0, 50.0, 50.0),
-                    (1, 0.0, 100.0),
-                    (2, 0.0, 100.0),
-                    (3, 0.0, 20.0)
-                ]
-            ]
-        );
-    }
-
-    #[test]
-    fn a_box_ending_at_a_column_edge_stays_in_that_column() {
-        assert_eq!(
-            shape(&[split(100.0), split(50.0)], 100.0),
-            vec![vec![(0, 0.0, 100.0)], vec![(1, 0.0, 50.0)]]
-        );
-    }
-
-    #[test]
-    fn boxes_avoiding_breaks_move_or_overflow_whole() {
-        assert_eq!(
-            shape(&[avoid(20.0), avoid(40.0), avoid(40.0)], 30.0),
-            vec![
-                vec![(0, 0.0, 20.0)],
-                vec![(1, 0.0, 40.0)],
-                vec![(2, 0.0, 40.0)]
-            ]
-        );
-    }
-
-    #[test]
-    fn sibling_margins_collapse_and_truncate_at_a_break() {
-        let first = Item {
-            margin_bottom: 20.0,
-            ..avoid(40.0)
-        };
-        let second = Item {
-            margin_top: 10.0,
-            ..avoid(10.0)
-        };
-        // 40 + max(20, 10) + 10 = 70 fits a 70px column.
-        assert_eq!(
-            shape(&[first, second], 70.0),
-            vec![vec![(0, 0.0, 40.0)], vec![(0, 60.0, 10.0)]]
-        );
-        // In a 60px column the second box moves, and loses its margin.
-        assert_eq!(
-            shape(&[first, second], 60.0),
-            vec![vec![(0, 0.0, 40.0)], vec![(1, 0.0, 10.0)]]
-        );
-    }
-
-    #[test]
-    fn balancing_shares_breakable_content_and_respects_avoidance() {
-        assert_eq!(balanced_height(&[split(400.0)], 4), 100.0);
-        assert_eq!(balanced_height(&[avoid(40.0), avoid(40.0)], 3), 40.0);
-        // Three 30px boxes that avoid breaks need 60px in two columns.
-        let height = balanced_height(&[avoid(30.0), avoid(30.0), avoid(30.0)], 2);
-        assert!((height - 60.0).abs() < 0.01, "{height}");
-    }
-}
+mod tests;
