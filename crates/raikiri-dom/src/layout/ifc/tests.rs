@@ -622,7 +622,14 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
         ("display:block;height:25%", 25.0),
     ];
     for (child_css, expected) in cases {
-        for (root_css, height) in [("height:100px", expected), ("", 10.0)] {
+        for (root_css, height) in [
+            ("height:100px", expected),
+            // A border-box height leaves the padding out of the basis.
+            ("box-sizing:border-box;height:120px;padding:10px", expected),
+            ("", 10.0),
+            // The body fills the 600px page, so half of it is definite too.
+            ("height:50%", expected * 3.0),
+        ] {
             let mut child = None;
             let (mut doc, cascade, _root) = ahem_paragraph_with(root_css, |doc, root| {
                 doc.append_text(root, "AA");

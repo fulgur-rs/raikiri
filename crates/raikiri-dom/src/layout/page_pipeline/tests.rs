@@ -10353,3 +10353,211 @@ fn repeated_header_table_grows_over_anonymous_cells_on_later_pages() {
         "the table's border box must reach past its moved last row"
     );
 }
+
+/// `html > body(margin:0)` built by `build`, laid out on 100px-square pages.
+/// Returns the document and its page count.
+fn paged_body(build: impl FnOnce(&mut Document, usize)) -> (Document, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:100px"),
+    );
+    build(&mut doc, body);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (doc, pages.len())
+}
+
+fn page_flow_y(doc: &Document, node: usize) -> f32 {
+    crate::layout::test_support::absolute_rect(doc, node).1
+}
+
+#[test]
+fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
+    let mut ids = Vec::new();
+    let (doc, pages) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:20px",
+            "display:block;height:10px",
+            "display:block;height:50px;break-inside:avoid",
+            "float:left;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The avoiding float starts the second page and the clearing float
+    // stays below it; the in-flow block after them keeps its place. The
+    // avoiding block then opens the third page, and the float after it
+    // follows only that block.
+    assert_eq!(ys, vec![100.0, 160.0, 60.0, 100.0, 150.0], "{ys:?}");
+    assert_eq!(pages, 2);
+}
+
+#[test]
+fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
+    let mut float = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        float = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:150px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, float), 100.0);
+}
+
+/// `body > div(60px) > table > [caption] > tbody(group_css) > rows`, each
+/// row holding one cell of the given height. Returns the first cell's
+/// page-flow y.
+fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: bool) -> f32 {
+    let mut first_cell = None;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(if caption {
+                "display:block;height:40px"
+            } else {
+                "display:block;height:60px"
+            }),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        if caption {
+            let caption = doc.append_element(
+                Some(table),
+                "caption",
+                Style::default(),
+                Some("display:table-caption"),
+            );
+            doc.append_element(
+                Some(caption),
+                "div",
+                Style::default(),
+                Some("display:block;height:20px"),
+            );
+        }
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some(&format!("display:table-row-group;{group_css}")),
+        );
+        for (height, row_css) in rows {
+            let row = doc.append_element(
+                Some(group),
+                "tr",
+                Style::default(),
+                Some(&format!("display:table-row;{row_css}")),
+            );
+            let cell = doc.append_element(
+                Some(row),
+                "td",
+                Style::default(),
+                Some(&format!("display:table-cell;padding:0;height:{height}px")),
+            );
+            first_cell.get_or_insert(cell);
+        }
+    });
+    page_flow_y(&doc, first_cell.unwrap())
+}
+
+#[test]
+fn an_avoiding_row_group_starts_the_next_page_with_its_table_spacing() {
+    let rows = [(20.0, ""), (30.0, "")];
+    // Without `avoid` the first row stays after the 60px block and the
+    // table's 2px spacing.
+    assert_eq!(avoiding_row_group("", &rows, false), 62.0);
+    // The group would cross the page edge, so it moves as a whole; the
+    // spacing above the table's first row moves with it.
+    assert_eq!(
+        avoiding_row_group("break-inside:avoid", &rows, false),
+        102.0
+    );
+    // A group that fits stays where it is.
+    assert_eq!(
+        avoiding_row_group("break-inside:avoid", &[(20.0, "")], false),
+        62.0
+    );
+}
+
+#[test]
+fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
+    // The forced break before the second row splits the group, and its
+    // first part fits on the page.
+    assert_eq!(
+        avoiding_row_group(
+            "break-inside:avoid",
+            &[(20.0, ""), (30.0, "break-before:page")],
+            false
+        ),
+        62.0
+    );
+    // With a caption above the grid, the row starts at the top of the page.
+    assert_eq!(
+        avoiding_row_group("break-inside:avoid", &[(20.0, ""), (30.0, "")], true),
+        100.0
+    );
+}
+
+#[test]
+fn break_inside_avoid_does_not_move_an_inline_box() {
+    // `break-inside` does not apply to inline boxes: the block inside the
+    // avoiding inline box breaks where it falls. The same box made
+    // block-level moves to the next page.
+    for (display, expected) in [("inline", 60.0), ("block", 100.0)] {
+        let mut inner = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            let avoiding = doc.append_element(
+                Some(body),
+                "span",
+                Style::default(),
+                Some(&format!("display:{display};break-inside:avoid")),
+            );
+            inner = doc.append_element(
+                Some(avoiding),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+        });
+        assert_eq!(page_flow_y(&doc, inner), expected, "{display}");
+    }
+}

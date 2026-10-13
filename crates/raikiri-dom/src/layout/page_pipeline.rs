@@ -3925,7 +3925,8 @@ pub fn layout_pages_with_page_geometry_and_control(
     // so the shift ends where the float's subtree does. A later float may
     // not start above an earlier one (CSS 2.1 §9.5.1), so it keeps the
     // shift of the last moved float until in-flow content opens a page.
-    let mut pending_float_shift: Option<(usize, f32)> = None;
+    // The page the flow was on before the float moved is restored with it.
+    let mut pending_float_shift: Option<(usize, f32, u32)> = None;
     let mut later_float_shift = 0.0_f32;
     // Unpaginated border-box bottom of the last in-flow block-level child
     // seen for each parent, while no other content followed it. The gap to
@@ -4075,10 +4076,11 @@ pub fn layout_pages_with_page_geometry_and_control(
             flow_shift += correction;
             pending_underflow = None;
         }
-        if let Some((float_id, delta)) = pending_float_shift
+        if let Some((float_id, delta, flow_page)) = pending_float_shift
             && !is_descendant_or_self(document, node_id, float_id, &parent_of)
         {
             flow_shift -= delta;
+            current_page = flow_page;
             pending_float_shift = None;
             later_float_shift = delta;
         }
@@ -4087,7 +4089,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             && is_floating_box_for_pagination(document, cascade, node_id)
         {
             flow_shift += later_float_shift;
-            pending_float_shift = Some((node_id, later_float_shift));
+            pending_float_shift = Some((node_id, later_float_shift, current_page));
         }
         if document.get_node(node_id).is_none() {
             continue;
@@ -4742,10 +4744,12 @@ pub fn layout_pages_with_page_geometry_and_control(
                         flow_shift += node_delta;
                     }
                     if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
-                        let inherited = pending_float_shift
-                            .filter(|(float_id, _)| *float_id == node_id)
-                            .map_or(0.0, |(_, delta)| delta);
-                        pending_float_shift = Some((node_id, inherited + node_delta));
+                        let (inherited, flow_page) = pending_float_shift
+                            .filter(|(float_id, _, _)| *float_id == node_id)
+                            .map_or((0.0, page_before_candidate), |(_, delta, page)| {
+                                (delta, page)
+                            });
+                        pending_float_shift = Some((node_id, inherited + node_delta, flow_page));
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
