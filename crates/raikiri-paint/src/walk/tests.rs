@@ -1011,6 +1011,27 @@ fn a_root_with_display_none_paints_blank_paper() {
         panic!("expected a fill, got {:?}", scene.commands[0]);
     };
     assert_eq!(fill.brush, Color::from_rgba8(255, 255, 255, 255).into());
+
+    struct NoImages;
+    impl raikiri_traits::ImagePixelSource for NoImages {
+        fn get_decoded(
+            &self,
+            _url: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            None
+        }
+    }
+    let mut scene = Scene::new();
+    let warnings = crate::paint_single_page_with_images_and_warnings(
+        &mut scene,
+        &document,
+        &cascade,
+        PageBox::A4,
+        &NoImages,
+    )
+    .expect("paint succeeds");
+    assert!(warnings.is_empty());
+    assert_eq!(scene.commands.len(), 1, "only the paper is painted");
 }
 
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {

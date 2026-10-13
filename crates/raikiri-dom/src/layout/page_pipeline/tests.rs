@@ -10291,3 +10291,45 @@ fn repeated_header_table_grows_over_anonymous_cells_on_later_pages() {
         "the table's border box must reach past its moved last row"
     );
 }
+
+#[test]
+fn forced_break_clearance_applies_to_paged_layout_only() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;float:right;width:10px;height:50px"),
+    );
+    let second = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;break-before:page;height:10px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
+    assert_eq!(doc.forced_break_clearance, vec![second]);
+    assert_eq!(doc.nodes[second].style.clear, taffy::Clear::Both);
+
+    // A single page has no break to clear at, so the box sits beside the
+    // float again and the cached paged layout is not reused.
+    layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
+    assert!(doc.forced_break_clearance.is_empty());
+    assert_eq!(doc.nodes[second].style.clear, taffy::Clear::None);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.y, 0.0);
+}
