@@ -1125,10 +1125,11 @@ fn margin_rule_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
 fn margin_rule_body_range(margin_rule: &str) -> Option<Range<usize>> {
     let mut input = ParserInput::new(margin_rule);
     let mut parser = Parser::new(&mut input);
+    // `nested_at_rule_ranges` only reports an at-keyword followed by a block.
     if !matches!(parser.next(), Ok(Token::AtKeyword(_)))
         || !matches!(parser.next(), Ok(Token::CurlyBracketBlock))
     {
-        return None;
+        return None; // cov:ignore: Every margin rule range starts with an at-keyword and its block.
     }
     let start = parser.position().byte_index();
     let end = parser
@@ -1136,7 +1137,7 @@ fn margin_rule_body_range(margin_rule: &str) -> Option<Range<usize>> {
             while block.next_including_whitespace_and_comments().is_ok() {}
             Ok::<_, ParseError<'_, ()>>(block.position().byte_index())
         })
-        .ok()?;
+        .ok()?; // cov:ignore: The closure never returns an error.
     Some(start..end.max(start))
 }
 

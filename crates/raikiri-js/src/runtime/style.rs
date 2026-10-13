@@ -888,14 +888,14 @@ fn write_declared(
     if property.trim().is_empty() {
         return Ok(());
     }
-    if source.rule.is_some() {
+    if let Some(rule) = source.rule {
         let text = with_state(context, |s| {
             declared_text(s.host.document(), source.index, source.rule, source.margin)
                 .0
                 .unwrap_or_default()
         })?;
         let next = with_inline_style_property(Some(&text), property, value, important);
-        return write_rule_body(context, source, &next);
+        return write_rule_body(context, source, rule, &next);
     }
     with_state(context, |s| {
         let next = with_inline_style_property(
@@ -911,20 +911,22 @@ fn write_declared(
     mark_dirty(context)
 }
 
-/// Replaces the declarations of the rule (or margin rule) `source` reads.
-fn write_rule_body(context: &mut Context, source: &StyleSource, body: &str) -> JsResult<()> {
-    match (source.rule, source.margin) {
-        (Some(rule), Some(margin)) => super::stylesheet::write_stylesheet_margin_rule_body(
+/// Replaces the declarations of `rule` (or of `source`'s margin rule in it).
+fn write_rule_body(
+    context: &mut Context,
+    source: &StyleSource,
+    rule: usize,
+    body: &str,
+) -> JsResult<()> {
+    match source.margin {
+        Some(margin) => super::stylesheet::write_stylesheet_margin_rule_body(
             context,
             source.index,
             rule,
             margin,
             body,
         ),
-        (Some(rule), None) => {
-            super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, body)
-        }
-        (None, _) => Ok(()),
+        None => super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, body),
     }
 }
 
@@ -1182,8 +1184,8 @@ fn style_css_text_set(
     let text = dom_string(args, 0, context)?;
     let page = source.is_page_rule(context)?;
     let validated = serialize_validated(&validated_inline_declarations(Some(&text), page));
-    if source.rule.is_some() {
-        write_rule_body(context, &source, &validated)?;
+    if let Some(rule) = source.rule {
+        write_rule_body(context, &source, rule, &validated)?;
     } else {
         with_state(context, |s| {
             s.host
@@ -1427,7 +1429,7 @@ pub(crate) fn margin_rule_style_object(
 }
 
 /// Defines on an `@page` rule's declaration object the attributes of its
-/// descriptors that are not also properties (CSSOM §6.4.3,
+/// descriptors (CSSOM §6.4.3,
 /// `CSSPageDescriptors`): `size`, `pageOrientation` / `page-orientation`,
 /// `marks`, and `bleed`. They are own properties so the shared
 /// `CSSStyleDeclaration` prototype does not gain them.
@@ -1436,9 +1438,6 @@ pub(crate) fn install_page_descriptor_accessors(
     style: &JsObject,
 ) -> JsResult<()> {
     for descriptor in raikiri_style::PAGE_DESCRIPTOR_NAMES {
-        if raikiri_style::property::is_supported_property_name(descriptor) {
-            continue;
-        }
         for key in attribute_names(descriptor) {
             let (getter, setter) = property_accessor_pair(context, descriptor, &key)?;
             define_accessor(style, &key, getter, setter, context)?;

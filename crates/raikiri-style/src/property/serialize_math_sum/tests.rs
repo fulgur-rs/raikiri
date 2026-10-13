@@ -199,3 +199,19 @@ fn values_it_cannot_fold_are_left_alone() {
         assert_eq!(sums(raw), None, "{raw}");
     }
 }
+
+#[test]
+fn comparison_functions_only_fold_where_they_stand_alone() {
+    let deep = format!("{}1px{}", "min(".repeat(40), ")".repeat(40));
+    for raw in [
+        "calc(1px + max(1em, 2px))",
+        "calc(2 * max(1em, 2px))",
+        "calc(abs(1px) + 1em)",
+        "calc(1e30px / 1e-30px * 1em)",
+        "calc(1e30px * 1e30px / 1px)",
+        "min(1px, var(--x))",
+        &deep,
+    ] {
+        assert_eq!(sums(raw), None, "{raw}");
+    }
+}

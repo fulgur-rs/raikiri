@@ -1710,3 +1710,17 @@ fn margin_rule_style_reads_and_writes_its_own_block() {
          topLeft.name === 'top-left' && pageRule.cssRules[1].name === 'bottom-center'",
     );
 }
+
+#[test]
+fn stale_page_and_margin_rule_objects_do_not_rewrite_other_rules() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style');          styleElement.textContent = '@page { @top-left { color: red } }';          document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0];          var style = pageRule.cssRules[0].style; pageRule.deleteRule(0);          var threw = false; try { style.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }          styleElement.textContent = 'p { color: red }'; pageRule.selectorText = ':first';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "threw && style.color === '' && styleElement.textContent === 'p { color: red }'",
+    );
+}

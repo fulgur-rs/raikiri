@@ -458,9 +458,6 @@ fn parse_function_body(lower: &str, input: &mut Parser<'_, '_>, nesting: usize) 
         }
         input.expect_comma().ok()?;
     }
-    if function == MathFunction::Clamp && args.len() != 3 {
-        return None;
-    }
     simplify_function(function, args)
 }
 
