@@ -45,13 +45,14 @@ pub fn measure_ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
 }
 
 /// Used length of `line-height: normal` in the first available font `key`
-/// selects from `fonts`, in px: its ascent, descent and line gap, as the
-/// inline engine sizes a `normal` line.
+/// selects from `fonts`, in px: the sum of its ascent, descent and line gap,
+/// which is how the inline engine sizes a `normal` line.
 ///
 /// The [first available font](https://www.w3.org/TR/css-fonts-4/#first-available-font)
 /// is the first face in the family list whose `unicode-range` includes
-/// U+0020, so the face is matched on a space. `None` when the family list
-/// does not map or no face matches.
+/// U+0020, so the face is matched on a space. The key carries no stretch or
+/// variation settings, so the face's default instance is measured. `None`
+/// when the family list does not map or no face matches.
 pub fn measure_normal_line_height(fonts: &FontCollection, key: &ChFontKey) -> Option<f32> {
     let size = key.size.0;
     let found = fonts.match_cluster(&font_query(key)?, " ")?;

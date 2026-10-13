@@ -756,18 +756,53 @@ fn enable_inline_engine(
     } else {
         raikiri_dom::build_inline_document_fonts(&shared, font_faces, font_loader)
     };
-    let measurer = NormalLineHeightSource::new(EngineNormalLineHeight(fonts.clone()));
+    let measurer = NormalLineHeightSource::new(EngineNormalLineHeight::new(fonts.clone()));
     dom.set_font_collection(fonts);
     (report, measurer)
 }
 
 /// Measures `line-height: normal` for the `lh` unit in the fonts the inline
 /// engine lays text out with, so `1lh` matches the height of a `normal` line.
-struct EngineNormalLineHeight(shodo::font::FontCollection);
+///
+/// Measures are kept per family list, size and weight, with one entry per
+/// style, since a document uses few fonts and cascades it more than once.
+struct EngineNormalLineHeight {
+    fonts: shodo::font::FontCollection,
+    measured: Mutex<NormalLineHeights>,
+}
+
+type NormalLineHeights = HashMap<
+    (Arc<Vec<raikiri_style::FontFamilyName>>, u32, u32),
+    Vec<(raikiri_style::property::FontStyle, Option<f32>)>,
+>;
+
+impl EngineNormalLineHeight {
+    fn new(fonts: shodo::font::FontCollection) -> Self {
+        Self {
+            fonts,
+            measured: Mutex::default(),
+        }
+    }
+}
 
 impl NormalLineHeight for EngineNormalLineHeight {
     fn normal_line_height(&self, font: &raikiri_style::ChFontKey) -> Option<ComputedLength> {
-        raikiri_dom::layout::measure_normal_line_height(&self.0, font).map(ComputedLength)
+        let key = (
+            font.family.clone(),
+            font.size.0.to_bits(),
+            font.weight.to_bits(),
+        );
+        let mut measured = self.measured.lock().unwrap_or_else(|e| e.into_inner());
+        let styles = measured.entry(key).or_default();
+        let value = match styles.iter().find(|(style, _)| *style == font.style) {
+            Some(&(_, value)) => value,
+            None => {
+                let value = raikiri_dom::layout::measure_normal_line_height(&self.fonts, font);
+                styles.push((font.style, value));
+                value
+            }
+        };
+        value.map(ComputedLength)
     }
 }
 

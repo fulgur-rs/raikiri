@@ -317,6 +317,7 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.letter_spacing_computed = first.letter_spacing_computed;
     parent.line_break = first.line_break;
     parent.line_height = first.line_height;
+    parent.normal_line_height = first.normal_line_height;
     parent.list_style_image = first.list_style_image.clone();
     parent.list_style_position = first.list_style_position;
     parent.list_style_type = first.list_style_type.clone();
