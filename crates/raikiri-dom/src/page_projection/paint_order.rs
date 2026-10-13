@@ -343,19 +343,17 @@ impl Document {
         run: &PositionedGlyphRun<'_>,
         letter_groups: &mut HashMap<usize, LetterGroups>,
     ) -> Option<NodeId> {
-        if let Some((letter, owner)) = run.letter_box {
-            if let Some(group) = usize::try_from(run.line.root.0).ok().and_then(|root| {
+        // The paragraph retains the fragment of every run a letter box
+        // holds.
+        if let Some((letter, owner)) = run.letter_box
+            && let Some(group) = usize::try_from(run.line.root.0).ok().and_then(|root| {
                 letter_groups
                     .entry(root)
                     .or_insert_with(|| self.letter_groups(cascade, root))
                     .nearest(letter, owner)
-            }) {
-                return group.map(|group| NodeId::new(group as u64));
-            }
-            // cov:ignore: the paragraph retains the fragment of every run
-            if let Some(letter) = pseudo_opacity_group(cascade, letter) {
-                return Some(NodeId::new(letter as u64));
-            }
+            })
+        {
+            return group.map(|group| NodeId::new(group as u64));
         }
         self.run_group_outside_letter(cascade, run)
     }
@@ -1821,15 +1819,10 @@ fn first_letter_pieces<'p>(
             let source = first_letter_anchor(document, root, piece);
             let anchor = source.map(|(anchor, _, _)| anchor);
             let pseudo = source.and_then(|(_, pseudo, _)| pseudo);
+            // The paragraph retains the fragment of every piece.
             let (own, held) = source
                 .and_then(|(_, _, letters)| groups.fragment(piece.node, letters))
-                // cov:ignore: the paragraph retains the fragment of every piece
-                .unwrap_or_else(|| {
-                    let held = source.and_then(|(_, _, letters)| {
-                        document.letter_source_group(items.cascade, root, letters)
-                    });
-                    (pseudo_opacity_group(items.cascade, piece.node), held)
-                });
+                .unwrap_or_default();
             LetterPiece {
                 anchor,
                 after: pseudo == Some(GeneratedKind::After),
