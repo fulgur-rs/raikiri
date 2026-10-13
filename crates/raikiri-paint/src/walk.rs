@@ -1232,6 +1232,7 @@ fn paint_list_marker(
         width,
         height,
         padding_left,
+        (0.0, f32::INFINITY, false),
         &snapshots,
         None,
     );
@@ -1250,6 +1251,7 @@ fn paint_list_marker_with_snapshots(
     width: f32,                  // cov:ignore: signature line has no executable mapping
     height: f32,                 // cov:ignore: signature line has no executable mapping
     padding_left: f32,           // cov:ignore: signature line has no executable mapping
+    page_flow: (f32, f32, bool), // cov:ignore: signature line has no executable mapping
     snapshots: &[CounterSnapshot],
     pixel_source: Option<&dyn ImagePixelSource>,
 ) {
@@ -1326,11 +1328,26 @@ fn paint_list_marker_with_snapshots(
     else {
         return;
     };
+    // The marker's baseline meets the item's first line (CSS Lists 3
+    // §3.1), where the page's text runs place it. It belongs to the item's
+    // first page, so the item's later pages draw none.
+    let (content_origin_y, page_bottom, repeated) = page_flow;
+    let top = match document.list_marker_text_top(
+        cascade,
+        node_id,
+        (content_origin_y, repeated),
+        paint_y,
+        page_bottom,
+    ) {
+        Some(Some(top)) => top,
+        Some(None) => return,
+        None => paint_y,
+    };
     crate::standalone_text::draw(
         scene,
         &shaped,
         paint_x + offset_x,
-        paint_y,
+        top,
         css_color(computed.color),
     );
 }
@@ -3131,6 +3148,11 @@ pub(crate) fn paint_document_impl(
                             marker_width,
                             marker_height,
                             layout.padding.left,
+                            (
+                                content_origin_y,
+                                page_offset_y + page_bottom,
+                                inside_fixed || fixed_in_viewport,
+                            ),
                             counter_snapshots,
                             pixel_source,
                         );

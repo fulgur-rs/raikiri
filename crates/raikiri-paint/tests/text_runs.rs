@@ -1056,6 +1056,72 @@ fn assert_cases_match_paint(cases: &[(&str, &str)]) {
     }
 }
 
+/// A marker whose item's first line starts on the next page stays at the
+/// bottom of the item's first page, in the painter as in the page's runs.
+#[test]
+fn a_marker_whose_first_line_moves_on_matches_paint() {
+    assert_cases_match_paint(&[
+        (
+            "<ol><li style=\"padding-top: 145px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        (
+            "<ol><li style=\"padding-top: 150px; line-height: 30px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        // An item that starts on a later page keeps its marker there when a
+        // relative offset moves it above the page's top.
+        (
+            "<div style=\"height: 165px\"></div>\
+             <ol><li style=\"position: relative; top: -20px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        // Translations that paint adds move the marker with its item, after
+        // its line's page is decided where layout put it.
+        (
+            "<ol><li style=\"padding-top: 130px; position: relative; top: 15px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        (
+            "<ol><li style=\"padding-top: 130px; transform: translateY(15px)\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        (
+            "<div style=\"transform: translateY(15px)\">\
+             <ol><li style=\"padding-top: 130px\">A</li></ol></div>",
+            "body { margin: 0 }",
+        ),
+        // A repeated table header draws its marker on every page.
+        (
+            "<table><thead><tr><td><ol><li>H</li></ol></td></tr></thead><tbody>\
+             <tr><td style=\"height: 120px\">a</td></tr>\
+             <tr><td style=\"height: 120px\">b</td></tr>\
+             <tr><td style=\"height: 120px\">c</td></tr></tbody></table>",
+            "body { margin: 0 }",
+        ),
+    ]);
+}
+
+/// A fixed list repeats on every page with its marker.
+#[test]
+fn a_fixed_list_draws_its_marker_on_every_page() {
+    let result = lay_out(
+        "<ol style=\"position: fixed; top: 0\"><li>A</li></ol>\
+         <div style=\"height: 500px\"></div>",
+        "body { margin: 0 }",
+    );
+    assert!(result.page_count() > 1);
+    let glyphs: Vec<_> = result
+        .pages()
+        .map(|page| drawn(&page, result.page_count()))
+        .collect();
+    // The marker's glyphs and the item's letter.
+    assert!(glyphs[0].len() > 1);
+    for page in &glyphs[1..] {
+        assert_eq!(page, &glyphs[0]);
+    }
+}
+
 #[test]
 fn relatively_positioned_text_matches_paint() {
     let words = vec!["word"; 40].join(" ");

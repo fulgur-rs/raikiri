@@ -500,16 +500,31 @@ fn an_empty_first_block_child_gives_the_item_no_first_line() {
 }
 
 #[test]
-fn a_flex_first_child_leaves_the_marker_at_the_fallback() {
-    // Tree order does not find a flex container's first line, so the marker
-    // does not follow the item that comes first in the source.
+fn an_outside_marker_follows_the_first_baseline_of_a_flex_child() {
+    // A flex container orders its items, so its first baseline comes from
+    // the item placed first, not from the one first in the source (CSS
+    // Flexbox 1 §8.5).
     let document = lay_out(
         "<ol><li><div style=\"display:flex\">\
          <span style=\"order:2;padding-top:20px\">A</span><span style=\"order:1\">B</span>\
          </div></li></ol>",
         "",
     );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "B")
+    );
     assert!(run_baseline(&document, 0, "1.") < run_baseline(&document, 0, "A"));
+    let document = lay_out(
+        "<ol><li><div style=\"display:flex;padding-top:7px\">\
+         <span style=\"padding-top:20px\">A</span><span>B</span>\
+         </div></li></ol>",
+        "",
+    );
+    assert_eq!(
+        run_baseline(&document, 0, "1."),
+        run_baseline(&document, 0, "A")
+    );
 }
 
 #[test]

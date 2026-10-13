@@ -24,7 +24,7 @@ pub(crate) enum CalcNode {
 // Intentional stricter resource limits (decision raikiri-spike-afrl3):
 // bound trees before boxing, including error-path destruction. A shared
 // work allowance also bounds parser retries and AST-free wrapper chains.
-const MAX_CALC_TREE_DEPTH: usize = 128;
+const MAX_CALC_TREE_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
 const MAX_CALC_PARSE_WORK: usize = 4096;
 
 struct CalcParseBudget {

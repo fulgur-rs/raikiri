@@ -23,6 +23,12 @@ these files, and runs `run-baseline-report --strict` over the pass baseline and
 every expected-failure id on Linux with the bundled WPT fonts. A new `FAIL`,
 `XPASS`, or `ERROR` fails the run; the job summary lists them.
 
+The `WPT vacuity sweep` workflow
+(`.github/workflows/wpt-vacuity-sweep.yml`) runs weekly and on manual
+dispatch. It audits every runnable reftest that none of these files lists with
+`audit-vacuous-passes` (see "Promoting sweep passes") and lists the `KEEP` ids
+in its job summary. It only reports; promotion stays a reviewed change.
+
 ## Interpreting baseline PASS
 
 The pass baseline records reproducible output equality or parsing assertions,
@@ -77,7 +83,11 @@ no effect; promote one of those only after reviewing it individually.
 The 2026-10-12 sweep promotion audited 14,465 runnable, unregistered reftests
 at pinned WPT `97ea26e2` on Linux: 5,956 passed, of which 752 were blank,
 2,486 unstyled, and 151 mismatch-only. The 2,567 `KEEP` ids, identical in two
-runs, form the last section of `raikiri-baseline.txt`.
+runs, form the 2026-10-12 section of `raikiri-baseline.txt`.
+
+The first weekly sweep, at Raikiri `b0130e7`, reported 358 new `KEEP` ids.
+All 358 were `KEEP` again in two runs at the next main commit and form the
+2026-10-13 section.
 
 ## Expected failures
 

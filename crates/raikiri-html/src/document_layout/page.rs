@@ -1,5 +1,6 @@
 use super::{
     DomView, Fragment, GeneratedImageId, MarginBox, OverflowClip, PaintEvent, PositionedGlyphRun,
+    TextLineId,
 };
 use crate::RenderError;
 use raikiri_style::property::StringFetchMode;
@@ -295,6 +296,24 @@ impl<'a> Page<'a> {
         })
     }
 
+    /// Where an image of `::before` or `::after` content from
+    /// [`PaintEvent::GeneratedImage`] sits in the text: the line holding it,
+    /// and its UTF-8 offset in that line's processed text when known.
+    ///
+    /// Within one line, the image and the glyph runs of [`Self::text_runs`]
+    /// follow the logical (reading) order of the offsets, compared with
+    /// [`PositionedGlyphRun::text_offset`]. This orders the text and images
+    /// of one `content` list, such as `'Note: ' url(icon.png) ' end'`,
+    /// although paint lists the images before the line's text. The offset is
+    /// `None` on a line that mixes bidi directions.
+    pub fn generated_image_text_position(
+        &self,
+        image: GeneratedImageId,
+    ) -> Option<(TextLineId, Option<usize>)> {
+        self.document
+            .page_generated_image_text_position(self.index(), image)
+    }
+
     /// Cached raster pixels of an image of `::before` or `::after` content
     /// from [`PaintEvent::GeneratedImage`].
     ///
@@ -307,7 +326,26 @@ impl<'a> Page<'a> {
         image: GeneratedImageId,
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
-        let (url, rect) = self.document.page_generated_image(self.index(), image)?;
+        let (url, content) = self.document.page_generated_image(self.index(), image)?;
+        let owner = usize::try_from(image.owner.0).ok();
+        let pseudo = match image.kind {
+            crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
+            _ => raikiri_style::PseudoElem::Before,
+        };
+        // An image that replaces its pseudo-element is drawn at its
+        // `object-fit` rectangle, clipped to its box.
+        let object = owner
+            .and_then(|owner| {
+                self.document
+                    .content_image_object_rect(owner, pseudo, image.index)
+            })
+            .unwrap_or(PaintRect::new(0.0, 0.0, content.width, content.height));
+        let rect = PaintRect::new(
+            content.x + object.x,
+            content.y + object.y,
+            object.width,
+            object.height,
+        );
         if ![rect.x, rect.y, rect.width, rect.height]
             .into_iter()
             .all(f32::is_finite)
@@ -316,14 +354,18 @@ impl<'a> Page<'a> {
         {
             return None;
         }
-        let pixels = source.get_decoded_at_size(
-            url,
-            raikiri_traits::ImageRasterSize {
+        // The size layout prepared the pixels at, which stays bounded when
+        // `object-fit` makes the object far larger than its box.
+        let raster = owner
+            .and_then(|owner| {
+                self.document
+                    .content_image_raster_size(owner, pseudo, image.index)
+            })
+            .unwrap_or(raikiri_traits::ImageRasterSize {
                 width: rect.width,
                 height: rect.height,
-            },
-            None,
-        )?;
+            });
+        let pixels = source.get_decoded_at_size(url, raster, None)?;
         let bytes = (pixels.width as usize)
             .checked_mul(pixels.height as usize)?
             .checked_mul(4)?;
@@ -335,7 +377,7 @@ impl<'a> Page<'a> {
             url: url.clone(),
             pixels,
             rect,
-            clip: raikiri_traits::PaintClip::new(rect),
+            clip: raikiri_traits::PaintClip::new(content),
             clip_owner: Some(image.owner),
         })
     }

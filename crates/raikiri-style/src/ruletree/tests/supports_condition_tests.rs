@@ -247,8 +247,8 @@ fn negated_forgiving_selectors_cannot_hide_tokenizer_errors() {
 #[test]
 fn deeply_nested_supports_conditions_are_bounded() {
     let nested = |depth: usize| format!("{}display: block{}", "(".repeat(depth), ")".repeat(depth));
-    assert!(supports_condition(&nested(128)));
-    assert!(!supports_condition(&nested(129)));
+    assert!(supports_condition(&nested(75)));
+    assert!(!supports_condition(&nested(76)));
     assert!(!supports_condition(&nested(4000)));
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(

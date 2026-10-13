@@ -114,6 +114,72 @@ impl Document {
         ))
     }
 
+    /// Where an outside text marker is drawn on the page whose flow starts
+    /// at `page.0`, as in [`crate::PositionedGlyphRun`]s of the page, where
+    /// `page.1` tells that the painter is drawing content repeated on every
+    /// page, such as a fixed box: `Some(None)` on any page but the item's
+    /// first, unless the item is repeated there, else the top of
+    /// the marker's line for a list item whose border edge is painted at
+    /// `top` on a page whose content ends at `page_bottom`. Its baseline
+    /// meets the item's first line, and it stays on the page when that line
+    /// starts on a later one. The line's page is decided where layout put
+    /// it, before the translations that paint adds. `None` when layout
+    /// prepared no text marker for `owner`.
+    #[doc(hidden)]
+    pub fn list_marker_text_top(
+        &self,
+        cascade: &CascadeResult,
+        owner: usize,
+        page: (f32, bool),
+        top: f32,
+        page_bottom: f32,
+    ) -> Option<Option<f32>> {
+        let (content_origin_y, repeated) = page;
+        // A marker in a table header repeated on this page belongs to it,
+        // as the page's runs place it.
+        let repeated = repeated
+            || matches!(
+                self.table_objects.headers.shift(owner, content_origin_y),
+                Some(Some(_))
+            );
+        self.page_projection.markers.get(&owner).map(|marker| {
+            (repeated || marker.is_on_page(content_origin_y)).then(|| {
+                let moved = text_runs::run_translation_y(
+                    self,
+                    cascade,
+                    &self.page_projection.run_context,
+                    owner,
+                );
+                marker.line_top(top - moved, page_bottom) + moved
+            })
+        })
+    }
+
+    /// The line holding one image of `::before` or `::after` content placed
+    /// on one page, and the UTF-8 offset of the image in that line's
+    /// processed text when it is known. The offset orders the image among
+    /// the line's glyph runs by [`crate::PositionedGlyphRun::text_offset`],
+    /// in logical (reading) order.
+    #[doc(hidden)]
+    pub fn page_generated_image_text_position(
+        &self,
+        page_index: u32,
+        image: generated_images::GeneratedImageId,
+    ) -> Option<(crate::TextLineId, Option<usize>)> {
+        let placement = self
+            .page_projection
+            .generated_images
+            .get(&page_index)?
+            .get(&image.key()?)?;
+        Some((
+            crate::TextLineId {
+                root: NodeId::new(placement.root as u64),
+                index: placement.line,
+            },
+            placement.text_offset,
+        ))
+    }
+
     /// Prepared URL and rectangle of one image of `::before` or `::after`
     /// content placed on one page.
     #[doc(hidden)]

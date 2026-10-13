@@ -1616,9 +1616,8 @@ pub(crate) fn parse_registered_consumer_value(
 /// tokenizer sees it. Nesting deeper than the scanner's limit counts as a
 /// call, which defers validation to substitution time rather than rejecting.
 fn contains_var_function(raw: &str) -> bool {
-    const MAX_DEPTH: usize = 128;
     fn scan(parser: &mut Parser<'_, '_>, depth: usize) -> bool {
-        if depth > MAX_DEPTH {
+        if depth > crate::MAX_CSS_NESTING_DEPTH {
             return true;
         }
         loop {

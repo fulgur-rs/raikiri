@@ -149,6 +149,73 @@ fn inside_image_marker_scales_raster_pixels_to_css_dimensions() {
     assert!(!missing.commands.iter().any(|command| matches!(command,RenderCommand::Fill(fill) if matches!(fill.brush,anyrender::Paint::Image(_)))));
 }
 
+#[test]
+fn a_replacing_content_image_is_drawn_at_its_object_fit_rect_in_its_box_clip() {
+    struct ContentPixels;
+    impl raikiri_traits::ImagePixelSource for ContentPixels {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 32,
+                height: 16,
+                rgba: [0, 0, 255, 255].repeat(32 * 16),
+            }))
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(16.0),
+                height: Some(8.0),
+                aspect_ratio: Some(2.0),
+            })
+        }
+    }
+    let (mut doc, cascade, root) = paragraph("", |doc, root| {
+        let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+        doc.append_text(
+            style,
+            "div::before{content:url(https://images.test/a.png);width:32px;height:32px;\
+             object-fit:cover}",
+        );
+        doc.append_text(root, "a");
+    });
+    doc.prepare_list_marker_images(&cascade, &ContentPixels, None);
+    lay_out(&mut doc, &cascade);
+    let mut scene = Scene::new();
+    draw_ifc_lines(
+        &mut scene,
+        &doc,
+        &cascade,
+        root,
+        IfcPosition {
+            x: 0.0,
+            y: 0.0,
+            shift_y: 0.0,
+        },
+        &crate::text::DecorationContext::default(),
+        None,
+        &[],
+    );
+    let clip = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(kurbo::Shape::bounding_box(&clip.clip)),
+            _ => None,
+        })
+        .expect("the image box clips the image");
+    assert_eq!((clip.width(), clip.height()), (32.0, 32.0));
+    let fills = image_fills(&scene);
+    assert_eq!(fills.len(), 1);
+    // The 2:1 image covers the 32x32 box at 64x32, centered, so its
+    // 32x16 raster is scaled by 2 and starts 16px left of the box.
+    let coeffs = fills[0].transform.as_coeffs();
+    assert_eq!(&coeffs[..4], &[2.0, 0.0, 0.0, 2.0]);
+    assert_eq!(coeffs[4], clip.x0 - 16.0);
+    assert_eq!(coeffs[5], clip.y0);
+}
+
 /// Image fills recorded in `scene`.
 fn image_fills(scene: &Scene) -> Vec<&anyrender::recording::FillCommand> {
     scene
