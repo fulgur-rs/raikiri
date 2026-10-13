@@ -302,7 +302,9 @@ fn a_transformed_body_contains_fixed_boxes() {
         "",
         "position:fixed;left:5px;top:6px;width:20px;height:10px",
     );
-    assert_eq!(absolute_rect(&doc, fixed), (35.0, 56.0, 20.0, 10.0));
+    // The insets are measured from the body's padding box, not from the
+    // parent the box sits in.
+    assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
 }
 
 #[test]
@@ -338,6 +340,104 @@ fn grid_abspos_static_positions_survive_the_fixed_relayout() {
     assert_eq!(gw, 220.0);
     let (x, y, _, _) = absolute_rect(&doc, item);
     assert_eq!((x - gx, y - gy), (10.0, 10.0));
+}
+
+#[test]
+fn absolute_boxes_are_placed_against_a_positioned_ancestor_other_than_the_parent() {
+    // The body contains the box, not the 0px tall wrapper it sits in.
+    let (doc, abs) = laid_out_in(
+        "position:relative",
+        "margin-left:30px;height:300px",
+        "",
+        "position:absolute;bottom:0;width:20px;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, abs), (30.0, 590.0, 20.0, 10.0));
+    // The grandparent's padding box: 214px wide at x=30, y=50.
+    for (abs_css, expected) in [
+        (
+            "right:0;top:0;width:20px;height:10px",
+            (224.0, 50.0, 20.0, 10.0),
+        ),
+        (
+            "left:0;bottom:0;width:50%;height:10px",
+            (30.0, 154.0, 107.0, 10.0),
+        ),
+        // Auto insets keep the static position.
+        ("width:20px;height:10px", (47.0, 57.0, 20.0, 10.0)),
+    ] {
+        let (doc, abs) = laid_out(
+            "position:relative;margin-left:30px;padding:7px;width:200px;height:100px",
+            "margin-left:10px",
+            &format!("position:absolute;{abs_css}"),
+        );
+        assert_eq!(absolute_rect(&doc, abs), expected, "{abs_css}");
+    }
+}
+
+#[test]
+fn fixed_boxes_are_placed_against_a_transformed_ancestor_other_than_the_parent() {
+    let (doc, fixed) = laid_out(
+        "transform:translateX(0px);margin-left:30px;width:200px;height:100px;border:2px solid",
+        "margin-left:10px",
+        "position:fixed;right:0;bottom:0;width:10px;height:10px",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (222.0, 142.0, 10.0, 10.0));
+}
+
+#[test]
+fn grid_static_positions_follow_justify_self_after_the_fixed_relayout() {
+    // Centered in the 200px grid starting at x=100: 400px wide against the
+    // page area, the margin box starts at x=0.
+    for (grid_css, item_css, expected_x) in [
+        ("justify-items:center", "", 0.0),
+        // `justify-self` overrides `justify-items`; the right edge stays at
+        // x=300.
+        ("justify-items:center", "justify-self:end", -100.0),
+        ("justify-items:end", "justify-self:start", 100.0),
+        ("justify-items:end", "justify-self:center", 0.0),
+        // A right-to-left grid starts at its right edge.
+        ("direction:rtl", "", -100.0),
+        ("direction:rtl;justify-items:end", "", 100.0),
+        // The margin box is aligned.
+        ("justify-items:end", "margin-right:20px", -120.0),
+    ] {
+        let (doc, fixed) = laid_out(
+            "margin-left:100px;width:200px",
+            &format!("display:grid;{grid_css}"),
+            &format!("position:fixed;width:50%;height:10px;{item_css}"),
+        );
+        assert_eq!(
+            absolute_rect(&doc, fixed),
+            (expected_x, 50.0, 400.0, 10.0),
+            "{grid_css};{item_css}"
+        );
+    }
+}
+
+#[test]
+fn grid_static_positions_follow_justify_self_without_a_relayout() {
+    // An absolutely positioned item contained by the grid keeps its size.
+    for (grid_css, item_css, expected_x) in [
+        ("justify-items:center", "", 175.0),
+        ("justify-items:center", "justify-self:end", 250.0),
+        ("", "justify-self:center", 175.0),
+        ("justify-items:end", "justify-self:auto", 250.0),
+        ("justify-items:stretch", "", 100.0),
+        ("justify-items:center", "margin-left:10px", 180.0),
+        // Auto margins are zero when every inset is auto.
+        ("", "margin-left:auto", 100.0),
+    ] {
+        let (doc, item) = laid_out(
+            "margin-left:100px;width:200px",
+            &format!("display:grid;position:relative;{grid_css}"),
+            &format!("position:absolute;width:50px;height:10px;{item_css}"),
+        );
+        assert_eq!(
+            absolute_rect(&doc, item),
+            (expected_x, 50.0, 50.0, 10.0),
+            "{grid_css};{item_css}"
+        );
+    }
 }
 
 #[test]
