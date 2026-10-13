@@ -332,6 +332,13 @@ pub struct Document {
     /// O(1) cost per mutation plus O(N) per layout batch gives amortized
     /// O(1) invalidation.
     pub(crate) layout_dirty: bool,
+    /// The boxes the last paged layout gave clearance at a forced page
+    /// break. A pass that clears another set dirties the layout cache,
+    /// since the change bypasses the cascade.
+    pub(crate) forced_break_clearance: Vec<usize>,
+    /// Page values that paged layout gives clearance by in place of the
+    /// cascade's, for a layout that otherwise ignores page names.
+    pub(crate) clearance_page_values: Option<Vec<raikiri_style::property::PageValue>>,
     /// Set around a table's intrinsic width probe of a cell that is an ifc
     /// root: the next ifc measurement only needs the cell's width, so it
     /// skips breaking the paragraph into lines.
@@ -596,6 +603,8 @@ impl Document {
             counter_snapshot_cache: std::sync::OnceLock::new(),
             root: 0,
             layout_dirty: false,
+            forced_break_clearance: Vec::new(),
+            clearance_page_values: None,
             ifc_width_probe: false,
             ifc: None,
             layout_cascade_generation: None,
@@ -1882,6 +1891,8 @@ impl Document {
             counter_snapshot_cache: _,
             root: _,
             layout_dirty: _,
+            forced_break_clearance: _,
+            clearance_page_values: _,
             ifc_width_probe: _,
             ifc,
             layout_cascade_generation: _,

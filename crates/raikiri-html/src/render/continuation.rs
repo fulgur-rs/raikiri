@@ -12,6 +12,7 @@ use raikiri_dom::{
     CrossingBox, Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
 };
+use raikiri_style::property::PageValue;
 use raikiri_style::{CascadeOptions, CascadeResult, MediaContext, RuleTree, cascade_with_options};
 use raikiri_traits::{LayoutError, ReplacedResolver};
 
@@ -103,7 +104,7 @@ pub(super) fn resume_at(
     earlier: &[CrossingBox],
 ) -> Result<Option<Vec<Continuation>>, LayoutError> {
     let Some((continuation, pages)) =
-        relayout_from(inputs, slices, geometries, page, start, Some(earlier))?
+        relayout_from(inputs, slices, geometries, page, start, Some(earlier), None)?
     else {
         return Ok(None);
     };
@@ -155,8 +156,23 @@ fn continue_from(
             break;
         };
         let page = page as usize;
-        let Some((continuation, pages)) =
-            relayout_from(inputs, slices, geometries, page, start, None)?
+        let before =
+            segment
+                .document
+                .page_content_before(segment.cascade, page as u32, start.token);
+        // Continue no box from the earlier layout. The body then has no
+        // fragment on the resumed page when it starts above it, as after a
+        // resumed stream, whose shorter dropped page would otherwise leave
+        // it one there.
+        let Some((continuation, pages)) = relayout_from(
+            inputs,
+            slices,
+            geometries,
+            page,
+            start,
+            Some(&[]),
+            Some(&before),
+        )?
         else {
             break;
         };
@@ -171,7 +187,10 @@ fn continue_from(
 
 /// Lay a copy of the document out at the width of page `page` and resume it
 /// at `start`. Returns the copy and its pages, numbered from `page`, or
-/// `None` when the copy does not reproduce the page start.
+/// `None` when the copy does not reproduce the page start, or puts content
+/// before the token on that page that `content_before`, the earlier
+/// layout's, does not have.
+#[allow(clippy::too_many_arguments)]
 fn relayout_from(
     inputs: &ContinuationInputs<'_>,
     slices: &[PageSlice],
@@ -179,6 +198,7 @@ fn relayout_from(
     page: usize,
     start: PageStart,
     earlier: Option<&[CrossingBox]>,
+    content_before: Option<&[usize]>,
 ) -> Result<Option<(Continuation, Vec<PageSlice>)>, LayoutError> {
     let geometry = geometries[page];
     // The run's element cascade already succeeded on the same input with the
@@ -199,7 +219,18 @@ fn relayout_from(
     document.prepare_continuation_cascade(&mut cascade, start.token);
 
     // Measure where the copy places the page start, on one page tall
-    // enough to hold everything before it.
+    // enough to hold everything before it. Page names would force a break
+    // before the token, such as the change to its own named page, and move
+    // it off the measuring page, so the measurement ignores them for
+    // breaking. The page the measurement ends then starts at that break,
+    // which the later layout, with the names, places there again.
+    let page_values = std::mem::replace(
+        &mut cascade.page_values,
+        vec![PageValue::Auto; document.node_count()],
+    );
+    // The changes of named page still give the boxes after them clearance,
+    // as in the later layout.
+    document.set_clearance_page_values(Some(page_values.clone()));
     let measure_control = PageLayoutControl::for_geometry_discovery(inputs.max_pages)
         .with_abort_check(inputs.abort_check);
     let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
@@ -225,6 +256,8 @@ fn relayout_from(
         &measure_geometries,
         &measure_control,
     )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
+    document.set_clearance_page_values(None);
+    cascade.page_values = page_values;
     // The token was found on the earlier layout's page, and the copy breaks
     // no line or box before it, so the measuring page holds it too.
     let Some(token_y) = document.page_token_offset(0, start.token) else {
@@ -323,6 +356,21 @@ fn relayout_from(
         let resumed_offset = document.page_token_offset(page as u32, start.token);
         if resumed_offset.is_none_or(|offset| (offset - start.offset).abs() > POSITION_TOLERANCE) {
             return Ok(None); // cov:ignore: defensive; the resumed page starts at the token's measured position
+        }
+        // The copy drops the forced breaks before the token, so content that
+        // the earlier layout kept on an earlier page, such as a float below
+        // the end of its block, can run onto the resumed page. Content can
+        // also move up onto the dropped lead page and be painted nowhere.
+        // Either way the page no longer starts with what it did.
+        if content_before.is_some_and(|earlier| {
+            let earlier: std::collections::HashSet<usize> = earlier.iter().copied().collect();
+            let copy: std::collections::HashSet<usize> = document
+                .page_content_before(&cascade, page as u32, start.token)
+                .into_iter()
+                .collect();
+            copy != earlier
+        }) {
+            return Ok(None);
         }
         return Ok(Some((
             Continuation {

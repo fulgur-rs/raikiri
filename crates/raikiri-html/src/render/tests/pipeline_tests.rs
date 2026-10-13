@@ -1556,3 +1556,447 @@ fn pipeline_counts_the_pages_a_relatively_positioned_float_paints_on() {
     );
     assert_eq!(run(&doc).slices.len(), 2);
 }
+
+#[test]
+fn pipeline_places_floats_after_a_forced_break_clear_of_earlier_pages() {
+    // Each page starts with a right float; the floats of earlier pages do
+    // not reach the later ones, so every float sits at the right edge.
+    let block = "<div style='break-before:page'>\
+                 <div class='f' style='float:right;width:100px;height:100px'></div></div>";
+    let doc = parse(&format!(
+        "<style>@page {{ size: 400px 400px; margin: 0 }} body {{ margin: 0 }}</style>\
+         <div><div class='f' style='float:right;width:100px;height:100px'></div></div>{}",
+        block.repeat(2)
+    ));
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 3);
+    for page in 0..3 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}
+
+#[test]
+fn pipeline_places_floats_after_a_named_page_change_clear_of_earlier_pages() {
+    // A change of named page forces the break, so the floats before it do
+    // not reach the next page either.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:a'><div class='f'></div></div>\
+         <div style='page:b'><div class='f'></div></div>\
+         <div style='page:c'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 3);
+    for page in 0..3 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}
+
+#[test]
+fn pipeline_prints_a_hidden_root_on_one_page() {
+    let doc = parse(
+        "<html style='display:none'><body>\
+         <div style='height:2000px'>a</div>\
+         <div style='break-before:page'>b <a href='#x'>c</a></div></body></html>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    // The hidden content leaves nothing on the page.
+    let (document, cascade) = out.layout_for_page(0);
+    assert_eq!(document.page_fragments(0).count(), 0);
+    assert!(document.page_text_runs(cascade, 0).is_empty());
+    assert_eq!(document.page_links(0).count(), 0);
+}
+
+#[test]
+fn pipeline_clears_a_forced_break_inside_display_contents_on_both_sides() {
+    // The box after the break sits in a `display: contents` wrapper and
+    // clears only the left side; the right float of the earlier page still
+    // does not reach it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div style='display:contents'>\
+         <div style='break-before:page; clear:left'><div class='f'></div></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    for page in 0..2 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}
+
+#[test]
+fn pipeline_clears_the_box_after_a_nested_break_after() {
+    // The forced break sits on the last box inside a wrapper; the wrapper's
+    // next sibling starts the new page clear of the earlier float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div><div style='break-after:page'>a</div></div>\
+         <div><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    for page in 0..2 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}
+
+#[test]
+fn pipeline_clears_a_float_right_after_a_forced_break() {
+    // The float right after the break goes to the new page clear of the
+    // earlier page's float, and the block after it follows it there.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div style='break-after:page'>a</div>\
+         <div class='f'></div><div style='height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let floats: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(floats, vec![300.0]);
+    assert!(
+        document
+            .page_fragments(1)
+            .any(|fragment| fragment.rect().height == 50.0),
+        "the block follows the float onto the new page"
+    );
+}
+
+#[test]
+fn pipeline_lines_up_floats_after_a_forced_break_on_the_new_page() {
+    // Only the first float after the break clears the earlier page; the
+    // second lines up beside it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div style='break-after:page'>a</div>\
+         <div class='f'></div><div class='f'></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let mut floats: Vec<(f32, f32)> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| (fragment.rect().x, fragment.rect().y))
+        .collect();
+    floats.sort_by(|a, b| a.0.total_cmp(&b.0));
+    assert_eq!(floats.len(), 2);
+    assert_eq!(floats[0].0, 200.0);
+    assert_eq!(floats[1].0, 300.0);
+    assert_eq!(floats[0].1, floats[1].1);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_leading_text() {
+    // The text takes the body's page, so the box on page `b` after it starts
+    // a new page clear of the float beside the text.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>text\
+         <div style='page:b'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_leading_generated_content() {
+    // Generated content before the boxes takes the body's page like text.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         body::before { content: 'x' }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div style='page:b'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_generated_content_of_display_contents() {
+    // The wrapper generates no box, but its `::before` content still takes
+    // the body's page before the box on page `b`.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .w { display: contents } .w::before { content: 'x' }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div class='w'><div style='page:b'><div class='f'></div></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_a_float_on_the_parent_page() {
+    // The float between the boxes on page `b` takes the body's page, so the
+    // second box on page `b` starts a new page clear of it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'>a</div><div class='f'></div>\
+         <div style='page:b'><div class='f'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 3);
+    let (document, _) = out.layout_for_page(2);
+    let xs: Vec<f32> = document
+        .page_fragments(2)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_a_non_rendered_element() {
+    // A `style` element is never rendered, even as `display: contents`, so
+    // the box after it still changes page from page `b` and starts the new
+    // page clear of the float escaping page `b`.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'><div class='f'></div>a</div>\
+         <style style='display:contents'>x</style>\
+         <div style='display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_preserved_white_space() {
+    // Pagination takes no page value from white space, even preserved, so
+    // the parent starts on page `b` with its named child. The parent then
+    // starts the new page clear of the float before it, and its white space
+    // and child go to that page together.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div style='white-space:pre'>   <div style='page:b; display:flow-root; height:50px'>b</div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_an_inline_replaced_element() {
+    // An image with `display: inline` is still an atomic inline, content of
+    // its parent's page, so the named block after it changes page and
+    // starts the new page clear of the float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div><img style='display:inline; width:10px; height:10px'>\
+         <div style='page:b; display:flow-root; height:50px'>b</div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
+fn pipeline_clears_a_named_page_after_an_empty_inline_box() {
+    // An empty inline box still makes a line on its parent's page, so the
+    // named block after it changes page and starts the new page clear of
+    // the float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div>\
+         <div><span style='padding:0 40px'></span>\
+         <div style='page:b; display:flow-root; height:50px'>b</div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the second page");
+    assert_eq!(block.rect().width, 400.0);
+}
+
+#[test]
+fn pipeline_ignores_running_elements_between_boxes_on_one_named_page() {
+    // A running element generates no box where it stands, so the boxes on
+    // page `b` around it share one page and the second stays beside the
+    // first one's float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div style='page:b'><div class='f'></div>a</div>\
+         <div style='position:running(header)'>h</div>\
+         <div style='page:b; display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let block = document
+        .page_fragments(0)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the page");
+    assert_eq!(block.rect().width, 300.0);
+}
+
+#[test]
+fn pipeline_ignores_forced_breaks_on_inline_boxes() {
+    // Pagination does not break after an inline box, so the block after it
+    // stays beside the float on the same page.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div class='f'></div><span style='break-after:page'>a</span>\
+         <div style='display:flow-root; height:50px'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+    let (document, _) = out.layout_for_page(0);
+    let block = document
+        .page_fragments(0)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the page");
+    assert_eq!(block.rect().width, 300.0);
+}
+
+#[test]
+fn pipeline_clears_a_forced_break_on_a_block_inside_an_inline_box() {
+    // Pagination breaks before the block inside the inline box, so the block
+    // starts the new page clear of the earlier page's float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <span><div style='break-before:page'><div class='f'></div></div></span>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let xs: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_a_float_with_its_own_break_before() {
+    // The float's own break moves it to the new page, clear of the earlier
+    // page's float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div><div>a</div>\
+         <div class='f' style='break-before:page'></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let floats: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(floats, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_the_box_after_a_float_with_break_after() {
+    // The box after the float starts the new page and does not shorten
+    // beside the earlier page's floats.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div class='f' style='break-after:page'></div>\
+         <div style='height:50px; display:flow-root'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the new page");
+    assert_eq!(block.rect().width, 400.0);
+}
