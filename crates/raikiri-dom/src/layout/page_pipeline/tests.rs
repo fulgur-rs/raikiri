@@ -4276,6 +4276,30 @@ fn an_inline_block_is_measured_before_the_lines_are_broken() {
 }
 
 #[test]
+fn atomics_whose_margin_boxes_add_up_to_the_line_share_it() {
+    // Each margin box is 4.009 + (50% - 8.018) + 4.009 = 50px. Rounded part
+    // by part to 1/64px, the two would come to 100.03px and break the line.
+    let (mut doc, cascade, _atomic, root) = ahem_paragraph_with_atomic(
+        "",
+        "width:calc(50% - 8.018px);height:10px;margin-inline:4.009px",
+        "",
+        "",
+    );
+    let second = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some("display:inline-block;width:calc(50% - 8.018px);height:10px;margin-inline:4.009px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).unwrap_or(cascade);
+    lay_out(&mut doc, &cascade);
+    assert_eq!(stored_lines(&doc, root).lines.len(), 1);
+    assert!(doc.nodes[second].unrounded_layout.location.x > 50.0);
+}
+
+#[test]
 fn a_wide_atomic_moves_to_the_next_line() {
     let (mut doc, cascade, _atomic, root) =
         ahem_paragraph_with_atomic("aa ", "width:90px;height:10px", " bb", "");

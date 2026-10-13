@@ -1086,10 +1086,18 @@ pub(crate) fn measure_atomics(
             }
             Some(_) => None,
         };
+        // shodo rounds every supplied length to 1/64 px on its own, so the
+        // margins and the border box would round separately and the margin
+        // box could grow past what the sizes add up to (two halves of a line
+        // no longer fitting it). Round the margin box as a whole and give the
+        // border box what is left after the rounded margins.
+        let snap = |value: f32| (value * 64.0).round() / 64.0;
+        let outer = snap(output.size.width + margin.left + margin.right);
+        let inline_size = (outer - snap(margin.left) - snap(margin.right)).max(0.0);
         sizes.insert(
             id,
             AtomicSize {
-                inline_size: output.size.width,
+                inline_size,
                 block_size: output.size.height,
                 baseline,
                 margins: shodo::node::Sides {

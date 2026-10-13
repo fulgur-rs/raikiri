@@ -1,7 +1,7 @@
 //! `border-image` and its longhands (CSS Backgrounds 3 §6
 //! <https://www.w3.org/TR/css-backgrounds-3/#border-images>).
 
-use cssparser::{ParseError, Parser, Token};
+use cssparser::{ParseError, Parser, ParserInput, ToCss, Token};
 
 use crate::property::types::*;
 
@@ -42,8 +42,80 @@ fn parse_up_to_four<'i, T: Copy>(
     sides_from(&values)
 }
 
-/// A `<number [0,∞]>` token.
+/// One math function (`calc()`, `min()`, `max()` or `clamp()`) folded to a
+/// single numeric value and clamped to `[0,∞]`, returned as CSS source for
+/// the slot's own parser. A math function outside a property's range is
+/// clamped instead of rejected (CSS Values 4 §10.12), unlike a literal
+/// negative value. A function that does not fold to one value is left to
+/// the slot's other branches.
+fn clamped_math_source<'i>(input: &mut Parser<'i, '_>) -> Result<String, ParseError<'i, ()>> {
+    let location = input.current_source_location();
+    input.skip_whitespace();
+    let start = input.position();
+    match input.next()? {
+        Token::Function(name)
+            if ["calc", "min", "max", "clamp"]
+                .iter()
+                .any(|function| name.eq_ignore_ascii_case(function)) => {}
+        _ => return Err(location.new_custom_error(())),
+    }
+    input.parse_nested_block(|nested| {
+        while nested.next().is_ok() {}
+        Ok::<_, ParseError<'_, ()>>(())
+    })?;
+    let simplified = crate::cascade::simplify_math_functions(input.slice_from(start))
+        .ok_or_else(|| location.new_custom_error(()))?;
+    let mut token_input = ParserInput::new(&simplified);
+    let mut parser = Parser::new(&mut token_input);
+    let token = next_numeric_stable(&mut parser)
+        .ok()
+        .filter(|token| {
+            matches!(
+                token,
+                Token::Number { .. } | Token::Percentage { .. } | Token::Dimension { .. }
+            ) && parser.expect_exhausted().is_ok()
+        })
+        .ok_or_else(|| location.new_custom_error(()))?;
+    let clamped = match token {
+        Token::Number { value, .. } if value < 0.0 => Token::Number {
+            has_sign: false,
+            value: 0.0,
+            int_value: Some(0),
+        },
+        Token::Percentage { unit_value, .. } if unit_value < 0.0 => Token::Percentage {
+            has_sign: false,
+            unit_value: 0.0,
+            int_value: Some(0),
+        },
+        Token::Dimension { value, unit, .. } if value < 0.0 => Token::Dimension {
+            has_sign: false,
+            value: 0.0,
+            int_value: Some(0),
+            unit,
+        },
+        token => token,
+    };
+    Ok(clamped.to_css_string())
+}
+
+/// Parse `source`, a value from [`clamped_math_source`], with `item`.
+fn parse_clamped<T>(
+    source: &str,
+    item: impl for<'a, 'b> FnOnce(&mut Parser<'a, 'b>) -> Option<T>,
+) -> Option<T> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let value = item(&mut parser)?;
+    parser.expect_exhausted().ok()?;
+    Some(value)
+}
+
+/// A `<number [0,∞]>` token, or a math function that folds to a number.
 fn parse_non_negative_number<'i>(input: &mut Parser<'i, '_>) -> Result<f32, ParseError<'i, ()>> {
+    if let Ok(source) = input.try_parse(clamped_math_source) {
+        return parse_clamped(&source, |parser| expect_number_stable(parser).ok())
+            .ok_or_else(|| input.new_custom_error(()));
+    }
     let value = expect_number_stable(input)?;
     if value >= 0.0 {
         Ok(value)
@@ -61,6 +133,10 @@ fn parse_slice_offset<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<BorderImageSliceOffset, ParseError<'i, ()>> {
     let location = input.current_source_location();
+    if let Ok(source) = input.try_parse(clamped_math_source) {
+        return parse_clamped(&source, |parser| parse_slice_offset(parser).ok())
+            .ok_or_else(|| location.new_custom_error(()));
+    }
     let offset = match next_numeric_stable(input)? {
         Token::Number { value, .. } => BorderImageSliceOffset::Number(value),
         Token::Percentage { unit_value, .. } => BorderImageSliceOffset::Percent(unit_value * 100.0),
@@ -99,6 +175,16 @@ fn parse_width_side<'i>(
     if let Ok(number) = input.try_parse(parse_non_negative_number) {
         return Ok(BorderImageWidthSide::Number(number));
     }
+    // A math function that folds to one length or percentage.
+    if let Ok(length) = input.try_parse(|input| {
+        let source = clamped_math_source(input)?;
+        parse_clamped(&source, |parser| {
+            parse_non_negative_length_percentage_res(parser).ok()
+        })
+        .ok_or_else(|| input.new_custom_error(()))
+    }) {
+        return Ok(BorderImageWidthSide::LengthPercentage(length.into()));
+    }
     // A mixed-unit `calc()` that substitution or simplification could not
     // fold keeps its terms; a math function is clamped to the range.
     if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
@@ -124,6 +210,11 @@ fn parse_outset_side<'i>(
         return Ok(BorderImageOutsetSide::Number(number));
     }
     let location = input.current_source_location();
+    if let Ok(source) = input.try_parse(clamped_math_source) {
+        return parse_clamped(&source, parse_non_negative_length)
+            .map(BorderImageOutsetSide::Length)
+            .ok_or_else(|| location.new_custom_error(()));
+    }
     parse_non_negative_length(input)
         .map(BorderImageOutsetSide::Length)
         .ok_or_else(|| location.new_custom_error(()))

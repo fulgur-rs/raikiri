@@ -145,7 +145,6 @@ fn margin_row_margins(top: f32) -> PageMargins {
 }
 
 fn fixed_margin_spec() -> MarginBoxSpec {
-    let initial = ComputedValues::initial();
     MarginBoxSpec {
         slot: PageMarginBoxSlot::TopCenter,
         content: String::new(),
@@ -156,13 +155,10 @@ fn fixed_margin_spec() -> MarginBoxSpec {
             b: 0,
             a: 255,
         }),
-        background_image_url: None,
+        background_clip: VisualBox::BorderBox,
+        background_layers: Vec::new(),
+        background_layer_count: 1,
         background_image_lime: false,
-        background_size: initial.background_size,
-        background_position: initial.background_position,
-        background_repeat: initial.background_repeat,
-        background_origin: initial.background_origin,
-        background_clip: initial.background_clip,
         content_image_lime: false,
         border_top: None,
         border_right: None,
@@ -832,4 +828,74 @@ fn margin_box_text_shadow_substitutes_variables() {
     assert_eq!(shadows.len(), 1);
     assert_eq!(shadows[0].offset, (2.0, 3.0));
     assert_eq!(shadows[0].color.r, 255);
+}
+
+#[test]
+fn a_margin_box_color_takes_the_clip_of_the_bottom_layer() {
+    let clip = |declarations: &str| {
+        let (doc, cascade) = page_cascade_fixture(&format!(
+            "@page {{ margin: 40px; @top-left {{ content: 'x'; {declarations} }} }}"
+        ));
+        let boxes = layout_page(&doc, &cascade, small_page());
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        head.background_clip
+    };
+    assert_eq!(clip(""), VisualBox::BorderBox);
+    assert_eq!(clip("background-clip: content-box"), VisualBox::ContentBox);
+    // The clip list repeats to the number of image layers.
+    assert_eq!(
+        clip(
+            "background-image: url(a.png), none, none; \
+             background-clip: content-box, padding-box"
+        ),
+        VisualBox::ContentBox
+    );
+    assert_eq!(
+        clip("background: url(a.png), red content-box"),
+        VisualBox::ContentBox
+    );
+}
+
+#[test]
+fn margin_box_layers_below_the_painted_ones_are_dropped() {
+    let mut images = vec!["none"; MAX_PAINTED_BACKGROUND_LAYERS];
+    images[0] = "url(top.png)";
+    images.push("url(under.png)");
+    let (doc, cascade) = page_cascade_fixture(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'x'; background-image: {} }} }}",
+        images.join(", ")
+    ));
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let urls: Vec<_> = head
+        .background_layers
+        .iter()
+        .map(|layer| layer.url.as_str())
+        .collect();
+    assert_eq!(urls, ["top.png"]);
+    assert_eq!(
+        head.background_layer_count,
+        MAX_PAINTED_BACKGROUND_LAYERS + 1
+    );
+}
+
+#[test]
+fn margin_box_text_shadow_takes_the_css_wide_keywords() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; text-shadow: 4px 4px lime; \
+           @top-left { content: 'abc'; text-shadow: 1px 1px red; text-shadow: initial } \
+           @top-right { content: 'abc'; text-shadow: 1px 1px red; text-shadow: unset } }",
+    );
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [left, right] = boxes.as_slice() else {
+        panic!("two boxes: {boxes:?}");
+    };
+    assert!(left.text_runs()[0].shadows.is_empty(), "initial is none");
+    let unset = &right.text_runs()[0].shadows;
+    assert_eq!(unset.len(), 1, "unset inherits the page context's value");
+    assert_eq!(unset[0].offset, (4.0, 4.0));
 }

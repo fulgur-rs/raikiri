@@ -32,7 +32,11 @@ use crate::page::TargetRegistry;
 pub struct RenderLimits {
     /// Exceeding this yields `LimitExceeded { kind: Pages }`.
     pub max_document_pages: Option<u32>,
-    /// Checked after parsing completes.
+    /// Maximum total DOM nodes, including the virtual document root. Built-in
+    /// HTML parser entry points enforce it before each node
+    /// allocation. Lower-level entry points with caller-supplied sinks leave
+    /// allocation policy to those sinks. Configurable entry points may
+    /// explicitly disable the limit with `None`.
     pub max_dom_nodes: Option<u64>,
     /// Maximum number of per-document target references.
     pub max_target_slots: Option<u32>,

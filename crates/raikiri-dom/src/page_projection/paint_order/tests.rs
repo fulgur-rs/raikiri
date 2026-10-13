@@ -109,6 +109,7 @@ fn skipping_subtrees_without_events_keeps_every_page_order() {
             cascade: &cascade,
             document: &document,
             page: fragment,
+            later_line_boxes: Default::default(),
         };
         for item in &fragment.items {
             items
@@ -157,6 +158,7 @@ fn an_untraceable_event_source_walks_every_node() {
         cascade: &cascade,
         document: &document,
         page: fragment,
+        later_line_boxes: Default::default(),
     };
     assert!(document.page_paint_nodes(&items, 0, None).is_none());
 }

@@ -1121,7 +1121,7 @@ fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
         cv.flex_direction = direction;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut diag);
+        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(
@@ -1139,7 +1139,7 @@ fn bridge_flex_maps_every_flex_direction_and_flex_wrap_keyword() {
         cv.flex_wrap = wrap;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut diag);
+        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
         assert_eq!(style.flex_wrap, expected, "flex-wrap: {wrap:?}");
     }
 }
@@ -1155,7 +1155,7 @@ fn bridge_flex_absolutizes_flex_basis_px_and_percent() {
     cv.flex_basis = ComputedFlexBasis::Px(40.0);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_flex(&mut style, &cv, &mut diag);
+    bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(style.flex_basis, Dimension::length(40.0));
 
     // `ComputedFlexBasis::Percent` holds the authored number (`50.0`
@@ -1167,7 +1167,7 @@ fn bridge_flex_absolutizes_flex_basis_px_and_percent() {
     cv.flex_basis = ComputedFlexBasis::Percent(50.0);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_flex(&mut style, &cv, &mut diag);
+    bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(style.flex_basis, Dimension::percent(0.5));
 }
 
@@ -1186,7 +1186,7 @@ fn bridge_flex_maps_intrinsic_basis_keywords_to_taffy_dimensions() {
         cv.flex_basis = value;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_flex(&mut style, &cv, &mut diag);
+        bridge_flex(&mut style, &cv, &mut Vec::new(), &mut diag);
         assert_eq!(style.flex_basis, expected);
         assert!(diag.is_empty());
     }
@@ -1590,7 +1590,7 @@ fn bridge_gap_collapses_normal_to_zero() {
     assert_eq!(cv.column_gap, ComputedLengthPercentageOrNormal::Normal);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut diag);
+    bridge_gap(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.gap,
         Size {
@@ -1598,6 +1598,29 @@ fn bridge_gap_collapses_normal_to_zero() {
             height: LengthPercentage::length(0.0),
         }
     );
+}
+
+#[test]
+fn bridge_gap_hands_a_mixed_calc_to_taffy() {
+    // `column-gap: calc(10% + 5px)` keeps both terms and resolves against
+    // the container's inner size once it is known.
+    let mut cv = ComputedValues::initial();
+    cv.column_gap =
+        ComputedLengthPercentageOrNormal::Calc(raikiri_style::property::CalcLengthPercentage {
+            percent: 10.0,
+            px: 5.0,
+        });
+    let mut style = Style::default();
+    let mut calc_values = Vec::new();
+    let mut diag = Vec::new();
+    bridge_gap(&mut style, &cv, &mut calc_values, &mut diag);
+    let raw = style.gap.width.into_raw();
+    assert!(raw.is_calc());
+    assert_eq!(
+        crate::taffy_impl::resolve_calc(raw.calc_value(), 200.0),
+        25.0
+    );
+    assert_eq!(style.gap.height, LengthPercentage::length(0.0));
 }
 
 #[test]
@@ -1614,7 +1637,7 @@ fn bridge_gap_absolutizes_percent_gap() {
     cv.column_gap = ComputedLengthPercentageOrNormal::Percent(10.0);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_gap(&mut style, &cv, &mut diag);
+    bridge_gap(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.gap,
         Size {
@@ -2210,6 +2233,26 @@ fn grid_auto_flow_column_places_implicit_items_column_wise_through_taffy() {
         a_loc.y,
         b_loc.y
     );
+}
+
+#[test]
+fn multicol_style_keeps_both_terms_of_a_calc_gap() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;width:200px;column-gap:calc(10% + 5px)"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let style = multicol_style_from_computed(&cascade.computed[container]).expect("multicol style");
+    assert!((style.gap - 5.0).abs() < 0.01, "{style:?}");
+    assert_eq!(style.gap_percent, Some(10.0));
 }
 
 #[test]

@@ -321,3 +321,61 @@ fn css_wide_margin_resolution_preserves_deferred_sizing_declarations() {
     };
     assert_eq!(deferred.value, "var(--width)");
 }
+
+#[test]
+fn css_wide_text_shadow_initial_resets_and_others_inherit() {
+    for (keyword, inherits) in [
+        ("initial", false),
+        ("inherit", true),
+        ("unset", true),
+        ("revert", true),
+        ("revert-layer", true),
+    ] {
+        let mut doc = TestDoc::new();
+        let parent = doc.push_element(0, "div", Some("text-shadow: 1px 2px red"));
+        let child = doc.push_element_with_attrs(parent, "p", None, &[("id", "target")]);
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("p {{ text-shadow: 5px 5px blue }} #target {{ text-shadow: {keyword} }}"),
+            Origin::Author,
+        );
+        let result = cascade(&doc, &tree).unwrap();
+        let shadows = &result.computed[child].text_shadow;
+        if inherits {
+            assert_eq!(shadows.len(), 1, "{keyword}");
+            assert_eq!(shadows[0].offset_x.px(), 1.0, "{keyword}");
+            assert_eq!(shadows[0].offset_y.px(), 2.0, "{keyword}");
+        } else {
+            assert!(shadows.is_empty(), "{keyword}");
+        }
+    }
+}
+
+#[test]
+fn css_wide_text_shadow_on_page_context() {
+    for (keyword, expected) in [("initial", 0), ("inherit", 1)] {
+        let mut doc = TestDoc::new();
+        let root = doc.push_element(0, "html", Some("text-shadow: 1px 1px red"));
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("@page {{ text-shadow: 3px 3px blue; text-shadow: {keyword} }}"),
+            Origin::Author,
+        );
+        let root_style = cascade(&doc, &tree).unwrap().computed[root].clone();
+        let result = cascade_page_with_media_context(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::FromRoot(&root_style),
+            &MediaContext::print(),
+        );
+        let Some(PropertyValue::TextShadow(items)) =
+            result.declarations().get(&PropertyKey::TextShadow)
+        else {
+            panic!(
+                "{keyword}: {:?}",
+                result.declarations().get(&PropertyKey::TextShadow)
+            );
+        };
+        assert_eq!(items.len(), expected, "{keyword}");
+    }
+}

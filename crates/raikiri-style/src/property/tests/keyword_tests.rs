@@ -80,7 +80,6 @@ fn keyword_tables_round_trip_through_their_parsers() {
         StringFetchMode,
         VerticalSide,
         Visibility,
-        VisualBox,
         WhiteSpace,
         WhiteSpaceCollapse,
         WordBreak,
@@ -102,6 +101,14 @@ fn multi_token_keyword_tables_round_trip_through_the_property_parser() {
         assert_eq!(
             parse_entire(value.as_css_str(), "text-transform"),
             Some(PropertyValue::TextTransform(value)),
+            "{}",
+            value.as_css_str()
+        );
+    }
+    for &value in VisualBox::ALL {
+        assert_eq!(
+            parse_entire(value.as_css_str(), "background-clip"),
+            Some(PropertyValue::BackgroundClip(Arc::from([value]))),
             "{}",
             value.as_css_str()
         );

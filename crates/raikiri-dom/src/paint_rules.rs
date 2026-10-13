@@ -3,9 +3,9 @@
 
 use crate::Document;
 use raikiri_style::property::{
-    BackgroundImage, BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue,
-    EmptyCellsValue, FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility,
-    WhiteSpaceCollapse, ZIndexValue,
+    BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue, EmptyCellsValue,
+    FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse,
+    ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
@@ -249,6 +249,47 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
     .flatten()
 }
 
+/// The group opacity the `::first-line` boxes around the first line of
+/// paragraph `root` paint that line's content with, if any.
+///
+/// A `::first-line` is a fictional inline box wrapping the content of its
+/// block's first formatted line, inside the block and outside the inline
+/// elements on the line, which it splits at the line's end (CSS Pseudo 4
+/// §2.1.1). Its opacity composites that content as one group (§2.1.2, CSS
+/// Color 4 §3.3). The first line of a paragraph is also the first formatted
+/// line of each ancestor block it starts, so their `::first-line` boxes
+/// nest around the same content, and their opacities multiply. A paragraph
+/// that starts with a block child has no first line of its own.
+pub fn first_line_opacity_layer(document: &Document, root: usize) -> Option<f32> {
+    let node = document.get_node(root)?;
+    if node.kind() != NodeKind::Element || !node.is_ifc_root() {
+        return None;
+    }
+    let ifc = node.ifc.as_ref()?;
+    let lines = ifc.lines.as_ref()?;
+    if lines.lines.is_empty() || lines.block_line_starts.iter().any(|&(_, line)| line == 0) {
+        return None;
+    }
+    ifc.first_line_opacity
+}
+
+/// Whether `id` is an atomic inline on the first line of paragraph `root`,
+/// so the paragraph's `::first-line` wraps it (see
+/// [`first_line_opacity_layer`]). Floats and absolutely positioned boxes are
+/// not on any line: the `::first-line` box wraps only the inline-level
+/// content of the line (CSS Pseudo 4 §2.1.1).
+pub fn atomic_on_first_line(document: &Document, root: usize, id: usize) -> bool {
+    document
+        .get_node(root)
+        .and_then(|node| node.ifc_lines())
+        .and_then(|lines| lines.first())
+        .is_some_and(|line| {
+            line.fragments().any(|fragment| {
+                matches!(fragment, shodo::Fragment::Atomic(atomic) if atomic.node.0 as usize == id)
+            })
+        })
+}
+
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
 /// composites at among the other groups of its paragraph: the `z-index` of a
 /// relatively positioned pseudo-element, and 0 otherwise, the level of the
@@ -380,7 +421,7 @@ pub fn is_visibility_hidden_table_part(cv: &ComputedValues) -> bool {
 /// per-cell clip.
 pub fn paints_table_part_decoration(cv: &ComputedValues) -> bool {
     cv.background_color.a > 0
-        || !matches!(cv.background_image, BackgroundImage::None)
+        || cv.has_background_image()
         || [
             &cv.border.top,
             &cv.border.right,

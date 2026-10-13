@@ -948,36 +948,7 @@ pub(crate) fn project_deferred_value(
             }
             _ => return None,
         },
-        PropertyValue::Background(shorthand) => match key {
-            crate::property::PropertyKey::BackgroundColor => match shorthand.color_expression {
-                Some(source) => {
-                    PropertyValue::ContextualColor(crate::property::ContextualColor { source, key })
-                }
-                None => PropertyValue::BackgroundColor(shorthand.color),
-            },
-            crate::property::PropertyKey::BackgroundImage => {
-                PropertyValue::BackgroundImage(shorthand.image)
-            }
-            crate::property::PropertyKey::BackgroundRepeat => {
-                PropertyValue::BackgroundRepeat(shorthand.repeat)
-            }
-            crate::property::PropertyKey::BackgroundAttachment => {
-                PropertyValue::BackgroundAttachment(shorthand.attachment)
-            }
-            crate::property::PropertyKey::BackgroundPosition => {
-                PropertyValue::BackgroundPosition(shorthand.position)
-            }
-            crate::property::PropertyKey::BackgroundSize => {
-                PropertyValue::BackgroundSize(shorthand.size)
-            }
-            crate::property::PropertyKey::BackgroundClip => {
-                PropertyValue::BackgroundClip(shorthand.clip)
-            }
-            crate::property::PropertyKey::BackgroundOrigin => {
-                PropertyValue::BackgroundOrigin(shorthand.origin)
-            }
-            _ => return None,
-        },
+        PropertyValue::Background(shorthand) => return shorthand.longhand(key),
         _ => return None,
     })
 }

@@ -165,3 +165,47 @@ fn calc_padding_on_a_table_resolves_against_its_containing_block() {
     let ((cx, _, _, _), _) = boxes(&html, "c");
     assert_close(cx - x, 22.0, "table content left inset", &html);
 }
+
+#[test]
+fn calc_padding_of_a_flex_item_resolves_against_the_flex_container_width() {
+    // The automatic minimum size of the item adds its padding to its
+    // min-content size. Against the 200px container `calc(100px - 50%)` is
+    // zero, so the item keeps its 100px flex base size.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+         .flex {{ display: flex; width: 200px }}</style>\
+         <div class=flex><div id=i style=\"flex-basis: 50%; padding-right: calc(100px - 50%)\">XX</div></div>"
+    );
+    let ((_, _, width, _), (_, _, cw, _)) = boxes(&html, "i");
+    assert_close(width, 100.0, "border-box width", &html);
+    assert_close(cw, 100.0, "content width", &html);
+}
+
+#[test]
+fn percent_padding_of_a_flex_item_counts_in_its_automatic_minimum_size() {
+    // 10% of the 200px container is 20px, added to the 40px min-content
+    // size of the text.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+         .flex {{ display: flex; width: 200px }}</style>\
+         <div class=flex><div id=i style=\"flex-basis: 0; padding-right: 10%\">XX</div></div>"
+    );
+    let ((_, _, width, _), (_, _, cw, _)) = boxes(&html, "i");
+    assert_close(width, 60.0, "border-box width", &html);
+    assert_close(cw, 40.0, "content width", &html);
+}
+
+#[test]
+fn percent_margin_of_a_flex_item_stays_outside_its_automatic_minimum_size() {
+    // The margin moves the next item but leaves the border box at the
+    // 40px min-content size of the text.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+         .flex {{ display: flex; width: 200px }}</style>\
+         <div class=flex><div id=i style=\"flex-basis: 0; margin-right: 10%\">XX</div><div id=n>X</div></div>"
+    );
+    let ((x, _, width, _), _) = boxes(&html, "i");
+    let ((nx, _, _, _), _) = boxes(&html, "n");
+    assert_close(width, 40.0, "border-box width", &html);
+    assert_close(nx - x, 60.0, "next item offset", &html);
+}

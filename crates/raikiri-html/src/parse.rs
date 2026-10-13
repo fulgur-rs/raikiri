@@ -1,15 +1,18 @@
 //! Public parse entrypoints.
 
 use std::borrow::Cow;
+use std::cell::Cell;
 use std::io::Read;
+use std::rc::Rc;
 
 use html5ever::driver::{ParseOpts, parse_document, parse_fragment as parse_html_fragment};
 use html5ever::interface::QualName;
+use html5ever::tendril::{TendrilSink, fmt::UTF8};
 use html5ever::tree_builder::TreeSink;
 use markup5ever::{LocalName, Namespace};
 use raikiri_traits::{
-    Body, Method, NetworkError, ParseError, RenderWarning, Request, ResourceKind, StylesheetKind,
-    ViolationType, WarningKind,
+    Body, LimitKind, Method, NetworkError, ParseError, RenderLimits, RenderWarning, Request,
+    ResourceKind, StylesheetKind, ViolationType, WarningKind,
 };
 use url::Url;
 
@@ -26,7 +29,9 @@ use crate::types::{ParseOptions, StylesheetSource, UncascadedDocument};
 ///
 /// Treat `input` as a UTF-8 byte stream. Read failures return
 /// [`ParseError::Io`]; input that is not valid UTF-8 returns [`ParseError::Encoding`].
-/// This is the current scope; encoding_rs support may be added later.
+/// The default input-byte and DOM-node budgets return
+/// [`ParseError::LimitExceeded`] when reached. This is the current scope;
+/// encoding_rs support may be added later.
 ///
 /// # Example
 ///
@@ -44,12 +49,18 @@ pub fn parse<R: Read>(
     input: R,
     options: &ParseOptions<'_>,
 ) -> Result<UncascadedDocument, ParseError> {
-    parse_with_sink(input, RaikiriTreeSink::default(), options)
+    let limits = RenderLimits::default();
+    parse_with_budgets(input, options, &limits)
 }
 
 /// Parse through a consumer-supplied sink. Consumer wrappers must declare
 /// `type Output = UncascadedDocument` and propagate the inner sink's
 /// `finish(self)` result.
+///
+/// Input reads use the default `max_input_bytes` cap. A caller-supplied sink
+/// owns its DOM allocation policy. The public `RaikiriTreeSink::new` is a raw
+/// sink without a node budget, so callers must supply another allocation
+/// boundary or use [`parse`] for the built-in sink with both default caps.
 ///
 /// After parsing, inject the default UA CSS into the Document with
 /// [`raikiri_dom::Document::add_stylesheet`] and retain consumer extra sheets
@@ -71,8 +82,60 @@ where
     S: TreeSink<Handle = usize, Output = UncascadedDocument>,
 {
     let mut feed = Utf8Feed::new(parse_document(sink, ParseOpts::default()));
-    feed.feed_reader(input)?;
+    feed.feed_reader_limited(input, RenderLimits::default().max_input_bytes, |_| true)?;
     finish_document(feed.finish()?, options)
+}
+
+pub(crate) fn parse_with_budgets<R: Read>(
+    input: R,
+    options: &ParseOptions<'_>,
+    limits: &RenderLimits,
+) -> Result<UncascadedDocument, ParseError> {
+    let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
+    let node_limit_signal = sink.dom_node_limit_signal();
+    let parser = parse_document(sink, ParseOpts::default());
+    parse_with_budgets_and_parser(
+        input,
+        parser,
+        options,
+        limits.max_input_bytes,
+        limits.max_dom_nodes,
+        node_limit_signal,
+    )
+}
+
+fn parse_with_budgets_and_parser<R, P>(
+    input: R,
+    parser: P,
+    options: &ParseOptions<'_>,
+    max_input_bytes: Option<u64>,
+    max_dom_nodes: Option<u64>,
+    node_limit_signal: Rc<Cell<Option<u64>>>,
+) -> Result<UncascadedDocument, ParseError>
+where
+    R: Read,
+    P: TendrilSink<UTF8, Output = UncascadedDocument>,
+{
+    let mut feed = Utf8Feed::new(parser);
+    feed.feed_reader_limited(input, max_input_bytes, |_| {
+        node_limit_signal.get().is_none()
+    })?;
+    if let Some(actual) = node_limit_signal.get() {
+        return Err(dom_node_limit_error(max_dom_nodes, actual));
+    }
+    let document = feed.finish()?;
+    if let Some(actual) = node_limit_signal.get() {
+        return Err(dom_node_limit_error(max_dom_nodes, actual));
+    }
+    finish_document(document, options)
+}
+
+fn dom_node_limit_error(limit: Option<u64>, actual: u64) -> ParseError {
+    ParseError::LimitExceeded {
+        kind: LimitKind::DomNodes,
+        limit: limit.unwrap_or_else(|| actual.saturating_sub(1)),
+        actual,
+    }
 }
 
 /// Parse HTML markup using the browser's fragment algorithm for an element context.
@@ -93,15 +156,24 @@ pub fn parse_fragment<R: Read>(
         Namespace::from(context_namespace),
         LocalName::from(context_local_name),
     );
-    let mut feed = Utf8Feed::new(parse_html_fragment(
-        RaikiriTreeSink::default(),
+    let limits = RenderLimits::default();
+    let sink = RaikiriTreeSink::with_limits(limits.max_parse_warnings, limits.max_dom_nodes);
+    let node_limit_signal = sink.dom_node_limit_signal();
+    let parser = parse_html_fragment(
+        sink,
         ParseOpts::default(),
         context_name,
         Vec::new(),
         context_element_allows_scripting,
-    ));
-    feed.feed_reader(input)?;
-    let mut doc = finish_document(feed.finish()?, options)?;
+    );
+    let mut doc = parse_with_budgets_and_parser(
+        input,
+        parser,
+        options,
+        limits.max_input_bytes,
+        limits.max_dom_nodes,
+        node_limit_signal,
+    )?;
     flatten_fragment_root(&mut doc.dom);
     Ok(doc)
 }

@@ -508,6 +508,20 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         PropertyValue::UnicodeBidi(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::FontVariantCaps(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::WritingMode(value) => Some(value.as_css_str().to_owned()),
+        PropertyValue::BackgroundRepeat(list) => {
+            Some(serialize_layer_list(list, serialize_background_repeat))
+        }
+        PropertyValue::BackgroundAttachment(list) => Some(serialize_layer_list(list, |value| {
+            value.as_css_str().to_owned()
+        })),
+        PropertyValue::BackgroundClip(list) | PropertyValue::BackgroundOrigin(list) => {
+            Some(serialize_layer_list(list, |value| {
+                value.as_css_str().to_owned()
+            }))
+        }
+        PropertyValue::BackgroundSize(list) => {
+            Some(serialize_layer_list(list, serialize_background_size))
+        }
 
         // Not canonically serialized yet: callers fall back to echoing the
         // raw input. A new variant must be added either to an arm above or
@@ -614,11 +628,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Orphans(..)
         | PropertyValue::Widows(..)
         | PropertyValue::RubyPosition(..)
-        | PropertyValue::BackgroundRepeat(..)
-        | PropertyValue::BackgroundAttachment(..)
-        | PropertyValue::BackgroundClip(..)
-        | PropertyValue::BackgroundOrigin(..)
-        | PropertyValue::BackgroundSize(..)
         | PropertyValue::BackgroundPosition(..)
         | PropertyValue::BackgroundImage(..)
         | PropertyValue::Background(..)
@@ -661,6 +670,43 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextSpacingShorthand(..)
         | PropertyValue::TextEmphasisColor(..)
         | PropertyValue::TextEmphasis(..) => None,
+    }
+}
+
+/// Serializes one item per background layer, separated by `", "`.
+fn serialize_layer_list<T>(list: &[T], item: impl Fn(&T) -> String) -> String {
+    list.iter().map(item).collect::<Vec<_>>().join(", ")
+}
+
+/// Serializes one `<repeat-style>` in its shortest form (CSSOM shortest
+/// serialization): `repeat-x` / `repeat-y` for their two-keyword
+/// equivalents, and one keyword when both axes match.
+fn serialize_background_repeat(value: &BackgroundRepeat) -> String {
+    use BackgroundRepeatKeyword::{NoRepeat, Repeat};
+    match (value.x, value.y) {
+        (x, y) if x == y => x.as_css_str().to_owned(),
+        (Repeat, NoRepeat) => "repeat-x".to_owned(),
+        (NoRepeat, Repeat) => "repeat-y".to_owned(),
+        (x, y) => format!("{} {}", x.as_css_str(), y.as_css_str()),
+    }
+}
+
+/// Serializes one `<bg-size>`: `auto auto` as `auto`, and an explicit
+/// width with both axes, since an omitted height means `auto`
+/// (`1px` reads back as `1px auto`).
+fn serialize_background_size(value: &BackgroundSize) -> String {
+    match value {
+        BackgroundSize::Cover => "cover".to_owned(),
+        BackgroundSize::Contain => "contain".to_owned(),
+        BackgroundSize::Explicit {
+            width: LengthOrAuto::Auto,
+            height: LengthOrAuto::Auto,
+        } => "auto".to_owned(),
+        BackgroundSize::Explicit { width, height } => format!(
+            "{} {}",
+            serialize_length_or_auto(width),
+            serialize_length_or_auto(height)
+        ),
     }
 }
 

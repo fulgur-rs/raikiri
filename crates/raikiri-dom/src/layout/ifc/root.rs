@@ -62,6 +62,9 @@ pub(crate) struct IfcRoot {
     /// content that does not wrap, by node id.
     pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
     pub(crate) letter_styles: Vec<super::first_letter::LetterStyle>,
+    /// The opacity of the translucent `::first-line` boxes around the first
+    /// line, multiplied.
+    pub(crate) first_line_opacity: Option<f32>,
     letter_style_index: Arc<LetterStyleIndex>,
 }
 
@@ -299,6 +302,7 @@ impl IfcRoot {
             nowrap: projected.nowrap,
             text_nowrap: projected.text_nowrap,
             letter_styles: projected.letter_styles,
+            first_line_opacity: projected.first_line_opacity,
             letter_style_index,
         }
     }
@@ -324,6 +328,7 @@ impl IfcRoot {
             nowrap: self.nowrap,
             text_nowrap: self.text_nowrap.clone(),
             letter_styles: self.letter_styles.clone(),
+            first_line_opacity: self.first_line_opacity,
             letter_style_index: self.letter_style_index.clone(),
         }
     }

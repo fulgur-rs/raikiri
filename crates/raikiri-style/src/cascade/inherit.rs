@@ -2228,6 +2228,20 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     crate::property::BoxDecorationBreak::Slice
                 });
             }
+            crate::property::PropertyKey::TextShadow => {
+                // Inherited: only `initial` resets to `none`.
+                return PropertyValue::TextShadow(if initial || inherited.text_shadow.is_empty() {
+                    crate::property::empty_text_shadow_list()
+                } else {
+                    Arc::new(
+                        inherited
+                            .text_shadow
+                            .iter()
+                            .map(|shadow| crate::resolve::lift_text_shadow_item(*shadow))
+                            .collect(),
+                    )
+                });
+            }
             crate::property::PropertyKey::ListStyleImage => {
                 return PropertyValue::ListStyleImage(if initial {
                     crate::property::BackgroundImage::None
@@ -2809,15 +2823,12 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::BackgroundSize(_)
         | PropertyValue::BackgroundPosition(_)
         // background-image (CSS Backgrounds and Borders 3 §2.3) — `None` /
-        // `Url(String)` are opaque to font-size/line-height resolution, same
-        // as its 4 keyword-only siblings just above. `Gradient(..)` *does*
-        // carry `<length-percentage>`/`<angle>` payloads (CSS Images 4 §3),
-        // but this crate deliberately never resolves them against the
-        // inheritance parent (or at all, pre-paint) — resolving a gradient's
-        // lengths needs the gradient box's own dimensions, an input phase 2
-        // doesn't have, so the whole variant is left as specified-layer data
-        // all the way into `ComputedValues` (`BackgroundImage` doc's scope
-        // note). Nothing for phase 2 to do here either way.
+        // `Url(String)` items are opaque to font-size/line-height
+        // resolution, same as the keyword-only siblings just above.
+        // `Gradient(..)` items carry `<length-percentage>`/`<angle>`
+        // payloads (CSS Images 4 §3) whose font-relative parts need the
+        // declaring node's own font-size (phase 3), not the inheritance
+        // parent's. Nothing for phase 2 to do here.
         | PropertyValue::BackgroundImage(_)
         // `background` shorthand — same "nothing for phase 2 to resolve"
         // shape as `Padding`/`Margin`/`Border`/`Flex`/`Gap` above: its
@@ -3364,13 +3375,13 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Widows(n) => target.widows = n,
         PropertyValue::WritingMode(v) => target.writing_mode = v,
         PropertyValue::RubyPosition(v) => target.ruby_position = v,
-        PropertyValue::BackgroundRepeat(v) => target.background_repeat = v,
-        PropertyValue::BackgroundAttachment(v) => target.background_attachment = v,
-        PropertyValue::BackgroundClip(v) => target.background_clip = v,
-        PropertyValue::BackgroundOrigin(v) => target.background_origin = v,
-        PropertyValue::BackgroundSize(v) => target.background_size = v,
-        PropertyValue::BackgroundPosition(v) => target.background_position = v,
-        PropertyValue::BackgroundImage(v) => target.background_image = v,
+        PropertyValue::BackgroundRepeat(v) => target.background_repeat = Some(v),
+        PropertyValue::BackgroundAttachment(v) => target.background_attachment = Some(v),
+        PropertyValue::BackgroundClip(v) => target.background_clip = Some(v),
+        PropertyValue::BackgroundOrigin(v) => target.background_origin = Some(v),
+        PropertyValue::BackgroundSize(v) => target.background_size = Some(v),
+        PropertyValue::BackgroundPosition(v) => target.background_position = Some(v),
+        PropertyValue::BackgroundImage(v) => target.background_image = Some(v),
         PropertyValue::Background(shorthand) => {
             expand_background(&shorthand, |v| apply_value(v, target))
         }

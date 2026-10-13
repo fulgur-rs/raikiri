@@ -394,6 +394,58 @@ fn suppressed_marker_images_preserve_the_shared_background_request_budget() {
 }
 
 #[test]
+fn background_preload_skips_layers_below_the_painted_ones() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    let layers = |prefix: &str| {
+        (0..MAX_PAINTED_BACKGROUND_LAYERS + 6)
+            .map(|index| format!("url(https://images.test/{prefix}-{index}.svg)"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let html = format!(
+        r#"<!doctype html><style>
+        div {{ background-image:{}; border-image-source:url(https://images.test/border.svg) }}
+        @page {{ background-image:{}; @top-left {{ content:'x'; background-image:{} }} }}
+        </style><div></div>"#,
+        layers("element"),
+        layers("page"),
+        layers("margin"),
+    );
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_bytes(), &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = Default::default();
+    let mut attempts = 0;
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    let requests: Vec<String> = provider
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(url, _)| url.path().trim_start_matches('/').to_owned())
+        .collect();
+    for prefix in ["element", "page", "margin"] {
+        let fetched = requests
+            .iter()
+            .filter(|path| path.starts_with(&format!("{prefix}-")))
+            .count();
+        assert_eq!(fetched, MAX_PAINTED_BACKGROUND_LAYERS, "{prefix}");
+        assert!(
+            !requests.contains(&format!("{prefix}-{MAX_PAINTED_BACKGROUND_LAYERS}.svg")),
+            "{prefix}"
+        );
+    }
+    // The border image after the painted layers is still reached.
+    assert!(requests.contains(&"border.svg".to_owned()));
+}
+
+#[test]
 fn render_preloads_only_effective_marker_images() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);

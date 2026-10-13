@@ -464,3 +464,319 @@ fn display_contents_elements_form_no_opacity_group() {
         );
     }
 }
+
+/// The boxes, text and opacity groups of a paragraph, in paint order: `box
+/// <id>`, `text` for the paragraph's own lines, `text <id>` for a group's,
+/// `push` and `pop`. A pseudo-element group's text is `text pseudo`.
+fn content_order(body: &str, style: &str) -> Vec<String> {
+    let result = lay_out_with_font(body, &format!("p {{margin:0}} {style}"));
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    let mut order: Vec<String> = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(_) => order.push("push".into()),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::Box(fragment) => {
+                if let Some(name) = dom.attr(fragment.node(), "id") {
+                    order.push(format!("box {name}"));
+                }
+            }
+            PaintEvent::TextLine(_) => order.push("text".into()),
+            PaintEvent::GroupTextLine(_, group) => {
+                order.push(format!(
+                    "text {}",
+                    dom.attr(group, "id").unwrap_or("pseudo")
+                ));
+            }
+            _ => {}
+        }
+    }
+    order
+}
+
+/// A group with a negative stack level paints below the paragraph's own
+/// inline content (CSS 2.1 Appendix E step 3).
+#[test]
+fn negative_inline_opacity_groups_paint_below_the_paragraph_text() {
+    assert_eq!(
+        content_order(
+            "<p id=p>A<span id=group>B</span></p>",
+            "#group {opacity:.5;position:relative;z-index:-1;background:blue}",
+        ),
+        ["box p", "push", "box group", "text group", "pop", "text"]
+    );
+}
+
+/// Inside a group, a nested group with a negative stack level paints above
+/// the group's own box and below the rest of its content.
+#[test]
+fn negative_nested_opacity_groups_paint_above_their_group_box() {
+    assert_eq!(
+        content_order(
+            "<p id=p>A<span id=outer>B<span id=inner>C</span>D</span></p>",
+            "#outer {opacity:.5;background:blue} \
+             #inner {opacity:.25;position:relative;z-index:-1;background:red}",
+        ),
+        [
+            "box p",
+            "text",
+            "push",
+            "box outer",
+            "push",
+            "box inner",
+            "text inner",
+            "pop",
+            "text outer",
+            "pop"
+        ]
+    );
+}
+
+/// A translucent `::before` with a negative stack level paints below the
+/// paragraph's text.
+#[test]
+fn negative_pseudo_opacity_groups_paint_below_the_paragraph_text() {
+    let style = "#p::before {content:'X';opacity:.5;position:relative;z-index:-1}";
+    assert_eq!(
+        content_order("<p id=p>A</p>", style),
+        ["box p", "push", "text pseudo", "pop", "text"]
+    );
+}
+
+/// In an anonymous paragraph, too, a group with a negative stack level
+/// paints below the paragraph's text.
+#[test]
+fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
+    assert_eq!(
+        content_order(
+            "<div id=d>A<span id=group>B</span><p id=p>C</p></div>",
+            "#group {opacity:.5;position:relative;z-index:-1}",
+        ),
+        [
+            "box d",
+            "push",
+            "box group",
+            "text group",
+            "pop",
+            "text",
+            "box p",
+            "text"
+        ]
+    );
+}
+
+/// Like `content_order`, with each group's opacity and each text line's
+/// index: `push <alpha>`, `text <line>` and `text <id> <line>`.
+fn line_order(body: &str, style: &str) -> Vec<String> {
+    let result = lay_out_with_font(body, &format!("p {{margin:0}} {style}"));
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    let mut order: Vec<String> = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(alpha) => order.push(format!("push {alpha}")),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::Box(fragment) => {
+                if let Some(name) = dom.attr(fragment.node(), "id") {
+                    order.push(format!("box {name}"));
+                }
+            }
+            PaintEvent::GeneratedBox(generated) => {
+                order.push(format!("generated {}", generated.line.index));
+            }
+            PaintEvent::TextLine(line) => order.push(format!("text {}", line.index)),
+            PaintEvent::GroupTextLine(line, group) => {
+                order.push(format!(
+                    "text {} {}",
+                    dom.attr(group, "id").unwrap_or("pseudo"),
+                    line.index
+                ));
+            }
+            _ => {}
+        }
+    }
+    order
+}
+
+/// A translucent `::first-line` composites the first line's content as one
+/// group, listed after the paragraph's other lines, and splits the groups
+/// of the inline elements on it.
+#[test]
+fn translucent_first_line_lists_the_first_line_in_a_group() {
+    assert_eq!(
+        line_order("<p id=p>A<br>B</p>", "#p::first-line {opacity:.5}"),
+        ["box p", "text 1", "push 0.5", "text 0", "pop"]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p>A<span id=s>B<br>C</span><i id=i>D</i></p>",
+            "#p::first-line {opacity:.5} #s, #i {opacity:.25;background:red}",
+        ),
+        [
+            "box p",
+            "push 0.5",
+            "text 0",
+            "push 0.25",
+            "text s 0",
+            "pop",
+            "pop",
+            "push 0.25",
+            "box s",
+            "text s 1",
+            "pop",
+            "push 0.25",
+            "box i",
+            "text i 1",
+            "pop"
+        ]
+    );
+}
+
+/// A `::before` on the first line is inside the `::first-line` group, with
+/// its decoration.
+#[test]
+fn translucent_first_line_holds_generated_content() {
+    assert_eq!(
+        line_order(
+            "<p id=p>A<br>B</p>",
+            "#p::first-line {opacity:.5} #p::before {content:'X';background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "generated 0",
+            "text 0",
+            "pop"
+        ]
+    );
+}
+
+/// Groups only on the first line are listed in the `::first-line` group
+/// alone, nested groups included, and translucent pseudo-elements on the
+/// first line too.
+#[test]
+fn translucent_first_line_holds_the_groups_on_its_line() {
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<i id=i>B</i></b><br>C</p>",
+            "#p::first-line {opacity:.5} #b, #i {opacity:.25}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "push 0.25",
+            "box b",
+            "text b 0",
+            "push 0.25",
+            "box i",
+            "text i 0",
+            "pop",
+            "pop",
+            "pop"
+        ]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p>A<br>B</p>",
+            "#p::first-line {opacity:.5} #p::before {content:'X';opacity:.25;background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "text 0",
+            "push 0.25",
+            "generated 0",
+            "text pseudo 0",
+            "pop",
+            "pop"
+        ]
+    );
+}
+
+/// A group whose only content outside the first line is a box laid out
+/// beside the lines, such as a float, is listed with the other lines.
+#[test]
+fn translucent_first_line_leaves_floats_to_the_other_lines() {
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<i id=i></i></b><br>C</p>",
+            "#p::first-line {opacity:.5} #b {opacity:.25} \
+             #i {float:left;width:5px;height:5px;background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "push 0.25",
+            "box b",
+            "text b 0",
+            "pop",
+            "pop",
+            "push 0.25",
+            "box i",
+            "pop"
+        ]
+    );
+}
+
+/// An atomic inline on the first line is inside the `::first-line` group,
+/// in the group of the inline element around it when there is one; one on
+/// a later line is listed with the other lines.
+#[test]
+fn translucent_first_line_holds_its_atomic_inlines() {
+    assert_eq!(
+        line_order(
+            "<p id=p>A<i id=a></i><br>B<i id=z></i></p>",
+            "#p::first-line {opacity:.5} \
+             #a, #z {display:inline-block;width:5px;height:5px;background:red}",
+        ),
+        [
+            "box p", "text 1", "box z", "push 0.5", "text 0", "box a", "pop"
+        ]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<i id=a></i></b><br>B</p>",
+            "#p::first-line {opacity:.5} #b {opacity:.25} \
+             #a {display:inline-block;width:5px;height:5px;background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "push 0.25",
+            "box b",
+            "text b 0",
+            "box a",
+            "pop",
+            "pop"
+        ]
+    );
+}
+
+/// A first line on another page lists no group here, even when an atomic
+/// inline on it is inside an inline opacity group.
+#[test]
+fn translucent_first_line_on_another_page_lists_no_group() {
+    let lines = "B<br>".repeat(30);
+    let result = lay_out_with_font(
+        &format!("<p id=p><b id=b>A<i id=a></i></b><br>{lines}</p>"),
+        "p {margin:0} #p::first-line {opacity:.5} #b {opacity:.25} \
+         #a {display:inline-block;width:5px;height:5px;background:red}",
+    );
+    let page = result.page(1).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, PaintEvent::PushOpacity(_))),
+        "{events:?}"
+    );
+}

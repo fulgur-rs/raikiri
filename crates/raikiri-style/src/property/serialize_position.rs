@@ -20,7 +20,8 @@ pub fn serialize_position_value(name: &str, raw_value: &str) -> Option<String> {
         return None;
     }
     match name {
-        "background-position" | "object-position" => canonical_position(raw_value),
+        "background-position" => canonical_position_list(raw_value),
+        "object-position" => canonical_position(raw_value),
         "background-image" => canonical_gradient_positions(raw_value),
         _ => None,
     }
@@ -83,6 +84,25 @@ fn contains_substitution(block: &mut Parser<'_, '_>) -> bool {
         }
     }
     found
+}
+
+/// The canonical text of a comma-separated list of `<position>` values,
+/// one per background layer, or `None` when any item is not one.
+fn canonical_position_list(source: &str) -> Option<String> {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let items = parser
+        .parse_comma_separated(|item| {
+            let start = item.position();
+            while item.next().is_ok() {}
+            Ok::<_, cssparser::ParseError<'_, ()>>(item.slice_from(start).trim().to_owned())
+        })
+        .ok()?;
+    let items = items
+        .iter()
+        .map(|item| canonical_position(item))
+        .collect::<Option<Vec<_>>>()?;
+    Some(items.join(", "))
 }
 
 /// The canonical text of a whole `<position>` value, or `None` when

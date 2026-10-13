@@ -2221,12 +2221,49 @@ pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlen
     MixBlendMode::from_css_ident(input.expect_ident().ok()?)
 }
 
-/// Parse `<visual-box>` (see the [`VisualBox`] grammar:
-/// `border-box | padding-box | content-box`). Shared by `background-clip` and
-/// `background-origin`; differences in their initial values are handled in
-/// `specified.rs`/`computed.rs`, not by the caller.
-pub(super) fn parse_visual_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
-    VisualBox::from_css_ident(input.expect_ident().ok()?)
+/// Parse one plain `<visual-box>` (`border-box | padding-box |
+/// content-box`), the item grammar of `background-origin`.
+pub(super) fn parse_origin_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
+    match VisualBox::from_css_ident(input.expect_ident().ok()?)? {
+        visual_box @ (VisualBox::BorderBox | VisualBox::PaddingBox | VisualBox::ContentBox) => {
+            Some(visual_box)
+        }
+        _ => None,
+    }
+}
+
+/// Parse one `background-clip` item (CSS Backgrounds 4 §2.6):
+/// `<visual-box> | [ border-area || text ]`. The pair of `border-area` and
+/// `text`, in either order, becomes [`VisualBox::BorderAreaText`].
+pub(super) fn parse_clip_box(input: &mut Parser<'_, '_>) -> Option<VisualBox> {
+    let first = VisualBox::from_css_ident(input.expect_ident().ok()?)?;
+    let partner = match first {
+        VisualBox::BorderArea => "text",
+        VisualBox::Text => "border-area",
+        _ => return Some(first),
+    };
+    if input
+        .try_parse(|i| i.expect_ident_matching(partner))
+        .is_ok()
+    {
+        Some(VisualBox::BorderAreaText)
+    } else {
+        Some(first)
+    }
+}
+
+/// Parse a comma-separated list with one `item` per background layer
+/// (the `#` multiplier of every per-layer background longhand, CSS
+/// Backgrounds 3 §2.1). Each item must consume its whole comma-delimited
+/// segment, and an empty segment is invalid.
+pub(super) fn parse_layer_list<T>(
+    input: &mut Parser<'_, '_>,
+    item: impl Fn(&mut Parser<'_, '_>) -> Option<T>,
+) -> Option<Arc<[T]>> {
+    input
+        .parse_comma_separated(|i| item(i).ok_or_else(|| i.new_custom_error::<_, ()>(())))
+        .ok()
+        .map(Arc::from)
 }
 
 /// One axis of `<bg-size>`: `<length-percentage [0,∞]> | auto`.
@@ -2301,55 +2338,86 @@ pub(crate) fn parse_background_position_and_size(
 }
 
 /// Parse the `background` shorthand (see the grammar section of the
-/// [`BackgroundShorthand`] docs).
+/// [`BackgroundShorthand`] docs): comma-separated layers, each parsed by
+/// [`parse_background_layer`]. Only the final layer may carry a color.
+pub(crate) fn parse_background_shorthand(
+    input: &mut Parser<'_, '_>,
+) -> Option<BackgroundShorthand> {
+    let layers = input
+        .parse_comma_separated(|i| {
+            parse_background_layer(i).ok_or_else(|| i.new_custom_error::<_, ()>(()))
+        })
+        .ok()?;
+    let last = layers.len() - 1;
+    let mut color = CssColor::TRANSPARENT;
+    let mut color_expression = None;
+    let mut specs = Vec::with_capacity(layers.len());
+    for (index, (layer, layer_color)) in layers.into_iter().enumerate() {
+        if let Some((value, expression)) = layer_color {
+            // "A color is permitted in <final-bg-layer>, but not in <bg-layer>."
+            if index != last {
+                return None;
+            }
+            color = value;
+            color_expression = expression;
+        }
+        specs.push(layer);
+    }
+    Some(BackgroundShorthand {
+        color_expression,
+        color,
+        layers: specs.into_boxed_slice(),
+    })
+}
+
+/// Parse one layer of the `background` shorthand, with its color when it
+/// has one; the caller rejects a color outside the final layer.
 ///
 /// # `||` (any-order) grammar semantics
 ///
-/// Use the same loop as [`parse_border_shorthand`](super::box_model::parse_border_shorthand): try each
-/// unfilled slot with `try_parse`; on success, fill it and restart the loop.
-/// Stop when every slot is full or a token matches none. The caller's
-/// `expect_exhausted` in the `rule.rs` declaration parser drops leftover tokens.
-/// The "Single-layer support only" section of [`BackgroundShorthand`] explains
-/// how this rejects multiple comma-separated layers.
+/// Use the same loop as [`parse_border_shorthand`](super::box_model::parse_border_shorthand):
+/// try each unfilled slot with `try_parse`; on success, fill it and restart
+/// the loop. Stop when a token matches no unfilled slot; the comma-delimited
+/// segment must then be exhausted, or the declaration is invalid.
 ///
-/// Of the six slots, only `visual_boxes` can match twice: the grammar has
-/// two independent `||` alternatives for `<visual-box>`
-/// (see [`BackgroundShorthand`]). Treat `position_and_size` as one slot via
+/// Of the slots, only the visual boxes can match twice: the grammar has two
+/// independent `||` alternatives for `<visual-box>` (see
+/// [`BackgroundShorthand`]). Treat position and size as one slot via
 /// [`parse_background_position_and_size`]: the spec's
 /// `<bg-position> [ / <bg-size> ]?` is a single `||` alternative.
 ///
 /// The token sets of all slots are disjoint: image uses `none`/`url()`/gradient
 /// functions, position uses directional keywords or lengths, repeat-style,
 /// attachment, and visual-box each use their own keywords, and color uses named
-/// colors, hex, or functions. Thus slot trial order cannot affect the result;
-/// see the same point in the [`parse_border_shorthand`](super::box_model::parse_border_shorthand) docs.
+/// colors, hex, or functions. Thus slot trial order cannot affect the result.
 ///
 /// # At least 1 component required
 ///
-/// spec CSS Values 4 §2.2 `||` semantics: "one or more of them must occur,
-/// in any order." Zero components (an empty `background:` or only unknown keywords)
-/// return `None`, dropping the declaration (as in [`parse_border_shorthand`](super::box_model::parse_border_shorthand)).
+/// CSS Values 4 §2.2 `||` semantics: "one or more of them must occur, in
+/// any order." A layer with zero components is invalid.
 ///
-/// # Initial value fill (omitted components)
+/// # Visual boxes
 ///
-/// See the "Initial value fill" section of [`BackgroundShorthand`]. How the
-/// 0/1/2 occurrences of `visual_boxes` set origin/clip follows spec §2.10:
-/// ("If one `<visual-box>` value is present then it sets both
-/// background-origin and background-clip to that value. If two values are
-/// present, then the first sets background-origin and the second
-/// background-clip.") With zero occurrences, use each longhand's spec initial value:
-/// origin is padding-box and clip is border-box. This differs from one occurrence,
-/// which sets both to that value; only the zero case is asymmetric.
-pub(crate) fn parse_background_shorthand(
+/// With no box, origin and clip keep their initial values (`padding-box`
+/// and `border-box`). One plain `<visual-box>` sets both. A lone
+/// `border-area`, `text` or `border-area text` can only be a clip: it sets
+/// background-clip and sets background-origin to `border-box` (CSS
+/// Backgrounds 4 §2.10). With two boxes, the first sets
+/// origin and the second clip, except that a clip-only keyword always
+/// lands on clip; two clip-only boxes are invalid.
+#[allow(clippy::type_complexity)]
+fn parse_background_layer(
     input: &mut Parser<'_, '_>,
-) -> Option<BackgroundShorthand> {
+) -> Option<(
+    BackgroundLayerSpec,
+    Option<(CssColor, Option<smol_str::SmolStr>)>,
+)> {
     let mut image: Option<BackgroundImage> = None;
     let mut position_and_size: Option<(CssPosition, Option<BackgroundSize>)> = None;
     let mut repeat: Option<BackgroundRepeat> = None;
     let mut attachment: Option<BackgroundAttachment> = None;
     let mut visual_boxes: Vec<VisualBox> = Vec::new();
-    let mut color: Option<CssColor> = None;
-    let mut color_expression = None;
+    let mut color: Option<(CssColor, Option<smol_str::SmolStr>)> = None;
 
     loop {
         if image.is_none()
@@ -2389,7 +2457,7 @@ pub(crate) fn parse_background_shorthand(
         }
         if visual_boxes.len() < 2
             && let Ok(v) = input.try_parse(|i| -> Result<VisualBox, ParseError<'_, ()>> {
-                parse_visual_box(i).ok_or_else(|| i.new_custom_error(()))
+                parse_clip_box(i).ok_or_else(|| i.new_custom_error(()))
             })
         {
             visual_boxes.push(v);
@@ -2401,18 +2469,15 @@ pub(crate) fn parse_background_shorthand(
             })
         {
             color = Some(if expression.is_some() {
-                CssColor::TRANSPARENT
+                (CssColor::TRANSPARENT, expression)
             } else {
-                value
+                (value, None)
             });
-            color_expression = expression;
             continue;
         }
-
-        // No unfilled slot matched: the token is a second value for a filled slot
-        // (a third for `visual_boxes`), a comma (multiple layers), or an unknown token.
-        // Break the loop and let the caller's `expect_exhausted` drop the leftover
-        // (as in `parse_border_shorthand`).
+        // No unfilled slot matched: the token is a second value for a filled
+        // slot (a third for the visual boxes) or an unknown token. The
+        // comma-delimited parser rejects the leftover.
         break;
     }
 
@@ -2426,50 +2491,40 @@ pub(crate) fn parse_background_shorthand(
         return None;
     }
 
+    let is_origin = |visual_box: VisualBox| {
+        matches!(
+            visual_box,
+            VisualBox::BorderBox | VisualBox::PaddingBox | VisualBox::ContentBox
+        )
+    };
+    let initial = BackgroundLayerSpec::initial();
     let (origin, clip) = match visual_boxes.as_slice() {
-        [] => (VisualBox::PaddingBox, VisualBox::BorderBox),
-        [one] => (*one, *one),
-        [first, second] => (*first, *second),
-        // cov:ignore: the loop above only pushes while
-        // `visual_boxes.len() < 2`, so `visual_boxes` can never hold more
-        // than 2 elements by the time this match runs — there is no input
-        // that reaches this arm, and constructing one would require
-        // bypassing the loop guard entirely.
-        _ => unreachable!("visual_boxes never grows past 2 (loop guard above)"),
+        [] => (initial.origin, initial.clip),
+        [one] if is_origin(*one) => (*one, *one),
+        // A value valid only for `background-clip` (`text`, `border-area`,
+        // `border-area text`) sets the origin to `border-box` (CSS
+        // Backgrounds 4 §2.12).
+        [one] => (VisualBox::BorderBox, *one),
+        [first, second] if is_origin(*first) => (*first, *second),
+        [first, second] if is_origin(*second) => (*second, *first),
+        _ => return None,
     };
 
     let (position, size) = match position_and_size {
-        Some((position, size)) => (
-            position,
-            size.unwrap_or(BackgroundSize::Explicit {
-                width: LengthOrAuto::Auto,
-                height: LengthOrAuto::Auto,
-            }),
-        ),
-        None => (
-            CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-            },
-            BackgroundSize::Explicit {
-                width: LengthOrAuto::Auto,
-                height: LengthOrAuto::Auto,
-            },
-        ),
+        Some((position, size)) => (position, size.unwrap_or(initial.size)),
+        None => (initial.position, initial.size),
     };
 
-    Some(BackgroundShorthand {
-        color_expression,
-        color: color.unwrap_or(CssColor::TRANSPARENT),
-        image: image.unwrap_or(BackgroundImage::None),
-        repeat: repeat.unwrap_or(BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Repeat,
-            y: BackgroundRepeatKeyword::Repeat,
-        }),
-        attachment: attachment.unwrap_or(BackgroundAttachment::Scroll),
-        position,
-        size,
-        clip,
-        origin,
-    })
+    Some((
+        BackgroundLayerSpec {
+            image: image.unwrap_or(BackgroundImage::None),
+            repeat: repeat.unwrap_or(initial.repeat),
+            attachment: attachment.unwrap_or(initial.attachment),
+            position,
+            size,
+            clip,
+            origin,
+        },
+        color,
+    ))
 }

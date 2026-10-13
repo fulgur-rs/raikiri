@@ -42,7 +42,12 @@ fn inside_text_marker_group_lookup_has_a_work_bound() {
     assert!(!pieces.is_empty());
     assert!(pieces.iter().any(|piece| piece.parent == Some(piece.node)));
     PARENT_GROUP_VISITS.with(|visits| visits.set(0));
-    let paint = TypographicPaint::new(root, &pieces, &computed);
+    let paragraph = Paragraph {
+        document: &doc,
+        cascade: &computed,
+        root_id: li,
+    };
+    let paint = TypographicPaint::new(paragraph, root, &pieces);
     for piece in &pieces {
         assert_eq!(paint.piece_group(piece), None);
     }
@@ -91,6 +96,7 @@ fn nested_first_letter_group_lookup_has_a_document_wide_work_bound() {
         page.width = 100.0;
         page.height = 80.0;
         layout_single_page(&mut doc, &computed, page).unwrap();
+        let root_id = root;
         let root = doc.get_node(root).unwrap();
         let pieces = root.ifc_inline_boxes().unwrap();
         assert!(pieces.len() >= 64);
@@ -104,7 +110,12 @@ fn nested_first_letter_group_lookup_has_a_document_wide_work_bound() {
             }
         }
         PARENT_GROUP_VISITS.with(|visits| visits.set(0));
-        let paint = TypographicPaint::new(root, &pieces, &computed);
+        let paragraph = Paragraph {
+            document: &doc,
+            cascade: &computed,
+            root_id,
+        };
+        let paint = TypographicPaint::new(paragraph, root, &pieces);
         for piece in &pieces {
             paint.piece_group(piece);
         }

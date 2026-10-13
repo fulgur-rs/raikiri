@@ -1,15 +1,21 @@
 //! RaikiriTreeSink — html5ever `TreeSink` implementation backed by
 //! raikiri-dom::Document. Handle = arena index (usize).
+//!
+//! The raw sink constructor does not impose a DOM-node budget because the
+//! `TreeSink::finish` contract cannot report a parse-limit error. Public parser
+//! entry points use a private budget-aware constructor; callers that drive
+//! this sink through `parse_with_sink` own the node-allocation policy.
 
 use std::borrow::Cow;
 use std::cell::{Cell, Ref, RefCell};
+use std::rc::Rc;
 
 use html5ever::interface::{Attribute, ElementFlags, NodeOrText, QualName, TreeSink};
 use html5ever::tendril::StrTendril;
 use html5ever::tree_builder::{QuirksMode, Tracer, TreeBuilder};
 use markup5ever::ns;
 use raikiri_dom::Document;
-use raikiri_traits::{Dom, RenderWarning, WarningKind};
+use raikiri_traits::{Dom, Node, NodeId, NodeKind, RenderWarning, WarningKind};
 use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use taffy::Style;
@@ -41,6 +47,13 @@ pub struct RaikiriTreeSink {
     /// Intended to receive [`raikiri_traits::RenderLimits::max_parse_warnings`];
     /// see that field's documentation for the rationale.
     max_parse_warnings: Option<usize>,
+    /// Maximum number of DOM arena nodes, including the virtual document root.
+    max_dom_nodes: Option<u64>,
+    /// Number of DOM nodes already allocated, including the virtual root.
+    allocated_dom_nodes: Cell<u64>,
+    /// First node count that exceeded `max_dom_nodes`, shared with the parser
+    /// driver so it can stop reading at the next input chunk boundary.
+    dom_node_limit_exceeded: Rc<Cell<Option<u64>>>,
     /// Character data for one insertion point that has not reached the
     /// Document yet. The tokenizer splits a text run at
     /// every input chunk boundary, and merging each piece into the Document's
@@ -67,20 +80,71 @@ impl RaikiriTreeSink {
     /// `max_parse_warnings` caps the warnings recorded by [`TreeSink::parse_error`]
     /// (`None` = unlimited). Callers normally pass the value of
     /// `raikiri_traits::RenderLimits::max_parse_warnings` directly.
-    /// `raikiri_html::parse` uses the default; `raikiri::parse_html_with_limits`
-    /// passes the value configured by the consumer.
+    /// This raw sink has no DOM-node limit. The public `parse` and
+    /// `parse_fragment` entry points use an internal budget-aware sink instead.
+    /// Callers using `parse_with_sink` are responsible for their sink's DOM
+    /// allocation limit.
     pub fn new(max_parse_warnings: Option<usize>) -> Self {
+        Self::with_limits(max_parse_warnings, None)
+    }
+
+    pub(crate) fn with_limits(
+        max_parse_warnings: Option<usize>,
+        max_dom_nodes: Option<u64>,
+    ) -> Self {
+        let initial_node_count = 1;
         Self {
             document: RefCell::new(Document::new()),
-            qual_names: RefCell::new(FxHashMap::default()),
+            qual_names: RefCell::new({
+                let mut names = FxHashMap::default();
+                names.insert(
+                    OVERFLOW_HANDLE,
+                    QualName::new(None, ns!(html), "div".into()),
+                );
+                names
+            }),
             attributes: RefCell::new(FxHashMap::default()),
             warnings: RefCell::new(Vec::new()),
             quirks_mode: Cell::new(QuirksMode::NoQuirks),
             max_parse_warnings,
+            max_dom_nodes,
+            allocated_dom_nodes: Cell::new(initial_node_count),
+            dom_node_limit_exceeded: Rc::new(Cell::new(
+                max_dom_nodes
+                    .filter(|limit| initial_node_count > *limit)
+                    .map(|_| initial_node_count),
+            )),
             pending_text: RefCell::new(None),
             root_attributes_frozen: Cell::new(false),
             root_attributes_reported: RefCell::new(Vec::new()),
         }
+    }
+
+    pub(crate) fn dom_node_limit_signal(&self) -> Rc<Cell<Option<u64>>> {
+        Rc::clone(&self.dom_node_limit_exceeded)
+    }
+
+    pub(crate) fn dom_node_limit_error(&self) -> Option<(u64, u64)> {
+        self.dom_node_limit_exceeded.get().map(|actual| {
+            (
+                self.max_dom_nodes
+                    .unwrap_or_else(|| actual.saturating_sub(1)),
+                actual,
+            )
+        })
+    }
+
+    fn try_allocate_dom_node(&self) -> bool {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return false;
+        }
+        let actual = self.allocated_dom_nodes.get().saturating_add(1);
+        if self.max_dom_nodes.is_some_and(|limit| actual > limit) {
+            self.dom_node_limit_exceeded.set(Some(actual));
+            return false;
+        }
+        self.allocated_dom_nodes.set(actual);
+        true
     }
 
     /// Construct a detached element node and register its QualName and attributes
@@ -92,6 +156,9 @@ impl RaikiriTreeSink {
     /// full-fidelity metadata in the side tables.
     fn make_element(&self, name: QualName, attrs: Vec<Attribute>) -> usize {
         self.flush_text();
+        if !self.try_allocate_dom_node() {
+            return OVERFLOW_HANDLE;
+        }
         let tag: SmolStr = AsRef::<str>::as_ref(&name.local).into();
         let idx =
             self.document
@@ -112,10 +179,12 @@ impl RaikiriTreeSink {
     /// finish it, while the parser keeps its own state.
     pub(crate) fn snapshot(&self) -> UncascadedDocument {
         self.flush_text();
+        let mut qual_names = self.qual_names.borrow().clone();
+        qual_names.remove(&OVERFLOW_HANDLE);
         assemble_document(
             self.document.borrow().clone(),
             self.warnings.borrow().clone(),
-            &self.qual_names.borrow(),
+            &qual_names,
             &self.attributes.borrow(),
             convert_quirks(self.quirks_mode.get()),
         )
@@ -135,16 +204,29 @@ impl RaikiriTreeSink {
     /// Adds `text` to the buffer, flushing first if it targets another
     /// insertion point.
     fn buffer_text(&self, target: TextTarget, text: &str) {
-        let mut pending = self.pending_text.borrow_mut();
-        if let Some((pending_target, buffer)) = pending.as_mut()
-            && *pending_target == target
-        {
-            buffer.push_str(text);
+        if self.dom_node_limit_exceeded.get().is_some() {
             return;
         }
-        if let Some((pending_target, buffer)) = pending.replace((target, text.to_owned())) {
+        let previous = {
+            let mut pending = self.pending_text.borrow_mut();
+            if let Some((pending_target, buffer)) = pending.as_mut()
+                && *pending_target == target
+            {
+                buffer.push_str(text);
+                return;
+            }
+            pending.take()
+        };
+        if let Some((pending_target, buffer)) = previous {
             self.write_text(pending_target, buffer);
         }
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
+        if self.text_target_would_allocate(target) && !self.try_allocate_dom_node() {
+            return;
+        }
+        *self.pending_text.borrow_mut() = Some((target, text.to_owned()));
     }
 
     /// Writes buffered character data to the Document.
@@ -156,6 +238,9 @@ impl RaikiriTreeSink {
     }
 
     fn write_text(&self, target: TextTarget, text: String) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         let mut document = self.document.borrow_mut();
         match target {
             TextTarget::Append(parent) => {
@@ -166,7 +251,34 @@ impl RaikiriTreeSink {
             }
         }
     }
+
+    fn text_target_would_allocate(&self, target: TextTarget) -> bool {
+        let document = self.document.borrow();
+        match target {
+            TextTarget::Append(parent) => document
+                .child_ids(NodeId(parent as u64))
+                .last()
+                .and_then(|id| document.node(id))
+                .is_none_or(|node| node.kind() != NodeKind::Text),
+            TextTarget::Before { parent, sibling } => {
+                let parent = NodeId(parent as u64);
+                let sibling = NodeId(sibling as u64);
+                let mut previous = None;
+                for child in document.child_ids(parent) {
+                    if child == sibling {
+                        return previous
+                            .and_then(|id| document.node(id))
+                            .is_none_or(|node| node.kind() != NodeKind::Text);
+                    }
+                    previous = Some(child);
+                }
+                true
+            }
+        }
+    }
 }
+
+const OVERFLOW_HANDLE: usize = usize::MAX;
 
 /// Where buffered character data will be inserted.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -190,10 +302,12 @@ impl TreeSink for RaikiriTreeSink {
 
     fn finish(self) -> UncascadedDocument {
         self.flush_text();
+        let mut qual_names = self.qual_names.into_inner();
+        qual_names.remove(&OVERFLOW_HANDLE);
         assemble_document(
             self.document.into_inner(),
             self.warnings.into_inner(),
-            &self.qual_names.into_inner(),
+            &qual_names,
             &self.attributes.into_inner(),
             convert_quirks(self.quirks_mode.get()),
         )
@@ -280,6 +394,9 @@ impl TreeSink for RaikiriTreeSink {
 
     fn create_element(&self, name: QualName, attrs: Vec<Attribute>, flags: ElementFlags) -> usize {
         let idx = self.make_element(name, attrs);
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return idx;
+        }
         // When creating a `<template>` element, html5ever sets
         // `flags.template=true` (markup5ever `create_element_with_flags`).
         // Eagerly allocate a fragment root and store it in the template_contents
@@ -288,6 +405,9 @@ impl TreeSink for RaikiriTreeSink {
         // remain empty, as in blitz; see
         // `Document::allocate_template_fragment_root` documentation.
         if flags.template {
+            if !self.try_allocate_dom_node() {
+                return idx;
+            }
             self.document
                 .borrow_mut()
                 .allocate_template_fragment_root(idx);
@@ -301,6 +421,9 @@ impl TreeSink for RaikiriTreeSink {
         // Allocate detached (parent=None); html5ever later attaches it with
         // append(parent, ...).
         self.flush_text();
+        if !self.try_allocate_dom_node() {
+            return OVERFLOW_HANDLE;
+        }
         self.document
             .borrow_mut()
             .append_comment(None, text.to_string())
@@ -310,6 +433,9 @@ impl TreeSink for RaikiriTreeSink {
         // Persist as a NodeData::ProcessingInstruction variant
         // (previously a "#pi" pseudo-tag Element that was stripped).
         self.flush_text();
+        if !self.try_allocate_dom_node() {
+            return OVERFLOW_HANDLE;
+        }
         self.document.borrow_mut().append_processing_instruction(
             None,
             target.to_string(),
@@ -318,6 +444,9 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn append(&self, parent: &usize, child: NodeOrText<usize>) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         match child {
             NodeOrText::AppendNode(c) => {
                 self.flush_text();
@@ -335,6 +464,9 @@ impl TreeSink for RaikiriTreeSink {
         prev_element: &usize,
         child: NodeOrText<usize>,
     ) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         // Implement proper foster parenting later. It does not arise in the
         // current hello-world case; for now, insert_before if there is a parent,
         // otherwise append as a child of prev_element.
@@ -362,6 +494,9 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn get_template_contents(&self, target: &usize) -> usize {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return OVERFLOW_HANDLE;
+        }
         // When `create_element` sees `flags.template=true`, it stores
         // the fragment root's arena index in the `template_contents` slot.
         // The index returned here becomes the parent handle for subsequent
@@ -389,6 +524,9 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn append_before_sibling(&self, sibling: &usize, new_node: NodeOrText<usize>) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         let parent = self
             .document
             .borrow()
@@ -417,6 +555,9 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn add_attrs_if_missing(&self, target: &usize, attrs: Vec<Attribute>) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         let mut store = self.attributes.borrow_mut();
         let existing = store.entry(*target).or_default();
         let missing: Vec<Attribute> = attrs
@@ -448,11 +589,17 @@ impl TreeSink for RaikiriTreeSink {
     }
 
     fn remove_from_parent(&self, target: &usize) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         self.flush_text();
         self.document.borrow_mut().detach_from_parent(*target);
     }
 
     fn reparent_children(&self, node: &usize, new_parent: &usize) {
+        if self.dom_node_limit_exceeded.get().is_some() {
+            return;
+        }
         self.flush_text();
         self.document
             .borrow_mut()

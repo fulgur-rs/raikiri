@@ -1,5 +1,7 @@
 use super::*;
 
+mod dom_node_budget_tests;
+
 #[test]
 fn fragment_root_with_zero_or_multiple_children_is_not_flattened() {
     let mut empty = raikiri_dom::Document::new();

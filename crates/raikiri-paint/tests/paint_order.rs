@@ -907,3 +907,17 @@ fn walker_column_clips_are_left_out_of_the_comparison() {
     let pops = steps.iter().filter(|s| matches!(s, Step::PopClip)).count();
     assert_eq!(pushes, pops, "{steps:?}");
 }
+
+/// Boxes beside the lines of a paragraph with inline opacity groups are
+/// traced where the painter places them: a box with a negative stack level
+/// below the text, the others inside the groups around them. (The walker
+/// traces a paragraph's text once, so the group holds no text here.)
+#[test]
+fn atomic_inlines_beside_inline_opacity_groups() {
+    assert_same_order(
+        "<p>A<i style=\"display:inline-block;width:5px;height:5px;position:relative;\
+         z-index:-1;background:red\"></i>B<span style=\"opacity:.5\">\
+         <b style=\"display:inline-block;width:5px;height:5px;background:blue\"></b></span></p>",
+        "",
+    );
+}

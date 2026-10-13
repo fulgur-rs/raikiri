@@ -616,7 +616,9 @@ impl<'a> Page<'a> {
     /// page, while this list has it only on the pages its box reaches; and it
     /// draws each line's inline element backgrounds just before that line's
     /// text, while this list has all of a paragraph's inline element boxes
-    /// before all of its text.
+    /// before all of its text. A `::first-line` with opacity below one is
+    /// not a group here: its line is listed with the rest of its paragraph
+    /// and drawn opaque. [`Self::paint_order_for_text_runs`] lists the group.
     pub fn paint_order(&self) -> Vec<PaintEvent<'a>> {
         self.document.page_paint_order(
             self.cascade,
@@ -642,6 +644,14 @@ impl<'a> Page<'a> {
     /// `::first-letter` with opacity below one is such a group too, holding
     /// its generated boxes, its images and its text, named by the
     /// pseudo-element's own id instead of an element's.
+    /// A `::first-line` with opacity below one, on the paragraph or on an
+    /// ancestor block whose first line it holds, makes a group of the
+    /// paragraph's first line, listed
+    /// before the paragraph's other inline groups: a
+    /// [`PaintEvent::PushOpacity`], the content of the first line in the
+    /// order above, and the [`PaintEvent::PopOpacity`]. An inline element's
+    /// boxes go in it only when the element is on no later line; its floats
+    /// and atomic inlines stay with the other lines.
     /// [`Self::text_run_opacity_group`] tells
     /// which line event draws a run: a run of no group belongs to the
     /// `TextLine` event of its line, and any other run to the `GroupTextLine`
