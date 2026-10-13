@@ -337,10 +337,12 @@ enum Node {
 
 impl Node {
     /// The only term and its unit, for a sum of one term written with one
-    /// unit.
-    fn simple_monomial(&self) -> Option<(&str, f32)> {
+    /// unit other than a percentage. Percentages cannot be ordered before
+    /// their basis is known, which may be negative, so a comparison function
+    /// never combines them (CSS Values 4 §10.12).
+    fn comparable_monomial(&self) -> Option<(&str, f32)> {
         match self {
-            Self::Sum(terms) => terms.simple_monomial(),
+            Self::Sum(terms) => terms.simple_monomial().filter(|(unit, _)| *unit != "%"),
             Self::Function(..) => None,
         }
     }
@@ -394,9 +396,9 @@ fn simplify_function(function: MathFunction, args: Vec<Node>) -> Option<Node> {
             return None;
         };
         if let (Some((unit, min)), Some((value_unit, value)), Some((max_unit, max))) = (
-            min.simple_monomial(),
-            value.simple_monomial(),
-            max.simple_monomial(),
+            min.comparable_monomial(),
+            value.comparable_monomial(),
+            max.comparable_monomial(),
         ) && unit == value_unit
             && unit == max_unit
         {
@@ -412,7 +414,7 @@ fn simplify_function(function: MathFunction, args: Vec<Node>) -> Option<Node> {
     let mut kept: Vec<Node> = Vec::with_capacity(args.len());
     for arg in args {
         let simple = arg
-            .simple_monomial()
+            .comparable_monomial()
             .map(|(unit, value)| (unit.to_owned(), value));
         let Some((unit, value)) = simple else {
             kept.push(arg);

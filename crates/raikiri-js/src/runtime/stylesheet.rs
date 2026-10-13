@@ -73,7 +73,8 @@ pub(crate) fn is_page_prelude(prelude: &str) -> bool {
 }
 
 /// The page selector list of an `@page` prelude, serialized from its tokens:
-/// comments dropped, whitespace runs collapsed to one space, and the result
+/// comments dropped, whitespace runs collapsed to one space, pseudo-page
+/// names ASCII-lowercased (page names stay case-sensitive), and the result
 /// trimmed. `None` when `prelude` does not start with the `page` at-keyword.
 fn page_selector_text(prelude: &str) -> Option<String> {
     let mut input = ParserInput::new(prelude);
@@ -83,14 +84,20 @@ fn page_selector_text(prelude: &str) -> Option<String> {
         _ => return None,
     }
     let mut out = String::new();
+    let mut after_colon = false;
     while let Ok(token) = parser.next_including_whitespace() {
-        if matches!(token, Token::WhiteSpace(_)) {
-            if !out.is_empty() && !out.ends_with(' ') {
-                out.push(' ');
+        match token {
+            Token::WhiteSpace(_) => {
+                if !out.is_empty() && !out.ends_with(' ') {
+                    out.push(' ');
+                }
             }
-        } else {
-            out.push_str(&token.to_css_string());
+            Token::Ident(name) if after_colon => {
+                out.push_str(&Token::Ident(name.to_ascii_lowercase().into()).to_css_string());
+            }
+            token => out.push_str(&token.to_css_string()),
         }
+        after_colon = matches!(token, Token::Colon);
     }
     Some(out.trim_end().to_owned())
 }
@@ -713,6 +720,14 @@ pub(crate) fn css_style_rule_object(
         with_state(context, |state| {
             state.css_style_rules.remove(&key);
             state.css_rule_styles.remove(&key);
+            // Margin rules of a page rule that is gone must not be handed
+            // out for a later page rule at the same index.
+            state
+                .css_margin_rules
+                .retain(|&(sheet, rule, _), _| (sheet, rule) != key);
+            state
+                .css_margin_rule_styles
+                .retain(|&(sheet, rule, _), _| (sheet, rule) != key);
         })?;
     }
     let prototype = context.intrinsics().constructors().object().prototype();
@@ -1094,7 +1109,13 @@ pub(crate) fn margin_rule_object(
     );
     define_getter(&object, "name", margin_rule_name, context)?;
     define_getter(&object, "cssText", margin_rule_text, context)?;
-    define_getter(&object, "style", margin_rule_style, context)?;
+    define_accessor(
+        &object,
+        "style",
+        margin_rule_style,
+        margin_rule_style_set,
+        context,
+    )?;
     super::interfaces::set_to_string_tag(&object, "CSSMarginRule", context)?;
     with_state(context, |state| {
         state.css_margin_rules.insert(key, object.clone())
@@ -1118,6 +1139,21 @@ fn margin_rule_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
         state.css_margin_rule_styles.insert(key, style.clone())
     })?;
     Ok(style.into())
+}
+
+/// `CSSMarginRule.style`, on setting: forwards to the declaration object's
+/// `cssText` (`[PutForwards=cssText]`, CSSOM §6.4.8).
+fn margin_rule_style_set(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let style = margin_rule_style(this, &[], context)?;
+    let value = args.first().cloned().unwrap_or_default();
+    if let Some(style) = style.as_object() {
+        style.set(js_string!("cssText"), value, true, context)?;
+    }
+    Ok(JsValue::undefined())
 }
 
 /// The range of a margin rule's declarations, relative to `margin_rule`:

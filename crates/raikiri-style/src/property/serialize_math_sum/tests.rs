@@ -143,6 +143,15 @@ fn comparison_function_arguments_of_one_unit_combine() {
         Some("max(20px, 2em)")
     );
     assert_eq!(sums("min(10px, 1in)").as_deref(), Some("calc(10px)"));
+    // Percentages keep every argument: their basis may be negative.
+    assert_eq!(
+        sums("min(10%, 20%, 1em)").as_deref(),
+        Some("min(10%, 20%, 1em)")
+    );
+    assert_eq!(
+        sums("clamp(10%, 50%, 20%)").as_deref(),
+        Some("clamp(10%, 50%, 20%)")
+    );
     assert_eq!(
         sums("clamp(10px, 50px, 20px)").as_deref(),
         Some("calc(20px)")

@@ -1628,13 +1628,16 @@ fn page_rule_selector_text_setter_replaces_only_a_valid_prelude() {
     .unwrap();
     ok(
         &mut rt,
-        "pageRule.selectorText === 'named:LEFT' && \
-         styleElement.textContent === '@page named:LEFT { margin: 1px; @top-left { content: \"a\" } } p { color: red }' && \
+        "pageRule.selectorText === 'named:left' && \
+         styleElement.textContent === '@page named:left { margin: 1px; @top-left { content: \"a\" } } p { color: red }' && \
          pageRule.style.margin === '1px' && pageRule.cssRules.length === 1",
     );
     rt.evaluate("pageRule.selectorText = 'p { color: blue'; pageRule.selectorText = '::first';")
         .unwrap();
-    ok(&mut rt, "pageRule.selectorText === 'named:LEFT'");
+    ok(&mut rt, "pageRule.selectorText === 'named:left'");
+    rt.evaluate("pageRule.selectorText = 'Named:First';")
+        .unwrap();
+    ok(&mut rt, "pageRule.selectorText === 'Named:first'");
     rt.evaluate("pageRule.selectorText = '';").unwrap();
     ok(
         &mut rt,
@@ -1722,5 +1725,42 @@ fn stale_page_and_margin_rule_objects_do_not_rewrite_other_rules() {
     ok(
         &mut rt,
         "threw && style.color === '' && styleElement.textContent === 'p { color: red }'",
+    );
+}
+
+#[test]
+fn margin_rule_style_assignment_forwards_to_css_text() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "'use strict'; var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         document.head.appendChild(styleElement); var marginRule = styleElement.sheet.cssRules[0].cssRules[0]; \
+         var style = marginRule.style; marginRule.style = 'color: blue';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "marginRule.style === style && style.color === 'blue'",
+    );
+}
+
+#[test]
+fn margin_rules_are_rebuilt_when_their_page_rule_is_replaced() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         document.head.appendChild(styleElement); \
+         var before = styleElement.sheet.cssRules[0].cssRules[0]; var beforeStyle = before.style; \
+         styleElement.textContent = 'p {}'; styleElement.sheet.cssRules[0]; \
+         styleElement.textContent = '@page { @top-left { color: blue } }'; \
+         var after = styleElement.sheet.cssRules[0].cssRules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "after !== before && after.style !== beforeStyle && after.style.color === 'blue'",
     );
 }
