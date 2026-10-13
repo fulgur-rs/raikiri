@@ -5,13 +5,15 @@ use super::generated_boxes::{GeneratedBox, PageGeneratedBoxes};
 use super::generated_images::{GeneratedImageId, PageGeneratedImages};
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{
-    Document, Fragment, GeneratedKind, OverflowClip, PositionedGlyphRun, RunSource, TextLineId,
-    paint_rules,
+    Document, Fragment, GeneratedKind, Node, OverflowClip, PositionedGlyphRun, RunSource,
+    TextLineId, paint_rules,
 };
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
 use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::rc::Rc;
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -161,9 +163,33 @@ struct PageItems<'a> {
     cascade: &'a CascadeResult,
     document: &'a Document,
     page: &'a super::records::PageFragment,
+    /// The elements with inline boxes on lines after the first, by
+    /// paragraph root, built when a paragraph is first split by line.
+    later_line_boxes: RefCell<HashMap<usize, Rc<HashSet<usize>>>>,
 }
 
 impl<'a> PageItems<'a> {
+    /// The elements of paragraph `root` with inline boxes on lines after
+    /// the first.
+    fn later_line_boxes(&self, root: usize, root_node: &Node) -> Rc<HashSet<usize>> {
+        Rc::clone(
+            self.later_line_boxes
+                .borrow_mut()
+                .entry(root)
+                .or_insert_with(|| {
+                    Rc::new(
+                        root_node
+                            .ifc_inline_boxes()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .filter(|piece| piece.line != 0)
+                            .map(|piece| piece.node)
+                            .collect(),
+                    )
+                }),
+        )
+    }
+
     fn of(&self, node_id: usize) -> &[&'a PageFragmentItem] {
         self.by_node.get(&node_id).map_or(&[], Vec::as_slice)
     }
@@ -379,6 +405,7 @@ impl Document {
             cascade,
             document: self,
             page,
+            later_line_boxes: RefCell::default(),
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -1145,16 +1172,22 @@ impl Document {
         lines: Option<&TextLines>,
         part: LinePart,
     ) -> bool {
-        let mut content = Vec::new();
-        let nested = push_paragraph(self, items, root, Some(group), lines, part, &mut content);
-        !content.is_empty()
-            || (part != LinePart::First
-                && !self
-                    .ifc_boxes_in_group(items.cascade, root, Some(group))
-                    .is_empty())
-            || nested
-                .into_iter()
-                .any(|nested| self.group_has_content(items, root, nested, lines, part))
+        // Nested groups are walked with a stack, as deep as the document.
+        let mut pending = vec![group];
+        while let Some(group) = pending.pop() {
+            let mut content = Vec::new();
+            let nested = push_paragraph(self, items, root, Some(group), lines, part, &mut content);
+            if !content.is_empty()
+                || (part != LinePart::First
+                    && !self
+                        .ifc_boxes_in_group(items.cascade, root, Some(group))
+                        .is_empty())
+            {
+                return true;
+            }
+            pending.extend(nested);
+        }
+        false
     }
 
     fn ifc_boxes_in_group(
@@ -1330,16 +1363,10 @@ fn push_paragraph<'a>(
         return Vec::new(); // cov:ignore: paragraph roots come from the arena
     };
     // The elements with boxes on lines after the first.
-    let later: HashSet<usize> = if part == LinePart::All {
-        HashSet::new()
+    let later = if part == LinePart::All {
+        Rc::default()
     } else {
-        root_node
-            .ifc_inline_boxes()
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|piece| piece.line != 0)
-            .map(|piece| piece.node)
-            .collect()
+        items.later_line_boxes(root, root_node)
     };
     let admits_box = |element: usize| match part {
         LinePart::All => true,
