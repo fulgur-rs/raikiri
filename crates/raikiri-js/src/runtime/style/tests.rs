@@ -1875,3 +1875,49 @@ fn margin_rule_objects_follow_insert_and_delete_rule() {
          rightStyle.color === 'black' && styleElement.textContent.includes('color: black')",
     );
 }
+
+#[test]
+fn rule_objects_are_detached_by_a_replacement_with_the_same_text() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         document.head.appendChild(styleElement); var page = styleElement.sheet.cssRules[0]; \
+         var margin = page.cssRules[0]; var style = margin.style; \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         var afterSame = styleElement.sheet.cssRules[0]; \
+         var held = afterSame.cssRules[0].style; \
+         styleElement.textContent = 'p {}'; \
+         styleElement.textContent = '@page { @top-left { color: red } }'; \
+         var threw = false; try { held.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "afterSame !== page && afterSame.cssRules[0] !== margin && style.color === '' && \
+         threw && styleElement.sheet.cssRules[0] !== afterSame && \
+         styleElement.textContent === '@page { @top-left { color: red } }'",
+    );
+}
+
+#[test]
+fn detached_margin_rules_keep_their_declaration_object() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @top-left { color: red } @top-right { color: blue } }'; \
+         document.head.appendChild(styleElement); var page = styleElement.sheet.cssRules[0]; \
+         var deleted = page.cssRules[0]; var replaced = page.cssRules[1]; \
+         var deletedStyle = deleted.style; deletedStyle.expando = 1; \
+         var replacedStyle = replaced.style; page.deleteRule(0); \
+         styleElement.textContent = '@page {}';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "deleted.style === deletedStyle && deleted.style.expando === 1 && \
+         replaced.style === replacedStyle && replacedStyle.parentRule === null",
+    );
+}

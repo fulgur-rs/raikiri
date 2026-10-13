@@ -4,6 +4,7 @@ use std::cell::Cell;
 use std::ops::Range;
 use std::rc::Rc;
 
+use boa_engine::gc::GcRefCell;
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{
@@ -372,32 +373,50 @@ pub(crate) fn stylesheet_text(document: &Document, style_element: usize) -> Stri
         .unwrap_or_default()
 }
 
-/// The sheet text of one style element as the CSSOM last saw or wrote it,
-/// and the generation of rule objects handed out for that text.
+/// The sheet of one style element as the CSSOM last saw or wrote it -- its
+/// child nodes and their text -- and the generation of rule objects handed
+/// out for it.
 pub(crate) struct SheetVersion {
+    children: Vec<usize>,
     text: String,
     generation: u64,
 }
 
+/// The style element's child node indices. Replacing its contents (a
+/// `textContent` or `innerHTML` write, inserting or removing a child)
+/// always allocates or drops child nodes, so this tells a replacement apart
+/// from a write that leaves the same text behind.
+fn sheet_children(document: &Document, style_element: usize) -> Vec<usize> {
+    document
+        .get_node(style_element)
+        .map(|node| node.children.clone())
+        .unwrap_or_default()
+}
+
 /// The current rule object generation of `style_element`'s sheet.
 ///
-/// A change to the sheet text that did not come through the CSSOM (for
-/// example a `textContent` write) replaces every rule in it: the generation
+/// A change to the sheet that did not come through the CSSOM (for example a
+/// `textContent` write, even of the same text) replaces every rule in it,
+/// as HTML's "update a style block" creates a new sheet: the generation
 /// advances and the cached rule and declaration objects are dropped, so the
 /// objects of the old generation are detached from the sheet (CSSOM §6.4,
 /// a removed rule has no parent and its changes no longer reach the sheet).
 fn sync_sheet(state: &mut State, style_element: usize) -> u64 {
-    let text = stylesheet_text(state.host.document(), style_element);
+    let document = state.host.document();
+    let children = sheet_children(document, style_element);
+    let text = stylesheet_text(document, style_element);
     let version = state
         .css_sheet_versions
         .entry(style_element)
         .or_insert_with(|| SheetVersion {
+            children: children.clone(),
             text: text.clone(),
             generation: 0,
         });
-    if version.text == text {
+    if version.children == children && version.text == text {
         return version.generation;
     }
+    version.children = children;
     version.text = text;
     version.generation += 1;
     let generation = version.generation;
@@ -410,17 +429,17 @@ fn sync_sheet(state: &mut State, style_element: usize) -> u64 {
     state
         .css_margin_rules
         .retain(|&(sheet, ..), _| sheet != style_element);
-    state
-        .css_margin_rule_styles
-        .retain(|&(sheet, ..), _| sheet != style_element);
     generation
 }
 
 /// Records a sheet text the CSSOM itself wrote, which keeps the rule
 /// objects of the current generation attached.
 fn record_sheet_text(state: &mut State, style_element: usize) {
-    let text = stylesheet_text(state.host.document(), style_element);
+    let document = state.host.document();
+    let children = sheet_children(document, style_element);
+    let text = stylesheet_text(document, style_element);
     if let Some(version) = state.css_sheet_versions.get_mut(&style_element) {
+        version.children = children;
         version.text = text;
     }
 }
@@ -1177,10 +1196,6 @@ fn shift_margin_rules(state: &mut State, page: &RuleSlot, shift: impl Fn(usize) 
         .css_margin_rules
         .extract_if(|key, _| is_child(key))
         .collect();
-    let styles: Vec<_> = state
-        .css_margin_rule_styles
-        .extract_if(|key, _| is_child(key))
-        .collect();
     for ((sheet, rule, margin), object) in rules {
         let new_index = shift(margin);
         if let Some(data) = object.downcast_ref::<MarginRuleData>() {
@@ -1191,13 +1206,6 @@ fn shift_margin_rules(state: &mut State, page: &RuleSlot, shift: impl Fn(usize) 
         }
         if let Some(index) = new_index {
             state.css_margin_rules.insert((sheet, rule, index), object);
-        }
-    }
-    for ((sheet, rule, margin), object) in styles {
-        if let Some(index) = shift(margin) {
-            state
-                .css_margin_rule_styles
-                .insert((sheet, rule, index), object);
         }
     }
 }
@@ -1253,6 +1261,7 @@ fn margin_rule_object(
         Some(context.intrinsics().constructors().object().prototype()),
         MarginRuleData {
             slot: RuleSlot::new(style_element, generation, rule_index, Some(margin_index)),
+            style: GcRefCell::new(None),
         },
     );
     define_getter(&object, "name", margin_rule_name, context)?;
@@ -1275,27 +1284,20 @@ fn margin_rule_object(
 /// block (CSSOM §6.4.4, `CSSMarginDescriptors`).
 fn margin_rule_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let slot = margin_rule_data(this)?;
-    let style_element = slot.style_element;
-    let key = with_state(context, |state| {
-        let (rule, margin) = slot.location(state)?;
-        Some((style_element, rule, margin?))
-    })?;
-    let existing = key.and_then(|key| {
-        with_state(context, |state| {
-            state.css_margin_rule_styles.get(&key).cloned()
-        })
-        .ok()?
-    });
+    let Some(object) = this.as_object() else {
+        return Ok(JsValue::undefined()); // cov:ignore: `margin_rule_data` accepted `this` as an object.
+    };
+    let existing = object
+        .downcast_ref::<MarginRuleData>()
+        .and_then(|data| data.style.borrow().clone());
     if let Some(existing) = existing {
         return Ok(existing.into());
     }
+    // Kept on the rule object itself, so the rule keeps the same
+    // declaration object after it moves or is detached.
     let style = super::style::rule_style_object(context, slot)?;
-    // A detached rule's declaration object reads nothing and writes
-    // nowhere; it is not cached under an index another rule now holds.
-    if let Some(key) = key {
-        with_state(context, |state| {
-            state.css_margin_rule_styles.insert(key, style.clone())
-        })?;
+    if let Some(data) = object.downcast_ref::<MarginRuleData>() {
+        *data.style.borrow_mut() = Some(style.clone());
     }
     Ok(style.into())
 }
@@ -1383,6 +1385,8 @@ pub(crate) fn write_stylesheet_margin_rule_body(
 struct MarginRuleData {
     #[unsafe_ignore_trace]
     slot: Rc<RuleSlot>,
+    /// The rule's `style`, created on first access.
+    style: GcRefCell<Option<JsObject>>,
 }
 
 /// The source text of each margin rule nested in the page rule `page`;
