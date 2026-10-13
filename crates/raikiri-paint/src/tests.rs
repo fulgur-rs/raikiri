@@ -2446,3 +2446,146 @@ fn translucent_pseudo_groups_follow_their_stack_level() {
         ]
     );
 }
+
+/// A translucent inline element composites its background and text as one
+/// group, after the rest of the paragraph.
+#[test]
+fn translucent_inline_element_is_one_group() {
+    let scene = painted_html(
+        br#"<html><body><p>a <span style="opacity:.5;background:red">BB</span> c</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill", "glyphs 2", "glyphs 2", "push 0.5", "fill", "glyphs 2", "pop"
+        ]
+    );
+}
+
+/// Translucent inline elements nest their groups, and groups of the same
+/// paragraph composite by stack level.
+#[test]
+fn translucent_inline_groups_nest_and_follow_their_stack_level() {
+    let nested = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5">B<b style="opacity:.25">C</b>D</span>E</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&nested),
+        [
+            "fill",
+            "glyphs 1",
+            "glyphs 1",
+            "push 0.5",
+            "glyphs 1",
+            "glyphs 1",
+            "push 0.25",
+            "glyphs 1",
+            "pop",
+            "pop"
+        ]
+    );
+    let stacked = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;position:relative;z-index:1">B</span><span style="opacity:.25">C</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&stacked),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.25",
+            "glyphs 1",
+            "pop",
+            "push 0.5",
+            "glyphs 1",
+            "pop"
+        ]
+    );
+}
+
+/// A group with a negative stack level paints below the paragraph's text,
+/// and inside a group, above that group's own box.
+#[test]
+fn negative_inline_groups_paint_below_the_text() {
+    let scene = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;position:relative;z-index:-1">B</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "push 0.5", "glyphs 1", "pop", "glyphs 1"]
+    );
+    let nested = painted_html(
+        br#"<html><body><p>A<span style="opacity:.5;background:blue">B<b style="opacity:.25;position:relative;z-index:-1;background:red">C</b>D</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&nested),
+        [
+            "fill",
+            "glyphs 1",
+            "push 0.5",
+            "fill",
+            "push 0.25",
+            "fill",
+            "glyphs 1",
+            "pop",
+            "glyphs 1",
+            "glyphs 1",
+            "pop"
+        ]
+    );
+}
+
+/// An atomic inline inside a translucent inline element paints inside that
+/// element's opacity.
+#[test]
+fn atomic_inline_in_a_translucent_element_paints_inside_its_opacity() {
+    let scene = painted_html(
+        br#"<html><body><p>a <span style="opacity:.5">B<span style="display:inline-block;width:5px;height:5px;background:blue"></span>B</span> c</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        [
+            "fill", "glyphs 2", "glyphs 2", "push 0.5", "glyphs 1", "glyphs 1", "pop", "push 0.5",
+            "fill", "pop"
+        ]
+    );
+}
+/// A box beside the lines with a negative stack level paints below the
+/// paragraph's text.
+#[test]
+fn negative_atomic_inline_paints_below_the_paragraph_text() {
+    let scene = painted_html(
+        br#"<html><body><p>A<i style="display:inline-block;width:5px;height:5px;position:relative;z-index:-1;background:red"></i>B</p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "fill", "glyphs 1", "glyphs 1"]
+    );
+}
+
+/// A first letter taken from a translucent inline element's text paints in
+/// that element's group, and its own group nests in it.
+#[test]
+fn first_letter_in_a_translucent_inline_element_paints_in_its_group() {
+    let plain = painted_html(
+        br#"<html><head><style>p::first-letter{color:red}</style></head><body><p><span style="opacity:.5">Hi</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&plain),
+        ["fill", "push 0.5", "glyphs 1", "glyphs 1", "pop"]
+    );
+    let translucent = painted_html(
+        br#"<html><head><style>p::first-letter{opacity:.25}</style></head><body><p><span style="opacity:.5">Hi</span></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&translucent),
+        [
+            "fill",
+            "push 0.5",
+            "glyphs 1",
+            "push 0.25",
+            "glyphs 1",
+            "pop",
+            "pop"
+        ]
+    );
+}

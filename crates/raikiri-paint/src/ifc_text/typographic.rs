@@ -1,9 +1,12 @@
-//! Composite a typographic pseudo's complete paint as one opacity group.
+//! Composite the complete paint of a translucent inline element or
+//! typographic pseudo as one opacity group.
 
 use anyrender::{PaintScene, Scene};
 use kurbo::{Affine, Rect};
 use peniko::Mix;
-use raikiri_dom::{InlineBoxPiece, Node};
+use raikiri_dom::{Document, InlineBoxPiece, Node, NodeKind};
+use raikiri_style::PseudoElem;
+use raikiri_style::property::DisplayValue;
 use std::collections::HashMap;
 
 #[derive(Clone, Copy)]
@@ -70,6 +73,11 @@ struct Group {
     level: i32,
     parent: Option<usize>,
     children: Vec<Child>,
+    /// The element or typographic box whose paint the group composites.
+    owner: usize,
+    /// How many of the first commands of `scene` paint the owner's own box,
+    /// below the groups with negative stack levels nested in it.
+    floor: usize,
 }
 
 /// A composited group placed in its parent's paint: the parent command it
@@ -88,27 +96,37 @@ impl FragmentKey {
     }
 }
 
+/// The paragraph whose groups are painted.
+#[derive(Clone, Copy)]
+pub(crate) struct Paragraph<'a> {
+    pub(crate) document: &'a Document,
+    pub(crate) cascade: &'a raikiri_style::CascadeResult,
+    pub(crate) root_id: usize,
+}
+
 pub(super) struct TypographicPaint {
     normal: Scene,
     groups: Vec<Group>,
     nearest_groups: HashMap<FragmentKey, Option<usize>>,
     piece_groups: HashMap<FragmentKey, Option<usize>>,
+    /// The innermost group of a translucent inline element around each
+    /// element of the paragraph, the element included.
+    element_groups: HashMap<usize, Option<usize>>,
 }
 
 impl TypographicPaint {
-    /// `cascade` supplies the opacity of the `::before` and `::after` boxes,
-    /// which, like `::first-letter` ones, composite their complete paint as
-    /// one group (CSS Color 4 §3.3).
-    pub(super) fn new(
-        root: &Node,
-        pieces: &[InlineBoxPiece],
-        cascade: &raikiri_style::CascadeResult,
-    ) -> Self {
+    /// A non-atomic inline element with an opacity below one composites its
+    /// fragments on the paragraph's lines as one group, and so do the
+    /// `::before`, `::after` and `::first-letter` boxes (CSS Color 4 §3.3).
+    /// The groups nest as their boxes do.
+    pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
+        let cascade = paragraph.cascade;
         let mut paint = Self {
             normal: Scene::new(),
             groups: Vec::new(),
             nearest_groups: HashMap::new(),
             piece_groups: HashMap::new(),
+            element_groups: HashMap::new(),
         };
         let mut by_box = HashMap::new();
         let mut parents = HashMap::new();
@@ -168,7 +186,12 @@ impl TypographicPaint {
                 path.push(next);
                 match parents.get(&next).copied().flatten() {
                     Some(parent) => next = parent,
-                    None => break None,
+                    // The outermost typographic box is inside the inline
+                    // elements around it.
+                    None => {
+                        break enclosing_element(paragraph.document, next)
+                            .and_then(|element| paint.element_group(paragraph, element));
+                    }
                 }
             };
             for key in path.into_iter().rev() {
@@ -185,6 +208,8 @@ impl TypographicPaint {
                                 ),
                                 parent: group,
                                 children: Vec::new(),
+                                owner: key.node,
+                                floor: 0,
                             });
                             index
                         });
@@ -213,6 +238,43 @@ impl TypographicPaint {
             cached_group(key, &piece_parents, &mut paint.piece_groups);
         }
         paint
+    }
+
+    /// The innermost group of a translucent inline element of `paragraph`
+    /// around `id`, an element or generated box, `id` included. The walk up
+    /// stops at the paragraph root and at any box that is not an inline
+    /// element. Elements with `display: contents` form no group.
+    pub(super) fn element_group(&mut self, paragraph: Paragraph<'_>, id: usize) -> Option<usize> {
+        let start =
+            raikiri_dom::generated_content::generated_origin(id).map_or(id, |(element, _)| element);
+        let mut path = Vec::new();
+        let mut group = None;
+        for (id, opacity) in inline_ancestors(paragraph, start) {
+            if let Some(&cached) = self.element_groups.get(&id) {
+                group = cached;
+                break;
+            }
+            path.push((id, opacity));
+        }
+        // Allocate the outer groups first, in the order their elements are
+        // first painted.
+        for (id, opacity) in path.into_iter().rev() {
+            if let Some(opacity) = opacity {
+                let index = self.groups.len();
+                self.groups.push(Group {
+                    scene: Scene::new(),
+                    opacity,
+                    level: raikiri_dom::paint_rules::pseudo_stack_level(paragraph.cascade, id),
+                    parent: group,
+                    children: Vec::new(),
+                    owner: id,
+                    floor: 0,
+                });
+                group = Some(index);
+            }
+            self.element_groups.insert(id, group);
+        }
+        group
     }
 
     pub(super) fn nearest(&self, id: usize, owner: usize) -> Option<usize> {
@@ -244,6 +306,18 @@ impl TypographicPaint {
             })
             .copied()
             .flatten()
+    }
+
+    /// Record that the box of `piece`, painted into `group` from command
+    /// `start` on, is the group's own box when nothing but that box was
+    /// painted into it before.
+    pub(super) fn note_box(&mut self, group: Option<usize>, piece: &InlineBoxPiece, start: usize) {
+        if let Some(group) = group.and_then(|index| self.groups.get_mut(index))
+            && group.owner == piece.node
+            && group.floor == start
+        {
+            group.floor = group.scene.commands.len();
+        }
     }
 
     pub(super) fn target(&mut self, group: Option<usize>) -> &mut Scene {
@@ -303,10 +377,16 @@ impl TypographicPaint {
             }
             // A group composites after the rest of its parent's paint, like
             // the other stacking contexts with `z-index: auto` of the
-            // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8).
+            // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8). One
+            // with a negative stack level goes below that paint, above only
+            // the parent's own box (Appendix E step 3).
             let parent = group.parent;
             let level = group.level;
-            let insertion = self.target(parent).commands.len();
+            let insertion = match (level < 0, parent) {
+                (true, Some(parent)) => self.groups[parent].floor,
+                (true, None) => 0,
+                (false, _) => self.target(parent).commands.len(),
+            };
             // Groups at the same place paint by stack level, then in tree
             // order.
             let child = (insertion, level, index, composite);
@@ -323,6 +403,59 @@ impl TypographicPaint {
         }
         scene.append_scene(merge_children(self.normal, roots), Affine::IDENTITY);
     }
+}
+
+/// `start` and the inline elements of `paragraph` around it, innermost
+/// first, with their group opacities. The walk stops at the paragraph root
+/// and at any box that is not an inline element.
+fn inline_ancestors(
+    paragraph: Paragraph<'_>,
+    start: usize,
+) -> impl Iterator<Item = (usize, Option<f32>)> + '_ {
+    let source_owner = paragraph.document.ifc_source_owner(paragraph.root_id);
+    std::iter::successors(Some(start), move |&id| paragraph.document.parent_of(id))
+        .take_while(move |&id| id != paragraph.root_id && id != source_owner)
+        .map_while(move |id| {
+            let node = paragraph.document.get_node(id)?;
+            let cv = paragraph.cascade.computed.get(id)?;
+            (node.kind() == NodeKind::Element
+                && matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents))
+            .then(|| (id, raikiri_dom::paint_rules::opacity_layer(cv)))
+        })
+}
+
+/// The opacities of the translucent inline elements of `paragraph` around
+/// `id`, a box laid out beside its lines, outermost first.
+pub(crate) fn enclosing_inline_opacities(paragraph: Paragraph<'_>, id: usize) -> Vec<(usize, f32)> {
+    let mut opacities: Vec<_> = paragraph
+        .document
+        .parent_of(id)
+        .into_iter()
+        .flat_map(|parent| inline_ancestors(paragraph, parent))
+        .filter_map(|(id, opacity)| opacity.map(|opacity| (id, opacity)))
+        .collect();
+    opacities.reverse();
+    opacities
+}
+
+/// The element whose inline groups enclose the outermost typographic box
+/// `key`: the element itself, the originating element of a `::before` or
+/// `::after`, or the element whose text a `::first-letter` wraps.
+fn enclosing_element(document: &Document, key: FragmentKey) -> Option<usize> {
+    let Some((element, pseudo)) = raikiri_dom::generated_content::generated_origin(key.node) else {
+        return Some(key.node);
+    };
+    // Letters taken from generated text are inside their pseudo-element's
+    // box, which `key` then has as its parent.
+    if pseudo == PseudoElem::FirstLetter
+        && let Some(owner) = key.owner
+        && document
+            .get_node(owner)
+            .is_some_and(|node| node.kind() == NodeKind::Text)
+    {
+        return document.parent_of(owner);
+    }
+    Some(element)
 }
 
 fn cached_group(
