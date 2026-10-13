@@ -2196,14 +2196,15 @@ rgb(5, 6, 7) url(\"a.png\") 1px 2px / 3px 4px space round local padding-box cont
         &mut rt,
         "s.length === 8 && s.backgroundColor === 'red' && \
          s.background === 'red url(\"b.png\")' && \
-         e.getAttribute('style').indexOf('background-color: red') >= 0",
+         e.getAttribute('style') === 'background: red url(\"b.png\");'",
     );
     rt.evaluate("s.removeProperty('background-color');")
         .unwrap();
     ok(
         &mut rt,
         "s.length === 7 && s.background === '' && s.cssText.indexOf('background:') < 0 && \
-         s.backgroundImage === 'url(\"b.png\")'",
+         s.backgroundImage === 'url(\"b.png\")' && \
+         e.getAttribute('style').indexOf('background-image: url(\"b.png\")') >= 0",
     );
     rt.evaluate("s.removeProperty('background');").unwrap();
     ok(&mut rt, "s.length === 0 && e.getAttribute('style') === ''");
@@ -2285,6 +2286,13 @@ fn background_with_a_substitution_function_stays_one_declaration() {
         &mut rt,
         "s.length === 2 && s.background === 'var(--b)' && s.backgroundColor === 'blue'",
     );
+    // A later `background` that splits replaces the earlier one.
+    rt.evaluate("e.setAttribute('style', 'background: var(--b); background: red');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "s.length === 8 && s.background === 'red' && s.cssText === 'background: red;'",
+    );
 }
 
 #[test]
@@ -2301,6 +2309,6 @@ fn rule_declarations_hold_background_as_longhands() {
     ok(
         &mut rt,
         "style.length === 8 && style.background === 'blue' && \
-         styleElement.textContent.indexOf('background-color: blue') >= 0",
+         styleElement.sheet.cssRules[0].cssText === 'p {background: blue;}'",
     );
 }

@@ -48,7 +48,10 @@ fn background_longhand_texts_keep_source_text_per_layer() {
             "currentcolor"
         ]
     );
-    assert_eq!(texts("border-area").unwrap()[5..7], ["border-box", "border-area"]);
+    assert_eq!(
+        texts("border-area").unwrap()[5..7],
+        ["border-box", "border-area"]
+    );
 }
 
 #[test]

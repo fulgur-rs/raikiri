@@ -271,7 +271,7 @@ fn validated_inline_declarations(
             continue;
         }
         if let Some(longhands) = shorthand::longhands_of(&name) {
-            out.retain(|d| !longhands.contains(&d.name.as_str()));
+            out.retain(|d| !same_property(&d.name, &name) && !longhands.contains(&d.name.as_str()));
         }
         let declarations =
             shorthand::expand(&name, &stored, page).unwrap_or_else(|| vec![(name, stored)]);
@@ -567,7 +567,8 @@ pub(crate) fn with_inline_style_property(
 ) -> String {
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
-    if let Some(shorthand) = shorthand::shorthand_of(property) {
+    let shorthand = shorthand::shorthand_of(property);
+    if let Some(shorthand) = shorthand {
         split_raw_shorthand(&mut declarations, shorthand);
     }
     if let Some(longhands) = shorthand::longhands_of(property) {
@@ -587,11 +588,42 @@ pub(crate) fn with_inline_style_property(
             });
         }
     }
+    if let Some(shorthand) = shorthand {
+        join_raw_shorthand(&mut declarations, shorthand);
+    }
+    serialize_raw(&declarations)
+}
+
+fn serialize_raw(declarations: &[RawDeclaration]) -> String {
     serialize_declarations(
         declarations
             .iter()
             .map(|d| (d.name.as_str(), d.value.as_str(), d.important)),
     )
+}
+
+/// Writes the longhands of `shorthand` in `declarations` back as one
+/// declaration of it, where the first of them was, when they make it up,
+/// so a block a script edited one longhand at a time reads as written.
+fn join_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str) {
+    let validated = validated_inline_declarations(Some(&serialize_raw(declarations)), false);
+    let Some((value, important)) = assembled_shorthand(&validated, shorthand) else {
+        return;
+    };
+    let is_longhand = |d: &RawDeclaration| shorthand::shorthand_of(&d.name) == Some(shorthand);
+    let first = declarations
+        .iter()
+        .position(is_longhand)
+        .unwrap_or_default();
+    declarations.retain(|d| !is_longhand(d));
+    declarations.insert(
+        first,
+        RawDeclaration {
+            name: shorthand.to_owned(),
+            value,
+            important,
+        },
+    );
 }
 
 /// Replaces each declaration of `shorthand` in `declarations` with the
@@ -722,7 +754,8 @@ impl StyleSource {
     /// ([`validated_inline_declarations`]) in declaration order (last
     /// occurrence wins, survivor at the last position): unsupported names
     /// and unparseable values are dropped, duplicates collapse to one.
-    /// Shorthands are kept as specified (not expanded into longhands).
+    /// `background` enumerates as its longhands ([`shorthand`]); other
+    /// shorthands are kept as specified (not expanded into longhands).
     ///
     /// A computed declaration enumerates supported longhands only (see
     /// [`is_computed_shorthand`]), in the sorted order
@@ -1202,16 +1235,27 @@ fn style_remove_property(
 /// a CSS declaration block").
 fn serialize_validated(declarations: &[ValidatedDeclaration]) -> String {
     let mut entries: Vec<(&str, String, bool)> = Vec::with_capacity(declarations.len());
-    let mut written: Vec<&str> = Vec::new();
+    // Each shorthand is assembled once: `Some` once written, `None` when
+    // its longhands do not make it up.
+    let mut assembled: Vec<(&str, Option<(String, bool)>)> = Vec::new();
     for d in declarations {
-        if let Some(shorthand) = shorthand::shorthand_of(&d.name)
-            && let Some((value, important)) = assembled_shorthand(declarations, shorthand)
-        {
-            if !written.contains(&shorthand) {
-                written.push(shorthand);
-                entries.push((shorthand, value, important));
+        if let Some(shorthand) = shorthand::shorthand_of(&d.name) {
+            let index = assembled
+                .iter()
+                .position(|(name, _)| *name == shorthand)
+                .unwrap_or_else(|| {
+                    let value = assembled_shorthand(declarations, shorthand);
+                    entries.extend(
+                        value
+                            .clone()
+                            .map(|(value, important)| (shorthand, value, important)),
+                    );
+                    assembled.push((shorthand, value));
+                    assembled.len() - 1
+                });
+            if assembled[index].1.is_some() {
+                continue;
             }
-            continue;
         }
         entries.push((d.name.as_str(), d.value.clone(), d.important));
     }

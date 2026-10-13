@@ -5,8 +5,8 @@
 use cssparser::{ParseError, Parser, ParserInput};
 
 use super::super::serialize::serialize_value;
-use super::color::parse_contextual_color;
 use super::super::types::PropertyKey;
+use super::color::parse_contextual_color;
 use super::visual::{
     parse_background_attachment, parse_background_image, parse_background_repeat,
     parse_background_shorthand, parse_background_size, parse_bg_position, parse_clip_box,
@@ -66,14 +66,23 @@ pub fn background_longhand_texts(value: &str) -> Option<Vec<(&'static str, Strin
         .unwrap_or_else(|| "transparent".to_owned());
     Some(vec![
         ("background-image", joined(|layer| &layer.image, "none")),
-        ("background-position", joined(|layer| &layer.position, "0% 0%")),
+        (
+            "background-position",
+            joined(|layer| &layer.position, "0% 0%"),
+        ),
         ("background-size", serialized(PropertyKey::BackgroundSize)?),
-        ("background-repeat", serialized(PropertyKey::BackgroundRepeat)?),
+        (
+            "background-repeat",
+            serialized(PropertyKey::BackgroundRepeat)?,
+        ),
         (
             "background-attachment",
             serialized(PropertyKey::BackgroundAttachment)?,
         ),
-        ("background-origin", serialized(PropertyKey::BackgroundOrigin)?),
+        (
+            "background-origin",
+            serialized(PropertyKey::BackgroundOrigin)?,
+        ),
         ("background-clip", serialized(PropertyKey::BackgroundClip)?),
         ("background-color", color),
     ])

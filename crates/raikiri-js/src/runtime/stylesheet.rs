@@ -513,6 +513,11 @@ fn sync_sheet(state: &mut State, style_element: usize) {
 /// Detaches every rule object handed out for `style_element`'s sheet,
 /// whose text was `old_text`. Each top-level rule moves to a text of its
 /// own, which the objects of its margin rules share.
+///
+/// The detached objects stay cached under their new text, so a rule keeps
+/// returning the same objects. Each rule object is detached at most once,
+/// so what stays cached grows with the objects scripts asked for, not with
+/// the number of sheet changes.
 fn detach_sheet_rules(state: &mut State, style_element: usize, old_text: &str) {
     let sheet = SheetKey::Element(style_element);
     let rules: Vec<_> = state
@@ -564,7 +569,7 @@ fn rule_object_slot(object: &JsObject) -> Option<Rc<RuleSlot>> {
 }
 
 /// Records a sheet text the CSSOM itself wrote, which keeps the rule
-/// objects of the current generation attached.
+/// objects handed out for the sheet attached.
 fn record_sheet_text(state: &mut State, style_element: usize) {
     let document = state.host.document();
     let children = sheet_children(document, style_element);
@@ -1190,7 +1195,8 @@ pub(crate) fn rule_body(text: &str, rule_index: usize) -> Option<String> {
 
 /// Replaces the declarations of the top-level rule `rule_index` of `sheet`
 /// with `body`. A declaration object only exists for a rule with a block,
-/// and a slot always points at its rule, so the rule is always there.
+/// and a slot always points at its rule, so the rule is always there;
+/// otherwise nothing is written.
 pub(crate) fn write_rule_body(
     context: &mut Context,
     sheet: SheetKey,
@@ -1198,11 +1204,20 @@ pub(crate) fn write_rule_body(
     body: &str,
 ) -> JsResult<()> {
     let text = with_state(context, |state| sheet_text(state, sheet))?;
-    let rule = parse_css_rules(&text)
-        .get(rule_index)
-        .cloned()
-        .unwrap_or_default();
-    let body_range = rule.body.clone().unwrap_or_default();
+    let rule = parse_css_rules(&text).get(rule_index).cloned();
+    if let Some((rule, body_range)) = rule.and_then(|rule| Some((rule.clone(), rule.body?))) {
+        write_sheet_text(
+            context,
+            sheet,
+            with_rule_body(&text, &rule, body_range, body),
+        )?;
+    }
+    Ok(())
+}
+
+/// The sheet `text` with the block `body_range` of `rule` replaced by
+/// `body`.
+fn with_rule_body(text: &str, rule: &CssRuleInfo, body_range: Range<usize>, body: &str) -> String {
     let mut updated = String::with_capacity(text.len() + body.len());
     updated.push_str(&text[..body_range.start]);
     updated.push_str(body);
@@ -1216,7 +1231,7 @@ pub(crate) fn write_rule_body(
         }
     }
     updated.push_str(&text[body_range.end..]);
-    write_sheet_text(context, sheet, updated)
+    updated
 }
 
 /// Replace `range` (relative to the rule body starting at `body_start`) of
@@ -1536,12 +1551,15 @@ pub(crate) fn write_margin_rule_body(
     margin_index: usize,
     body: &str,
 ) -> JsResult<()> {
-    // A margin rule's slot always points at a margin rule of its text.
+    // A margin rule's slot always points at a margin rule of its text;
+    // otherwise nothing is written.
     let range = with_state(context, |state| {
         margin_body_range(&sheet_text(state, sheet), rule_index, margin_index)
-    })?
-    .unwrap_or_default();
-    splice_rule_body(context, sheet, 0, range, body)
+    })?;
+    if let Some(range) = range {
+        splice_rule_body(context, sheet, 0, range, body)?;
+    }
+    Ok(())
 }
 
 #[derive(Trace, Finalize, JsData)]
