@@ -92,7 +92,14 @@ pub(super) struct TypographicPaint {
 }
 
 impl TypographicPaint {
-    pub(super) fn new(root: &Node, pieces: &[InlineBoxPiece]) -> Self {
+    /// `cascade` supplies the opacity of the `::before` and `::after` boxes,
+    /// which, like `::first-letter` ones, composite their complete paint as
+    /// one group (CSS Color 4 §3.3).
+    pub(super) fn new(
+        root: &Node,
+        pieces: &[InlineBoxPiece],
+        cascade: &raikiri_style::CascadeResult,
+    ) -> Self {
         let mut paint = Self {
             normal: Scene::new(),
             groups: Vec::new(),
@@ -118,6 +125,10 @@ impl TypographicPaint {
             ) && cv.opacity < 1.0
             {
                 opacities.insert(key, cv.opacity);
+            } else if let Some(opacity) =
+                raikiri_dom::paint_rules::pseudo_opacity_layer(cascade, piece.node)
+            {
+                opacities.insert(key, opacity);
             }
         }
         // Resolve parents before children. Equal opacities share a group only
@@ -191,6 +202,17 @@ impl TypographicPaint {
             .get(&FragmentKey {
                 node: id,
                 owner: Some(owner),
+            })
+            // The text of a `::before` or `::after` box is its own.
+            .or_else(|| {
+                (id == owner)
+                    .then(|| {
+                        self.nearest_groups.get(&FragmentKey {
+                            node: id,
+                            owner: None,
+                        })
+                    })
+                    .flatten()
             })
             .copied()
             .flatten()

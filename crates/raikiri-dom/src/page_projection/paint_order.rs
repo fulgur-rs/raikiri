@@ -118,6 +118,9 @@ struct TextLines {
     paragraphs: HashMap<NodeId, Vec<TextLineId>>,
     /// Lines with runs in an inline opacity group, by the group's element.
     groups: HashMap<NodeId, Vec<TextLineId>>,
+    /// The `::first-letter` groups with runs, by paragraph root and group,
+    /// with the group that holds their letters.
+    letters: HashMap<(usize, usize), Option<usize>>,
 }
 
 /// The fragments of one page, grouped by source node.
@@ -187,6 +190,16 @@ impl Document {
         let mut seen = HashSet::new();
         for run in runs {
             let group = self.text_run_opacity_group(cascade, run);
+            if let (Some(letter), Ok(root)) = (
+                run.letter_box
+                    .filter(|&letter| group.is_some_and(|group| group.0 == letter as u64)),
+                usize::try_from(run.line.root.0),
+            ) {
+                lines.letters.entry((root, letter)).or_insert_with(|| {
+                    self.run_group_outside_letter(cascade, run)
+                        .and_then(|group| usize::try_from(group.0).ok())
+                });
+            }
             if seen.insert((run.line, group)) {
                 match group {
                     Some(group) => lines.groups.entry(group),
@@ -215,16 +228,41 @@ impl Document {
     /// its paragraph. Runs of the paragraph root's own content, list markers
     /// and ellipses belong to no inline group. Elements with
     /// `display: contents` form no group.
+    ///
+    /// A `::before`, `::after` or `::first-letter` laid out in the paragraph
+    /// is such a group too, named by the id of
+    /// [`crate::generated_content::generated_node_id`]: its letters and
+    /// generated text belong to it before any element around them.
     #[doc(hidden)]
     pub fn text_run_opacity_group(
         &self,
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
+        if let Some(letter) = run
+            .letter_box
+            .and_then(|letter| pseudo_opacity_group(cascade, letter))
+        {
+            return Some(NodeId::new(letter as u64));
+        }
+        self.run_group_outside_letter(cascade, run)
+    }
+
+    /// The opacity group of `run` apart from that of a `::first-letter`
+    /// around its letters.
+    fn run_group_outside_letter(
+        &self,
+        cascade: &CascadeResult,
+        run: &PositionedGlyphRun<'_>,
+    ) -> Option<NodeId> {
         let start = match run.source {
             RunSource::Text(node) => self.parent_of(usize::try_from(node.0).ok()?)?,
-            RunSource::Generated(owner, GeneratedKind::Before | GeneratedKind::After) => {
-                usize::try_from(owner.0).ok()?
+            RunSource::Generated(owner, kind @ (GeneratedKind::Before | GeneratedKind::After)) => {
+                let owner = usize::try_from(owner.0).ok()?;
+                if let Some(group) = generated_group(cascade, owner, kind) {
+                    return Some(NodeId::new(group as u64));
+                }
+                owner
             }
             _ => return None,
         };
@@ -376,9 +414,7 @@ impl Document {
                     // like other z-index: auto stacking contexts: its inline
                     // boxes and text, then its atomic inlines and floats,
                     // then the groups nested in it.
-                    let Some(alpha) = cascade
-                        .computed
-                        .get(group)
+                    let Some(alpha) = crate::generated_content::computed_for_id(cascade, group)
                         .and_then(paint_rules::opacity_layer)
                     else {
                         continue; // cov:ignore: groups are found by their opacity
@@ -852,14 +888,24 @@ impl Document {
             // Each group joins the boxes at its place in tree order before
             // the stable sort, so equal keys keep tree order.
             let position = self.preorder_positions(root);
-            for group in groups {
-                let at = position.get(&group).map_or(entries.len(), |&group_at| {
+            let mut groups: Vec<(Option<(usize, u8)>, usize)> = groups
+                .into_iter()
+                .map(|group| (self.group_tree_position(&position, group), group))
+                .collect();
+            // Pseudo-element groups are found after the element groups of
+            // the same pass; tree order puts them among those.
+            groups.sort_by_key(|&(at, _)| at.map_or((usize::MAX, u8::MAX), |at| at));
+            for (group_at, group) in groups {
+                let at = group_at.map_or(entries.len(), |group_at| {
                     entries
                         .iter()
                         .position(|(_, frame)| match *frame {
-                            Frame::Visit(id) | Frame::Paragraph(id) | Frame::InlineGroup(_, id) => {
-                                position.get(&id).is_some_and(|&at| at > group_at)
+                            Frame::Visit(id) | Frame::Paragraph(id) => {
+                                position.get(&id).is_some_and(|&at| (at, 0) > group_at)
                             }
+                            Frame::InlineGroup(_, id) => self
+                                .group_tree_position(&position, id)
+                                .is_some_and(|at| at > group_at),
                             Frame::PopClip
                             | Frame::PopOpacity
                             | Frame::PopTransform
@@ -869,15 +915,55 @@ impl Document {
                         .unwrap_or(entries.len())
                 });
                 // A positioned group keeps its own z-index level.
-                let key = match cascade.computed.get(group).map(|cv| &cv.position) {
-                    Some(PositionValue::Static) | None => paint_rules::STACKING_CONTEXT_PAINT_KEY,
-                    Some(_) => paint_rules::paint_child_key(group, display, cascade),
+                let key = match crate::generated_content::generated_origin(group) {
+                    Some(_) => crate::generated_content::computed_for_id(cascade, group)
+                        .map_or(paint_rules::STACKING_CONTEXT_PAINT_KEY, |cv| {
+                            paint_rules::stacking_context_key(cv)
+                        }),
+                    None => match cascade.computed.get(group).map(|cv| &cv.position) {
+                        Some(PositionValue::Static) | None => {
+                            paint_rules::STACKING_CONTEXT_PAINT_KEY
+                        }
+                        Some(_) => paint_rules::paint_child_key(group, display, cascade),
+                    },
                 };
                 entries.insert(at, (key, Frame::InlineGroup(root, group)));
             }
         }
         entries.sort_by_key(|(key, _)| *key);
         entries.into_iter().map(|(_, frame)| frame).collect()
+    }
+
+    /// Where opacity group `group` stands in the tree order of a paragraph
+    /// whose preorder positions are `position`: an element at its own
+    /// position, a `::before` or `::first-letter` just after its originating
+    /// element, and an `::after` after the element's last descendant. The
+    /// second number orders the pieces that share a position.
+    fn group_tree_position(
+        &self,
+        position: &HashMap<usize, usize>,
+        group: usize,
+    ) -> Option<(usize, u8)> {
+        let Some((owner, pseudo)) = crate::generated_content::generated_origin(group) else {
+            return position.get(&group).map(|&at| (at, 0));
+        };
+        match pseudo {
+            PseudoElem::Before => position.get(&owner).map(|&at| (at, 1)),
+            // A first letter can belong to a block around the paragraph,
+            // which then starts the paragraph's tree order.
+            PseudoElem::FirstLetter => Some((position.get(&owner).copied().unwrap_or(0), 2)),
+            _ => {
+                let mut last = owner;
+                while let Some(&child) = self
+                    .get_node(last)
+                    .and_then(|node| node.children.last())
+                    .filter(|child| position.contains_key(child))
+                {
+                    last = child;
+                }
+                position.get(&last).map(|&at| (at, 3))
+            }
+        }
     }
 
     /// The preorder index of each node in the subtree of `root`.
@@ -1105,6 +1191,11 @@ fn push_paragraph<'a>(
         }
         return Vec::new();
     }
+    if let Some(group) = group
+        && crate::generated_content::generated_origin(group).is_some()
+    {
+        return push_pseudo_group(document, items, root, group, lines, &push_lines, events);
+    }
     let beside_lines: HashSet<usize> = root_node.ifc_boxes().into_iter().collect();
     // The listed content starts at the group element itself, or inside the
     // paragraph root around the root's own generated content.
@@ -1176,32 +1267,27 @@ fn push_paragraph<'a>(
         .filter(|&&(id, kind)| kind.is_none() && id != first)
         .map(|&(id, _)| id)
         .collect();
+    let pieces = first_letter_pieces(document, items, root);
+    // A first letter with an opacity of its own is a group nested in the
+    // group that holds its letters.
+    for own in letter_groups(&pieces, lines, root, group) {
+        if !nested.contains(&own) {
+            nested.push(own);
+        }
+    }
     // Each first-letter piece with the element it is listed under, whether
     // its letters come from `::after`, its owner, and the element that holds
     // its letters, which clips it.
-    let letters: Vec<(usize, bool, usize, usize, &super::generated_boxes::BoxPiece)> = items
-        .generated_boxes
-        .into_iter()
-        .flat_map(|boxes| {
-            boxes.range(
-                (root, 0, GeneratedKind::FirstLetter)
-                    ..=(root, usize::MAX, GeneratedKind::FirstLetter),
-            )
-        })
-        .filter(|((_, _, kind), _)| *kind == GeneratedKind::FirstLetter)
-        .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
-        .filter_map(|(owner, piece)| {
-            let (anchor, after) = first_letter_anchor(document, root, piece)
-                .map_or((None, false), |(anchor, after)| (Some(anchor), after));
-            let held = anchor
-                .and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor));
-            (held == group).then(|| {
-                let clip = anchor.unwrap_or(owner);
-                let anchor = anchor
-                    .filter(|anchor| listed.contains(anchor))
-                    .unwrap_or(first);
-                (anchor, after, owner, clip, piece)
-            })
+    let letters: Vec<(usize, bool, usize, usize, &super::generated_boxes::BoxPiece)> = pieces
+        .iter()
+        .filter(|letter| letter.own.is_none() && letter.held == group)
+        .map(|letter| {
+            let clip = letter.anchor.unwrap_or(letter.owner);
+            let anchor = letter
+                .anchor
+                .filter(|anchor| listed.contains(anchor))
+                .unwrap_or(first);
+            (anchor, letter.after, letter.owner, clip, letter.piece)
         })
         .collect();
     for (node_id, kind) in elements {
@@ -1216,6 +1302,19 @@ fn push_paragraph<'a>(
             }
             None => {}
             Some(kind) => {
+                // A pseudo-element with an opacity of its own is a group,
+                // listed after this content with its boxes, images and text.
+                // Its `::first-letter` slot still follows.
+                if matches!(kind, GeneratedKind::Before | GeneratedKind::After)
+                    && let Some(pseudo) = generated_group(items.cascade, node_id, kind)
+                {
+                    if pseudo_on_paragraph(items, root, node_id, kind, lines)
+                        && !nested.contains(&pseudo)
+                    {
+                        nested.push(pseudo);
+                    }
+                    continue;
+                }
                 let own = items
                     .generated_boxes
                     .and_then(|boxes| boxes.get(&(root, node_id, kind)))
@@ -1266,6 +1365,12 @@ fn push_paragraph<'a>(
                     GeneratedKind::After => true,
                     _ => continue,
                 };
+                // The images of a `::before` group are listed in the group.
+                if !after
+                    && generated_group(items.cascade, node_id, GeneratedKind::Before).is_some()
+                {
+                    continue;
+                }
                 // The images are replaced content inside the pseudo-element's
                 // inline box, painted above its decoration and above the
                 // first-letter boxes wrapping its letters, as the inline
@@ -1298,24 +1403,273 @@ fn push_paragraph<'a>(
 
 /// The element of paragraph `root` whose letters a `::first-letter` piece
 /// wraps: the parent of the text, or the originating element of the
-/// `::before` or `::after` text, they come from; and whether they are its
-/// `::after` text.
+/// `::before` or `::after` text, they come from; and which of those
+/// pseudo-elements, if any, the letters are the text of.
 fn first_letter_anchor(
     document: &Document,
     root: usize,
     piece: &super::generated_boxes::BoxPiece,
-) -> Option<(usize, bool)> {
+) -> Option<(usize, Option<GeneratedKind>)> {
     let source = document
         .ifc_layout_node(root)?
         .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
         .1;
     if let Some((element, pseudo)) = crate::generated_content::generated_origin(source) {
-        return Some((element, pseudo == PseudoElem::After));
+        let kind = match pseudo {
+            PseudoElem::After => GeneratedKind::After,
+            _ => GeneratedKind::Before,
+        };
+        return Some((element, Some(kind)));
     }
     match document.get_node(source)?.kind() {
-        NodeKind::Text => document.parent_of(source).map(|parent| (parent, false)),
-        _ => Some((source, false)),
+        NodeKind::Text => document.parent_of(source).map(|parent| (parent, None)),
+        _ => Some((source, None)),
     }
+}
+
+/// One `::first-letter` piece of a paragraph, with the opacity groups
+/// around it.
+struct LetterPiece<'p> {
+    /// The element whose letters the piece wraps, when known.
+    anchor: Option<usize>,
+    /// Whether the letters are the `::after` text of the anchor.
+    after: bool,
+    /// The block whose `::first-letter` the piece is.
+    owner: usize,
+    piece: &'p super::generated_boxes::BoxPiece,
+    /// The innermost opacity group around the letters, other than the
+    /// piece's own: a `::before` or `::after` group they are the text of,
+    /// or the inline group of the anchor.
+    held: Option<usize>,
+    /// The piece's own opacity group, when its `::first-letter` has one.
+    own: Option<usize>,
+}
+
+/// The `::first-letter` pieces of paragraph `root` on the page, in paint
+/// order.
+fn first_letter_pieces<'p>(
+    document: &Document,
+    items: &PageItems<'p>,
+    root: usize,
+) -> Vec<LetterPiece<'p>> {
+    items
+        .generated_boxes
+        .into_iter()
+        .flat_map(|boxes| {
+            boxes.range(
+                (root, 0, GeneratedKind::FirstLetter)
+                    ..=(root, usize::MAX, GeneratedKind::FirstLetter),
+            )
+        })
+        .filter(|((_, _, kind), _)| *kind == GeneratedKind::FirstLetter)
+        .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
+        .map(|(owner, piece)| {
+            let source = first_letter_anchor(document, root, piece);
+            let anchor = source.map(|(anchor, _)| anchor);
+            let pseudo = source.and_then(|(_, pseudo)| pseudo);
+            let held = match (anchor, pseudo) {
+                (Some(anchor), Some(kind)) => generated_group(items.cascade, anchor, kind),
+                _ => None,
+            }
+            .or_else(|| {
+                anchor.and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor))
+            });
+            LetterPiece {
+                anchor,
+                after: pseudo == Some(GeneratedKind::After),
+                owner,
+                piece,
+                held,
+                own: pseudo_opacity_group(items.cascade, piece.node),
+            }
+        })
+        .collect()
+}
+
+/// Lists the content of the opacity group of a pseudo-element of paragraph
+/// `root`, named by its generated id: the decoration of a `::before` or
+/// `::after` with the first letters taken from its text and its images, or
+/// the pieces of a `::first-letter`; then the group's text. Returns the
+/// groups of the first letters nested in it.
+fn push_pseudo_group<'a>(
+    document: &'a Document,
+    items: &PageItems<'a>,
+    root: usize,
+    group: usize,
+    lines: Option<&TextLines>,
+    push_lines: &dyn Fn(&mut Vec<PaintEvent<'a>>),
+    events: &mut Vec<PaintEvent<'a>>,
+) -> Vec<usize> {
+    let Some((element, pseudo)) = crate::generated_content::generated_origin(group) else {
+        return Vec::new(); // cov:ignore: the caller checks the id
+    };
+    let root_node = document.ifc_layout_node(root);
+    let push_piece = |events: &mut Vec<PaintEvent<'a>>,
+                      owner: usize,
+                      kind: GeneratedKind,
+                      clip: usize,
+                      piece: &super::generated_boxes::BoxPiece| {
+        let Some(style) =
+            root_node.and_then(|node| column_projection_style(node, items.cascade, piece))
+        else {
+            return; // cov:ignore: pieces are prepared only for boxes with a style
+        };
+        events.push(PaintEvent::GeneratedBox(GeneratedBox {
+            owner: NodeId::new(owner as u64),
+            line: TextLineId {
+                root: NodeId::new(root as u64),
+                index: piece.line,
+            },
+            kind,
+            rect: piece.rect,
+            style,
+            clip_owner: NodeId::new(clip as u64),
+            has_start_edge: piece.has_start_edge,
+            has_end_edge: piece.has_end_edge,
+        }));
+    };
+    let letters = first_letter_pieces(document, items, root);
+    let mut nested = Vec::new();
+    match pseudo {
+        PseudoElem::FirstLetter => {
+            for letter in letters.iter().filter(|letter| letter.own == Some(group)) {
+                let clip = letter.anchor.unwrap_or(letter.owner);
+                push_piece(
+                    events,
+                    letter.owner,
+                    GeneratedKind::FirstLetter,
+                    clip,
+                    letter.piece,
+                );
+            }
+        }
+        PseudoElem::Before | PseudoElem::After => {
+            let (kind, after) = if pseudo == PseudoElem::After {
+                (GeneratedKind::After, true)
+            } else {
+                (GeneratedKind::Before, false)
+            };
+            for piece in items
+                .generated_boxes
+                .and_then(|boxes| boxes.get(&(root, element, kind)))
+                .into_iter()
+                .flatten()
+            {
+                push_piece(events, element, kind, element, piece);
+            }
+            // The first letters taken from the pseudo-element's text wrap
+            // them inside its box, below its images.
+            for letter in letters
+                .iter()
+                .filter(|letter| letter.own.is_none() && letter.held == Some(group))
+            {
+                push_piece(
+                    events,
+                    letter.owner,
+                    GeneratedKind::FirstLetter,
+                    letter.anchor.unwrap_or(letter.owner),
+                    letter.piece,
+                );
+            }
+            for own in letter_groups(&letters, lines, root, Some(group)) {
+                if !nested.contains(&own) {
+                    nested.push(own);
+                }
+            }
+            events.extend(
+                items
+                    .generated_images
+                    .into_iter()
+                    .flat_map(|images| {
+                        images.range((element, after, 0)..=(element, after, usize::MAX))
+                    })
+                    .filter(|(_, placement)| placement.root == root)
+                    .map(|(&(owner, after, index), _)| {
+                        PaintEvent::GeneratedImage(GeneratedImageId::new(owner, after, index))
+                    }),
+            );
+        }
+        _ => {} // cov:ignore: only these pseudo-elements form groups
+    }
+    push_lines(events);
+    nested
+}
+
+/// The `::first-letter` groups of paragraph `root` nested directly in
+/// `group`: those of the pieces whose letters it holds, and those of the
+/// supplied runs, in that order.
+fn letter_groups(
+    pieces: &[LetterPiece<'_>],
+    lines: Option<&TextLines>,
+    root: usize,
+    group: Option<usize>,
+) -> Vec<usize> {
+    let mut found: Vec<usize> = pieces
+        .iter()
+        .filter(|letter| letter.held == group)
+        .filter_map(|letter| letter.own)
+        .collect();
+    let mut from_runs: Vec<usize> = lines
+        .into_iter()
+        .flat_map(|lines| &lines.letters)
+        .filter(|&(&(letter_root, _), &held)| letter_root == root && held == group)
+        .map(|(&(_, letter), _)| letter)
+        .collect();
+    from_runs.sort_unstable();
+    found.extend(from_runs);
+    found.dedup();
+    found
+}
+
+/// The opacity group the pseudo-element with generated id `id` forms in its
+/// paragraph: its id, when it has one (see
+/// [`paint_rules::pseudo_opacity_layer`]).
+fn pseudo_opacity_group(cascade: &CascadeResult, id: usize) -> Option<usize> {
+    paint_rules::pseudo_opacity_layer(cascade, id).map(|_| id)
+}
+
+/// The opacity group the `::before` or `::after` of `element` forms in its
+/// paragraph, if any.
+fn generated_group(cascade: &CascadeResult, element: usize, kind: GeneratedKind) -> Option<usize> {
+    let pseudo = match kind {
+        GeneratedKind::Before => PseudoElem::Before,
+        GeneratedKind::After => PseudoElem::After,
+        _ => return None,
+    };
+    pseudo_opacity_group(
+        cascade,
+        crate::generated_content::generated_node_id(element, pseudo),
+    )
+}
+
+/// Whether the `::before` or `::after` of `element` paints anything of
+/// paragraph `root` on the page: a decoration, an image, or a line of its
+/// text.
+fn pseudo_on_paragraph(
+    items: &PageItems<'_>,
+    root: usize,
+    element: usize,
+    kind: GeneratedKind,
+    lines: Option<&TextLines>,
+) -> bool {
+    let after = kind == GeneratedKind::After;
+    let pseudo = if after {
+        PseudoElem::After
+    } else {
+        PseudoElem::Before
+    };
+    let id = NodeId::new(crate::generated_content::generated_node_id(element, pseudo) as u64);
+    items
+        .generated_boxes
+        .is_some_and(|boxes| boxes.contains_key(&(root, element, kind)))
+        || items.generated_images.is_some_and(|images| {
+            images
+                .range((element, after, 0)..=(element, after, usize::MAX))
+                .any(|(_, placement)| placement.root == root)
+        })
+        || lines
+            .and_then(|lines| lines.groups.get(&id))
+            .is_some_and(|lines| lines.iter().any(|line| line.root.0 == root as u64))
 }
 
 /// The paragraph line that holds a content image placed on the page.

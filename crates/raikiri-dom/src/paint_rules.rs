@@ -229,6 +229,26 @@ pub fn opacity_layer(cv: &ComputedValues) -> Option<f32> {
     (cv.opacity < 1.0 && cv.display != DisplayValue::Contents).then_some(cv.opacity)
 }
 
+/// The group opacity a `::before`, `::after` or `::first-letter` laid out in
+/// its paragraph paints its boxes, images and text with, by the generated id
+/// of [`crate::generated_content::generated_node_id`]. Floated and
+/// out-of-flow pseudo-elements are not in the paragraph and form no group
+/// there.
+pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
+    let (_, pseudo) = crate::generated_content::generated_origin(id)?;
+    if !matches!(
+        pseudo,
+        PseudoElem::Before | PseudoElem::After | PseudoElem::FirstLetter
+    ) {
+        return None;
+    }
+    let cv = crate::generated_content::computed_for_id(cascade, id)?;
+    (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+        && matches!(cv.float, FloatValue::None))
+    .then(|| opacity_layer(cv))
+    .flatten()
+}
+
 /// Whether an in-flow block's inline content (its lines and the atomic
 /// inlines and floats laid out beside them) waits for the enclosing layer.
 ///
@@ -436,8 +456,22 @@ pub(crate) type PaintChildKey = ((u8, i32), u8, i32);
 /// CSS 2.1 Appendix E step 8 paints that layer in tree order.
 pub(crate) const STACKING_CONTEXT_PAINT_KEY: PaintChildKey = ((2, 0), 0, 0);
 
+/// The paint key of a stacking context that is not a flex or grid item and
+/// has computed values `cv`, such as a pseudo-element with `opacity` below
+/// one: [`STACKING_CONTEXT_PAINT_KEY`] when it is not positioned, else its
+/// z-index level.
+pub(crate) fn stacking_context_key(cv: &ComputedValues) -> PaintChildKey {
+    match cv.position {
+        PositionValue::Static => STACKING_CONTEXT_PAINT_KEY,
+        _ => (computed_paint_order_key(cv), 0, 0),
+    }
+}
+
 fn paint_order_key(cascade: &CascadeResult, node_id: usize) -> (u8, i32) {
-    let computed = &cascade.computed[node_id];
+    computed_paint_order_key(&cascade.computed[node_id])
+}
+
+fn computed_paint_order_key(computed: &ComputedValues) -> (u8, i32) {
     match (&computed.position, computed.z_index) {
         // In-flow boxes paint before positioned descendants with an auto
         // z-index. Keep ordinary static boxes in the normal bucket, but

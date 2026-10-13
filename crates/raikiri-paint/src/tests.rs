@@ -2307,3 +2307,53 @@ fn padded_dotted_page_border_stays_inside_the_right_page_margin() {
         "page border must span x=50..350, got {border_bounds:?}"
     );
 }
+
+/// A translucent `::before` composites its background and its text as one
+/// group (CSS Color 4 §3.3), and the rest of the paragraph stays outside it.
+#[test]
+fn translucent_before_groups_its_box_and_text() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><head><style>p::before{content:'X';opacity:.5;background:red}</style></head><body><p>abc</p></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
+
+    let push = scene
+        .commands
+        .iter()
+        .position(|command| {
+            matches!(command, RenderCommand::PushLayer(layer) if (layer.alpha - 0.5).abs() < f32::EPSILON)
+        })
+        .expect("the pseudo-element opens an opacity group");
+    let pop = push
+        + scene.commands[push..]
+            .iter()
+            .position(|command| matches!(command, RenderCommand::PopLayer))
+            .expect("the group closes");
+    let glyphs = |range: &[RenderCommand]| -> Vec<usize> {
+        range
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::GlyphRun(run) => Some(run.glyphs.len()),
+                _ => None,
+            })
+            .collect()
+    };
+    let inside = &scene.commands[push..pop];
+    assert!(
+        inside
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Fill(_)))
+    );
+    assert_eq!(glyphs(inside), [1]);
+    assert_eq!(glyphs(&scene.commands[pop..]), [3]);
+}
