@@ -1076,18 +1076,29 @@ fn stylesheet_objects_report_invalid_receivers_and_stale_rules() {
          (function() { try { Object.getOwnPropertyDescriptor(rule, 'selectorText').get.call({}); return false; } catch (_) { return true; } })()",
     );
 
-    rt.evaluate("styleElement.textContent = ''; rule.selectorText;")
-        .unwrap_err();
-    rt.evaluate("declaration.color = 'red';").unwrap_err();
+    // A rule removed from its sheet keeps its own selector and
+    // declarations, and writes to it stay on the detached rule.
+    rt.evaluate("styleElement.textContent = ''; declaration.color = 'red';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "rule.selectorText === 'span' && declaration.color === 'red' && \
+         rule.cssText === 'span {color: red;}' && declaration.parentRule === rule && \
+         styleElement.textContent === '' && sheet.cssRules.length === 0",
+    );
 
     rt.evaluate(
         "styleElement.textContent = 'span { color: cyan; }'; \
          var replacementRule = sheet.cssRules[0]; var replacementStyle = replacementRule.style; \
-         styleElement.textContent = '@import url(\"theme.css\");';",
+         styleElement.textContent = '@import url(\"theme.css\");'; \
+         replacementStyle.cssText = 'color: red';",
     )
     .unwrap();
-    rt.evaluate("replacementStyle.cssText = 'color: red';")
-        .unwrap_err();
+    ok(
+        &mut rt,
+        "replacementRule.cssText === 'span {color: red;}' && \
+         styleElement.textContent === '@import url(\"theme.css\");'",
+    );
 }
 
 #[test]
@@ -1418,12 +1429,16 @@ fn page_rule_css_rules_lists_margin_rules_live() {
     ok(
         &mut rt,
         "list.length === 1 && list[0].name === 'bottom-center' && list[0] !== first && \
-         first.name === '' && first.cssText === ''",
+         first.name === 'top-left' && first.cssText === '@TOP-LEFT { content: \"a\" }'",
     );
-    rt.evaluate("styleElement.textContent = 'p {}';").unwrap();
+    // The detached page rule keeps its own margin rules.
+    rt.evaluate("var second = list[0]; styleElement.textContent = 'p {}';")
+        .unwrap();
     ok(
         &mut rt,
-        "list.length === 0 && first.cssText === '' && first.name === ''",
+        "list.length === 1 && list[0] === second && second.name === 'bottom-center' && \
+         pageRule.style.margin === '1px' && first.name === 'top-left' && \
+         styleElement.sheet.cssRules[0].selectorText === 'p'",
     );
 }
 
@@ -1720,12 +1735,14 @@ fn stale_page_and_margin_rule_objects_do_not_rewrite_other_rules() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     rt.evaluate(
-        "var styleElement = document.createElement('style');          styleElement.textContent = '@page { @top-left { color: red } }';          document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0];          var style = pageRule.cssRules[0].style; pageRule.deleteRule(0);          var threw = false; try { style.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }          styleElement.textContent = 'p { color: red }'; pageRule.selectorText = ':first';",
+        "var styleElement = document.createElement('style');          styleElement.textContent = '@page { @top-left { color: red } }';          document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0];          var style = pageRule.cssRules[0].style; pageRule.deleteRule(0);          style.color = 'blue';          styleElement.textContent = 'p { color: red }'; pageRule.selectorText = ':first';",
     )
     .unwrap();
     ok(
         &mut rt,
-        "threw && style.color === '' && styleElement.textContent === 'p { color: red }'",
+        "style.color === 'blue' && pageRule.selectorText === ':first' && \
+         pageRule.cssText.replace(/ /g, '') === '@page:first{}' && \
+         styleElement.textContent === 'p { color: red }'",
     );
 }
 
@@ -1771,21 +1788,23 @@ fn rule_objects_from_replaced_sheet_text_are_detached() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     // A margin rule's declaration object held across a replacement of the
-    // sheet text must not write into the new margin rule at its index.
+    // sheet text writes to the detached rule, not the new margin rule at
+    // its index.
     rt.evaluate(
         "var styleElement = document.createElement('style'); \
          styleElement.textContent = '@page { @top-left { color: red } }'; \
          document.head.appendChild(styleElement); var page = styleElement.sheet.cssRules[0]; \
          var oldMargin = page.cssRules[0]; var oldStyle = oldMargin.style; \
          styleElement.textContent = '@page :first { @top-right { color: green } }'; \
-         var threw = false; try { oldStyle.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }",
+         oldStyle.color = 'blue';",
     )
     .unwrap();
     ok(
         &mut rt,
-        "threw && styleElement.textContent === '@page :first { @top-right { color: green } }' && \
-         oldStyle.color === '' && oldStyle.length === 0 && oldStyle.parentRule === null && \
-         oldMargin.name === '' && page.cssRules.length === 0 && \
+        "styleElement.textContent === '@page :first { @top-right { color: green } }' && \
+         oldStyle.color === 'blue' && oldStyle.length === 1 && oldStyle.parentRule === oldMargin && \
+         oldMargin.name === 'top-left' && page.cssRules.length === 1 && \
+         page.cssRules[0] === oldMargin && page.selectorText === '' && \
          styleElement.sheet.cssRules[0] !== page && \
          styleElement.sheet.cssRules[0].cssRules[0] !== oldMargin && \
          styleElement.sheet.cssRules[0].cssRules[0].style.color === 'green'",
@@ -1818,19 +1837,17 @@ fn style_rule_objects_from_replaced_sheet_text_are_detached() {
          styleElement.textContent = 'p { color: red }'; \
          document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
          var style = rule.style; styleElement.textContent = 'div { color: green }'; \
-         var threw = false; try { style.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }",
+         style.color = 'blue';",
     )
     .unwrap();
     ok(
         &mut rt,
-        "threw && styleElement.textContent === 'div { color: green }' && \
-         style.color === '' && style.parentRule === null && \
+        "styleElement.textContent === 'div { color: green }' && \
+         style.color === 'blue' && style.parentRule === rule && rule.selectorText === 'p' && \
          styleElement.sheet.cssRules[0] !== rule && \
          styleElement.sheet.cssRules[0].style !== style && \
          styleElement.sheet.cssRules[0].style.color === 'green'",
     );
-    rt.evaluate("rule.selectorText;").unwrap_err();
-
     // Writes through the CSSOM keep the objects attached.
     rt.evaluate(
         "var live = styleElement.sheet.cssRules[0]; var liveStyle = live.style; \
@@ -1868,7 +1885,7 @@ fn margin_rule_objects_follow_insert_and_delete_rule() {
         .unwrap();
     ok(
         &mut rt,
-        "left.name === '' && leftStyle.color === '' && leftStyle.parentRule === null && \
+        "left.name === 'top-left' && leftStyle.color === 'red' && leftStyle.parentRule === left && \
          page.cssRules.length === 2 && page.cssRules[1] === right && \
          right.name === 'top-right' && page.cssRules[0].name === 'top-center' && \
          page.cssRules[0].style.color === 'blue' && \
@@ -1879,7 +1896,15 @@ fn margin_rule_objects_follow_insert_and_delete_rule() {
     ok(
         &mut rt,
         "page.cssRules.length === 1 && page.cssRules[0] === center && \
-         center.name === 'top-center' && right.name === '' && rightStyle.color === ''",
+         center.name === 'top-center' && right.name === 'top-right' && \
+         rightStyle.color === 'black' && !styleElement.textContent.includes('top-right')",
+    );
+    // Writes to a removed margin rule stay on it.
+    rt.evaluate("leftStyle.color = 'white';").unwrap();
+    ok(
+        &mut rt,
+        "left.cssText === '@top-left {color: white;}' && \
+         !styleElement.textContent.includes('white')",
     );
 }
 
@@ -1897,13 +1922,13 @@ fn rule_objects_are_detached_by_a_replacement_with_the_same_text() {
          var held = afterSame.cssRules[0].style; \
          styleElement.textContent = 'p {}'; \
          styleElement.textContent = '@page { @top-left { color: red } }'; \
-         var threw = false; try { held.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }",
+         held.color = 'blue';",
     )
     .unwrap();
     ok(
         &mut rt,
-        "afterSame !== page && afterSame.cssRules[0] !== margin && style.color === '' && \
-         threw && styleElement.sheet.cssRules[0] !== afterSame && \
+        "afterSame !== page && afterSame.cssRules[0] !== margin && style.color === 'red' && \
+         held.color === 'blue' && styleElement.sheet.cssRules[0] !== afterSame && \
          styleElement.textContent === '@page { @top-left { color: red } }'",
     );
 }
@@ -1925,7 +1950,8 @@ fn detached_margin_rules_keep_their_declaration_object() {
     ok(
         &mut rt,
         "deleted.style === deletedStyle && deleted.style.expando === 1 && \
-         replaced.style === replacedStyle && replacedStyle.parentRule === null",
+         replaced.style === replacedStyle && replacedStyle.parentRule === replaced && \
+         deletedStyle.color === 'red' && replacedStyle.color === 'blue'",
     );
 }
 
@@ -1942,12 +1968,12 @@ fn rule_objects_are_detached_by_in_place_text_data_writes() {
          var afterData = styleElement.sheet.cssRules[0]; \
          text.appendData(''); var afterAppend = styleElement.sheet.cssRules[0]; \
          var plain = document.createTextNode('x'); plain.data = 'y'; \
-         var threw = false; try { style.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }",
+         style.color = 'blue';",
     )
     .unwrap();
     ok(
         &mut rt,
-        "afterData !== rule && afterAppend !== afterData && threw && \
+        "afterData !== rule && afterAppend !== afterData && style.color === 'blue' && \
          styleElement.textContent === 'p { color: red }'",
     );
 }
@@ -1968,7 +1994,8 @@ fn detached_rules_keep_their_declaration_object() {
     ok(
         &mut rt,
         "rule.style === style && rule.style.expando === 1 && page.style === pageStyle && \
-         style.parentRule === null && pageStyle.color === ''",
+         style.parentRule === rule && style.color === 'red' && pageStyle.margin === '1px' && \
+         page.selectorText === '' && pageStyle.parentRule === page",
     );
 }
 
@@ -1993,7 +2020,7 @@ fn rule_objects_are_detached_when_the_same_child_is_removed_and_reinserted() {
     ok(
         &mut rt,
         "first !== second && second !== third && third !== fourth && fourth !== fifth && \
-         stable === fifth && firstStyle.color === '' && fifth.style.color === 'red'",
+         stable === fifth && firstStyle.color === 'red' && fifth.style.color === 'red'",
     );
 }
 
@@ -2038,26 +2065,25 @@ fn inserting_empty_fragments_keeps_rule_objects_attached() {
 }
 
 #[test]
-fn page_rule_arguments_that_replace_the_sheet_throw_instead_of_splicing() {
+fn page_rule_arguments_that_replace_the_sheet_change_the_detached_rule() {
     let (host, ..) = StubHost::page();
     let mut rt = DomRuntime::new(host).unwrap();
     rt.evaluate(
         "var styleElement = document.createElement('style'); \
          styleElement.textContent = '@page { @top-left { color: red } }'; \
          document.head.appendChild(styleElement); var page = styleElement.sheet.cssRules[0]; \
-         var insertError = null; var deleteError = null; \
-         try { page.insertRule({ toString() { styleElement.textContent = ''; \
-             return '@top-right { color: blue }'; } }); } catch (e) { insertError = e; } \
+         page.insertRule({ toString() { styleElement.textContent = ''; \
+             return '@top-right { color: blue }'; } }); \
+         var inserted = page.cssRules.length; \
          styleElement.textContent = '@page { @top-left { color: red } }'; \
-         page = styleElement.sheet.cssRules[0]; \
-         try { page.deleteRule({ valueOf() { styleElement.textContent = ''; return 0; } }); } \
-         catch (e) { deleteError = e; }",
+         var second = styleElement.sheet.cssRules[0]; \
+         second.deleteRule({ valueOf() { styleElement.textContent = ''; return 0; } });",
     )
     .unwrap();
     ok(
         &mut rt,
-        "insertError instanceof TypeError && deleteError instanceof TypeError && \
-         styleElement.textContent === ''",
+        "inserted === 2 && page.cssRules[0].name === 'top-right' && \
+         second.cssRules.length === 0 && styleElement.textContent === ''",
     );
 }
 
@@ -2094,14 +2120,15 @@ fn rule_objects_are_detached_when_a_failed_variadic_insert_moves_the_style_eleme
         "var styleElement = document.createElement('style'); \
          styleElement.textContent = 'p { color: red }'; \
          document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
-         var style = rule.style; var failed = false; var threw = false; \
+         var style = rule.style; var failed = false; \
          try { document.body.append(styleElement, document); } catch (e) { failed = true; } \
-         try { style.color = 'blue'; } catch (e) { threw = true; }",
+         style.color = 'blue';",
     )
     .unwrap();
     ok(
         &mut rt,
-        "failed && threw && styleElement.textContent === 'p { color: red }'",
+        "failed && style.color === 'blue' && rule.cssText === 'p {color: blue;}' && \
+         styleElement.textContent === 'p { color: red }'",
     );
 }
 

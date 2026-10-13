@@ -199,32 +199,30 @@ fn is_page_descriptor(name: &str) -> bool {
 /// The declaration text a declaration object reads -- a margin rule's
 /// block, its rule's block, or the element's `style` attribute -- and
 /// whether that text belongs to an `@page` rule, whose descriptors are valid
-/// alongside its properties. A rule's declaration object that is detached
-/// from its sheet reads no text.
+/// alongside its properties. A rule detached from its sheet keeps reading
+/// its own text.
 fn declared_text(state: &mut super::State, source: &StyleSource) -> (Option<String>, bool) {
-    let index = source.index;
     let Some(slot) = &source.rule else {
         return (
             state
                 .host
                 .document()
-                .element_attribute(index, "style")
+                .element_attribute(source.index, "style")
                 .map(str::to_owned),
             false,
         );
     };
-    let location = slot.location(state);
-    let document = state.host.document();
-    match location {
-        Some((rule, Some(margin))) => (
-            super::stylesheet::stylesheet_margin_rule_body(document, index, rule, margin),
+    let (sheet, rule, margin) = slot.location(state);
+    let text = super::stylesheet::sheet_text(state, sheet);
+    match margin {
+        Some(margin) => (
+            super::stylesheet::margin_rule_body(&text, rule, margin),
             false,
         ),
-        Some((rule, None)) => (
-            super::stylesheet::stylesheet_rule_body(document, index, rule),
-            super::stylesheet::is_page_rule(document, index, rule),
+        None => (
+            super::stylesheet::rule_body(&text, rule),
+            super::stylesheet::is_page_rule(&text, rule),
         ),
-        None => (None, false),
     }
 }
 
@@ -633,9 +631,10 @@ impl StyleSource {
         let Some(slot) = &self.rule else {
             return Ok(false);
         };
-        let index = self.index;
         with_state(context, |s| match slot.location(s) {
-            Some((rule, None)) => super::stylesheet::is_page_rule(s.host.document(), index, rule),
+            (sheet, rule, None) => {
+                super::stylesheet::is_page_rule(&super::stylesheet::sheet_text(s, sheet), rule)
+            }
             _ => false,
         })
     }
@@ -908,23 +907,14 @@ fn write_declared(
 }
 
 /// Replaces the declarations of the rule (or margin rule) `slot` points at.
-/// A detached rule's declarations no longer reach its former sheet.
+/// A detached rule's declarations change its own text, not its former
+/// sheet.
 fn write_rule_body(context: &mut Context, slot: &RuleSlot, body: &str) -> JsResult<()> {
-    let style_element = slot.style_element;
     match with_state(context, |s| slot.location(s))? {
-        Some((rule, Some(margin))) => super::stylesheet::write_stylesheet_margin_rule_body(
-            context,
-            style_element,
-            rule,
-            margin,
-            body,
-        ),
-        Some((rule, None)) => {
-            super::stylesheet::write_stylesheet_rule_body(context, style_element, rule, body)
+        (sheet, rule, Some(margin)) => {
+            super::stylesheet::write_margin_rule_body(context, sheet, rule, margin, body)
         }
-        None => Err(JsNativeError::typ()
-            .with_message("CSS rule no longer exists")
-            .into()),
+        (sheet, rule, None) => super::stylesheet::write_rule_body(context, sheet, rule, body),
     }
 }
 
@@ -1393,7 +1383,8 @@ fn get_computed_style(_: &JsValue, args: &[JsValue], context: &mut Context) -> J
 /// The declaration object over the block of the rule (or margin rule)
 /// `slot` points at.
 pub(crate) fn rule_style_object(context: &mut Context, slot: Rc<RuleSlot>) -> JsResult<JsObject> {
-    style_object(context, slot.style_element, false, Some(slot))
+    // A rule's declarations are found through `slot`, not an element.
+    style_object(context, 0, false, Some(slot))
 }
 
 /// Defines on an `@page` rule's declaration object the attributes of its
