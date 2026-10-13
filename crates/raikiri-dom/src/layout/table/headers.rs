@@ -70,13 +70,18 @@ impl HeaderRepeats {
                 .rows
                 .get(&table)
                 .expect("table preparation records every rendered table");
-            // This pass refreshes explicit row/cell boxes. Flattened Contents
-            // and anonymous cells keep the existing table projection instead.
+            // This pass refreshes row and cell boxes, explicit or anonymous
+            // (an anonymous row is marked by its first anonymous cell).
+            // Cells flattened out of a `display: contents` row keep the
+            // existing table projection instead.
+            let anonymous = |id: usize| id >= document.nodes.len();
             if !grid_rows.iter().all(|row| {
-                row.marker < document.nodes.len()
-                    && document.nodes[row.marker].display == DisplayValue::TableRow
+                if anonymous(row.marker) {
+                    return row.cells.iter().all(|&cell| anonymous(cell));
+                }
+                document.nodes[row.marker].display == DisplayValue::TableRow
                     && row.cells.iter().all(|&cell| {
-                        cell < document.nodes.len() && document.parent_of(cell) == Some(row.marker)
+                        anonymous(cell) || document.parent_of(cell) == Some(row.marker)
                     })
             }) {
                 continue;

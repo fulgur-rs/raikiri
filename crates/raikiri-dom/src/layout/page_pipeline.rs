@@ -100,8 +100,12 @@ fn body_border_box_height(document: &Document, cascade: &CascadeResult, body_id:
         return 0.0;
     }
     let layout = &document.nodes[body_id].unrounded_layout;
-    let edges = layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
-    let border_box = if matches!(computed.box_sizing, raikiri_style::property::BoxSizing::BorderBox) {
+    let edges =
+        layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom;
+    let border_box = if matches!(
+        computed.box_sizing,
+        raikiri_style::property::BoxSizing::BorderBox
+    ) {
         content.max(edges)
     } else {
         content + edges
@@ -4139,8 +4143,16 @@ pub fn layout_pages_with_page_geometry_and_control(
         // page. The row is a class-A boundary owned by the table engine; its
         // cells and descendants follow the same flow shift below. Rowspans,
         // cell-internal breaks remain out of this narrow row-boundary pass.
+        // A row that follows a repeated header must fit beside the header's
+        // copy on the next page; otherwise moving it gains nothing.
+        let repeated_header_height = table_headers
+            .rows
+            .get(&node_id)
+            .and_then(|header_id| table_headers.headers.get(header_id))
+            .map_or(0.0, |header| header.height + header.gap);
         let table_row_overflow = candidate.is_table_row
-            && height <= page_step_at(current_page) + 0.001
+            && height + repeated_header_height
+                <= page_step_at(current_page.saturating_add(1)) + 0.001
             && effective_y.is_finite()
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
@@ -4510,7 +4522,10 @@ pub fn layout_pages_with_page_geometry_and_control(
     // it, such as a nested absolutely positioned box or the overflow of a
     // monolithic box, still need pages to paint on.
     if !control.page_limit_reached.get() {
-        let end = root_flow_offset + content_overflow_end(document, cascade, body_id);
+        // Pagination materialized the moved boxes in page coordinates, which
+        // already include `root_flow_offset`; boxes it left alone paint where
+        // their own coordinates put them.
+        let end = content_overflow_end(document, cascade, body_id);
         if end.is_finite() && end > 0.0 {
             let end_page = page_index_for_end(end);
             control.check_discovery_page_index(end_page)?;

@@ -694,7 +694,10 @@ fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limi
 }
 
 #[test]
-fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
+fn pipeline_counts_distant_absolute_boxes_as_pages() {
+    // An absolutely positioned box still needs a page to paint on, as in
+    // browsers, so a distant one extends the page count and meets the page
+    // limit like in-flow content does.
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 200px;margin:0}</style>\
          <div style='height:90px'></div><div style='height:90px'></div><div style='height:70px'></div>\
@@ -722,8 +725,18 @@ fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
     );
 
     match result {
-        Ok(PipelineRun::Completed(output)) => assert_eq!(output.slices.len(), 2),
-        Err(error) => panic!("an out-of-flow box must not increase the page count: {error}"),
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            ..
+        }) => {}
+        Err(error) => panic!("expected a page limit rejection, got {error}"),
+        Ok(PipelineRun::Completed(output)) => {
+            panic!(
+                "expected rejection, but generated {} pages",
+                output.slices.len()
+            )
+        }
         Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
@@ -734,12 +747,15 @@ fn converged_schedule_keeps_page_content_origins() {
         "<style>@page{size:100px 100px;margin:0} @page :left{size:100px 240px;margin:0} @page wide{size:100px 180px;margin:0}</style><div style='height:200px'>first</div><div style='page:wide;break-before:page;height:10px'>wide</div><div style='height:300px'>tail</div>",
     );
     let out = run(&doc);
+    // The first box runs onto the 240px left page, so the forced break opens
+    // the third page (`wide`, 180px). The unnamed tail changes the page type
+    // again and starts the fourth page; its overflow needs a fifth.
     assert_eq!(
         out.slices
             .iter()
             .map(|p| p.content_origin_y)
             .collect::<Vec<_>>(),
-        vec![0.0, 100.0, 280.0, 380.0]
+        vec![0.0, 100.0, 340.0, 520.0, 760.0]
     );
 }
 
