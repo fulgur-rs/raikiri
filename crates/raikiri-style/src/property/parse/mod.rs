@@ -83,6 +83,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
                 | PropertyKey::BoxDecorationBreak
+                | PropertyKey::TextShadow
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;
@@ -194,6 +195,32 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                         empty_text_shadow_list()
                     } else {
                         Arc::new(parsed)
+                    }));
+                }
+            }
+            // The border-image number, percentage and length slots clamp a
+            // math function to their range at computed-value time. Validate
+            // with that grammar, since generic simplification would turn
+            // `calc(-1)` into a literal `-1`, and keep the source so the
+            // specified value still reads back as written.
+            if matches!(
+                normalized_name.as_str(),
+                "border-image"
+                    | "border-image-slice"
+                    | "border-image-width"
+                    | "border-image-outset"
+            ) {
+                let valid = {
+                    let mut reparsed_input = ParserInput::new(value.as_ref());
+                    let mut reparsed = Parser::new(&mut reparsed_input);
+                    parse_property_grammar(&normalized_name, &mut reparsed).is_some()
+                        && reparsed.expect_exhausted().is_ok()
+                };
+                if valid {
+                    return Some(PropertyValue::Deferred(DeferredValue {
+                        property: normalized_name.into(),
+                        value,
+                        key: key?,
                     }));
                 }
             }

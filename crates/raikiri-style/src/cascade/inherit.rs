@@ -2228,6 +2228,20 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     crate::property::BoxDecorationBreak::Slice
                 });
             }
+            crate::property::PropertyKey::TextShadow => {
+                // Inherited: only `initial` resets to `none`.
+                return PropertyValue::TextShadow(if initial || inherited.text_shadow.is_empty() {
+                    crate::property::empty_text_shadow_list()
+                } else {
+                    Arc::new(
+                        inherited
+                            .text_shadow
+                            .iter()
+                            .map(|shadow| crate::resolve::lift_text_shadow_item(*shadow))
+                            .collect(),
+                    )
+                });
+            }
             crate::property::PropertyKey::ListStyleImage => {
                 return PropertyValue::ListStyleImage(if initial {
                     crate::property::BackgroundImage::None

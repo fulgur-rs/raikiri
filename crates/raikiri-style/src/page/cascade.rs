@@ -308,7 +308,7 @@ impl PageMarginBoxCascadeResult {
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
-                let value = resolved_value(&decl.value)?;
+                let value = margin_box_text_shadow_default(resolved_value(&decl.value)?)?;
                 Some(Declaration::new(
                     resolve_css_wide_color_font(
                         value,
@@ -354,6 +354,21 @@ impl PageMarginBoxCascadeResult {
         }
         Some(merged)
     }
+}
+
+/// Settle a CSS-wide keyword on a margin box's `text-shadow`. The property
+/// is inherited (CSS Text Decoration 3 §4), so every keyword other than
+/// `initial` drops the declaration and the box takes the page context's
+/// value; `initial` is `none`.
+fn margin_box_text_shadow_default(value: PropertyValue) -> Option<PropertyValue> {
+    if let PropertyValue::Deferred(marker) = &value
+        && marker.key == PropertyKey::TextShadow
+        && let Some(keyword) = marker.css_wide_keyword()
+    {
+        return (keyword == crate::property::CssWideKeyword::Initial)
+            .then(|| PropertyValue::TextShadow(crate::property::empty_text_shadow_list()));
+    }
+    Some(value)
 }
 
 /// Winning values from an `@page` cascade pass.
