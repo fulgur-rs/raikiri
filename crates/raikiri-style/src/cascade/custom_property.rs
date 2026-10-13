@@ -966,7 +966,7 @@ fn push_bounded(output: &mut String, fragment: &str) -> Option<()> {
     Some(())
 }
 
-pub(crate) const MATH_FUNCTIONS: [&str; 4] = ["calc", "min", "max", "clamp"];
+const MATH_FUNCTIONS: [&str; 4] = ["calc", "min", "max", "clamp"];
 
 /// Find named CSS functions by walking cssparser's component-value tokens.
 /// `Parser::next` skips a function body, so recurse into every block to keep

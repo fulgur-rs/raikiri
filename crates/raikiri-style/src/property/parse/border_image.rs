@@ -54,7 +54,7 @@ fn clamped_math_source<'i>(input: &mut Parser<'i, '_>) -> Result<String, ParseEr
     let start = input.position();
     match input.next()? {
         Token::Function(name)
-            if crate::cascade::MATH_FUNCTIONS
+            if ["calc", "min", "max", "clamp"]
                 .iter()
                 .any(|function| name.eq_ignore_ascii_case(function)) => {}
         _ => return Err(location.new_custom_error(())),
@@ -174,6 +174,16 @@ fn parse_width_side<'i>(
     // A bare number, including `0`, is a multiple of the border width.
     if let Ok(number) = input.try_parse(parse_non_negative_number) {
         return Ok(BorderImageWidthSide::Number(number));
+    }
+    // A math function that folds to one length or percentage.
+    if let Ok(length) = input.try_parse(|input| {
+        let source = clamped_math_source(input)?;
+        parse_clamped(&source, |parser| {
+            parse_non_negative_length_percentage_res(parser).ok()
+        })
+        .ok_or_else(|| input.new_custom_error(()))
+    }) {
+        return Ok(BorderImageWidthSide::LengthPercentage(length.into()));
     }
     // A mixed-unit `calc()` that substitution or simplification could not
     // fold keeps its terms; a math function is clamped to the range.

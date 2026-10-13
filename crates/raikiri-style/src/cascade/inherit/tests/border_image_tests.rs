@@ -195,6 +195,21 @@ fn border_image_math_functions_in_range_keep_their_value() {
     );
     let image = &values.border_image;
     assert_eq!(image.slice.offsets.top, BorderImageSliceOffset::Number(2.0));
+    let width = cascade_doc(
+        "",
+        "div",
+        Some("border-image-width: min(-5px, -2px) max(-1%, -2%)"),
+    );
+    assert_eq!(
+        width.border_image.width.top,
+        BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(0.0))
+    );
+    assert!(matches!(
+        width.border_image.width.right,
+        BorderImageWidthSide::LengthPercentage(
+            ComputedLengthPercentageOrCalc::Px(0.0) | ComputedLengthPercentageOrCalc::Percent(0.0)
+        )
+    ));
     assert_eq!(
         image.slice.offsets.right,
         BorderImageSliceOffset::Percent(50.0)
