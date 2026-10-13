@@ -288,7 +288,11 @@ pub(crate) fn draw_ifc_lines_with_resources(
             if !vertical {
                 // Each shadow layer covers every run of the box before the
                 // next one up, so the first declared shadow stays on top.
-                let layers = segment[0].style.text_shadow.len();
+                let layers = segment
+                    .iter()
+                    .map(|draw| draw.style.text_shadow.len())
+                    .max()
+                    .unwrap_or(0);
                 for layer in (0..layers).rev() {
                     for draw in segment {
                         let Some(font) = draw.run.font_data() else {

@@ -3100,3 +3100,22 @@ fn text_inside_a_contents_element_shares_the_enclosing_box_phases() {
         "{kinds:?}"
     );
 }
+
+#[test]
+fn a_contents_element_paints_its_own_shadow_within_the_enclosing_box() {
+    let on = painted_root("width:200px;color:black", |doc, root| {
+        doc.append_text(root, "a");
+        let wrapper = doc.append_element(
+            Some(root),
+            "i",
+            Style::default(),
+            Some("display:contents;text-shadow:2px 2px red"),
+        );
+        doc.append_text(wrapper, "b");
+    });
+    let shadows = runs_in_order(&on)
+        .into_iter()
+        .filter(|run| run.3.contains("[1.0, 0.0, 0.0, 1.0]"))
+        .count();
+    assert_eq!(shadows, 1, "{:?}", runs_in_order(&on));
+}
