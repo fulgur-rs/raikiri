@@ -195,20 +195,26 @@ fn is_page_descriptor(name: &str) -> bool {
         .any(|descriptor| descriptor.eq_ignore_ascii_case(name))
 }
 
-/// The declaration text a declaration object reads -- its rule's block, or
-/// the element's `style` attribute -- and whether that text belongs to an
-/// `@page` rule, whose descriptors are valid alongside its properties.
+/// The declaration text a declaration object reads -- a margin rule's
+/// block, its rule's block, or the element's `style` attribute -- and
+/// whether that text belongs to an `@page` rule, whose descriptors are valid
+/// alongside its properties.
 fn declared_text(
     document: &raikiri_dom::Document,
     index: usize,
     rule: Option<usize>,
+    margin: Option<usize>,
 ) -> (Option<String>, bool) {
-    match rule {
-        Some(rule) => (
+    match (rule, margin) {
+        (Some(rule), Some(margin)) => (
+            super::stylesheet::stylesheet_margin_rule_body(document, index, rule, margin),
+            false,
+        ),
+        (Some(rule), None) => (
             super::stylesheet::stylesheet_rule_body(document, index, rule),
             super::stylesheet::is_page_rule(document, index, rule),
         ),
-        None => (
+        (None, _) => (
             document
                 .element_attribute(index, "style")
                 .map(str::to_owned),
@@ -612,12 +618,15 @@ struct StyleSource {
     index: usize,
     computed: bool,
     rule: Option<usize>,
+    /// The margin rule within the page rule `rule` whose block this object
+    /// reads and writes.
+    margin: Option<usize>,
 }
 
 impl StyleSource {
     /// Whether this declaration object belongs to an `@page` rule.
     fn is_page_rule(&self, context: &mut Context) -> JsResult<bool> {
-        let Some(rule) = self.rule else {
+        let (Some(rule), None) = (self.rule, self.margin) else {
             return Ok(false);
         };
         let index = self.index;
@@ -648,9 +657,9 @@ impl StyleSource {
                 .map(|name| (*name).to_owned()));
         }
         let index_ = self.index;
-        let rule = self.rule;
+        let (rule, margin) = (self.rule, self.margin);
         with_state(context, |s| {
-            let (text, page) = declared_text(s.host.document(), index_, rule);
+            let (text, page) = declared_text(s.host.document(), index_, rule, margin);
             validated_inline_declarations(text.as_deref(), page)
                 .into_iter()
                 .nth(index)
@@ -663,9 +672,9 @@ impl StyleSource {
             return Ok(computed_longhand_names().len());
         }
         let index_ = self.index;
-        let rule = self.rule;
+        let (rule, margin) = (self.rule, self.margin);
         with_state(context, |s| {
-            let (text, page) = declared_text(s.host.document(), index_, rule);
+            let (text, page) = declared_text(s.host.document(), index_, rule, margin);
             validated_inline_declarations(text.as_deref(), page).len()
         })
     }
@@ -690,7 +699,8 @@ fn this_style(this: &JsValue, context: &mut Context) -> JsResult<Rc<StyleSource>
 
 fn read_declared(context: &mut Context, source: &StyleSource, property: &str) -> JsResult<String> {
     with_state(context, |s| {
-        let (text, page) = declared_text(s.host.document(), source.index, source.rule);
+        let (text, page) =
+            declared_text(s.host.document(), source.index, source.rule, source.margin);
         inline_style_value(text.as_deref(), property, page)
     })
 }
@@ -878,13 +888,14 @@ fn write_declared(
     if property.trim().is_empty() {
         return Ok(());
     }
-    if let Some(rule) = source.rule {
+    if source.rule.is_some() {
         let text = with_state(context, |s| {
-            super::stylesheet::stylesheet_rule_body(s.host.document(), source.index, rule)
+            declared_text(s.host.document(), source.index, source.rule, source.margin)
+                .0
                 .unwrap_or_default()
         })?;
         let next = with_inline_style_property(Some(&text), property, value, important);
-        return super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, &next);
+        return write_rule_body(context, source, &next);
     }
     with_state(context, |s| {
         let next = with_inline_style_property(
@@ -898,6 +909,23 @@ fn write_declared(
             .set_element_inline_style(source.index, Some(next.into()));
     })?;
     mark_dirty(context)
+}
+
+/// Replaces the declarations of the rule (or margin rule) `source` reads.
+fn write_rule_body(context: &mut Context, source: &StyleSource, body: &str) -> JsResult<()> {
+    match (source.rule, source.margin) {
+        (Some(rule), Some(margin)) => super::stylesheet::write_stylesheet_margin_rule_body(
+            context,
+            source.index,
+            rule,
+            margin,
+            body,
+        ),
+        (Some(rule), None) => {
+            super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, body)
+        }
+        (None, _) => Ok(()),
+    }
 }
 
 /// The computed value of `property`, or `None` for an unsupported property
@@ -995,9 +1023,12 @@ fn style_item(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
 /// `parentRule` for a declaration from a rule, or `null` for inline style.
 fn style_parent_rule(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let source = this_style(this, context)?;
-    match source.rule {
-        Some(rule) => super::stylesheet::parent_rule(context, source.index, rule),
-        None => Ok(JsValue::null()),
+    match (source.rule, source.margin) {
+        (Some(rule), Some(margin)) => {
+            Ok(super::stylesheet::margin_rule_object(context, source.index, rule, margin)?.into())
+        }
+        (Some(rule), None) => super::stylesheet::parent_rule(context, source.index, rule),
+        (None, _) => Ok(JsValue::null()),
     }
 }
 
@@ -1023,9 +1054,9 @@ fn style_get_property_priority(
         String::new()
     } else {
         let index = source.index;
-        let rule = source.rule;
+        let (rule, margin) = (source.rule, source.margin);
         with_state(context, |s| {
-            let (text, page) = declared_text(s.host.document(), index, rule);
+            let (text, page) = declared_text(s.host.document(), index, rule, margin);
             property_priority(text.as_deref(), &name, page).to_owned()
         })?
     };
@@ -1125,9 +1156,9 @@ fn style_css_text_get(this: &JsValue, _: &[JsValue], context: &mut Context) -> J
         return Ok(JsValue::from(JsString::from("")));
     }
     let index = source.index;
-    let rule = source.rule;
+    let (rule, margin) = (source.rule, source.margin);
     let text = with_state(context, |s| {
-        let (style_text, page) = declared_text(s.host.document(), index, rule);
+        let (style_text, page) = declared_text(s.host.document(), index, rule, margin);
         serialize_validated(&validated_inline_declarations(style_text.as_deref(), page))
     })?;
     Ok(JsValue::from(JsString::from(text)))
@@ -1151,8 +1182,8 @@ fn style_css_text_set(
     let text = dom_string(args, 0, context)?;
     let page = source.is_page_rule(context)?;
     let validated = serialize_validated(&validated_inline_declarations(Some(&text), page));
-    if let Some(rule) = source.rule {
-        super::stylesheet::write_stylesheet_rule_body(context, source.index, rule, &validated)?;
+    if source.rule.is_some() {
+        write_rule_body(context, &source, &validated)?;
     } else {
         with_state(context, |s| {
             s.host
@@ -1326,6 +1357,7 @@ fn style_object(
             index,
             computed,
             rule,
+            margin: None,
         },
     )
 }
@@ -1372,6 +1404,47 @@ pub(crate) fn stylesheet_style_object(
     rule: usize,
 ) -> JsResult<JsObject> {
     style_object(context, style_element, false, Some(rule))
+}
+
+/// The declaration object of margin rule `margin` in the page rule `rule`.
+pub(crate) fn margin_rule_style_object(
+    context: &mut Context,
+    style_element: usize,
+    rule: usize,
+    margin: usize,
+) -> JsResult<JsObject> {
+    let prototype = protos(context).css_style_declaration.clone();
+    indexed_object(
+        context,
+        prototype,
+        StyleSource {
+            index: style_element,
+            computed: false,
+            rule: Some(rule),
+            margin: Some(margin),
+        },
+    )
+}
+
+/// Defines on an `@page` rule's declaration object the attributes of its
+/// descriptors that are not also properties (CSSOM §6.4.3,
+/// `CSSPageDescriptors`): `size`, `pageOrientation` / `page-orientation`,
+/// `marks`, and `bleed`. They are own properties so the shared
+/// `CSSStyleDeclaration` prototype does not gain them.
+pub(crate) fn install_page_descriptor_accessors(
+    context: &mut Context,
+    style: &JsObject,
+) -> JsResult<()> {
+    for descriptor in raikiri_style::PAGE_DESCRIPTOR_NAMES {
+        if raikiri_style::property::is_supported_property_name(descriptor) {
+            continue;
+        }
+        for key in attribute_names(descriptor) {
+            let (getter, setter) = property_accessor_pair(context, descriptor, &key)?;
+            define_accessor(style, &key, getter, setter, context)?;
+        }
+    }
+    Ok(())
 }
 
 fn css_supports(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
