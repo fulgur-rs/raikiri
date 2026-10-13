@@ -3534,14 +3534,10 @@ impl FlexBasisValue {
     /// depends on a percentage basis, a font or a viewport is clamped when it
     /// is resolved.
     pub(crate) fn from_non_negative_calc(value: RelativeCalcLengthPercentage) -> Self {
-        match LengthOrAuto::from_relative_calc(value) {
-            LengthOrAuto::Length(Length::Px(px)) => Self::Length(Length::Px(px.max(0.0))),
-            LengthOrAuto::Length(Length::Percent(percent)) => {
-                Self::Length(Length::Percent(percent.max(0.0)))
-            }
-            LengthOrAuto::Length(length) => Self::Length(length),
-            LengthOrAuto::Calc(calc) => Self::Calc(calc),
-            _ => Self::RelativeCalc(value),
+        match LengthPercentageOrCalc::from_non_negative_calc(value) {
+            LengthPercentageOrCalc::Length(length) => Self::Length(length),
+            LengthPercentageOrCalc::Calc(calc) => Self::Calc(calc),
+            LengthPercentageOrCalc::RelativeCalc(calc) => Self::RelativeCalc(calc),
         }
     }
 }

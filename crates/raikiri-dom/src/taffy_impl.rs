@@ -137,14 +137,6 @@ fn flex_item_percent_basis(tree: &Document, node: usize) -> Option<f32> {
 /// Whether a margin, padding or border of `style` depends on its percentage
 /// basis.
 fn has_percent_edge(style: &Style) -> bool {
-    use taffy::ResolveOrZero;
-    // A `calc()` edge always carries a percentage term (one without folds
-    // to a length) and may clamp to zero at small probe bases.
-    let depends_on_basis = |edge: taffy::LengthPercentage| {
-        edge.into_raw().is_calc()
-            || edge.resolve_or_zero(Some(0.0), resolve_calc)
-                != edge.resolve_or_zero(Some(1.0), resolve_calc)
-    };
     let margin_depends_on_basis = |edge: taffy::LengthPercentageAuto| {
         edge.into_raw().is_calc()
             || edge.resolve_to_option(0.0, resolve_calc)
@@ -153,7 +145,7 @@ fn has_percent_edge(style: &Style) -> bool {
     [style.padding, style.border].into_iter().any(|edges| {
         [edges.left, edges.right, edges.top, edges.bottom]
             .into_iter()
-            .any(depends_on_basis)
+            .any(edge_depends_on_basis)
     }) || [
         style.margin.left,
         style.margin.right,
@@ -162,6 +154,16 @@ fn has_percent_edge(style: &Style) -> bool {
     ]
     .into_iter()
     .any(margin_depends_on_basis)
+}
+
+/// Whether a padding or border length depends on its percentage basis.
+fn edge_depends_on_basis(edge: taffy::LengthPercentage) -> bool {
+    use taffy::ResolveOrZero;
+    // A `calc()` edge always carries a percentage term (one without folds to
+    // a length) and may clamp to zero at small probe bases.
+    edge.into_raw().is_calc()
+        || edge.resolve_or_zero(Some(0.0), resolve_calc)
+            != edge.resolve_or_zero(Some(1.0), resolve_calc)
 }
 
 /// Give Taffy pixel edge values resolved against the containing block's
@@ -1678,14 +1680,6 @@ impl Document {
     /// Whether an in-flow child of block container `idx` has a top or bottom
     /// padding or border that depends on its percentage basis.
     fn has_percent_vertical_edge_child(&self, idx: usize) -> bool {
-        use taffy::ResolveOrZero;
-        // A `calc()` edge always carries a percentage term (one without
-        // folds to a length) and may clamp to zero at small probe bases.
-        let depends_on_basis = |edge: taffy::LengthPercentage| {
-            edge.into_raw().is_calc()
-                || edge.resolve_or_zero(Some(0.0), resolve_calc)
-                    != edge.resolve_or_zero(Some(1.0), resolve_calc)
-        };
         TaffyChildIter::new(self, NodeId::from(idx)).any(|child| {
             let Some(node) = self.nodes.get(usize::from(child)) else {
                 return false;
@@ -1699,7 +1693,7 @@ impl Document {
                     style.border.bottom,
                 ]
                 .into_iter()
-                .any(depends_on_basis)
+                .any(edge_depends_on_basis)
         })
     }
 }

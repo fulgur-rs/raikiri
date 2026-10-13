@@ -564,8 +564,9 @@ pub enum ComputedBackgroundSize {
 /// (<https://www.w3.org/TR/css-flexbox-1/#flex-basis-property>): "Computed
 /// value: specified keyword or a computed `<length-percentage>` value".
 /// `auto` / `content` remain keywords in the computed layer; other values are
-/// absolutized to the [`ComputedLengthPercentage`] shape (`Px` / `Percent`).
-/// This is the `content`-keyword counterpart of [`ComputedLengthPercentageOrAuto`].
+/// absolutized to `Px` / `Percent`, or to `Calc` for a mixed percentage and
+/// length. This is the `content`-keyword counterpart of
+/// [`ComputedLengthPercentageOrAuto`].
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ComputedFlexBasis {
     /// Absolutized length in px.
@@ -2977,9 +2978,10 @@ fn resolve_conic_gradient(
 ///
 /// Pass `content` through as a keyword (see [`ComputedFlexBasis::Content`] and
 /// the scope notes in [`crate::property::FlexBasisValue`]). Delegate the `auto`
-/// / `<length-percentage>` branch to [`resolve_length_percentage_or_auto`],
+/// / `<length-percentage>` branch to [`resolve_size_length_percentage_or_auto`],
 /// matching the `<'width'>` grammar exactly, including its `Auto` fallback for
-/// unresolved `Lh`/`Rlh`. Do not duplicate the implementation.
+/// unresolved `Lh`/`Rlh` and its clamp of a math function to `[0,∞]`. Do not
+/// duplicate the implementation.
 pub fn resolve_flex_basis(
     specified: FlexBasisValue,
     font_size: ComputedLength,
@@ -3017,7 +3019,9 @@ fn computed_flex_basis(
     match resolve_size_length_percentage_or_auto(specified, font_size, own_line_height, ctx) {
         ComputedLengthPercentageOrAuto::Auto => ComputedFlexBasis::Auto,
         ComputedLengthPercentageOrAuto::Px(v) => ComputedFlexBasis::Px(v),
-        ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p),
+        // A font-relative calc() whose length terms cancel leaves a bare
+        // percentage, which is clamped to the `[0,∞]` range as well.
+        ComputedLengthPercentageOrAuto::Percent(p) => ComputedFlexBasis::Percent(p.max(0.0)),
         ComputedLengthPercentageOrAuto::Calc(calc) => ComputedFlexBasis::Calc(calc),
         ComputedLengthPercentageOrAuto::MinContent => ComputedFlexBasis::Auto, // cov:ignore: only the width / inline-size parser produces min-content
     }

@@ -2251,6 +2251,12 @@ fn mixed_calc_in_flex_basis_keeps_its_percentage_for_used_value_time() {
         Some("font-size: 10px; flex-basis: calc(1em - 20px)"),
     );
     assert_eq!(cv.flex_basis, ComputedFlexBasis::Px(0.0));
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; flex-basis: calc(-10% + 1em - 10px)"),
+    );
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Percent(0.0));
 }
 
 #[test]
