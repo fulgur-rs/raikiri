@@ -464,3 +464,105 @@ fn display_contents_elements_form_no_opacity_group() {
         );
     }
 }
+
+/// The boxes, text and opacity groups of a paragraph, in paint order: `box
+/// <id>`, `text` for the paragraph's own lines, `text <id>` for a group's,
+/// `push` and `pop`. A pseudo-element group's text is `text pseudo`.
+fn content_order(body: &str, style: &str) -> Vec<String> {
+    let result = lay_out_with_font(body, &format!("p {{margin:0}} {style}"));
+    let page = result.page(0).unwrap();
+    let dom = page.dom();
+    let runs = page.text_runs();
+    let mut order: Vec<String> = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushOpacity(_) => order.push("push".into()),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::Box(fragment) => {
+                if let Some(name) = dom.attr(fragment.node(), "id") {
+                    order.push(format!("box {name}"));
+                }
+            }
+            PaintEvent::TextLine(_) => order.push("text".into()),
+            PaintEvent::GroupTextLine(_, group) => {
+                order.push(format!(
+                    "text {}",
+                    dom.attr(group, "id").unwrap_or("pseudo")
+                ));
+            }
+            _ => {}
+        }
+    }
+    order
+}
+
+/// A group with a negative stack level paints below the paragraph's own
+/// inline content (CSS 2.1 Appendix E step 3).
+#[test]
+fn negative_inline_opacity_groups_paint_below_the_paragraph_text() {
+    assert_eq!(
+        content_order(
+            "<p id=p>A<span id=group>B</span></p>",
+            "#group {opacity:.5;position:relative;z-index:-1;background:blue}",
+        ),
+        ["box p", "push", "box group", "text group", "pop", "text"]
+    );
+}
+
+/// Inside a group, a nested group with a negative stack level paints above
+/// the group's own box and below the rest of its content.
+#[test]
+fn negative_nested_opacity_groups_paint_above_their_group_box() {
+    assert_eq!(
+        content_order(
+            "<p id=p>A<span id=outer>B<span id=inner>C</span>D</span></p>",
+            "#outer {opacity:.5;background:blue} \
+             #inner {opacity:.25;position:relative;z-index:-1;background:red}",
+        ),
+        [
+            "box p",
+            "text",
+            "push",
+            "box outer",
+            "push",
+            "box inner",
+            "text inner",
+            "pop",
+            "text outer",
+            "pop"
+        ]
+    );
+}
+
+/// A translucent `::before` with a negative stack level paints below the
+/// paragraph's text.
+#[test]
+fn negative_pseudo_opacity_groups_paint_below_the_paragraph_text() {
+    let style = "#p::before {content:'X';opacity:.5;position:relative;z-index:-1}";
+    assert_eq!(
+        content_order("<p id=p>A</p>", style),
+        ["box p", "push", "text pseudo", "pop", "text"]
+    );
+}
+
+/// In an anonymous paragraph, too, a group with a negative stack level
+/// paints below the paragraph's text.
+#[test]
+fn negative_opacity_groups_paint_below_anonymous_paragraph_text() {
+    assert_eq!(
+        content_order(
+            "<div id=d>A<span id=group>B</span><p id=p>C</p></div>",
+            "#group {opacity:.5;position:relative;z-index:-1}",
+        ),
+        [
+            "box d",
+            "push",
+            "box group",
+            "text group",
+            "pop",
+            "text",
+            "box p",
+            "text"
+        ]
+    );
+}
