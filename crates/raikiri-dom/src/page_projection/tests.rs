@@ -87,7 +87,7 @@ fn decoration_preparation_checks_budget_and_cancellation_before_publication() {
                     super::generated_boxes::prepare(
                         &doc, &cascade, &roots, &pages, &cache, &mut work,
                     )
-                    .map(|boxes| {
+                    .map(|(boxes, _)| {
                         boxes
                             .values()
                             .flat_map(|page| page.values())

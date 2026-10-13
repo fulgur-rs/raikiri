@@ -53,9 +53,11 @@ impl<'a, 'b> ProjectionWork<'a, 'b> {
 }
 
 pub(crate) type ParagraphCache = HashMap<usize, ParagraphProjection>;
+/// A line piece of a generated box, or of an inline element when the kind is
+/// `None`, with its owner, line offset, shift, and line top and height.
 pub(crate) type PreparedGeneratedPiece = (
     usize,
-    crate::GeneratedKind,
+    Option<crate::GeneratedKind>,
     crate::layout::InlineBoxPiece,
     (f32, f32),
     f32,
@@ -234,7 +236,26 @@ impl ParagraphProjection {
             content_images: Vec::new(),
             content_image_columns: HashMap::new(),
         };
-        for piece in node.ifc_inline_boxes().unwrap_or_default() {
+        // A translucent `::first-line` composites the first line apart from
+        // the others, so the paint order lists the line pieces of the inline
+        // elements on the first line and on later ones.
+        let pieces = node.ifc_inline_boxes().unwrap_or_default();
+        let split: HashSet<usize> =
+            if crate::paint_rules::first_line_opacity_layer(document, root).is_some() {
+                let first: HashSet<usize> = pieces
+                    .iter()
+                    .filter(|piece| piece.line == 0)
+                    .map(|piece| piece.node)
+                    .collect();
+                pieces
+                    .iter()
+                    .filter(|piece| piece.line != 0 && first.contains(&piece.node))
+                    .map(|piece| piece.node)
+                    .collect()
+            } else {
+                HashSet::new()
+            };
+        for piece in pieces {
             work.check()?;
             if multicol {
                 work.charge(1)?;
@@ -251,19 +272,24 @@ impl ParagraphProjection {
                 .copied()
                 .unwrap_or(0.0);
             let column = line_columns[piece.line];
-            if let Some((owner, kind)) = crate::generated_content::generated_origin(piece.node)
+            let generated = crate::generated_content::generated_origin(piece.node);
+            if let Some((owner, kind)) = generated
                 .and_then(|(owner, pseudo)| {
                     Some((
                         owner,
-                        match pseudo {
+                        Some(match pseudo {
                             raikiri_style::PseudoElem::Before => crate::GeneratedKind::Before,
                             raikiri_style::PseudoElem::After => crate::GeneratedKind::After,
                             raikiri_style::PseudoElem::FirstLetter => {
                                 crate::GeneratedKind::FirstLetter
                             }
                             _ => return None,
-                        },
+                        }),
                     ))
+                })
+                .or_else(|| {
+                    (generated.is_none() && split.contains(&piece.node))
+                        .then_some((piece.node, None))
                 })
                 && piece.border_box.width > 0.0
                 && piece.border_box.height > 0.0

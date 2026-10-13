@@ -1,7 +1,7 @@
 //! A page's body content as a sequence of paint steps, in the order the
 //! built-in painter draws it.
 
-use super::generated_boxes::{GeneratedBox, PageGeneratedBoxes};
+use super::generated_boxes::{GeneratedBox, LineBox, PageGeneratedBoxes, PageInlineBoxes};
 use super::generated_images::{GeneratedImageId, PageGeneratedImages};
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{
@@ -14,6 +14,7 @@ use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// What a clip in [`PaintEvent::PushClip`] comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -83,6 +84,13 @@ pub enum PaintEvent<'a> {
     MarkerImage(NodeId),
     /// One generated inline box decoration; its text follows in paragraph lines.
     GeneratedBox(GeneratedBox<'a>),
+    /// One line's piece of a non-atomic inline element's box, listed in
+    /// place of the element's [`PaintEvent::Box`] where a translucent
+    /// `::first-line` splits the element: its pieces on the first line are
+    /// inside the first line's group, and the others are with the rest of
+    /// the paragraph. Paint each as the element's box over the piece's
+    /// rectangle, with the borders of the start and end edges it has.
+    LineBox(LineBox<'a>),
     /// One image of `::before` or `::after` content placed on this page,
     /// after the decoration of the pseudo-element that holds it. Its URL and
     /// rectangle come from [`Document::page_generated_image`].
@@ -153,41 +161,56 @@ struct TextLines {
     letters: HashMap<(usize, usize), Option<usize>>,
 }
 
+mod letters;
+
+pub(super) use letters::LetterGroupCache;
+use letters::LetterGroups;
+
+/// The elements of a paragraph with inline boxes on its first line and on
+/// the lines after it.
+#[derive(Default)]
+struct LineBoxes {
+    first: HashSet<usize>,
+    later: HashSet<usize>,
+}
+
 /// The fragments of one page, grouped by source node.
 struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
     content_box: super::records::PageFragmentRect,
     overflow_clips: BTreeMap<NodeId, OverflowClip>,
     generated_boxes: Option<&'a PageGeneratedBoxes>,
+    inline_boxes: Option<&'a PageInlineBoxes>,
     generated_images: Option<&'a PageGeneratedImages>,
     cascade: &'a CascadeResult,
     document: &'a Document,
     page: &'a super::records::PageFragment,
-    /// The elements with inline boxes on lines after the first, by
-    /// paragraph root, built when a paragraph is first split by line.
-    later_line_boxes: RefCell<HashMap<usize, Rc<HashSet<usize>>>>,
+    /// The elements with inline boxes on the first line and on lines after
+    /// the first, by paragraph root, built when a paragraph is first split
+    /// by line.
+    line_boxes: RefCell<HashMap<usize, Rc<LineBoxes>>>,
 }
 
 impl<'a> PageItems<'a> {
-    /// The elements of paragraph `root` with inline boxes on lines after
-    /// the first.
-    fn later_line_boxes(&self, root: usize, root_node: &Node) -> Rc<HashSet<usize>> {
-        Rc::clone(
-            self.later_line_boxes
-                .borrow_mut()
-                .entry(root)
-                .or_insert_with(|| {
-                    Rc::new(
-                        root_node
-                            .ifc_inline_boxes()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter(|piece| piece.line != 0)
-                            .map(|piece| piece.node)
-                            .collect(),
-                    )
-                }),
-        )
+    /// The `::first-letter` opacity groups of paragraph `root`.
+    fn letter_groups(&self, root: usize) -> Arc<LetterGroups> {
+        self.document.cached_letter_groups(self.cascade, root)
+    }
+
+    /// The elements of paragraph `root` with inline boxes on the first line
+    /// and on lines after the first.
+    fn line_boxes(&self, root: usize, root_node: &Node) -> Rc<LineBoxes> {
+        Rc::clone(self.line_boxes.borrow_mut().entry(root).or_insert_with(|| {
+            let mut boxes = LineBoxes::default();
+            for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
+                if piece.line == 0 {
+                    boxes.first.insert(piece.node);
+                } else {
+                    boxes.later.insert(piece.node);
+                }
+            }
+            Rc::new(boxes)
+        }))
     }
 
     fn of(&self, node_id: usize) -> &[&'a PageFragmentItem] {
@@ -244,18 +267,19 @@ impl Document {
         let mut seen = HashSet::new();
         for run in runs {
             let group = self.text_run_opacity_group(cascade, run);
-            if let (Some(letter), Ok(root)) = (
-                run.letter_box
-                    .filter(|&letter| group.is_some_and(|group| group.0 == letter as u64)),
+            // The letters of a `::first-letter` group, its own or that of an
+            // ancestor block's first letter around them.
+            if let (Some(_), Some(Ok(group)), Ok(root)) = (
+                run.letter_box,
+                group.map(|group| usize::try_from(group.0)),
                 usize::try_from(run.line.root.0),
-            ) {
-                lines.letters.entry((root, letter)).or_insert_with(|| {
-                    self.enclosing_letter_group(cascade, root, letter)
-                        .or_else(|| {
-                            self.run_group_outside_letter(cascade, run)
-                                .and_then(|group| usize::try_from(group.0).ok())
-                        })
-                });
+            ) && crate::generated_content::generated_origin(group)
+                .is_some_and(|(_, pseudo)| pseudo == PseudoElem::FirstLetter)
+            {
+                lines
+                    .letters
+                    .entry((root, group))
+                    .or_insert_with(|| self.cached_letter_groups(cascade, root).around(group));
             }
             if seen.insert((run.line, group)) {
                 match group {
@@ -289,40 +313,31 @@ impl Document {
     /// A `::before`, `::after` or `::first-letter` laid out in the paragraph
     /// is such a group too, named by the id of
     /// [`crate::generated_content::generated_node_id`]: its letters and
-    /// generated text belong to it before any element around them.
+    /// generated text belong to it before any element around them. The
+    /// fragments of a `::first-letter` that keep different opacities, or lie
+    /// in different groups, form one group each, the others named by ids of
+    /// [`crate::generated_content::first_letter_group_id`].
     #[doc(hidden)]
     pub fn text_run_opacity_group(
         &self,
         cascade: &CascadeResult,
         run: &PositionedGlyphRun<'_>,
     ) -> Option<NodeId> {
-        if let Some(letter) = run
-            .letter_box
-            .and_then(|letter| pseudo_opacity_group(cascade, letter))
+        // The paragraph retains the fragment of every run a letter box
+        // holds.
+        if let Some((letter, owner)) = run.letter_box
+            && let Some(group) = usize::try_from(run.line.root.0).ok().and_then(|root| {
+                self.cached_letter_groups(cascade, root)
+                    .nearest(letter, owner)
+            })
         {
-            return Some(NodeId::new(letter as u64));
+            return group.map(|group| NodeId::new(group as u64));
         }
         self.run_group_outside_letter(cascade, run)
     }
 
-    /// The opacity group of the innermost `::first-letter` of an ancestor
-    /// block around the letters of `letter`, a `::first-letter` box of
-    /// paragraph `root`, if any.
-    fn enclosing_letter_group(
-        &self,
-        cascade: &CascadeResult,
-        root: usize,
-        letter: usize,
-    ) -> Option<usize> {
-        let node = self.ifc_layout_node(root)?;
-        std::iter::successors(node.ifc_typographic_parent(letter), |&parent| {
-            node.ifc_typographic_parent(parent)
-        })
-        .find_map(|parent| pseudo_opacity_group(cascade, parent))
-    }
-
-    /// The opacity group of `run` apart from that of a `::first-letter`
-    /// around its letters.
+    /// The opacity group of `run`, text outside every `::first-letter`
+    /// group.
     fn run_group_outside_letter(
         &self,
         cascade: &CascadeResult,
@@ -401,11 +416,12 @@ impl Document {
             content_box: page.content_box,
             overflow_clips: self.overflow_clips_on_page(page),
             generated_boxes: self.page_projection.generated_boxes.get(&page_index),
+            inline_boxes: self.page_projection.inline_boxes.get(&page_index),
             generated_images: self.page_projection.generated_images.get(&page_index),
             cascade,
             document: self,
             page,
-            later_line_boxes: RefCell::default(),
+            line_boxes: RefCell::default(),
         };
         for item in &page.items {
             if let Ok(node_id) = usize::try_from(item.node_id.0) {
@@ -538,8 +554,15 @@ impl Document {
                     // like other z-index: auto stacking contexts: its inline
                     // boxes and text, then its atomic inlines and floats,
                     // then the groups nested in it.
-                    let Some(alpha) = crate::generated_content::computed_for_id(cascade, group)
-                        .and_then(paint_rules::opacity_layer)
+                    let letter = crate::generated_content::generated_origin(group)
+                        .is_some_and(|(_, pseudo)| pseudo == PseudoElem::FirstLetter);
+                    let Some(alpha) = letter
+                        .then(|| items.letter_groups(root).opacity(group))
+                        .flatten()
+                        .or_else(|| {
+                            crate::generated_content::computed_for_id(cascade, group)
+                                .and_then(paint_rules::opacity_layer)
+                        })
                     else {
                         continue; // cov:ignore: groups are found by their opacity
                     };
@@ -826,13 +849,14 @@ impl Document {
         }
         let mut line_clips = HashMap::new();
         let mut line_overflow_chains = HashMap::new();
-        // Only the paragraphs with lines or generated boxes in the events
-        // need their line clips.
+        // Only the paragraphs with lines, generated boxes or line pieces in
+        // the events need their line clips.
         let listed_roots: HashSet<usize> = events
             .iter()
             .filter_map(|event| match event {
                 PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => Some(line.root),
                 PaintEvent::GeneratedBox(fragment) => Some(fragment.line.root),
+                PaintEvent::LineBox(piece) => Some(piece.line.root),
                 PaintEvent::GeneratedImage(image) => {
                     let placement = items.generated_images?.get(&image.key()?)?;
                     Some(NodeId::new(placement.root as u64))
@@ -914,6 +938,7 @@ impl Document {
                 PaintEvent::GeneratedBox(fragment) => {
                     line_overflow_chains.get(&fragment.line).copied()
                 }
+                PaintEvent::LineBox(piece) => line_overflow_chains.get(&piece.line).copied(),
                 PaintEvent::GeneratedImage(image) => generated_image_line(&items, image)
                     .and_then(|line| line_overflow_chains.get(&line).copied()),
                 PaintEvent::ColumnRule(rule) => rule.overflow_chain,
@@ -948,6 +973,7 @@ impl Document {
                     line_clips.get(&line).copied()
                 }
                 PaintEvent::GeneratedBox(fragment) => line_clips.get(&fragment.line).copied(),
+                PaintEvent::LineBox(piece) => line_clips.get(&piece.line).copied(),
                 PaintEvent::GeneratedImage(image) => generated_image_line(&items, image)
                     .and_then(|line| line_clips.get(&line).copied()),
                 PaintEvent::ColumnRule(rule) => rule.fragmentainer_clip,
@@ -1358,9 +1384,9 @@ impl Document {
 /// directly in the listed content is skipped, and those groups are returned
 /// in document order for the caller to list after this content.
 ///
-/// Only the content on the lines of `part` is listed. An inline element's
-/// boxes are not split by line: they go with the first line when the
-/// element is only on that line, and with the other lines otherwise.
+/// Only the content on the lines of `part` is listed. An inline element
+/// only on the first line, or only on later lines, lists its box with
+/// those lines; one on both lists its line pieces on the lines of `part`.
 fn push_paragraph<'a>(
     document: &'a Document,
     items: &PageItems<'a>,
@@ -1373,16 +1399,64 @@ fn push_paragraph<'a>(
     let Some(root_node) = document.ifc_layout_node(root) else {
         return Vec::new(); // cov:ignore: paragraph roots come from the arena
     };
-    // The elements with boxes on lines after the first.
-    let later = if part == LinePart::All {
+    // The elements with boxes on the first line and on lines after it.
+    let lines_of_boxes = if part == LinePart::All {
         Rc::default()
     } else {
-        items.later_line_boxes(root, root_node)
+        items.line_boxes(root, root_node)
     };
+    let later = &lines_of_boxes.later;
     let admits_box = |element: usize| match part {
         LinePart::All => true,
         LinePart::First => !later.contains(&element),
         LinePart::Rest => later.contains(&element),
+    };
+    // An element on the first line and on later ones is split by line: its
+    // pieces on the lines of `part` stand for its box. Without prepared
+    // pieces on the page, its box goes with the other lines.
+    let line_pieces = |element: usize| {
+        (part != LinePart::All
+            && later.contains(&element)
+            && lines_of_boxes.first.contains(&element))
+        .then(|| items.inline_boxes?.get(&(root, element)))
+        .flatten()
+    };
+    let push_line_boxes = |events: &mut Vec<PaintEvent<'a>>,
+                           element: usize,
+                           pieces: &[super::generated_boxes::BoxPiece]| {
+        let boxes: Vec<Fragment<'a>> = items
+            .of(element)
+            .iter()
+            .filter(|item| item.kind == PageFragmentKind::Box)
+            .map(|&item| items.fragment(item))
+            .collect();
+        // The pieces come in line order and the boxes in flow order, so the
+        // search for each piece's box resumes where the last one ended.
+        let mut cursor = 0;
+        for piece in pieces.iter().filter(|piece| part.admits(piece.line)) {
+            // The element's box on the page that holds the piece, such as
+            // its box in the piece's column; a piece outside every box later
+            // in the flow goes with the box of the last piece.
+            if let Some(next) = boxes[cursor..]
+                .iter()
+                .position(|fragment| contains(fragment.paint_rect(), piece.rect))
+            {
+                cursor += next;
+            }
+            let Some(&fragment) = boxes.get(cursor) else {
+                return; // cov:ignore: an element with line pieces on the page has a box there
+            };
+            events.push(PaintEvent::LineBox(LineBox {
+                fragment,
+                line: TextLineId {
+                    root: NodeId::new(root as u64),
+                    index: piece.line,
+                },
+                rect: piece.rect,
+                has_start_edge: piece.has_start_edge,
+                has_end_edge: piece.has_end_edge,
+            }));
+        }
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {
         for &item in items.of(node_id) {
@@ -1546,7 +1620,9 @@ fn push_paragraph<'a>(
                 .get(node_id)
                 .is_some_and(paint_rules::generates_box) =>
             {
-                if admits_box(node_id) {
+                if let Some(pieces) = line_pieces(node_id) {
+                    push_line_boxes(events, node_id, pieces);
+                } else if admits_box(node_id) {
                     push_kind(events, node_id, PageFragmentKind::Box);
                 }
             }
@@ -1658,13 +1734,14 @@ fn push_paragraph<'a>(
 
 /// The element of paragraph `root` whose letters a `::first-letter` piece
 /// wraps: the parent of the text, or the originating element of the
-/// `::before` or `::after` text, they come from; and which of those
-/// pseudo-elements, if any, the letters are the text of.
+/// `::before` or `::after` text, they come from; which of those
+/// pseudo-elements, if any, the letters are the text of; and the node that
+/// supplies the letters.
 fn first_letter_anchor(
     document: &Document,
     root: usize,
     piece: &super::generated_boxes::BoxPiece,
-) -> Option<(usize, Option<GeneratedKind>)> {
+) -> Option<(usize, Option<GeneratedKind>, usize)> {
     let source = document
         .ifc_layout_node(root)?
         .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
@@ -1674,11 +1751,13 @@ fn first_letter_anchor(
             PseudoElem::After => GeneratedKind::After,
             _ => GeneratedKind::Before,
         };
-        return Some((element, Some(kind)));
+        return Some((element, Some(kind), source));
     }
     match document.get_node(source)?.kind() {
-        NodeKind::Text => document.parent_of(source).map(|parent| (parent, None)),
-        _ => Some((source, None)),
+        NodeKind::Text => document
+            .parent_of(source)
+            .map(|parent| (parent, None, source)),
+        _ => Some((source, None, source)), // cov:ignore: letters come from text or generated content
     }
 }
 
@@ -1707,6 +1786,7 @@ fn first_letter_pieces<'p>(
     items: &PageItems<'p>,
     root: usize,
 ) -> Vec<LetterPiece<'p>> {
+    let groups = items.letter_groups(root);
     items
         .generated_boxes
         .into_iter()
@@ -1720,26 +1800,19 @@ fn first_letter_pieces<'p>(
         .flat_map(|(&(_, owner, _), pieces)| pieces.iter().map(move |piece| (owner, piece)))
         .map(|(owner, piece)| {
             let source = first_letter_anchor(document, root, piece);
-            let anchor = source.map(|(anchor, _)| anchor);
-            let pseudo = source.and_then(|(_, pseudo)| pseudo);
-            let held = document
-                .enclosing_letter_group(items.cascade, root, piece.node)
-                .or_else(|| match (anchor, pseudo) {
-                    (Some(anchor), Some(kind)) => generated_group(items.cascade, anchor, kind),
-                    _ => None,
-                })
-                .or_else(|| {
-                    anchor.and_then(|anchor| {
-                        document.inline_opacity_group(items.cascade, root, anchor)
-                    })
-                });
+            let anchor = source.map(|(anchor, _, _)| anchor);
+            let pseudo = source.and_then(|(_, pseudo, _)| pseudo);
+            // The paragraph retains the fragment of every piece.
+            let (own, held) = source
+                .and_then(|(_, _, letters)| groups.fragment(piece.node, letters))
+                .unwrap_or_default();
             LetterPiece {
                 anchor,
                 after: pseudo == Some(GeneratedKind::After),
                 owner,
                 piece,
                 held,
-                own: pseudo_opacity_group(items.cascade, piece.node),
+                own,
             }
         })
         .collect()
@@ -1884,7 +1957,8 @@ fn letter_groups(
         .collect();
     from_runs.sort_unstable();
     found.extend(from_runs);
-    found.dedup();
+    let mut seen = HashSet::new();
+    found.retain(|&group| seen.insert(group));
     found
 }
 
@@ -1948,6 +2022,12 @@ fn generated_image_line(items: &PageItems<'_>, image: GeneratedImageId) -> Optio
     })
 }
 
+/// Whether rectangle `outer` contains the centre of `inner`.
+fn contains(outer: PaintRect, inner: PaintRect) -> bool {
+    let (x, y) = (inner.x + inner.width * 0.5, inner.y + inner.height * 0.5);
+    x >= outer.x && x <= outer.x + outer.width && y >= outer.y && y <= outer.y + outer.height
+}
+
 /// The frames listed around a paragraph's own inline content.
 struct ParagraphFrames {
     /// Stacking contexts with negative stack levels, listed before it.
@@ -1988,6 +2068,9 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
         .iter()
         .take_while(|event| match (event, origin) {
             (PaintEvent::Box(fragment), None) => fragment.node() == NodeId::new(group as u64),
+            (PaintEvent::LineBox(piece), None) => {
+                piece.fragment.node() == NodeId::new(group as u64)
+            }
             (PaintEvent::GeneratedBox(generated), Some((owner, pseudo))) => {
                 generated.owner == NodeId::new(owner as u64)
                     && matches!(

@@ -893,6 +893,18 @@ impl Node {
             .map(|style| &style.computed)
     }
 
+    /// The `::first-letter` fragments of an ifc root in layout order: each
+    /// fragment's typographic box, the owner of the letters it wraps (as in
+    /// [`Self::ifc_typographic_style_for_owner`]) and its retained style.
+    pub(crate) fn ifc_letter_fragments(
+        &self,
+    ) -> impl Iterator<Item = (usize, usize, &raikiri_style::ComputedValues)> {
+        self.ifc
+            .iter()
+            .flat_map(|root| &root.letter_styles)
+            .map(|style| (style.box_id, style.source_owner, &style.computed))
+    }
+
     /// Enclosing typographic pseudo box, when ancestor block letters nest.
     pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
         self.ifc.as_ref()?.typographic_parent(box_id)

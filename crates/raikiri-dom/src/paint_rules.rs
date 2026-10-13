@@ -249,6 +249,26 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
     .flatten()
 }
 
+/// The group opacity one fragment of a `::first-letter` laid out in its
+/// paragraph, by the generated id `id` of its box, paints its boxes and
+/// letters with. A fragment keeps the style it was given for the text it
+/// wraps, `retained`, and composites with that style's opacity; without
+/// one, it takes the pseudo-element's (see [`pseudo_opacity_layer`]).
+pub fn letter_opacity_layer(
+    cascade: &CascadeResult,
+    id: usize,
+    retained: Option<&ComputedValues>,
+) -> Option<f32> {
+    let Some(retained) = retained else {
+        return pseudo_opacity_layer(cascade, id);
+    };
+    let cv = crate::generated_content::computed_for_id(cascade, id)?;
+    (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+        && matches!(cv.float, FloatValue::None))
+    .then(|| opacity_layer(retained))
+    .flatten()
+}
+
 /// The group opacity the `::first-line` boxes around the first line of
 /// paragraph `root` paint that line's content with, if any.
 ///

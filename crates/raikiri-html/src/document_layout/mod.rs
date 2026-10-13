@@ -18,9 +18,9 @@ pub use streaming::{
 pub use raikiri_dom::{
     ClipKind, ColumnRule, DecorationKind, DecorationLine, DecorationStyle, DeferredGlyph,
     DeferredSlot, DeferredValue, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
-    GeneratedBox, GeneratedImageId, GeneratedKind, Glyph, MarginBox, MarginBoxBackgroundImage,
-    MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip, PaintEvent, PositionedGlyphRun,
-    RepeatKind, RunSource, Synthesis, Tag, TextLineId, TextShadow,
+    GeneratedBox, GeneratedImageId, GeneratedKind, Glyph, LineBox, MarginBox,
+    MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip,
+    PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId, TextShadow,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};
