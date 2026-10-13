@@ -83,7 +83,11 @@ no effect; promote one of those only after reviewing it individually.
 The 2026-10-12 sweep promotion audited 14,465 runnable, unregistered reftests
 at pinned WPT `97ea26e2` on Linux: 5,956 passed, of which 752 were blank,
 2,486 unstyled, and 151 mismatch-only. The 2,567 `KEEP` ids, identical in two
-runs, form the last section of `raikiri-baseline.txt`.
+runs, form the 2026-10-12 section of `raikiri-baseline.txt`.
+
+The first weekly sweep, at Raikiri `b0130e7`, reported 358 new `KEEP` ids.
+All 358 were `KEEP` again in two runs at the next main commit and form the
+2026-10-13 section.
 
 ## Expected failures
 
