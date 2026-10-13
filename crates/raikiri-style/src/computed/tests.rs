@@ -656,6 +656,7 @@ fn non_initial_parent() -> ComputedValues {
         // non-inherited, so use values different from the initial `auto`/`normal`
         // (as required for non_initial_parent).
         isolation: Isolation::Isolate,
+        box_decoration_break: crate::property::BoxDecorationBreak::Clone,
         mix_blend_mode: MixBlendMode::Multiply,
         // CSS Masking Level 1 §7.1/§5.1: both are non-inherited,
         // so use values different from the initial `none`

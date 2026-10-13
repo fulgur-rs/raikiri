@@ -15,18 +15,24 @@ pub(crate) struct BackgroundSlice {
 pub(super) fn background_slices(pieces: &[InlineBoxPiece]) -> Vec<Option<BackgroundSlice>> {
     let mut groups = HashMap::<usize, Vec<usize>>::new();
     for (index, piece) in pieces.iter().enumerate() {
-        if raikiri_dom::generated_content::generated_origin(piece.node)
-            .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
-        {
-            groups.entry(piece.node).or_default().push(index);
-        }
+        groups.entry(piece.node).or_default().push(index);
     }
     let mut slices = vec![None; pieces.len()];
     for indices in groups.values_mut() {
-        // Join the boxes in visual order, excluding their owners' margins.
-        // Keep each fragment's own height and move the virtual composite
-        // origin so its slice aligns with the fragment's physical position.
-        indices.sort_by(|&a, &b| pieces[a].border_box.x.total_cmp(&pieces[b].border_box.x));
+        if indices.len() < 2 {
+            continue;
+        }
+        // Join the boxes line after line, each line's in visual order,
+        // excluding their owners' margins (CSS Fragmentation 3 §5.4
+        // `box-decoration-break: slice`). Keep each fragment's own height and
+        // move the virtual composite origin so its slice aligns with the
+        // fragment's physical position.
+        indices.sort_by(|&a, &b| {
+            pieces[a]
+                .line
+                .cmp(&pieces[b].line)
+                .then(pieces[a].border_box.x.total_cmp(&pieces[b].border_box.x))
+        });
         let first = &pieces[indices[0]];
         let last = &pieces[*indices.last().expect("nonempty pseudo fragment group")];
         let left = first.content_box.x - first.border_box.x;

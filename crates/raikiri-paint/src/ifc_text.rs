@@ -83,10 +83,18 @@ pub(crate) fn draw_ifc_lines_with_resources(
         .ifc_layout_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
+    // A box split across lines is sliced from one joined box, which spans
+    // every line of the paragraph, including those on other pages.
+    let all_slices = typographic::background_slices(&pieces);
     let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
-    for piece in pieces {
-        if let Some(line_pieces) = pieces_by_line.get_mut(piece.line) {
+    let mut slices_by_line = vec![Vec::new(); positioned.all_lines().len()];
+    for (piece, slice) in pieces.into_iter().zip(all_slices) {
+        if let (Some(line_pieces), Some(line_slices)) = (
+            pieces_by_line.get_mut(piece.line),
+            slices_by_line.get_mut(piece.line),
+        ) {
             line_pieces.push(piece);
+            line_slices.push(slice);
         }
     }
     let offsets = positioned.offsets;
@@ -109,7 +117,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
             .ifc_layout_node(root_id)
             .expect("positioned lines require an existing IFC root");
         let mut paint = typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index]);
-        let background_slices = typographic::background_slices(&pieces_by_line[line_index]);
+        let background_slices = &slices_by_line[line_index];
         for marker in &positioned_line.markers {
             let Some(image) = document.list_marker_image_shared(marker.owner) else {
                 continue;

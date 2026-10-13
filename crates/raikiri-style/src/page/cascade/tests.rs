@@ -23,12 +23,12 @@ use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::{
     AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
     BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue,
-    BorderColor, BorderRadius, BorderSpacingValue, BoxShadowItem, BoxSizing, BreakBetween,
-    BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue, ContentComponent,
-    CssColor, CssPosition, CssPositionOffset, CustomProperty, Direction, DisplayValue,
-    EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow, FlexShorthand,
-    FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning,
+    BorderColor, BorderRadius, BorderSpacingValue, BoxDecorationBreak, BoxShadowItem, BoxSizing,
+    BreakBetween, BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath,
+    ColumnCountValue, ColumnFillValue, ColumnWidthValue, ColumnsShorthand, ContentAlignmentValue,
+    ContentComponent, CssColor, CssPosition, CssPositionOffset, CustomProperty, Direction,
+    DisplayValue, EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexFlow,
+    FlexShorthand, FlexWrapValue, FloatValue, FontFeatureSetting, FontFeatureSettings, FontKerning,
     FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontShorthand, FontShorthandSize,
     FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSetting,
@@ -3359,7 +3359,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 175;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 176;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -3976,6 +3976,8 @@ property_key_samples! {
     // (`isolate`, not `auto`) so a would-be pass-through regression
     // (accidentally routing this arm through a transform) is visible.
     Isolation => PropertyValue::Isolation(Isolation::Isolate),
+    // CSS Fragmentation 3 §5.4 — non-initial (`clone`, not `slice`).
+    BoxDecorationBreak => PropertyValue::BoxDecorationBreak(BoxDecorationBreak::Clone),
     // CSS Compositing and Blending Level 1 §3.4.1 — non-initial
     // (`multiply`, not `normal`), same rationale as `Isolation` above.
     MixBlendMode => PropertyValue::MixBlendMode(MixBlendMode::Multiply),
@@ -4471,6 +4473,7 @@ property_value_variant_registry! {
     Opacity,
     Isolation,
     MixBlendMode,
+    BoxDecorationBreak,
     MaskImage,
     ClipPath,
     Transform,
@@ -5210,6 +5213,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `Length` at all, unlike `Opacity`'s `f32`) — always `None`.
             | PropertyValue::Isolation(_)
             | PropertyValue::MixBlendMode(_)
+            | PropertyValue::BoxDecorationBreak(_)
 
             // `clip-path` (§5.1) — no embedded length at all (no
             // `<basic-shape>` support, `ClipPath` doc's scope note), so

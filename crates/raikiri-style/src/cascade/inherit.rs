@@ -2857,6 +2857,7 @@ pub(crate) fn resolve_against_inherited(
         // payloads with no phase-2 dependency, same shape as `ObjectFit`
         // above.
         | PropertyValue::Isolation(_)
+        | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
         // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
         // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
@@ -3380,6 +3381,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ObjectPosition(v) => target.object_position = v,
         PropertyValue::Opacity(v) => target.opacity = v,
         PropertyValue::Isolation(v) => target.isolation = v,
+        PropertyValue::BoxDecorationBreak(v) => target.box_decoration_break = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,

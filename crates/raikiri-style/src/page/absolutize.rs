@@ -628,6 +628,7 @@ pub(super) fn absolutize_in_page_context(
 
         | PropertyValue::ObjectFit(_)
         | PropertyValue::Isolation(_)
+        | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
 
         | PropertyValue::ClipPath(_)

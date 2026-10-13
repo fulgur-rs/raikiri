@@ -8476,6 +8476,28 @@ css_keywords!(Isolation {
     Isolate => "isolate",
 });
 
+/// Specified value of `box-decoration-break`.
+///
+/// CSS Fragmentation 3 §5.4 "Fragmented Borders and Backgrounds: the
+/// box-decoration-break property"
+/// <https://www.w3.org/TR/css-break-3/#break-decoration>. Grammar:
+/// `slice | clone`. **Non-inherited**. Computed value = specified keyword.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoxDecorationBreak {
+    /// `slice` — the initial value. The box is drawn as if unbroken and cut
+    /// at the breaks; backgrounds and border images span the joined box.
+    Slice,
+    /// `clone` — each fragment is drawn as a whole box with its own borders,
+    /// padding, background and border image.
+    Clone,
+}
+
+css_keywords!(BoxDecorationBreak {
+    Slice => "slice",
+    Clone => "clone",
+});
+
 /// Specified value of `mix-blend-mode`.
 ///
 /// CSS Compositing and Blending Level 1 §3.4.1 "Mix Blend Mode: the
@@ -10460,6 +10482,10 @@ pub enum PropertyValue {
     /// Compositing and Blending Level 1 §3.4.2; see [`Isolation`]). Appended
     /// as a new 1:1 disjoint field under the placement rule in [`PropertyKey`].
     Isolation(Isolation),
+    /// `box-decoration-break` — **non-inherited**, initial:
+    /// [`BoxDecorationBreak::Slice`] (CSS Fragmentation 3 §5.4; see
+    /// [`BoxDecorationBreak`]).
+    BoxDecorationBreak(BoxDecorationBreak),
     /// `mix-blend-mode` — **non-inherited**, initial:
     /// [`MixBlendMode::Normal`] (CSS Compositing and Blending Level 1 §3.4.1;
     /// see [`MixBlendMode`]). Appended as a new 1:1 disjoint field under the
@@ -11151,6 +11177,7 @@ pub enum PropertyKey {
     // existing fields.
     Isolation,
     MixBlendMode,
+    BoxDecorationBreak,
     // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1, semantics on
     // the matching PropertyValue::MaskImage / PropertyValue::ClipPath
     // variants; sibling PropertyKey variants carry no per-variant docs per
@@ -11556,6 +11583,7 @@ impl PropertyValue {
             PropertyValue::ObjectPosition(_) => PropertyKey::ObjectPosition,
             PropertyValue::Opacity(_) => PropertyKey::Opacity,
             PropertyValue::Isolation(_) => PropertyKey::Isolation,
+            PropertyValue::BoxDecorationBreak(_) => PropertyKey::BoxDecorationBreak,
             PropertyValue::MixBlendMode(_) => PropertyKey::MixBlendMode,
             PropertyValue::MaskImage(_) => PropertyKey::MaskImage,
             PropertyValue::ClipPath(_) => PropertyKey::ClipPath,
@@ -12642,6 +12670,7 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "object-position" => PropertyKey::ObjectPosition,
         "opacity" => PropertyKey::Opacity,
         "isolation" => PropertyKey::Isolation,
+        "box-decoration-break" => PropertyKey::BoxDecorationBreak,
         "mix-blend-mode" => PropertyKey::MixBlendMode,
         "mask-image" => PropertyKey::MaskImage,
         "clip-path" => PropertyKey::ClipPath,

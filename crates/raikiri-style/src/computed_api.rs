@@ -117,6 +117,8 @@ pub type ComputedMixBlendMode = property::MixBlendMode;
 
 /// Computed `isolation` ([`ComputedValues::isolation`]).
 pub type ComputedIsolation = property::Isolation;
+/// Computed value of `box-decoration-break`.
+pub type ComputedBoxDecorationBreak = property::BoxDecorationBreak;
 
 /// Computed `clip-path` ([`ComputedValues::clip_path`]).
 pub type ComputedClipPath = property::ClipPath;

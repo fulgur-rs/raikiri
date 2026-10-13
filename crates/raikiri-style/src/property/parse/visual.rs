@@ -2113,6 +2113,11 @@ pub(super) fn parse_isolation(input: &mut Parser<'_, '_>) -> Option<Isolation> {
     Isolation::from_css_ident(input.expect_ident().ok()?)
 }
 
+/// Parse `box-decoration-break: slice | clone` (see [`BoxDecorationBreak`]).
+pub(super) fn parse_box_decoration_break(input: &mut Parser<'_, '_>) -> Option<BoxDecorationBreak> {
+    BoxDecorationBreak::from_css_ident(input.expect_ident().ok()?)
+}
+
 /// Parse `mix-blend-mode: <blend-mode>` (see the [`MixBlendMode`]
 /// grammar: 16 keywords).
 pub(super) fn parse_mix_blend_mode(input: &mut Parser<'_, '_>) -> Option<MixBlendMode> {

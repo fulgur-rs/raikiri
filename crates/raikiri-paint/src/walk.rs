@@ -5214,7 +5214,15 @@ pub(crate) fn paint_inline_box(
     let content = piece.content_box;
     // The start edge is on the physical left when the element's own direction
     // is left to right, whatever the paragraph's direction.
-    let (left_edge, right_edge) = if cv.direction == raikiri_style::property::Direction::Rtl {
+    // With `box-decoration-break: clone` every fragment is drawn as a whole
+    // box (CSS Fragmentation 3 §5.4). The inline layout does not reserve the
+    // cloned borders and padding at the breaks yet, so they are drawn over
+    // the fragment's own area there.
+    let clone = cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone;
+    let background_slice = background_slice.filter(|_| !clone);
+    let (left_edge, right_edge) = if clone {
+        (true, true)
+    } else if cv.direction == raikiri_style::property::Direction::Rtl {
         (piece.has_end_edge, piece.has_start_edge)
     } else {
         (piece.has_start_edge, piece.has_end_edge)
@@ -5241,14 +5249,7 @@ pub(crate) fn paint_inline_box(
     let has_border = [&border.top, &border.right, &border.bottom, &border.left]
         .iter()
         .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
-    // Other inline image fragmentation remains a separate follow-up.
-    let background_image = if raikiri_dom::generated_content::generated_origin(piece.node)
-        .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::FirstLetter)
-    {
-        &cv.background_image
-    } else {
-        &BackgroundImage::None
-    };
+    let background_image = &cv.background_image;
     let mut radius = paintable_border_radius(
         &cv.border_radius,
         (has_border
