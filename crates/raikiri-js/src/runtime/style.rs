@@ -783,14 +783,56 @@ fn declaration_value(property: &str, value: &str, page: bool) -> Option<String> 
     let parsed = parse_property_value(property, value)?;
     Some(
         raikiri_style::property::serialize_value(&parsed)
+            .map(|serialized| keep_math_function_wrapper(value, serialized))
             .or_else(|| {
                 raikiri_style::property::serialize_color_value(
                     &property.to_ascii_lowercase(),
                     value,
                 )
             })
+            .or_else(|| {
+                raikiri_style::property::serialize_position_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
+            .or_else(|| {
+                raikiri_style::property::serialize_alpha_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
             .unwrap_or_else(|| value.trim().to_owned()),
     )
+}
+
+/// A specified value written as one math function keeps a `calc()` wrapper
+/// when it folds to a single number or dimension (CSS Values 4 §10.13), so
+/// `calc(10px + 20px)` reads back as `calc(30px)`, not `30px`.
+fn keep_math_function_wrapper(value: &str, serialized: String) -> String {
+    let mut input = ParserInput::new(value);
+    let mut parser = Parser::new(&mut input);
+    let is_math_function = parser
+        .parse_entirely(|input| {
+            let name = input.expect_function()?.clone();
+            input.parse_nested_block(|block| {
+                while block.next().is_ok() {}
+                Ok::<_, cssparser::ParseError<'_, ()>>(())
+            })?;
+            Ok::<_, cssparser::ParseError<'_, ()>>(name)
+        })
+        .is_ok_and(|name| {
+            [
+                "calc", "min", "max", "clamp", "round", "mod", "rem", "abs", "sign",
+            ]
+            .iter()
+            .any(|function| name.eq_ignore_ascii_case(function))
+        });
+    if is_math_function && !serialized.contains([' ', '(']) {
+        format!("calc({serialized})")
+    } else {
+        serialized
+    }
 }
 
 /// Set (or, for an empty or whitespace-only `value`, remove) one inline

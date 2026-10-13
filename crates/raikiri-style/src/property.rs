@@ -27,5 +27,11 @@ pub(crate) use media_math::{
 mod serialize;
 pub use serialize::*;
 
+mod serialize_alpha;
+pub use serialize_alpha::serialize_alpha_value;
+
+mod serialize_position;
+pub use serialize_position::serialize_position_value;
+
 #[cfg(test)]
 mod tests;

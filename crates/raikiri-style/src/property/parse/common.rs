@@ -213,7 +213,7 @@ pub(super) fn expect_percentage_stable<'i>(
 /// ever sees it. Non-numeric tokens, and numeric tokens whose value isn't
 /// `NaN`, pass through unchanged. Same whitespace/comment-skip rationale
 /// as `expect_number_stable`.
-pub(super) fn next_numeric_stable<'i, 't>(
+pub(crate) fn next_numeric_stable<'i, 't>(
     input: &mut Parser<'i, 't>,
 ) -> Result<Token<'i>, BasicParseError<'i>> {
     input.skip_whitespace();

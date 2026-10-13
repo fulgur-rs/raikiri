@@ -3157,7 +3157,15 @@ fn font_language_override_accepts_case_insensitive_normal_and_rejects_invalid_va
             FontLanguageOverride::Normal
         ))
     );
-    for input in ["none", "foo", "inherit", "1"] {
+    for input in [
+        "none",
+        "foo",
+        "inherit",
+        "1",
+        "\"\"",
+        "\"ENGLISH\"",
+        "\"\u{e9}n\"",
+    ] {
         assert_eq!(parse(input, "font-language-override"), None);
     }
     assert_eq!(

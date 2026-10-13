@@ -164,6 +164,19 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         // currently-correct echoed "none"/"min-content"/"max-content" into
         // a wrong "auto" — deliberately left unserialized (falls back to
         // echo) until those three parse functions preserve the keyword.
+        // A plain length carries no such ambiguity (`0` reads back `0px`).
+        PropertyValue::Width(LengthOrAuto::Length(length))
+        | PropertyValue::Height(LengthOrAuto::Length(length))
+        | PropertyValue::MinWidth(LengthOrAuto::Length(length))
+        | PropertyValue::MinHeight(LengthOrAuto::Length(length))
+        | PropertyValue::MaxWidth(LengthOrAuto::Length(length))
+        | PropertyValue::MaxHeight(LengthOrAuto::Length(length))
+        | PropertyValue::InlineSize(LengthOrAuto::Length(length))
+        | PropertyValue::BlockSize(LengthOrAuto::Length(length)) => Some(serialize_length(length)),
+        PropertyValue::FlexGrow(value) | PropertyValue::FlexShrink(value) => {
+            Some(serialize_number(*value))
+        }
+        PropertyValue::FontFamily(families) => Some(serialize_font_family_list(families)),
         PropertyValue::Width(_)
         | PropertyValue::Height(_)
         | PropertyValue::MinWidth(_)
@@ -503,7 +516,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Deferred(..)
         | PropertyValue::Color(..)
         | PropertyValue::BackgroundColor(..)
-        | PropertyValue::FontFamily(..)
         | PropertyValue::FontSizeRelative(..)
         | PropertyValue::FontWeight(..)
         | PropertyValue::LineHeight(..)
@@ -559,8 +571,6 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextWrapShorthand(..)
         | PropertyValue::FlexDirection(..)
         | PropertyValue::FlexWrap(..)
-        | PropertyValue::FlexGrow(..)
-        | PropertyValue::FlexShrink(..)
         | PropertyValue::FlexBasis(..)
         | PropertyValue::Flex(..)
         | PropertyValue::FlexFlow(..)
@@ -652,6 +662,71 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::TextEmphasisColor(..)
         | PropertyValue::TextEmphasis(..) => None,
     }
+}
+
+/// Serializes a `font-family` list (CSSOM §"Serializing CSS values"): a
+/// generic family as its lowercase keyword, and a family name as a sequence
+/// of identifiers when that reads back as the same name, otherwise as a
+/// string.
+fn serialize_font_family_list(families: &[FontFamilyName]) -> String {
+    families
+        .iter()
+        .map(|family| match family.1 {
+            FontFamilyKind::Generic => family.as_str().to_ascii_lowercase(),
+            FontFamilyKind::Named => serialize_family_name(family.as_str()),
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn serialize_family_name(name: &str) -> String {
+    let words: Vec<&str> = name.split(' ').collect();
+    let plain = words.iter().all(|word| {
+        let mut identifier = String::new();
+        cssparser::serialize_identifier(word, &mut identifier)
+            .expect("serializing into a String cannot fail");
+        !word.is_empty() && identifier == *word && !is_reserved_family_word(word)
+    });
+    if plain {
+        return name.to_owned();
+    }
+    let mut quoted = String::new();
+    cssparser::serialize_string(name, &mut quoted).expect("serializing into a String cannot fail");
+    quoted
+}
+
+/// Words that would read back as a keyword rather than a family name when
+/// written unquoted.
+fn is_reserved_family_word(word: &str) -> bool {
+    [
+        "inherit",
+        "initial",
+        "unset",
+        "revert",
+        "revert-layer",
+        "default",
+        "serif",
+        "sans-serif",
+        "cursive",
+        "fantasy",
+        "monospace",
+        "system-ui",
+        "emoji",
+        "math",
+        "fangsong",
+        "ui-serif",
+        "ui-sans-serif",
+        "ui-monospace",
+        "ui-rounded",
+        "caption",
+        "icon",
+        "menu",
+        "message-box",
+        "small-caption",
+        "status-bar",
+    ]
+    .iter()
+    .any(|reserved| word.eq_ignore_ascii_case(reserved))
 }
 
 /// Serializes a numeric CSS dimension (`10px`, `1.5em`). `unit` is always a

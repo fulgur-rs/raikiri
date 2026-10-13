@@ -700,9 +700,16 @@ pub(super) fn parse_font_language_override(
             .then_some(FontLanguageOverride::Normal);
     }
 
+    // An OpenType language system tag: one to four printable ASCII
+    // characters, padded with trailing spaces (CSS Fonts 4 §6.13).
     let value = input.expect_string().ok()?;
-    let value = value.as_ref().trim_end_matches(' ');
-    Some(FontLanguageOverride::String(SmolStr::new(value)))
+    let tag = value.as_ref();
+    if tag.is_empty() || tag.len() > 4 || !tag.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
+        return None;
+    }
+    Some(FontLanguageOverride::String(SmolStr::new(
+        tag.trim_end_matches(' '),
+    )))
 }
 
 pub(super) fn parse_font_synthesis(input: &mut Parser<'_, '_>) -> Option<FontSynthesisValue> {
@@ -1130,6 +1137,14 @@ pub(super) fn parse_text_spacing_shorthand(
         trim: TextSpacingTrim::Normal,
         autospace: TextAutospace::Normal,
     };
+    // `none` and `auto` stand for both longhands, so they only appear alone.
+    if components.len() > 1
+        && components
+            .iter()
+            .any(|component| matches!(component.as_str(), "none" | "auto"))
+    {
+        return None;
+    }
     if components.len() == 1 {
         match components[0].as_str() {
             // CSS-wide `initial` resets both longhands to their initial values.

@@ -828,7 +828,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + background-clip: border-area images clipped to the border shape (+3).
     // + Page count from nested abspos, body height and contain:size overflow,
     //   and a header repeated over anonymous cells (+5).
-    assert_eq!(set.baseline.entries.len(), 3938);
+    // + Parsing tests passing with canonical position, alpha, sizing, flex and font-family serialization (+13).
+    assert_eq!(set.baseline.entries.len(), 3951);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",

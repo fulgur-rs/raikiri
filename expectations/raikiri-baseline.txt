@@ -68,6 +68,7 @@ css/css-animations/parsing/animation-range-start-invalid.html
 css/css-animations/parsing/animation-timing-function-invalid.html
 css/css-backgrounds/parsing/background-clip-invalid.html
 css/css-backgrounds/parsing/background-origin-invalid.html
+css/css-backgrounds/parsing/background-position-valid.html
 css/css-backgrounds/parsing/background-position-x-invalid.html
 css/css-backgrounds/parsing/background-position-y-invalid.html
 css/css-backgrounds/parsing/border-color-invalid.html
@@ -93,12 +94,16 @@ css/css-contain/parsing/contain-invalid.html
 css/css-flexbox/parsing/flex-basis-valid.html
 css/css-flexbox/parsing/flex-direction-valid.html
 css/css-flexbox/parsing/flex-flow-invalid.html
+css/css-flexbox/parsing/flex-grow-valid.html
 css/css-flexbox/parsing/flex-invalid.html
+css/css-flexbox/parsing/flex-shrink-valid.html
 css/css-flexbox/parsing/flex-wrap-valid.html
 css/css-flexbox/parsing/order-invalid.html
+css/css-fonts/parsing/font-family-valid.html
 css/css-fonts/parsing/font-feature-settings-invalid.html
 css/css-fonts/parsing/font-invalid.html
 css/css-fonts/parsing/font-kerning-invalid.html
+css/css-fonts/parsing/font-language-override-invalid.html
 css/css-fonts/parsing/font-optical-sizing-invalid.html
 css/css-fonts/parsing/font-palette-invalid.html
 css/css-fonts/parsing/font-size-adjust-invalid.html
@@ -172,6 +177,7 @@ css/css-text/parsing/text-align-valid.html
 css/css-text/parsing/text-autospace-invalid.html
 css/css-text/parsing/text-group-align-invalid.html
 css/css-text/parsing/text-justify-invalid.html
+css/css-text/parsing/text-spacing-invalid.html
 css/css-text/parsing/text-spacing-trim-invalid.html
 css/css-text/parsing/text-wrap-invalid.html
 css/css-text/parsing/text-wrap-mode-invalid.html
@@ -407,11 +413,13 @@ css/css-color/parsing/color-invalid-contrast-color-function.html
 css/css-color/parsing/color-invalid.html
 css/css-color/parsing/opacity-invalid.html
 css/css-gaps/parsing/rule-overlap-invalid.html
+css/css-images/parsing/gradient-position-valid.html
 css/css-images/parsing/image-orientation-invalid.html
 css/css-images/parsing/image-rendering-invalid.html
 css/css-images/parsing/image-resolution-invalid.html
 css/css-images/parsing/object-fit-invalid.html
 css/css-images/parsing/object-position-invalid.html
+css/css-images/parsing/object-position-valid.html
 # --- css-images focused exact reftests (800x600, 2026-09-21) ---
 css/css-images/gradients-with-transparent.html
 css/css-images/gradient-border-box.html
@@ -511,11 +519,15 @@ css/css-size-adjust/parsing/text-size-adjust-invalid.html
 css/css-sizing/parsing/box-sizing-invalid.html
 css/css-sizing/parsing/box-sizing-valid.html
 css/css-sizing/parsing/height-invalid.html
+css/css-sizing/parsing/height-valid.html
 css/css-sizing/parsing/max-height-invalid.html
+css/css-sizing/parsing/max-height-valid.html
 css/css-sizing/parsing/max-width-invalid.html
+css/css-sizing/parsing/max-width-valid.html
 css/css-sizing/parsing/min-height-invalid.html
 css/css-sizing/parsing/min-width-invalid.html
 css/css-sizing/parsing/width-invalid.html
+css/css-sizing/parsing/width-valid.html
 css/css-transitions/parsing/transition-delay-invalid.html
 css/css-transitions/parsing/transition-duration-invalid.html
 css/css-transitions/parsing/transition-invalid.html
@@ -1612,6 +1624,7 @@ css/css-backgrounds/box-shadow-body.html
 css/css-backgrounds/box-shadow-overlapping-002.html
 css/css-backgrounds/box-shadow-overlapping-004.html
 css/css-color/parsing/color-valid.html
+css/css-color/parsing/opacity-valid.html
 # Negative-only rejection guards; these do not establish valid grid support.
 css/css-grid/parsing/grid-shorthand-invalid.html
 css/css-grid/parsing/grid-template-shorthand-invalid.html
