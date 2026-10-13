@@ -164,10 +164,12 @@ fn background_repeat_parse_single_keyword_applies_to_both_axes() {
         // and does its job.
         assert_eq!(
             parse(source, "background-repeat"),
-            Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
-                x: keyword,
-                y: keyword,
-            })),
+            Some(PropertyValue::BackgroundRepeat(Arc::from([
+                BackgroundRepeat {
+                    x: keyword,
+                    y: keyword,
+                }
+            ]))),
             "{source}"
         );
     }
@@ -177,17 +179,21 @@ fn background_repeat_parse_single_keyword_applies_to_both_axes() {
 fn background_repeat_parse_repeat_x_and_repeat_y() {
     assert_eq!(
         parse("repeat-x", "background-repeat"),
-        Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Repeat,
-            y: BackgroundRepeatKeyword::NoRepeat,
-        }))
+        Some(PropertyValue::BackgroundRepeat(Arc::from([
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }
+        ])))
     );
     assert_eq!(
         parse("repeat-y", "background-repeat"),
-        Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
-            x: BackgroundRepeatKeyword::NoRepeat,
-            y: BackgroundRepeatKeyword::Repeat,
-        }))
+        Some(PropertyValue::BackgroundRepeat(Arc::from([
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::NoRepeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            }
+        ])))
     );
 }
 
@@ -195,10 +201,12 @@ fn background_repeat_parse_repeat_x_and_repeat_y() {
 fn background_repeat_parse_two_keyword_form() {
     assert_eq!(
         parse("space round", "background-repeat"),
-        Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Space,
-            y: BackgroundRepeatKeyword::Round,
-        }))
+        Some(PropertyValue::BackgroundRepeat(Arc::from([
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Space,
+                y: BackgroundRepeatKeyword::Round,
+            }
+        ])))
     );
 }
 
@@ -206,17 +214,21 @@ fn background_repeat_parse_two_keyword_form() {
 fn background_repeat_is_case_insensitive() {
     assert_eq!(
         parse("REPEAT-X", "background-repeat"),
-        Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Repeat,
-            y: BackgroundRepeatKeyword::NoRepeat,
-        }))
+        Some(PropertyValue::BackgroundRepeat(Arc::from([
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }
+        ])))
     );
     assert_eq!(
         parse("No-Repeat", "background-repeat"),
-        Some(PropertyValue::BackgroundRepeat(BackgroundRepeat {
-            x: BackgroundRepeatKeyword::NoRepeat,
-            y: BackgroundRepeatKeyword::NoRepeat,
-        }))
+        Some(PropertyValue::BackgroundRepeat(Arc::from([
+            BackgroundRepeat {
+                x: BackgroundRepeatKeyword::NoRepeat,
+                y: BackgroundRepeatKeyword::NoRepeat,
+            }
+        ])))
     );
 }
 
@@ -235,10 +247,10 @@ fn background_repeat_rejects_unknown_keyword() {
 
 #[test]
 fn background_repeat_key_maps_to_background_repeat_property_key() {
-    let v = PropertyValue::BackgroundRepeat(BackgroundRepeat {
+    let v = PropertyValue::BackgroundRepeat(Arc::from([BackgroundRepeat {
         x: BackgroundRepeatKeyword::Repeat,
         y: BackgroundRepeatKeyword::Repeat,
-    });
+    }]));
     assert_eq!(v.key(), PropertyKey::BackgroundRepeat);
 }
 
@@ -248,21 +260,21 @@ fn background_repeat_key_maps_to_background_repeat_property_key() {
 fn background_attachment_parse_all_three_keywords() {
     assert_eq!(
         parse("scroll", "background-attachment"),
-        Some(PropertyValue::BackgroundAttachment(
+        Some(PropertyValue::BackgroundAttachment(Arc::from([
             BackgroundAttachment::Scroll
-        ))
+        ])))
     );
     assert_eq!(
         parse("fixed", "background-attachment"),
-        Some(PropertyValue::BackgroundAttachment(
+        Some(PropertyValue::BackgroundAttachment(Arc::from([
             BackgroundAttachment::Fixed
-        ))
+        ])))
     );
     assert_eq!(
         parse("local", "background-attachment"),
-        Some(PropertyValue::BackgroundAttachment(
+        Some(PropertyValue::BackgroundAttachment(Arc::from([
             BackgroundAttachment::Local
-        ))
+        ])))
     );
 }
 
@@ -270,9 +282,9 @@ fn background_attachment_parse_all_three_keywords() {
 fn background_attachment_is_case_insensitive() {
     assert_eq!(
         parse("FIXED", "background-attachment"),
-        Some(PropertyValue::BackgroundAttachment(
+        Some(PropertyValue::BackgroundAttachment(Arc::from([
             BackgroundAttachment::Fixed
-        ))
+        ])))
     );
 }
 
@@ -290,7 +302,7 @@ fn background_attachment_rejects_unknown_keyword() {
 
 #[test]
 fn background_attachment_key_maps_to_background_attachment_property_key() {
-    let v = PropertyValue::BackgroundAttachment(BackgroundAttachment::Scroll);
+    let v = PropertyValue::BackgroundAttachment(Arc::from([BackgroundAttachment::Scroll]));
     assert_eq!(v.key(), PropertyKey::BackgroundAttachment);
 }
 
@@ -300,15 +312,21 @@ fn background_attachment_key_maps_to_background_attachment_property_key() {
 fn background_clip_parse_all_three_keywords() {
     assert_eq!(
         parse("border-box", "background-clip"),
-        Some(PropertyValue::BackgroundClip(VisualBox::BorderBox))
+        Some(PropertyValue::BackgroundClip(Arc::from([
+            VisualBox::BorderBox
+        ])))
     );
     assert_eq!(
         parse("padding-box", "background-clip"),
-        Some(PropertyValue::BackgroundClip(VisualBox::PaddingBox))
+        Some(PropertyValue::BackgroundClip(Arc::from([
+            VisualBox::PaddingBox
+        ])))
     );
     assert_eq!(
         parse("content-box", "background-clip"),
-        Some(PropertyValue::BackgroundClip(VisualBox::ContentBox))
+        Some(PropertyValue::BackgroundClip(Arc::from([
+            VisualBox::ContentBox
+        ])))
     );
 }
 
@@ -316,15 +334,21 @@ fn background_clip_parse_all_three_keywords() {
 fn background_origin_parse_all_three_keywords() {
     assert_eq!(
         parse("border-box", "background-origin"),
-        Some(PropertyValue::BackgroundOrigin(VisualBox::BorderBox))
+        Some(PropertyValue::BackgroundOrigin(Arc::from([
+            VisualBox::BorderBox
+        ])))
     );
     assert_eq!(
         parse("padding-box", "background-origin"),
-        Some(PropertyValue::BackgroundOrigin(VisualBox::PaddingBox))
+        Some(PropertyValue::BackgroundOrigin(Arc::from([
+            VisualBox::PaddingBox
+        ])))
     );
     assert_eq!(
         parse("content-box", "background-origin"),
-        Some(PropertyValue::BackgroundOrigin(VisualBox::ContentBox))
+        Some(PropertyValue::BackgroundOrigin(Arc::from([
+            VisualBox::ContentBox
+        ])))
     );
 }
 
@@ -332,11 +356,15 @@ fn background_origin_parse_all_three_keywords() {
 fn background_clip_and_origin_are_case_insensitive() {
     assert_eq!(
         parse("BORDER-BOX", "background-clip"),
-        Some(PropertyValue::BackgroundClip(VisualBox::BorderBox))
+        Some(PropertyValue::BackgroundClip(Arc::from([
+            VisualBox::BorderBox
+        ])))
     );
     assert_eq!(
         parse("Padding-Box", "background-origin"),
-        Some(PropertyValue::BackgroundOrigin(VisualBox::PaddingBox))
+        Some(PropertyValue::BackgroundOrigin(Arc::from([
+            VisualBox::PaddingBox
+        ])))
     );
 }
 
@@ -355,13 +383,13 @@ fn background_origin_rejects_unknown_keyword() {
 
 #[test]
 fn background_clip_key_maps_to_background_clip_property_key() {
-    let v = PropertyValue::BackgroundClip(VisualBox::BorderBox);
+    let v = PropertyValue::BackgroundClip(Arc::from([VisualBox::BorderBox]));
     assert_eq!(v.key(), PropertyKey::BackgroundClip);
 }
 
 #[test]
 fn background_origin_key_maps_to_background_origin_property_key() {
-    let v = PropertyValue::BackgroundOrigin(VisualBox::PaddingBox);
+    let v = PropertyValue::BackgroundOrigin(Arc::from([VisualBox::PaddingBox]));
     assert_eq!(v.key(), PropertyKey::BackgroundOrigin);
 }
 
@@ -371,11 +399,15 @@ fn background_origin_key_maps_to_background_origin_property_key() {
 fn background_size_parse_cover_and_contain() {
     assert_eq!(
         parse("cover", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Cover))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Cover
+        ])))
     );
     assert_eq!(
         parse("contain", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Contain))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Contain
+        ])))
     );
 }
 
@@ -386,10 +418,12 @@ fn background_size_parse_single_value_fills_auto_for_second_axis() {
     // `border-radius`'s 1-4 value fill rule).
     assert_eq!(
         parse("50%", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
-            width: LengthOrAuto::Length(Length::Percent(50.0)),
-            height: LengthOrAuto::Auto,
-        }))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Percent(50.0)),
+                height: LengthOrAuto::Auto,
+            }
+        ])))
     );
 }
 
@@ -397,10 +431,12 @@ fn background_size_parse_single_value_fills_auto_for_second_axis() {
 fn background_size_parse_two_values() {
     assert_eq!(
         parse("100px 50%", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
-            width: LengthOrAuto::Length(Length::Px(100.0)),
-            height: LengthOrAuto::Length(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Px(100.0)),
+                height: LengthOrAuto::Length(Length::Percent(50.0)),
+            }
+        ])))
     );
 }
 
@@ -408,18 +444,22 @@ fn background_size_parse_two_values() {
 fn background_size_parse_auto_auto() {
     assert_eq!(
         parse("auto auto", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
-            width: LengthOrAuto::Auto,
-            height: LengthOrAuto::Auto,
-        }))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            }
+        ])))
     );
     // single bare `auto` also fills the second axis with `auto`.
     assert_eq!(
         parse("auto", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
-            width: LengthOrAuto::Auto,
-            height: LengthOrAuto::Auto,
-        }))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            }
+        ])))
     );
 }
 
@@ -451,10 +491,12 @@ fn background_size_rejects_negative_percentage() {
 fn background_size_accepts_percentage() {
     assert_eq!(
         parse("10%", "background-size"),
-        Some(PropertyValue::BackgroundSize(BackgroundSize::Explicit {
-            width: LengthOrAuto::Length(Length::Percent(10.0)),
-            height: LengthOrAuto::Auto,
-        }))
+        Some(PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Percent(10.0)),
+                height: LengthOrAuto::Auto,
+            }
+        ])))
     );
 }
 
@@ -472,7 +514,7 @@ fn background_size_rejects_unknown_unit() {
 
 #[test]
 fn background_size_key_maps_to_background_size_property_key() {
-    let v = PropertyValue::BackgroundSize(BackgroundSize::Cover);
+    let v = PropertyValue::BackgroundSize(Arc::from([BackgroundSize::Cover]));
     assert_eq!(v.key(), PropertyKey::BackgroundSize);
 }
 
@@ -488,38 +530,48 @@ fn background_position_parse_single_keyword() {
     // `center`.
     assert_eq!(
         parse("center", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
     assert_eq!(
         parse("left", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
     assert_eq!(
         parse("right", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
     assert_eq!(
         parse("top", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }
+        ])))
     );
     assert_eq!(
         parse("bottom", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(100.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(100.0)),
+            }
+        ])))
     );
 }
 
@@ -529,10 +581,12 @@ fn background_position_parse_single_length_percentage() {
     // vertical defaults to `center`.
     assert_eq!(
         parse("25%", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(25.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(25.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
 }
 
@@ -542,10 +596,12 @@ fn background_position_parse_two_bare_length_percentages() {
     // — strict horizontal-then-vertical order, no reordering.
     assert_eq!(
         parse("10px 20px", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Px(10.0)),
-            vertical: CssPositionOffset::Start(Length::Px(20.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Px(20.0)),
+            }
+        ])))
     );
 }
 
@@ -553,10 +609,10 @@ fn background_position_parse_two_bare_length_percentages() {
 fn background_position_parse_two_keywords_reordered() {
     // 3rd alternative (`&&`, either order) — `top left` and `left top`
     // must produce the identical result.
-    let expected = PropertyValue::BackgroundPosition(CssPosition {
+    let expected = PropertyValue::BackgroundPosition(Arc::from([CssPosition {
         horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
         vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-    });
+    }]));
     assert_eq!(
         parse("left top", "background-position"),
         Some(expected.clone())
@@ -568,10 +624,10 @@ fn background_position_parse_two_keywords_reordered() {
 fn background_position_parse_center_with_single_edge_keyword_either_order() {
     // `center` is ambiguous until the other token disambiguates it
     // (`parse_position_branch3` doc) — both orders must agree.
-    let expected = PropertyValue::BackgroundPosition(CssPosition {
+    let expected = PropertyValue::BackgroundPosition(Arc::from([CssPosition {
         horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
         vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-    });
+    }]));
     assert_eq!(
         parse("center left", "background-position"),
         Some(expected.clone())
@@ -589,10 +645,12 @@ fn background_position_parse_keyword_then_bare_length_percentage() {
     // the bare vertical value). See `parse_bg_position` doc.
     assert_eq!(
         parse("left 10px", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-            vertical: CssPositionOffset::Start(Length::Px(10.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }
+        ])))
     );
 }
 
@@ -606,10 +664,12 @@ fn background_position_parse_right_10px_is_not_an_edge_offset() {
     // 3rd token (see `background_position_parse_edge_offset_three_values`).
     assert_eq!(
         parse("right 10px", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
-            vertical: CssPositionOffset::Start(Length::Px(10.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }
+        ])))
     );
 }
 
@@ -619,10 +679,12 @@ fn background_position_parse_edge_offset_three_values() {
     // other axis a bare `center`.
     assert_eq!(
         parse("right 10px center", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::End(Length::Px(10.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
 }
 
@@ -634,10 +696,12 @@ fn background_position_parse_edge_offset_four_values() {
     // from the right edge").
     assert_eq!(
         parse("bottom 10px right 20px", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::End(Length::Px(20.0)),
-            vertical: CssPositionOffset::End(Length::Px(10.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(20.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
+            }
+        ])))
     );
 }
 
@@ -649,10 +713,12 @@ fn background_position_parse_edge_offset_missing_offset_defaults_to_zero() {
     // back to `Start`).
     assert_eq!(
         parse("bottom 10px right", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
-            vertical: CssPositionOffset::End(Length::Px(10.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(100.0)),
+                vertical: CssPositionOffset::End(Length::Px(10.0)),
+            }
+        ])))
     );
 }
 
@@ -663,10 +729,12 @@ fn background_position_accepts_negative_length_offset() {
     // ("outward" offsets, per the propdef's offset-computation prose).
     assert_eq!(
         parse("bottom -10px right -20px", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::End(Length::Px(-20.0)),
-            vertical: CssPositionOffset::End(Length::Px(-10.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::End(Length::Px(-20.0)),
+                vertical: CssPositionOffset::End(Length::Px(-10.0)),
+            }
+        ])))
     );
 }
 
@@ -687,10 +755,12 @@ fn background_position_parse_edge_offset_percentage_normalizes_non_zero() {
     // helper itself needing to know that basis.
     assert_eq!(
         parse("right 30% center", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(70.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(70.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
 }
 
@@ -704,24 +774,30 @@ fn background_position_parse_branch2_vertical_keywords_with_bare_horizontal_leng
     // one is tried before the 2nd (`parse_bg_position` doc).
     assert_eq!(
         parse("10px top", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Px(10.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }
+        ])))
     );
     assert_eq!(
         parse("10px center", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Px(10.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
     assert_eq!(
         parse("10px bottom", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Px(10.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(100.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(100.0)),
+            }
+        ])))
     );
 }
 
@@ -733,10 +809,12 @@ fn background_position_parse_branch2_horizontal_center_with_bare_vertical_length
     // file is claimed by the 3rd alternative first.
     assert_eq!(
         parse("center 10px", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Px(10.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Px(10.0)),
+            }
+        ])))
     );
 }
 
@@ -751,10 +829,12 @@ fn background_position_parse_edge_keyword_then_center() {
     // which starts from `center` rather than ending on it).
     assert_eq!(
         parse("top center", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }
+        ])))
     );
 }
 
@@ -766,10 +846,12 @@ fn background_position_parse_center_then_vertical_edge() {
     // which only ever pairs `center` with a *horizontal* edge (`left`).
     assert_eq!(
         parse("center top", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }
+        ])))
     );
 }
 
@@ -780,10 +862,12 @@ fn background_position_parse_center_center() {
     // attempts before matching the explicit trailing `center` ident.
     assert_eq!(
         parse("center center", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(50.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(50.0)),
+            }
+        ])))
     );
 }
 
@@ -815,10 +899,12 @@ fn background_position_rejects_trailing_garbage() {
 fn background_position_is_case_insensitive() {
     assert_eq!(
         parse("TOP LEFT", "background-position"),
-        Some(PropertyValue::BackgroundPosition(CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-        }))
+        Some(PropertyValue::BackgroundPosition(Arc::from([
+            CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            }
+        ])))
     );
 }
 
@@ -831,10 +917,10 @@ fn background_position_rejects_css_wide_keyword() {
 
 #[test]
 fn background_position_key_maps_to_background_position_property_key() {
-    let v = PropertyValue::BackgroundPosition(CssPosition {
+    let v = PropertyValue::BackgroundPosition(Arc::from([CssPosition {
         horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
         vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-    });
+    }]));
     assert_eq!(v.key(), PropertyKey::BackgroundPosition);
 }
 
@@ -844,7 +930,9 @@ fn background_position_key_maps_to_background_position_property_key() {
 fn background_image_parse_none() {
     assert_eq!(
         parse("none", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::None))
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::None
+        ])))
     );
 }
 
@@ -852,9 +940,9 @@ fn background_image_parse_none() {
 fn background_image_parse_url_unquoted_form() {
     assert_eq!(
         parse("url(foo.png)", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(
-            "foo.png".into()
-        )))
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::Url("foo.png".into())
+        ])))
     );
 }
 
@@ -862,9 +950,9 @@ fn background_image_parse_url_unquoted_form() {
 fn background_image_parse_url_quoted_form() {
     assert_eq!(
         parse("url(\"foo.png\")", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(
-            "foo.png".into()
-        )))
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::Url("foo.png".into())
+        ])))
     );
 }
 
@@ -874,7 +962,9 @@ fn background_image_is_case_insensitive() {
     // properties; see the `REPEAT-X`/`No-Repeat` tests for `background-repeat`).
     assert_eq!(
         parse("NONE", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::None))
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::None
+        ])))
     );
 }
 
@@ -910,7 +1000,10 @@ fn oklab_shorter() -> GradientColorInterpolation {
 /// The gradient a parsed `background-image` holds, if it holds one.
 fn background_gradient(value: &Option<PropertyValue>) -> Option<&Gradient> {
     match value {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(gradient))) => Some(gradient),
+        Some(PropertyValue::BackgroundImage(images)) => match &images[..] {
+            [BackgroundImage::Gradient(gradient)] => Some(&**gradient),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -949,8 +1042,8 @@ fn background_image_parses_linear_gradient_with_default_direction_and_interpolat
     // (`to bottom` / `Oklab`) are baked in.
     assert_eq!(
         parse("linear-gradient(red, blue)", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-            Arc::new(Gradient::Linear(LinearGradient {
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::Gradient(Arc::new(Gradient::Linear(LinearGradient {
                 repeating: false,
                 direction: LinearGradientDirection::Side(SideOrCorner {
                     horizontal: None,
@@ -958,8 +1051,8 @@ fn background_image_parses_linear_gradient_with_default_direction_and_interpolat
                 }),
                 interpolation: oklab_shorter(),
                 stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None),]),
-            }))
-        )))
+            })))
+        ])))
     );
 }
 
@@ -1087,8 +1180,8 @@ fn background_image_parses_linear_gradient_side_and_corner_any_order() {
         "linear-gradient(to left top, red, blue)",
         "background-image",
     );
-    let expected = Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-        Arc::new(Gradient::Linear(LinearGradient {
+    let expected = Some(PropertyValue::BackgroundImage(Arc::from([
+        BackgroundImage::Gradient(Arc::new(Gradient::Linear(LinearGradient {
             repeating: false,
             direction: LinearGradientDirection::Side(SideOrCorner {
                 horizontal: Some(HorizontalSide::Left),
@@ -1096,8 +1189,8 @@ fn background_image_parses_linear_gradient_side_and_corner_any_order() {
             }),
             interpolation: oklab_shorter(),
             stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None)]),
-        })),
-    )));
+        }))),
+    ])));
     assert_eq!(to_top_left, expected);
     assert_eq!(to_left_top, expected);
 }
@@ -1263,8 +1356,8 @@ fn background_image_parses_radial_gradient_with_default_shape_size_and_position(
     // center` / `Oklab` are all spec-mandated defaults.
     assert_eq!(
         parse("radial-gradient(red, blue)", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-            Arc::new(Gradient::Radial(RadialGradient {
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::Gradient(Arc::new(Gradient::Radial(RadialGradient {
                 repeating: false,
                 shape: RadialShape::Ellipse,
                 size: RadialSize::Extent(RadialExtent::FarthestCorner),
@@ -1274,8 +1367,8 @@ fn background_image_parses_radial_gradient_with_default_shape_size_and_position(
                 },
                 interpolation: oklab_shorter(),
                 stops: Arc::new(vec![gradient_stop(RED, None), gradient_stop(BLUE, None)]),
-            }))
-        )))
+            })))
+        ])))
     );
 }
 
@@ -1468,8 +1561,8 @@ fn background_image_parses_conic_gradient_double_angle_stop_as_solid_band() {
 fn background_image_parses_conic_gradient_with_default_angle_and_position() {
     assert_eq!(
         parse("conic-gradient(red, blue)", "background-image"),
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Gradient(
-            Arc::new(Gradient::Conic(ConicGradient {
+        Some(PropertyValue::BackgroundImage(Arc::from([
+            BackgroundImage::Gradient(Arc::new(Gradient::Conic(ConicGradient {
                 repeating: false,
                 angle: Angle(0.0),
                 position: CssPosition {
@@ -1487,8 +1580,8 @@ fn background_image_parses_conic_gradient_with_default_angle_and_position() {
                         position: None,
                     },
                 ]),
-            }))
-        )))
+            })))
+        ])))
     );
 }
 
@@ -1575,21 +1668,15 @@ fn background_image_rejects_unknown_keyword() {
 
 #[test]
 fn background_image_key_maps_to_background_image_property_key() {
-    let v = PropertyValue::BackgroundImage(BackgroundImage::None);
+    let v = PropertyValue::BackgroundImage(Arc::from([BackgroundImage::None]));
     assert_eq!(v.key(), PropertyKey::BackgroundImage);
 }
 
-// ── background-* comma-list (multi-layer) rejection ──
+// ── background-* comma-separated layer lists (CSS Backgrounds 3 §2.1) ──
 
 #[test]
-fn background_longhands_reject_comma_separated_multi_layer() {
-    // All 7 background-* longhands are single-layer only; comma-separated
-    // multi-layer (#-list) must be whole-declaration-drop via
-    // `DeclParser::parse_value` + `expect_exhausted` (rule.rs:1094 etc.).
-    // This pins that a future refactor never silently truncates to the
-    // first layer ("first layer wins") — which would paint the wrong
-    // background instead of falling through to the previous declaration
-    // or the initial value.
+fn background_longhands_accept_comma_separated_layer_lists() {
+    // Every per-layer longhand takes `<item>#`: one item per layer.
     let cases: &[(&str, &str)] = &[
         ("background-repeat", "repeat, no-repeat"),
         ("background-attachment", "scroll, fixed"),
@@ -1600,36 +1687,106 @@ fn background_longhands_reject_comma_separated_multi_layer() {
         ("background-image", "url(a.png), url(b.png)"),
     ];
     for (name, source) in cases {
-        assert_eq!(
-            parse_entire(source, name),
-            None,
-            "{name}: {source:?} should be whole-declaration-drop"
-        );
-        // The leading layer itself is valid — so the rejection is solely
-        // due to the trailing `, <layer>` leftover caught by
-        // `expect_exhausted`, not the parser rejecting the first token.
-        assert!(
-            parse(source, name).is_some(),
-            "{name}: first layer of {source:?} should still parse without exhaustion check"
-        );
+        let len = match parse_entire(source, name) {
+            Some(PropertyValue::BackgroundRepeat(list)) => list.len(),
+            Some(PropertyValue::BackgroundAttachment(list)) => list.len(),
+            Some(PropertyValue::BackgroundClip(list) | PropertyValue::BackgroundOrigin(list)) => {
+                list.len()
+            }
+            Some(PropertyValue::BackgroundSize(list)) => list.len(),
+            Some(PropertyValue::BackgroundPosition(list)) => list.len(),
+            Some(PropertyValue::BackgroundImage(list)) => list.len(),
+            other => panic!("{name}: {source:?} parsed to {other:?}"),
+        };
+        assert_eq!(len, 2, "{name}: {source:?}");
     }
 }
 
 #[test]
-fn background_image_rejects_comma_list_with_none_and_gradient_variants() {
-    // `none` and `<gradient>` are also valid single layers; mixing them
-    // with a comma must still be whole-declaration-drop.
+fn background_longhands_reject_empty_and_invalid_list_items() {
+    // An empty item, or one item that is invalid, drops the declaration.
+    let cases: &[(&str, &str)] = &[
+        ("background-repeat", "repeat,"),
+        ("background-repeat", ", repeat"),
+        ("background-attachment", "scroll,, fixed"),
+        ("background-clip", "border-box, bogus"),
+        ("background-size", "cover contain, auto"),
+        ("background-position", "left top, middle"),
+        ("background-image", "none, auto"),
+    ];
+    for (name, source) in cases {
+        assert_eq!(parse_entire(source, name), None, "{name}: {source:?}");
+    }
+}
+
+#[test]
+fn background_image_lists_mix_none_urls_and_gradients() {
+    for (source, kinds) in [
+        ("none, url(b.png)", ["none", "url"]),
+        ("url(a.png), none", ["url", "none"]),
+        ("none, none", ["none", "none"]),
+        (
+            "linear-gradient(red, blue), url(b.png)",
+            ["gradient", "url"],
+        ),
+        (
+            "url(a.png), linear-gradient(red, blue)",
+            ["url", "gradient"],
+        ),
+    ] {
+        let Some(PropertyValue::BackgroundImage(images)) = parse_entire(source, "background-image")
+        else {
+            panic!("background-image: {source:?} should parse");
+        };
+        let got: Vec<&str> = images
+            .iter()
+            .map(|image| match image {
+                BackgroundImage::None => "none",
+                BackgroundImage::Url(_) => "url",
+                _ => "gradient",
+            })
+            .collect();
+        assert_eq!(got, kinds, "{source:?}");
+    }
+}
+
+#[test]
+fn background_clip_accepts_border_area_and_text_in_either_order() {
+    let clip = |source| match parse_entire(source, "background-clip") {
+        Some(PropertyValue::BackgroundClip(list)) => Some(list.to_vec()),
+        _ => None,
+    };
+    assert_eq!(clip("border-area"), Some(vec![VisualBox::BorderArea]));
+    assert_eq!(clip("text"), Some(vec![VisualBox::Text]));
+    assert_eq!(
+        clip("border-area text"),
+        Some(vec![VisualBox::BorderAreaText])
+    );
+    assert_eq!(
+        clip("TEXT border-area"),
+        Some(vec![VisualBox::BorderAreaText])
+    );
+    assert_eq!(
+        clip("border-area text, content-box"),
+        Some(vec![VisualBox::BorderAreaText, VisualBox::ContentBox])
+    );
+    assert_eq!(clip("text text"), None);
+    assert_eq!(clip("border-area border-area"), None);
+    assert_eq!(clip("border-box text"), None);
+}
+
+#[test]
+fn background_origin_rejects_clip_only_keywords() {
     for source in [
-        "none, url(b.png)",
-        "url(a.png), none",
-        "none, none",
-        "linear-gradient(red, blue), url(b.png)",
-        "url(a.png), linear-gradient(red, blue)",
+        "border-area",
+        "text",
+        "border-area text",
+        "border-box, text",
     ] {
         assert_eq!(
-            parse_entire(source, "background-image"),
+            parse_entire(source, "background-origin"),
             None,
-            "background-image: {source:?} should be whole-declaration-drop"
+            "background-origin: {source:?}"
         );
     }
 }
@@ -1666,24 +1823,26 @@ fn background_shorthand_color_only_fills_the_other_7_with_initial_values() {
                 b: 0,
                 a: 255
             },
-            image: BackgroundImage::None,
-            repeat: BackgroundRepeat {
-                x: BackgroundRepeatKeyword::Repeat,
-                y: BackgroundRepeatKeyword::Repeat,
-            },
-            attachment: BackgroundAttachment::Scroll,
-            position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-            },
-            size: BackgroundSize::Explicit {
-                width: LengthOrAuto::Auto,
-                height: LengthOrAuto::Auto,
-            },
-            // 0 `<visual-box>` occurrence: the 2 longhands fall back to
-            // their own (different) initial values, not to each other.
-            clip: VisualBox::BorderBox,
-            origin: VisualBox::PaddingBox,
+            layers: Box::new([BackgroundLayerSpec {
+                image: BackgroundImage::None,
+                repeat: BackgroundRepeat {
+                    x: BackgroundRepeatKeyword::Repeat,
+                    y: BackgroundRepeatKeyword::Repeat,
+                },
+                attachment: BackgroundAttachment::Scroll,
+                position: CssPosition {
+                    horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                    vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+                },
+                size: BackgroundSize::Explicit {
+                    width: LengthOrAuto::Auto,
+                    height: LengthOrAuto::Auto,
+                },
+                // 0 `<visual-box>` occurrence: the 2 longhands fall back to
+                // their own (different) initial values, not to each other.
+                clip: VisualBox::BorderBox,
+                origin: VisualBox::PaddingBox,
+            }]),
         }
     );
 }
@@ -1702,16 +1861,19 @@ fn background_shorthand_spec_example_url_position_size_color_repeat_attachment_b
         "url(\"chess.png\") 40% / 10em gray round fixed border-box",
         "background",
     ));
-    assert_eq!(got.image, BackgroundImage::Url("chess.png".into()));
     assert_eq!(
-        got.position,
+        got.layers[0].image,
+        BackgroundImage::Url("chess.png".into())
+    );
+    assert_eq!(
+        got.layers[0].position,
         CssPosition {
             horizontal: CssPositionOffset::Start(Length::Percent(40.0)),
             vertical: CssPositionOffset::Start(Length::Percent(50.0)),
         }
     );
     assert_eq!(
-        got.size,
+        got.layers[0].size,
         BackgroundSize::Explicit {
             width: LengthOrAuto::Length(Length::Em(10.0)),
             height: LengthOrAuto::Auto,
@@ -1727,15 +1889,15 @@ fn background_shorthand_spec_example_url_position_size_color_repeat_attachment_b
         }
     );
     assert_eq!(
-        got.repeat,
+        got.layers[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Round,
             y: BackgroundRepeatKeyword::Round,
         }
     );
-    assert_eq!(got.attachment, BackgroundAttachment::Fixed);
-    assert_eq!(got.clip, VisualBox::BorderBox);
-    assert_eq!(got.origin, VisualBox::BorderBox);
+    assert_eq!(got.layers[0].attachment, BackgroundAttachment::Fixed);
+    assert_eq!(got.layers[0].clip, VisualBox::BorderBox);
+    assert_eq!(got.layers[0].origin, VisualBox::BorderBox);
 }
 
 /// Spec §2.10 verbatim third worked example: `div { background:
@@ -1752,9 +1914,12 @@ fn background_shorthand_spec_example_box_before_image_and_color() {
         "padding-box url(paper.jpg) white center",
         "background",
     ));
-    assert_eq!(got.clip, VisualBox::PaddingBox);
-    assert_eq!(got.origin, VisualBox::PaddingBox);
-    assert_eq!(got.image, BackgroundImage::Url("paper.jpg".into()));
+    assert_eq!(got.layers[0].clip, VisualBox::PaddingBox);
+    assert_eq!(got.layers[0].origin, VisualBox::PaddingBox);
+    assert_eq!(
+        got.layers[0].image,
+        BackgroundImage::Url("paper.jpg".into())
+    );
     assert_eq!(
         got.color,
         CssColor {
@@ -1765,22 +1930,22 @@ fn background_shorthand_spec_example_box_before_image_and_color() {
         }
     );
     assert_eq!(
-        got.position,
+        got.layers[0].position,
         CssPosition {
             horizontal: CssPositionOffset::Start(Length::Percent(50.0)),
             vertical: CssPositionOffset::Start(Length::Percent(50.0)),
         }
     );
     assert_eq!(
-        got.repeat,
+        got.layers[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Repeat,
             y: BackgroundRepeatKeyword::Repeat,
         }
     );
-    assert_eq!(got.attachment, BackgroundAttachment::Scroll);
+    assert_eq!(got.layers[0].attachment, BackgroundAttachment::Scroll);
     assert_eq!(
-        got.size,
+        got.layers[0].size,
         BackgroundSize::Explicit {
             width: LengthOrAuto::Auto,
             height: LengthOrAuto::Auto,
@@ -1813,23 +1978,26 @@ fn background_shorthand_reordered_position_before_slash_size() {
             a: 255
         }
     );
-    assert_eq!(got.image, BackgroundImage::Url("metal.jpg".into()));
     assert_eq!(
-        got.position,
+        got.layers[0].image,
+        BackgroundImage::Url("metal.jpg".into())
+    );
+    assert_eq!(
+        got.layers[0].position,
         CssPosition {
             horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
             vertical: CssPositionOffset::Start(Length::Percent(0.0)),
         }
     );
     assert_eq!(
-        got.size,
+        got.layers[0].size,
         BackgroundSize::Explicit {
             width: LengthOrAuto::Length(Length::Percent(100.0)),
             height: LengthOrAuto::Auto,
         }
     );
     assert_eq!(
-        got.repeat,
+        got.layers[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::NoRepeat,
             y: BackgroundRepeatKeyword::NoRepeat,
@@ -1846,8 +2014,8 @@ fn background_shorthand_reordered_position_before_slash_size() {
 #[test]
 fn background_shorthand_two_distinct_visual_boxes_assign_origin_then_clip() {
     let got = expect_background(parse("content-box border-box", "background"));
-    assert_eq!(got.origin, VisualBox::ContentBox);
-    assert_eq!(got.clip, VisualBox::BorderBox);
+    assert_eq!(got.layers[0].origin, VisualBox::ContentBox);
+    assert_eq!(got.layers[0].clip, VisualBox::BorderBox);
 }
 
 /// `<bg-position>`'s 3-4 value edge-offset form (`CssPosition` doc's
@@ -1861,14 +2029,14 @@ fn background_shorthand_two_distinct_visual_boxes_assign_origin_then_clip() {
 fn background_shorthand_edge_offset_position_stops_before_next_component() {
     let got = expect_background(parse("bottom 10px right 20px no-repeat", "background"));
     assert_eq!(
-        got.position,
+        got.layers[0].position,
         CssPosition {
             horizontal: CssPositionOffset::End(Length::Px(20.0)),
             vertical: CssPositionOffset::End(Length::Px(10.0)),
         }
     );
     assert_eq!(
-        got.repeat,
+        got.layers[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::NoRepeat,
             y: BackgroundRepeatKeyword::NoRepeat,
@@ -1892,19 +2060,81 @@ fn background_shorthand_rejects_unknown_keyword() {
     assert_eq!(parse("bogus", "background"), None);
 }
 
-/// spec §2.10's `<bg-layer>#? , <final-bg-layer>` grammar allows
-/// comma-separated multi-layer values (see the spec's own 4th example,
-/// `background: url(a.png) top left no-repeat, url(b.png) center /
-/// 100% 100% no-repeat, url(c.png) white`). This crate's single-layer
-/// scope carving ([`BackgroundShorthand`] doc's Non-goal section) does
-/// not silently take the first layer — it rejects the whole declaration:
-/// the parser stops at the first layer's end, and the leftover comma
-/// (plus any further layers) fails the caller's `expect_exhausted`
-/// check, dropping the declaration entirely.
+/// spec §2.10's `<bg-layer>#? , <final-bg-layer>` grammar: comma-separated
+/// layers (the spec's own 4th example, `background: url(a.png) top left
+/// no-repeat, url(b.png) center / 100% 100% no-repeat, url(c.png) white`).
 #[test]
-fn background_shorthand_rejects_comma_separated_multi_layer() {
+fn background_shorthand_parses_comma_separated_layers() {
+    let got = expect_background(parse_entire(
+        "url(a.png) top left no-repeat, url(b.png) center / 100% 100% no-repeat, url(c.png) white",
+        "background",
+    ));
+    assert_eq!(got.layers.len(), 3);
+    assert_eq!(got.layers[0].image, BackgroundImage::Url("a.png".into()));
+    assert_eq!(got.layers[1].image, BackgroundImage::Url("b.png".into()));
+    assert_eq!(got.layers[2].image, BackgroundImage::Url("c.png".into()));
     assert_eq!(
-        parse_entire("url(a.png) top, url(b.png) bottom", "background"),
+        got.layers[1].size,
+        BackgroundSize::Explicit {
+            width: LengthOrAuto::Length(Length::Percent(100.0)),
+            height: LengthOrAuto::Length(Length::Percent(100.0)),
+        }
+    );
+    // Omitted components take the initial value per layer.
+    assert_eq!(got.layers[2].repeat, BackgroundLayerSpec::initial().repeat);
+    assert_eq!(
+        got.color,
+        CssColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255
+        }
+    );
+}
+
+/// "A color is permitted in `<final-bg-layer>`, but not in `<bg-layer>`."
+#[test]
+fn background_shorthand_rejects_a_color_outside_the_final_layer() {
+    assert_eq!(parse_entire("red, url(a.png)", "background"), None);
+    assert_eq!(parse_entire("red, green", "background"), None);
+    assert!(parse_entire("url(a.png), red", "background").is_some());
+    assert_eq!(parse_entire("url(a.png),", "background"), None);
+    assert_eq!(parse_entire(", url(a.png)", "background"), None);
+}
+
+/// CSS Backgrounds 4 §2.10: `border-area` (alone or with `text`) sets the
+/// clip and makes the origin `border-box`.
+#[test]
+fn background_shorthand_border_area_sets_border_box_origin() {
+    let boxes = |source| {
+        let got = expect_background(parse_entire(source, "background"));
+        (got.layers[0].origin, got.layers[0].clip)
+    };
+    assert_eq!(
+        boxes("border-area"),
+        (VisualBox::BorderBox, VisualBox::BorderArea)
+    );
+    assert_eq!(
+        boxes("border-area text"),
+        (VisualBox::BorderBox, VisualBox::BorderAreaText)
+    );
+    assert_eq!(boxes("text"), (VisualBox::BorderBox, VisualBox::Text));
+    assert_eq!(
+        boxes("url(a.png) text"),
+        (VisualBox::BorderBox, VisualBox::Text)
+    );
+    assert_eq!(
+        boxes("content-box border-area"),
+        (VisualBox::ContentBox, VisualBox::BorderArea)
+    );
+    assert_eq!(
+        boxes("border-box content-box"),
+        (VisualBox::BorderBox, VisualBox::ContentBox)
+    );
+    assert!(parse_entire("border-area text", "background").is_some());
+    assert_eq!(
+        parse_entire("text border-area url(a.png) text", "background"),
         None
     );
 }
@@ -1958,22 +2188,24 @@ fn background_shorthand_key_maps_to_background_property_key() {
     let v = PropertyValue::Background(Box::new(BackgroundShorthand {
         color_expression: None,
         color: CssColor::TRANSPARENT,
-        image: BackgroundImage::None,
-        repeat: BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Repeat,
-            y: BackgroundRepeatKeyword::Repeat,
-        },
-        attachment: BackgroundAttachment::Scroll,
-        position: CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-            vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-        },
-        size: BackgroundSize::Explicit {
-            width: LengthOrAuto::Auto,
-            height: LengthOrAuto::Auto,
-        },
-        clip: VisualBox::BorderBox,
-        origin: VisualBox::PaddingBox,
+        layers: Box::new([BackgroundLayerSpec {
+            image: BackgroundImage::None,
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            attachment: BackgroundAttachment::Scroll,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Auto,
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::BorderBox,
+            origin: VisualBox::PaddingBox,
+        }]),
     }));
     assert_eq!(v.key(), PropertyKey::Background);
 }

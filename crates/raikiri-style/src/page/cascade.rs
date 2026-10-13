@@ -655,17 +655,17 @@ impl PageCascadeResult {
     /// resource URLs. This narrow visitor lets the embedder replace those URLs
     /// without exposing the declaration maps for unrestricted mutation.
     pub fn for_each_background_image_mut(&mut self, mut visitor: impl FnMut(&mut BackgroundImage)) {
-        if let Some(PropertyValue::BackgroundImage(image)) =
+        if let Some(PropertyValue::BackgroundImage(images)) =
             self.declarations.get_mut(&PropertyKey::BackgroundImage)
         {
-            visitor(image);
+            Arc::make_mut(images).iter_mut().for_each(&mut visitor);
         }
         for margin_box in &mut self.margin_boxes {
             for declaration in &mut margin_box.declarations {
                 if matches!(declaration.value, PropertyValue::BackgroundImage(_)) {
                     declaration.update_value(|value| {
-                        if let PropertyValue::BackgroundImage(image) = value {
-                            visitor(image);
+                        if let PropertyValue::BackgroundImage(images) = value {
+                            Arc::make_mut(images).iter_mut().for_each(&mut visitor);
                         }
                     });
                 }

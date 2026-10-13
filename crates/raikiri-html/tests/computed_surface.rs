@@ -131,7 +131,7 @@ fn painter_reads_typed_computed_values_through_raikiri_html_only() {
     let cv = page.computed(node).expect("computed values for #box");
 
     assert_eq!(cv.color, GREEN);
-    assert_eq!(first_stop_px(&cv.background_image), Some(20.0));
+    assert_eq!(first_stop_px(&cv.background_layers()[0].image), Some(20.0));
     assert_eq!(
         border_summary(&cv.border, cv.color),
         (3.0, BorderStyle::Dashed, GREEN)

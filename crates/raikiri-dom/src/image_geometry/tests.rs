@@ -67,8 +67,8 @@ fn end_percent_positions_resolve_from_the_end_edge() {
 #[test]
 fn background_axis_helpers_reject_non_finite_edges() {
     let computed = raikiri_style::ComputedValues::initial();
-    let position = &computed.background_position;
-    let repeat = &computed.background_repeat;
+    let position = &computed.background_layers()[0].position;
+    let repeat = &computed.background_layers()[0].repeat;
     assert!(
         axis_origins(
             f64::INFINITY,
@@ -108,8 +108,8 @@ fn background_tiles_cover_the_painting_area() {
         (10.0, 10.0, 100.0, 50.0),
         (0.0, 0.0, 120.0, 70.0),
         (40.0, 30.0),
-        &computed.background_position,
-        &computed.background_repeat,
+        &computed.background_layers()[0].position,
+        &computed.background_layers()[0].repeat,
     )
     .expect("repeat tiles");
     assert_eq!((tiles.width, tiles.height), (40.0, 30.0));
@@ -120,8 +120,8 @@ fn background_tiles_cover_the_painting_area() {
             (0.0, 0.0, 100.0, 50.0),
             (0.0, 0.0, 0.0, 50.0),
             (40.0, 30.0),
-            &computed.background_position,
-            &computed.background_repeat,
+            &computed.background_layers()[0].position,
+            &computed.background_layers()[0].repeat,
         )
         .is_none()
     );
@@ -129,7 +129,7 @@ fn background_tiles_cover_the_painting_area() {
 
 #[test]
 fn background_dimensions_fill_missing_natural_sizes() {
-    let auto = raikiri_style::ComputedValues::initial().background_size;
+    let auto = raikiri_style::ComputedValues::initial().background_layers()[0].size;
     let size = |width, height, ratio, area: (f64, f64)| {
         background_image_dimensions(
             &auto,
@@ -162,8 +162,8 @@ fn background_tiles_reject_unusable_images_and_positions() {
             positioning,
             (0.0, 0.0, 100.0, 100.0),
             image,
-            &computed.background_position,
-            &computed.background_repeat,
+            &computed.background_layers()[0].position,
+            &computed.background_layers()[0].repeat,
         )
     };
     assert!(tiles((0.0, 0.0, 100.0, 100.0), (0.0, 10.0)).is_none());
@@ -175,7 +175,7 @@ fn background_tiles_reject_unusable_images_and_positions() {
 #[test]
 fn background_tiles_follow_no_repeat_and_space() {
     let computed = raikiri_style::ComputedValues::initial();
-    let mut repeat = computed.background_repeat;
+    let mut repeat = computed.background_layers()[0].repeat;
     repeat.x = BackgroundRepeatKeyword::NoRepeat;
     repeat.y = BackgroundRepeatKeyword::Space;
     let tiles = |image_h| {
@@ -183,7 +183,7 @@ fn background_tiles_follow_no_repeat_and_space() {
             (0.0, 0.0, 100.0, 100.0),
             (0.0, 0.0, 100.0, 100.0),
             (30.0, image_h),
-            &computed.background_position,
+            &computed.background_layers()[0].position,
             &repeat,
         )
         .expect("tiles")
@@ -201,7 +201,7 @@ fn background_tiles_follow_no_repeat_and_space() {
         100.0,
         30.0,
         30.0,
-        &computed.background_position.vertical,
+        &computed.background_layers()[0].position.vertical,
         &BackgroundRepeatKeyword::Space,
         None,
     );
@@ -210,13 +210,13 @@ fn background_tiles_follow_no_repeat_and_space() {
 
 #[test]
 fn round_tiles_bound_degenerate_counts() {
-    let position = raikiri_style::ComputedValues::initial().background_position;
+    let position = raikiri_style::ComputedValues::initial().background_layers()[0].position;
     assert_eq!(
         round_axis_tiles(100_000.0, 1.0, BackgroundRepeatKeyword::Round),
         (10.0, Some(10_000))
     );
     // Capped tiles still cover the painting area.
-    let mut repeat = raikiri_style::ComputedValues::initial().background_repeat;
+    let mut repeat = raikiri_style::ComputedValues::initial().background_layers()[0].repeat;
     repeat.x = BackgroundRepeatKeyword::Round;
     let tiles = background_tiles(
         (0.0, 0.0, 20_000.0, 10.0),
@@ -332,7 +332,7 @@ fn round_tiles_bound_degenerate_counts() {
 #[test]
 fn round_tiles_follow_position_and_space_tiles_cover_the_painting_area() {
     let computed = raikiri_style::ComputedValues::initial();
-    let mut position = computed.background_position;
+    let mut position = computed.background_layers()[0].position;
     position.horizontal = ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(5.0));
     // A rescaled `round` tile is placed by `background-position` and repeats
     // over the painting area like `repeat`.
@@ -357,7 +357,7 @@ fn round_tiles_follow_position_and_space_tiles_cover_the_painting_area() {
         135.0,
         30.0,
         30.0,
-        &computed.background_position.horizontal,
+        &computed.background_layers()[0].position.horizontal,
         &BackgroundRepeatKeyword::Space,
         None,
     );

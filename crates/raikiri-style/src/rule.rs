@@ -1523,31 +1523,27 @@ pub(crate) fn expand_font(shorthand: &FontShorthand, mut push: impl FnMut(Proper
 
 /// Cold helper expanding `background` into eight longhands (color/image/repeat/
 /// attachment/position/size/clip/origin; see the [`BackgroundShorthand`] docs).
-/// `image` is not `Copy`, so it is cloned, for the same reason
-/// `expand_grid_row`/`expand_grid_column` clone `GridLineValue`'s
-/// `Named`/`NamedLine` components.
+/// Each per-layer longhand receives one item per layer, and the color comes
+/// from the final layer.
 #[inline(never)]
 pub(crate) fn expand_background(
     shorthand: &BackgroundShorthand,
     mut push: impl FnMut(PropertyValue),
 ) {
-    if let Some(source) = &shorthand.color_expression {
-        push(PropertyValue::ContextualColor(
-            crate::property::ContextualColor {
-                source: source.clone(),
-                key: PropertyKey::BackgroundColor,
-            },
-        ));
-    } else {
-        push(PropertyValue::BackgroundColor(shorthand.color));
+    for key in [
+        PropertyKey::BackgroundColor,
+        PropertyKey::BackgroundImage,
+        PropertyKey::BackgroundRepeat,
+        PropertyKey::BackgroundAttachment,
+        PropertyKey::BackgroundPosition,
+        PropertyKey::BackgroundSize,
+        PropertyKey::BackgroundClip,
+        PropertyKey::BackgroundOrigin,
+    ] {
+        if let Some(value) = shorthand.longhand(key) {
+            push(value);
+        }
     }
-    push(PropertyValue::BackgroundImage(shorthand.image.clone()));
-    push(PropertyValue::BackgroundRepeat(shorthand.repeat));
-    push(PropertyValue::BackgroundAttachment(shorthand.attachment));
-    push(PropertyValue::BackgroundPosition(shorthand.position));
-    push(PropertyValue::BackgroundSize(shorthand.size));
-    push(PropertyValue::BackgroundClip(shorthand.clip));
-    push(PropertyValue::BackgroundOrigin(shorthand.origin));
 }
 
 /// Validate a consumer-owned value with the grammar shared by declarations and feature queries.

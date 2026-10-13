@@ -2875,8 +2875,8 @@ impl CascadeImagePreparer for FileCascadeImagePreparer<'_> {
         cascade: &mut raikiri_style::CascadeResult,
     ) {
         for computed in &mut cascade.computed {
-            crate::http_resources::prepare_background_image(
-                &mut computed.background_image,
+            crate::http_resources::prepare_background_layers(
+                computed,
                 self.base_url,
                 self.resolver,
             );

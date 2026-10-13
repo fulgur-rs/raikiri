@@ -1184,25 +1184,36 @@ pub(crate) fn parse_property_grammar(
         // renderer-facing fallback, not the computed CSSOM value.
         "writing-mode" => parse_writing_mode(input).map(PropertyValue::WritingMode),
         "ruby-position" => parse_ruby_position(input).map(PropertyValue::RubyPosition),
-        // CSS Backgrounds and Borders 3 §2.4-§2.9. `background-clip` /
-        // `background-origin` share the `<visual-box>` keyword parser
-        // (`VisualBox` doc — the two differ only in initial value, handled
-        // in `specified.rs`/`computed.rs`, not here).
-        "background-repeat" => parse_background_repeat(input).map(PropertyValue::BackgroundRepeat),
-        "background-attachment" => {
-            parse_background_attachment(input).map(PropertyValue::BackgroundAttachment)
+        // CSS Backgrounds and Borders 3 §2.3-§2.9: every per-layer
+        // longhand takes a comma-separated list with one item per layer
+        // (`parse_layer_list`). `background-origin` takes a plain
+        // `<visual-box>`, while `background-clip` also takes the CSS
+        // Backgrounds 4 `border-area` / `text` keywords.
+        "background-repeat" => {
+            parse_layer_list(input, parse_background_repeat).map(PropertyValue::BackgroundRepeat)
         }
-        "background-clip" => parse_visual_box(input).map(PropertyValue::BackgroundClip),
-        "background-origin" => parse_visual_box(input).map(PropertyValue::BackgroundOrigin),
-        "background-size" => parse_background_size(input).map(PropertyValue::BackgroundSize),
-        "background-position" => parse_bg_position(input).map(PropertyValue::BackgroundPosition),
-        // CSS Backgrounds and Borders 3 §2.3
+        "background-attachment" => parse_layer_list(input, parse_background_attachment)
+            .map(PropertyValue::BackgroundAttachment),
+        "background-clip" => {
+            parse_layer_list(input, parse_clip_box).map(PropertyValue::BackgroundClip)
+        }
+        "background-origin" => {
+            parse_layer_list(input, parse_origin_box).map(PropertyValue::BackgroundOrigin)
+        }
+        "background-size" => {
+            parse_layer_list(input, parse_background_size).map(PropertyValue::BackgroundSize)
+        }
+        "background-position" => {
+            parse_layer_list(input, parse_bg_position).map(PropertyValue::BackgroundPosition)
+        }
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>.
-        "background-image" => parse_background_image(input).map(PropertyValue::BackgroundImage),
+        "background-image" => {
+            parse_layer_list(input, parse_background_image).map(PropertyValue::BackgroundImage)
+        }
         // CSS Backgrounds and Borders 3 §2.10
         // <https://www.w3.org/TR/css-backgrounds-3/#the-background>. Any-order
-        // `||` fan-out of the 8 longhands above, single layer only
-        // (`BackgroundShorthand` doc's Non-goal section).
+        // `||` fan-out of the 8 longhands above, one group per
+        // comma-separated layer (`BackgroundShorthand` doc).
         "background" => {
             parse_background_shorthand(input).map(|v| PropertyValue::Background(Box::new(v)))
         }
