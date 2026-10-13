@@ -1029,15 +1029,23 @@ struct FirstLine {
 /// flex container orders its items itself, so its first line is the first
 /// baseline its layout recorded; a grid container is left to the fallback.
 fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
-    let in_flow = |id: usize| {
+    // `float` does not apply to flex items (CSS Flexbox 1 §3), so a flex
+    // container's items are checked without it.
+    let laid_out = |id: usize| {
         document.nodes.get(id).is_some_and(|node| {
             node.is_in_document()
                 && node.kind() != NodeKind::Text
                 && node.style.display != taffy::Display::None
                 && node.style.position != taffy::Position::Absolute
-                && node.style.float == taffy::Float::None
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
+    };
+    let in_flow = |id: usize| {
+        laid_out(id)
+            && document
+                .nodes
+                .get(id)
+                .is_some_and(|node| node.style.float == taffy::Float::None)
     };
     let (mut id, mut y) = (owner, 0.0);
     loop {
@@ -1066,7 +1074,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             let center = node
                 .layout_children()
                 .iter()
-                .filter(|&&child| in_flow(child))
+                .filter(|&&child| laid_out(child))
                 .find_map(|&child| {
                     let line = first_line(document, cascade, child)?;
                     let top = document.nodes[child].unrounded_layout.location.y

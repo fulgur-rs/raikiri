@@ -3086,9 +3086,19 @@ impl Document {
                     decode(&url, full).map(|image| (image, full)).or_else(|| {
                         (object_area > visible_area).then_some(())?;
                         let scale = (visible_area / object_area).sqrt() as f32;
+                        let (mut width, mut height) = (object.width * scale, object.height * scale);
+                        // A side under a pixel takes one, and the other keeps
+                        // the visible area rather than the aspect ratio, so
+                        // an extreme ratio does not grow the raster again.
+                        let area = visible_area as f32;
+                        if height < 1.0 {
+                            (width, height) = (area.min(object.width), 1.0);
+                        } else if width < 1.0 {
+                            (width, height) = (1.0, area.min(object.height));
+                        }
                         let bounded = raikiri_traits::ImageRasterSize {
-                            width: (object.width * scale).max(1.0),
-                            height: (object.height * scale).max(1.0),
+                            width: width.max(1.0),
+                            height: height.max(1.0),
                         };
                         decode(&url, bounded).map(|image| (image, bounded))
                     })

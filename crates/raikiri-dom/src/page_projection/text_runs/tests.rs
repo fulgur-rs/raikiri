@@ -360,3 +360,12 @@ fn pages_without_ordered_flow_slices_are_each_checked() {
         second_lines.collect::<Vec<_>>()
     );
 }
+
+/// `float` does not apply to a flex item, which still gives the line.
+#[test]
+fn a_flex_first_line_includes_a_floated_item() {
+    let (document, cascade, flex) = flex_items(&["line-height:50px;float:left"]);
+    let line = first_line(&document, &cascade, flex).unwrap();
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
+}
