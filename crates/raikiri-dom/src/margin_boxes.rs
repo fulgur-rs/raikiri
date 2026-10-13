@@ -25,8 +25,9 @@ use raikiri_style::property::{
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
-    CounterStyleRegistry, PageCascadeResult, PageMarginBoxCascadeResult, PageMarginBoxSlot,
-    ResolveContext, resolve_background_size, resolve_css_position, resolve_margin_length_or_auto,
+    CounterStyleRegistry, MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_background_size,
+    resolve_css_position, resolve_margin_length_or_auto,
     resolve_non_negative_length_percentage_or_calc,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
@@ -175,8 +176,12 @@ fn margin_box_background_layers(
         _ => None,
     };
     let initial = BackgroundLayerSpec::initial();
+    // Only the top layers are painted; the cap applies to every item, as for
+    // element backgrounds, so the URL layers kept here match the ones
+    // resource loading fetched.
     images
         .iter()
+        .take(MAX_PAINTED_BACKGROUND_LAYERS)
         .enumerate()
         .filter_map(|(index, image)| {
             let BackgroundImage::Url(url) = image else {

@@ -471,6 +471,7 @@ fn page_layer_item<T: Copy>(list: Option<&[T]>, index: usize, initial: T) -> T {
     }
 }
 
+#[cfg(test)]
 fn page_background_clips(cascade: &CascadeResult) -> Option<&[VisualBox]> {
     match page_property(cascade, PropertyKey::BackgroundClip) {
         Some(PropertyValue::BackgroundClip(clips)) => Some(clips),
@@ -689,7 +690,6 @@ fn paint_page_background_image(
         _ => None,
     };
     let origins = page_background_origins(cascade);
-    let clips = page_background_clips(cascade);
     let border = page_border_widths(cascade, area);
     let padding = page_padding_widths(cascade, area);
     // The page context inherits `color` from the root element.
@@ -725,7 +725,6 @@ fn paint_page_background_image(
         });
         layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
         layer.origin = page_layer_item(origins, index, initial_layer.origin);
-        layer.clip = page_layer_item(clips, index, initial_layer.clip);
         paint_page_background_layer(
             image_cache,
             scene,
@@ -1502,6 +1501,27 @@ fn paint_margin_box(
                         &painting,
                     );
                 }
+            }
+            // `border-area` paints the color in the border ring only, as
+            // the element path does.
+            None if margin_box.background_clip == VisualBox::BorderArea => {
+                let inner = Rect::new(
+                    rect.x0 + border.0,
+                    rect.y0 + border.1,
+                    rect.x1 - border.2,
+                    rect.y1 - border.3,
+                );
+                let mut ring = kurbo::Shape::to_path(&rect, 0.1);
+                if inner.x1 > inner.x0 && inner.y1 > inner.y0 {
+                    ring.extend(kurbo::Shape::path_elements(&inner, 0.1));
+                }
+                scene.fill(
+                    Fill::EvenOdd,
+                    Affine::IDENTITY,
+                    css_color(color),
+                    None,
+                    &ring,
+                );
             }
             None => warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {

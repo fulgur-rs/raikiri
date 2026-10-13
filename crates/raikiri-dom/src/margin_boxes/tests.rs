@@ -856,3 +856,24 @@ fn a_margin_box_color_takes_the_clip_of_the_bottom_layer() {
         VisualBox::ContentBox
     );
 }
+
+#[test]
+fn margin_box_layers_below_the_painted_ones_are_dropped() {
+    let mut images = vec!["none"; MAX_PAINTED_BACKGROUND_LAYERS];
+    images[0] = "url(top.png)";
+    images.push("url(under.png)");
+    let (doc, cascade) = page_cascade_fixture(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'x'; background-image: {} }} }}",
+        images.join(", ")
+    ));
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let urls: Vec<_> = head
+        .background_layers
+        .iter()
+        .map(|layer| layer.url.as_str())
+        .collect();
+    assert_eq!(urls, ["top.png"]);
+}

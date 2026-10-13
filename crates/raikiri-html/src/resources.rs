@@ -910,10 +910,7 @@ impl<'a> RenderResources<'a> {
                     .take(MAX_PAINTED_BACKGROUND_LAYERS)
                     .chain(std::iter::once(&computed.border_image.source))
             })
-            .filter_map(|image| match image {
-                BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
-                _ => None,
-            });
+            .filter_map(background_url);
         self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);
     }
 
