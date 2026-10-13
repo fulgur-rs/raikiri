@@ -145,7 +145,6 @@ fn margin_row_margins(top: f32) -> PageMargins {
 }
 
 fn fixed_margin_spec() -> MarginBoxSpec {
-    let initial = ComputedValues::initial();
     MarginBoxSpec {
         slot: PageMarginBoxSlot::TopCenter,
         content: String::new(),
@@ -156,13 +155,8 @@ fn fixed_margin_spec() -> MarginBoxSpec {
             b: 0,
             a: 255,
         }),
-        background_image_url: None,
+        background_layers: Vec::new(),
         background_image_lime: false,
-        background_size: initial.background_size,
-        background_position: initial.background_position,
-        background_repeat: initial.background_repeat,
-        background_origin: initial.background_origin,
-        background_clip: initial.background_clip,
         content_image_lime: false,
         border_top: None,
         border_right: None,

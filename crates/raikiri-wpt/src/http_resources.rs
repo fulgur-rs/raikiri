@@ -105,6 +105,21 @@ pub(crate) fn prepare_background_image(
     let _ = resolver.resolve(ResolverRequest::new(&absolute));
 }
 
+/// Prepares the image of every background layer of `computed`. A node
+/// without background images keeps its shared layer list.
+pub(crate) fn prepare_background_layers(
+    computed: &mut raikiri_style::ComputedValues,
+    base_url: &Url,
+    resolver: &dyn raikiri_traits::ReplacedResolver,
+) {
+    if !computed.has_background_image() {
+        return;
+    }
+    for layer in std::sync::Arc::make_mut(&mut computed.background_layers) {
+        prepare_background_image(&mut layer.image, base_url, resolver);
+    }
+}
+
 pub(crate) fn prepare_cascade_images(
     document: &raikiri_dom::Document,
     cascade: &mut raikiri_style::CascadeResult,
@@ -112,7 +127,7 @@ pub(crate) fn prepare_cascade_images(
     resolver: &dyn raikiri_traits::ReplacedResolver,
 ) {
     for computed in &mut cascade.computed {
-        prepare_background_image(&mut computed.background_image, base_url, resolver);
+        prepare_background_layers(computed, base_url, resolver);
         prepare_background_image(&mut computed.border_image.source, base_url, resolver);
         prepare_background_image(&mut computed.list_style_image, base_url, resolver);
     }

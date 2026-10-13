@@ -901,7 +901,12 @@ impl<'a> RenderResources<'a> {
                 ) && computed.visibility == Visibility::Visible
                     && computed.opacity > 0.0
             })
-            .flat_map(|computed| [&computed.background_image, &computed.border_image.source])
+            // Every background layer, top first, then the border image.
+            .flat_map(|computed| {
+                computed
+                    .background_images()
+                    .chain(std::iter::once(&computed.border_image.source))
+            })
             .filter_map(|image| match image {
                 BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
                 _ => None,
@@ -993,10 +998,10 @@ impl<'a> RenderResources<'a> {
         signal: Option<&AbortSignal>,
     ) {
         let mut raw_urls: Vec<&str> = Vec::new();
-        if let Some(PropertyValue::BackgroundImage(BackgroundImage::Url(raw_url))) =
+        if let Some(PropertyValue::BackgroundImage(images)) =
             page.declarations().get(&PropertyKey::BackgroundImage)
         {
-            raw_urls.push(raw_url);
+            raw_urls.extend(images.iter().filter_map(background_url));
         }
         let margin_box_rules = page.margin_boxes();
         let mut seen_slots = Vec::new();
@@ -1011,16 +1016,19 @@ impl<'a> RenderResources<'a> {
                 .flat_map(|candidate| candidate.declarations.iter())
                 .filter(|declaration| declaration.value().key() == PropertyKey::BackgroundImage)
                 .next_back();
-            if let Some(PropertyValue::BackgroundImage(BackgroundImage::Url(raw_url))) =
+            if let Some(PropertyValue::BackgroundImage(images)) =
                 winning_background.map(|declaration| declaration.value())
             {
-                raw_urls.push(raw_url);
+                raw_urls.extend(images.iter().filter_map(background_url));
             }
         }
         self.preload_background_urls(raw_urls, base_url, warnings, seen, attempts, signal);
     }
 
     /// Fetch and decode CSS background images ahead of paint.
+    ///
+    /// Callers pass every layer's URL; the shared request limit and decode
+    /// budgets bound the work however many layers a declaration lists.
     ///
     /// Computed `url()` values are kept as authored, so a relative URL is
     /// resolved here against the document base URL, as list-marker images
@@ -2208,6 +2216,14 @@ fn pseudo_generates_box(
         }),
         PseudoElem::FirstLine | PseudoElem::FirstLetter => true,
         _ => false,
+    }
+}
+
+/// The URL of a `url()` background layer.
+fn background_url(image: &BackgroundImage) -> Option<&str> {
+    match image {
+        BackgroundImage::Url(raw_url) => Some(raw_url.as_str()),
+        _ => None,
     }
 }
 

@@ -17,7 +17,9 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::ComputedValues;
-use crate::computed::CustomPropertyEnvironment;
+use crate::computed::{
+    ComputedBackgroundLayer, CustomPropertyEnvironment, initial_background_layers,
+};
 use crate::property::{
     BackgroundImage, BasicShape, ClipPath, ContentComponent, CounterStyle, FilterFunction,
     FontFeatureSettings, FontLanguageOverride, FontPaletteValue, FontVariationSettings, Gradient,
@@ -194,13 +196,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         justify_self: _,
         orphans: _,
         widows: _,
-        background_repeat: _,
-        background_attachment: _,
-        background_clip: _,
-        background_origin: _,
-        background_size: _,
-        background_position: _,
-        background_image,
+        background_layers,
         border_image,
         object_fit: _,
         object_position: _,
@@ -270,7 +266,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         + str_of(line_str(grid_row_end), line_str(&parent.grid_row_end))
         + str_of(line_str(grid_column_start), line_str(&parent.grid_column_start))
         + str_of(line_str(grid_column_end), line_str(&parent.grid_column_end))
-        + image(background_image, &parent.background_image)
+        + background_layers_heap(background_layers, &parent.background_layers)
         + image(&border_image.source, &parent.border_image.source)
         + image(mask_image, &parent.mask_image)
         + clip_path_heap(clip_path)
@@ -358,6 +354,18 @@ fn content_component(component: &ContentComponent) -> u64 {
         }
         _ => 0,
     }
+}
+
+/// The heap of a node's background layer list, unless it is the parent's
+/// list or the shared initial one: the list itself and each layer's image.
+fn background_layers_heap(
+    value: &Arc<[ComputedBackgroundLayer]>,
+    parent: &Arc<[ComputedBackgroundLayer]>,
+) -> u64 {
+    if Arc::ptr_eq(value, parent) || Arc::ptr_eq(value, &initial_background_layers()) {
+        return 0;
+    }
+    slice_heap(value, |layer| image(&layer.image, &BackgroundImage::None))
 }
 
 fn image(value: &BackgroundImage, parent: &BackgroundImage) -> u64 {

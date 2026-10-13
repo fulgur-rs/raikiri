@@ -422,6 +422,73 @@ pub struct ChLengthProvenance {
     pub font: ChFontKey,
 }
 
+/// One computed background layer (CSS Backgrounds and Borders 3 §2.1): the
+/// item of each per-layer longhand that applies to this layer, after the
+/// lists are reconciled to the number of `background-image` items.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComputedBackgroundLayer {
+    /// `background-image` (§2.3), initial [`BackgroundImage::None`]. Per CSS
+    /// Values and Units 4 §4.5.1, a `<url>`'s computed value is technically
+    /// the resolved absolute URL; this crate holds the raw text and defers
+    /// resolution to the runtime consumer (raikiri-style does not depend on
+    /// the `url` crate). `Gradient(..)`'s `<length-percentage>` payloads have
+    /// their font-relative lengths absolutized to `Px` while `<percentage>`
+    /// and `<angle>` stay symbolic until painting (see
+    /// `resolve_background_image`).
+    pub image: BackgroundImage,
+    /// `background-position` (§2.6), initial `0% 0%`. See
+    /// [`crate::property::CssPositionOffset`] for why edge-relative offsets
+    /// (`right 10px` etc.) stay symbolic.
+    pub position: ComputedCssPosition,
+    /// `background-size` (§2.9), initial `auto auto`; lengths absolutized
+    /// against this node's font-size and line-height, `%` passed through.
+    pub size: ComputedBackgroundSize,
+    /// `background-repeat` (§2.4), initial `repeat repeat`.
+    pub repeat: BackgroundRepeat,
+    /// `background-attachment` (§2.5), initial `scroll`.
+    pub attachment: BackgroundAttachment,
+    /// `background-origin` (§2.8), initial `padding-box`.
+    pub origin: VisualBox,
+    /// `background-clip` (§2.7), initial `border-box`.
+    pub clip: VisualBox,
+}
+
+impl ComputedBackgroundLayer {
+    /// A layer with every per-layer longhand at its initial value.
+    pub fn initial() -> Self {
+        Self {
+            image: BackgroundImage::None,
+            position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
+                    0.0,
+                )),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0)),
+            },
+            size: ComputedBackgroundSize::Explicit {
+                width: ComputedLengthPercentageOrAuto::Auto,
+                height: ComputedLengthPercentageOrAuto::Auto,
+            },
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            attachment: BackgroundAttachment::Scroll,
+            origin: VisualBox::PaddingBox,
+            clip: VisualBox::BorderBox,
+        }
+    }
+}
+
+/// The shared initial background layer list: one initial layer. Every node
+/// without background declarations clones this `Arc` instead of allocating.
+pub(crate) fn initial_background_layers() -> Arc<[ComputedBackgroundLayer]> {
+    static INITIAL: OnceLock<Arc<[ComputedBackgroundLayer]>> = OnceLock::new();
+    INITIAL
+        .get_or_init(|| Arc::from([ComputedBackgroundLayer::initial()]))
+        .clone()
+}
+
 /// Computed `border-image-*` longhands (CSS Backgrounds 3 §6
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-images>).
 ///
@@ -433,7 +500,7 @@ pub struct ChLengthProvenance {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComputedBorderImage {
     /// `border-image-source`. Gradients are absolutized like
-    /// [`ComputedValues::background_image`].
+    /// [`ComputedBackgroundLayer::image`].
     pub source: BackgroundImage,
     /// `border-image-slice`, as specified.
     pub slice: BorderImageSlice,
@@ -1708,75 +1775,18 @@ pub struct ComputedValues {
     /// which side of a fragmentation break the minimum line count applies to
     /// (after the break, vs. `orphans`'s before).
     pub widows: i32,
-    /// `background-repeat`. **non-inherited**, initial:
-    /// [`BackgroundRepeat`]`{x: Repeat, y: Repeat}` (CSS Backgrounds and
-    /// Borders 3 §2.4 "Tiling Images: the background-repeat
-    /// property" <https://www.w3.org/TR/css-backgrounds-3/#the-background-repeat>,
-    /// "Value: `<repeat-style>#`", "Inherited: no"). Computed value =
-    /// specified keyword pair (no length payload).
-    pub background_repeat: BackgroundRepeat,
-    /// `background-attachment`. **non-inherited**, initial:
-    /// [`BackgroundAttachment::Scroll`] (CSS Backgrounds and Borders 3 §2.5
-    /// "Affixing Images: the background-attachment property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-attachment>,
-    /// "Value: `<attachment>#`", "Inherited: no").
-    pub background_attachment: BackgroundAttachment,
-    /// `background-clip`. **non-inherited**, initial:
-    /// [`VisualBox::BorderBox`] (CSS Backgrounds and Borders 3 §2.7
-    /// "Painting Area: the background-clip property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-clip>,
-    /// "Value: `<visual-box>#`", "Initial: border-box", "Inherited: no" —
-    /// sibling [`Self::background_origin`] has a *different* initial, see
-    /// that field's doc).
-    pub background_clip: VisualBox,
-    /// `background-origin`. **non-inherited**, initial:
-    /// [`VisualBox::PaddingBox`] (CSS Backgrounds and Borders 3 §2.8
-    /// "Positioning Area: the background-origin property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-origin>,
-    /// "Value: `<visual-box>#`", "Initial: padding-box", "Inherited: no" —
-    /// sibling [`Self::background_clip`] has a *different* initial, see
-    /// that field's doc).
-    pub background_origin: VisualBox,
-    /// `background-size`. **non-inherited**, initial:
-    /// [`crate::property::BackgroundSize::Explicit`]`{width: Auto, height: Auto}` (CSS
-    /// Backgrounds and Borders 3 §2.9 "Sizing Images: the
-    /// background-size property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-size>,
-    /// "Value: `<bg-size>#`", "Initial: auto", "Inherited: no"). Contains a
-    /// `<length-percentage>` per axis, absolutized against this node's own
-    /// font-size/line-height (`em`/`rem`/`lh` resolved to px, `%` passed
-    /// through — same layering as [`Self::width`]).
-    pub background_size: ComputedBackgroundSize,
-    /// `background-position`. **non-inherited**, initial: `0% 0%` (CSS
-    /// Backgrounds and Borders 3 §2.6 "Positioning the Background Image:
-    /// the background-position property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-position>,
-    /// "Value: `<bg-position>#`", "Inherited: no"). See
-    /// [`crate::property::CssPositionOffset`] doc for why edge-relative
-    /// offsets (`right 10px` etc.) stay symbolic through this layer too.
-    pub background_position: ComputedCssPosition,
-    /// `background-image`. **non-inherited**, initial: [`BackgroundImage::None`]
-    /// (CSS Backgrounds and Borders 3 §2.3 "Image Sources: the
-    /// background-image property"
-    /// <https://www.w3.org/TR/css-backgrounds-3/#the-background-image>,
-    /// "Value: `<bg-image>#`", "Inherited: no"). This crate parses only a
-    /// single layer (`<bg-image> = <image> | none`, `<image> = <url> |
-    /// <gradient>` — both alternatives implemented, see [`BackgroundImage`]
-    /// doc's scope-carving section for what's deferred within `<gradient>`
-    /// itself); comma-separated multi-layer `#` support is a follow-up.
-    /// Per CSS Values and Units 4 §4.5.1, a `<url>`'s computed value is
-    /// technically the *resolved absolute URL*, not the specified text
-    /// verbatim — this crate holds the raw `String` unresolved and defers
-    /// resolution to the runtime consumer, the same boundary
-    /// [`crate::property::PropertyValue::Content`]'s `Image` component
-    /// documents (raikiri-style doesn't depend on the `url` crate).
-    /// `Gradient(..)`'s `<length-percentage>` payloads are partially
-    /// absolutized (font-relative lengths → `Px`, `<percentage>` stays
-    /// symbolic — `resolve_background_image` doc) while `<angle>` stays
-    /// unresolved; the `<percentage>` half still needs the gradient box's
-    /// own dimensions (paint/used-value layer, see
-    /// [`crate::specified::SpecifiedValues::background_image`] doc).
-    pub background_image: BackgroundImage,
+    /// The background layers (CSS Backgrounds and Borders 3 §2.1
+    /// <https://www.w3.org/TR/css-backgrounds-3/#layering>), one per item of
+    /// `background-image`, in declaration order: the first layer is painted
+    /// on top. **non-inherited**. Never empty; the initial value is one
+    /// [`ComputedBackgroundLayer::initial`] layer.
+    ///
+    /// The other per-layer longhands (`background-position`, `-size`,
+    /// `-repeat`, `-attachment`, `-origin` and `-clip`) are reconciled to
+    /// this length: "the excess values at the end are not used", and a list
+    /// with too few values is repeated as needed (§2.1). See
+    /// [`ComputedBackgroundLayer`] for each field.
+    pub background_layers: Arc<[ComputedBackgroundLayer]>,
     /// `border-image-source`, `-slice`, `-width`, `-outset` and `-repeat`
     /// (CSS Backgrounds 3 §6). **non-inherited**; see
     /// [`ComputedBorderImage`].
@@ -1798,7 +1808,7 @@ pub struct ComputedValues {
     /// ([`crate::property::CssPosition`] doc's reuse note). Percentages
     /// resolve against the replaced element's own content box at used-value
     /// time (a layout-time input this crate's cascade/computed layer does
-    /// not have), so — same as [`Self::background_position`] — the
+    /// not have), so — same as [`ComputedBackgroundLayer::position`] — the
     /// `<length-percentage>` payload is absolutized against font-size/
     /// line-height only, not against a box size.
     pub object_position: ComputedCssPosition,
@@ -1872,7 +1882,7 @@ pub struct ComputedValues {
     /// <https://www.w3.org/TR/css-masking-1/#the-mask-image>). Identity
     /// pass-through from [`crate::specified::SpecifiedValues::mask_image`]
     /// — this crate never absolutizes a `<gradient>` payload's embedded
-    /// lengths, same reasoning as [`Self::background_image`].
+    /// lengths, same reasoning as [`ComputedBackgroundLayer::image`].
     pub mask_image: MaskImage,
     /// `clip-path`. **non-inherited**, initial: [`ClipPath::None`] (CSS
     /// Masking Level 1 §5.1 "Basic Shapes: the clip-path property"
@@ -2004,6 +2014,34 @@ pub struct ComputedValues {
 }
 
 impl ComputedValues {
+    /// The background layers, top first (see [`Self::background_layers`]).
+    /// Never empty.
+    pub fn background_layers(&self) -> &[ComputedBackgroundLayer] {
+        &self.background_layers
+    }
+
+    /// The `background-image` items, one per layer, top first.
+    pub fn background_images(&self) -> impl Iterator<Item = &BackgroundImage> + '_ {
+        self.background_layers.iter().map(|layer| &layer.image)
+    }
+
+    /// Whether any background layer has an image (`background-image` is
+    /// not `none` on every layer).
+    pub fn has_background_image(&self) -> bool {
+        self.background_images()
+            .any(|image| !matches!(image, BackgroundImage::None))
+    }
+
+    /// The `background-clip` of the final (bottom) layer, which also clips
+    /// the background color (CSS Backgrounds 3 §2.2: "The background color
+    /// is clipped according to the background-clip value associated with
+    /// the bottom-most background image layer").
+    pub fn final_background_clip(&self) -> VisualBox {
+        self.background_layers
+            .last()
+            .map_or(VisualBox::BorderBox, |layer| layer.clip)
+    }
+
     /// Return an effective resolved CSS custom-property value as an owned
     /// string.  This accessor deliberately exposes only primitive text, not
     /// the style engine's internal property environment.
@@ -2321,30 +2359,9 @@ impl ComputedValues {
             // are `2`.
             orphans: 2,
             widows: 2,
-            // CSS Backgrounds and Borders 3 §2.4–§2.9: spec initial
-            // values (see the field documentation for `Self::background_repeat`
-            // and others; `background_clip` and `background_origin` have
-            // different initial values).
-            background_repeat: BackgroundRepeat {
-                x: BackgroundRepeatKeyword::Repeat,
-                y: BackgroundRepeatKeyword::Repeat,
-            },
-            background_attachment: BackgroundAttachment::Scroll,
-            background_clip: VisualBox::BorderBox,
-            background_origin: VisualBox::PaddingBox,
-            background_size: ComputedBackgroundSize::Explicit {
-                width: ComputedLengthPercentageOrAuto::Auto,
-                height: ComputedLengthPercentageOrAuto::Auto,
-            },
-            background_position: ComputedCssPosition {
-                horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(
-                    0.0,
-                )),
-                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0)),
-            },
-            // CSS Backgrounds and Borders 3 §2.3: initial background-image
-            // is `none`.
-            background_image: BackgroundImage::None,
+            // CSS Backgrounds and Borders 3 §2.3–§2.9: one layer holding
+            // every per-layer longhand's initial value, shared by all nodes.
+            background_layers: initial_background_layers(),
             border_image: ComputedBorderImage::initial(),
             // CSS Images 3 §5.1: initial object-fit is `fill`.
             object_fit: ObjectFit::Fill,
@@ -2430,7 +2447,7 @@ impl ComputedValues {
     /// The field documentation on [`Self`] is the canonical source for each
     /// property's inheritance behavior (currently inherited: color / font-family / font-size / font-weight / text_align / hanging_punctuation / direction / writing_mode / cssom_writing_mode / line_height / font_style / font_kerning / font_optical_sizing / font_variant_emoji / font_language_override / font_variant_ligatures / font_synthesis / font_variant_position / font_palette / font_variant_numeric / font_variant_east_asian / font_variation_settings / font_feature_settings / font_variant_caps / text_transform / text_combine_upright / text_orientation / visibility / text_indent / word_break / overflow_wrap / letter_spacing / word_spacing / white_space / white_space_collapse / text_wrap_style / hyphens / hyphenate_character / hyphenate_limit_chars / tab_size / quotes / text_shadow / text_underline_offset / orphans / widows / border_collapse / border_spacing / caption_side / empty_cells;
     /// non-inherited: background-color / display / counter-* / content /
-    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_repeat / background_attachment / background_clip / background_origin / background_size / background_position / background_image / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout / column_count / column_fill / column_span / column_width).
+    /// string-set / running_templates / padding / margin / border / border_radius / box_shadow / outline / width / height / box_sizing / overflow / text_decoration_line / text_decoration_style / text_decoration_color / text_decoration_inset / unicode_bidi / vertical_align / z_index / break_before / break_after / break_inside / background_layers / object_fit / object_position / opacity / isolation / mix_blend_mode / mask_image / clip_path / transform / filter / table_layout / column_count / column_fill / column_span / column_width).
     ///
     /// The inherited/non-inherited classification is defined by each field's
     /// documentation. Inherited fields are copied from the parent's computed

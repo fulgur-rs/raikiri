@@ -3,9 +3,9 @@
 
 use crate::Document;
 use raikiri_style::property::{
-    BackgroundImage, BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue,
-    EmptyCellsValue, FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility,
-    WhiteSpaceCollapse, ZIndexValue,
+    BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue, EmptyCellsValue,
+    FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse,
+    ZIndexValue,
 };
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
@@ -380,7 +380,7 @@ pub fn is_visibility_hidden_table_part(cv: &ComputedValues) -> bool {
 /// per-cell clip.
 pub fn paints_table_part_decoration(cv: &ComputedValues) -> bool {
     cv.background_color.a > 0
-        || !matches!(cv.background_image, BackgroundImage::None)
+        || cv.has_background_image()
         || [
             &cv.border.top,
             &cv.border.right,
