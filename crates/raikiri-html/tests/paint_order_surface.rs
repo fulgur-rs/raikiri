@@ -724,3 +724,59 @@ fn translucent_first_line_leaves_floats_to_the_other_lines() {
         ]
     );
 }
+
+/// An atomic inline on the first line is inside the `::first-line` group,
+/// in the group of the inline element around it when there is one; one on
+/// a later line is listed with the other lines.
+#[test]
+fn translucent_first_line_holds_its_atomic_inlines() {
+    assert_eq!(
+        line_order(
+            "<p id=p>A<i id=a></i><br>B<i id=z></i></p>",
+            "#p::first-line {opacity:.5} \
+             #a, #z {display:inline-block;width:5px;height:5px;background:red}",
+        ),
+        [
+            "box p", "text 1", "box z", "push 0.5", "text 0", "box a", "pop"
+        ]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<i id=a></i></b><br>B</p>",
+            "#p::first-line {opacity:.5} #b {opacity:.25} \
+             #a {display:inline-block;width:5px;height:5px;background:red}",
+        ),
+        [
+            "box p",
+            "text 1",
+            "push 0.5",
+            "push 0.25",
+            "box b",
+            "text b 0",
+            "box a",
+            "pop",
+            "pop"
+        ]
+    );
+}
+
+/// A first line on another page lists no group here, even when an atomic
+/// inline on it is inside an inline opacity group.
+#[test]
+fn translucent_first_line_on_another_page_lists_no_group() {
+    let lines = "B<br>".repeat(30);
+    let result = lay_out_with_font(
+        &format!("<p id=p><b id=b>A<i id=a></i></b><br>{lines}</p>"),
+        "p {margin:0} #p::first-line {opacity:.5} #b {opacity:.25} \
+         #a {display:inline-block;width:5px;height:5px;background:red}",
+    );
+    let page = result.page(1).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, PaintEvent::PushOpacity(_))),
+        "{events:?}"
+    );
+}

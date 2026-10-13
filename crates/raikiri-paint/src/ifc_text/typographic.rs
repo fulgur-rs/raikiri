@@ -80,8 +80,10 @@ struct Group {
     boxes: Scene,
 }
 
-/// A composited group placed in its parent's paint: the parent command it
-/// precedes, its stack level, its allocation order, and its commands.
+/// A composited group or box placed in its parent's paint: the parent
+/// command it precedes, its stack level, its order among the others at the
+/// same place and level, and its commands. Group `i` has order `2 * (i + 1)`,
+/// so a box can take the odd order between two groups.
 type Child = (usize, i32, usize, Scene);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
@@ -106,6 +108,9 @@ pub(crate) struct Paragraph<'a> {
 
 pub(super) struct TypographicPaint {
     normal: Scene,
+    /// Boxes laid out beside the lines outside every group, placed in
+    /// `normal` like groups.
+    root_children: Vec<Child>,
     groups: Vec<Group>,
     nearest_groups: HashMap<FragmentKey, Option<usize>>,
     piece_groups: HashMap<FragmentKey, Option<usize>>,
@@ -123,6 +128,7 @@ impl TypographicPaint {
         let cascade = paragraph.cascade;
         let mut paint = Self {
             normal: Scene::new(),
+            root_children: Vec::new(),
             groups: Vec::new(),
             nearest_groups: HashMap::new(),
             piece_groups: HashMap::new(),
@@ -321,6 +327,47 @@ impl TypographicPaint {
         }
     }
 
+    /// Place the paint of a box laid out beside the lines, such as an atomic
+    /// inline, in `group`. A box that is not positioned is part of the
+    /// group's inline content: it paints after the paint drawn so far, below
+    /// the groups nested in it (CSS 2.1 Appendix E steps 7 and 8). A
+    /// positioned box paints at its stack level `level` among those groups,
+    /// after the first `groups_before` groups, those that come before it in
+    /// tree order.
+    pub(super) fn add_box(
+        &mut self,
+        group: Option<usize>,
+        positioned: Option<(i32, usize)>,
+        content: Scene,
+    ) {
+        let Some((level, groups_before)) = positioned else {
+            self.target(group).append_scene(content, Affine::IDENTITY);
+            return;
+        };
+        // Like a group, a box with a negative level goes below the rest of
+        // its parent's paint, and any other box after all of it, including
+        // the boxes that are not positioned placed after this one.
+        let insertion = if level < 0 { 0 } else { usize::MAX };
+        let child = (insertion, level, 2 * groups_before + 1, content);
+        match group {
+            Some(index) => self.groups[index].children.push(child),
+            None => self.root_children.push(child),
+        }
+    }
+
+    /// Whether the paragraph composites any group.
+    pub(super) fn has_groups(&self) -> bool {
+        !self.groups.is_empty()
+    }
+
+    /// How many groups have an owner for which `before` holds.
+    pub(super) fn groups_before(&self, before: impl Fn(usize) -> bool) -> usize {
+        self.groups
+            .iter()
+            .filter(|group| before(group.owner))
+            .count()
+    }
+
     pub(super) fn target(&mut self, group: Option<usize>) -> &mut Scene {
         match group {
             Some(index) => &mut self.groups[index].scene,
@@ -348,7 +395,7 @@ impl TypographicPaint {
             // A singular ancestor transform has no drawable two-dimensional ink.
             Affine::IDENTITY
         };
-        let mut roots = Vec::new();
+        let mut roots = std::mem::take(&mut self.root_children);
         if let Some((first_line, opacity)) = first_line {
             let mut content = Scene::new();
             first_line.finish(&mut content, clip, paint_transform, None);
@@ -410,7 +457,7 @@ impl TypographicPaint {
             };
             // Groups at the same place paint by stack level, then in tree
             // order, after a first line's group.
-            let child = (insertion, level, index + 1, composite);
+            let child = (insertion, level, 2 * (index + 1), composite);
             match parent {
                 Some(parent) => {
                     self.groups[parent].children.push(child);
@@ -426,10 +473,10 @@ impl TypographicPaint {
     }
 }
 
-/// The stack level an inline element's group composites at among the other
-/// groups of its paragraph: the `z-index` of a positioned element, and 0
-/// otherwise (CSS 2.1 §9.9.1).
-fn element_stack_level(cascade: &raikiri_style::CascadeResult, id: usize) -> i32 {
+/// The stack level an inline element's group, or a box laid out beside the
+/// lines, composites at among the other groups of its paragraph: the
+/// `z-index` of a positioned element, and 0 otherwise (CSS 2.1 §9.9.1).
+pub(super) fn element_stack_level(cascade: &raikiri_style::CascadeResult, id: usize) -> i32 {
     cascade
         .computed
         .get(id)
@@ -524,6 +571,11 @@ fn cached_group(
 fn merge_children(scene: Scene, mut children: Vec<Child>) -> Scene {
     if children.is_empty() {
         return scene;
+    }
+    // A child placed past the end follows the whole scene.
+    let end = scene.commands.len();
+    for child in &mut children {
+        child.0 = child.0.min(end);
     }
     children.sort_by_key(|(position, level, order, _)| (*position, *level, *order));
     let mut children = children.into_iter().peekable();

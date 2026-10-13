@@ -1900,6 +1900,32 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             paint_transform: Affine,
+            /// Keep the paragraph's groups open until
+            /// [`PaintFrame::FinishLines`] when it has any, so the boxes laid
+            /// out beside the lines join them.
+            hold: bool,
+            /// Whether a box beside the lines is inside a translucent inline
+            /// element, so the groups are kept open even if no text of the
+            /// element allocated one.
+            boxes_in_groups: bool,
+        },
+        /// Start recording the paint of a box laid out beside the held lines
+        /// of its paragraph. An `early` box paints before the lines, which
+        /// place it once they are drawn.
+        BeginBox {
+            root: usize,
+            node_id: usize,
+            early: bool,
+        },
+        /// Place the recorded paint of a box in the held lines of `root`.
+        EndBox {
+            root: usize,
+            node_id: usize,
+            early: bool,
+        },
+        /// Composite the held lines of `root` and the boxes placed in them.
+        FinishLines {
+            root: usize,
         },
         /// Close a layer of deferred inline content: paint what its blocks
         /// deferred, then drop the layer.
@@ -2049,11 +2075,18 @@ pub(crate) fn paint_document_impl(
     } else {
         None
     };
+    let mut capture_scene = crate::capture::CaptureScene::new(scene);
     let mut transformed_scene = crate::transform::TransformScene {
-        scene,
+        scene: &mut capture_scene,
         transform: Affine::IDENTITY,
     };
     let scene = &mut transformed_scene;
+    // Paragraphs whose groups wait for the boxes beside their lines,
+    // innermost last.
+    let mut held_lines: Vec<crate::ifc_text::HeldLines<'_>> = Vec::new();
+    // Boxes recorded before the lines of their paragraph, which place them:
+    // the paragraph root, the box and its paint.
+    let mut early_boxes: Vec<(usize, usize, anyrender::Scene)> = Vec::new();
     // Each open layer collects the inline content its plain blocks defer,
     // in tree order. The outermost layer closes after the whole body.
     let mut deferral_scopes: Vec<Vec<PaintFrame>> = vec![Vec::new()];
@@ -2256,6 +2289,8 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 paint_transform,
+                hold,
+                boxes_in_groups,
             } => {
                 let text_clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &text_clip {
@@ -2279,24 +2314,155 @@ pub(crate) fn paint_document_impl(
                 }
                 let saved_transform = scene.transform;
                 scene.transform = paint_transform;
-                crate::ifc_text::draw_ifc_lines_with_resources(
-                    image_cache,
-                    scene,
-                    document,
-                    cascade,
-                    node_id,
-                    crate::ifc_text::IfcPosition { x, y, shift_y },
-                    &decorations,
-                    fragmentainer,
-                    custom_highlights,
-                    pixel_source,
-                    warnings,
-                    page_box,
-                    paint_transform,
-                );
+                let early_start = early_boxes
+                    .iter()
+                    .rposition(|&(root, _, _)| root != node_id)
+                    .map_or(0, |index| index + 1);
+                let early: Vec<_> = early_boxes.drain(early_start..).collect();
+                if hold {
+                    let lines = crate::ifc_text::hold_ifc_lines(
+                        image_cache,
+                        document,
+                        cascade,
+                        node_id,
+                        crate::ifc_text::IfcPosition { x, y, shift_y },
+                        &decorations,
+                        fragmentainer,
+                        custom_highlights,
+                        pixel_source,
+                        warnings,
+                        page_box,
+                        paint_transform,
+                    );
+                    match lines {
+                        Some(mut lines) if boxes_in_groups || lines.has_groups() => {
+                            for (_, id, content) in early {
+                                lines.place_box(id, content);
+                            }
+                            held_lines.push(lines);
+                        }
+                        // Without groups the boxes paint in place: the early
+                        // ones below the lines, the others after them.
+                        lines => {
+                            for (_, _, content) in early {
+                                scene.scene.append_scene(content, Affine::IDENTITY);
+                            }
+                            if let Some(lines) = lines {
+                                lines.finish(scene);
+                            }
+                        }
+                    }
+                } else {
+                    crate::ifc_text::draw_ifc_lines_with_resources(
+                        image_cache,
+                        scene,
+                        document,
+                        cascade,
+                        node_id,
+                        crate::ifc_text::IfcPosition { x, y, shift_y },
+                        &decorations,
+                        fragmentainer,
+                        custom_highlights,
+                        pixel_source,
+                        warnings,
+                        page_box,
+                        paint_transform,
+                    );
+                }
                 scene.transform = saved_transform;
                 if text_clip.is_some() {
                     scene.pop_layer();
+                }
+                continue;
+            }
+            PaintFrame::BeginBox {
+                root,
+                node_id,
+                early,
+            } => {
+                // A box that closes deferred inline content paints it before
+                // the recording starts, as its visit would.
+                if deferral_scopes
+                    .last()
+                    .is_some_and(|pending| !pending.is_empty())
+                    && raikiri_dom::paint_rules::closes_deferred_inline_content(
+                        document, cascade, node_id,
+                    )
+                {
+                    let pending = deferral_scopes
+                        .last_mut()
+                        .map(std::mem::take)
+                        .unwrap_or_default();
+                    stack.push(PaintFrame::BeginBox {
+                        root,
+                        node_id,
+                        early,
+                    });
+                    stack.extend(pending.into_iter().rev());
+                    continue;
+                }
+                // The trace records the box inside the opacities of the
+                // inline elements around it, as it does for boxes beside
+                // lines that are not held.
+                if let Some(t) = trace.as_deref_mut() {
+                    t.extend(
+                        crate::ifc_text::enclosing_inline_opacities(
+                            crate::ifc_text::Paragraph {
+                                document,
+                                cascade,
+                                root_id: root,
+                            },
+                            node_id,
+                        )
+                        .into_iter()
+                        .map(|(id, alpha)| crate::PaintTraceEvent::PushOpacity(id, alpha)),
+                    );
+                }
+                if early
+                    || held_lines
+                        .last()
+                        .is_some_and(|lines| lines.root_id() == root)
+                {
+                    scene.scene.begin_capture();
+                }
+                continue;
+            }
+            PaintFrame::EndBox {
+                root,
+                node_id,
+                early,
+            } => {
+                if let Some(t) = trace.as_deref_mut() {
+                    let opacities = crate::ifc_text::enclosing_inline_opacities(
+                        crate::ifc_text::Paragraph {
+                            document,
+                            cascade,
+                            root_id: root,
+                        },
+                        node_id,
+                    );
+                    t.extend(opacities.iter().map(|_| crate::PaintTraceEvent::PopOpacity));
+                }
+                if early {
+                    early_boxes.push((root, node_id, scene.scene.end_capture()));
+                } else if let Some(lines) = held_lines
+                    .last_mut()
+                    .filter(|lines| lines.root_id() == root)
+                {
+                    lines.place_box(node_id, scene.scene.end_capture());
+                }
+                continue;
+            }
+            PaintFrame::FinishLines { root } => {
+                if held_lines
+                    .last()
+                    .is_some_and(|lines| lines.root_id() == root)
+                    && let Some(lines) = held_lines.pop()
+                {
+                    let saved_transform = scene.transform;
+                    scene.transform = lines.paint_transform();
+                    lines.finish(scene);
+                    scene.transform = saved_transform;
                 }
                 continue;
             }
@@ -3620,8 +3786,25 @@ pub(crate) fn paint_document_impl(
                         fragmentainer,
                         inside_fixed: ifc_inside_fixed,
                         paint_transform: scene.transform,
+                        // Lines clipped to the page content box hold no
+                        // boxes, which that clip does not cover.
+                        hold: !children.is_empty()
+                            && node.ifc_lines().is_some()
+                            && text_page_clip(ifc_inside_fixed).is_none(),
+                        boxes_in_groups: children.iter().any(|&child| {
+                            !crate::ifc_text::enclosing_inline_opacities(
+                                crate::ifc_text::Paragraph {
+                                    document,
+                                    cascade,
+                                    root_id: node_id,
+                                },
+                                child,
+                            )
+                            .is_empty()
+                        }),
                     });
                 }
+                let hold_lines = matches!(lines_frame, Some(PaintFrame::Lines { hold: true, .. }));
                 let own_multicol_clip_height = match cv.column_count {
                     ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
                         Some(layout.size.height)
@@ -3708,11 +3891,14 @@ pub(crate) fn paint_document_impl(
                             (*offset_child == child).then_some(*offset)
                         })
                         .unwrap_or(0.0);
-                    // A box beside the lines inside translucent inline
+                    // A box beside held lines joins the groups of the
+                    // paragraph, which composite it with the rest of their
+                    // paint once the lines and boxes are all recorded.
+                    // A box beside other lines inside translucent inline
                     // elements paints inside their opacity. Each box gets
                     // layers of its own, apart from the group the elements'
                     // text composites in.
-                    let inline_opacities = if node.is_ifc_root() {
+                    let inline_opacities = if node.is_ifc_root() && !hold_lines {
                         crate::ifc_text::enclosing_inline_opacities(
                             crate::ifc_text::Paragraph {
                                 document,
@@ -3726,15 +3912,26 @@ pub(crate) fn paint_document_impl(
                     };
                     // A box with a negative stack level paints below the
                     // paragraph's lines (CSS 2.1 Appendix E steps 3 and 7).
-                    let frames = if node.is_ifc_root()
+                    let below_lines = node.is_ifc_root()
                         && cascade.computed.get(child).is_some_and(|child_cv| {
                             child_cv.position != PositionValue::Static
                                 && matches!(child_cv.z_index, ZIndexValue::Integer(level) if level < 0)
-                        }) {
+                        });
+                    let frames = if below_lines {
                         &mut below_lines_frames
                     } else {
                         &mut child_frames
                     };
+                    // A box beside held lines joins the groups of the
+                    // paragraph, which composite it with the rest of their
+                    // paint once the lines and boxes are all recorded.
+                    if hold_lines {
+                        frames.push(PaintFrame::EndBox {
+                            root: node_id,
+                            node_id: child,
+                            early: below_lines,
+                        });
+                    }
                     frames.extend(inline_opacities.iter().map(|_| PaintFrame::PopOpacity));
                     frames.push(PaintFrame::Visit {
                         node_id: child,
@@ -3765,12 +3962,21 @@ pub(crate) fn paint_document_impl(
                             .rev()
                             .map(|&(node_id, alpha)| PaintFrame::PushOpacity { node_id, alpha }),
                     );
+                    if hold_lines {
+                        frames.push(PaintFrame::BeginBox {
+                            root: node_id,
+                            node_id: child,
+                            early: below_lines,
+                        });
+                    }
                 }
+                let finish_lines = hold_lines.then_some(PaintFrame::FinishLines { root: node_id });
                 if defers && node.is_ifc_root() {
                     if let Some(pending) = deferral_scopes.last_mut() {
                         pending.extend(below_lines_frames.into_iter().rev());
                         pending.extend(lines_frame);
                         pending.extend(child_frames.into_iter().rev());
+                        pending.extend(finish_lines);
                         // A standalone `::after` still follows the content
                         // it is generated after.
                         if after_pushed {
@@ -3784,6 +3990,7 @@ pub(crate) fn paint_document_impl(
                         deferral_scopes.push(Vec::new());
                         stack.push(PaintFrame::EndDeferral);
                     }
+                    stack.extend(finish_lines);
                     stack.extend(child_frames);
                     stack.extend(lines_frame);
                     stack.extend(below_lines_frames);
