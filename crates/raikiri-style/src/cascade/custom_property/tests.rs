@@ -146,15 +146,18 @@ fn var_in_background_shorthand_projects_each_deferred_longhand() {
     );
     assert_eq!(cv.background_color, RED);
     assert_eq!(
-        cv.background_repeat,
+        cv.background_layers()[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Round,
             y: BackgroundRepeatKeyword::Round,
         }
     );
-    assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
-    assert_eq!(cv.background_clip, VisualBox::BorderBox);
-    assert_eq!(cv.background_origin, VisualBox::BorderBox);
+    assert_eq!(
+        cv.background_layers()[0].attachment,
+        BackgroundAttachment::Fixed
+    );
+    assert_eq!(cv.background_layers()[0].clip, VisualBox::BorderBox);
+    assert_eq!(cv.background_layers()[0].origin, VisualBox::BorderBox);
 }
 
 #[test]

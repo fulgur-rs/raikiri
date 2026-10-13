@@ -55,8 +55,17 @@ fn keyword_offsets_stay_with_their_keyword() {
 }
 
 #[test]
+fn background_position_lists_canonicalize_each_layer() {
+    assert_eq!(
+        position("top left, bottom 16% left").as_deref(),
+        Some("left top, left bottom 16%")
+    );
+}
+
+#[test]
 fn unrecognized_text_and_other_properties_are_left_alone() {
-    assert_eq!(position("1px, 2px"), None);
+    assert_eq!(position("1px,, 2px"), None);
+    assert_eq!(position("1px,"), None);
     assert_eq!(position("middle"), None);
     assert_eq!(position("1px 2px 3px"), None);
     assert_eq!(serialize_position_value("width", "left"), None);

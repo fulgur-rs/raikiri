@@ -22,7 +22,7 @@ use super::*;
 use crate::computed::INITIAL_FONT_SIZE_PX;
 use crate::property::LengthPercentageOrCalc;
 use crate::property::{
-    AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
+    AlignSelfValue, BackgroundAttachment, BackgroundImage, BackgroundLayerSpec, BackgroundRepeat,
     BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, Border, BorderCollapseValue,
     BorderColor, BorderRadius, BorderSpacingValue, BoxDecorationBreak, BoxShadowItem, BoxSizing,
     BreakBetween, BreakInside, CalcLengthPercentage, CaptionSideValue, ClearValue, ClipPath,
@@ -2459,22 +2459,24 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     let shorthand = BackgroundShorthand {
         color_expression: None,
         color: CssColor::TRANSPARENT,
-        image: BackgroundImage::None,
-        repeat: BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Repeat,
-            y: BackgroundRepeatKeyword::Repeat,
-        },
-        attachment: BackgroundAttachment::Scroll,
-        position: CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Em(1.0)),
-            vertical: CssPositionOffset::Start(Length::Rem(2.0)),
-        },
-        size: BackgroundSize::Explicit {
-            width: LengthOrAuto::Length(Length::Em(3.0)),
-            height: LengthOrAuto::Length(Length::Rem(4.0)),
-        },
-        clip: VisualBox::BorderBox,
-        origin: VisualBox::PaddingBox,
+        layers: Box::new([BackgroundLayerSpec {
+            image: BackgroundImage::None,
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Repeat,
+                y: BackgroundRepeatKeyword::Repeat,
+            },
+            attachment: BackgroundAttachment::Scroll,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Em(1.0)),
+                vertical: CssPositionOffset::Start(Length::Rem(2.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Em(3.0)),
+                height: LengthOrAuto::Length(Length::Rem(4.0)),
+            },
+            clip: VisualBox::BorderBox,
+            origin: VisualBox::PaddingBox,
+        }]),
     };
     assert_eq!(
         absolutize_in_page_context(
@@ -2489,14 +2491,17 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Background(Box::new(BackgroundShorthand {
-            position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Px(20.0)),
-                vertical: CssPositionOffset::Start(Length::Px(32.0)),
-            },
-            size: BackgroundSize::Explicit {
-                width: LengthOrAuto::Length(Length::Px(60.0)),
-                height: LengthOrAuto::Length(Length::Px(64.0)),
-            },
+            layers: Box::new([BackgroundLayerSpec {
+                position: CssPosition {
+                    horizontal: CssPositionOffset::Start(Length::Px(20.0)),
+                    vertical: CssPositionOffset::Start(Length::Px(32.0)),
+                },
+                size: BackgroundSize::Explicit {
+                    width: LengthOrAuto::Length(Length::Px(60.0)),
+                    height: LengthOrAuto::Length(Length::Px(64.0)),
+                },
+                ..shorthand.layers[0].clone()
+            }]),
             ..shorthand
         })),
     );
@@ -2928,7 +2933,9 @@ fn absolutize_in_page_context_covers_background_size_cover_and_contain_arms() {
         // failure, which doesn't happen while this test passes.
         assert_eq!(
             absolutize_in_page_context(
-                ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(size)),
+                ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(Arc::from([
+                    size
+                ]))),
                 fs,
                 None,
                 &ctx,
@@ -2936,7 +2943,7 @@ fn absolutize_in_page_context_covers_background_size_cover_and_contain_arms() {
                 OutlineStyle::None,
                 OverflowXY::both(OverflowValue::Visible),
             ),
-            PropertyValue::BackgroundSize(size),
+            PropertyValue::BackgroundSize(Arc::from([size])),
             "background-size: {size:?}",
         );
     }
@@ -2963,7 +2970,7 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(size)),
+            ResolvedAgainstInherited::for_test(PropertyValue::BackgroundSize(Arc::from([size]))),
             fs,
             None,
             &ctx,
@@ -2971,7 +2978,7 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::BackgroundSize(size),
+        PropertyValue::BackgroundSize(Arc::from([size])),
     );
 
     let position = CssPosition {
@@ -2980,7 +2987,9 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::BackgroundPosition(position)),
+            ResolvedAgainstInherited::for_test(PropertyValue::BackgroundPosition(Arc::from([
+                position
+            ]))),
             fs,
             None,
             &ctx,
@@ -2988,7 +2997,7 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::BackgroundPosition(position),
+        PropertyValue::BackgroundPosition(Arc::from([position])),
     );
 }
 
@@ -3921,29 +3930,29 @@ property_key_samples! {
     // carry no length (`x`/`y` intentionally asymmetric to catch a
     // swapped-axis regression, same reasoning as `OverflowXY`'s
     // distinct x/y samples).
-    BackgroundRepeat => PropertyValue::BackgroundRepeat(BackgroundRepeat {
+    BackgroundRepeat => PropertyValue::BackgroundRepeat(Arc::from([BackgroundRepeat {
         x: BackgroundRepeatKeyword::Round,
         y: BackgroundRepeatKeyword::Space,
-    }),
-    BackgroundAttachment => PropertyValue::BackgroundAttachment(BackgroundAttachment::Fixed),
-    BackgroundClip => PropertyValue::BackgroundClip(VisualBox::ContentBox),
-    BackgroundOrigin => PropertyValue::BackgroundOrigin(VisualBox::ContentBox),
+    }])),
+    BackgroundAttachment => PropertyValue::BackgroundAttachment(Arc::from([BackgroundAttachment::Fixed])),
+    BackgroundClip => PropertyValue::BackgroundClip(Arc::from([VisualBox::ContentBox])),
+    BackgroundOrigin => PropertyValue::BackgroundOrigin(Arc::from([VisualBox::ContentBox])),
     // CSS Backgrounds and Borders 3 §2.9 — `Length::Em` worst-case
     // payload (same convention as `Padding`/`Width` above) so this raw
     // sample is caught by `specified_layer_residue` before phase 3
     // absolutizes it; `height: Auto` also exercises the "second axis
     // omitted defaults to auto" fill rule's `Auto` arm.
-    BackgroundSize => PropertyValue::BackgroundSize(BackgroundSize::Explicit {
+    BackgroundSize => PropertyValue::BackgroundSize(Arc::from([BackgroundSize::Explicit {
         width: LengthOrAuto::Length(Length::Em(2.0)),
         height: LengthOrAuto::Auto,
-    }),
+    }])),
     // CSS Backgrounds and Borders 3 §2.6 — `Em`/`Rem` worst-case
     // payload on both `Start` and `End` (distinct edges, to exercise
     // both `CssPositionOffset` variants in the same sample).
-    BackgroundPosition => PropertyValue::BackgroundPosition(CssPosition {
+    BackgroundPosition => PropertyValue::BackgroundPosition(Arc::from([CssPosition {
         horizontal: CssPositionOffset::Start(Length::Em(1.0)),
         vertical: CssPositionOffset::End(Length::Rem(2.0)),
-    }),
+    }])),
     // CSS Backgrounds and Borders 3 §2.3 — `Url` is the non-initial
     // worst case among the two payloads with no length component
     // (`None` is the spec initial value, same reasoning as
@@ -3954,9 +3963,9 @@ property_key_samples! {
     // reports `None` unconditionally regardless of payload (that arm's
     // doc explains why), so `Gradient(..)` wouldn't exercise anything
     // `Url` doesn't already.
-    BackgroundImage => PropertyValue::BackgroundImage(BackgroundImage::Url(
+    BackgroundImage => PropertyValue::BackgroundImage(Arc::from([BackgroundImage::Url(
         "marble.svg".into(),
-    )),
+    )])),
     // CSS Backgrounds and Borders 3 §2.10 — shorthand fall-through
     // (`Flex`/`Gap`/`Border` above use the same "sample a shorthand with
     // a length-bearing component" shape). Only `position`/`size` carry a
@@ -3967,22 +3976,24 @@ property_key_samples! {
     Background => PropertyValue::Background(Box::new(BackgroundShorthand {
         color_expression: None,
         color: GREEN,
-        image: BackgroundImage::Url("tile.png".into()),
-        repeat: BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Space,
-            y: BackgroundRepeatKeyword::Round,
-        },
-        attachment: BackgroundAttachment::Local,
-        position: CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Em(1.5)),
-            vertical: CssPositionOffset::End(Length::Rem(0.5)),
-        },
-        size: BackgroundSize::Explicit {
-            width: LengthOrAuto::Length(Length::Em(3.0)),
-            height: LengthOrAuto::Auto,
-        },
-        clip: VisualBox::PaddingBox,
-        origin: VisualBox::ContentBox,
+        layers: Box::new([BackgroundLayerSpec {
+            image: BackgroundImage::Url("tile.png".into()),
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Space,
+                y: BackgroundRepeatKeyword::Round,
+            },
+            attachment: BackgroundAttachment::Local,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Em(1.5)),
+                vertical: CssPositionOffset::End(Length::Rem(0.5)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Em(3.0)),
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::PaddingBox,
+            origin: VisualBox::ContentBox,
+        }]),
     })),
     // CSS Images Module Level 3 §5.1 — keyword-only, carries no length.
     // `Contain` is the non-initial worst case (`fill` is the spec
@@ -5363,12 +5374,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // per axis — same shape as `Width`/`Height` above
             // (`length_or_auto` delegate); `cover`/`contain` carry no
             // length.
-            PropertyValue::BackgroundSize(size) => match size {
+            PropertyValue::BackgroundSize(sizes) => sizes.iter().find_map(|size| match size {
                 BackgroundSize::Cover | BackgroundSize::Contain => None,
                 BackgroundSize::Explicit { width, height } => {
                     length_or_auto(*width).or_else(|| length_or_auto(*height))
                 }
-            },
+            }),
             // `background-position` stores a `<length-percentage>` per
             // edge/offset (`CssPositionOffset::Start`/`End` both wrap a
             // plain `Length` — the edge itself carries no length).
@@ -5378,14 +5389,16 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                     }
                 }
-                offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
+                pos.iter().find_map(|pos| {
+                    offset_residue(pos.horizontal).or_else(|| offset_residue(pos.vertical))
+                })
             }
             // `background` shorthand fall-through — `position`/`size`/`image`
             // all carry `<length-percentage>` (same shape as `Flex`/`Gap`
             // above, but now including the gradient payload's font-relative
             // lengths — `Percent` stays symbolic, same split as
             // `BackgroundImage` below).
-            PropertyValue::Background(shorthand) => {
+            PropertyValue::Background(shorthand) => shorthand.layers.iter().find_map(|layer| {
                 let image_residue = {
                     fn gradient_residue(
                         g: &crate::property::Gradient,
@@ -5419,13 +5432,13 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                                 .or_else(|| offset_residue(cg.position.vertical)),
                         }
                     }
-                    match &shorthand.image {
+                    match &layer.image {
                         crate::property::BackgroundImage::None
                         | crate::property::BackgroundImage::Url(_) => None,
                         crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
                     }
                 };
-                let size_residue = match shorthand.size {
+                let size_residue = match layer.size {
                     BackgroundSize::Cover | BackgroundSize::Contain => None,
                     BackgroundSize::Explicit { width, height } => {
                         length_or_auto(width).or_else(|| length_or_auto(height))
@@ -5439,10 +5452,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                                 CssPositionOffset::Start(l) | CssPositionOffset::End(l) => length(l),
                             }
                         }
-                        offset_residue(shorthand.position.horizontal)
-                            .or_else(|| offset_residue(shorthand.position.vertical))
+                        offset_residue(layer.position.horizontal)
+                            .or_else(|| offset_residue(layer.position.vertical))
                     })
-            }
+            }),
             // `background-image` / `mask-image` — `None`/`Url(String)` carry
             // no length; `Gradient(..)`'s `<length-percentage>` payloads are
             // checked via `length` (font-relative) while `Percent` stays
@@ -5477,10 +5490,10 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             .or_else(|| offset_residue(cg.position.vertical)),
                     }
                 }
-                match img {
+                img.iter().find_map(|img| match img {
                     crate::property::BackgroundImage::None | crate::property::BackgroundImage::Url(_) => None,
                     crate::property::BackgroundImage::Gradient(g) => gradient_residue(g, length),
-                }
+                })
             }
             PropertyValue::MaskImage(img) => {
                 fn gradient_residue(
@@ -5708,11 +5721,15 @@ fn flex_basis_content_and_gap_normal_are_not_specified_layer_residue() {
 #[test]
 fn background_size_cover_and_contain_are_not_specified_layer_residue() {
     assert_eq!(
-        specified_layer_residue(&PropertyValue::BackgroundSize(BackgroundSize::Cover)),
+        specified_layer_residue(&PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Cover
+        ]))),
         None,
     );
     assert_eq!(
-        specified_layer_residue(&PropertyValue::BackgroundSize(BackgroundSize::Contain)),
+        specified_layer_residue(&PropertyValue::BackgroundSize(Arc::from([
+            BackgroundSize::Contain
+        ]))),
         None,
     );
 }
@@ -5729,19 +5746,21 @@ fn background_shorthand_size_cover_and_contain_are_not_specified_layer_residue()
         BackgroundShorthand {
             color_expression: None,
             color: RED,
-            image: BackgroundImage::None,
-            repeat: BackgroundRepeat {
-                x: BackgroundRepeatKeyword::Repeat,
-                y: BackgroundRepeatKeyword::Repeat,
-            },
-            attachment: BackgroundAttachment::Scroll,
-            position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-            },
-            size,
-            clip: VisualBox::BorderBox,
-            origin: VisualBox::PaddingBox,
+            layers: Box::new([BackgroundLayerSpec {
+                image: BackgroundImage::None,
+                repeat: BackgroundRepeat {
+                    x: BackgroundRepeatKeyword::Repeat,
+                    y: BackgroundRepeatKeyword::Repeat,
+                },
+                attachment: BackgroundAttachment::Scroll,
+                position: CssPosition {
+                    horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
+                    vertical: CssPositionOffset::Start(Length::Percent(0.0)),
+                },
+                size,
+                clip: VisualBox::BorderBox,
+                origin: VisualBox::PaddingBox,
+            }]),
         }
     }
     assert_eq!(

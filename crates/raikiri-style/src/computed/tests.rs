@@ -623,21 +623,23 @@ fn non_initial_parent() -> ComputedValues {
         // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9:
         // these fields are all non-inherited, so give them non-initial values
         // (as required for non_initial_parent).
-        background_repeat: BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Round,
-            y: BackgroundRepeatKeyword::Space,
-        },
-        background_attachment: BackgroundAttachment::Fixed,
-        background_clip: VisualBox::ContentBox,
-        background_origin: VisualBox::ContentBox,
-        background_size: ComputedBackgroundSize::Cover,
-        background_position: ComputedCssPosition {
-            horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(5.0)),
-            vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0)),
-        },
-        // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
-        // different from the initial `None` (as required for non_initial_parent).
-        background_image: BackgroundImage::Url("fixture.png".into()),
+        background_layers: Arc::from([crate::computed::ComputedBackgroundLayer {
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Space,
+            },
+            attachment: BackgroundAttachment::Fixed,
+            clip: VisualBox::ContentBox,
+            origin: VisualBox::ContentBox,
+            size: ComputedBackgroundSize::Cover,
+            position: ComputedCssPosition {
+                horizontal: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(5.0)),
+                vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(25.0)),
+            },
+            // CSS Backgrounds and Borders 3 §2.3: non-inherited, so use a value
+            // different from the initial `None` (as required for non_initial_parent).
+            image: BackgroundImage::Url("fixture.png".into()),
+        }]),
         // CSS Backgrounds 3 §6: non-inherited; use a non-initial value.
         border_image: {
             let mut image = crate::computed::ComputedBorderImage::initial();
@@ -934,13 +936,34 @@ fn inherit_from_copies_inherited_and_resets_non_inherited() {
     assert_eq!(child.justify_self, initial.justify_self);
     // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.6/§2.7/§2.8/§2.9: all
     // are non-inherited.
-    assert_eq!(child.background_repeat, initial.background_repeat);
-    assert_eq!(child.background_attachment, initial.background_attachment);
-    assert_eq!(child.background_clip, initial.background_clip);
-    assert_eq!(child.background_origin, initial.background_origin);
-    assert_eq!(child.background_size, initial.background_size);
-    assert_eq!(child.background_position, initial.background_position);
-    assert_eq!(child.background_image, initial.background_image);
+    assert_eq!(
+        child.background_layers()[0].repeat,
+        initial.background_layers()[0].repeat
+    );
+    assert_eq!(
+        child.background_layers()[0].attachment,
+        initial.background_layers()[0].attachment
+    );
+    assert_eq!(
+        child.background_layers()[0].clip,
+        initial.background_layers()[0].clip
+    );
+    assert_eq!(
+        child.background_layers()[0].origin,
+        initial.background_layers()[0].origin
+    );
+    assert_eq!(
+        child.background_layers()[0].size,
+        initial.background_layers()[0].size
+    );
+    assert_eq!(
+        child.background_layers()[0].position,
+        initial.background_layers()[0].position
+    );
+    assert_eq!(
+        child.background_layers()[0].image,
+        initial.background_layers()[0].image
+    );
     assert_eq!(child.border_image, initial.border_image);
     // CSS Images Module Level 3 §5.1/§5.2: all are non-inherited.
     assert_eq!(child.object_fit, initial.object_fit);

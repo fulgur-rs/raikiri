@@ -16,10 +16,11 @@ use crate::{
     TextShadow,
 };
 use raikiri_style::property::{
-    BackgroundImage, BackgroundRepeat, Border, BorderColor, BorderStyle, ContentComponent,
-    CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto, LengthPercentageOrCalc,
-    PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcLengthPercentage, Sides, StringFetchMode,
-    TextAlign, TextShadowColor, TextShadowLength, VerticalAlign, VisualBox, WritingMode,
+    BackgroundImage, BackgroundLayerSpec, BackgroundRepeat, Border, BorderColor, BorderStyle,
+    ContentComponent, CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto,
+    LengthPercentageOrCalc, PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcLengthPercentage,
+    Sides, StringFetchMode, TextAlign, TextShadowColor, TextShadowLength, VerticalAlign, VisualBox,
+    WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength,
@@ -98,7 +99,7 @@ impl MarginBoxBorder {
     }
 }
 
-/// The `background-image: url()` layer of a margin box. The URL is the
+/// One `background-image: url()` layer of a margin box. The URL is the
 /// authored spelling; resolve it against the document base URL.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -115,6 +116,92 @@ pub struct MarginBoxBackgroundImage {
     pub origin: VisualBox,
     /// `background-clip`.
     pub clip: VisualBox,
+}
+
+/// The `background-clip` of the bottom background layer a margin box rule
+/// declares. The `background-image` list sets the number of layers and the
+/// clip list repeats to that length (CSS Backgrounds 3 §2.1).
+fn margin_box_background_clip(rule: &PageMarginBoxCascadeResult) -> VisualBox {
+    let layers = match margin_box_property(rule, PropertyKey::BackgroundImage) {
+        Some(PropertyValue::BackgroundImage(images)) => images.len().max(1),
+        _ => 1,
+    };
+    match margin_box_property(rule, PropertyKey::BackgroundClip) {
+        Some(PropertyValue::BackgroundClip(clips)) if !clips.is_empty() => {
+            clips[(layers - 1) % clips.len()]
+        }
+        _ => BackgroundLayerSpec::initial().clip,
+    }
+}
+
+/// The `url()` background layers a margin box rule declares, top first.
+/// Every per-layer list is reconciled to the number of `background-image`
+/// items (CSS Backgrounds 3 §2.1): a shorter list repeats, extra items are
+/// unused.
+fn margin_box_background_layers(
+    rule: &PageMarginBoxCascadeResult,
+    font_size: ComputedLength,
+    resolve_context: &ResolveContext,
+) -> Vec<MarginBoxBackgroundImage> {
+    let Some(PropertyValue::BackgroundImage(images)) =
+        margin_box_property(rule, PropertyKey::BackgroundImage)
+    else {
+        return Vec::new();
+    };
+    fn item<T: Copy>(list: Option<&[T]>, index: usize, initial: T) -> T {
+        match list {
+            Some(list) if !list.is_empty() => list[index % list.len()],
+            _ => initial,
+        }
+    }
+    let sizes = match margin_box_property(rule, PropertyKey::BackgroundSize) {
+        Some(PropertyValue::BackgroundSize(list)) => Some(&**list),
+        _ => None,
+    };
+    let positions = match margin_box_property(rule, PropertyKey::BackgroundPosition) {
+        Some(PropertyValue::BackgroundPosition(list)) => Some(&**list),
+        _ => None,
+    };
+    let repeats = match margin_box_property(rule, PropertyKey::BackgroundRepeat) {
+        Some(PropertyValue::BackgroundRepeat(list)) => Some(&**list),
+        _ => None,
+    };
+    let origins = match margin_box_property(rule, PropertyKey::BackgroundOrigin) {
+        Some(PropertyValue::BackgroundOrigin(list)) => Some(&**list),
+        _ => None,
+    };
+    let clips = match margin_box_property(rule, PropertyKey::BackgroundClip) {
+        Some(PropertyValue::BackgroundClip(list)) => Some(&**list),
+        _ => None,
+    };
+    let initial = BackgroundLayerSpec::initial();
+    images
+        .iter()
+        .enumerate()
+        .filter_map(|(index, image)| {
+            let BackgroundImage::Url(url) = image else {
+                return None;
+            };
+            Some(MarginBoxBackgroundImage {
+                url: url.to_string(),
+                size: resolve_background_size(
+                    item(sizes, index, initial.size),
+                    font_size,
+                    None,
+                    resolve_context,
+                ),
+                position: resolve_css_position(
+                    item(positions, index, initial.position),
+                    font_size,
+                    None,
+                    resolve_context,
+                ),
+                repeat: item(repeats, index, initial.repeat),
+                origin: item(origins, index, initial.origin),
+                clip: item(clips, index, initial.clip),
+            })
+        })
+        .collect()
 }
 
 /// The shaped generated text of a margin box and where it is drawn.
@@ -237,8 +324,13 @@ pub struct MarginBox {
     pub text_shadows: Vec<TextShadow>,
     /// Background color, `None` when transparent.
     pub background_color: Option<CssColor>,
-    /// Background image layer.
-    pub background_image: Option<MarginBoxBackgroundImage>,
+    /// `background-clip` of the bottom layer, which also clips
+    /// [`Self::background_color`] (CSS Backgrounds 3 §2.1).
+    pub background_clip: VisualBox,
+    /// The `url()` background image layers, top first (CSS Backgrounds 3
+    /// §2.1: the first layer in the list is painted on top). Layers without
+    /// a URL image are left out.
+    pub background_layers: Vec<MarginBoxBackgroundImage>,
     /// Solid borders in top, right, bottom, left order.
     pub borders: [Option<MarginBoxBorder>; 4],
     /// Used padding.
@@ -275,7 +367,8 @@ impl MarginBox {
             color: CssColor::BLACK,
             text_shadows: Vec::new(),
             background_color: None,
-            background_image: None,
+            background_clip: VisualBox::BorderBox,
+            background_layers: Vec::new(),
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
@@ -405,13 +498,9 @@ struct MarginBoxSpec {
     content: String,
     deferred: Vec<DeferredSlot>,
     background: Option<CssColor>,
-    background_image_url: Option<String>,
-    background_image_lime: bool,
-    background_size: ComputedBackgroundSize,
-    background_position: ComputedCssPosition,
-    background_repeat: BackgroundRepeat,
-    background_origin: VisualBox,
     background_clip: VisualBox,
+    background_layers: Vec<MarginBoxBackgroundImage>,
+    background_image_lime: bool,
     content_image_lime: bool,
     border_top: Option<(f32, CssColor)>,
     border_right: Option<(f32, CssColor)>,
@@ -1406,37 +1495,12 @@ fn margin_box_spec(
         Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(*value),
         _ => None,
     };
-    let background_image_url = match margin_box_property(rule, PropertyKey::BackgroundImage) {
-        Some(PropertyValue::BackgroundImage(BackgroundImage::Url(url))) => Some(url.to_string()),
-        _ => None,
-    };
-    let background_image_lime = background_image_url
-        .as_deref()
-        .is_some_and(|url| url.ends_with("/green.png") || url == "green.png");
-    let background_size = match margin_box_property(rule, PropertyKey::BackgroundSize) {
-        Some(PropertyValue::BackgroundSize(size)) => {
-            resolve_background_size(*size, ComputedLength(font_size), None, &resolve_context)
-        }
-        _ => initial.background_size,
-    };
-    let background_position = match margin_box_property(rule, PropertyKey::BackgroundPosition) {
-        Some(PropertyValue::BackgroundPosition(position)) => {
-            resolve_css_position(*position, ComputedLength(font_size), None, &resolve_context)
-        }
-        _ => initial.background_position,
-    };
-    let background_repeat = match margin_box_property(rule, PropertyKey::BackgroundRepeat) {
-        Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
-        _ => initial.background_repeat,
-    };
-    let background_origin = match margin_box_property(rule, PropertyKey::BackgroundOrigin) {
-        Some(PropertyValue::BackgroundOrigin(origin)) => *origin,
-        _ => initial.background_origin,
-    };
-    let background_clip = match margin_box_property(rule, PropertyKey::BackgroundClip) {
-        Some(PropertyValue::BackgroundClip(clip)) => *clip,
-        _ => initial.background_clip,
-    };
+    let background_clip = margin_box_background_clip(rule);
+    let background_layers =
+        margin_box_background_layers(rule, ComputedLength(font_size), &resolve_context);
+    let background_image_lime = background_layers
+        .iter()
+        .any(|layer| layer.url.ends_with("/green.png") || layer.url == "green.png");
     let [border_top, border_right, border_bottom, border_left] =
         margin_box_borders(document, cascade, page, rule, font_size);
     let margin_auto = margin_box_auto_margins(rule);
@@ -1519,13 +1583,9 @@ fn margin_box_spec(
         content,
         deferred,
         background,
-        background_image_url,
-        background_image_lime,
-        background_size,
-        background_position,
-        background_repeat,
-        background_origin,
         background_clip,
+        background_layers,
+        background_image_lime,
         content_image_lime,
         border_top,
         border_right,
@@ -1621,17 +1681,8 @@ fn place_margin_box(
         color: spec.text_color,
         text_shadows: spec.text_shadows.clone(),
         background_color: spec.background,
-        background_image: spec
-            .background_image_url
-            .clone()
-            .map(|url| MarginBoxBackgroundImage {
-                url,
-                size: spec.background_size,
-                position: spec.background_position,
-                repeat: spec.background_repeat,
-                origin: spec.background_origin,
-                clip: spec.background_clip,
-            }),
+        background_clip: spec.background_clip,
+        background_layers: spec.background_layers.clone(),
         borders: [
             border(spec.border_top),
             border(spec.border_right),

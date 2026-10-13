@@ -624,11 +624,11 @@ fn background_image_geometry_covers_supported_size_and_position_forms() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let repeat = cascade.computed[start_px_id].background_repeat;
-    let start_px = cascade.computed[start_px_id].background_position;
-    let start_percent = cascade.computed[start_percent_id].background_position;
-    let end_px = cascade.computed[end_px_id].background_position;
-    let end_percent = cascade.computed[end_percent_id].background_position;
+    let repeat = cascade.computed[start_px_id].background_layers()[0].repeat;
+    let start_px = cascade.computed[start_px_id].background_layers()[0].position;
+    let start_percent = cascade.computed[start_percent_id].background_layers()[0].position;
+    let end_px = cascade.computed[end_px_id].background_layers()[0].position;
+    let end_percent = cascade.computed[end_percent_id].background_layers()[0].position;
     let mut scene = Scene::new();
     paint_background_image(
         &crate::walk::ImageBrushCache::default(),
@@ -1467,8 +1467,8 @@ fn background_repeat_fixture(
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     (
-        cascade.computed[id].background_position,
-        cascade.computed[id].background_repeat,
+        cascade.computed[id].background_layers()[0].position,
+        cascade.computed[id].background_layers()[0].repeat,
     )
 }
 
@@ -1995,6 +1995,15 @@ fn background_origin_and_clip_insets_follow_visual_boxes() {
         )
         .is_none()
     );
+    assert!(
+        clip_inset_rect(
+            area,
+            raikiri_style::property::VisualBox::BorderAreaText,
+            border,
+            padding
+        )
+        .is_none()
+    );
 }
 
 #[test]
@@ -2073,38 +2082,43 @@ fn background_clip_text_warns_and_border_area_masks_images() {
         bottom: 0.0,
         left: 0.0,
     };
-    let initial = ComputedValues::initial();
-    // `text` skips both color and image with a visible warning.
-    let mut scene = Scene::new();
-    let mut warnings = Vec::new();
-    paint_element_background(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        100.0,
-        50.0,
-        0.0,
-        0.0,
-        CssColor {
-            r: 0,
-            g: 255,
-            b: 0,
-            a: 255,
-        },
-        &BackgroundImage::Url("https://example.test/red.png".into()),
-        CssColor::BLACK,
+    // `text` and `border-area text` skip both color and image with a
+    // visible warning.
+    for clip in [
         raikiri_style::property::VisualBox::Text,
-        initial.background_origin,
-        &ComputedBorderRadius::all(ComputedLength(0.0)),
-        &border,
-        &padding,
-        &initial.background_size,
-        &initial.background_position,
-        &initial.background_repeat,
-        Some(&source),
-        &mut warnings,
-    );
-    assert!(!warnings.is_empty());
-    assert_eq!(background_fill_count(&scene), 0);
+        raikiri_style::property::VisualBox::BorderAreaText,
+    ] {
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_element_background(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            100.0,
+            50.0,
+            0.0,
+            0.0,
+            CssColor {
+                r: 0,
+                g: 255,
+                b: 0,
+                a: 255,
+            },
+            &[{
+                let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+                layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+                layer.clip = clip;
+                layer
+            }],
+            CssColor::BLACK,
+            &ComputedBorderRadius::all(ComputedLength(0.0)),
+            &border,
+            &padding,
+            Some(&source),
+            &mut warnings,
+        );
+        assert!(!warnings.is_empty());
+        assert_eq!(background_fill_count(&scene), 0);
+    }
 
     // `border-area` paints color and image into a mask of the borders.
     let mut authored = Border::new();
@@ -2138,16 +2152,16 @@ fn background_clip_text_warns_and_border_area_masks_images() {
             b: 0,
             a: 255,
         },
-        &BackgroundImage::Url("https://example.test/red.png".into()),
+        &[{
+            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+            layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+            layer.clip = raikiri_style::property::VisualBox::BorderArea;
+            layer
+        }],
         CssColor::BLACK,
-        raikiri_style::property::VisualBox::BorderArea,
-        initial.background_origin,
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &ring_border,
         &padding,
-        &initial.background_size,
-        &initial.background_position,
-        &initial.background_repeat,
         Some(&source),
         &mut ring_warnings,
     );
@@ -2458,7 +2472,7 @@ fn background_page_clip_and_origin_explicit_values() {
 }
 
 #[test]
-fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
+fn background_page_images_ignore_clip_and_empty_area_skips() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -2475,31 +2489,44 @@ fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
         }
     }
     let source = RedPixels;
-    let (document, cascade) = canvas_fixture(
-        Some(
-            "@page { background-image: url('https://example.test/red.png'); background-clip: text; }",
-        ),
-        None,
-    );
-    let mut scene = Scene::new();
-    let mut warnings = Vec::new();
-    paint_page_background_image(
-        &crate::walk::ImageBrushCache::default(),
-        &mut scene,
-        &document,
-        &cascade,
-        kurbo::Rect::new(0.0, 0.0, 100.0, 50.0),
-        Some(&source),
-        &mut warnings,
-    );
-    assert!(!warnings.is_empty());
-    assert_eq!(background_fill_count(&scene), 0);
+    let area = kurbo::Rect::new(0.0, 0.0, 100.0, 50.0);
+    // The page background painting area is the whole page box whatever
+    // `background-clip` says, unsupported clips included.
+    for clip in ["text", "border-area text", "content-box, padding-box"] {
+        let (document, cascade) = canvas_fixture(
+            Some(&format!(
+                "@page {{ background-image: url('https://example.test/red.png'), url('https://example.test/red.png'); background-clip: {clip}; border: 4px solid black; padding: 3px; }}"
+            )),
+            None,
+        );
+        let mut scene = Scene::new();
+        let mut warnings = Vec::new();
+        paint_page_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut scene,
+            &document,
+            &cascade,
+            area,
+            Some(&source),
+            &mut warnings,
+        );
+        assert!(warnings.is_empty(), "{clip}: {warnings:?}");
+        let clips: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(layer) => {
+                    Some(kurbo::Shape::bounding_box(&layer.clip))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(clips, vec![area, area], "{clip}");
+    }
 
-    // Empty painting area (tiny area with large borders) skips without warning.
-    let (_, empty_cascade) = canvas_fixture(
-        Some(
-            "@page { background-image: url('https://example.test/red.png'); border: 20px solid black; background-clip: padding-box; }",
-        ),
+    // An empty page area skips without warning.
+    let (document, empty_cascade) = canvas_fixture(
+        Some("@page { background-image: url('https://example.test/red.png'); }"),
         None,
     );
     let mut empty_scene = Scene::new();
@@ -2509,10 +2536,11 @@ fn background_page_unsupported_clip_warns_and_empty_painting_skips() {
         &mut empty_scene,
         &document,
         &empty_cascade,
-        kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
         Some(&source),
         &mut empty_warnings,
     );
+    assert!(empty_warnings.is_empty());
     assert_eq!(background_fill_count(&empty_scene), 0);
 }
 
@@ -2555,24 +2583,39 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
     assert!(warnings.is_empty());
     assert!(!scene.commands.is_empty());
 
-    // Unsupported canvas clip warns and skips.
-    let (_, text_cascade) = canvas_fixture(
-        Some("@page { margin: 5px; }"),
-        Some("background-image: url('https://example.test/red.png'); background-clip: text;"),
-    );
-    let mut text_scene = Scene::new();
-    let mut text_warnings = Vec::new();
-    paint_canvas_background_image(
-        &crate::walk::ImageBrushCache::default(),
-        &mut text_scene,
-        &document,
-        &text_cascade,
-        area,
-        Some(&source),
-        &mut text_warnings,
-    );
-    assert!(!text_warnings.is_empty());
-    assert_eq!(background_fill_count(&text_scene), 0);
+    // `background-clip` has no effect on a propagated background: every
+    // layer paints over the whole canvas area, whatever its clip.
+    for clip in ["text", "content-box, border-box"] {
+        let (_, clip_cascade) = canvas_fixture(
+            Some("@page { margin: 5px; }"),
+            Some(&format!(
+                "background-image: url('https://example.test/red.png'), url('https://example.test/red.png'); background-clip: {clip}; border: 4px solid black; padding: 2px;"
+            )),
+        );
+        let mut clip_scene = Scene::new();
+        let mut clip_warnings = Vec::new();
+        paint_canvas_background_image(
+            &crate::walk::ImageBrushCache::default(),
+            &mut clip_scene,
+            &document,
+            &clip_cascade,
+            area,
+            Some(&source),
+            &mut clip_warnings,
+        );
+        assert!(clip_warnings.is_empty(), "{clip}: {clip_warnings:?}");
+        let clips: Vec<_> = clip_scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::PushClipLayer(layer) => {
+                    Some(kurbo::Shape::bounding_box(&layer.clip))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(clips, vec![area, area], "{clip}");
+    }
 }
 
 #[test]
@@ -2593,7 +2636,6 @@ fn background_element_origins_clips_and_rounded_images() {
         }
     }
     let source = RedPixels;
-    let initial = ComputedValues::initial();
     let zero_border = resolve_border(
         Border::new(),
         ComputedLength(16.0),
@@ -2652,22 +2694,25 @@ fn background_element_origins_clips_and_rounded_images() {
                 b: 0,
                 a: 0,
             },
-            &BackgroundImage::Url("https://example.test/red.png".into()),
+            &[{
+                let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+                layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+                layer.clip = clip;
+                layer.origin = origin;
+                layer.position = no_repeat_position;
+                layer.repeat = no_repeat;
+                layer
+            }],
             CssColor::BLACK,
-            clip,
-            origin,
             &ComputedBorderRadius::all(ComputedLength(0.0)),
             &zero_sides,
             &content_padding,
-            &initial.background_size,
-            &no_repeat_position,
-            &no_repeat,
             Some(&source),
             &mut warnings,
         );
         assert!(warnings.is_empty());
-        // Transparent color still emits a fill plus the single image tile.
-        assert_eq!(background_fill_count(&scene), 2);
+        // A transparent color emits no fill; only the single image tile.
+        assert_eq!(background_fill_count(&scene), 1);
     }
 
     // Invalid element origin warns and falls back.
@@ -2686,16 +2731,17 @@ fn background_element_origins_clips_and_rounded_images() {
             b: 0,
             a: 0,
         },
-        &BackgroundImage::Url("https://example.test/red.png".into()),
+        &[{
+            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+            layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+            layer.clip = raikiri_style::property::VisualBox::BorderBox;
+            layer.origin = raikiri_style::property::VisualBox::Text;
+            layer
+        }],
         CssColor::BLACK,
-        raikiri_style::property::VisualBox::BorderBox,
-        raikiri_style::property::VisualBox::Text,
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
-        &initial.background_size,
-        &initial.background_position,
-        &initial.background_repeat,
         Some(&source),
         &mut warn_warnings,
     );
@@ -2717,21 +2763,24 @@ fn background_element_origins_clips_and_rounded_images() {
             b: 0,
             a: 0,
         },
-        &BackgroundImage::Url("https://example.test/red.png".into()),
+        &[{
+            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+            layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+            layer.clip = raikiri_style::property::VisualBox::BorderArea;
+            layer.position = no_repeat_position;
+            layer.repeat = no_repeat;
+            layer
+        }],
         CssColor::BLACK,
-        raikiri_style::property::VisualBox::BorderArea,
-        initial.background_origin,
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &zero_sides,
         &padding,
-        &initial.background_size,
-        &no_repeat_position,
-        &no_repeat,
         Some(&source),
         &mut fallback_warnings,
     );
     assert!(fallback_warnings.is_empty());
-    assert_eq!(background_fill_count(&fallback), 2);
+    // The transparent color emits no fill; only the single image tile.
+    assert_eq!(background_fill_count(&fallback), 1);
 
     // Rounded element image pushes a rounded clip layer.
     let mut rounded = Scene::new();
@@ -2749,16 +2798,17 @@ fn background_element_origins_clips_and_rounded_images() {
             b: 0,
             a: 0,
         },
-        &BackgroundImage::Url("https://example.test/red.png".into()),
+        &[{
+            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+            layer.image = BackgroundImage::Url("https://example.test/red.png".into());
+            layer.clip = raikiri_style::property::VisualBox::BorderBox;
+            layer.origin = raikiri_style::property::VisualBox::BorderBox;
+            layer
+        }],
         CssColor::BLACK,
-        raikiri_style::property::VisualBox::BorderBox,
-        raikiri_style::property::VisualBox::BorderBox,
         &ComputedBorderRadius::all(ComputedLength(8.0)),
         &zero_sides,
         &padding,
-        &initial.background_size,
-        &initial.background_position,
-        &initial.background_repeat,
         Some(&source),
         &mut rounded_warnings,
     );
@@ -2814,7 +2864,12 @@ fn margin_box_image(
         PageBox::A4,
         raikiri_dom::MarginBoxPageContext::new(0, 1, false),
     );
-    let mut image = laid_out.into_iter().next()?.background_image?;
+    let mut image = laid_out
+        .into_iter()
+        .next()?
+        .background_layers
+        .into_iter()
+        .next()?;
     assert_eq!(image.url, "https://example.test/red.png");
     image.origin = origin;
     image.clip = clip;
@@ -2824,8 +2879,10 @@ fn margin_box_image(
 #[test]
 fn background_margin_box_origin_clip_and_unsupported_images() {
     let mut margin_box = fixed_margin_box();
-    margin_box.background_image = margin_box_image(VisualBox::ContentBox, VisualBox::PaddingBox);
-    assert!(margin_box.background_image.is_some());
+    margin_box.background_layers = margin_box_image(VisualBox::ContentBox, VisualBox::PaddingBox)
+        .into_iter()
+        .collect();
+    assert!(!margin_box.background_layers.is_empty());
     let border = Some(raikiri_dom::MarginBoxBorder::new(4.0, CssColor::BLACK));
     margin_box.borders = [border; 4];
     margin_box.padding = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
@@ -2862,7 +2919,9 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
     assert!(fills >= 6, "{fills} fills");
 
     let mut unsupported = fixed_margin_box();
-    unsupported.background_image = margin_box_image(VisualBox::BorderBox, VisualBox::Text);
+    unsupported.background_layers = margin_box_image(VisualBox::BorderBox, VisualBox::Text)
+        .into_iter()
+        .collect();
     let mut unsupported_scene = Scene::new();
     let mut unsupported_warnings = Vec::new();
     paint_margin_box(
@@ -2873,6 +2932,62 @@ fn background_margin_box_origin_clip_and_unsupported_images() {
         &mut unsupported_warnings,
     );
     assert!(!unsupported_warnings.is_empty());
+}
+
+#[test]
+fn margin_box_color_is_clipped_by_the_bottom_layer() {
+    let mut margin_box = fixed_margin_box();
+    margin_box.borders = [Some(raikiri_dom::MarginBoxBorder::new(4.0, CssColor::BLACK)); 4];
+    margin_box.padding = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
+    margin_box.background_clip = VisualBox::ContentBox;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &margin_box,
+        None,
+        &mut warnings,
+    );
+    assert!(warnings.is_empty());
+    let color = scene
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            RenderCommand::Fill(fill) => Some(kurbo::Shape::bounding_box(&fill.shape)),
+            _ => None,
+        })
+        .expect("the color is painted");
+    assert_eq!(color, kurbo::Rect::new(6.0, 6.0, 94.0, 44.0));
+
+    // A clip that leaves no area paints no color.
+    let mut empty = fixed_margin_box();
+    empty.padding = PaintInsets::new(30.0, 30.0, 30.0, 30.0);
+    empty.background_clip = VisualBox::ContentBox;
+    let mut empty_scene = Scene::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut empty_scene,
+        &empty,
+        None,
+        &mut Vec::new(),
+    );
+    assert_eq!(background_fill_count(&empty_scene), 0);
+
+    // An unsupported clip skips the color with a warning.
+    let mut text = fixed_margin_box();
+    text.background_clip = VisualBox::Text;
+    let mut text_scene = Scene::new();
+    let mut text_warnings = Vec::new();
+    paint_margin_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut text_scene,
+        &text,
+        None,
+        &mut text_warnings,
+    );
+    assert_eq!(background_fill_count(&text_scene), 0);
+    assert_eq!(text_warnings.len(), 1);
 }
 
 #[test]
@@ -3015,7 +3130,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
     let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
     assert!((pl - 23.0).abs() < 0.001);
 
-    // Empty canvas painting (tiny area with large borders) skips silently.
+    // An empty canvas area skips silently.
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -3034,9 +3149,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
     let source = RedPixels;
     let (document, cascade) = canvas_fixture(
         Some("@page { margin: 5px; }"),
-        Some(
-            "background-image: url('https://example.test/red.png'); border: 20px solid black; background-clip: padding-box;",
-        ),
+        Some("background-image: url('https://example.test/red.png'); border: 20px solid black;"),
     );
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
@@ -3045,7 +3158,7 @@ fn background_canvas_percent_padding_and_empty_painting() {
         &mut scene,
         &document,
         &cascade,
-        kurbo::Rect::new(0.0, 0.0, 10.0, 10.0),
+        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
         Some(&source),
         &mut warnings,
     );
@@ -3803,7 +3916,7 @@ fn conic_angular_offsets_cover_missing_angle_and_percent() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let conic = conic_of(&cascade.computed[id].background_image);
+    let conic = conic_of(&cascade.computed[id].background_layers()[0].image);
     let first = angular_stop_offset(conic.stops[0].position);
     assert!(first.is_some_and(|v| (v - 0.125).abs() < 0.001));
 }
@@ -3859,7 +3972,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let center_conic = conic_of(&cascade.computed[center_id].background_image);
+    let center_conic = conic_of(&cascade.computed[center_id].background_layers()[0].image);
     assert_eq!(center_conic.stops.len(), 8);
     let positioning = kurbo::Rect::new(0.0, 0.0, 200.0, 200.0);
     let center = conic_center(&center_conic.position, positioning);
@@ -3873,7 +3986,7 @@ fn conic_center_and_sweep_cover_pinned_quadrants() {
     };
     let gradient = conic_to_peniko(&center_conic, center, current).expect("sweep");
     assert_eq!(gradient.stops.len(), 8);
-    let angle_conic = conic_of(&cascade.computed[angle_id].background_image);
+    let angle_conic = conic_of(&cascade.computed[angle_id].background_layers()[0].image);
     let default_center = conic_center(&angle_conic.position, positioning);
     assert!((default_center.x - 100.0).abs() < 0.01);
     assert!((default_center.y - 100.0).abs() < 0.01);
@@ -3899,8 +4012,8 @@ fn conic_paint_covers_empty_square_and_rounded_boxes() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let square = conic_of(&cascade.computed[square_id].background_image);
-    let round = conic_of(&cascade.computed[round_id].background_image);
+    let square = conic_of(&cascade.computed[square_id].background_layers()[0].image);
+    let round = conic_of(&cascade.computed[round_id].background_layers()[0].image);
     let current = CssColor {
         r: 0,
         g: 0,
@@ -3959,8 +4072,9 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
     );
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let bg_image = cascade.computed[conic_id].background_image.clone();
-    let initial = ComputedValues::initial();
+    let bg_image = cascade.computed[conic_id].background_layers()[0]
+        .image
+        .clone();
     let border = raikiri_style::property::Sides {
         top: resolve_border(
             Border::new(),
@@ -4014,16 +4128,16 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
             b: 255,
             a: 255,
         },
-        &bg_image,
+        &[{
+            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+            layer.image = bg_image.clone();
+            layer.clip = raikiri_style::property::VisualBox::BorderBox;
+            layer
+        }],
         current,
-        raikiri_style::property::VisualBox::BorderBox,
-        initial.background_origin,
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
-        &initial.background_size,
-        &initial.background_position,
-        &initial.background_repeat,
         None,
         &mut warnings,
     );
@@ -4038,16 +4152,16 @@ fn conic_background_element_paint_covers_opaque_and_transparent_bases() {
         0.0,
         0.0,
         CssColor::TRANSPARENT,
-        &bg_image,
+        &[{
+            let mut layer = raikiri_style::ComputedBackgroundLayer::initial();
+            layer.image = bg_image.clone();
+            layer.clip = raikiri_style::property::VisualBox::BorderBox;
+            layer
+        }],
         current,
-        raikiri_style::property::VisualBox::BorderBox,
-        initial.background_origin,
         &ComputedBorderRadius::all(ComputedLength(0.0)),
         &border,
         &padding,
-        &initial.background_size,
-        &initial.background_position,
-        &initial.background_repeat,
         None,
         &mut transparent_warnings,
     );

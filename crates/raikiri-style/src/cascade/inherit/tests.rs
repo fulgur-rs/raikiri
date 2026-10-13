@@ -5014,15 +5014,18 @@ fn background_repeat_attachment_clip_origin_wired_through_cascade_from_inline_st
         ),
     );
     assert_eq!(
-        cv.background_repeat,
+        cv.background_layers()[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Repeat,
             y: BackgroundRepeatKeyword::NoRepeat,
         }
     );
-    assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
-    assert_eq!(cv.background_clip, VisualBox::ContentBox);
-    assert_eq!(cv.background_origin, VisualBox::BorderBox);
+    assert_eq!(
+        cv.background_layers()[0].attachment,
+        BackgroundAttachment::Fixed
+    );
+    assert_eq!(cv.background_layers()[0].clip, VisualBox::ContentBox);
+    assert_eq!(cv.background_layers()[0].origin, VisualBox::BorderBox);
 }
 
 #[test]
@@ -5043,7 +5046,7 @@ fn background_repeat_attachment_clip_origin_are_non_inherited() {
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(
-        r.computed[p].background_repeat,
+        r.computed[p].background_layers()[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Round,
             y: BackgroundRepeatKeyword::Round,
@@ -5053,26 +5056,38 @@ fn background_repeat_attachment_clip_origin_are_non_inherited() {
     // child without its own winner resets to each property's spec
     // initial, not the parent's value.
     assert_eq!(
-        r.computed[span].background_repeat,
+        r.computed[span].background_layers()[0].repeat,
         BackgroundRepeat {
             x: BackgroundRepeatKeyword::Repeat,
             y: BackgroundRepeatKeyword::Repeat,
         }
     );
     assert_eq!(
-        r.computed[p].background_attachment,
+        r.computed[p].background_layers()[0].attachment,
         BackgroundAttachment::Local
     );
     assert_eq!(
-        r.computed[span].background_attachment,
+        r.computed[span].background_layers()[0].attachment,
         BackgroundAttachment::Scroll
     );
-    assert_eq!(r.computed[p].background_clip, VisualBox::ContentBox);
-    assert_eq!(r.computed[span].background_clip, VisualBox::BorderBox);
-    assert_eq!(r.computed[p].background_origin, VisualBox::ContentBox);
+    assert_eq!(
+        r.computed[p].background_layers()[0].clip,
+        VisualBox::ContentBox
+    );
+    assert_eq!(
+        r.computed[span].background_layers()[0].clip,
+        VisualBox::BorderBox
+    );
+    assert_eq!(
+        r.computed[p].background_layers()[0].origin,
+        VisualBox::ContentBox
+    );
     // `background-origin`'s initial (`padding-box`) differs from
     // `background-clip`'s (`border-box`) — check both distinctly.
-    assert_eq!(r.computed[span].background_origin, VisualBox::PaddingBox);
+    assert_eq!(
+        r.computed[span].background_layers()[0].origin,
+        VisualBox::PaddingBox
+    );
 }
 
 #[test]
@@ -5083,7 +5098,7 @@ fn background_size_wired_through_cascade_and_absolutizes_em() {
     // 1st, per `BackgroundSize` doc's fill-rule note).
     let cv = cascade_doc("", "div", Some("background-size: 2em"));
     assert_eq!(
-        cv.background_size,
+        cv.background_layers()[0].size,
         ComputedBackgroundSize::Explicit {
             width: ComputedLengthPercentageOrAuto::Px(32.0),
             height: ComputedLengthPercentageOrAuto::Auto,
@@ -5099,10 +5114,13 @@ fn background_size_is_non_inherited() {
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(r.computed[p].background_size, ComputedBackgroundSize::Cover);
     assert_eq!(
-        r.computed[span].background_size,
-        ComputedValues::initial().background_size
+        r.computed[p].background_layers()[0].size,
+        ComputedBackgroundSize::Cover
+    );
+    assert_eq!(
+        r.computed[span].background_layers()[0].size,
+        ComputedValues::initial().background_layers()[0].size
     );
 }
 
@@ -5116,7 +5134,7 @@ fn background_position_wired_through_cascade_and_absolutizes_edge_offset() {
     // to `Start(100%)` (`CssPositionOffset` doc's normalization note).
     let cv = cascade_doc("", "div", Some("background-position: bottom 1em right"));
     assert_eq!(
-        cv.background_position,
+        cv.background_layers()[0].position,
         ComputedCssPosition {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(100.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(16.0)),
@@ -5132,12 +5150,12 @@ fn background_position_is_non_inherited() {
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_ne!(
-        r.computed[p].background_position,
-        ComputedValues::initial().background_position
+        r.computed[p].background_layers()[0].position,
+        ComputedValues::initial().background_layers()[0].position
     );
     assert_eq!(
-        r.computed[span].background_position,
-        ComputedValues::initial().background_position
+        r.computed[span].background_layers()[0].position,
+        ComputedValues::initial().background_layers()[0].position
     );
 }
 
@@ -5566,7 +5584,7 @@ fn background_image_wired_through_cascade_from_inline_style() {
     use crate::property::BackgroundImage;
     let cv = cascade_doc("", "div", Some("background-image: url(marble.svg)"));
     assert_eq!(
-        cv.background_image,
+        cv.background_layers()[0].image,
         BackgroundImage::Url("marble.svg".into())
     );
 }
@@ -5579,7 +5597,7 @@ fn background_image_defaults_to_none_without_declaration() {
     // rather than just the no-winner default.
     use crate::property::BackgroundImage;
     let cv = cascade_doc("", "p", None);
-    assert_eq!(cv.background_image, BackgroundImage::None);
+    assert_eq!(cv.background_layers()[0].image, BackgroundImage::None);
 }
 
 #[test]
@@ -5591,7 +5609,7 @@ fn background_image_explicit_none_overrides_an_earlier_url() {
         "div",
         Some("background-image: url(a.png); background-image: none"),
     );
-    assert_eq!(cv.background_image, BackgroundImage::None);
+    assert_eq!(cv.background_layers()[0].image, BackgroundImage::None);
 }
 
 #[test]
@@ -5603,13 +5621,16 @@ fn background_image_is_non_inherited() {
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
     assert_eq!(
-        r.computed[p].background_image,
+        r.computed[p].background_layers()[0].image,
         BackgroundImage::Url("marble.svg".into())
     );
     // CSS Backgrounds and Borders 3 §2.3 "Inherited: no" — the child
     // without its own winner resets to the spec initial (`none`), not
     // the parent's value.
-    assert_eq!(r.computed[span].background_image, BackgroundImage::None);
+    assert_eq!(
+        r.computed[span].background_layers()[0].image,
+        BackgroundImage::None
+    );
 }
 
 #[test]
@@ -5626,7 +5647,7 @@ fn background_image_wired_through_cascade_from_inline_style_with_gradient() {
         Some("background-image: linear-gradient(red, blue)"),
     );
     assert!(matches!(
-        cv.background_image,
+        cv.background_layers()[0].image,
         BackgroundImage::Gradient(ref gradient) if matches!(**gradient, Gradient::Linear(_))
     ));
 }
@@ -5647,7 +5668,10 @@ fn background_image_invalid_gradient_does_not_overwrite_an_earlier_url() {
         "div",
         Some("background-image: url(a.png); background-image: linear-gradient(red)"),
     );
-    assert_eq!(cv.background_image, BackgroundImage::Url("a.png".into()));
+    assert_eq!(
+        cv.background_layers()[0].image,
+        BackgroundImage::Url("a.png".into())
+    );
 }
 
 #[test]
@@ -5671,7 +5695,10 @@ fn background_image_radial_gradient_position_before_shape_does_not_overwrite_an_
             "background-image: url(a.png); background-image: radial-gradient(at center circle, red, blue)",
         ),
     );
-    assert_eq!(cv.background_image, BackgroundImage::Url("a.png".into()));
+    assert_eq!(
+        cv.background_layers()[0].image,
+        BackgroundImage::Url("a.png".into())
+    );
 }
 
 #[test]
@@ -6241,10 +6268,10 @@ fn resolved_against_inherited_carries_the_value_without_loss() {
     // is this arm's only coverage of the 7 `Background*` variants in
     // that bucket (same shape as the `Color` assertion above, which
     // covers `background_color`'s sibling arm the same way).
-    let position = PropertyValue::BackgroundPosition(crate::property::CssPosition {
+    let position = PropertyValue::BackgroundPosition(Arc::from([crate::property::CssPosition {
         horizontal: crate::property::CssPositionOffset::Start(Length::Px(5.0)),
         vertical: crate::property::CssPositionOffset::Start(Length::Px(5.0)),
-    });
+    }]));
     let passthrough = resolve_against_inherited(position.clone(), &inherited, &ctx);
     assert_eq!(passthrough.into_property_value(), position);
 }
@@ -7851,42 +7878,55 @@ fn apply_value_direct_background_shorthand_fall_through() {
     // `BackgroundSize`/`BackgroundClip`/`BackgroundOrigin` longhands
     // before `apply_value` ever sees it) — not a safety net, a canary.
     use crate::property::{
-        BackgroundAttachment, BackgroundImage, BackgroundRepeat, BackgroundRepeatKeyword,
-        BackgroundShorthand, BackgroundSize, CssPosition, CssPositionOffset, VisualBox,
+        BackgroundAttachment, BackgroundImage, BackgroundLayerSpec, BackgroundRepeat,
+        BackgroundRepeatKeyword, BackgroundShorthand, BackgroundSize, CssPosition,
+        CssPositionOffset, VisualBox,
     };
     let mut cv = SpecifiedValues::initial();
     let shorthand = BackgroundShorthand {
         color_expression: None,
         color: RED,
-        image: BackgroundImage::Url("tile.png".into()),
-        repeat: BackgroundRepeat {
-            x: BackgroundRepeatKeyword::Round,
-            y: BackgroundRepeatKeyword::Space,
-        },
-        attachment: BackgroundAttachment::Fixed,
-        position: CssPosition {
-            horizontal: CssPositionOffset::Start(Length::Px(10.0)),
-            vertical: CssPositionOffset::End(Length::Px(20.0)),
-        },
-        size: BackgroundSize::Explicit {
-            width: LengthOrAuto::Length(Length::Px(100.0)),
-            height: LengthOrAuto::Auto,
-        },
-        clip: VisualBox::PaddingBox,
-        origin: VisualBox::ContentBox,
+        layers: Box::new([BackgroundLayerSpec {
+            image: BackgroundImage::Url("tile.png".into()),
+            repeat: BackgroundRepeat {
+                x: BackgroundRepeatKeyword::Round,
+                y: BackgroundRepeatKeyword::Space,
+            },
+            attachment: BackgroundAttachment::Fixed,
+            position: CssPosition {
+                horizontal: CssPositionOffset::Start(Length::Px(10.0)),
+                vertical: CssPositionOffset::End(Length::Px(20.0)),
+            },
+            size: BackgroundSize::Explicit {
+                width: LengthOrAuto::Length(Length::Px(100.0)),
+                height: LengthOrAuto::Auto,
+            },
+            clip: VisualBox::PaddingBox,
+            origin: VisualBox::ContentBox,
+        }]),
     };
     apply_value(
         PropertyValue::Background(Box::new(shorthand.clone())),
         &mut cv,
     );
     assert_eq!(cv.background_color, RED);
-    assert_eq!(cv.background_image, shorthand.image);
-    assert_eq!(cv.background_repeat, shorthand.repeat);
-    assert_eq!(cv.background_attachment, shorthand.attachment);
-    assert_eq!(cv.background_position, shorthand.position);
-    assert_eq!(cv.background_size, shorthand.size);
-    assert_eq!(cv.background_clip, shorthand.clip);
-    assert_eq!(cv.background_origin, shorthand.origin);
+    let layer = &shorthand.layers[0];
+    assert_eq!(
+        cv.background_image.as_deref(),
+        Some(&[layer.image.clone()][..])
+    );
+    assert_eq!(cv.background_repeat.as_deref(), Some(&[layer.repeat][..]));
+    assert_eq!(
+        cv.background_attachment.as_deref(),
+        Some(&[layer.attachment][..])
+    );
+    assert_eq!(
+        cv.background_position.as_deref(),
+        Some(&[layer.position][..])
+    );
+    assert_eq!(cv.background_size.as_deref(), Some(&[layer.size][..]));
+    assert_eq!(cv.background_clip.as_deref(), Some(&[layer.clip][..]));
+    assert_eq!(cv.background_origin.as_deref(), Some(&[layer.origin][..]));
 }
 
 #[test]
@@ -7899,29 +7939,84 @@ fn background_shorthand_expands_to_8_longhands_through_real_cascade() {
         Some("background: red url(a.png) no-repeat fixed border-box"),
     );
     assert_eq!(cv.background_color, RED);
-    assert_eq!(cv.background_image, BackgroundImage::Url("a.png".into()));
-    assert_eq!(cv.background_attachment, BackgroundAttachment::Fixed);
-    assert_eq!(cv.background_clip, VisualBox::BorderBox);
-    assert_eq!(cv.background_origin, VisualBox::BorderBox);
+    assert_eq!(
+        cv.background_layers()[0].image,
+        BackgroundImage::Url("a.png".into())
+    );
+    assert_eq!(
+        cv.background_layers()[0].attachment,
+        BackgroundAttachment::Fixed
+    );
+    assert_eq!(cv.background_layers()[0].clip, VisualBox::BorderBox);
+    assert_eq!(cv.background_layers()[0].origin, VisualBox::BorderBox);
 }
 
 #[test]
-fn background_shorthand_comma_separated_multi_layer_declaration_dropped_through_real_cascade() {
-    // `property::tests::background_shorthand_rejects_comma_separated_multi_layer`
-    // pins this via the `parse_entire` fixture (`Parser::parse_entirely`,
-    // semantically equivalent to the real `DeclParser`'s
-    // `expect_exhausted` check but not the real pipeline itself). This
-    // is the end-to-end sibling, through the real parse -> cascade path
-    // (`expand_shorthand_into` never runs since `parse_value` itself
-    // returns `None` for the whole declaration): a prior valid winner
-    // must survive untouched, not merely fall back to the initial value
-    // (which would also happen if the declaration were simply absent).
+fn background_shorthand_comma_separated_layers_through_real_cascade() {
+    // A multi-layer shorthand expands into one list item per layer, and
+    // resets the color to its initial value.
+    use crate::property::BackgroundImage;
     let cv = cascade_doc(
         "",
         "div",
         Some("background: red; background: url(a.png) top, url(b.png) bottom"),
     );
-    assert_eq!(cv.background_color, RED);
+    assert_eq!(cv.background_color, CssColor::TRANSPARENT);
+    let images: Vec<_> = cv.background_images().cloned().collect();
+    assert_eq!(
+        images,
+        [
+            BackgroundImage::Url("a.png".into()),
+            BackgroundImage::Url("b.png".into())
+        ]
+    );
+}
+
+#[test]
+fn background_longhand_lists_are_reconciled_to_the_image_count() {
+    // CSS Backgrounds 3 §2.1: a short list repeats and excess items are
+    // unused; the number of `background-image` items sets the layer count.
+    use crate::property::{BackgroundAttachment, VisualBox};
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "background-image: url(a.png), url(b.png), url(c.png); \
+             background-attachment: fixed, local; \
+             background-clip: content-box, padding-box, border-box, content-box",
+        ),
+    );
+    let layers = cv.background_layers();
+    assert_eq!(layers.len(), 3);
+    let attachments: Vec<_> = layers.iter().map(|layer| layer.attachment).collect();
+    assert_eq!(
+        attachments,
+        [
+            BackgroundAttachment::Fixed,
+            BackgroundAttachment::Local,
+            BackgroundAttachment::Fixed
+        ]
+    );
+    let clips: Vec<_> = layers.iter().map(|layer| layer.clip).collect();
+    assert_eq!(
+        clips,
+        [
+            VisualBox::ContentBox,
+            VisualBox::PaddingBox,
+            VisualBox::BorderBox
+        ]
+    );
+    assert_eq!(cv.final_background_clip(), VisualBox::BorderBox);
+    assert!(cv.has_background_image());
+}
+
+#[test]
+fn background_without_declarations_shares_the_initial_layer_list() {
+    let a = cascade_doc("", "div", Some("color: red"));
+    let b = cascade_doc("", "div", Some("background-image: none"));
+    assert!(Arc::ptr_eq(&a.background_layers, &b.background_layers));
+    assert_eq!(a.background_layers().len(), 1);
+    assert!(!a.has_background_image());
 }
 
 #[test]

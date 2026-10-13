@@ -27,13 +27,13 @@ use std::sync::Arc;
 use smol_str::SmolStr;
 
 use crate::computed::{
-    ChFontKey, ChLengthProvenance, ComputedBorderImage, ComputedValues, FontSizeKeywordInfo,
-    RunningTemplate, VerticalLogicalSize,
+    ChFontKey, ChLengthProvenance, ComputedBackgroundLayer, ComputedBorderImage, ComputedValues,
+    FontSizeKeywordInfo, RunningTemplate, VerticalLogicalSize, initial_background_layers,
 };
 use crate::property::{
     AlignSelfValue, BORDER_IMAGE_OUTSET_INITIAL, BORDER_IMAGE_WIDTH_INITIAL,
-    BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage, BackgroundRepeat,
-    BackgroundRepeatKeyword, BackgroundSize, Border, BorderCollapseValue, BorderColor,
+    BORDER_WIDTH_MEDIUM_PX, BackgroundAttachment, BackgroundImage, BackgroundLayerSpec,
+    BackgroundRepeat, BackgroundSize, Border, BorderCollapseValue, BorderColor,
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxDecorationBreak, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue,
@@ -608,32 +608,39 @@ pub struct SpecifiedValues {
     pub orphans: i32,
     /// Staging value for [`ComputedValues::widows`]; same layer as [`Self::orphans`].
     pub widows: i32,
-    /// Staging value for [`ComputedValues::background_repeat`]; computed-equivalent because
+    /// Specified `background-repeat` list, one item per layer; `None` is the
+    /// initial single `repeat` layer. Computed-equivalent because
     /// `BackgroundRepeat` carries no lengths.
-    pub background_repeat: BackgroundRepeat,
-    /// Staging value for [`ComputedValues::background_attachment`]; computed-equivalent because
-    /// `BackgroundAttachment` carries no lengths.
-    pub background_attachment: BackgroundAttachment,
-    /// Staging value for [`ComputedValues::background_clip`]; computed-equivalent because
-    /// `VisualBox` carries no lengths.
-    pub background_clip: VisualBox,
-    /// Staging value for [`ComputedValues::background_origin`]; computed-equivalent because
-    /// `VisualBox` carries no lengths.
-    pub background_origin: VisualBox,
-    /// **Specified** `background-size`; phase 3 absolutizes `<length-percentage>` on each axis,
+    pub background_repeat: Option<Arc<[BackgroundRepeat]>>,
+    /// Specified `background-attachment` list; `None` is the initial single
+    /// `scroll` layer. Computed-equivalent.
+    pub background_attachment: Option<Arc<[BackgroundAttachment]>>,
+    /// Specified `background-clip` list; `None` is the initial single
+    /// `border-box` layer. Computed-equivalent.
+    pub background_clip: Option<Arc<[VisualBox]>>,
+    /// Specified `background-origin` list; `None` is the initial single
+    /// `padding-box` layer. Computed-equivalent.
+    pub background_origin: Option<Arc<[VisualBox]>>,
+    /// **Specified** `background-size` list; `None` is the initial single
+    /// `auto` layer. Phase 3 absolutizes `<length-percentage>` on each axis,
     /// as for `width` / `height`.
-    pub background_size: BackgroundSize,
-    /// **Specified** `background-position`; phase 3 absolutizes `<length-percentage>` in each offset.
-    pub background_position: CssPosition,
-    /// Staging value for [`ComputedValues::background_image`]. `None` and `Url(String)` are
-    /// computed-equivalent. Phase 3 absolutizes the font-relative part of `<length-percentage>`
-    /// in `Gradient(..)` (CSS Images 4 §3), including `GradientColorStop::position`,
-    /// `RadialSize::Circle` / `Ellipse`, and `CssPosition` in `RadialGradient` / `ConicGradient`.
-    /// Percentages pass through because they need the gradient box dimensions at paint /
-    /// used-value time (see the `resolve_background_image` docs). Angles always pass through.
-    pub background_image: BackgroundImage,
+    pub background_size: Option<Arc<[BackgroundSize]>>,
+    /// **Specified** `background-position` list; `None` is the initial single
+    /// `0% 0%` layer. Phase 3 absolutizes `<length-percentage>` in each offset.
+    pub background_position: Option<Arc<[CssPosition]>>,
+    /// Specified `background-image` list, whose length is the number of
+    /// background layers; `None` is the initial single `none` layer. `None`
+    /// and `Url(String)` items are computed-equivalent. Phase 3 absolutizes
+    /// the font-relative part of `<length-percentage>` in `Gradient(..)` (CSS
+    /// Images 4 §3), including `GradientColorStop::position`,
+    /// `RadialSize::Circle` / `Ellipse`, and `CssPosition` in
+    /// `RadialGradient` / `ConicGradient`. Percentages pass through because
+    /// they need the gradient box dimensions at paint / used-value time (see
+    /// the `resolve_background_image` docs). Angles always pass through.
+    /// Phase 3 also reconciles the other per-layer lists to this length.
+    pub background_image: Option<Arc<[BackgroundImage]>>,
     /// Staging value for [`ComputedBorderImage::source`]; gradients are
-    /// absolutized in phase 3 like [`Self::background_image`].
+    /// absolutized in phase 3 like each item of [`Self::background_image`].
     pub border_image_source: BackgroundImage,
     /// Staging value for [`ComputedBorderImage::slice`]; computed-equivalent.
     pub border_image_slice: BorderImageSlice,
@@ -1023,32 +1030,15 @@ impl SpecifiedValues {
             // CSS Fragmentation Module Level 3 §3.3: orphans and widows are both initially `2`.
             orphans: 2,
             widows: 2,
-            // CSS Backgrounds and Borders 3 §2.4: background-repeat is initially `repeat` on both axes.
-            background_repeat: BackgroundRepeat {
-                x: BackgroundRepeatKeyword::Repeat,
-                y: BackgroundRepeatKeyword::Repeat,
-            },
-            // CSS Backgrounds and Borders 3 §2.5: background-attachment is initially `scroll`.
-            background_attachment: BackgroundAttachment::Scroll,
-            // CSS Backgrounds and Borders 3 §2.7: background-clip is initially `border-box`,
-            // unlike its sibling background_origin (initially `padding-box`).
-            background_clip: VisualBox::BorderBox,
-            // background-origin is initially `padding-box`.
-            background_origin: VisualBox::PaddingBox,
-            // CSS Backgrounds and Borders 3 §2.9: background-size is initially `auto` on both
-            // axes. This is an explicit spec value, unrelated to the single-value fill rule in
-            // the `BackgroundSize` docs.
-            background_size: BackgroundSize::Explicit {
-                width: LengthOrAuto::Auto,
-                height: LengthOrAuto::Auto,
-            },
-            // CSS Backgrounds and Borders 3 §2.6: background-position is initially `0% 0%`.
-            background_position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-            },
-            // CSS Backgrounds and Borders 3 §2.3: background-image is initially `none`.
-            background_image: BackgroundImage::None,
+            // CSS Backgrounds and Borders 3 §2.3-§2.9: `None` stands for each
+            // per-layer longhand's initial single-layer list.
+            background_repeat: None,
+            background_attachment: None,
+            background_clip: None,
+            background_origin: None,
+            background_size: None,
+            background_position: None,
+            background_image: None,
             border_image_source: BackgroundImage::None,
             border_image_slice: BorderImageSlice::INITIAL,
             border_image_width: BORDER_IMAGE_WIDTH_INITIAL,
@@ -1427,22 +1417,13 @@ impl SpecifiedValues {
             // non-inherited (CSS Backgrounds and Borders 3 §2.3/§2.4/§2.5/§2.6/
             // §2.7/§2.8/§2.9, all "Inherited: no") — child starts from spec
             // initial, same as `background_color` above.
-            background_repeat: BackgroundRepeat {
-                x: BackgroundRepeatKeyword::Repeat,
-                y: BackgroundRepeatKeyword::Repeat,
-            },
-            background_attachment: BackgroundAttachment::Scroll,
-            background_clip: VisualBox::BorderBox,
-            background_origin: VisualBox::PaddingBox,
-            background_size: BackgroundSize::Explicit {
-                width: LengthOrAuto::Auto,
-                height: LengthOrAuto::Auto,
-            },
-            background_position: CssPosition {
-                horizontal: CssPositionOffset::Start(Length::Percent(0.0)),
-                vertical: CssPositionOffset::Start(Length::Percent(0.0)),
-            },
-            background_image: BackgroundImage::None,
+            background_repeat: None,
+            background_attachment: None,
+            background_clip: None,
+            background_origin: None,
+            background_size: None,
+            background_position: None,
+            background_image: None,
             border_image_source: BackgroundImage::None,
             border_image_slice: BorderImageSlice::INITIAL,
             border_image_width: BORDER_IMAGE_WIDTH_INITIAL,
@@ -2144,33 +2125,21 @@ impl SpecifiedValues {
             bottom: resolve_length_percentage_or_auto(self.bottom, font_size, own_line_height, ctx),
             left: resolve_length_percentage_or_auto(self.left, font_size, own_line_height, ctx),
             box_sizing: self.box_sizing,
-            // CSS Backgrounds and Borders 3 §2.4/§2.5/§2.7/§2.8: the computed values are
-            // specified keywords with no lengths, like the TextDecorationLine arm below.
-            background_repeat: self.background_repeat,
-            background_attachment: self.background_attachment,
-            background_clip: self.background_clip,
-            background_origin: self.background_origin,
-            // CSS Backgrounds and Borders 3 §2.9/§2.6: these contain `<length-percentage>`, so
-            // absolutize them like width / height.
-            background_size: resolve_background_size(
-                self.background_size,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
-            background_position: resolve_css_position(
-                self.background_position,
-                font_size,
-                own_line_height,
-                ctx,
-            ),
-            // CSS Backgrounds and Borders 3 §2.3 / CSS Images 4 §3: `None` and `Url(String)` are
-            // computed-equivalent. For `Gradient(..)`, absolutize font-relative parts of
-            // `<length-percentage>` against this node's font_size / own_line_height. Percentages
-            // need gradient box dimensions and pass through (see the `resolve_background_image`
-            // docs); angles also pass through.
-            background_image: resolve_background_image(
-                self.background_image,
+            // CSS Backgrounds and Borders 3 §2.1: one layer per `background-image` item, the
+            // other per-layer lists repeated or truncated to that length. Lengths in sizes,
+            // positions and gradients are absolutized against this node's font_size /
+            // own_line_height; percentages and angles pass through (see the
+            // `resolve_background_image` docs).
+            background_layers: computed_background_layers(
+                &BackgroundLists {
+                    image: self.background_image.as_deref(),
+                    position: self.background_position.as_deref(),
+                    size: self.background_size.as_deref(),
+                    repeat: self.background_repeat.as_deref(),
+                    attachment: self.background_attachment.as_deref(),
+                    origin: self.background_origin.as_deref(),
+                    clip: self.background_clip.as_deref(),
+                },
                 font_size,
                 own_line_height,
                 ctx,
@@ -2675,6 +2644,80 @@ fn resolve_auto_tracks(
     } else {
         resolve_grid_auto_track_list(tracks, font_size, own_line_height, ctx)
     }
+}
+
+/// Borrowed specified per-layer background lists; `None` is a property's
+/// initial single-layer list.
+pub(crate) struct BackgroundLists<'a> {
+    pub(crate) image: Option<&'a [BackgroundImage]>,
+    pub(crate) position: Option<&'a [CssPosition]>,
+    pub(crate) size: Option<&'a [BackgroundSize]>,
+    pub(crate) repeat: Option<&'a [BackgroundRepeat]>,
+    pub(crate) attachment: Option<&'a [BackgroundAttachment]>,
+    pub(crate) origin: Option<&'a [VisualBox]>,
+    pub(crate) clip: Option<&'a [VisualBox]>,
+}
+
+/// Computes the background layers from the specified per-layer lists (CSS
+/// Backgrounds and Borders 3 §2.1): the number of `background-image` items
+/// is the number of layers; every other list repeats from its start when
+/// it has too few items, and its excess items are unused. With every list
+/// at its initial value, or with a result equal to the initial single
+/// layer, the shared initial list is returned without allocating.
+pub(crate) fn computed_background_layers(
+    lists: &BackgroundLists<'_>,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Arc<[ComputedBackgroundLayer]> {
+    if lists.image.is_none()
+        && lists.position.is_none()
+        && lists.size.is_none()
+        && lists.repeat.is_none()
+        && lists.attachment.is_none()
+        && lists.origin.is_none()
+        && lists.clip.is_none()
+    {
+        return initial_background_layers();
+    }
+    fn item<T: Clone>(list: Option<&[T]>, index: usize, initial: T) -> T {
+        match list {
+            Some(list) if !list.is_empty() => list[index % list.len()].clone(),
+            _ => initial,
+        }
+    }
+    let initial = BackgroundLayerSpec::initial();
+    let count = lists.image.map_or(1, |images| images.len().max(1));
+    let layers: Arc<[ComputedBackgroundLayer]> = (0..count)
+        .map(|index| {
+            let mut layer = ComputedBackgroundLayer::initial();
+            layer.image = resolve_background_image(
+                item(lists.image, index, BackgroundImage::None),
+                font_size,
+                own_line_height,
+                ctx,
+            );
+            layer.position = resolve_css_position(
+                item(lists.position, index, initial.position),
+                font_size,
+                own_line_height,
+                ctx,
+            );
+            layer.size = resolve_background_size(
+                item(lists.size, index, initial.size),
+                font_size,
+                own_line_height,
+                ctx,
+            );
+            layer.repeat = item(lists.repeat, index, initial.repeat);
+            layer.attachment = item(lists.attachment, index, initial.attachment);
+            layer.origin = item(lists.origin, index, initial.origin);
+            layer.clip = item(lists.clip, index, initial.clip);
+            layer
+        })
+        .collect();
+    let shared = initial_background_layers();
+    if *layers == *shared { shared } else { layers }
 }
 
 #[cfg(test)]

@@ -22,18 +22,19 @@ use raikiri_dom::image_geometry::{
 };
 use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
-    AnglePercentage, BackgroundImage, Border, BorderColor, BorderImageOutsetSide,
-    BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient, CssColor, CssPosition,
-    CssPositionOffset, DisplayValue, FloatValue, Gradient, GradientStopColor,
-    HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
-    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
-    VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
+    AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor,
+    BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient,
+    CssColor, CssPosition, CssPositionOffset, DisplayValue, FloatValue, Gradient,
+    GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
+    ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
+    PropertyValue, Sides, TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
+    ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
     ComputedCssPosition, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, ComputedValues, ResolveContext, resolve_background_size,
-    resolve_border, resolve_css_position,
+    ComputedTransformFunction, ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext,
+    resolve_background_size, resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -373,7 +374,7 @@ fn page_background_color(
     let declarations = cascade.page.declarations();
     let mut has_background_declaration = false;
     let mut background_color = CssColor::TRANSPARENT;
-    let mut background_image = BackgroundImage::None;
+    let mut background_image = &BackgroundImage::None;
     let mut current_color = CssColor::BLACK;
 
     if let Some(PropertyValue::BackgroundColor(value)) =
@@ -385,7 +386,11 @@ fn page_background_color(
     if let Some(PropertyValue::BackgroundImage(value)) =
         declarations.get(&PropertyKey::BackgroundImage)
     {
-        background_image = value.clone();
+        // The image-derived color fallback applies to a single layer only;
+        // with several layers the color stands alone under the images.
+        if let [image] = &**value {
+            background_image = image;
+        }
         has_background_declaration = true;
     }
     if let Some(PropertyValue::Color(value)) = declarations.get(&PropertyKey::Color) {
@@ -397,7 +402,7 @@ fn page_background_color(
     }
     // A gradient the page box draws paints over the background color
     // rather than standing in for it.
-    if paints_gradient_image(&background_image) {
+    if paints_gradient_image(background_image) {
         return (background_color.a != 0).then(|| {
             Color::from_rgba8(
                 background_color.r,
@@ -409,7 +414,7 @@ fn page_background_color(
     }
     background_color_with_image_source(
         background_color,
-        &background_image,
+        background_image,
         current_color,
         pixel_source,
     )
@@ -419,16 +424,14 @@ fn page_background_color(
 fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Option<usize> {
     let html_id = find_html(document)?;
     let html = cascade.computed.get(html_id)?;
-    let html_is_transparent =
-        matches!(&html.background_image, BackgroundImage::None) && html.background_color.a == 0;
+    let html_is_transparent = !html.has_background_image() && html.background_color.a == 0;
     if !html_is_transparent {
         return Some(html_id);
     }
 
     let body_id = raikiri_dom::paint_rules::find_paint_root(document)?;
     let body = cascade.computed.get(body_id)?;
-    let body_has_background =
-        !matches!(&body.background_image, BackgroundImage::None) || body.background_color.a != 0;
+    let body_has_background = body.has_background_image() || body.background_color.a != 0;
     body_has_background.then_some(body_id)
 }
 
@@ -441,31 +444,65 @@ fn canvas_background_color(
         .computed
         .get(canvas_background_owner(document, cascade)?)?;
     // A linear or radial gradient is painted as an image over the color by
-    // `paint_canvas_background_image`.
-    if paints_gradient_image(&computed.background_image) {
-        return (computed.background_color.a != 0).then(|| css_color(computed.background_color));
-    }
+    // `paint_canvas_background_image`, and so are the images of several
+    // layers: the image-derived color fallback applies to one layer only.
+    let image = match computed.background_layers() {
+        [layer] if !paints_gradient_image(&layer.image) => &layer.image,
+        _ => {
+            return (computed.background_color.a != 0)
+                .then(|| css_color(computed.background_color));
+        }
+    };
     background_color_with_image_source(
         computed.background_color,
-        &computed.background_image,
+        image,
         computed.color,
         pixel_source,
     )
     .map(|color| Color::from_rgba8(color.r, color.g, color.b, color.a))
 }
 
-fn page_background_clip(cascade: &CascadeResult) -> VisualBox {
-    match page_property(cascade, PropertyKey::BackgroundClip) {
-        Some(PropertyValue::BackgroundClip(clip)) => *clip,
-        _ => ComputedValues::initial().background_clip,
+/// The item of an `@page` per-layer background list for layer `index`: a
+/// list with too few items repeats (CSS Backgrounds 3 §2.1).
+fn page_layer_item<T: Copy>(list: Option<&[T]>, index: usize, initial: T) -> T {
+    match list {
+        Some(list) if !list.is_empty() => list[index % list.len()],
+        _ => initial,
     }
 }
 
-fn page_background_origin(cascade: &CascadeResult) -> VisualBox {
-    match page_property(cascade, PropertyKey::BackgroundOrigin) {
-        Some(PropertyValue::BackgroundOrigin(origin)) => *origin,
-        _ => ComputedValues::initial().background_origin,
+fn page_background_clips(cascade: &CascadeResult) -> Option<&[VisualBox]> {
+    match page_property(cascade, PropertyKey::BackgroundClip) {
+        Some(PropertyValue::BackgroundClip(clips)) => Some(clips),
+        _ => None,
     }
+}
+
+fn page_background_origins(cascade: &CascadeResult) -> Option<&[VisualBox]> {
+    match page_property(cascade, PropertyKey::BackgroundOrigin) {
+        Some(PropertyValue::BackgroundOrigin(origins)) => Some(origins),
+        _ => None,
+    }
+}
+
+/// The page `background-clip` of the first layer.
+#[cfg(test)]
+fn page_background_clip(cascade: &CascadeResult) -> VisualBox {
+    page_layer_item(
+        page_background_clips(cascade),
+        0,
+        raikiri_style::ComputedBackgroundLayer::initial().clip,
+    )
+}
+
+/// The page `background-origin` of the first layer.
+#[cfg(test)]
+fn page_background_origin(cascade: &CascadeResult) -> VisualBox {
+    page_layer_item(
+        page_background_origins(cascade),
+        0,
+        raikiri_style::ComputedBackgroundLayer::initial().origin,
+    )
 }
 
 /// Used page border widths in px for background geometry.
@@ -543,7 +580,7 @@ fn origin_inset_rect(
             area.x1 - br - pr,
             area.y1 - bb - pb,
         ),
-        VisualBox::BorderArea | VisualBox::Text => {
+        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
@@ -588,10 +625,30 @@ fn clip_inset_rect(
             area.x1 - br - pr,
             area.y1 - bb - pb,
         )),
-        VisualBox::BorderArea | VisualBox::Text => None,
+        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => None,
         // cov:ignore: defensive fallback for future `VisualBox` variants
         _ => Some(area),
     }
+}
+
+/// The layers of `layers` that are painted, top first: all of them, or the
+/// top [`MAX_PAINTED_BACKGROUND_LAYERS`] with a warning.
+fn painted_background_layers<'a, T>(layers: &'a [T], warnings: &mut Vec<RenderWarning>) -> &'a [T] {
+    if layers.len() <= MAX_PAINTED_BACKGROUND_LAYERS {
+        return layers;
+    }
+    warnings.push(RenderWarning {
+        kind: WarningKind::ResourceFallback {
+            kind: raikiri_traits::ResourceKind::Image,
+            url: None,
+        },
+        node_id: None,
+        details: format!(
+            "a box has {} background layers; only the top {MAX_PAINTED_BACKGROUND_LAYERS} were painted",
+            layers.len()
+        ),
+    });
+    &layers[..MAX_PAINTED_BACKGROUND_LAYERS]
 }
 
 fn paint_page_background_image(
@@ -605,11 +662,99 @@ fn paint_page_background_image(
 ) {
     // The page box paints a URL image through the pixel source, and a
     // linear or radial gradient itself.
-    let Some(PropertyValue::BackgroundImage(image)) =
+    let Some(PropertyValue::BackgroundImage(images)) =
         page_property(cascade, PropertyKey::BackgroundImage)
     else {
         return;
     };
+    let initial = ComputedValues::initial();
+    let initial_layer = raikiri_style::ComputedBackgroundLayer::initial();
+    let root = find_html(document).and_then(|node_id| cascade.computed.get(node_id));
+    let root_font_size = root.map_or(initial.font_size, |computed| computed.font_size);
+    let page_font_size = match page_property(cascade, PropertyKey::FontSize) {
+        Some(PropertyValue::FontSize(Length::Px(px))) => ComputedLength(*px),
+        _ => root_font_size,
+    };
+    let resolve_context = ResolveContext::new(root_font_size);
+    let sizes = match page_property(cascade, PropertyKey::BackgroundSize) {
+        Some(PropertyValue::BackgroundSize(sizes)) => Some(&**sizes),
+        _ => None,
+    };
+    let positions = match page_property(cascade, PropertyKey::BackgroundPosition) {
+        Some(PropertyValue::BackgroundPosition(positions)) => Some(&**positions),
+        _ => None,
+    };
+    let repeats = match page_property(cascade, PropertyKey::BackgroundRepeat) {
+        Some(PropertyValue::BackgroundRepeat(repeats)) => Some(&**repeats),
+        _ => None,
+    };
+    let origins = page_background_origins(cascade);
+    let clips = page_background_clips(cascade);
+    let border = page_border_widths(cascade, area);
+    let padding = page_padding_widths(cascade, area);
+    // The page context inherits `color` from the root element.
+    let current_color = match page_property(cascade, PropertyKey::Color) {
+        Some(PropertyValue::Color(color)) => *color,
+        _ => root.map_or(initial.color, |computed| computed.color),
+    };
+    // CSS Backgrounds 3 §2.1: the first layer is on top, so paint from the
+    // last to the first.
+    let painted = painted_background_layers(images, warnings);
+    for (index, image) in painted.iter().enumerate().rev() {
+        let mut layer = initial_layer.clone();
+        layer.image = image.clone();
+        layer.size = sizes.map_or(initial_layer.size, |sizes| {
+            resolve_background_size(
+                page_layer_item(Some(sizes), index, BackgroundLayerSpec::initial().size),
+                page_font_size,
+                None,
+                &resolve_context,
+            )
+        });
+        layer.position = positions.map_or(initial_layer.position, |positions| {
+            resolve_css_position(
+                page_layer_item(
+                    Some(positions),
+                    index,
+                    BackgroundLayerSpec::initial().position,
+                ),
+                page_font_size,
+                None,
+                &resolve_context,
+            )
+        });
+        layer.repeat = page_layer_item(repeats, index, initial_layer.repeat);
+        layer.origin = page_layer_item(origins, index, initial_layer.origin);
+        layer.clip = page_layer_item(clips, index, initial_layer.clip);
+        paint_page_background_layer(
+            image_cache,
+            scene,
+            &layer,
+            area,
+            (border, padding),
+            (page_font_size, &resolve_context, current_color),
+            pixel_source,
+            warnings,
+        );
+    }
+}
+
+/// Left, top, right and bottom widths of a box edge, in CSS px.
+type EdgeWidths = (f64, f64, f64, f64);
+
+/// Paint one `@page` background layer over the page border box `area`.
+#[allow(clippy::too_many_arguments)]
+fn paint_page_background_layer(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    layer: &raikiri_style::ComputedBackgroundLayer,
+    area: Rect,
+    (border, padding): (EdgeWidths, EdgeWidths),
+    (page_font_size, resolve_context, current_color): (ComputedLength, &ResolveContext, CssColor),
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    let image = &layer.image;
     let source = match image {
         BackgroundImage::Url(raw_url) => {
             let (Some(pixel_source), Some(url)) = (pixel_source, image_cache.image_url(raw_url))
@@ -622,55 +767,14 @@ fn paint_page_background_image(
         _ => return,
     };
     let url = source.as_ref().ok().map(|(_, url)| url);
-    let initial = ComputedValues::initial();
-    let root = find_html(document).and_then(|node_id| cascade.computed.get(node_id));
-    let root_font_size = root.map_or(initial.font_size, |computed| computed.font_size);
-    let page_font_size = match page_property(cascade, PropertyKey::FontSize) {
-        Some(PropertyValue::FontSize(Length::Px(px))) => ComputedLength(*px),
-        _ => root_font_size,
-    };
-    let resolve_context = ResolveContext::new(root_font_size);
-    let background_size = match page_property(cascade, PropertyKey::BackgroundSize) {
-        Some(PropertyValue::BackgroundSize(size)) => {
-            resolve_background_size(*size, page_font_size, None, &resolve_context)
-        }
-        _ => initial.background_size,
-    };
-    let background_position = match page_property(cascade, PropertyKey::BackgroundPosition) {
-        Some(PropertyValue::BackgroundPosition(position)) => {
-            resolve_css_position(*position, page_font_size, None, &resolve_context)
-        }
-        _ => initial.background_position,
-    };
-    let background_repeat = match page_property(cascade, PropertyKey::BackgroundRepeat) {
-        Some(PropertyValue::BackgroundRepeat(repeat)) => *repeat,
-        _ => initial.background_repeat,
-    };
-    // `@page` paint/position areas with nonzero margins/borders (CSS Page 3
-    // page box plus CSS Backgrounds 3 sections 2.7-2.8): `area` is the page
-    // border box (full paper for the page background). Origin insets it to the
-    // positioning box; clip insets it to the painting box. `border-area`/`text`
-    // clips are explicitly rejected with a warning instead of silently
-    // omitting pixels.
-    let origin = page_background_origin(cascade);
-    let clip = page_background_clip(cascade);
-    let border = page_border_widths(cascade, area);
-    let padding = page_padding_widths(cascade, area);
-    let positioning = origin_inset_rect(area, origin, border, padding, url, warnings);
-    let Some(painting) = clip_inset_rect(area, clip, border, padding) else {
-        let what = if url.is_some() { "image" } else { "gradient" };
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: url.map(redacted_image_url),
-            },
-            node_id: None,
-            details: format!(
-                "page background-clip has an unsupported visual box; the {what} was skipped"
-            ),
-        });
-        return;
-    };
+    // `@page` positioning area with nonzero margins/borders (CSS Page 3 page
+    // box plus CSS Backgrounds 3 section 2.8): `area` is the page border box
+    // (full paper for the page background), and origin insets it to the
+    // positioning box. The page background painting area covers the whole
+    // page box regardless of `background-clip` (CSS Page 3, "Page Backgrounds
+    // and Painting Order"), so every layer paints over all of `area`.
+    let positioning = origin_inset_rect(area, layer.origin, border, padding, url, warnings);
+    let painting = area;
     if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
         return;
     }
@@ -681,9 +785,9 @@ fn paint_page_background_image(
             &url,
             positioning,
             painting,
-            &background_size,
-            &background_position,
-            &background_repeat,
+            &layer.size,
+            &layer.position,
+            &layer.repeat,
             pixel_source,
             warnings,
         ),
@@ -694,15 +798,10 @@ fn paint_page_background_image(
                     image.clone(),
                     page_font_size,
                     None,
-                    &resolve_context,
+                    resolve_context,
                 )
             else {
                 return;
-            };
-            // The page context inherits `color` from the root element.
-            let current_color = match page_property(cascade, PropertyKey::Color) {
-                Some(PropertyValue::Color(color)) => *color,
-                _ => root.map_or(initial.color, |computed| computed.color),
             };
             gradient::paint_gradient_layer(
                 scene,
@@ -710,9 +809,9 @@ fn paint_page_background_image(
                 positioning,
                 painting,
                 None,
-                &background_size,
-                &background_position,
-                &background_repeat,
+                &layer.size,
+                &layer.position,
+                &layer.repeat,
                 current_color,
             );
         }
@@ -746,27 +845,54 @@ fn paint_canvas_background_image(
     let Some(computed) = cascade.computed.get(node_id) else {
         return;
     };
-    if let BackgroundImage::Gradient(gradient) = &computed.background_image
-        && paints_gradient_image(&computed.background_image)
+    // CSS Backgrounds 3 §2.1: paint from the last layer to the first.
+    let painted = painted_background_layers(computed.background_layers(), warnings);
+    for layer in painted.iter().rev() {
+        paint_canvas_background_layer(
+            image_cache,
+            scene,
+            computed,
+            layer,
+            area,
+            pixel_source,
+            warnings,
+        );
+    }
+}
+
+/// Paint one background layer propagated to the canvas over the canvas
+/// border box `area`.
+fn paint_canvas_background_layer(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    computed: &ComputedValues,
+    layer: &raikiri_style::ComputedBackgroundLayer,
+    area: Rect,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    if let BackgroundImage::Gradient(gradient) = &layer.image
+        && paints_gradient_image(&layer.image)
     {
-        paint_canvas_gradient(scene, computed, gradient, area, warnings);
+        paint_canvas_gradient(scene, computed, layer, gradient, area, warnings);
         return;
     }
     let Some(pixel_source) = pixel_source else {
         return;
     };
-    let BackgroundImage::Url(raw_url) = &computed.background_image else {
+    let BackgroundImage::Url(raw_url) = &layer.image else {
         return;
     };
     let Some(url) = image_cache.image_url(raw_url) else {
         return;
     };
-    // Canvas paint/position areas with nonzero page margins and root borders
-    // (CSS Backgrounds 3 section 2.11 propagation plus sections 2.7-2.8):
-    // `area` is the canvas border box (page content area inside margins, or
-    // full paper when margins are zero). Origin/clip inset it by the canvas
-    // owner's border and padding. Unsupported clips warn instead of silently
-    // omitting pixels.
+    // Canvas positioning area with nonzero page margins and root borders
+    // (CSS Backgrounds 3 section 2.11 propagation plus section 2.8): `area`
+    // is the canvas border box (page content area inside margins, or full
+    // paper when margins are zero). Origin insets it by the canvas owner's
+    // border and padding. `background-clip` has no effect on a propagated
+    // background (CSS Backgrounds 3 §2.11.1), so the image paints over the
+    // whole of `area`, as the gradient path does.
     let border = (
         computed.border.left.width().px() as f64,
         computed.border.top.width().px() as f64,
@@ -774,27 +900,8 @@ fn paint_canvas_background_image(
         computed.border.bottom.width().px() as f64,
     );
     let padding = canvas_used_padding(computed, area.width());
-    let positioning = origin_inset_rect(
-        area,
-        computed.background_origin,
-        border,
-        padding,
-        Some(&url),
-        warnings,
-    );
-    let Some(painting) = clip_inset_rect(area, computed.background_clip, border, padding) else {
-        warnings.push(RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: raikiri_traits::ResourceKind::Image,
-                url: Some(redacted_image_url(&url)),
-            },
-            node_id: None,
-            details: "canvas background-clip has an unsupported visual box; the image was skipped"
-                .into(),
-        });
-        return;
-    };
-    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
+    let positioning = origin_inset_rect(area, layer.origin, border, padding, Some(&url), warnings);
+    if area.x1 <= area.x0 || area.y1 <= area.y0 {
         return;
     }
     paint_background_from_source(
@@ -802,10 +909,10 @@ fn paint_canvas_background_image(
         scene,
         &url,
         positioning,
-        painting,
-        &computed.background_size,
-        &computed.background_position,
-        &computed.background_repeat,
+        area,
+        &layer.size,
+        &layer.position,
+        &layer.repeat,
         pixel_source,
         warnings,
     );
@@ -825,6 +932,7 @@ fn paints_gradient_image(image: &BackgroundImage) -> bool {
 fn paint_canvas_gradient(
     scene: &mut impl PaintScene,
     computed: &ComputedValues,
+    layer: &raikiri_style::ComputedBackgroundLayer,
     gradient: &Gradient,
     area: Rect,
     warnings: &mut Vec<RenderWarning>,
@@ -836,14 +944,7 @@ fn paint_canvas_gradient(
         computed.border.bottom.width().px() as f64,
     );
     let padding = canvas_used_padding(computed, area.width());
-    let positioning = origin_inset_rect(
-        area,
-        computed.background_origin,
-        border,
-        padding,
-        None,
-        warnings,
-    );
+    let positioning = origin_inset_rect(area, layer.origin, border, padding, None, warnings);
     // The canvas background covers the whole canvas, so the root's
     // background-clip has no effect (CSS Backgrounds 3 §2.11.1).
     let painting = area;
@@ -856,9 +957,9 @@ fn paint_canvas_gradient(
         positioning,
         painting,
         None,
-        &computed.background_size,
-        &computed.background_position,
-        &computed.background_repeat,
+        &layer.size,
+        &layer.position,
+        &layer.repeat,
         computed.color,
     );
 }
@@ -1372,33 +1473,55 @@ fn paint_margin_box(
         return;
     }
     let rect = Rect::new(x as f64, y as f64, (x + width) as f64, (y + height) as f64);
-    if let Some(color) = margin_box.background_color {
-        scene.fill(
-            Fill::NonZero,
-            Affine::IDENTITY,
-            css_color(color),
-            None,
-            &rect,
-        );
-    }
     let borders = margin_box.border_widths();
-    if let (Some(image), Some(source)) = (&margin_box.background_image, pixel_source) {
-        if let Some(url) = image_cache.image_url(&image.url) {
-            // Margin-box paint/position areas honor `background-origin`/`background-clip`
-            // like elements (border box is `rect`). Unsupported `text`/`border-area`
-            // clips warn and skip the image instead of silently omitting pixels.
-            let border = (
-                borders.left as f64,
-                borders.top as f64,
-                borders.right as f64,
-                borders.bottom as f64,
-            );
-            let padding = (
-                margin_box.padding.left as f64,
-                margin_box.padding.top as f64,
-                margin_box.padding.right as f64,
-                margin_box.padding.bottom as f64,
-            );
+    // Margin-box paint/position areas honor `background-origin`/`background-clip`
+    // like elements (border box is `rect`). Unsupported `text`/`border-area`
+    // clips warn and skip the color or image instead of silently omitting pixels.
+    let border = (
+        borders.left as f64,
+        borders.top as f64,
+        borders.right as f64,
+        borders.bottom as f64,
+    );
+    let padding = (
+        margin_box.padding.left as f64,
+        margin_box.padding.top as f64,
+        margin_box.padding.right as f64,
+        margin_box.padding.bottom as f64,
+    );
+    if let Some(color) = margin_box.background_color {
+        // The bottom layer's clip also clips the color (CSS Backgrounds 3 §2.1).
+        match clip_inset_rect(rect, margin_box.background_clip, border, padding) {
+            Some(painting) => {
+                if painting.x1 > painting.x0 && painting.y1 > painting.y0 {
+                    scene.fill(
+                        Fill::NonZero,
+                        Affine::IDENTITY,
+                        css_color(color),
+                        None,
+                        &painting,
+                    );
+                }
+            }
+            None => warnings.push(RenderWarning {
+                kind: WarningKind::ResourceFallback {
+                    kind: raikiri_traits::ResourceKind::Image,
+                    url: None,
+                },
+                node_id: None,
+                details:
+                    "margin-box background-clip has an unsupported visual box; the color was skipped"
+                        .into(),
+            }),
+        }
+    }
+    if let Some(source) = pixel_source.filter(|_| !margin_box.background_layers.is_empty()) {
+        // CSS Backgrounds 3 §2.1: the first layer is on top.
+        let layers = painted_background_layers(&margin_box.background_layers, warnings);
+        for image in layers.iter().rev() {
+            let Some(url) = image_cache.image_url(&image.url) else {
+                continue;
+            };
             let positioning =
                 origin_inset_rect(rect, image.origin, border, padding, Some(&url), warnings);
             match clip_inset_rect(rect, image.clip, border, padding) {
@@ -1823,7 +1946,7 @@ pub(crate) fn paint_document_impl(
     // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
     if cascade.computed[body_id].background_color.a != 0
         // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
-        && cascade.computed[body_id].background_image == BackgroundImage::None
+        && !cascade.computed[body_id].has_background_image()
     // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
     {
         let Some(body) = document.get_node(body_id) else {
@@ -2345,9 +2468,7 @@ pub(crate) fn paint_document_impl(
                 .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
                 let paint_border_radius = paintable_border_radius(
                     &cv.border_radius,
-                    (has_border
-                        || cv.background_color.a > 0
-                        || !matches!(cv.background_image, BackgroundImage::None))
+                    (has_border || cv.background_color.a > 0 || cv.has_background_image())
                         && cv.transform.is_empty()
                         && cv.filter.is_empty(),
                 );
@@ -2821,16 +2942,11 @@ pub(crate) fn paint_document_impl(
                             own_paint_x,
                             own_paint_y,
                             cv.background_color,
-                            &cv.background_image,
+                            cv.background_layers(),
                             cv.color,
-                            cv.background_clip,
-                            cv.background_origin,
                             &paint_border_radius,
                             painted_border,
                             &paint_padding,
-                            &cv.background_size,
-                            &cv.background_position,
-                            &cv.background_repeat,
                             pixel_source,
                             warnings,
                         );
@@ -2845,12 +2961,10 @@ pub(crate) fn paint_document_impl(
                     // every border side already paints the complete visible
                     // union in `paint_element_background`; avoid compositing
                     // the same anti-aliased rounded edge a second time.
-                    let border_covered_by_background = matches!(
-                        cv.background_image,
-                        BackgroundImage::None
-                    ) && cv.background_color.a == 255
+                    let border_covered_by_background = !cv.has_background_image()
+                        && cv.background_color.a == 255
                         && matches!(
-                            cv.background_clip,
+                            cv.final_background_clip(),
                             raikiri_style::property::VisualBox::PaddingBox
                                 | raikiri_style::property::VisualBox::ContentBox
                         )
@@ -3085,16 +3199,11 @@ pub(crate) fn paint_document_impl(
                             paint_x,
                             paint_y,
                             color,
-                            &BackgroundImage::None,
+                            std::slice::from_ref(&color_only_background_layer(cv)),
                             cv.color,
-                            cv.background_clip,
-                            cv.background_origin,
                             &paint_border_radius,
                             &cv.border,
                             &paint_padding,
-                            &cv.background_size,
-                            &cv.background_position,
-                            &cv.background_repeat,
                             pixel_source,
                             warnings,
                         );
@@ -4191,9 +4300,15 @@ fn vertical_table_cell_background_width(
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
 ) -> Option<f32> {
-    if cascade.computed.get(node_id)?.display != DisplayValue::TableCell
-        || cascade.computed.get(node_id)?.background_clip
-            != raikiri_style::property::VisualBox::ContentBox
+    // The narrowed width applies to the whole background, so it is used only
+    // when every layer clips to the content box; a layer clipped to a larger
+    // box must keep the full cell width.
+    let cv = cascade.computed.get(node_id)?;
+    if cv.display != DisplayValue::TableCell
+        || !cv
+            .background_layers()
+            .iter()
+            .all(|layer| layer.clip == raikiri_style::property::VisualBox::ContentBox)
     {
         return None;
     }
@@ -4236,6 +4351,19 @@ fn vertical_table_cell_background_width(
     )
 }
 
+/// The final background layer of `cv` without its image: what a box paints
+/// when only its background color is drawn.
+fn color_only_background_layer(cv: &ComputedValues) -> raikiri_style::ComputedBackgroundLayer {
+    let mut layer = cv
+        .background_layers()
+        .last()
+        .cloned()
+        .unwrap_or_else(raikiri_style::ComputedBackgroundLayer::initial);
+    layer.image = BackgroundImage::None;
+    layer
+}
+
+/// Paint an element's background color and every background layer.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_element_background(
     image_cache: &crate::walk::ImageBrushCache,
@@ -4245,41 +4373,110 @@ pub(crate) fn paint_element_background(
     abs_x: f32,
     abs_y: f32,
     bg: CssColor,
-    bg_image: &BackgroundImage,
+    layers: &[raikiri_style::ComputedBackgroundLayer],
     current_color: CssColor,
-    clip: VisualBox,
-    origin: VisualBox,
     border_radius: &ComputedBorderRadius,
     border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
     padding: &taffy::Rect<f32>,
-    background_size: &ComputedBackgroundSize,
-    background_position: &ComputedCssPosition,
-    background_repeat: &raikiri_style::property::BackgroundRepeat,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
-    paint_element_background_slice(
+    paint_element_background_layers(
         image_cache,
         scene,
-        width,
-        height,
-        abs_x,
-        abs_y,
+        (width, height, abs_x, abs_y),
         bg,
-        bg_image,
+        layers,
         current_color,
-        clip,
-        origin,
         border_radius,
         border,
         padding,
-        background_size,
-        background_position,
-        background_repeat,
         pixel_source,
         warnings,
         None,
     );
+}
+
+/// Paint the background color and then the layers from the last to the
+/// first, so the first layer ends on top (CSS Backgrounds 3 §2.1). The
+/// color is clipped by the final layer's `background-clip` (§2.2).
+///
+/// A single layer keeps the color derived from its image when no pixel
+/// source paints it (see [`background_color_with_image_source`]); with
+/// several layers the color is painted as declared.
+#[allow(clippy::too_many_arguments)]
+fn paint_element_background_layers(
+    image_cache: &crate::walk::ImageBrushCache,
+    scene: &mut impl PaintScene,
+    (width, height, abs_x, abs_y): (f32, f32, f32, f32),
+    bg: CssColor,
+    layers: &[raikiri_style::ComputedBackgroundLayer],
+    current_color: CssColor,
+    border_radius: &ComputedBorderRadius,
+    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
+    padding: &taffy::Rect<f32>,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+    image_slice: Option<Rect>,
+) {
+    let (Some(final_layer), true) = (layers.last(), width > 0.0 && height > 0.0) else {
+        return;
+    };
+    let paint = |scene: &mut _,
+                 bg: CssColor,
+                 layer: &raikiri_style::ComputedBackgroundLayer,
+                 image: &BackgroundImage,
+                 image_color_fallback: bool,
+                 warnings: &mut Vec<RenderWarning>| {
+        paint_element_background_slice(
+            image_cache,
+            scene,
+            width,
+            height,
+            abs_x,
+            abs_y,
+            bg,
+            image,
+            current_color,
+            layer.clip,
+            layer.origin,
+            border_radius,
+            border,
+            padding,
+            &layer.size,
+            &layer.position,
+            &layer.repeat,
+            pixel_source,
+            warnings,
+            image_slice,
+            image_color_fallback,
+        );
+    };
+    if let [layer] = layers {
+        paint(scene, bg, layer, &layer.image, true, warnings);
+        return;
+    }
+    paint(
+        scene,
+        bg,
+        final_layer,
+        &BackgroundImage::None,
+        false,
+        warnings,
+    );
+    let layers = painted_background_layers(layers, warnings);
+    for layer in layers.iter().rev() {
+        if !matches!(layer.image, BackgroundImage::None) {
+            paint(
+                scene,
+                CssColor::TRANSPARENT,
+                layer,
+                &layer.image,
+                false,
+                warnings,
+            );
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -4304,6 +4501,7 @@ fn paint_element_background_slice(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     image_slice: Option<Rect>,
+    image_color_fallback: bool,
 ) {
     if width <= 0.0 || height <= 0.0 {
         return;
@@ -4312,7 +4510,12 @@ fn paint_element_background_slice(
         BackgroundImage::Url(raw_url) => image_cache.resolve_url(raw_url),
         _ => None,
     };
-    let effective = background_color_with_image_source(bg, bg_image, current_color, pixel_source);
+    // Without the image-derived fallback, the color is painted as declared.
+    let effective = if image_color_fallback {
+        background_color_with_image_source(bg, bg_image, current_color, pixel_source)
+    } else {
+        (bg.a != 0).then_some(bg)
+    };
     // A gradient paints even when its first stop is transparent.
     let has_gradient = matches!(bg_image, BackgroundImage::Gradient(_));
     if effective.is_none() && background_url.is_none() && !has_gradient {
@@ -4329,8 +4532,10 @@ fn paint_element_background_slice(
     }
     // background-clip: text trims to glyph shapes (CSS Backgrounds 4 section 2.6).
     // Glyph-path clipping is not implemented; warn and skip so the gap is
-    // visible instead of silently mispainting an opaque rect.
-    if matches!(clip, VisualBox::Text) {
+    // visible instead of silently mispainting an opaque rect. `border-area
+    // text` clips to the union of the border area and the glyphs and needs
+    // the same glyph clipping.
+    if matches!(clip, VisualBox::Text | VisualBox::BorderAreaText) {
         if effective.a != 0 || background_url.is_some() || has_gradient {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
@@ -4370,6 +4575,7 @@ fn paint_element_background_slice(
     // a one-pixel seam where an inner clipped fill meets its border ring. A
     // gradient is not one color, so it keeps its own clip.
     let border_box_union = matches!(clip, VisualBox::PaddingBox | VisualBox::ContentBox)
+        && effective.a != 0
         && !has_gradient
         && [&border.top, &border.right, &border.bottom, &border.left]
             .iter()
@@ -4390,7 +4596,7 @@ fn paint_element_background_slice(
         VisualBox::BorderBox => (bx0, by0, bx1, by1),
         VisualBox::PaddingBox => (bx0 + bl, by0 + bt, bx1 - br, by1 - bb),
         VisualBox::ContentBox => (bx0 + bl + pl, by0 + bt + pt, bx1 - br - pr, by1 - bb - pb),
-        VisualBox::BorderArea | VisualBox::Text => {
+        VisualBox::BorderArea | VisualBox::Text | VisualBox::BorderAreaText => {
             warnings.push(RenderWarning {
                 kind: WarningKind::ResourceFallback {
                     kind: raikiri_traits::ResourceKind::Image,
@@ -4486,6 +4692,7 @@ fn paint_element_background_slice(
                     pixel_source,
                     warnings,
                     image_slice,
+                    image_color_fallback,
                 );
                 scene.pop_layer();
                 scene.pop_layer();
@@ -4514,7 +4721,7 @@ fn paint_element_background_slice(
         // `text` returns above; this arm is unreachable but keeps the match
         // exhaustive for future `VisualBox` variants.
         // cov:ignore: unreachable text arm; early return above handles text
-        VisualBox::Text => Rect::new(bx0, by0, bx1, by1),
+        VisualBox::Text | VisualBox::BorderAreaText => Rect::new(bx0, by0, bx1, by1),
         // cov:ignore: defensive fallback for future `VisualBox` variants
         _ => Rect::new(bx0, by0, bx1, by1),
     };
@@ -4572,17 +4779,19 @@ fn paint_element_background_slice(
         );
         return;
     }
-    fill_rounded_background(
-        scene,
-        color,
-        painting.x0,
-        painting.y0,
-        painting.x1,
-        painting.y1,
-        border_radius,
-        radius_inset,
-        radius_reference,
-    );
+    if effective.a != 0 {
+        fill_rounded_background(
+            scene,
+            color,
+            painting.x0,
+            painting.y0,
+            painting.x1,
+            painting.y1,
+            border_radius,
+            radius_inset,
+            radius_reference,
+        );
+    }
     if let (Some(url), Some(source)) = (background_url.as_ref(), pixel_source) {
         // Clip URL images to the same rounded curve as the color fill
         // (CSS Backgrounds 3 section 5.3: backgrounds clip to the curve).
@@ -5373,12 +5582,10 @@ pub(crate) fn paint_inline_box(
     let has_border = [&border.top, &border.right, &border.bottom, &border.left]
         .iter()
         .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
-    let background_image = &cv.background_image;
+    let has_background_image = cv.has_background_image();
     let mut radius = paintable_border_radius(
         &cv.border_radius,
-        (has_border
-            || cv.background_color.a > 0
-            || !matches!(background_image, BackgroundImage::None))
+        (has_border || cv.background_color.a > 0 || has_background_image)
             && cv.transform.is_empty()
             && cv.filter.is_empty(),
     );
@@ -5427,9 +5634,7 @@ pub(crate) fn paint_inline_box(
         );
         let joined_radius = paintable_border_radius(
             &cv.border_radius,
-            (has_border
-                || cv.background_color.a > 0
-                || !matches!(background_image, BackgroundImage::None))
+            (has_border || cv.background_color.a > 0 || has_background_image)
                 && cv.transform.is_empty()
                 && cv.filter.is_empty(),
         );
@@ -5460,8 +5665,7 @@ pub(crate) fn paint_inline_box(
     // positioning area. Slice that image before applying each owner's offset;
     // fragment heights remain local when their inherited fonts differ.
     let slice = background_slice.filter(|slice| {
-        !matches!(background_image, BackgroundImage::None)
-            && (slice.outer.x != outer.x || slice.outer.width != outer.width)
+        has_background_image && (slice.outer.x != outer.x || slice.outer.width != outer.width)
     });
     let mut background_outer = outer;
     let mut background_padding = padding;
@@ -5492,24 +5696,21 @@ pub(crate) fn paint_inline_box(
     } else {
         radius
     };
-    paint_element_background_slice(
+    paint_element_background_layers(
         image_cache,
         scene,
-        background_outer.width,
-        background_outer.height,
-        x + background_outer.x,
-        abs_y,
+        (
+            background_outer.width,
+            background_outer.height,
+            x + background_outer.x,
+            abs_y,
+        ),
         cv.background_color,
-        background_image,
+        cv.background_layers(),
         cv.color,
-        cv.background_clip,
-        cv.background_origin,
         &background_radius,
         if slice.is_some() { &cv.border } else { &border },
         &background_padding,
-        &cv.background_size,
-        &cv.background_position,
-        &cv.background_repeat,
         pixel_source,
         warnings,
         slice.map(|_| {

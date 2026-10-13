@@ -834,6 +834,51 @@ fn serialize_value_formats_font_family_lists() {
 }
 
 #[test]
+fn background_layer_lists_serialize_canonically() {
+    let serialized =
+        |name: &str, source: &str| serialize_value(&parse_entire(source, name).expect("parses"));
+    for (name, source, expected) in [
+        (
+            "background-repeat",
+            "repeat repeat, no-repeat repeat",
+            "repeat, repeat-y",
+        ),
+        (
+            "background-repeat",
+            "repeat no-repeat, space round",
+            "repeat-x, space round",
+        ),
+        (
+            "background-attachment",
+            "scroll, fixed, local",
+            "scroll, fixed, local",
+        ),
+        (
+            "background-clip",
+            "text border-area, padding-box",
+            "border-area text, padding-box",
+        ),
+        (
+            "background-origin",
+            "content-box, border-box",
+            "content-box, border-box",
+        ),
+        (
+            "background-size",
+            "auto auto, 10px, cover",
+            "auto, 10px auto, cover",
+        ),
+        ("background-size", "auto 1px, contain", "auto 1px, contain"),
+    ] {
+        assert_eq!(
+            serialized(name, source).as_deref(),
+            Some(expected),
+            "{name}: {source:?}"
+        );
+    }
+}
+
+#[test]
 fn border_image_math_functions_keep_their_specified_text() {
     // Out-of-range math clamps at computed-value time, so the specified
     // value keeps its text, which the CSSOM echoes back.
