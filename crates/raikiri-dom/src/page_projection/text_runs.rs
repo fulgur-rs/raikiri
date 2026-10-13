@@ -1158,17 +1158,13 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
             .find(|&&(item, _)| item == child)
             .map_or(0, |&(_, column)| column)
     };
+    // The recorded items follow the children Taffy laid out: in
+    // order-modified document order, with `display: contents` flattened.
     let mut first_row_items = node
-        .layout_children()
+        .grid_item_row_starts
         .iter()
-        .copied()
-        .filter(|&child| {
-            is_item(child)
-                && node
-                    .grid_item_row_starts
-                    .iter()
-                    .any(|&(item, row)| item == child && row == first_row)
-        })
+        .filter(|&&(item, row)| row == first_row && is_item(item))
+        .map(|&(item, _)| item)
         .collect::<Vec<_>>();
     // A stable sort keeps the order-modified document order within a column.
     first_row_items.sort_by_key(|&child| column_of(child));
@@ -1183,12 +1179,25 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
     let item_layout = item_node.unrounded_layout;
     let top = item_layout.location.y - layout_applied_relative_offset_y(document, cascade, item);
     let bottom = item_layout.size.height;
-    Some(match first_line(document, cascade, item) {
+    // Layout containment suppresses the item's own baseline, so one is
+    // synthesized (CSS Contain 2 §3.2).
+    let layout_contained = cascade.computed.get(item).is_some_and(|computed| {
+        computed
+            .contain
+            .contains(raikiri_style::property::Contain::LAYOUT)
+    });
+    let line = if layout_contained {
+        None
+    } else {
+        first_line(document, cascade, item)
+    };
+    Some(match line {
         Some(mut line) => {
-            // A scroll container's baseline stays within its border box
-            // (CSS Box Alignment 3 §9.1).
+            // A scroll container's baseline, and the line that decides its
+            // page, stay within its border box (CSS Box Alignment 3 §9.1).
             if item_node.style.overflow.y.is_scroll_container() {
                 line.baseline = line.baseline.clamp(0.0, bottom);
+                line.center = line.center.clamp(0.0, bottom);
             }
             FirstLine {
                 baseline: top + line.baseline,

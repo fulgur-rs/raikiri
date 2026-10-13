@@ -472,7 +472,7 @@ fn a_grid_first_line_clamps_the_baseline_of_a_scrolling_item() {
     let (document, cascade, grid) = grid_items("", &["overflow:auto;height:10px;padding-top:20px"]);
     let line = first_line(&document, &cascade, grid).unwrap();
     assert_eq!(line.baseline, 7.0 + 30.0);
-    assert_eq!(line.center, 7.0 + 20.0 + 10.0);
+    assert_eq!(line.center, 7.0 + 30.0);
 }
 
 /// Text directly in a grid is an anonymous item that gives its own line.
@@ -503,6 +503,27 @@ fn a_grid_first_line_includes_text_directly_in_the_grid() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 10.0);
+}
+
+/// A layout-contained item exports no baseline, so the bottom of its border
+/// box stands in for its line.
+#[test]
+fn a_grid_first_line_synthesizes_the_baseline_of_a_layout_contained_item() {
+    let (document, cascade, grid) = grid_items("", &["contain:layout;height:30px"]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 30.0);
+    assert_eq!(line.center, 7.0 + 30.0);
+}
+
+/// Items inside a `display: contents` child of the grid are grid items of
+/// their own.
+#[test]
+fn a_grid_first_line_finds_items_inside_display_contents() {
+    let (document, cascade, grid) = grid_items("", &["display:contents", ""]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    // The X inside the contents box is an anonymous item on the first row.
     assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
     assert_eq!(line.center, 7.0 + 10.0);
 }
