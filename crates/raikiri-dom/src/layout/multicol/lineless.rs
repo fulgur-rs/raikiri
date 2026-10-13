@@ -50,6 +50,10 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.style.clear != defaults.clear
             || node.style.inset != Rect::auto()
             || block_margins(node).is_none()
+            // Painting draws every fragment's decorations whole, so a box
+            // with block-axis borders or padding would repeat them at each
+            // break instead of slicing them (CSS Fragmentation 3, 5.4).
+            || has_block_edge_decorations(node)
             || node.style.overflow != defaults.overflow
             // A logical minimum block size keeps the boxes on the projection
             // that preserves their unfragmented minimum.
@@ -97,6 +101,12 @@ fn block_margins(node: &crate::Node) -> Option<(f32, f32)> {
         style_dimension_length(value.into()).filter(|px| px.is_finite() && *px >= 0.0)
     };
     Some((length(margin.top)?, length(margin.bottom)?))
+}
+
+fn has_block_edge_decorations(node: &crate::Node) -> bool {
+    let zero = LengthPercentage::length(0.0);
+    let (padding, border) = (node.style.padding, node.style.border);
+    padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
 }
 
 fn has_rendered_content(tree: &Document, id: usize) -> bool {
@@ -155,6 +165,21 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placem
     let mut piece_count = 0usize;
     let mut placements = Vec::with_capacity(items.len());
     for item in items {
+        // A box with no block size, borders or padding is self-collapsing:
+        // its own margins join the margins around it (CSS 2, 8.3.1).
+        if item.height <= 0.0 {
+            piece_count += 1;
+            if piece_count > max_pieces {
+                return None;
+            }
+            placements.push(vec![Piece {
+                column,
+                top: (cursor + pending_margin.max(item.margin_top)).min(column_height),
+                height: 0.0,
+            }]);
+            pending_margin = pending_margin.max(item.margin_top).max(item.margin_bottom);
+            continue;
+        }
         let mut pieces = Vec::new();
         let mut gap = pending_margin.max(item.margin_top);
         let fits_after_gap = if item.splittable {
@@ -369,7 +394,13 @@ pub(super) fn layout(
         .saturating_sub(1);
     let column_height = match context.available_height {
         Some(height) => height,
-        None if context.column_fill == ColumnFillValue::Auto => stacked_height(&items, max_pieces)?,
+        None if context.column_fill == ColumnFillValue::Auto => {
+            let Some(height) = stacked_height(&items, max_pieces) else {
+                tree.fragment_tree.limit_exceeded = true;
+                return None;
+            };
+            height
+        }
         None => balanced_height(&items, context.column_count, max_pieces),
     };
     if !column_height.is_finite() || column_height <= 0.0 {

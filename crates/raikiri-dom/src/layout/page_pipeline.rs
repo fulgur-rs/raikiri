@@ -104,9 +104,13 @@ fn content_overflow_end(
         }
         // Inside columns only an absolutely positioned box placed against a
         // containing block outside them is measured, with its subtree.
+        // A `display: contents` element generates no positioned box, so its
+        // children stay in the column flow.
+        let positioned = computed.position == PositionValue::Absolute
+            && computed.display != DisplayValue::Contents;
         let in_columns = match in_columns {
-            Some(true) if computed.position == PositionValue::Absolute => None,
-            Some(false) if computed.position == PositionValue::Absolute => continue,
+            Some(true) if positioned => None,
+            Some(false) if positioned => continue,
             other => other,
         };
         // Layout places some boxes without their relative offset, which

@@ -1184,6 +1184,18 @@ fn pipeline_counts_absolute_boxes_inside_multicol_as_pages() {
 }
 
 #[test]
+fn pipeline_keeps_children_of_positioned_display_contents_in_columns() {
+    // `display: contents` generates no positioned box, so the block stays in
+    // the 50px-tall columns and is not measured at its unfragmented height.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;column-gap:0;height:50px'>\
+         <div style='display:contents;position:absolute'><div style='height:300px'></div></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
 fn pipeline_does_not_count_unfragmented_column_content_as_pages() {
     // The 300px block is balanced into two 150px columns: two pages, not
     // the three its unfragmented height would reach.

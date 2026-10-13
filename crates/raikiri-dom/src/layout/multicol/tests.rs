@@ -1934,3 +1934,50 @@ fn the_trailing_margin_of_blocks_without_lines_stays_in_the_container() {
     );
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 60.0);
 }
+
+#[test]
+fn blocks_with_block_edge_decorations_are_not_sliced() {
+    for decoration in ["border-top:2px solid", "padding-bottom:2px"] {
+        let (doc, _, children) = lineless_fixture(
+            "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+            &[&format!("display:block;height:200px;{decoration}")],
+        );
+        assert!(fragment_rects(&doc, children[0]).len() <= 1, "{decoration}");
+    }
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+        &["display:block;height:200px;border-left:2px solid"],
+    );
+    assert_eq!(fragment_rects(&doc, children[0]).len(), 2);
+}
+
+#[test]
+fn auto_filled_blocks_without_lines_report_the_fragment_budget() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::{LayoutError, PageBox};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;columns:2;column-fill:auto"),
+    );
+    for _ in 0..16 {
+        doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+    }
+    doc.fragment_tree.limit = 8;
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    assert!(matches!(
+        layout_single_page(&mut doc, &cascade, PageBox::A4),
+        Err(LayoutError::FragmentLimitExceeded { limit: 8 })
+    ));
+}

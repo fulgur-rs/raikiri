@@ -111,7 +111,8 @@ fn a_gap_taller_than_the_column_moves_the_box_to_the_next_column() {
         margin_top: 120.0,
         ..split(0.0)
     };
-    assert_eq!(shape(&[empty], 100.0), vec![vec![(1, 0.0, 0.0)]]);
+    // A self-collapsing box takes no room, so it stays at the column end.
+    assert_eq!(shape(&[empty], 100.0), vec![vec![(0, 100.0, 0.0)]]);
 }
 
 #[test]
@@ -157,4 +158,26 @@ fn the_stacked_height_collapses_adjoining_margins() {
         ..avoid(40.0)
     };
     assert_eq!(stacked_height(&[first, second], usize::MAX), Some(100.0));
+}
+
+#[test]
+fn self_collapsing_boxes_join_the_surrounding_margins() {
+    let empty = Item {
+        margin_top: 20.0,
+        margin_bottom: 30.0,
+        ..split(0.0)
+    };
+    assert_eq!(stacked_height(&[empty], usize::MAX), Some(30.0));
+    let first = Item {
+        margin_bottom: 10.0,
+        ..split(40.0)
+    };
+    assert_eq!(
+        shape(&[first, empty, split(40.0)], 200.0),
+        vec![
+            vec![(0, 0.0, 40.0)],
+            vec![(0, 60.0, 0.0)],
+            vec![(0, 70.0, 40.0)]
+        ]
+    );
 }
