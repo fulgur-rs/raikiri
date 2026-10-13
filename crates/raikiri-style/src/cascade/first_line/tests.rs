@@ -346,3 +346,42 @@ fn first_line_filters_deferred_shorthand() {
     assert_eq!(first.font_size.0, 24.0);
     assert_eq!(first.font_style, crate::property::FontStyle::Italic);
 }
+
+/// Measures `line-height: normal` as 1.25 times the font size.
+struct ScaledNormal;
+
+impl crate::resolve::NormalLineHeight for ScaledNormal {
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<crate::ComputedLength> {
+        Some(crate::ComputedLength(font.size.0 * 1.25))
+    }
+}
+
+#[test]
+fn first_line_options_measure_normal_and_take_the_viewport() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size:20px"));
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, "#root::first-line{font-size:40px}");
+    let root = doc.push_element_with_attrs(html, "p", Some("display:block"), &[("id", "root")]);
+    let span = doc.push_element(root, "span", Some("padding-left:1lh;padding-right:50vw"));
+    let options = crate::CascadeOptions {
+        viewport: Some((200.0, 100.0)),
+        normal_line_height: Some(crate::NormalLineHeightSource::new(ScaledNormal)),
+        ..crate::CascadeOptions::default()
+    };
+    let result = crate::cascade_with_first_line_options(
+        &doc,
+        &build_rule_tree(&doc),
+        &MediaContext::screen(),
+        StyleNodeId(root as u64),
+        &options,
+    )
+    .unwrap();
+    let px = crate::resolve::ComputedLengthPercentageOrCalc::Px;
+    let normal = &result.normal.computed[span];
+    assert_eq!(normal.padding.left, px(25.0));
+    assert_eq!(normal.padding.right, px(100.0));
+    let first = result.first_line.unwrap().computed[span].clone().unwrap();
+    assert_eq!(first.padding.left, px(50.0));
+    assert_eq!(first.padding.right, px(100.0));
+}

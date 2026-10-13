@@ -577,7 +577,9 @@ mod table_hints;
 pub(crate) use custom_property::*;
 mod first_letter;
 mod first_line;
-pub use first_line::{FirstLineCascade, FirstLineStyles, cascade_with_first_line};
+pub use first_line::{
+    FirstLineCascade, FirstLineStyles, cascade_with_first_line, cascade_with_first_line_options,
+};
 mod inherit;
 pub(crate) use inherit::*;
 mod limits;
