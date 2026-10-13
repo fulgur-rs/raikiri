@@ -635,8 +635,14 @@ fn clip_inset_rect(
 /// The layers of `layers` that are painted, top first: all of them, or the
 /// top [`MAX_PAINTED_BACKGROUND_LAYERS`] with a warning.
 fn painted_background_layers<'a, T>(layers: &'a [T], warnings: &mut Vec<RenderWarning>) -> &'a [T] {
-    if layers.len() <= MAX_PAINTED_BACKGROUND_LAYERS {
-        return layers;
+    warn_unpainted_background_layers(layers.len(), warnings);
+    &layers[..layers.len().min(MAX_PAINTED_BACKGROUND_LAYERS)]
+}
+
+/// Warn when a box declares more background layers than are painted.
+fn warn_unpainted_background_layers(layer_count: usize, warnings: &mut Vec<RenderWarning>) {
+    if layer_count <= MAX_PAINTED_BACKGROUND_LAYERS {
+        return;
     }
     warnings.push(RenderWarning {
         kind: WarningKind::ResourceFallback {
@@ -645,11 +651,9 @@ fn painted_background_layers<'a, T>(layers: &'a [T], warnings: &mut Vec<RenderWa
         },
         node_id: None,
         details: format!(
-            "a box has {} background layers; only the top {MAX_PAINTED_BACKGROUND_LAYERS} were painted",
-            layers.len()
+            "a box has {layer_count} background layers; only the top {MAX_PAINTED_BACKGROUND_LAYERS} were painted"
         ),
     });
-    &layers[..MAX_PAINTED_BACKGROUND_LAYERS]
 }
 
 fn paint_page_background_image(
@@ -1535,10 +1539,11 @@ fn paint_margin_box(
             }),
         }
     }
+    // The layout already dropped the layers under the painted ones.
+    warn_unpainted_background_layers(margin_box.background_layer_count, warnings);
     if let Some(source) = pixel_source.filter(|_| !margin_box.background_layers.is_empty()) {
         // CSS Backgrounds 3 §2.1: the first layer is on top.
-        let layers = painted_background_layers(&margin_box.background_layers, warnings);
-        for image in layers.iter().rev() {
+        for image in margin_box.background_layers.iter().rev() {
             let Some(url) = image_cache.image_url(&image.url) else {
                 continue;
             };

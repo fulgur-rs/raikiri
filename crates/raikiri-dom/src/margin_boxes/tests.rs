@@ -157,6 +157,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         }),
         background_clip: VisualBox::BorderBox,
         background_layers: Vec::new(),
+        background_layer_count: 1,
         background_image_lime: false,
         content_image_lime: false,
         border_top: None,
@@ -876,4 +877,8 @@ fn margin_box_layers_below_the_painted_ones_are_dropped() {
         .map(|layer| layer.url.as_str())
         .collect();
     assert_eq!(urls, ["top.png"]);
+    assert_eq!(
+        head.background_layer_count,
+        MAX_PAINTED_BACKGROUND_LAYERS + 1
+    );
 }

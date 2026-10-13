@@ -119,14 +119,20 @@ pub struct MarginBoxBackgroundImage {
     pub clip: VisualBox,
 }
 
+/// The number of background layers a margin box rule declares: one per
+/// `background-image` item (CSS Backgrounds 3 §2.1).
+fn margin_box_background_layer_count(rule: &PageMarginBoxCascadeResult) -> usize {
+    match margin_box_property(rule, PropertyKey::BackgroundImage) {
+        Some(PropertyValue::BackgroundImage(images)) => images.len().max(1),
+        _ => 1,
+    }
+}
+
 /// The `background-clip` of the bottom background layer a margin box rule
 /// declares. The `background-image` list sets the number of layers and the
 /// clip list repeats to that length (CSS Backgrounds 3 §2.1).
 fn margin_box_background_clip(rule: &PageMarginBoxCascadeResult) -> VisualBox {
-    let layers = match margin_box_property(rule, PropertyKey::BackgroundImage) {
-        Some(PropertyValue::BackgroundImage(images)) => images.len().max(1),
-        _ => 1,
-    };
+    let layers = margin_box_background_layer_count(rule);
     match margin_box_property(rule, PropertyKey::BackgroundClip) {
         Some(PropertyValue::BackgroundClip(clips)) if !clips.is_empty() => {
             clips[(layers - 1) % clips.len()]
@@ -336,6 +342,9 @@ pub struct MarginBox {
     /// §2.1: the first layer in the list is painted on top). Layers without
     /// a URL image are left out.
     pub background_layers: Vec<MarginBoxBackgroundImage>,
+    /// Number of background layers the box declares, including the layers
+    /// under the painted ones that [`Self::background_layers`] leaves out.
+    pub background_layer_count: usize,
     /// Solid borders in top, right, bottom, left order.
     pub borders: [Option<MarginBoxBorder>; 4],
     /// Used padding.
@@ -374,6 +383,7 @@ impl MarginBox {
             background_color: None,
             background_clip: VisualBox::BorderBox,
             background_layers: Vec::new(),
+            background_layer_count: 1,
             borders: [None; 4],
             padding: PaintInsets::new(0.0, 0.0, 0.0, 0.0),
             text: None,
@@ -505,6 +515,7 @@ struct MarginBoxSpec {
     background: Option<CssColor>,
     background_clip: VisualBox,
     background_layers: Vec<MarginBoxBackgroundImage>,
+    background_layer_count: usize,
     background_image_lime: bool,
     content_image_lime: bool,
     border_top: Option<(f32, CssColor)>,
@@ -1590,6 +1601,7 @@ fn margin_box_spec(
         background,
         background_clip,
         background_layers,
+        background_layer_count: margin_box_background_layer_count(rule),
         background_image_lime,
         content_image_lime,
         border_top,
@@ -1688,6 +1700,7 @@ fn place_margin_box(
         background_color: spec.background,
         background_clip: spec.background_clip,
         background_layers: spec.background_layers.clone(),
+        background_layer_count: spec.background_layer_count,
         borders: [
             border(spec.border_top),
             border(spec.border_right),

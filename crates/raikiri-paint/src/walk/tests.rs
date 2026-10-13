@@ -3038,6 +3038,27 @@ fn margin_box_color_is_clipped_by_the_bottom_layer() {
 }
 
 #[test]
+fn margin_box_warns_about_layers_under_the_painted_ones() {
+    let paint = |layer_count| {
+        let mut margin_box = fixed_margin_box();
+        margin_box.background_layer_count = layer_count;
+        let mut warnings = Vec::new();
+        paint_margin_box(
+            &crate::walk::ImageBrushCache::default(),
+            &mut Scene::new(),
+            &margin_box,
+            None,
+            &mut warnings,
+        );
+        warnings
+    };
+    assert!(paint(raikiri_style::MAX_PAINTED_BACKGROUND_LAYERS).is_empty());
+    let warnings = paint(raikiri_style::MAX_PAINTED_BACKGROUND_LAYERS + 1);
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].details.contains("65 background layers"));
+}
+
+#[test]
 fn margin_box_without_area_paints_nothing() {
     let mut margin_box = fixed_margin_box();
     margin_box.rect = PaintRect::new(0.0, 0.0, 0.0, 50.0);
