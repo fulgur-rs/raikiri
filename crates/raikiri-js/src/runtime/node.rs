@@ -284,9 +284,15 @@ pub(crate) fn write_attribute(
     value: &str,
 ) -> JsResult<()> {
     let result = with_state(context, |s| {
-        s.host
+        let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
+        let result = s
+            .host
             .document_mut()
-            .set_element_attribute(index, name, value)
+            .set_element_attribute(index, name, value);
+        if result.is_ok() {
+            super::stylesheet::note_attribute_change(s, index, had_css_type);
+        }
+        result
     })?;
     if let Err(message) = result {
         return Err(throw_dom_exception(
@@ -316,7 +322,10 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     let index = this_element(this, context)?;
     let name = dom_string(args, 0, context)?;
     let removed = with_state(context, |s| {
-        s.host.document_mut().remove_element_attribute(index, &name)
+        let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
+        let removed = s.host.document_mut().remove_element_attribute(index, &name);
+        super::stylesheet::note_attribute_change(s, index, had_css_type);
+        removed
     })?;
     if matches!(removed, Ok(Some(_))) {
         mark_dirty(context)?;

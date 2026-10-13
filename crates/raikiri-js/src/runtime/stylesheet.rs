@@ -390,8 +390,33 @@ pub(crate) struct SheetVersion {
 /// sheet was replaced (HTML "update a style block" runs on every child text
 /// content change).
 pub(crate) fn note_character_data_change(state: &mut State, node: usize) {
-    if let Some(parent) = state.host.document().parent_of(node) {
+    let document = state.host.document();
+    // Only Text children make up the sheet; comments and processing
+    // instructions do not run the child text content change steps.
+    if document.get_node(node).map(|n| n.kind()) != Some(NodeKind::Text) {
+        return;
+    }
+    if let Some(parent) = document.parent_of(node) {
         note_child_list_change(state, parent, &[]);
+    }
+}
+
+/// HTML "update a style block": a `type` other than empty or `text/css`
+/// (ASCII case-insensitive) creates no style sheet.
+pub(crate) fn has_css_type(document: &Document, element: usize) -> bool {
+    document
+        .element_attribute(element, "type")
+        .is_none_or(|kind| kind.is_empty() || kind.eq_ignore_ascii_case("text/css"))
+}
+
+/// Notes an attribute write on `element`, which had a CSS `type` before it
+/// when `had_css_type` is set. A write that turns a style element's sheet
+/// off or back on destroys the sheet the CSSOM handed out objects for.
+pub(crate) fn note_attribute_change(state: &mut State, element: usize, had_css_type: bool) {
+    if has_css_type(state.host.document(), element) != had_css_type
+        && let Some(version) = state.css_sheet_versions.get_mut(&element)
+    {
+        version.stale = true;
     }
 }
 
@@ -565,12 +590,7 @@ fn stylesheet_nodes(document: &Document) -> Vec<usize> {
                 Some("http://www.w3.org/1999/xhtml") | Some("http://www.w3.org/2000/svg")
             )
         {
-            // HTML "update a style block": a `type` other than empty or
-            // `text/css` (ASCII case-insensitive) creates no style sheet.
-            let is_css = document
-                .element_attribute(index, "type")
-                .is_none_or(|kind| kind.is_empty() || kind.eq_ignore_ascii_case("text/css"));
-            if is_css {
+            if has_css_type(document, index) {
                 nodes.push(index);
             }
             continue;

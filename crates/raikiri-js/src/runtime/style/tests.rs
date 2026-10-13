@@ -2104,3 +2104,37 @@ fn rule_objects_are_detached_when_a_failed_variadic_insert_moves_the_style_eleme
         "failed && threw && styleElement.textContent === 'p { color: red }'",
     );
 }
+
+#[test]
+fn rule_objects_are_detached_when_the_style_type_turns_the_sheet_off_and_on() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         styleElement.setAttribute('type', 'TEXT/CSS'); styleElement.setAttribute('media', 'print');",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
+    rt.evaluate(
+        "styleElement.setAttribute('type', 'text/plain'); styleElement.removeAttribute('type');",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] !== rule");
+}
+
+#[test]
+fn comment_data_writes_keep_rule_objects_attached() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         var comment = document.createComment('x'); styleElement.appendChild(comment); \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         comment.data = 'y'; comment.appendData('z'); comment.textContent = 'w';",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
+}
