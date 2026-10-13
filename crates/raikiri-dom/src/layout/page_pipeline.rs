@@ -3802,7 +3802,31 @@ pub fn layout_pages_with_page_geometry_and_control(
             .iter()
             .map(|candidate| (candidate.node_id, candidate.raw_y))
             .collect();
-        let mut tables_with_rows = HashSet::<usize>::new();
+        let table_of = |row: usize| {
+            let mut table = parent_of[row];
+            while let Some(id) = table
+                && !matches!(
+                    cascade.computed[id].display,
+                    DisplayValue::Table | DisplayValue::InlineTable
+                )
+            {
+                table = parent_of[id];
+            }
+            table
+        };
+        // Each table's first row in visual order: the table layout places a
+        // footer group after the body groups wherever it is in the source.
+        let mut table_first_rows = HashMap::<usize, (usize, f32)>::new();
+        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
+            if let Some(table) = table_of(candidate.node_id) {
+                let first = table_first_rows
+                    .entry(table)
+                    .or_insert((candidate.node_id, candidate.raw_y));
+                if candidate.raw_y < first.1 {
+                    *first = (candidate.node_id, candidate.raw_y);
+                }
+            }
+        }
         let mut group_first_rows = HashMap::<usize, Option<usize>>::new();
         // The last row seen in each row group: rows of a nested table are
         // visited between two rows of the outer group.
@@ -3820,16 +3844,12 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 cascade.computed[previous].break_after,
                             )
                         });
-            let mut table = parent_of[row];
-            while let Some(id) = table
-                && !matches!(
-                    cascade.computed[id].display,
-                    DisplayValue::Table | DisplayValue::InlineTable
-                )
-            {
-                table = parent_of[id];
-            }
-            let first_in_table = table.is_some_and(|table| tables_with_rows.insert(table));
+            let table = table_of(row);
+            let first_in_table = table.is_some_and(|table| {
+                table_first_rows
+                    .get(&table)
+                    .is_some_and(|&(first, _)| first == row)
+            });
             let Some(group) = parent_of[row].filter(|&group| avoiding_row_group(group)) else {
                 continue;
             };

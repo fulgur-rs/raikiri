@@ -10998,6 +10998,42 @@ fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
     );
 }
 
+#[test]
+fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
+    let mut footer_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        let footer = doc.append_element(
+            Some(table),
+            "tfoot",
+            Style::default(),
+            Some("display:table-footer-group;break-inside:avoid"),
+        );
+        footer_cell = append_row(doc, footer, "", 20.0).1;
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        append_row(doc, group, "", 20.0);
+    });
+    // The footer is laid out after the body, so the body row is the table's
+    // first row and the footer moves to the top of the next page alone.
+    assert_eq!(page_flow_y(&doc, footer_cell), 100.0);
+}
+
 /// Appends `table > tbody(break-inside:avoid)` to `parent` and returns the
 /// row group.
 fn append_avoiding_table(doc: &mut Document, parent: usize) -> usize {
