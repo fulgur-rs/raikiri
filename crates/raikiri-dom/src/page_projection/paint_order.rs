@@ -1,7 +1,7 @@
 //! A page's body content as a sequence of paint steps, in the order the
 //! built-in painter draws it.
 
-use super::generated_boxes::{GeneratedBox, PageGeneratedBoxes};
+use super::generated_boxes::{GeneratedBox, LineBox, PageGeneratedBoxes, PageInlineBoxes};
 use super::generated_images::{GeneratedImageId, PageGeneratedImages};
 use super::records::{PageFragmentItem, PageFragmentKind};
 use crate::{
@@ -83,6 +83,13 @@ pub enum PaintEvent<'a> {
     MarkerImage(NodeId),
     /// One generated inline box decoration; its text follows in paragraph lines.
     GeneratedBox(GeneratedBox<'a>),
+    /// One line's piece of a non-atomic inline element's box, listed in
+    /// place of the element's [`PaintEvent::Box`] where a translucent
+    /// `::first-line` splits the element: its pieces on the first line are
+    /// inside the first line's group, and the others are with the rest of
+    /// the paragraph. Paint each as the element's box over the piece's
+    /// rectangle, with the borders of the start and end edges it has.
+    LineBox(LineBox<'a>),
     /// One image of `::before` or `::after` content placed on this page,
     /// after the decoration of the pseudo-element that holds it. Its URL and
     /// rectangle come from [`Document::page_generated_image`].
@@ -157,19 +164,29 @@ mod letters;
 
 use letters::LetterGroups;
 
+/// The elements of a paragraph with inline boxes on its first line and on
+/// the lines after it.
+#[derive(Default)]
+struct LineBoxes {
+    first: HashSet<usize>,
+    later: HashSet<usize>,
+}
+
 /// The fragments of one page, grouped by source node.
 struct PageItems<'a> {
     by_node: HashMap<usize, Vec<&'a PageFragmentItem>>,
     content_box: super::records::PageFragmentRect,
     overflow_clips: BTreeMap<NodeId, OverflowClip>,
     generated_boxes: Option<&'a PageGeneratedBoxes>,
+    inline_boxes: Option<&'a PageInlineBoxes>,
     generated_images: Option<&'a PageGeneratedImages>,
     cascade: &'a CascadeResult,
     document: &'a Document,
     page: &'a super::records::PageFragment,
-    /// The elements with inline boxes on lines after the first, by
-    /// paragraph root, built when a paragraph is first split by line.
-    later_line_boxes: RefCell<HashMap<usize, Rc<HashSet<usize>>>>,
+    /// The elements with inline boxes on the first line and on lines after
+    /// the first, by paragraph root, built when a paragraph is first split
+    /// by line.
+    line_boxes: RefCell<HashMap<usize, Rc<LineBoxes>>>,
     /// The `::first-letter` opacity groups, by paragraph root, built when a
     /// paragraph's first letters are first listed.
     letter_groups: RefCell<HashMap<usize, Rc<LetterGroups>>>,
@@ -186,25 +203,20 @@ impl<'a> PageItems<'a> {
         )
     }
 
-    /// The elements of paragraph `root` with inline boxes on lines after
-    /// the first.
-    fn later_line_boxes(&self, root: usize, root_node: &Node) -> Rc<HashSet<usize>> {
-        Rc::clone(
-            self.later_line_boxes
-                .borrow_mut()
-                .entry(root)
-                .or_insert_with(|| {
-                    Rc::new(
-                        root_node
-                            .ifc_inline_boxes()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .filter(|piece| piece.line != 0)
-                            .map(|piece| piece.node)
-                            .collect(),
-                    )
-                }),
-        )
+    /// The elements of paragraph `root` with inline boxes on the first line
+    /// and on lines after the first.
+    fn line_boxes(&self, root: usize, root_node: &Node) -> Rc<LineBoxes> {
+        Rc::clone(self.line_boxes.borrow_mut().entry(root).or_insert_with(|| {
+            let mut boxes = LineBoxes::default();
+            for piece in root_node.ifc_inline_boxes().unwrap_or_default() {
+                if piece.line == 0 {
+                    boxes.first.insert(piece.node);
+                } else {
+                    boxes.later.insert(piece.node);
+                }
+            }
+            Rc::new(boxes)
+        }))
     }
 
     fn of(&self, node_id: usize) -> &[&'a PageFragmentItem] {
@@ -412,11 +424,12 @@ impl Document {
             content_box: page.content_box,
             overflow_clips: self.overflow_clips_on_page(page),
             generated_boxes: self.page_projection.generated_boxes.get(&page_index),
+            inline_boxes: self.page_projection.inline_boxes.get(&page_index),
             generated_images: self.page_projection.generated_images.get(&page_index),
             cascade,
             document: self,
             page,
-            later_line_boxes: RefCell::default(),
+            line_boxes: RefCell::default(),
             letter_groups: RefCell::default(),
         };
         for item in &page.items {
@@ -1377,9 +1390,9 @@ impl Document {
 /// directly in the listed content is skipped, and those groups are returned
 /// in document order for the caller to list after this content.
 ///
-/// Only the content on the lines of `part` is listed. An inline element's
-/// boxes are not split by line: they go with the first line when the
-/// element is only on that line, and with the other lines otherwise.
+/// Only the content on the lines of `part` is listed. An inline element
+/// only on the first line, or only on later lines, lists its box with
+/// those lines; one on both lists its line pieces on the lines of `part`.
 fn push_paragraph<'a>(
     document: &'a Document,
     items: &PageItems<'a>,
@@ -1392,16 +1405,52 @@ fn push_paragraph<'a>(
     let Some(root_node) = document.ifc_layout_node(root) else {
         return Vec::new(); // cov:ignore: paragraph roots come from the arena
     };
-    // The elements with boxes on lines after the first.
-    let later = if part == LinePart::All {
+    // The elements with boxes on the first line and on lines after it.
+    let lines_of_boxes = if part == LinePart::All {
         Rc::default()
     } else {
-        items.later_line_boxes(root, root_node)
+        items.line_boxes(root, root_node)
     };
+    let later = &lines_of_boxes.later;
     let admits_box = |element: usize| match part {
         LinePart::All => true,
         LinePart::First => !later.contains(&element),
         LinePart::Rest => later.contains(&element),
+    };
+    // An element on the first line and on later ones is split by line: its
+    // pieces on the lines of `part` stand for its box.
+    let split = |element: usize| {
+        part != LinePart::All && later.contains(&element) && lines_of_boxes.first.contains(&element)
+    };
+    let push_line_boxes = |events: &mut Vec<PaintEvent<'a>>, element: usize| {
+        let Some(&item) = items
+            .of(element)
+            .iter()
+            .find(|item| item.kind == PageFragmentKind::Box)
+        else {
+            return;
+        };
+        let fragment = items.fragment(item);
+        events.extend(
+            items
+                .inline_boxes
+                .and_then(|boxes| boxes.get(&(root, element)))
+                .into_iter()
+                .flatten()
+                .filter(|piece| part.admits(piece.line))
+                .map(|piece| {
+                    PaintEvent::LineBox(LineBox {
+                        fragment,
+                        line: TextLineId {
+                            root: NodeId::new(root as u64),
+                            index: piece.line,
+                        },
+                        rect: piece.rect,
+                        has_start_edge: piece.has_start_edge,
+                        has_end_edge: piece.has_end_edge,
+                    })
+                }),
+        );
     };
     let push_kind = |events: &mut Vec<PaintEvent<'a>>, node_id: usize, kind| {
         for &item in items.of(node_id) {
@@ -1565,7 +1614,9 @@ fn push_paragraph<'a>(
                 .get(node_id)
                 .is_some_and(paint_rules::generates_box) =>
             {
-                if admits_box(node_id) {
+                if split(node_id) {
+                    push_line_boxes(events, node_id);
+                } else if admits_box(node_id) {
                     push_kind(events, node_id, PageFragmentKind::Box);
                 }
             }
@@ -2009,6 +2060,9 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
         .iter()
         .take_while(|event| match (event, origin) {
             (PaintEvent::Box(fragment), None) => fragment.node() == NodeId::new(group as u64),
+            (PaintEvent::LineBox(piece), None) => {
+                piece.fragment.node() == NodeId::new(group as u64)
+            }
             (PaintEvent::GeneratedBox(generated), Some((owner, pseudo))) => {
                 generated.owner == NodeId::new(owner as u64)
                     && matches!(

@@ -37,6 +37,27 @@ pub struct GeneratedBox<'a> {
     pub has_end_edge: bool,
 }
 
+/// One line's piece of the box of a non-atomic inline element: its
+/// background, borders and outline on that line.
+///
+/// Coordinates and edge ownership come from the same line pieces the native
+/// painter uses.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct LineBox<'a> {
+    /// The element's box on the page, whose node and style the piece paints.
+    pub fragment: crate::Fragment<'a>,
+    /// Paragraph line the piece is on.
+    pub line: crate::TextLineId,
+    /// Border box of the piece in page-local CSS pixels, in the coordinates
+    /// of the paragraph's lines, like [`GeneratedBox::rect`].
+    pub rect: PaintRect,
+    /// The piece contains the inline start edge of the element's box.
+    pub has_start_edge: bool,
+    /// The piece contains the inline end edge of the element's box.
+    pub has_end_edge: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(super) struct BoxPiece {
     /// The inline engine's node id of the box, with the ids that select the
@@ -53,6 +74,10 @@ pub(super) struct BoxPiece {
 /// Page, paragraph root, originating element, and the pseudo-element.
 pub(super) type PageGeneratedBoxes = BTreeMap<(usize, usize, GeneratedKind), Vec<BoxPiece>>;
 pub(super) type GeneratedBoxes = BTreeMap<u32, PageGeneratedBoxes>;
+/// Page, paragraph root and inline element: the line pieces of the inline
+/// elements a translucent `::first-line` splits.
+pub(super) type PageInlineBoxes = BTreeMap<(usize, usize), Vec<BoxPiece>>;
+pub(super) type InlineBoxes = BTreeMap<u32, PageInlineBoxes>;
 
 pub(super) fn prepare(
     document: &Document,
@@ -61,7 +86,7 @@ pub(super) fn prepare(
     pages: &[PageFragment],
     paragraphs: &crate::layout::ParagraphCache,
     work: &mut crate::layout::ProjectionWork<'_, '_>,
-) -> Result<GeneratedBoxes, raikiri_traits::LayoutError> {
+) -> Result<(GeneratedBoxes, InlineBoxes), raikiri_traits::LayoutError> {
     let mut prepared = Vec::new();
     let context = RunContext::new(document, roots, pages);
     let mut eligible = HashMap::new();
@@ -94,6 +119,7 @@ pub(super) fn prepare(
     }
     let flow_pages = FlowPages::new(pages);
     let mut result = GeneratedBoxes::new();
+    let mut inline = InlineBoxes::new();
     for (root, paint_shift, pieces) in &prepared {
         let source = document.ifc_source_owner(root.node);
         let layout_node = document.ifc_layout_node(root.node);
@@ -160,39 +186,46 @@ pub(super) fn prepare(
                     })
                     .map_or(piece.node, |(_, owner)| owner);
                 let relative = crate::cumulative_offset(document, root.node, offsets, source);
-                result
-                    .entry(page.page_index)
-                    .or_default()
-                    .entry((root.node, owner, kind))
-                    .or_default()
-                    .push(BoxPiece {
-                        node: piece.node,
-                        source_container: piece.source_container,
-                        source_owner: piece.source_owner,
-                        line: piece.line,
-                        rect: PaintRect::new(
-                            page.content_box.x
-                                + root.x
-                                + paint_shift.0
-                                + relative.0
-                                + offset.0
-                                + rect.x,
-                            page.content_box.y
-                                + root.y
-                                + paint_shift.1
-                                + relative.1
-                                + offset.1
-                                + rect.y
-                                - shift
-                                - if root.is_repeat { 0.0 } else { start },
-                            rect.width,
-                            rect.height,
-                        ),
-                        has_start_edge: piece.has_start_edge,
-                        has_end_edge: piece.has_end_edge,
-                    });
+                let pieces = match kind {
+                    Some(kind) => result
+                        .entry(page.page_index)
+                        .or_default()
+                        .entry((root.node, owner, kind))
+                        .or_default(),
+                    None => inline
+                        .entry(page.page_index)
+                        .or_default()
+                        .entry((root.node, owner))
+                        .or_default(),
+                };
+                pieces.push(BoxPiece {
+                    node: piece.node,
+                    source_container: piece.source_container,
+                    source_owner: piece.source_owner,
+                    line: piece.line,
+                    rect: PaintRect::new(
+                        page.content_box.x
+                            + root.x
+                            + paint_shift.0
+                            + relative.0
+                            + offset.0
+                            + rect.x,
+                        page.content_box.y
+                            + root.y
+                            + paint_shift.1
+                            + relative.1
+                            + offset.1
+                            + rect.y
+                            - shift
+                            - if root.is_repeat { 0.0 } else { start },
+                        rect.width,
+                        rect.height,
+                    ),
+                    has_start_edge: piece.has_start_edge,
+                    has_end_edge: piece.has_end_edge,
+                });
             }
         }
     }
-    Ok(result)
+    Ok((result, inline))
 }

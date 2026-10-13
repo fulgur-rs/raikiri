@@ -44,6 +44,9 @@ pub(crate) struct PageProjection {
     image_markers: BTreeMap<u32, BTreeMap<NodeId, PaintRect>>,
     generated_images: generated_images::GeneratedImages,
     generated_boxes: generated_boxes::GeneratedBoxes,
+    /// The line pieces of the inline elements split by a translucent
+    /// `::first-line`, by page.
+    inline_boxes: generated_boxes::InlineBoxes,
     column_rules: crate::column_rules::PageColumnRules,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
@@ -65,6 +68,7 @@ impl PageProjection {
         self.image_markers.clear();
         self.generated_images.clear();
         self.generated_boxes.clear();
+        self.inline_boxes.clear();
         self.column_rules.clear();
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
@@ -276,7 +280,7 @@ impl Document {
             image_markers::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let generated_images =
             generated_images::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
-        let generated_boxes =
+        let (generated_boxes, inline_boxes) =
             generated_boxes::prepare(self, cascade, &text_roots, &pages, &paragraphs, &mut work)?;
         let column_rules = crate::column_rules::project(self, cascade, &pages, &mut work)?;
         let text_roots_by_page =
@@ -345,6 +349,7 @@ impl Document {
             image_markers,
             generated_images,
             generated_boxes,
+            inline_boxes,
             column_rules,
             overflow_clips,
             placement_overflow_clips,

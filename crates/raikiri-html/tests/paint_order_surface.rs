@@ -587,6 +587,10 @@ fn line_order(body: &str, style: &str) -> Vec<String> {
             PaintEvent::GeneratedBox(generated) => {
                 order.push(format!("generated {}", generated.line.index));
             }
+            PaintEvent::LineBox(piece) => {
+                let name = dom.attr(piece.fragment.node(), "id").unwrap_or("?");
+                order.push(format!("box {name} {}", piece.line.index));
+            }
             PaintEvent::TextLine(line) => order.push(format!("text {}", line.index)),
             PaintEvent::GroupTextLine(line, group) => {
                 order.push(format!(
@@ -620,11 +624,12 @@ fn translucent_first_line_lists_the_first_line_in_a_group() {
             "push 0.5",
             "text 0",
             "push 0.25",
+            "box s 0",
             "text s 0",
             "pop",
             "pop",
             "push 0.25",
-            "box s",
+            "box s 1",
             "text s 1",
             "pop",
             "push 0.25",
@@ -779,4 +784,67 @@ fn translucent_first_line_on_another_page_lists_no_group() {
             .any(|event| matches!(event, PaintEvent::PushOpacity(_))),
         "{events:?}"
     );
+}
+
+/// An inline element on the first line and on later ones is split by line:
+/// its piece on the first line is in the `::first-line` group, and the
+/// others are with the rest of the paragraph, in place of its box.
+#[test]
+fn translucent_first_line_splits_the_boxes_of_inline_elements_by_line() {
+    assert_eq!(
+        line_order(
+            "<p id=p><b id=b>A<br>B</b></p>",
+            "#p::first-line {opacity:.5} #b {opacity:.25;background:red}",
+        ),
+        [
+            "box p",
+            "push 0.5",
+            "push 0.25",
+            "box b 0",
+            "text b 0",
+            "pop",
+            "pop",
+            "push 0.25",
+            "box b 1",
+            "text b 1",
+            "pop"
+        ]
+    );
+    assert_eq!(
+        line_order(
+            "<p id=p>A<span id=s>B<br>C</span></p>",
+            "#p::first-line {opacity:.5} #s {background:red}",
+        ),
+        [
+            "box p", "box s 1", "text 1", "push 0.5", "box s 0", "text 0", "pop"
+        ]
+    );
+    let result = lay_out_with_font(
+        "<p id=p>A<span id=s>B<br>C</span></p>",
+        "p {margin:0} #p::first-line {opacity:.5} #s {background:red;padding:0 3px}",
+    );
+    let page = result.page(0).unwrap();
+    let runs = page.text_runs();
+    let pieces: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::LineBox(piece) => Some(piece),
+            _ => None,
+        })
+        .collect();
+    let [rest, first] = pieces[..] else {
+        panic!("{pieces:?}");
+    };
+    assert_eq!((first.line.index, rest.line.index), (0, 1));
+    assert!((first.has_start_edge, first.has_end_edge) == (true, false));
+    assert!((rest.has_start_edge, rest.has_end_edge) == (false, true));
+    assert!(first.rect.y < rest.rect.y, "{first:?} {rest:?}");
+    let whole = first.fragment.paint_rect();
+    for piece in [first, rest] {
+        assert!(
+            piece.rect.y >= whole.y
+                && piece.rect.y + piece.rect.height <= whole.y + whole.height + 0.01
+        );
+    }
 }
