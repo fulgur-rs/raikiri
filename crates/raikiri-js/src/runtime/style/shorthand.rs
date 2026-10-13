@@ -99,9 +99,6 @@ fn assemble_background(values: &[&str]) -> Option<String> {
         let [image, position, size, repeat, attachment, origin, clip] =
             lists.each_ref().map(|list| list[index].as_str());
         let mut parts = Vec::new();
-        if index + 1 == layer_count && !matches!(color, "transparent" | "rgba(0, 0, 0, 0)") {
-            parts.push(color.to_owned());
-        }
         if image != "none" {
             parts.push(image.to_owned());
         }
@@ -121,6 +118,9 @@ fn assemble_background(values: &[&str]) -> Option<String> {
             parts.push(clip.to_owned());
         } else if (origin, clip) != ("padding-box", "border-box") {
             parts.push(format!("{origin} {clip}"));
+        }
+        if index + 1 == layer_count && !matches!(color, "transparent" | "rgba(0, 0, 0, 0)") {
+            parts.push(color.to_owned());
         }
         layers.push(if parts.is_empty() {
             "none".to_owned()

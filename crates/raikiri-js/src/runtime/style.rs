@@ -565,11 +565,24 @@ pub(crate) fn with_inline_style_property(
     value: &str,
     important: bool,
 ) -> String {
+    with_style_property(style_attr, property, value, important, false)
+}
+
+/// [`with_inline_style_property`] for a declaration block that belongs to
+/// an `@page` rule when `page` is set, which keeps a shorthand split and
+/// rejoined under the same validation the block is read with.
+fn with_style_property(
+    style_attr: Option<&str>,
+    property: &str,
+    value: &str,
+    important: bool,
+    page: bool,
+) -> String {
     let property = property.trim();
     let mut declarations = style_attr.map(parse_inline_style).unwrap_or_default();
     let shorthand = shorthand::shorthand_of(property);
     if let Some(shorthand) = shorthand {
-        split_raw_shorthand(&mut declarations, shorthand);
+        split_raw_shorthand(&mut declarations, shorthand, page);
     }
     if let Some(longhands) = shorthand::longhands_of(property) {
         declarations.retain(|d| {
@@ -589,7 +602,7 @@ pub(crate) fn with_inline_style_property(
         }
     }
     if let Some(shorthand) = shorthand {
-        join_raw_shorthand(&mut declarations, shorthand);
+        join_raw_shorthand(&mut declarations, shorthand, page);
     }
     serialize_raw(&declarations)
 }
@@ -605,8 +618,8 @@ fn serialize_raw(declarations: &[RawDeclaration]) -> String {
 /// Writes the longhands of `shorthand` in `declarations` back as one
 /// declaration of it, where the first of them was, when they make it up,
 /// so a block a script edited one longhand at a time reads as written.
-fn join_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str) {
-    let validated = validated_inline_declarations(Some(&serialize_raw(declarations)), false);
+fn join_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str, page: bool) {
+    let validated = validated_inline_declarations(Some(&serialize_raw(declarations)), page);
     let Some((value, important)) = assembled_shorthand(&validated, shorthand) else {
         return;
     };
@@ -628,28 +641,30 @@ fn join_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str) {
 
 /// Replaces each declaration of `shorthand` in `declarations` with the
 /// longhand declarations it sets, so one of them can change on its own. A
-/// value the block would not split stays as written.
-fn split_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str) {
-    *declarations = std::mem::take(declarations)
-        .into_iter()
-        .flat_map(|d| {
-            let longhands = same_property(&d.name, shorthand)
-                .then(|| declaration_value(shorthand, &d.value, false))
-                .flatten()
-                .and_then(|value| shorthand::expand(shorthand, &value, false));
-            match longhands {
-                Some(longhands) => longhands
-                    .into_iter()
-                    .map(|(name, value)| RawDeclaration {
-                        name,
-                        value,
-                        important: d.important,
-                    })
-                    .collect(),
-                None => vec![d],
-            }
-        })
-        .collect();
+/// value the block would not split stays as written. Each longhand replaces
+/// any earlier declaration of it, as setting a declaration does, so the
+/// longhands stay where the declaration that sets them is.
+fn split_raw_shorthand(declarations: &mut Vec<RawDeclaration>, shorthand: &str, page: bool) {
+    let mut split = Vec::with_capacity(declarations.len());
+    for d in std::mem::take(declarations) {
+        let longhands = same_property(&d.name, shorthand)
+            .then(|| declaration_value(shorthand, &d.value, page))
+            .flatten()
+            .and_then(|value| shorthand::expand(shorthand, &value, page));
+        let Some(longhands) = longhands else {
+            split.push(d);
+            continue;
+        };
+        for (name, value) in longhands {
+            split.retain(|earlier: &RawDeclaration| !same_property(&earlier.name, &name));
+            split.push(RawDeclaration {
+                name,
+                value,
+                important: d.important,
+            });
+        }
+    }
+    *declarations = split;
 }
 
 /// `getPropertyPriority`'s return value (CSSOM): `"important"` when the
@@ -997,7 +1012,8 @@ fn write_declared(
     }
     if let Some(slot) = &source.rule {
         let text = with_state(context, |s| declared_text(s, source).0.unwrap_or_default())?;
-        let next = with_inline_style_property(Some(&text), property, value, important);
+        let page = source.is_page_rule(context)?;
+        let next = with_style_property(Some(&text), property, value, important, page);
         return write_rule_body(context, slot, &next);
     }
     with_state(context, |s| {

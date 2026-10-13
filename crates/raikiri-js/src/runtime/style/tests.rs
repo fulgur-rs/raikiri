@@ -2185,7 +2185,7 @@ fn background_is_held_as_its_longhands() {
          s.backgroundAttachment === 'local, local' && s.backgroundOrigin === 'padding-box, padding-box' && \
          s.backgroundClip === 'content-box, content-box' && s.backgroundColor === 'rgb(5, 6, 7)' && \
          s.background === 'url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box, \
-rgb(5, 6, 7) url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box' && \
+url(\"a.png\") 1px 2px / 3px 4px space round local padding-box content-box rgb(5, 6, 7)' && \
          s.cssText === 'background: ' + s.background + ';' && s.getPropertyPriority('background') === ''",
     );
 
@@ -2195,8 +2195,8 @@ rgb(5, 6, 7) url(\"a.png\") 1px 2px / 3px 4px space round local padding-box cont
     ok(
         &mut rt,
         "s.length === 8 && s.backgroundColor === 'red' && \
-         s.background === 'red url(\"b.png\")' && \
-         e.getAttribute('style') === 'background: red url(\"b.png\");'",
+         s.background === 'url(\"b.png\") red' && \
+         e.getAttribute('style') === 'background: url(\"b.png\") red;'",
     );
     rt.evaluate("s.removeProperty('background-color');")
         .unwrap();
@@ -2286,6 +2286,17 @@ fn background_with_a_substitution_function_stays_one_declaration() {
         &mut rt,
         "s.length === 2 && s.background === 'var(--b)' && s.backgroundColor === 'blue'",
     );
+    // Editing a longhand keeps the winning `background` where it was.
+    rt.evaluate(
+        "e.setAttribute('style', 'background: red; color: white; background: blue'); \
+         s.backgroundImage = 'url(\"b.png\")';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s[0] === 'color' && s.background === 'url(\"b.png\") blue' && \
+         s.cssText === 'color: white; background: url(\"b.png\") blue;'",
+    );
     // A later `background` that splits replaces the earlier one.
     rt.evaluate("e.setAttribute('style', 'background: var(--b); background: red');")
         .unwrap();
@@ -2310,5 +2321,23 @@ fn rule_declarations_hold_background_as_longhands() {
         &mut rt,
         "style.length === 8 && style.background === 'blue' && \
          styleElement.sheet.cssRules[0].cssText === 'p {background: blue;}'",
+    );
+}
+
+#[test]
+fn page_rule_background_edits_keep_page_validation() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { background: 1vw 0 }'; \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         rule.style.backgroundColor = 'blue';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "rule.style.backgroundColor === 'blue' && rule.style.background === '' && \
+         rule.style.length === 1",
     );
 }
