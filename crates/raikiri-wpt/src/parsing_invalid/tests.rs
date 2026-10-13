@@ -106,10 +106,10 @@ fn calls_test_directly_ignores_helpers_and_methods() {
 
 #[test]
 fn run_parsing_invalid_file_runs_a_page_with_bare_test_calls() {
-    let dir = fixture(
-        "<script>test(() => { const d = document.createElement('div'); \
-         d.style.color = 'red'; assert_equals(d.style.color, 'red'); }, 'direct');</script>",
-    );
+    let dir = fixture(&format!(
+        "{PAGE_HEAD}<script>test(() => {{ const d = document.createElement('div'); \
+         d.style.color = 'red'; assert_equals(d.style.color, 'red'); }}, 'direct');</script>"
+    ));
     let outcome = run_parsing_invalid_file(dir.path(), Path::new(FIXTURE_PATH)).unwrap();
     assert!(outcome.all_passed(), "{outcome:?}");
 }
