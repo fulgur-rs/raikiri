@@ -147,9 +147,9 @@ pub(super) fn prepare(
                     continue;
                 }
                 let rect = piece.border_box;
-                // A pseudo-element moves with its relatively positioned
-                // inline ancestors, as its text does.
-                let relative = crate::cumulative_offset(document, root.node, offsets, owner);
+                // A pseudo-element moves by its own relative offset and with
+                // its relatively positioned inline ancestors, as its text does.
+                let relative = crate::cumulative_offset(document, root.node, offsets, piece.node);
                 result
                     .entry(page.page_index)
                     .or_default()

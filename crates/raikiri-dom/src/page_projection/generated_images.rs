@@ -177,9 +177,14 @@ pub(super) fn prepare(
                         continue;
                     }
                 }
-                // A pseudo-element moves with its relatively positioned
-                // inline ancestors, as its text does.
-                let relative = crate::cumulative_offset(document, root.node, offsets, image.owner);
+                // A pseudo-element moves by its own relative offset and with
+                // its relatively positioned inline ancestors, as its text does.
+                let relative = crate::cumulative_offset(
+                    document,
+                    root.node,
+                    offsets,
+                    crate::generated_content::generated_node_id(image.owner, image.pseudo),
+                );
                 placements.entry(page.page_index).or_default().insert(
                     (image.owner, image.pseudo == PseudoElem::After, image.index),
                     ImagePlacement {

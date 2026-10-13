@@ -206,7 +206,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 .iter()
                 .find(|piece| piece.node == pseudo_node)
                 .and_then(|piece| paint.piece_group(piece));
-            let (dx, dy) = cumulative_offset(document, root_id, offsets, image.owner);
+            let (dx, dy) = cumulative_offset(document, root_id, offsets, pseudo_node);
             let rect = image.rect;
             let brush = image_cache.whole(pixels);
             paint.target(group).fill(

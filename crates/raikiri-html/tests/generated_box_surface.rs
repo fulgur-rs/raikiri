@@ -316,3 +316,32 @@ fn first_letter_without_decoration_style_keeps_its_box_identity() {
     assert_eq!(letters[0].rect, PaintRect::new(0.0, 0.0, 20.0, 20.0));
     assert_eq!(letters[0].style.color.r, 255);
 }
+
+/// A relatively positioned `::before` moves its own text and box, as a
+/// relatively positioned inline element does (CSS 2.1 §9.4.3).
+#[test]
+fn relative_pseudo_elements_move_their_text_and_box() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B';position:relative;left:20px;top:5px;background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let generated = runs
+        .iter()
+        .find(|run| run.text == "B")
+        .expect("generated run");
+    let own = runs.iter().find(|run| run.text == "A").expect("text run");
+    assert_eq!(generated.origin.0, 20.0);
+    assert_eq!(generated.origin.1, own.origin.1 + 5.0);
+    assert_eq!(own.origin.0, 20.0);
+    let events = page.paint_order_for_text_runs(&runs);
+    let piece = events
+        .iter()
+        .find_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) => Some(piece),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(piece.rect, PaintRect::new(20.0, 5.0, 20.0, 20.0));
+}

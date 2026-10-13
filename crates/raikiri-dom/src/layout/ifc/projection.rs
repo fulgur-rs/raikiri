@@ -249,6 +249,9 @@ pub(crate) fn has_in_flow_generated_text(
 struct GeneratedImages {
     atomics: Vec<(NodeId, shodo::AtomicSize)>,
     writing_mode: WritingMode,
+    /// Paint offsets of the relatively positioned `::before` and `::after`
+    /// boxes, by the inline engine's node id of the pseudo-element.
+    offsets: Vec<(usize, (f32, f32))>,
 }
 
 /// The atomic size of an image of `width` by `height` CSS pixels, its
@@ -352,6 +355,13 @@ fn push_generated(
         return Ok(());
     }
     let id = NodeId(generated_node_id(element, pseudo) as u64);
+    // The pseudo-element's own relative offset moves its text and images
+    // like those of a relatively positioned inline element (CSS 2.1 §9.4.3).
+    if pseudo != PseudoElem::Marker && cv.position == PositionValue::Relative {
+        images
+            .offsets
+            .push((id.0 as usize, style::relative_offset_in_lines(cv)));
+    }
     let inline_level = pseudo == PseudoElem::Marker
         || matches!(
             cv.display,
@@ -808,6 +818,7 @@ fn project_children_builder(
     let mut generated_images = GeneratedImages {
         atomics: Vec::new(),
         writing_mode,
+        offsets: Vec::new(),
     };
     let marker_atomic = if anonymous_children.is_some() {
         None
@@ -1203,7 +1214,10 @@ fn project_children_builder(
         marker_atomic,
         generated_atomics: generated_images.atomics,
         rtl: root_cv.direction == Direction::Rtl,
-        offsets,
+        offsets: {
+            offsets.extend(generated_images.offsets);
+            offsets
+        },
         cleared_breaks,
         fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
         ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),

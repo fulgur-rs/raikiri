@@ -365,9 +365,16 @@ pub fn cumulative_offset(
     node: usize,
 ) -> (f32, f32) {
     let (mut dx, mut dy) = (0.0, 0.0);
-    // A pseudo-element moves with its element.
-    let node = generated_origin(node).map_or(node, |(element, _)| element);
+    // A pseudo-element moves by its own relative offset, and with its
+    // element.
     let mut current = Some(node);
+    if let Some((element, _)) = generated_origin(node) {
+        if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == node) {
+            dx += x;
+            dy += y;
+        }
+        current = Some(element);
+    }
     while let Some(id) = current {
         if id == root_id {
             break;
@@ -380,9 +387,6 @@ pub fn cumulative_offset(
     }
     (dx, dy)
 }
-
-#[cfg(test)]
-mod tests;
 
 /// The UTF-8 offsets in `line`'s processed text of the object replacement
 /// characters that stand for its atomic inlines and out-of-flow anchors, by
@@ -429,3 +433,6 @@ fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
             .collect(),
     )
 }
+
+#[cfg(test)]
+mod tests;

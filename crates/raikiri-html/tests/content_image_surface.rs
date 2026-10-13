@@ -423,3 +423,18 @@ fn images_order_with_generated_text_by_text_offset() {
     assert_eq!(positions.len(), 1);
     assert_eq!(positions[0].1, None);
 }
+
+#[test]
+fn a_relative_pseudo_element_moves_its_images() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>AB</p>",
+        "p::before{content:url(icon.png);position:relative;left:10px;top:3px}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect, PaintRect::new(10.0, 15.0, 8.0, 4.0));
+    // The offset moves the pseudo-element alone, not the text after it.
+    assert_eq!(run(&runs, "AB").origin.0, 8.0);
+}
