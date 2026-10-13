@@ -134,14 +134,13 @@ pub(super) fn prepare(
             pages.iter().map(|page| (page, *pieces)).collect()
         } else {
             let mut candidates = Vec::new();
-            for (index, &(_, _, _, offset, _, top, height)) in pieces.iter().enumerate() {
+            let centers = pieces.iter().map(|&(_, _, _, offset, _, top, height)| {
                 // The arithmetic of `line_center_on_page`, so rounding at
                 // large coordinates cannot prune the owning page.
                 let top = root.y + offset.1 + top;
-                let center = (top + (top + height)) * 0.5;
-                if !center.is_finite() {
-                    continue;
-                }
+                (top + (top + height)) * 0.5
+            });
+            for (index, center) in centers.enumerate().filter(|(_, center)| center.is_finite()) {
                 for page in flow_pages.around(center, center) {
                     work.charge(1)?;
                     candidates.push((page, &pieces[index..=index]));
