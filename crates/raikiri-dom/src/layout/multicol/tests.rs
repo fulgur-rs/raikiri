@@ -1981,3 +1981,33 @@ fn auto_filled_blocks_without_lines_report_the_fragment_budget() {
         Err(LayoutError::FragmentLimitExceeded { limit: 8 })
     ));
 }
+
+#[test]
+fn blocks_painting_whole_box_effects_are_not_sliced() {
+    for effect in [
+        "background-image:linear-gradient(red,blue)",
+        "border-radius:4px",
+        "box-shadow:0 0 2px black",
+        "outline:1px solid",
+    ] {
+        let (doc, _, children) = lineless_fixture(
+            "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+            &[&format!("display:block;height:200px;{effect}")],
+        );
+        assert!(fragment_rects(&doc, children[0]).len() <= 1, "{effect}");
+    }
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+        &["display:block;height:200px;background-color:red"],
+    );
+    assert_eq!(fragment_rects(&doc, children[0]).len(), 2);
+    // Boxes that each fit in a column are not cut, so they keep their effects.
+    let (doc, _, children) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
+        &[
+            "display:block;height:100px;box-shadow:0 0 2px black",
+            "display:block;height:100px;box-shadow:0 0 2px black",
+        ],
+    );
+    assert_eq!(fragment_rects(&doc, children[1]), vec![(1, 50.0, 0.0, 100.0)]);
+}

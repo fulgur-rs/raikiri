@@ -50,10 +50,6 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.style.clear != defaults.clear
             || node.style.inset != Rect::auto()
             || block_margins(node).is_none()
-            // Painting draws every fragment's decorations whole, so a box
-            // with block-axis borders or padding would repeat them at each
-            // break instead of slicing them (CSS Fragmentation 3, 5.4).
-            || has_block_edge_decorations(node)
             || node.style.overflow != defaults.overflow
             // A logical minimum block size keeps the boxes on the projection
             // that preserves their unfragmented minimum.
@@ -187,7 +183,13 @@ fn place(items: &[Item], column_height: f32, max_pieces: usize) -> Option<Placem
         } else {
             cursor + gap + item.height <= column_height + EPSILON
         };
-        if cursor > 0.0 && !fits_after_gap && (item.height > 0.0 || !item.splittable) {
+        // A gap that fills the column leaves no room for a box that avoids
+        // breaks either, so it starts the next column with the gap truncated.
+        let gap_fills_column = !item.splittable && gap >= column_height - EPSILON;
+        if (cursor > 0.0 || gap_fills_column)
+            && !fits_after_gap
+            && (item.height > 0.0 || !item.splittable)
+        {
             column += 1;
             cursor = 0.0;
             gap = 0.0;
@@ -410,6 +412,22 @@ pub(super) fn layout(
         tree.fragment_tree.limit_exceeded = true;
         return None;
     };
+    // Painting draws every fragment's decorations whole, so a box with
+    // block-axis borders or padding, or with effects sized from the whole
+    // box, would repeat them at each break instead of slicing them (CSS
+    // Fragmentation 3, 5.4). Such a box may still sit whole in one column.
+    let repeats_decorations = children
+        .iter()
+        .zip(&placements.pieces)
+        .any(|(&child, pieces)| {
+            pieces.len() > 1 && {
+                let node = &tree.nodes[child];
+                has_block_edge_decorations(node) || node.paints_whole_box_effects
+            }
+        });
+    if repeats_decorations {
+        return None;
+    }
     tree.fragment_tree.retire_previous_roots(parent);
     let used_height = if context.available_height.is_some() {
         border_box.height

@@ -388,6 +388,10 @@ pub struct Node {
     /// Whether enabled before/after content must remain in one measured subtree.
     /// Recomputed by the style bridge before every layout pass.
     pub(crate) has_before_or_after_content: bool,
+    /// Whether painting draws effects sized from the whole border box, such
+    /// as background images, rounded corners or shadows. Recomputed by the
+    /// style bridge before every layout pass.
+    pub(crate) paints_whole_box_effects: bool,
     /// Computed multicolumn settings consumed by the custom Taffy dispatch.
     pub(crate) multicol: Option<MulticolStyle>,
     /// Whether this normal-flow block spans its owning column group.
@@ -514,6 +518,7 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            paints_whole_box_effects: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
@@ -567,6 +572,7 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            paints_whole_box_effects: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
@@ -624,6 +630,7 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            paints_whole_box_effects: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
@@ -676,6 +683,7 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            paints_whole_box_effects: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
@@ -725,6 +733,7 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            paints_whole_box_effects: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),
@@ -776,6 +785,7 @@ impl Node {
             paragraph_widows: 2,
             multicol_auto_width: true,
             has_before_or_after_content: false,
+            paints_whole_box_effects: false,
             multicol: None,
             column_span_all: false,
             multicol_groups: Vec::new(),

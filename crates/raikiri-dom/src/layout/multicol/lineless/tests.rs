@@ -181,3 +181,18 @@ fn self_collapsing_boxes_join_the_surrounding_margins() {
         ]
     );
 }
+
+#[test]
+fn a_gap_taller_than_the_column_moves_a_box_avoiding_breaks() {
+    let item = Item {
+        margin_top: 120.0,
+        ..avoid(20.0)
+    };
+    assert_eq!(shape(&[item], 100.0), vec![vec![(1, 0.0, 20.0)]]);
+    // A gap that leaves some room keeps the box in the first column.
+    let item = Item {
+        margin_top: 90.0,
+        ..avoid(20.0)
+    };
+    assert_eq!(shape(&[item], 100.0), vec![vec![(0, 90.0, 20.0)]]);
+}
