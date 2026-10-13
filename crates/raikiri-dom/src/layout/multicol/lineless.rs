@@ -325,8 +325,8 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
 }
 
 /// Lay out `children` (from [`supported`]) as one stream cut into columns.
-/// `minimum` is the authored minimum border-box height of an auto-height
-/// container, which also bounds its columns from below. Returns the used
+/// `minimum` is the authored minimum border-box height of the container,
+/// which also bounds its columns from below. Returns the used
 /// border-box height of the container.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn layout(
@@ -409,12 +409,9 @@ pub(super) fn layout(
         None => balanced_height(&items, context.column_count, max_pieces),
     };
     // Columns are as tall as the container's content box (CSS Multi-column
-    // 1, 2), so a minimum height makes them taller.
-    let column_height = if context.available_height.is_some() {
-        column_height
-    } else {
-        column_height.max(minimum - origin.y - block_end_inset)
-    };
+    // 1, 2), so a minimum height makes them taller, whether the authored
+    // height is definite or not.
+    let column_height = column_height.max(minimum - origin.y - block_end_inset);
     if !column_height.is_finite() || column_height <= 0.0 {
         return None;
     }

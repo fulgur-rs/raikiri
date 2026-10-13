@@ -329,10 +329,11 @@ pub(crate) fn apply_computed_to_style(
 /// and overflow direction.  Text direction is mapped separately, into the
 /// paragraph style of the inline engine.
 /// Whether painting `cv` draws effects sized from the whole border box
-/// (images, rounded corners, shadows, outlines, masks, clips, transforms and
-/// filters), which a fragment cannot reproduce from its own slice.
+/// (background and border images, rounded corners, shadows, outlines, masks,
+/// clips, transforms and filters), which a fragment cannot reproduce from its own slice.
 fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bool {
     cv.background_image != initial.background_image
+        || cv.border_image != initial.border_image
         || cv.border_radius != initial.border_radius
         || !cv.box_shadow.is_empty()
         || cv.outline.style() != initial.outline.style()

@@ -206,7 +206,7 @@ pub(crate) fn compute_multicol_layout(
         };
         let block_end_inset = multicol_resolve_inset(tree, css.padding.bottom, basis)
             + multicol_resolve_inset(tree, css.border.bottom, basis);
-        // The authored minimum border-box height of an auto-height container.
+        // The authored minimum border-box height of the container.
         let minimum = multicol_definite_dimension(
             tree,
             tree.nodes[index].style.min_size.height.into(),
