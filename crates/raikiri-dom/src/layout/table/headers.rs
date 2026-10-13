@@ -70,13 +70,30 @@ impl HeaderRepeats {
                 .rows
                 .get(&table)
                 .expect("table preparation records every rendered table");
-            // This pass refreshes explicit row/cell boxes. Flattened Contents
-            // and anonymous cells keep the existing table projection instead.
+            // This pass refreshes row and cell boxes, explicit or anonymous
+            // (an anonymous row is marked by its first anonymous cell).
+            // Only the header may hold an anonymous row: body rows are the
+            // break points the header is repeated at, and an anonymous body
+            // row is not one. Cells flattened out of a `display: contents`
+            // row keep the existing table projection instead.
+            let anonymous = |id: usize| id >= document.nodes.len();
+            let owned_by_header = |cell: usize| {
+                document
+                    .table_objects
+                    .cells
+                    .get(cell.wrapping_sub(document.table_objects.arena_len))
+                    .is_some_and(|cell| cell.owner == header)
+            };
             if !grid_rows.iter().all(|row| {
-                row.marker < document.nodes.len()
-                    && document.nodes[row.marker].display == DisplayValue::TableRow
+                if anonymous(row.marker) {
+                    return row
+                        .cells
+                        .iter()
+                        .all(|&cell| anonymous(cell) && owned_by_header(cell));
+                }
+                document.nodes[row.marker].display == DisplayValue::TableRow
                     && row.cells.iter().all(|&cell| {
-                        cell < document.nodes.len() && document.parent_of(cell) == Some(row.marker)
+                        anonymous(cell) || document.parent_of(cell) == Some(row.marker)
                     })
             }) {
                 continue;
@@ -302,20 +319,33 @@ pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
         }
         let mut cells_by_part: HashMap<usize, Vec<raikiri_traits::PaintRect>> = HashMap::new();
         let mut table_bottom = table_origin.1;
-        for &part in &parts {
-            if document.nodes[part].display != DisplayValue::TableRow {
-                continue;
-            }
-            let children = document.nodes[part].children.clone();
-            for cell in children {
-                let node = &document.nodes[cell];
-                if node.display != DisplayValue::TableCell || node.is_display_none() {
-                    continue;
+        for &part in parts.iter().chain(std::iter::once(&table)) {
+            // A source row's own cells, then the anonymous cells wrapping the
+            // rest of its content, or of a group's or the table's content
+            // that has no row; anonymous cells are placed in their owner.
+            let mut cells = Vec::new();
+            if document.nodes[part].display == DisplayValue::TableRow {
+                for &cell in &document.nodes[part].children {
+                    let node = &document.nodes[cell];
+                    if node.display == DisplayValue::TableCell && !node.is_display_none() {
+                        let (x, y) = absolute_position(document, cell);
+                        let size = node.unrounded_layout.size;
+                        cells.push((x, y, size, node.hides_empty_table_cell));
+                    }
                 }
-                let (x, y) = absolute_position(document, cell);
-                let size = node.unrounded_layout.size;
+            }
+            let part_origin = absolute_position(document, part);
+            for (_, node) in document.anonymous_table_cells(part) {
+                let layout = node.unrounded_layout;
+                cells.push((
+                    part_origin.0 + layout.location.x,
+                    part_origin.1 + layout.location.y,
+                    layout.size,
+                    node.hides_empty_table_cell,
+                ));
+            }
+            for (x, y, size, hidden) in cells {
                 table_bottom = table_bottom.max(y + size.height);
-                let hidden = node.hides_empty_table_cell;
                 let mut current = Some(part);
                 while let Some(id) = current.filter(|&id| id != table) {
                     // The traversal above reaches rows only through explicit

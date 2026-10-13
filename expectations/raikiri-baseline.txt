@@ -1465,6 +1465,8 @@ css/css-page/monolithic-overflow-002-print.html
 css/css-page/monolithic-overflow-003-print.html
 css/css-page/monolithic-overflow-004-print.html
 css/css-page/monolithic-overflow-006-print.html
+css/css-page/monolithic-overflow-023-print.html
+css/css-page/monolithic-overflow-031-print.html
 # --- css-break widows-orphans paged-text PASS-now (exact, 800x600, 2026-09-25) ---
 # WPT rev 97ea26e26a2aac3eec7e770650b25e7049ed4a4e
 css/css-break/tall-line-in-short-fragmentainer-000.html
@@ -1483,8 +1485,11 @@ css/css-break/widows-orphans-018.html
 css/css-page/fixedpos-001-print.html
 css/css-page/fixedpos-002-print.html
 css/css-page/fixedpos-003-print.html
+css/css-page/fixedpos-004-print.html
 css/css-page/fixedpos-005-print.html
+css/css-page/fixedpos-006-print.html
 css/css-page/fixedpos-007-print.html
+css/css-page/fixedpos-008-print.html
 css/css-page/fixedpos-009-print.html
 # --- css/printing fragmented-inline-block exact 800x600 PASS-only (+2) ---
 css/printing/fragmented-inline-block-001-print.html

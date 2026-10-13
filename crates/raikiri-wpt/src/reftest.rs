@@ -3099,11 +3099,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut page_widths = Vec::with_capacity(schedule_len);
     for page_index in 0..schedule_len {
         let mut query = PageContextQuery::default();
-        query.page_name = provisional_slices
-            .get(page_index)
-            .and_then(|slice| slice.page_name.clone())
-            .or_else(|| fallback_page_name.clone())
-            .map(|name| Atom::from(name.as_str()));
+        // An unnamed provisional page stays unnamed; only the tail beyond the
+        // provisional pages continues the last page's type.
+        query.page_name = match provisional_slices.get(page_index) {
+            Some(slice) => slice.page_name.clone(),
+            None => fallback_page_name.clone(),
+        }
+        .map(|name| Atom::from(name.as_str()));
         query.is_first = page_index == 0;
         query.is_left = if first_page_is_left {
             page_index % 2 == 0
