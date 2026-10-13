@@ -2497,21 +2497,6 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             None => break name,
         }
     };
-    // Whether a forced break follows the box: its own `break-after`, or that
-    // of its last in-flow descendant, which pagination carries out to the
-    // next box.
-    let ends_with_forced_break = |document: &Document, mut id: usize| loop {
-        if page_break_is_forced(document, id, cascade.computed[id].break_after) {
-            break true;
-        }
-        if is_monolithic_for_pagination(document, cascade, id) {
-            break false;
-        }
-        match child_boxes(document, id).last() {
-            Some(&child) => id = child,
-            None => break false,
-        }
-    };
     // Walk the boxes with the page value each inherits, leaving floats out:
     // their page values do not take part in pagination.
     let mut cleared = Vec::new();
@@ -2520,7 +2505,6 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         let mut after_forced_break = false;
         let mut previous_page_name = None;
         for child in child_boxes(document, parent) {
-            let computed = &cascade.computed[child];
             let start_page_name =
                 match propagated_start_page_name(document, cascade, child, inherited.as_deref()) {
                     (true, name) => name,
@@ -2531,15 +2515,20 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 .is_some_and(|previous| *previous != start_page_name);
             let forced = after_forced_break
                 || named_break
-                || page_break_is_forced(document, child, computed.break_before);
-            after_forced_break = ends_with_forced_break(document, child);
+                || page_break_is_forced(document, child, cascade.computed[child].break_before);
+            // A break after the last box inside this one is carried out to
+            // the next box, as the paginator does.
+            after_forced_break = page_edge_constraint(document, cascade, child, false).0;
             previous_page_name = Some(end_page_name(document, child, inherited.clone()));
             let own_page_name = if page_applies_to_box(document, cascade, child) {
                 selected_page_name(cascade, child).or_else(|| inherited.clone())
             } else {
                 inherited.clone()
             };
-            pending.push((child, own_page_name));
+            // Pagination does not break inside a monolithic box.
+            if !is_monolithic_for_pagination(document, cascade, child) {
+                pending.push((child, own_page_name));
+            }
             // Floats on either side belong to the earlier page, so a
             // one-sided clear is widened too.
             if forced {
