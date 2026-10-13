@@ -1547,3 +1547,23 @@ fn style_sheet_getter_rejects_non_style_receivers() {
         "thrown instanceof TypeError && getter.call(st) === st.sheet",
     );
 }
+
+#[test]
+fn page_rule_insert_rule_closes_blocks_left_open_at_eof() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var s = document.createElement('style'); \
+         s.textContent = '@page { margin: 1px } p { color: blue }'; \
+         document.head.appendChild(s); \
+         s.sheet.cssRules[0].insertRule('@top-left { content: \"a');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s.sheet.cssRules.length === 2 && \
+         s.sheet.cssRules[0].cssRules.length === 1 && \
+         s.sheet.cssRules[0].cssRules[0].name === 'top-left' && \
+         s.sheet.cssRules[1].selectorText === 'p'",
+    );
+}

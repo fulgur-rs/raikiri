@@ -194,16 +194,59 @@ impl<'i> RuleBodyItemParser<'i, Option<usize>, ()> for NestedRuleRangeParser {
     }
 }
 
-/// `rule` as a single margin rule (`@<margin-box-name> { ... }`), trimmed, or
-/// `None` when it is anything else.
-fn parse_margin_rule(rule: &str) -> Option<&str> {
+/// `rule` as a single margin rule (`@<margin-box-name> { ... }`), serialized
+/// from its tokens so that every block, string, and comment the input left
+/// open at EOF is closed, or `None` when it is anything else.
+fn parse_margin_rule(rule: &str) -> Option<String> {
     let [range] = <[Range<usize>; 1]>::try_from(nested_at_rule_ranges(rule)).ok()?;
     // Like "parse a rule", only whitespace and comments may surround it.
     let blank = |text: &str| {
         let mut input = ParserInput::new(text);
         Parser::new(&mut input).is_exhausted()
     };
-    (blank(&rule[..range.start]) && blank(&rule[range.end..])).then(|| &rule[range])
+    if !(blank(&rule[..range.start]) && blank(&rule[range.end..])) {
+        return None;
+    }
+    let mut input = ParserInput::new(&rule[range]);
+    let mut out = String::new();
+    serialize_tokens(&mut Parser::new(&mut input), &mut out, 0).then_some(out)
+}
+
+/// Deepest block nesting [`serialize_tokens`] follows before giving up.
+const MAX_SERIALIZED_BLOCK_DEPTH: usize = 256;
+
+/// Appends the tokens of `input` to `out`, writing each block's closing token
+/// whether or not the source had it (CSS Syntax 3 §5.4.8: EOF closes a
+/// block). Returns `false` when blocks nest deeper than
+/// [`MAX_SERIALIZED_BLOCK_DEPTH`].
+fn serialize_tokens(input: &mut Parser<'_, '_>, out: &mut String, depth: usize) -> bool {
+    while let Ok(token) = input.next_including_whitespace_and_comments() {
+        let closer = match token {
+            Token::Function(_) | Token::ParenthesisBlock => ")",
+            Token::SquareBracketBlock => "]",
+            Token::CurlyBracketBlock => "}",
+            _ => {
+                out.push_str(&token.to_css_string());
+                continue;
+            }
+        };
+        out.push_str(&token.to_css_string());
+        if depth >= MAX_SERIALIZED_BLOCK_DEPTH {
+            return false;
+        }
+        let nested = input.parse_nested_block(|nested| {
+            if serialize_tokens(nested, out, depth + 1) {
+                Ok(())
+            } else {
+                Err(nested.new_custom_error::<(), ()>(()))
+            }
+        });
+        if nested.is_err() {
+            return false;
+        }
+        out.push_str(closer);
+    }
+    true
 }
 
 /// A rule as [`RuleRangeParser`] reports it: the trimmed prelude text, the
