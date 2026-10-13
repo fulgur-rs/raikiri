@@ -4343,91 +4343,65 @@ fn paint_element_background_slice(
                 radius_inset = (0.0, 0.0, 0.0, 0.0);
                 Rect::new(bx0, by0, bx1, by1)
             } else {
-                // A linear or radial gradient paints over the background
-                // color rather than standing in for it.
-                let ring_gradient = match bg_image {
-                    BackgroundImage::Gradient(gradient) if paints_gradient_image(bg_image) => {
-                        Some(gradient)
-                    }
-                    _ => None,
-                };
-                let color = if ring_gradient.is_some() {
-                    Color::from_rgba8(bg.r, bg.g, bg.b, bg.a)
-                } else {
-                    color
-                };
-                let top_rect = Rect::new(bx0, by0, bx1, inner_y0);
-                scene.fill(
-                    Fill::NonZero,
-                    kurbo::Affine::IDENTITY,
-                    color,
-                    None,
-                    &top_rect,
-                );
-                let bottom_rect = Rect::new(bx0, inner_y1, bx1, by1);
-                scene.fill(
-                    Fill::NonZero,
-                    kurbo::Affine::IDENTITY,
-                    color,
-                    None,
-                    &bottom_rect,
-                );
-                let left_rect = Rect::new(bx0, inner_y0, inner_x0, inner_y1);
-                scene.fill(
-                    Fill::NonZero,
-                    kurbo::Affine::IDENTITY,
-                    color,
-                    None,
-                    &left_rect,
-                );
-                let right_rect = Rect::new(inner_x1, inner_y0, bx1, inner_y1);
-                scene.fill(
-                    Fill::NonZero,
-                    kurbo::Affine::IDENTITY,
-                    color,
-                    None,
-                    &right_rect,
-                );
-                if let Some(gradient) = ring_gradient {
-                    // The outer edge runs clockwise and the inner one
-                    // counterclockwise, so the nonzero rule leaves the ring.
-                    let mut ring = kurbo::BezPath::new();
-                    ring.move_to((bx0, by0));
-                    ring.line_to((bx1, by0));
-                    ring.line_to((bx1, by1));
-                    ring.line_to((bx0, by1));
-                    ring.close_path();
-                    ring.move_to((inner_x0, inner_y0));
-                    ring.line_to((inner_x0, inner_y1));
-                    ring.line_to((inner_x1, inner_y1));
-                    ring.line_to((inner_x1, inner_y0));
-                    ring.close_path();
-                    gradient::paint_gradient_layer(
-                        scene,
-                        gradient,
-                        positioning,
-                        Rect::new(bx0, by0, bx1, by1),
-                        Some(&ring),
-                        background_size,
-                        background_position,
-                        background_repeat,
-                        current_color,
-                    );
+                // The border area is where the borders draw, with their
+                // styles and radii (CSS Backgrounds 4 §2.6). Draw the borders
+                // opaque as a mask, then composite the background, painted
+                // over the whole border box, into it.
+                let border_box = Rect::new(bx0, by0, bx1, by1);
+                scene.push_layer(Mix::Normal, 1.0, Affine::IDENTITY, &border_box, None, None);
+                let mut mask = *border;
+                for side in [
+                    &mut mask.top,
+                    &mut mask.right,
+                    &mut mask.bottom,
+                    &mut mask.left,
+                ] {
+                    side.color = BorderColor::Resolved(CssColor::BLACK);
                 }
-                if background_url.is_some() {
-                    warnings.push(RenderWarning {
-                    kind: WarningKind::ResourceFallback {
-                        kind: raikiri_traits::ResourceKind::Image,
-                        url: background_url
-                            .as_ref()
-                            .map(redacted_image_url),
-                    },
-                    node_id: None,
-                    details:
-                        "background-clip: border-area image tiling in the border ring is not yet implemented; the image was skipped"
-                            .into(),
-                });
-                }
+                paint_element_border_rounded(
+                    scene,
+                    width,
+                    height,
+                    abs_x,
+                    abs_y,
+                    &mask,
+                    current_color,
+                    border_radius,
+                );
+                scene.push_layer(
+                    peniko::BlendMode::new(Mix::Normal, peniko::Compose::SrcIn),
+                    1.0,
+                    Affine::IDENTITY,
+                    &border_box,
+                    None,
+                    None,
+                );
+                paint_element_background_slice(
+                    image_cache,
+                    scene,
+                    width,
+                    height,
+                    abs_x,
+                    abs_y,
+                    bg,
+                    bg_image,
+                    current_color,
+                    VisualBox::BorderBox,
+                    origin,
+                    // The mask already carries the corners; clipping the
+                    // background to them again would square their coverage.
+                    &ComputedBorderRadius::all(ComputedLength(0.0)),
+                    border,
+                    padding,
+                    background_size,
+                    background_position,
+                    background_repeat,
+                    pixel_source,
+                    warnings,
+                    image_slice,
+                );
+                scene.pop_layer();
+                scene.pop_layer();
                 return;
             }
         }

@@ -231,8 +231,10 @@ css/css-backgrounds/background-clip/clip-border-area-background-geometry.html
 css/css-backgrounds/background-clip/clip-border-area-border-image.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape-overflow.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape.html
+css/css-backgrounds/background-clip/clip-border-area-corner-shape.html
 css/css-backgrounds/background-clip/clip-border-area-on-body-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-root.html
+css/css-backgrounds/background-clip/clip-border-area.html
 css/css-backgrounds/background-clip/clip-rounded-corner.html
 css/css-backgrounds/background-clip/clip-text-background-table-cell.html
 css/css-backgrounds/background-clip/clip-text-composited-descendant-with-bg-color.html

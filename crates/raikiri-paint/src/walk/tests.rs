@@ -2038,7 +2038,7 @@ fn background_rounded_corners_clip_url_images() {
 }
 
 #[test]
-fn background_clip_text_and_border_area_warn_and_skip_images() {
+fn background_clip_text_warns_and_border_area_masks_images() {
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
         fn get_decoded(
@@ -2106,8 +2106,7 @@ fn background_clip_text_and_border_area_warn_and_skip_images() {
     assert!(!warnings.is_empty());
     assert_eq!(background_fill_count(&scene), 0);
 
-    // `border-area` keeps the color ring but skips the image with a warning.
-    // Nonzero borders establish a real ring; zero borders fall back to border-box.
+    // `border-area` paints color and image into a mask of the borders.
     let mut authored = Border::new();
     authored.width = Length::Px(10.0);
     authored.style = BorderStyle::Solid;
@@ -2152,13 +2151,26 @@ fn background_clip_text_and_border_area_warn_and_skip_images() {
         Some(&source),
         &mut ring_warnings,
     );
-    assert!(!ring_warnings.is_empty());
-    // Color ring paints but no image tiles in the ring.
-    assert!(!ring.commands.is_empty());
-    assert!(ring
+    assert!(ring_warnings.is_empty(), "{ring_warnings:?}");
+    let source_in = ring
         .commands
         .iter()
-        .all(|command| !matches!(command, RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))));
+        .position(|command| {
+            matches!(command, RenderCommand::PushLayer(layer)
+                if layer.blend.compose == peniko::Compose::SrcIn)
+        })
+        .expect("the background is composited into the border mask");
+    let (mask, background) = ring.commands.split_at(source_in);
+    assert!(
+        mask.iter().any(|command| {
+            matches!(command, RenderCommand::Fill(fill)
+                if fill.brush == anyrender::Paint::Solid(Color::BLACK))
+        }),
+        "the borders are drawn opaque as the mask"
+    );
+    assert!(background.iter().any(|command| {
+        matches!(command, RenderCommand::Fill(fill) if matches!(fill.brush, anyrender::Paint::Image(_)))
+    }));
 }
 
 #[test]
