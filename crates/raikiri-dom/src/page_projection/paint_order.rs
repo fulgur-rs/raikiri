@@ -367,7 +367,7 @@ impl Document {
 
         let mut events = Vec::new();
         // Paragraph content that waits for the stacking contexts painted
-        // below it, by [`Frame::HeldContent`] index.
+        // below it, by `Frame::HeldContent` index.
         let mut held = Vec::new();
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
