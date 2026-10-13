@@ -46,6 +46,7 @@ fn content_overflow_end(
     cascade: &CascadeResult,
     body_id: usize,
     root_flow_offset: f32,
+    page_area_height: f32,
 ) -> f32 {
     use raikiri_style::property::OverflowValue;
     // The body's overflow, or the root's, clips at the viewport, which
@@ -82,13 +83,21 @@ fn content_overflow_end(
         ) {
             continue;
         }
+        // Layout places the body without its relative offset, which the
+        // painter adds to the body and its subtree.
         let y = if node_id == body_id {
-            0.0
+            body_paint_offset_y(computed)
         } else {
             parent_y + node.unrounded_layout.location.y
         };
         let bottom = if node_id == body_id {
-            body_border_box_end(document, cascade, body_id, root_flow_offset)
+            y + body_border_box_end(
+                document,
+                cascade,
+                body_id,
+                root_flow_offset,
+                page_area_height,
+            )
         } else if node.unrounded_layout.size.height > 0.0 {
             y + node.unrounded_layout.size.height
         } else {
@@ -110,6 +119,19 @@ fn content_overflow_end(
     end
 }
 
+/// The block offset the painter gives a relatively positioned body: `top`
+/// over `-bottom`, where an inset that is not a length counts as `auto`.
+fn body_paint_offset_y(computed: &raikiri_style::ComputedValues) -> f32 {
+    if !matches!(computed.position, PositionValue::Relative) {
+        return 0.0;
+    }
+    match (computed.top, computed.bottom) {
+        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
+        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
+        _ => 0.0,
+    }
+}
+
 /// The block-end edge of the body's border box in page coordinates.
 ///
 /// Layout sizes the body to the page content box, so its laid-out height
@@ -123,20 +145,18 @@ fn body_border_box_end(
     cascade: &CascadeResult,
     body_id: usize,
     root_flow_offset: f32,
+    page_area_height: f32,
 ) -> f32 {
     let computed = &cascade.computed[body_id];
-    // Percentages resolve against the root's used height only when it is a
-    // definite length; otherwise they behave as `auto`.
+    // Percentages resolve against the root's used height only when it is
+    // definite; otherwise they behave as `auto`. The root's own percentages
+    // resolve against the initial containing block, the page area.
     let root_height = document.parent_of(body_id).and_then(|root| {
-        let absolute = |value: ComputedLengthPercentageOrAuto| match value {
-            ComputedLengthPercentageOrAuto::Px(value) => Some(value),
-            ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => Some(calc.px),
-            _ => None,
-        };
+        let definite = |value| used_computed_length_percentage_or_auto(value, page_area_height);
         let root_computed = &cascade.computed[root];
-        let height = absolute(root_computed.height)?;
-        let height = absolute(root_computed.max_height).map_or(height, |max| height.min(max));
-        let height = absolute(root_computed.min_height).map_or(height, |min| height.max(min));
+        let height = definite(root_computed.height)?;
+        let height = definite(root_computed.max_height).map_or(height, |max| height.min(max));
+        let height = definite(root_computed.min_height).map_or(height, |min| height.max(min));
         // The basis is the root's content box.
         let edges = if matches!(
             root_computed.box_sizing,
@@ -194,9 +214,11 @@ fn body_border_box_end(
         return min_end;
     }
     // In-flow children are in page coordinates already; with block-end
-    // edges their block-end margins stay inside the body.
+    // edges their block-end margins, negative ones included, stay inside the
+    // body.
     // The children of a `display: contents` element take part as the body's
     // own, and a relative offset moves a box without moving the flow.
+    let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
     let mut content_end = top + edges_top;
     let mut children: Vec<(usize, f32)> = body.children.iter().map(|&child| (child, 0.0)).collect();
     while let Some((child, offset)) = children.pop() {
@@ -218,21 +240,21 @@ fn body_border_box_end(
         {
             continue;
         }
-        let relative_shift = if matches!(child_computed.position, PositionValue::Relative) {
-            match (child_computed.top, child_computed.bottom) {
-                (ComputedLengthPercentageOrAuto::Px(top), _) => top,
-                (
-                    ComputedLengthPercentageOrAuto::Auto,
-                    ComputedLengthPercentageOrAuto::Px(bottom),
-                ) => -bottom,
-                _ => 0.0,
-            }
+        // Layout resolves the insets of relative and sticky boxes alike,
+        // against the body's content box.
+        let relative_shift = if matches!(
+            child_computed.position,
+            PositionValue::Relative | PositionValue::Sticky
+        ) {
+            let inset = |value| used_computed_length_percentage_or_auto(value, body_content_height);
+            inset(child_computed.top)
+                .or_else(|| inset(child_computed.bottom).map(|bottom| -bottom))
+                .unwrap_or(0.0)
         } else {
             0.0
         };
-        let end = offset + layout.location.y - relative_shift
-            + layout.size.height
-            + layout.margin.bottom.max(0.0);
+        let end =
+            offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
         if end.is_finite() {
             content_end = content_end.max(end);
         }
@@ -4709,7 +4731,8 @@ pub fn layout_pages_with_page_geometry_and_control(
         // Pagination materialized the moved boxes in page coordinates, which
         // already include `root_flow_offset`; boxes it left alone paint where
         // their own coordinates put them.
-        let end = content_overflow_end(document, cascade, body_id, root_flow_offset);
+        let end =
+            content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
         if end.is_finite() && end > 0.0 {
             let end_page = page_index_for_end(end);
             control.check_discovery_page_index(end_page)?;

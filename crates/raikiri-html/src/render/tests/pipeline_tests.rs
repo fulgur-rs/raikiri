@@ -1360,3 +1360,82 @@ fn pipeline_measures_the_auto_body_from_its_flow_content() {
         assert_eq!(run(&doc).slices.len(), pages, "{content}");
     }
 }
+
+#[test]
+fn pipeline_resolves_root_percentage_heights_against_the_page_area() {
+    // The root's percentages resolve against the page area, 100px here; a
+    // border-box root gives the body its content box.
+    for (css, pages) in [
+        ("html{height:200%} body{margin:0;height:100%}", 2),
+        (
+            "html{height:calc(150% + 50px);box-sizing:border-box;padding-bottom:100px} body{margin:0;height:100%}",
+            2,
+        ),
+        (
+            "body{margin:0;height:150px;box-sizing:border-box;padding-bottom:20px}",
+            2,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} {css}</style>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{css}");
+    }
+}
+
+#[test]
+fn pipeline_measures_the_auto_body_without_relative_offsets_and_with_negative_margins() {
+    // The body ends after the static position of its last in-flow child,
+    // including a negative block-end margin, followed by its padding. Boxes
+    // outside the flow do not move that end, but still paint where they are.
+    for (content, pages) in [
+        (
+            "<div style='position:relative;top:calc(150px + 1%);height:20px'>x</div>",
+            2,
+        ),
+        (
+            "<div style='display:none;height:500px'></div>\
+             <div style='position:absolute;height:10px;width:10px'></div>\
+             <div style='float:left;height:10px;width:10px'></div>\
+             <div style='position:relative;bottom:-150px;height:20px'>x</div>",
+            2,
+        ),
+        ("<div style='height:70px;margin-bottom:-30px'>x</div>", 1),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:40px}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content}");
+    }
+}
+
+#[test]
+fn pipeline_counts_the_pages_a_relatively_positioned_body_paints_on() {
+    for (css, pages) in [
+        ("body{margin:0;position:relative;top:150px;height:20px}", 2),
+        (
+            "body{margin:0;position:relative;bottom:-250px;height:20px}",
+            3,
+        ),
+        ("body{margin:0;position:relative;top:10%;height:20px}", 1),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} {css}</style><div style='height:10px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{css}");
+    }
+}
+
+#[test]
+fn pipeline_opens_a_new_page_for_a_page_type_change_after_overflowing_content() {
+    // The tall box continues onto the second page, so the named box after it
+    // opens a third, whether it starts partway down the second page or at
+    // the top of the third.
+    for height in [150, 200] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} @page wide{{size:200px 100px;margin:0}} body{{margin:0}}</style>\
+             <div style='height:{height}px'></div><div style='page:wide;height:10px'>wide</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), 3, "{height}");
+    }
+}
