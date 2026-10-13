@@ -2836,9 +2836,8 @@ fn resolve_css_position_offset(
                 ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(percent))
             }
             ComputedLengthPercentageOrAuto::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
-            // Not produced by a relative calc.
             ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
-                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0))
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)) // cov:ignore: a relative calc resolves only to Px, Percent or Calc
             }
         },
     }
