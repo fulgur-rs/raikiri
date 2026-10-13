@@ -405,6 +405,15 @@ pub(crate) fn note_child_list_change(state: &mut State, parent: usize) {
     }
 }
 
+/// Whether inserting `node` adds any children. Inserting an empty
+/// `DocumentFragment` returns before the children changed steps run (DOM
+/// "insert", step 3), so it leaves the sheet in place.
+pub(crate) fn inserts_nodes(document: &Document, node: usize) -> bool {
+    document
+        .get_node(node)
+        .is_none_or(|n| !(matches!(n.kind(), NodeKind::DocumentFragment) && n.children.is_empty()))
+}
+
 /// The style element's child node indices. Replacing its contents (a
 /// `textContent` or `innerHTML` write, inserting or removing a child)
 /// always allocates or drops child nodes, so this tells a replacement apart

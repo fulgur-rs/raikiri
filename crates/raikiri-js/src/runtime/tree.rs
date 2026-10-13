@@ -333,8 +333,9 @@ fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let node = arg_node(args, 0, context)?;
     let before = arg_required_node_or_null(args, 1, context)?;
     let result = with_state(context, |s| {
+        let inserts = super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = s.host.document_mut().pre_insert(parent, node, before);
-        if result.is_ok() {
+        if result.is_ok() && inserts {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result
@@ -348,8 +349,9 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let parent = this_node(this, context)?;
     let node = arg_node(args, 0, context)?;
     let result = with_state(context, |s| {
+        let inserts = super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = s.host.document_mut().pre_insert(parent, node, None);
-        if result.is_ok() {
+        if result.is_ok() && inserts {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result
@@ -500,8 +502,9 @@ fn append(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     let items = convert_args(context, args)?;
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
+        let inserts = super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = s.host.document_mut().pre_insert(parent, node, None);
-        if result.is_ok() {
+        if result.is_ok() && inserts {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result
@@ -522,8 +525,9 @@ fn prepend(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
             .and_then(|n| n.children.first().copied())
     })?;
     let result = with_state(context, |s| {
+        let inserts = super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = s.host.document_mut().pre_insert(parent, node, before);
-        if result.is_ok() {
+        if result.is_ok() && inserts {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result
@@ -608,8 +612,9 @@ fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
         }
     })?;
     let result = with_state(context, |s| {
+        let inserts = super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = s.host.document_mut().pre_insert(parent, node, reference);
-        if result.is_ok() {
+        if result.is_ok() && inserts {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result
@@ -631,8 +636,9 @@ fn after(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     })?;
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
+        let inserts = super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = s.host.document_mut().pre_insert(parent, node, viable_next);
-        if result.is_ok() {
+        if result.is_ok() && inserts {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result
@@ -660,6 +666,9 @@ fn replace_with(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         s.host.document().parent_of(this_index) == Some(parent)
     })?;
     let result = with_state(context, |s| -> Result<(), DomMutationError> {
+        // Replacing `this` always changes the children; a plain insertion
+        // changes them only when `node` brings any.
+        let changes = still_child || super::stylesheet::inserts_nodes(s.host.document(), node);
         let result = if still_child {
             s.host
                 .document_mut()
@@ -667,7 +676,7 @@ fn replace_with(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         } else {
             s.host.document_mut().pre_insert(parent, node, viable_next)
         };
-        if result.is_ok() {
+        if result.is_ok() && changes {
             super::stylesheet::note_child_list_change(s, parent);
         }
         result

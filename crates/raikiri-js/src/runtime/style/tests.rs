@@ -2012,3 +2012,27 @@ fn failed_tree_mutations_keep_rule_objects_attached() {
     .unwrap();
     ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
 }
+
+#[test]
+fn inserting_empty_fragments_keeps_rule_objects_attached() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var rule = styleElement.sheet.cssRules[0]; \
+         styleElement.appendChild(document.createDocumentFragment()); \
+         styleElement.insertBefore(document.createDocumentFragment(), styleElement.firstChild); \
+         styleElement.append(); styleElement.prepend(); \
+         styleElement.firstChild.before(); styleElement.firstChild.after();",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] === rule");
+    rt.evaluate(
+        "var fragment = document.createDocumentFragment(); \
+         fragment.appendChild(document.createTextNode('')); \
+         styleElement.appendChild(fragment);",
+    )
+    .unwrap();
+    ok(&mut rt, "styleElement.sheet.cssRules[0] !== rule");
+}
