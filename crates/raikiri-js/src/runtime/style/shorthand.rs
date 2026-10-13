@@ -79,10 +79,7 @@ fn assemble_background(values: &[&str]) -> Option<String> {
         origins,
         clips,
         color,
-    ] = values
-    else {
-        return None;
-    };
+    ]: [&str; 8] = std::array::from_fn(|index| values[index]);
     let lists = [
         images,
         positions,
@@ -92,7 +89,7 @@ fn assemble_background(values: &[&str]) -> Option<String> {
         origins,
         clips,
     ]
-    .map(|list| comma_separated(list));
+    .map(comma_separated);
     let layer_count = lists[0].len();
     if lists.iter().any(|list| list.len() != layer_count) {
         return None;
@@ -102,8 +99,8 @@ fn assemble_background(values: &[&str]) -> Option<String> {
         let [image, position, size, repeat, attachment, origin, clip] =
             lists.each_ref().map(|list| list[index].as_str());
         let mut parts = Vec::new();
-        if index + 1 == layer_count && !matches!(*color, "transparent" | "rgba(0, 0, 0, 0)") {
-            parts.push((*color).to_owned());
+        if index + 1 == layer_count && !matches!(color, "transparent" | "rgba(0, 0, 0, 0)") {
+            parts.push(color.to_owned());
         }
         if image != "none" {
             parts.push(image.to_owned());

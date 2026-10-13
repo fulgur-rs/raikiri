@@ -9,8 +9,7 @@ use boa_engine::gc::GcRefCell;
 use boa_engine::object::JsObject;
 use boa_engine::property::PropertyDescriptor;
 use boa_engine::{
-    Context, Finalize, JsData, JsError, JsNativeError, JsResult, JsString, JsValue, Trace,
-    js_string,
+    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace, js_string,
 };
 use cssparser::{
     AtRuleParser, CowRcStr, DeclarationParser, ParseError, Parser, ParserInput, ParserState,
@@ -619,9 +618,7 @@ fn write_sheet_text(context: &mut Context, sheet: SheetKey, text: String) -> JsR
         record_sheet_text(state, style_element);
         written
     })?;
-    result.map_err(|_| {
-        JsError::from(JsNativeError::typ().with_message("unable to update stylesheet rule"))
-    })?;
+    result.map_err(|error| JsNativeError::typ().with_message(error))?;
     super::node::mark_dirty(context)
 }
 
@@ -1205,14 +1202,9 @@ pub(crate) fn write_rule_body(
 ) -> JsResult<()> {
     let text = with_state(context, |state| sheet_text(state, sheet))?;
     let rule = parse_css_rules(&text).get(rule_index).cloned();
-    if let Some((rule, body_range)) = rule.and_then(|rule| Some((rule.clone(), rule.body?))) {
-        write_sheet_text(
-            context,
-            sheet,
-            with_rule_body(&text, &rule, body_range, body),
-        )?;
-    }
-    Ok(())
+    rule.and_then(|rule| Some((rule.clone(), rule.body?)))
+        .map(|(rule, body_range)| with_rule_body(&text, &rule, body_range, body))
+        .map_or(Ok(()), |updated| write_sheet_text(context, sheet, updated))
 }
 
 /// The sheet `text` with the block `body_range` of `rule` replaced by
@@ -1556,10 +1548,9 @@ pub(crate) fn write_margin_rule_body(
     let range = with_state(context, |state| {
         margin_body_range(&sheet_text(state, sheet), rule_index, margin_index)
     })?;
-    if let Some(range) = range {
-        splice_rule_body(context, sheet, 0, range, body)?;
-    }
-    Ok(())
+    range.map_or(Ok(()), |range| {
+        splice_rule_body(context, sheet, 0, range, body)
+    })
 }
 
 #[derive(Trace, Finalize, JsData)]
