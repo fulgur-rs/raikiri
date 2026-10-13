@@ -11368,3 +11368,63 @@ fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
     // The nested box keeps its margin, 31px into the wrapper.
     assert_eq!(ys, [0.0, 80.0, 31.0]);
 }
+
+#[test]
+fn a_float_shifted_after_a_moved_float_holds_the_next_one_below_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:30px",
+            "float:left;clear:left;width:40px;height:30px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 190.0], "{ys:?}");
+}
+
+#[test]
+fn a_percentage_bound_under_a_contents_element_resolves_against_its_box() {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let fixed = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        let contents = doc.append_element(
+            Some(fixed),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        wrapper = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;max-height:50%"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
+}

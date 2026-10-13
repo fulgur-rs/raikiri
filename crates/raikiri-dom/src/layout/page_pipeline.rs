@@ -4157,10 +4157,17 @@ pub fn layout_pages_with_page_geometry_and_control(
                 (floor - (candidate.raw_y + flow_shift)).clamp(0.0, later_float_shift)
             });
             if shift > 0.0 {
+                flow_shift += shift;
                 if floating {
                     pending_float_shift = Some((node_id, shift, current_page));
+                    // The shifted float is now the one later floats keep
+                    // below.
+                    let layout = &document.nodes[node_id].unrounded_layout;
+                    later_float_top = candidate.raw_y + flow_shift;
+                    later_float_bottom =
+                        later_float_top + layout.size.height + layout.margin.bottom;
+                    later_float_side = cascade.computed[node_id].float;
                 }
-                flow_shift += shift;
                 // The box may now start on a later page than the flow.
                 current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
             }
@@ -5264,9 +5271,8 @@ fn grown_auto_height(
     };
     // A percentage bound resolves against a containing block of definite
     // height (CSS 2.1 §10.7).
-    let containing_height = document
-        .parent_of(parent)
-        .and_then(|block| definite_content_height(document, block));
+    let containing_height =
+        box_parent(document, parent).and_then(|block| definite_content_height(document, block));
     // One that does not resolve, and a `calc()` bound, behave as `0` for
     // `min-height` and as `none` for `max-height`.
     let bound = |value: taffy::LengthPercentageAuto, auto: f32| {
@@ -5372,7 +5378,7 @@ fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
     let node = &document.nodes[block];
     let raw = node.style.size.height.into_raw();
     let definite = if raw.is_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
-        document.parent_of(block).is_none_or(|containing| {
+        box_parent(document, block).is_none_or(|containing| {
             document.nodes[containing].kind() == NodeKind::Document
                 || definite_content_height(document, containing).is_some()
         })
@@ -5387,6 +5393,16 @@ fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
             - layout.border.top
             - layout.border.bottom
     })
+}
+
+/// The nearest ancestor of `node_id` that generates a box: `display:
+/// contents` elements are skipped.
+fn box_parent(document: &Document, node_id: usize) -> Option<usize> {
+    let mut parent = document.parent_of(node_id)?;
+    while document.nodes[parent].display == DisplayValue::Contents {
+        parent = document.parent_of(parent)?;
+    }
+    Some(parent)
 }
 
 /// The in-flow box laid out just before `node_id` among its parent's boxes,
