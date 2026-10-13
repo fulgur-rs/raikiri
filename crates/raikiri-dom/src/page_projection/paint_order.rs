@@ -1430,14 +1430,20 @@ fn push_paragraph<'a>(
             .filter(|item| item.kind == PageFragmentKind::Box)
             .map(|&item| items.fragment(item))
             .collect();
+        // The pieces come in line order and the boxes in flow order, so the
+        // search for each piece's box resumes where the last one ended.
+        let mut cursor = 0;
         for piece in pieces.iter().filter(|piece| part.admits(piece.line)) {
             // The element's box on the page that holds the piece, such as
-            // its box in the piece's column.
-            let Some(&fragment) = boxes
+            // its box in the piece's column; a piece outside every box later
+            // in the flow goes with the box of the last piece.
+            if let Some(next) = boxes[cursor..]
                 .iter()
-                .find(|fragment| contains(fragment.paint_rect(), piece.rect))
-                .or(boxes.first())
-            else {
+                .position(|fragment| contains(fragment.paint_rect(), piece.rect))
+            {
+                cursor += next;
+            }
+            let Some(&fragment) = boxes.get(cursor) else {
                 return; // cov:ignore: an element with line pieces on the page has a box there
             };
             events.push(PaintEvent::LineBox(LineBox {
