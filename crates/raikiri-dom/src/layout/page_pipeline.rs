@@ -3818,19 +3818,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                 table = parent_of[id];
             }
             let first_in_table = table.is_some_and(|table| tables_with_rows.insert(table));
-            let Some(group) = parent_of[row] else {
+            let Some(group) = parent_of[row].filter(|&group| {
+                matches!(
+                    cascade.computed[group].display,
+                    DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
+                ) && matches!(
+                    cascade.computed[group].break_inside,
+                    raikiri_style::property::BreakInside::Avoid
+                        | raikiri_style::property::BreakInside::AvoidPage
+                )
+            }) else {
                 continue;
             };
-            if !matches!(
-                cascade.computed[group].display,
-                DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
-            ) || !matches!(
-                cascade.computed[group].break_inside,
-                raikiri_style::property::BreakInside::Avoid
-                    | raikiri_style::property::BreakInside::AvoidPage
-            ) {
-                continue;
-            }
             let entry = group_first_rows.entry(group);
             let first = match entry {
                 std::collections::hash_map::Entry::Vacant(slot) => {
@@ -4130,8 +4129,10 @@ pub fn layout_pages_with_page_geometry_and_control(
             let shift =
                 (later_float_bottom - (candidate.raw_y + flow_shift)).clamp(0.0, later_float_shift);
             if shift > 0.0 {
-                flow_shift += shift;
                 pending_float_shift = Some((node_id, shift, current_page));
+                flow_shift += shift;
+                // The float may now start on a later page than the flow.
+                current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
             }
         }
         if document.get_node(node_id).is_none() {
@@ -5239,10 +5240,9 @@ fn grown_auto_height(
             None
         } else if raw.tag() == taffy::CompactLength::LENGTH_TAG {
             Some(raw.value() + box_sizing_edges)
-        } else if raw.tag() == taffy::CompactLength::PERCENT_TAG {
-            containing_height.map(|height| raw.value() * height + box_sizing_edges)
         } else {
-            None
+            // The remaining tag is a percentage.
+            containing_height.map(|height| raw.value() * height + box_sizing_edges)
         }
     };
     let min = bound(style.min_size.height, 0.0)?;
@@ -5301,12 +5301,9 @@ fn grown_auto_height(
             after = after.max(bottom);
         }
     }
-    if !shifted {
-        return None;
-    }
     let growth = (after - before).max(0.0);
     let unconstrained = if bounded { before + edges_below } else { old };
-    Some((unconstrained + growth).clamp(min, max).max(old))
+    shifted.then(|| (unconstrained + growth).clamp(min, max).max(old))
 }
 
 /// Whether a grid, flex or multi-column container contains `node_id`, up to

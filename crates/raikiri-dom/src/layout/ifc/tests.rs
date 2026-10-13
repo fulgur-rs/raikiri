@@ -653,13 +653,12 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
     }
 }
 
-#[test]
-fn a_percentage_max_height_against_an_indefinite_block_leaves_the_basis_alone() {
+/// An inline-block paragraph with `height:100px;{max_css}` inside an
+/// auto-height wrapper, holding a `height:50%` float. Returns the
+/// paragraph's and the float's heights.
+fn inline_block_paragraph_in_an_auto_wrapper(max_css: &str) -> (f32, f32) {
     use raikiri_style::{build_rule_tree, cascade};
 
-    // CSS 2.1 §10.7: the paragraph's percentage `max-height` cannot resolve
-    // inside an auto-height wrapper, so it neither clamps the paragraph nor
-    // the basis of its children's percentage heights.
     let mut doc = Document::new();
     let html = doc.append_element(
         Some(0),
@@ -683,7 +682,9 @@ fn a_percentage_max_height_against_an_indefinite_block_leaves_the_basis_alone() 
         Some(wrapper),
         "div",
         taffy::Style::default(),
-        Some("display:inline-block;width:100px;font-family:Ahem;font-size:10px;line-height:10px;height:100px;max-height:50%"),
+        Some(&format!(
+            "display:inline-block;width:100px;font-family:Ahem;font-size:10px;line-height:10px;height:100px;{max_css}"
+        )),
     );
     doc.append_text(root, "AA");
     let child = doc.append_element(
@@ -697,6 +698,24 @@ fn a_percentage_max_height_against_an_indefinite_block_leaves_the_basis_alone() 
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(doc.nodes[root].unrounded_layout.size.height, 100.0);
-    assert_eq!(doc.nodes[child].unrounded_layout.size.height, 50.0);
+    (
+        doc.nodes[root].unrounded_layout.size.height,
+        doc.nodes[child].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_percentage_max_height_against_an_indefinite_block_leaves_the_basis_alone() {
+    // CSS 2.1 §10.7: the paragraph's percentage `max-height` cannot resolve
+    // inside an auto-height wrapper, so it neither clamps the paragraph nor
+    // the basis of its children's percentage heights. A length bound still
+    // clamps both.
+    assert_eq!(
+        inline_block_paragraph_in_an_auto_wrapper("max-height:50%"),
+        (100.0, 50.0)
+    );
+    assert_eq!(
+        inline_block_paragraph_in_an_auto_wrapper("max-height:60px"),
+        (60.0, 30.0)
+    );
 }

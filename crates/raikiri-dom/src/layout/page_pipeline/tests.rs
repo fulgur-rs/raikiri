@@ -8636,6 +8636,102 @@ fn an_avoiding_block_in_a_multi_column_body_grid_stays_in_its_column() {
     assert_eq!(page_flow_y(&doc, other), 0.0);
 }
 
+/// `body > [div(30px), div(wrapper_css) > [div(20px), div(avoid, 60px),
+/// div(avoid, 10px)]]`. Returns the page-flow y of both avoiding boxes and
+/// the wrapper's height.
+fn wrapper_with_avoiding_children(wrapper_css: &str) -> (f32, f32, f32) {
+    let (mut wrapper, mut avoiding, mut last) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{wrapper_css}")),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        avoiding = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        last = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;break-inside:avoid"),
+        );
+    });
+    (
+        page_flow_y(&doc, avoiding),
+        page_flow_y(&doc, last),
+        doc.nodes[wrapper].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_wrapper_grows_by_how_far_its_content_extends_after_a_moved_child() {
+    assert_eq!(wrapper_with_avoiding_children(""), (100.0, 160.0, 140.0));
+    // The boxes after the moved one inside a fixed-height wrapper still
+    // follow it, while the wrapper keeps its size.
+    assert_eq!(
+        wrapper_with_avoiding_children("height:90px"),
+        (100.0, 160.0, 90.0)
+    );
+}
+
+#[test]
+fn a_wrappers_max_height_follows_its_box_sizing() {
+    assert_eq!(
+        nested_avoiding_block(
+            "box-sizing:content-box;padding-bottom:5px;max-height:70px",
+            "break-inside:avoid"
+        ),
+        (100.0, 75.0, 2)
+    );
+    assert_eq!(
+        nested_avoiding_block(
+            "box-sizing:border-box;padding-bottom:5px;max-height:70px",
+            "break-inside:avoid"
+        ),
+        (100.0, 70.0, 2)
+    );
+}
+
+#[test]
+fn a_float_moved_by_an_earlier_float_can_move_again_to_avoid_a_break() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:50px;break-inside:avoid",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The clearing float follows the first one to 160px, then crosses the
+    // second page's end and starts the third page.
+    assert_eq!(ys, vec![100.0, 200.0], "{ys:?}");
+}
+
 #[test]
 fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
     // Auto-height ancestors grow with the moved box and push the block after
@@ -10804,7 +10900,7 @@ fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
     assert_eq!(
         avoiding_row_group(
             "break-inside:avoid",
-            &[(20.0, ""), (30.0, "break-before:page")],
+            &[(20.0, ""), (30.0, "break-before:page"), (10.0, "")],
             None
         ),
         62.0
