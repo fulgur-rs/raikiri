@@ -1439,3 +1439,15 @@ fn pipeline_opens_a_new_page_for_a_page_type_change_after_overflowing_content() 
         assert_eq!(run(&doc).slices.len(), 3, "{height}");
     }
 }
+
+#[test]
+fn pipeline_caps_a_border_box_auto_body_by_max_height() {
+    // Under `border-box` the 100px maximum covers the padding too.
+    for (sizing, pages) in [("border-box", 1), ("content-box", 2)] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;box-sizing:{sizing};max-height:100px;padding-bottom:40px}}</style>\
+             <div style='height:80px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{sizing}");
+    }
+}

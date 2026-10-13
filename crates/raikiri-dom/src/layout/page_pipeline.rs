@@ -259,11 +259,12 @@ fn body_border_box_end(
             content_end = content_end.max(end);
         }
     }
-    // `max-height` caps the auto height; `min-height` still wins over it.
+    // `max-height` caps the auto height, measured as `box-sizing` says;
+    // `min-height` still wins over it.
     let content_height = content_end - (top + edges_top);
-    let content_height =
-        used(computed.max_height).map_or(content_height, |max| content_height.min(max));
-    min_end.max(top + edges_top + content_height + edges_bottom)
+    let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
+    let auto_end = top + edges_top + content_height + edges_bottom;
+    min_end.max(auto_end.min(max_end))
 }
 
 // Cache the nearest column context for each visited source node. Row flex
