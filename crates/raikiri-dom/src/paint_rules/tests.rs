@@ -457,3 +457,27 @@ fn inline_deferral_rejects_a_node_without_cascaded_values() {
     assert!(!defers_inline_content(&doc, &cascade, usize::MAX));
     assert!(!closes_deferred_inline_content(&doc, &cascade, usize::MAX));
 }
+
+#[test]
+fn only_in_flow_typographic_pseudo_elements_form_opacity_groups() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "p::before{content:'a';opacity:.5} p::after{content:'b';opacity:.5;float:left} \
+         p::marker{opacity:.5}",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let p = doc.append_element(Some(body), "p", Style::default(), Some("display:list-item"));
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    let id = |pseudo| crate::generated_content::generated_node_id(p, pseudo);
+    assert_eq!(
+        pseudo_opacity_layer(&cascade, id(PseudoElem::Before)),
+        Some(0.5)
+    );
+    assert_eq!(pseudo_opacity_layer(&cascade, id(PseudoElem::After)), None);
+    assert_eq!(pseudo_opacity_layer(&cascade, id(PseudoElem::Marker)), None);
+    assert_eq!(pseudo_opacity_layer(&cascade, p), None);
+}

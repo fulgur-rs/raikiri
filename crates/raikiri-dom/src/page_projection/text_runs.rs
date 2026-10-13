@@ -270,6 +270,9 @@ pub struct PositionedGlyphRun<'a> {
     /// covers the glyphs and [`Self::decorations`] alike, moved by its
     /// offset and filled with its color. Empty for `none`.
     pub shadows: Vec<TextShadow>,
+    /// The `::first-letter` box whose letters the run draws, by its
+    /// generated node id; `None` for other text.
+    pub(crate) letter_box: Option<usize>,
 }
 
 /// One used `text-shadow` of a [`PositionedGlyphRun`].
@@ -1306,6 +1309,7 @@ pub(crate) fn standalone_runs<'a>(
                 decorations: Vec::new(),
                 shadows: shadows.to_vec(),
                 transform: None,
+                letter_box: None,
             });
         }
     }
@@ -1477,6 +1481,7 @@ fn glyph_run<'a>(
         decorations: Vec::new(),
         shadows: text_shadows(positioned.style),
         transform: None,
+        letter_box: (positioned.style_owner != positioned.owner).then_some(positioned.style_owner),
     })
 }
 

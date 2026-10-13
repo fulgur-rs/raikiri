@@ -978,9 +978,14 @@ fn soft_wrapped_first_letter_remainder_uses_ordinary_style() {
         let positioned = raikiri_dom::PositionedLines::new(&doc, &computed, root, None).unwrap();
         let lines: Vec<_> = positioned.lines().collect();
         assert_eq!(lines.len(), 2);
+        // The translucent first letter composites after the rest of the
+        // paragraph, so its runs follow the remainder's.
         let sizes = glyph_sizes(&doc, &computed);
-        assert_eq!(sizes.last(), Some(&(10.0, 1)));
-        assert_eq!(sizes[0].0, 20.0);
+        assert_eq!(sizes.first(), Some(&(10.0, 1)));
+        assert!(
+            sizes[1..].iter().all(|&(size, _)| size == 20.0),
+            "{sizes:?}"
+        );
         assert_eq!(lines[1].runs[0].style_owner, text);
         let rgba = pixels(&doc, &computed);
         assert_eq!(
