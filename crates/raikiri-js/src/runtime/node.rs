@@ -162,9 +162,12 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
                 guard_node_budget(context)?;
             }
             let result = with_state(context, |s| {
-                s.host
+                let result = s
+                    .host
                     .document_mut()
-                    .set_element_text_content(index, &value)
+                    .set_element_text_content(index, &value);
+                super::stylesheet::note_child_list_change(s, index);
+                result
             })?;
             if result.is_err() {
                 // cov:ignore: `set_element_text_content` only rejects an out-of-range or
@@ -426,6 +429,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         s.host
             .document_mut()
             .replace_children_from(index, &fragment, root);
+        super::stylesheet::note_child_list_change(s, index);
     })?;
     mark_dirty(context)?;
     super::dispatch::sync_event_handlers_in_subtree(context, index)?;

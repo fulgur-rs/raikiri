@@ -153,6 +153,7 @@ pub(crate) fn replace_all(
                 doc.detach_from_parent(child);
             }
         }
+        super::stylesheet::note_child_list_change(s, parent);
         Ok(())
     })?;
     result.map_err(|e| map_mutation_error(context, e))
@@ -330,7 +331,9 @@ fn insert_before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let node = arg_node(args, 0, context)?;
     let before = arg_required_node_or_null(args, 1, context)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, before)
+        let result = s.host.document_mut().pre_insert(parent, node, before);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -341,7 +344,9 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
     let parent = this_node(this, context)?;
     let node = arg_node(args, 0, context)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, None)
+        let result = s.host.document_mut().pre_insert(parent, node, None);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -351,7 +356,11 @@ fn append_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
 fn remove_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let parent = this_node(this, context)?;
     let child = arg_node(args, 0, context)?;
-    let result = with_state(context, |s| s.host.document_mut().pre_remove(parent, child))?;
+    let result = with_state(context, |s| {
+        let result = s.host.document_mut().pre_remove(parent, child);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
+    })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
     Ok(args[0].clone())
@@ -362,7 +371,9 @@ fn replace_child(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let node = arg_node(args, 0, context)?;
     let child = arg_node(args, 1, context)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().replace_child(parent, node, child)
+        let result = s.host.document_mut().replace_child(parent, node, child);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -479,7 +490,9 @@ fn append(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
     let items = convert_args(context, args)?;
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, None)
+        let result = s.host.document_mut().pre_insert(parent, node, None);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -497,7 +510,9 @@ fn prepend(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<
             .and_then(|n| n.children.first().copied())
     })?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, before)
+        let result = s.host.document_mut().pre_insert(parent, node, before);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -579,7 +594,9 @@ fn before(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
         }
     })?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, reference)
+        let result = s.host.document_mut().pre_insert(parent, node, reference);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -598,7 +615,9 @@ fn after(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     })?;
     let node = nodes_into_a_node(context, items)?;
     let result = with_state(context, |s| {
-        s.host.document_mut().pre_insert(parent, node, viable_next)
+        let result = s.host.document_mut().pre_insert(parent, node, viable_next);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -623,13 +642,15 @@ fn replace_with(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRe
         s.host.document().parent_of(this_index) == Some(parent)
     })?;
     let result = with_state(context, |s| -> Result<(), DomMutationError> {
-        if still_child {
+        let result = if still_child {
             s.host
                 .document_mut()
                 .replace_child(parent, node, this_index)
         } else {
             s.host.document_mut().pre_insert(parent, node, viable_next)
-        }
+        };
+        super::stylesheet::note_child_list_change(s, parent);
+        result
     })?;
     result.map_err(|e| map_mutation_error(context, e))?;
     mark_dirty(context)?;
@@ -641,7 +662,11 @@ fn remove(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVa
     let Some(parent) = with_state(context, |s| s.host.document().parent_of(index))? else {
         return Ok(JsValue::undefined());
     };
-    let result = with_state(context, |s| s.host.document_mut().pre_remove(parent, index))?;
+    let result = with_state(context, |s| {
+        let result = s.host.document_mut().pre_remove(parent, index);
+        super::stylesheet::note_child_list_change(s, parent);
+        result
+    })?;
     if let Err(error) = result {
         // cov:ignore: `parent` was confirmed to be `index`'s current parent immediately above.
         return Err(map_mutation_error(context, error));

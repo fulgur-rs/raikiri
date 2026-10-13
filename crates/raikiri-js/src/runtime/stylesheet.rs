@@ -380,8 +380,8 @@ pub(crate) struct SheetVersion {
     children: Vec<usize>,
     text: String,
     generation: u64,
-    /// Set when a child text node's data was written in place, which
-    /// replaces the sheet even when the text ends up the same.
+    /// Set when the element's children or their data changed outside the
+    /// CSSOM, which replaces the sheet even when the text ends up the same.
     stale: bool,
 }
 
@@ -390,8 +390,17 @@ pub(crate) struct SheetVersion {
 /// sheet was replaced (HTML "update a style block" runs on every child text
 /// content change).
 pub(crate) fn note_character_data_change(state: &mut State, node: usize) {
-    let parent = state.host.document().parent_of(node);
-    if let Some(version) = parent.and_then(|parent| state.css_sheet_versions.get_mut(&parent)) {
+    if let Some(parent) = state.host.document().parent_of(node) {
+        note_child_list_change(state, parent);
+    }
+}
+
+/// Notes a change to the children of `parent` (an insertion, removal, or
+/// replacement, even one that leaves the same nodes behind). When `parent`
+/// is a style element whose sheet the CSSOM has handed out objects for,
+/// that sheet was replaced (HTML "update a style block").
+pub(crate) fn note_child_list_change(state: &mut State, parent: usize) {
+    if let Some(version) = state.css_sheet_versions.get_mut(&parent) {
         version.stale = true;
     }
 }

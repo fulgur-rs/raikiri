@@ -1971,3 +1971,28 @@ fn detached_rules_keep_their_declaration_object() {
          style.parentRule === null && pageStyle.color === ''",
     );
 }
+
+#[test]
+fn rule_objects_are_detached_when_the_same_child_is_removed_and_reinserted() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var text = styleElement.firstChild; \
+         var first = styleElement.sheet.cssRules[0]; var firstStyle = first.style; \
+         styleElement.removeChild(text); styleElement.appendChild(text); \
+         var second = styleElement.sheet.cssRules[0]; \
+         styleElement.replaceChild(text, text); var third = styleElement.sheet.cssRules[0]; \
+         styleElement.replaceChildren(text); var fourth = styleElement.sheet.cssRules[0]; \
+         styleElement.innerHTML = 'p { color: red }'; var fifth = styleElement.sheet.cssRules[0]; \
+         var unrelated = document.createElement('div'); document.body.appendChild(unrelated); \
+         var stable = styleElement.sheet.cssRules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "first !== second && second !== third && third !== fourth && fourth !== fifth && \
+         stable === fifth && firstStyle.color === '' && fifth.style.color === 'red'",
+    );
+}
