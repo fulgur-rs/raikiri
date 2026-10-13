@@ -3033,3 +3033,27 @@ fn a_text_shadow_covers_the_emphasis_marks() {
         );
     }
 }
+
+#[test]
+fn the_text_nodes_of_one_box_share_its_decoration_phases() {
+    let on = painted_root(
+        "width:200px;color:black;text-decoration:underline line-through",
+        |doc, root| {
+            doc.append_text(root, "ab ");
+            doc.append_text(root, "cd");
+        },
+    );
+    let kinds: Vec<&str> = line_and_text_order(&on)
+        .into_iter()
+        .map(|(kind, _)| kind)
+        .collect();
+    let first_text = kinds.iter().position(|kind| *kind == "text").unwrap();
+    let last_text = kinds.iter().rposition(|kind| *kind == "text").unwrap();
+    assert!(last_text > first_text, "two runs: {kinds:?}");
+    assert!(
+        kinds[first_text..=last_text]
+            .iter()
+            .all(|kind| *kind == "text"),
+        "{kinds:?}"
+    );
+}

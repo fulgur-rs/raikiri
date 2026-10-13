@@ -817,3 +817,19 @@ fn margin_box_text_shadow_resolves_signed_and_root_relative_offsets() {
     assert_eq!(inherited.len(), 1, "inherit takes the page context's value");
     assert_eq!(inherited[0].offset, (4.0, 4.0));
 }
+
+#[test]
+fn margin_box_text_shadow_substitutes_variables() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; \
+           @top-left { content: 'abc'; --shadow: 2px 3px red; text-shadow: var(--shadow) } }",
+    );
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    let shadows = &head.text_runs()[0].shadows;
+    assert_eq!(shadows.len(), 1);
+    assert_eq!(shadows[0].offset, (2.0, 3.0));
+    assert_eq!(shadows[0].color.r, 255);
+}

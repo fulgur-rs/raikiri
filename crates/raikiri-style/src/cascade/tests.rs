@@ -765,3 +765,32 @@ fn hanging_punctuation_important_wins_cascade_and_is_inherited() {
 }
 
 mod css_wide_tests;
+
+#[test]
+fn box_decoration_break_takes_the_css_wide_keywords() {
+    use crate::property::BoxDecorationBreak::{Clone, Slice};
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "span", Some("box-decoration-break:clone"));
+    let default = doc.push_element(parent, "span", None);
+    let inherit = doc.push_element(parent, "span", Some("box-decoration-break:inherit"));
+    let unset = doc.push_element(
+        parent,
+        "span",
+        Some("box-decoration-break:clone;box-decoration-break:unset"),
+    );
+    let initial = doc.push_element(
+        parent,
+        "span",
+        Some("box-decoration-break:clone;box-decoration-break:initial"),
+    );
+    let result = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    for (node, expected) in [
+        (parent, Clone),
+        (default, Slice),
+        (inherit, Clone),
+        (unset, Slice),
+        (initial, Slice),
+    ] {
+        assert_eq!(result.computed[node].box_decoration_break, expected);
+    }
+}

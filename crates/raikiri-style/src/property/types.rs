@@ -7381,6 +7381,7 @@ impl DeferredValue {
                 | PropertyKey::BorderImageWidth
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
+                | PropertyKey::BoxDecorationBreak
         ) {
             return None;
         }

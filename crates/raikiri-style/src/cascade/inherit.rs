@@ -2220,6 +2220,14 @@ fn resolve_defaulting_value(value: PropertyValue, inherited: &ComputedValues) ->
                     (keyword == CssWideKeyword::Inherit).then_some(&inherited.border_image),
                 );
             }
+            crate::property::PropertyKey::BoxDecorationBreak => {
+                // Non-inherited: only `inherit` takes the parent's value.
+                return PropertyValue::BoxDecorationBreak(if keyword == CssWideKeyword::Inherit {
+                    inherited.box_decoration_break
+                } else {
+                    crate::property::BoxDecorationBreak::Slice
+                });
+            }
             crate::property::PropertyKey::ListStyleImage => {
                 return PropertyValue::ListStyleImage(if initial {
                     crate::property::BackgroundImage::None

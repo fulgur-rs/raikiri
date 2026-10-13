@@ -82,6 +82,7 @@ pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyVal
                 | PropertyKey::BorderImageWidth
                 | PropertyKey::BorderImageOutset
                 | PropertyKey::BorderImageRepeat
+                | PropertyKey::BoxDecorationBreak
         )
     ) && let Ok(keyword) = input.try_parse(|parser| {
         let keyword = parse_css_wide_keyword_res(parser)?;

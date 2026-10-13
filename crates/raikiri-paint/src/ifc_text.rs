@@ -46,8 +46,9 @@ struct RunDraw<'a> {
     /// The relative offsets of the run's inline ancestors.
     offset: (f32, f32),
     group: Option<usize>,
-    /// The node whose style the run uses.
-    style_owner: usize,
+    /// The box the run's text belongs to: a typographic pseudo's box, or
+    /// the parent element of a text node.
+    paint_box: usize,
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -270,7 +271,13 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 decorations,
                 offset,
                 group,
-                style_owner: positioned_run.style_owner,
+                paint_box: if positioned_run.style_owner == positioned_run.owner {
+                    document
+                        .parent_of(positioned_run.owner)
+                        .unwrap_or(positioned_run.owner)
+                } else {
+                    positioned_run.style_owner
+                },
             });
         }
         // Consecutive runs of one box paint in phases: every shadow, then
@@ -278,7 +285,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         // line-through (CSS 2.2 Appendix E; CSS Text Decoration 3 §4).
         // Different boxes keep their tree order, so a later box's shadow
         // still covers an earlier box's text.
-        for segment in runs.chunk_by(|a, b| a.style_owner == b.style_owner) {
+        for segment in runs.chunk_by(|a, b| a.paint_box == b.paint_box) {
             if !vertical {
                 // Each shadow layer covers every run of the box before the
                 // next one up, so the first declared shadow stays on top.
