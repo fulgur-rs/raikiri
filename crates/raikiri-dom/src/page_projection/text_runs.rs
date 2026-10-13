@@ -893,6 +893,40 @@ pub(super) fn paint_shift(
     Ok((dx, dy))
 }
 
+/// How far the painter moves the boxes around text root `root` down the
+/// page outside columns by offsets that only translate: the part of
+/// [`run_transform`] that the built-in painter adds to a box's position
+/// rather than to its transform.
+pub(super) fn run_translation_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    context: &RunContext,
+    root: usize,
+) -> f32 {
+    let mut dy = 0.0;
+    for (id, in_columns) in paint_chain(document, cascade, context, root)
+        .into_iter()
+        .rev()
+    {
+        if in_columns {
+            break;
+        }
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: the cascade has a value for every arena node
+        };
+        if cv.position == PositionValue::Fixed {
+            dy = 0.0;
+        }
+        let fragmented = context.fragmented.contains(&id);
+        if let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented)
+            && !shift.general
+        {
+            dy += shift.offset.1;
+        }
+    }
+    dy
+}
+
 /// The transform from the coordinates the runs of text root `root` are
 /// placed in on `page` to the page: the moves of the boxes around them
 /// outside columns, outermost first, as the paint order lists them.

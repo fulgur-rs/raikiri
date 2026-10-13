@@ -850,3 +850,49 @@ fn a_covering_content_image_too_large_for_the_budget_is_rastered_at_its_box_area
     assert!((raster.width - 160f32.sqrt()).abs() < 1e-4);
     assert!((raster.height - 160f32.sqrt()).abs() < 1e-4);
 }
+
+#[test]
+fn a_content_image_clipped_on_one_axis_is_rastered_at_its_visible_area() {
+    struct WideVector;
+    impl ImagePixelSource for WideVector {
+        fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+        fn intrinsic_size(&self, _: &url::Url) -> Option<ImageIntrinsicSize> {
+            Some(ImageIntrinsicSize {
+                width: Some(1000.0),
+                height: Some(1.0),
+                aspect_ratio: Some(1000.0),
+            })
+        }
+        fn get_decoded_at_size(
+            &self,
+            _: &url::Url,
+            size: ImageRasterSize,
+            limit: Option<u64>,
+        ) -> Option<Arc<DecodedImage>> {
+            let width = size.width.ceil() as u32;
+            let height = size.height.ceil() as u32;
+            let bytes = u64::from(width) * u64::from(height) * 4;
+            if limit.is_some_and(|limit| bytes > limit) {
+                return None;
+            }
+            Some(Arc::new(DecodedImage {
+                width,
+                height,
+                rgba: vec![0; bytes as usize],
+            }))
+        }
+    }
+    // The 1000x1 object protrudes from its 100x100 box only sideways, so it
+    // is smaller than the box; its 4000-byte raster does not fit the budget.
+    let (mut doc, cascade, p) = content_image_document(
+        "p::before{content:url(https://images.test/a.svg);width:100px;height:100px;object-fit:none}",
+    );
+    doc.prepare_list_marker_images_with_budget(&cascade, &WideVector, None, 2000);
+    use raikiri_style::PseudoElem;
+    let image = doc
+        .content_image(p, PseudoElem::Before, 0)
+        .expect("the image still exists");
+    assert_eq!((image.width, image.height), (317, 1));
+}

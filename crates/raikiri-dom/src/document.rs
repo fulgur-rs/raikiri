@@ -3070,18 +3070,19 @@ impl Document {
                 // `object-fit: cover` or `none` can make the object far
                 // larger than its box, which clips it. When that raster does
                 // not fit the budget, the image is requested again at the
-                // box's area so its existence does not depend on the clipped
-                // part.
+                // area of its visible part so its existence does not depend
+                // on the clipped part.
                 let object_area = f64::from(object.width) * f64::from(object.height);
-                let box_area = f64::from(size.width) * f64::from(size.height);
+                let visible_area = f64::from(object.width.min(size.width))
+                    * f64::from(object.height.min(size.height));
                 let full = raikiri_traits::ImageRasterSize {
                     width: object.width,
                     height: object.height,
                 };
                 let Some((image, raster)) =
                     decode(&url, full).map(|image| (image, full)).or_else(|| {
-                        (object_area > box_area).then_some(())?;
-                        let scale = (box_area / object_area).sqrt() as f32;
+                        (object_area > visible_area).then_some(())?;
+                        let scale = (visible_area / object_area).sqrt() as f32;
                         let bounded = raikiri_traits::ImageRasterSize {
                             width: (object.width * scale).max(1.0),
                             height: (object.height * scale).max(1.0),

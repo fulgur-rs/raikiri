@@ -117,22 +117,31 @@ impl Document {
     /// Where an outside text marker is drawn on the page whose flow starts
     /// at `content_origin_y`, as in [`crate::PositionedGlyphRun`]s of the
     /// page: `Some(None)` on any page but the item's first, else the top of
-    /// the marker's line for a list item whose border edge is at `top` on a
-    /// page whose content ends at `page_bottom`. Its baseline meets the
-    /// item's first line, and it stays on the page when that line starts on
-    /// a later one. `None` when layout prepared no text marker for `owner`.
+    /// the marker's line for a list item whose border edge is painted at
+    /// `top` on a page whose content ends at `page_bottom`. Its baseline
+    /// meets the item's first line, and it stays on the page when that line
+    /// starts on a later one. The line's page is decided where layout put
+    /// it, before the translations that paint adds. `None` when layout
+    /// prepared no text marker for `owner`.
     #[doc(hidden)]
     pub fn list_marker_text_top(
         &self,
+        cascade: &CascadeResult,
         owner: usize,
         content_origin_y: f32,
         top: f32,
         page_bottom: f32,
     ) -> Option<Option<f32>> {
         self.page_projection.markers.get(&owner).map(|marker| {
-            marker
-                .is_on_page(content_origin_y)
-                .then(|| marker.line_top(top, page_bottom))
+            marker.is_on_page(content_origin_y).then(|| {
+                let moved = text_runs::run_translation_y(
+                    self,
+                    cascade,
+                    &self.page_projection.run_context,
+                    owner,
+                );
+                marker.line_top(top - moved, page_bottom) + moved
+            })
         })
     }
 

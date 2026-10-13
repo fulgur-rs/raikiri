@@ -396,17 +396,41 @@ pub fn cumulative_offset(
 /// When every glyph run's bidi level has the parity of the line's direction,
 /// logical order runs from the line's inline start, so the objects sorted by
 /// inline position take the characters in turn. Objects have no bidi level
-/// of their own, so an embedding, override or isolate opened up to the end
-/// of the line could reorder them unseen. A line that mixes directions, may
-/// hold such reordering, or whose counts disagree, yields `None`.
+/// of their own, so a bidi control on the line, or an embedding, override
+/// or isolate still open where the line starts, could reorder them unseen.
+/// A line that mixes directions, may hold such reordering, or whose counts
+/// disagree, yields `None`.
 fn object_text_offsets(line: &shodo::Line) -> Option<Vec<(usize, usize)>> {
     let range = line.text_range();
-    if line.text().get(..range.end)?.chars().any(|c| {
+    if line.text().get(range.clone())?.chars().any(|c| {
         matches!(
             c,
             '\u{200E}' | '\u{200F}' | '\u{061C}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
         )
     }) {
+        return None;
+    }
+    // The embeddings, overrides and isolates open where the line starts,
+    // `true` for an isolate. A PDF closes only an embedding or override
+    // above every isolate, and a PDI closes its isolate with everything
+    // opened inside it; unmatched closers are ignored (UAX #9 X6a, X7).
+    let mut open = Vec::new();
+    for c in line.text().get(..range.start)?.chars() {
+        match c {
+            '\u{202A}' | '\u{202B}' | '\u{202D}' | '\u{202E}' => open.push(false),
+            '\u{2066}'..='\u{2068}' => open.push(true),
+            '\u{202C}' if open.last() == Some(&false) => {
+                open.pop();
+            }
+            '\u{2069}' => {
+                if let Some(isolate) = open.iter().rposition(|&isolate| isolate) {
+                    open.truncate(isolate);
+                }
+            }
+            _ => {}
+        }
+    }
+    if !open.is_empty() {
         return None;
     }
     let rtl = u8::from(line.used_direction() == shodo::geometry::Direction::Rtl);

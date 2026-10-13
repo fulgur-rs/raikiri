@@ -1076,6 +1076,21 @@ fn a_marker_whose_first_line_moves_on_matches_paint() {
              <ol><li style=\"position: relative; top: -20px\">A</li></ol>",
             "body { margin: 0 }",
         ),
+        // Translations that paint adds move the marker with its item, after
+        // its line's page is decided where layout put it.
+        (
+            "<ol><li style=\"padding-top: 130px; position: relative; top: 15px\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        (
+            "<ol><li style=\"padding-top: 130px; transform: translateY(15px)\">A</li></ol>",
+            "body { margin: 0 }",
+        ),
+        (
+            "<div style=\"transform: translateY(15px)\">\
+             <ol><li style=\"padding-top: 130px\">A</li></ol></div>",
+            "body { margin: 0 }",
+        ),
     ]);
 }
 

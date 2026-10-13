@@ -1332,7 +1332,13 @@ fn paint_list_marker_with_snapshots(
     // §3.1), where the page's text runs place it. It belongs to the item's
     // first page, so the item's later pages draw none.
     let (content_origin_y, page_bottom) = page_flow;
-    let top = match document.list_marker_text_top(node_id, content_origin_y, paint_y, page_bottom) {
+    let top = match document.list_marker_text_top(
+        cascade,
+        node_id,
+        content_origin_y,
+        paint_y,
+        page_bottom,
+    ) {
         Some(Some(top)) => top,
         Some(None) => return,
         None => paint_y,

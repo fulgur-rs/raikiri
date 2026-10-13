@@ -441,6 +441,35 @@ fn images_order_with_generated_text_by_text_offset() {
         .map(|(_, offset)| offset)
         .collect();
     assert_eq!(offsets, [None, None]);
+    let offsets = |body: &str, css: &str| {
+        let document = lay_out(body, css, &pixels);
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        page.paint_order_for_text_runs(&runs)
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::GeneratedImage(image) => page.generated_image_text_position(image),
+                _ => None,
+            })
+            .map(|(_, offset)| offset.is_some())
+            .collect::<Vec<_>>()
+    };
+    // An override closed on an earlier line leaves later lines alone.
+    assert_eq!(
+        offsets(
+            "<p><span>Z</span><br><i></i></p>",
+            "span{unicode-bidi:bidi-override;direction:rtl}             i::before{content:url(a.png) url(b.png)}",
+        ),
+        [true, true]
+    );
+    // One still open where the line starts reorders it.
+    assert_eq!(
+        offsets(
+            "<p><span>Z<br><i></i><br>W</span></p>",
+            "span{unicode-bidi:bidi-override;direction:rtl}             i::before{content:url(a.png) url(b.png)}",
+        ),
+        [false, false]
+    );
 }
 
 #[test]
