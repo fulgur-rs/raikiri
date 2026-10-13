@@ -100,3 +100,121 @@ fn variable_css_wide_borders_carry_the_keyword_to_the_border_image() {
         result.computed[parent].border_image
     );
 }
+
+#[test]
+fn border_image_math_functions_clamp_to_the_range() {
+    for (style, label) in [
+        (
+            "border-image-slice: calc(-1) calc(-10%) max(-5, -2) 4; \
+             border-image-width: calc(-1) calc(-5px) calc(-10%) 2; \
+             border-image-outset: calc(-1) calc(-5px) 1 1px",
+            "longhands",
+        ),
+        (
+            "--n: -1; border-image-slice: calc(var(--n)) calc(-10%) max(-5, -2) 4; \
+             border-image-width: calc(var(--n)) calc(-5px) calc(-10%) 2; \
+             border-image-outset: calc(var(--n)) calc(-5px) 1 1px",
+            "variables",
+        ),
+        (
+            "border-image: url(https://images.test/a.png) calc(-1) calc(-10%) max(-5, -2) 4 \
+             / calc(-1) calc(-5px) calc(-10%) 2 / calc(-1) calc(-5px) 1 1px",
+            "shorthand",
+        ),
+    ] {
+        let values = cascade_doc("", "div", Some(style));
+        let image = &values.border_image;
+        assert_eq!(
+            image.slice.offsets.top,
+            BorderImageSliceOffset::Number(0.0),
+            "{label}"
+        );
+        assert_eq!(
+            image.slice.offsets.right,
+            BorderImageSliceOffset::Percent(0.0),
+            "{label}"
+        );
+        assert_eq!(
+            image.slice.offsets.bottom,
+            BorderImageSliceOffset::Number(0.0),
+            "{label}"
+        );
+        assert_eq!(
+            image.width.top,
+            BorderImageWidthSide::Number(0.0),
+            "{label}"
+        );
+        assert_eq!(
+            image.width.right,
+            BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(0.0)),
+            "{label}"
+        );
+        assert!(
+            matches!(
+                image.width.bottom,
+                BorderImageWidthSide::LengthPercentage(
+                    ComputedLengthPercentageOrCalc::Px(0.0)
+                        | ComputedLengthPercentageOrCalc::Percent(0.0)
+                )
+            ),
+            "{label}: {:?}",
+            image.width.bottom
+        );
+        assert_eq!(
+            image.outset.top,
+            BorderImageOutsetSide::Number(0.0),
+            "{label}"
+        );
+        assert_eq!(
+            image.outset.right,
+            BorderImageOutsetSide::Length(0.0),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn border_image_literal_negative_numbers_stay_invalid() {
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("border-image-width: 2; border-image-width: -1"),
+    );
+    assert_eq!(
+        values.border_image.width.top,
+        BorderImageWidthSide::Number(2.0)
+    );
+}
+
+#[test]
+fn border_image_math_functions_in_range_keep_their_value() {
+    let values = cascade_doc(
+        "",
+        "div",
+        Some("border-image-slice: calc(1 + 1) calc(25% * 2); border-image-outset: calc(1px + 1em)"),
+    );
+    let image = &values.border_image;
+    assert_eq!(image.slice.offsets.top, BorderImageSliceOffset::Number(2.0));
+    let width = cascade_doc(
+        "",
+        "div",
+        Some("border-image-width: min(-5px, -2px) max(-1%, -2%)"),
+    );
+    assert_eq!(
+        width.border_image.width.top,
+        BorderImageWidthSide::LengthPercentage(ComputedLengthPercentageOrCalc::Px(0.0))
+    );
+    assert!(matches!(
+        width.border_image.width.right,
+        BorderImageWidthSide::LengthPercentage(
+            ComputedLengthPercentageOrCalc::Px(0.0) | ComputedLengthPercentageOrCalc::Percent(0.0)
+        )
+    ));
+    assert_eq!(
+        image.slice.offsets.right,
+        BorderImageSliceOffset::Percent(50.0)
+    );
+    // The outset grammar keeps no mixed-unit calc, so a math function that
+    // does not fold to one value leaves the initial outset.
+    assert_eq!(image.outset.top, BorderImageOutsetSide::Number(0.0));
+}

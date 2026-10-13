@@ -882,3 +882,20 @@ fn margin_box_layers_below_the_painted_ones_are_dropped() {
         MAX_PAINTED_BACKGROUND_LAYERS + 1
     );
 }
+
+#[test]
+fn margin_box_text_shadow_takes_the_css_wide_keywords() {
+    let (doc, cascade) = page_cascade_fixture(
+        "@page { margin: 40px; text-shadow: 4px 4px lime; \
+           @top-left { content: 'abc'; text-shadow: 1px 1px red; text-shadow: initial } \
+           @top-right { content: 'abc'; text-shadow: 1px 1px red; text-shadow: unset } }",
+    );
+    let boxes = layout_page(&doc, &cascade, small_page());
+    let [left, right] = boxes.as_slice() else {
+        panic!("two boxes: {boxes:?}");
+    };
+    assert!(left.text_runs()[0].shadows.is_empty(), "initial is none");
+    let unset = &right.text_runs()[0].shadows;
+    assert_eq!(unset.len(), 1, "unset inherits the page context's value");
+    assert_eq!(unset[0].offset, (4.0, 4.0));
+}

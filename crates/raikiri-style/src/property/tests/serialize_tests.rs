@@ -877,3 +877,24 @@ fn background_layer_lists_serialize_canonically() {
         );
     }
 }
+
+#[test]
+fn border_image_math_functions_keep_their_specified_text() {
+    // Out-of-range math clamps at computed-value time, so the specified
+    // value keeps its text, which the CSSOM echoes back.
+    for (property, source) in [
+        ("border-image-slice", "calc(-1) 4"),
+        ("border-image-slice", "calc(-1) calc(-10%) max(-5, -2) 4"),
+        ("border-image-width", "calc(-1) calc(-5px) calc(-10%) 2"),
+        ("border-image-width", "calc(-1)"),
+        ("border-image-outset", "calc(-5px) 1"),
+    ] {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        let value = parse_value(property, &mut parser);
+        assert!(
+            matches!(&value, Some(PropertyValue::Deferred(deferred)) if deferred.value == source),
+            "{property}: {value:?}"
+        );
+    }
+}
