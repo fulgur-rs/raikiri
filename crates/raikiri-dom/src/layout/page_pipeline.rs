@@ -2457,20 +2457,40 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             )
             && !is_floating_box_for_pagination(document, cascade, id)
     };
-    // The page value a box ends with: that of its last in-flow child, down
-    // to the deepest one.
-    let end_page_name = |document: &Document, mut id: usize, mut name: Option<String>| loop {
-        if page_applies_to_box(document, cascade, id) {
-            name = selected_page_name(cascade, id).or(name);
-        }
-        let last = document.nodes[id]
+    // The in-flow child boxes of `parent`, with the children of a
+    // `display: contents` element standing in its place.
+    let child_boxes = |document: &Document, parent: usize| {
+        let mut boxes = Vec::new();
+        let mut pending: Vec<usize> = document.nodes[parent]
             .children
             .iter()
             .rev()
             .copied()
-            .find(|&child| in_flow(document, child));
-        match last {
-            Some(child) => id = child,
+            .collect();
+        while let Some(child) = pending.pop() {
+            let node = &document.nodes[child];
+            if node.kind() == NodeKind::Element
+                && node.is_in_document()
+                && cascade.computed[child].display == DisplayValue::Contents
+            {
+                pending.extend(node.children.iter().rev().copied());
+            } else if in_flow(document, child) {
+                boxes.push(child);
+            }
+        }
+        boxes
+    };
+    // The page value a box ends with: that of its last in-flow child, down
+    // to the deepest one. A monolithic box does not pass up a descendant's.
+    let end_page_name = |document: &Document, mut id: usize, mut name: Option<String>| loop {
+        if page_applies_to_box(document, cascade, id) {
+            name = selected_page_name(cascade, id).or(name);
+        }
+        if is_monolithic_for_pagination(document, cascade, id) {
+            break name;
+        }
+        match child_boxes(document, id).last() {
+            Some(&child) => id = child,
             None => break name,
         }
     };
@@ -2480,11 +2500,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
         let mut previous_page_name = None;
-        for index in 0..document.nodes[parent].children.len() {
-            let child = document.nodes[parent].children[index];
-            if !in_flow(document, child) {
-                continue;
-            }
+        for child in child_boxes(document, parent) {
             let computed = &cascade.computed[child];
             let start_page_name =
                 match propagated_start_page_name(document, cascade, child, inherited.as_deref()) {
@@ -2505,9 +2521,10 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 inherited.clone()
             };
             pending.push((child, own_page_name));
-            let style = &mut document.nodes[child].style;
-            if forced && style.clear == taffy::Clear::None {
-                style.clear = taffy::Clear::Both;
+            // Floats on either side belong to the earlier page, so a
+            // one-sided clear is widened too.
+            if forced {
+                document.nodes[child].style.clear = taffy::Clear::Both;
             }
         }
     }
@@ -2854,6 +2871,15 @@ pub fn layout_pages_with_page_geometry_and_control(
     control.check_page_index(0)?;
     layout_single_page_with_table_projection(document, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
+    // A root with `display: none` generates no boxes, so nothing breaks into
+    // later pages: the document prints as a single blank page.
+    if cascade.root_element_computed().display == DisplayValue::None {
+        return Ok(vec![PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }]);
+    }
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),

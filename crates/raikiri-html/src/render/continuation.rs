@@ -356,6 +356,7 @@ fn relayout_from(
         // the earlier layout kept on an earlier page, such as a float below
         // the end of its block, can run onto the resumed page.
         if content_before.is_some_and(|earlier| {
+            let earlier: std::collections::HashSet<usize> = earlier.iter().copied().collect();
             document
                 .page_content_before(page as u32, start.token)
                 .iter()

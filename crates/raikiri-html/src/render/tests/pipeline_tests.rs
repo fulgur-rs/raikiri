@@ -1556,3 +1556,39 @@ fn pipeline_places_floats_after_a_named_page_change_clear_of_earlier_pages() {
         assert_eq!(xs, vec![300.0], "page {page}");
     }
 }
+
+#[test]
+fn pipeline_prints_a_hidden_root_on_one_page() {
+    let doc = parse(
+        "<html style='display:none'><body>\
+         <div style='height:2000px'>a</div>\
+         <div style='break-before:page'>b</div></body></html>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 1);
+}
+
+#[test]
+fn pipeline_clears_a_forced_break_inside_display_contents_on_both_sides() {
+    // The box after the break sits in a `display: contents` wrapper and
+    // clears only the left side; the right float of the earlier page still
+    // does not reach it.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div style='display:contents'>\
+         <div style='break-before:page; clear:left'><div class='f'></div></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    for page in 0..2 {
+        let (document, _) = out.layout_for_page(page);
+        let xs: Vec<f32> = document
+            .page_fragments(page)
+            .filter(|fragment| fragment.rect().width == 100.0)
+            .map(|fragment| fragment.rect().x)
+            .collect();
+        assert_eq!(xs, vec![300.0], "page {page}");
+    }
+}
