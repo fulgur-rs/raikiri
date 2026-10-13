@@ -125,18 +125,30 @@ fn body_border_box_end(
     root_flow_offset: f32,
 ) -> f32 {
     let computed = &cascade.computed[body_id];
-    // Percentages resolve against the root's height only when it is a
+    // Percentages resolve against the root's used height only when it is a
     // definite length; otherwise they behave as `auto`.
-    let root_height =
-        document
-            .parent_of(body_id)
-            .and_then(|root| match cascade.computed[root].height {
-                ComputedLengthPercentageOrAuto::Px(height) => Some(height.max(0.0)),
-                ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => {
-                    Some(calc.px.max(0.0))
-                }
-                _ => None,
-            });
+    let root_height = document.parent_of(body_id).and_then(|root| {
+        let absolute = |value: ComputedLengthPercentageOrAuto| match value {
+            ComputedLengthPercentageOrAuto::Px(value) => Some(value),
+            ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => Some(calc.px),
+            _ => None,
+        };
+        let root_computed = &cascade.computed[root];
+        let height = absolute(root_computed.height)?;
+        let height = absolute(root_computed.max_height).map_or(height, |max| height.min(max));
+        let height = absolute(root_computed.min_height).map_or(height, |min| height.max(min));
+        // The basis is the root's content box.
+        let edges = if matches!(
+            root_computed.box_sizing,
+            raikiri_style::property::BoxSizing::BorderBox
+        ) {
+            let layout = &document.nodes[root].unrounded_layout;
+            layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+        } else {
+            0.0
+        };
+        Some((height - edges).max(0.0))
+    });
     let used = |value: ComputedLengthPercentageOrAuto| {
         match value {
             ComputedLengthPercentageOrAuto::Px(value) => Some(value),
@@ -183,26 +195,53 @@ fn body_border_box_end(
     }
     // In-flow children are in page coordinates already; with block-end
     // edges their block-end margins stay inside the body.
-    let content_end = body
-        .children
-        .iter()
-        .filter(|&&child| {
-            let node = &document.nodes[child];
-            node.is_in_document()
-                && !node.is_display_none()
-                && node.kind() == NodeKind::Element
-                && matches!(
-                    cascade.computed[child].position,
-                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
-                )
-                && !super::page::is_floating_box_for_pagination(document, cascade, child)
-        })
-        .map(|&child| {
-            let layout = &document.nodes[child].unrounded_layout;
-            layout.location.y + layout.size.height + layout.margin.bottom.max(0.0)
-        })
-        .fold(top + edges_top, f32::max);
-    min_end.max(content_end + edges_bottom)
+    // The children of a `display: contents` element take part as the body's
+    // own, and a relative offset moves a box without moving the flow.
+    let mut content_end = top + edges_top;
+    let mut children: Vec<(usize, f32)> = body.children.iter().map(|&child| (child, 0.0)).collect();
+    while let Some((child, offset)) = children.pop() {
+        let node = &document.nodes[child];
+        let child_computed = &cascade.computed[child];
+        if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
+            continue;
+        }
+        let layout = &node.unrounded_layout;
+        if child_computed.display == DisplayValue::Contents {
+            let offset = offset + layout.location.y;
+            children.extend(node.children.iter().map(|&grandchild| (grandchild, offset)));
+            continue;
+        }
+        if !matches!(
+            child_computed.position,
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        ) || super::page::is_floating_box_for_pagination(document, cascade, child)
+        {
+            continue;
+        }
+        let relative_shift = if matches!(child_computed.position, PositionValue::Relative) {
+            match (child_computed.top, child_computed.bottom) {
+                (ComputedLengthPercentageOrAuto::Px(top), _) => top,
+                (
+                    ComputedLengthPercentageOrAuto::Auto,
+                    ComputedLengthPercentageOrAuto::Px(bottom),
+                ) => -bottom,
+                _ => 0.0,
+            }
+        } else {
+            0.0
+        };
+        let end = offset + layout.location.y - relative_shift
+            + layout.size.height
+            + layout.margin.bottom.max(0.0);
+        if end.is_finite() {
+            content_end = content_end.max(end);
+        }
+    }
+    // `max-height` caps the auto height; `min-height` still wins over it.
+    let content_height = content_end - (top + edges_top);
+    let content_height =
+        used(computed.max_height).map_or(content_height, |max| content_height.min(max));
+    min_end.max(top + edges_top + content_height + edges_bottom)
 }
 
 // Cache the nearest column context for each visited source node. Row flex
@@ -4675,12 +4714,18 @@ pub fn layout_pages_with_page_geometry_and_control(
             let end_page = page_index_for_end(end);
             control.check_discovery_page_index(end_page)?;
             max_page = max_page.max(end_page);
-            // Pages opened only by these boxes keep the page type the flow
-            // ended on.
-            let names_end = control.capped_page_index(end_page);
-            if page_names.len() <= names_end as usize {
-                page_names.resize(names_end as usize + 1, current_page_name.clone());
-            }
+        }
+    }
+    // Pages past the last one the normal flow reached hold only boxes outside
+    // it, and keep the page type the flow ended on, whatever page type was
+    // active when one of those boxes first reached them.
+    let names_end = control.capped_page_index(max_page);
+    if page_names.len() <= names_end as usize {
+        page_names.resize(names_end as usize + 1, current_page_name.clone());
+    }
+    if names_end > flow_max_page {
+        for name in &mut page_names[flow_max_page as usize + 1..=names_end as usize] {
+            name.clone_from(&current_page_name);
         }
     }
 

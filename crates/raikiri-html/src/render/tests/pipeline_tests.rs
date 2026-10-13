@@ -1300,3 +1300,63 @@ fn pipeline_resolves_body_percentage_height_against_a_calc_root() {
     );
     assert_eq!(run(&doc).slices.len(), 5);
 }
+
+#[test]
+fn pipeline_constrains_the_auto_body_height_before_its_padding() {
+    // The auto height (80px) beats `min-height`, and the padding then
+    // reaches the second page; `max-height` caps it back onto the first.
+    for (constraint, pages) in [("min-height:50px", 2), ("max-height:40px", 1)] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;{constraint};padding-bottom:40px}}</style>\
+             <div style='height:80px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{constraint}");
+    }
+}
+
+#[test]
+fn pipeline_resolves_body_percentages_against_the_root_used_height() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{height:500px;max-height:150px} body{margin:0;height:100%}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_names_tail_pages_after_the_flow_with_its_last_page_type() {
+    // The absolutely positioned box reaches the fourth page before the
+    // named box changes the page type on the second.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page b{size:300px 100px;margin:0} body{margin:0}</style>\
+         <div style='position:absolute;top:0;width:10px;height:350px'></div>\
+         <div style='height:50px'></div><div style='page:b;height:10px'></div>",
+    );
+    let out = run(&doc);
+    let names: Vec<_> = out
+        .slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(names, [None, Some("b"), Some("b"), Some("b")]);
+}
+
+#[test]
+fn pipeline_measures_the_auto_body_from_its_flow_content() {
+    // A `display: contents` wrapper's child counts as the body's own; a
+    // relative offset does not move the body's end.
+    for (content, pages) in [
+        (
+            "<div style='display:contents'><div style='height:80px'>x</div></div>",
+            2,
+        ),
+        (
+            "<div style='position:relative;top:150px;height:20px'>x</div>",
+            2,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:40px}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content}");
+    }
+}
