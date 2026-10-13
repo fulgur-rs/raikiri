@@ -317,6 +317,57 @@ fn first_letter_without_decoration_style_keeps_its_box_identity() {
     assert_eq!(letters[0].style.color.r, 255);
 }
 
+fn first_letter_boxes(events: &[PaintEvent<'_>]) -> Vec<(usize, PaintRect)> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::FirstLetter => {
+                Some((index, piece.rect))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The first letter moves with the relatively positioned inline element its
+/// letter comes from, as its glyphs do.
+#[test]
+fn a_first_letter_box_moves_with_its_relative_inline_source() {
+    let document = lay_out(
+        "<p><span>AB</span></p>",
+        "p{margin:0}span{position:relative;left:10px;top:5px}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    assert_eq!(letters[0].1, PaintRect::new(10.0, 5.0, 20.0, 20.0));
+}
+
+/// A first letter taken from an inline opacity group is composited with the
+/// group, as its glyphs are.
+#[test]
+fn a_first_letter_box_stays_inside_its_inline_opacity_group() {
+    let document = lay_out(
+        "<p><span>AB</span></p>",
+        "p{margin:0}span{opacity:.5}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    let push = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::PushOpacity(alpha) if *alpha == 0.5))
+        .unwrap();
+    let pop = events
+        .iter()
+        .rposition(|event| matches!(event, PaintEvent::PopOpacity))
+        .unwrap();
+    assert!(push < letters[0].0 && letters[0].0 < pop);
+}
+
 /// A relatively positioned `::before` moves its own text and box, as a
 /// relatively positioned inline element does (CSS 2.1 §9.4.3).
 #[test]

@@ -217,7 +217,7 @@ pub struct PositionedGlyphRun<'a> {
     pub text: &'a str,
     /// UTF-8 offset of [`Self::text`] in the processed text of its line.
     /// Within one line, runs and the images of generated content (see
-    /// `page_generated_image_text_position`) follow the logical (reading)
+    /// [`crate::Document::page_generated_image_text_position`]) follow the logical (reading)
     /// order of these offsets, whatever their visual order.
     pub text_offset: usize,
     /// The glyphs, left to right.
@@ -993,10 +993,23 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         ) {
             // A flex or grid container orders its items itself. A flex
             // layout records the first baseline they give it; a grid
-            // container is left to the fallback.
-            return node.flex_first_baseline.map(|baseline| FirstLine {
+            // container is left to the fallback. The middle of that line
+            // comes from the item whose first line has the baseline; when
+            // none matches, the baseline stands in.
+            let baseline = node.flex_first_baseline?;
+            let center = node
+                .children
+                .iter()
+                .filter(|&&child| in_flow(child))
+                .find_map(|&child| {
+                    let line = first_line(document, cascade, child)?;
+                    let top = document.nodes[child].unrounded_layout.location.y;
+                    ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
+                })
+                .unwrap_or(baseline);
+            return Some(FirstLine {
                 baseline: y + baseline,
-                center: y + baseline,
+                center: y + center,
             });
         }
         let child = match node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {

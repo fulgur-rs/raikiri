@@ -96,9 +96,8 @@ pub(super) fn prepare(
     let mut result = GeneratedBoxes::new();
     for (root, paint_shift, pieces) in &prepared {
         let source = document.ifc_source_owner(root.node);
-        let offsets = document
-            .ifc_layout_node(root.node)
-            .map_or(&[][..], |node| node.ifc_relative_offsets());
+        let layout_node = document.ifc_layout_node(root.node);
+        let offsets = layout_node.map_or(&[][..], |node| node.ifc_relative_offsets());
         // Fixed-position roots and repeated table headers can land on any page.
         let repeated = root.is_repeat || document.table_objects.headers.owner(source).is_some();
         let candidates: Box<dyn Iterator<Item = &PageFragment>> = if repeated {
@@ -149,7 +148,18 @@ pub(super) fn prepare(
                 let rect = piece.border_box;
                 // A pseudo-element moves by its own relative offset and with
                 // its relatively positioned inline ancestors, as its text does.
-                let relative = crate::cumulative_offset(document, root.node, offsets, piece.node);
+                // A typographic pseudo-element moves with the inline element
+                // its letters come from, as the native painter places it.
+                let source = layout_node
+                    .and_then(|node| {
+                        node.ifc_typographic_fragment(
+                            piece.node,
+                            piece.source_container,
+                            piece.source_owner,
+                        )
+                    })
+                    .map_or(piece.node, |(_, owner)| owner);
+                let relative = crate::cumulative_offset(document, root.node, offsets, source);
                 result
                     .entry(page.page_index)
                     .or_default()

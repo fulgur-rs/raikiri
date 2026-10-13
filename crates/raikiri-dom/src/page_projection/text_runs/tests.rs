@@ -169,6 +169,46 @@ fn a_typographic_box_is_not_reported_as_generated_before_text() {
     }
 }
 
+/// A flex container's first line is the one its layout took the first
+/// baseline from; the middle of that line decides its page, not the baseline.
+#[test]
+fn a_flex_first_line_keeps_the_center_of_its_item_line() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let flex = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:flex;padding-top:7px;font:10px Ahem"),
+    );
+    let item = document.append_element(
+        Some(flex),
+        "p",
+        taffy::Style::default(),
+        Some("display:block;margin:0;line-height:50px"),
+    );
+    document.append_text(item, "X".to_string());
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    let line = first_line(&document, &cascade, flex).unwrap();
+    // Ahem's ascent is 0.8em, and the 40px of leading is split evenly.
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
+}
+
 /// Two Ahem paragraphs, one X per 10px line: 25 lines, then 3 lines below.
 fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
     let mut document = Document::new();

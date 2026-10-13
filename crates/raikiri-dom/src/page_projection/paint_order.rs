@@ -1122,11 +1122,10 @@ fn push_paragraph<'a>(
         elements.push((first, None));
     }
     elements.push((first, Some(GeneratedKind::Before)));
-    if group.is_none() {
-        // The `::first-letter` boxes wrap the paragraph's first letter,
-        // which can come from the root's `::before`.
-        elements.push((first, Some(GeneratedKind::FirstLetter)));
-    }
+    // The `::first-letter` boxes wrap the paragraph's first letter, which
+    // can come from the root's `::before`. Each pass lists the boxes whose
+    // letters its inline opacity group holds.
+    elements.push((first, Some(GeneratedKind::FirstLetter)));
     let mut nested = Vec::new();
     let mut texts = Vec::new();
     let mut stack: Vec<_> = children.iter().rev().map(|&id| (id, false)).collect();
@@ -1193,6 +1192,11 @@ fn push_paragraph<'a>(
                 {
                     let owner_id = NodeId::new(owner as u64);
                     for piece in pieces {
+                        if kind == GeneratedKind::FirstLetter
+                            && first_letter_group(document, items.cascade, root, piece) != group
+                        {
+                            continue;
+                        }
                         let Some(style) = root_node_ifc
                             .and_then(|node| column_projection_style(node, items.cascade, piece))
                         else {
@@ -1244,6 +1248,26 @@ fn push_paragraph<'a>(
         }
     }
     nested
+}
+
+/// The inline opacity group of paragraph `root` that holds the letters of a
+/// `::first-letter` piece, as it holds their glyph runs: the innermost group
+/// around the element the letters come from.
+fn first_letter_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    piece: &super::generated_boxes::BoxPiece,
+) -> Option<usize> {
+    let source = document
+        .ifc_layout_node(root)?
+        .ifc_typographic_fragment(piece.node, piece.source_container, piece.source_owner)?
+        .1;
+    let start = match document.get_node(source)?.kind() {
+        NodeKind::Text => document.parent_of(source)?,
+        _ => source,
+    };
+    document.inline_opacity_group(cascade, root, start)
 }
 
 /// The paragraph line that holds a content image placed on the page.
