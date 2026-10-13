@@ -694,7 +694,10 @@ fn pipeline_discovers_named_page_after_oversized_text_before_enforcing_page_limi
 }
 
 #[test]
-fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
+fn pipeline_counts_distant_absolute_boxes_as_pages() {
+    // An absolutely positioned box still needs a page to paint on, as in
+    // browsers, so a distant one extends the page count and meets the page
+    // limit like in-flow content does.
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} @page :left{size:200px 200px;margin:0}</style>\
          <div style='height:90px'></div><div style='height:90px'></div><div style='height:70px'></div>\
@@ -722,8 +725,18 @@ fn pipeline_does_not_count_distant_absolute_percentage_boxes_as_pages() {
     );
 
     match result {
-        Ok(PipelineRun::Completed(output)) => assert_eq!(output.slices.len(), 2),
-        Err(error) => panic!("an out-of-flow box must not increase the page count: {error}"),
+        Err(RenderError::LimitExceeded {
+            kind: raikiri_traits::LimitKind::Pages,
+            limit: 2,
+            ..
+        }) => {}
+        Err(error) => panic!("expected a page limit rejection, got {error}"),
+        Ok(PipelineRun::Completed(output)) => {
+            panic!(
+                "expected rejection, but generated {} pages",
+                output.slices.len()
+            )
+        }
         Ok(PipelineRun::Aborted) | Ok(PipelineRun::NotResumed) => panic!("unexpected abort"),
     }
 }
@@ -734,12 +747,15 @@ fn converged_schedule_keeps_page_content_origins() {
         "<style>@page{size:100px 100px;margin:0} @page :left{size:100px 240px;margin:0} @page wide{size:100px 180px;margin:0}</style><div style='height:200px'>first</div><div style='page:wide;break-before:page;height:10px'>wide</div><div style='height:300px'>tail</div>",
     );
     let out = run(&doc);
+    // The first box runs onto the 240px left page, so the forced break opens
+    // the third page (`wide`, 180px). The unnamed tail changes the page type
+    // again and starts the fourth page; its overflow needs a fifth.
     assert_eq!(
         out.slices
             .iter()
             .map(|p| p.content_origin_y)
             .collect::<Vec<_>>(),
-        vec![0.0, 100.0, 280.0, 380.0]
+        vec![0.0, 100.0, 340.0, 520.0, 760.0]
     );
 }
 
@@ -1141,4 +1157,354 @@ fn many_columns_with_generated_decoration_prepare_one_source_piece() {
             .count(),
         1
     );
+}
+
+#[test]
+fn pipeline_counts_absolute_boxes_inside_inline_elements_as_pages() {
+    // The box inside the span is located from the paragraph's root, so it
+    // still extends the document onto a third page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='position:relative'><span>text\
+         <span style='position:absolute;top:250px;width:10px;height:10px'></span></span></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 3);
+}
+
+#[test]
+fn pipeline_clamps_body_height_by_max_height_when_counting_pages() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;height:500px;max-height:150px}</style>\
+         <div>text</div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_names_pages_opened_by_absolute_boxes_after_the_flow() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page wide{size:300px 100px;margin:0} body{margin:0}</style>\
+         <div style='page:wide;position:relative'>text\
+         <div style='position:absolute;top:150px;height:10px'></div></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    assert!(
+        out.slices
+            .iter()
+            .all(|slice| slice.page_name.as_deref() == Some("wide"))
+    );
+}
+
+#[test]
+fn pipeline_counts_the_body_after_the_root_margin() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{margin-top:60px} body{margin:0;height:60px}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_counts_the_block_end_padding_of_an_auto_height_body() {
+    for content in ["", "<div style='height:20px'>x</div>"] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:150px}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), 2, "{content:?}");
+    }
+}
+
+#[test]
+fn pipeline_named_page_after_paper_fit_box_ignores_absolute_boxes() {
+    // The 90px box overflows the 80px page area into the page padding but
+    // fits the paper, so it stays on the first page without opening the
+    // second. An absolutely positioned box reaching that page must not make
+    // the flow look as if it did.
+    let page_count = |absolute: &str| {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0;padding:10px}}\
+             @page wide{{size:200px 100px;margin:0;padding:10px}} body{{margin:0}}</style>{absolute}\
+             <div style='height:90px'>first</div><div style='page:wide;height:10px'>wide</div>"
+        ));
+        run(&doc).slices.len()
+    };
+    let without = page_count("");
+    let with = page_count("<div style='position:absolute;top:0;height:150px;width:10px'></div>");
+    assert_eq!(with, without);
+}
+
+#[test]
+fn pipeline_counts_boxes_under_boxless_overflow_hidden_elements() {
+    // `display: contents` generates no box and so clips nothing.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='position:relative'>text<div style='display:contents;overflow:hidden'>\
+         <div style='position:absolute;top:250px;width:10px;height:10px'></div></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 3);
+}
+
+#[test]
+fn pipeline_resolves_body_percentage_height_against_a_definite_root() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{height:500px} body{margin:0;height:100%}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 5);
+}
+
+#[test]
+fn pipeline_names_continuation_pages_after_the_innermost_box() {
+    // The outer box runs onto every page and names them `a`; the nested `b`
+    // box starts the second page and runs onto the third and fourth, which
+    // take its page type.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page a{size:200px 100px;margin:0}\
+         @page b{size:300px 100px;margin:0} body{margin:0}</style>\
+         <div style='page:a;height:1000px'><div style='height:50px'></div><div style='page:b;height:250px'></div></div>",
+    );
+    let out = run(&doc);
+    let names: Vec<_> = out
+        .slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(
+        names[..5],
+        [Some("a"), Some("b"), Some("b"), Some("b"), Some("a")],
+        "{names:?}"
+    );
+}
+
+#[test]
+fn pipeline_keeps_a_definite_zero_body_height_before_its_padding() {
+    // The 50px border box and the 80px child both fit the first page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;height:0;padding-bottom:50px}</style>\
+         <div style='height:80px'>x</div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_does_not_count_a_body_clipped_by_the_viewport() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{overflow:hidden} body{margin:0;height:1000px}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_resolves_body_percentage_height_against_a_calc_root() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{height:calc(500px)} body{margin:0;height:100%}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 5);
+}
+
+#[test]
+fn pipeline_constrains_the_auto_body_height_before_its_padding() {
+    // The auto height (80px) beats `min-height`, and the padding then
+    // reaches the second page; `max-height` caps it back onto the first.
+    for (constraint, pages) in [("min-height:50px", 2), ("max-height:40px", 1)] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;{constraint};padding-bottom:40px}}</style>\
+             <div style='height:80px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{constraint}");
+    }
+}
+
+#[test]
+fn pipeline_resolves_body_percentages_against_the_root_used_height() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} html{height:500px;max-height:150px} body{margin:0;height:100%}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_names_tail_pages_after_the_flow_with_its_last_page_type() {
+    // The absolutely positioned box reaches the fourth page before the
+    // named box changes the page type on the second.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} @page b{size:300px 100px;margin:0} body{margin:0}</style>\
+         <div style='position:absolute;top:0;width:10px;height:350px'></div>\
+         <div style='height:50px'></div><div style='page:b;height:10px'></div>",
+    );
+    let out = run(&doc);
+    let names: Vec<_> = out
+        .slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(names, [None, Some("b"), Some("b"), Some("b")]);
+}
+
+#[test]
+fn pipeline_measures_the_auto_body_from_its_flow_content() {
+    // A `display: contents` wrapper's child counts as the body's own; a
+    // relative offset does not move the body's end.
+    for (content, pages) in [
+        (
+            "<div style='display:contents'><div style='height:80px'>x</div></div>",
+            2,
+        ),
+        (
+            "<div style='position:relative;top:150px;height:20px'>x</div>",
+            2,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:40px}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content}");
+    }
+}
+
+#[test]
+fn pipeline_resolves_root_percentage_heights_against_the_page_area() {
+    // The root's percentages resolve against the page area, 100px here; a
+    // border-box root gives the body its content box.
+    for (css, pages) in [
+        ("html{height:200%} body{margin:0;height:100%}", 2),
+        (
+            "html{height:calc(150% + 50px);box-sizing:border-box;padding-bottom:100px} body{margin:0;height:100%}",
+            2,
+        ),
+        (
+            "body{margin:0;height:150px;box-sizing:border-box;padding-bottom:20px}",
+            2,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} {css}</style>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{css}");
+    }
+}
+
+#[test]
+fn pipeline_measures_the_auto_body_without_relative_offsets_and_with_negative_margins() {
+    // The body ends after the static position of its last in-flow child,
+    // including a negative block-end margin, followed by its padding. Boxes
+    // outside the flow do not move that end, but still paint where they are.
+    for (content, pages) in [
+        (
+            "<div style='position:relative;top:calc(150px + 1%);height:20px'>x</div>",
+            2,
+        ),
+        (
+            "<div style='display:none;height:500px'></div>\
+             <div style='position:absolute;height:10px;width:10px'></div>\
+             <div style='float:left;height:10px;width:10px'></div>\
+             <div style='position:relative;bottom:-150px;height:20px'>x</div>",
+            2,
+        ),
+        ("<div style='height:70px;margin-bottom:-30px'>x</div>", 1),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;padding-bottom:40px}}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{content}");
+    }
+}
+
+#[test]
+fn pipeline_counts_the_pages_a_relatively_positioned_body_paints_on() {
+    for (css, pages) in [
+        ("body{margin:0;position:relative;top:150px;height:20px}", 2),
+        (
+            "body{margin:0;position:relative;bottom:-250px;height:20px}",
+            3,
+        ),
+        ("body{margin:0;position:relative;top:10%;height:20px}", 1),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} {css}</style><div style='height:10px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{css}");
+    }
+}
+
+#[test]
+fn pipeline_opens_a_new_page_for_a_page_type_change_after_overflowing_content() {
+    // The tall box continues onto the second page, so the named box after it
+    // opens a third, whether it starts partway down the second page or at
+    // the top of the third.
+    for height in [150, 200] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} @page wide{{size:200px 100px;margin:0}} body{{margin:0}}</style>\
+             <div style='height:{height}px'></div><div style='page:wide;height:10px'>wide</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), 3, "{height}");
+    }
+}
+
+#[test]
+fn pipeline_caps_a_border_box_auto_body_by_max_height() {
+    // Under `border-box` the 100px maximum covers the padding too.
+    for (sizing, pages) in [("border-box", 1), ("content-box", 2)] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;box-sizing:{sizing};max-height:100px;padding-bottom:40px}}</style>\
+             <div style='height:80px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{sizing}");
+    }
+}
+
+#[test]
+fn pipeline_keeps_the_last_margin_of_a_body_with_min_height() {
+    // A `min-height` keeps the child's block-end margin inside the body.
+    for (min_height, pages) in [("80px", 2), ("0", 1)] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;min-height:{min_height}}}</style>\
+             <div style='height:20px;margin-bottom:100px'>x</div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{min_height}");
+    }
+}
+
+#[test]
+fn pipeline_does_not_measure_a_display_contents_body() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{display:contents;height:1000px}</style>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_measures_the_auto_body_from_its_collapsed_flow_and_enclosed_floats() {
+    // Sibling margins collapse before the body's padding follows the last
+    // child; a flow-root body also ends after its floats.
+    for (css, content, pages) in [
+        (
+            "body{margin:0;padding-bottom:10px}",
+            "<div style='height:20px;margin-bottom:200px'>x</div><div style='height:10px;margin-top:-200px'>y</div>",
+            1,
+        ),
+        (
+            "body{margin:0;padding-bottom:40px;display:flow-root}",
+            "<div style='float:left;width:10px;height:80px'></div><div style='height:1px'></div>",
+            2,
+        ),
+        (
+            "body{margin:0;padding-bottom:40px}",
+            "<div style='float:left;width:10px;height:80px'></div><div style='height:1px'></div>",
+            1,
+        ),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} {css}</style>{content}"
+        ));
+        assert_eq!(run(&doc).slices.len(), pages, "{css} {content}");
+    }
+}
+
+#[test]
+fn pipeline_counts_the_pages_a_relatively_positioned_float_paints_on() {
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='float:left;position:relative;top:150px;width:10px;height:20px'></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
 }

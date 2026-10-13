@@ -30,6 +30,313 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
     child_parent_y
 }
 
+/// The lowest block-end edge of the boxes that paint below the paginated
+/// flow: the body's own border box, nested absolutely positioned boxes, and
+/// content overflowing a box that offers no break points (for example a
+/// `contain: size` box). Measured from the body's coordinate space after
+/// pagination moved the flow.
+///
+/// Fixed boxes repeat on every page and running elements leave the flow, so
+/// their subtrees do not extend the document. A box that clips its
+/// block-axis overflow contributes its own border box but not its content.
+/// Inline elements are located by their paragraph's lines, which take part
+/// in pagination directly, so only the boxes inside them are measured.
+fn content_overflow_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root_flow_offset: f32,
+    page_area_height: f32,
+) -> f32 {
+    use raikiri_style::property::OverflowValue;
+    // The body's overflow, or the root's, clips at the viewport, which
+    // stays within the paginated flow.
+    if std::iter::once(body_id)
+        .chain(document.parent_of(body_id))
+        .any(|id| !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible))
+    {
+        return f32::NEG_INFINITY;
+    }
+    let mut end = f32::NEG_INFINITY;
+    let mut stack = vec![(body_id, 0.0_f32)];
+    while let Some((node_id, parent_y)) = stack.pop() {
+        let node = &document.nodes[node_id];
+        if !node.is_in_document()
+            || node.is_display_none()
+            || node.is_non_rendered_html_element()
+            || node.kind() != NodeKind::Element
+        {
+            continue;
+        }
+        // An inline element of a paragraph is placed by the paragraph's lines,
+        // which take part in pagination directly, and the boxes inside it are
+        // located from the paragraph's root, so only its children are walked,
+        // in the root's coordinate space.
+        if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+            stack.extend(node.children.iter().map(|&child| (child, parent_y)));
+            continue;
+        }
+        let computed = &cascade.computed[node_id];
+        if matches!(
+            computed.position,
+            PositionValue::Fixed | PositionValue::Running(_)
+        ) {
+            continue;
+        }
+        // Layout places some boxes without their relative offset, which
+        // the painter adds to the box and its subtree.
+        let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
+        let y = if node_id == body_id {
+            paint_offset
+        } else {
+            parent_y + node.unrounded_layout.location.y + paint_offset
+        };
+        // A `display: contents` body has no box of its own to measure.
+        let bottom = if node_id == body_id && computed.display == DisplayValue::Contents {
+            f32::NEG_INFINITY
+        } else if node_id == body_id {
+            y + body_border_box_end(
+                document,
+                cascade,
+                body_id,
+                root_flow_offset,
+                page_area_height,
+            )
+        } else if node.unrounded_layout.size.height > 0.0 {
+            y + node.unrounded_layout.size.height
+        } else {
+            f32::NEG_INFINITY
+        };
+        if bottom.is_finite() {
+            end = end.max(bottom);
+        }
+        // A `display: contents` element generates no box and clips nothing,
+        // as in painting.
+        let clips = node_id != body_id
+            && !matches!(computed.overflow.y, OverflowValue::Visible)
+            && crate::paint_rules::clips_element_overflow(document, cascade, node_id);
+        if clips || node.multicol.is_some() {
+            continue;
+        }
+        stack.extend(node.children.iter().map(|&child| (child, y)));
+    }
+    end
+}
+
+/// The block offset of a relatively positioned box that layout leaves to
+/// the painter: that of the body, of floats and of table parts, and of boxes
+/// placed by manual column placement. The painter takes `top` over
+/// `-bottom`, where an inset that is not a length counts as `auto`.
+fn painted_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    node_id: usize,
+) -> f32 {
+    let computed = &cascade.computed[node_id];
+    if !matches!(computed.position, PositionValue::Relative) {
+        return 0.0;
+    }
+    let float = matches!(computed.float, FloatValue::Left | FloatValue::Right)
+        && document.layout_parent_of(node_id).is_none_or(|parent| {
+            !matches!(
+                cascade.computed[parent].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        });
+    let inline_level = matches!(
+        computed.display,
+        DisplayValue::Inline
+            | DisplayValue::InlineBlock
+            | DisplayValue::InlineFlex
+            | DisplayValue::InlineGrid
+            | DisplayValue::InlineTable
+    );
+    let table_part = matches!(
+        computed.display,
+        DisplayValue::TableCaption
+            | DisplayValue::TableCell
+            | DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    );
+    let painted = ((node_id == body_id || float || table_part) && !inline_level)
+        || document.nodes[node_id].needs_relative_block_paint_offset();
+    if !painted {
+        return 0.0;
+    }
+    match (computed.top, computed.bottom) {
+        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
+        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
+        _ => 0.0,
+    }
+}
+
+/// The block-end edge of the body's border box in page coordinates.
+///
+/// Layout sizes the body to the page content box, so its laid-out height
+/// says nothing about the height the author gave it. A definite `height`,
+/// clamped by `max-height` and `min-height`, gives the content height. An
+/// auto-height body ends with its last in-flow child, followed by
+/// its own block-end padding and border. The body's border box starts after
+/// the root's margin (`root_flow_offset`) and its own block-start margin.
+fn body_border_box_end(
+    document: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    root_flow_offset: f32,
+    page_area_height: f32,
+) -> f32 {
+    let computed = &cascade.computed[body_id];
+    // Percentages resolve against the root's used height only when it is
+    // definite; otherwise they behave as `auto`. The root's own percentages
+    // resolve against the initial containing block, the page area.
+    let root_height = document.parent_of(body_id).and_then(|root| {
+        let definite = |value| used_computed_length_percentage_or_auto(value, page_area_height);
+        let root_computed = &cascade.computed[root];
+        let height = definite(root_computed.height)?;
+        let height = definite(root_computed.max_height).map_or(height, |max| height.min(max));
+        let height = definite(root_computed.min_height).map_or(height, |min| height.max(min));
+        // The basis is the root's content box.
+        let edges = if matches!(
+            root_computed.box_sizing,
+            raikiri_style::property::BoxSizing::BorderBox
+        ) {
+            let layout = &document.nodes[root].unrounded_layout;
+            layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+        } else {
+            0.0
+        };
+        Some((height - edges).max(0.0))
+    });
+    let used = |value: ComputedLengthPercentageOrAuto| {
+        match value {
+            ComputedLengthPercentageOrAuto::Px(value) => Some(value),
+            ComputedLengthPercentageOrAuto::Percent(_)
+            | ComputedLengthPercentageOrAuto::Calc(_) => {
+                root_height.and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
+            }
+            _ => None,
+        }
+        .map(|value| value.max(0.0))
+    };
+    let body = &document.nodes[body_id];
+    let layout = &body.unrounded_layout;
+    let edges_top = layout.padding.top + layout.border.top;
+    let edges_bottom = layout.padding.bottom + layout.border.bottom;
+    let top = root_flow_offset + document.body_block_start_margin;
+    let border_box_end = |content: f32| {
+        top + if matches!(
+            computed.box_sizing,
+            raikiri_style::property::BoxSizing::BorderBox
+        ) {
+            content.max(edges_top + edges_bottom)
+        } else {
+            content + edges_top + edges_bottom
+        }
+    };
+    let min_height = used(computed.min_height).unwrap_or(0.0);
+    // A definite height, even zero, fixes the border box; content
+    // overflowing it is measured on its own.
+    if let Some(height) = used(computed.height) {
+        let height = used(computed.max_height).map_or(height, |max| height.min(max));
+        return border_box_end(height.max(min_height));
+    }
+    let min_end = if min_height > 0.0 {
+        border_box_end(min_height)
+    } else {
+        f32::NEG_INFINITY
+    };
+    // Without block-end edges or a `min-height` an auto-height body ends
+    // with its content, which the flow already paginated. Text of the body's
+    // own paragraph is located by its lines, which are not measured here.
+    if (edges_bottom <= 0.0 && min_height <= 0.0) || body.is_ifc_root() {
+        return min_end;
+    }
+    // In-flow children are in page coordinates already, with the margins
+    // between them collapsed, so the content ends at the block-end margin
+    // edge of the last one; block-end edges or a `min-height` keep that
+    // margin, negative or not, inside the body. A body that establishes a
+    // formatting context of its own also encloses its floats.
+    // The children of a `display: contents` element take part as the body's
+    // own, and a relative offset moves a box without moving the flow.
+    let encloses_floats = computed.display == DisplayValue::FlowRoot;
+    let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
+    let mut content_end = top + edges_top;
+    let mut last_flow_end = None;
+    // Popped in document order.
+    let mut children: Vec<(usize, f32)> = body
+        .children
+        .iter()
+        .rev()
+        .map(|&child| (child, 0.0))
+        .collect();
+    while let Some((child, offset)) = children.pop() {
+        let node = &document.nodes[child];
+        let child_computed = &cascade.computed[child];
+        if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
+            continue;
+        }
+        let layout = &node.unrounded_layout;
+        if child_computed.display == DisplayValue::Contents {
+            let offset = offset + layout.location.y;
+            children.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&grandchild| (grandchild, offset)),
+            );
+            continue;
+        }
+        if !matches!(
+            child_computed.position,
+            PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+        ) {
+            continue;
+        }
+        if super::page::is_floating_box_for_pagination(document, cascade, child) {
+            // The painter adds a float's relative offset; its layout box is
+            // where the float sits in the flow.
+            let end = offset + layout.location.y + layout.size.height + layout.margin.bottom;
+            if encloses_floats && end.is_finite() {
+                content_end = content_end.max(end);
+            }
+            continue;
+        }
+        // Layout resolves the insets of relative and sticky boxes alike,
+        // against the body's content box.
+        let relative_shift = if matches!(
+            child_computed.position,
+            PositionValue::Relative | PositionValue::Sticky
+        ) {
+            let inset = |value| used_computed_length_percentage_or_auto(value, body_content_height);
+            inset(child_computed.top)
+                .or_else(|| inset(child_computed.bottom).map(|bottom| -bottom))
+                .unwrap_or(0.0)
+        } else {
+            0.0
+        };
+        let end =
+            offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
+        if end.is_finite() {
+            last_flow_end = Some(end);
+        }
+    }
+    if let Some(end) = last_flow_end {
+        content_end = content_end.max(end);
+    }
+    // `max-height` caps the auto height, measured as `box-sizing` says;
+    // `min-height` still wins over it.
+    let content_height = content_end - (top + edges_top);
+    let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
+    let auto_end = top + edges_top + content_height + edges_bottom;
+    min_end.max(auto_end.min(max_end))
+}
+
 // Cache the nearest column context for each visited source node. Row flex
 // suppresses local named-flow ownership, but its content still occupies the
 // enclosing physical page. Each source edge is resolved once per layout pass.
@@ -564,6 +871,14 @@ impl<'a> PageLayoutControl<'a> {
             return Err(LayoutError::PageLimitExceeded { limit, actual });
         }
         Ok(())
+    }
+
+    /// `page_index` bounded by the page limit, for per-page records that a
+    /// discovery pass truncating at the limit would otherwise grow without
+    /// bound.
+    fn capped_page_index(&self, page_index: u32) -> u32 {
+        self.max_pages
+            .map_or(page_index, |limit| page_index.min(limit.saturating_sub(1)))
     }
 
     fn check_discovery_page_index(&self, page_index: u32) -> Result<(), LayoutError> {
@@ -3477,6 +3792,10 @@ pub fn layout_pages_with_page_geometry_and_control(
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut max_page = 0_u32;
+    // The last page the normal flow (floats included) has reached, apart
+    // from absolutely positioned boxes and footnotes, which paint in
+    // parallel flows.
+    let mut flow_max_page = 0_u32;
     // Keep a break-after attached to its source box until its descendants
     // have been visited.  Applying it to the first flex child would turn a
     // break-after on the flex container into an extra blank page.
@@ -3887,6 +4206,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             }
             page_names[current_page as usize] = current_page_name.clone();
             max_page = max_page.max(current_page);
+            if !candidate.is_out_of_flow_descendant {
+                flow_max_page = flow_max_page.max(current_page);
+            }
             if name_participates_in_flow && height > 0.0 {
                 let context = enclosing_column_context(
                     node_id,
@@ -3909,6 +4231,22 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let end_page = page_index_for_end(end);
                     control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
+                    if !candidate.is_out_of_flow_descendant {
+                        flow_max_page = flow_max_page.max(end_page);
+                    }
+                    // The pages a box continues onto keep the page type it
+                    // started on until a later box names another, even when
+                    // an enclosing box running onto them named them first.
+                    let names_end = control.capped_page_index(end_page);
+                    if page_names.len() <= names_end as usize {
+                        page_names.resize(names_end as usize + 1, current_page_name.clone());
+                    }
+                    if !candidate.is_out_of_flow_descendant && names_end > current_page {
+                        for name in &mut page_names[current_page as usize + 1..=names_end as usize]
+                        {
+                            name.clone_from(&current_page_name);
+                        }
+                    }
                 }
             }
             if consumes_pending_break {
@@ -4055,8 +4393,16 @@ pub fn layout_pages_with_page_geometry_and_control(
         // page. The row is a class-A boundary owned by the table engine; its
         // cells and descendants follow the same flow shift below. Rowspans,
         // cell-internal breaks remain out of this narrow row-boundary pass.
+        // A row that follows a repeated header must fit beside the header's
+        // copy on the next page; otherwise moving it gains nothing.
+        let repeated_header_height = table_headers
+            .rows
+            .get(&node_id)
+            .and_then(|header_id| table_headers.headers.get(header_id))
+            .map_or(0.0, |header| header.height + header.gap);
         let table_row_overflow = candidate.is_table_row
-            && height <= page_step_at(current_page) + 0.001
+            && height + repeated_header_height
+                <= page_step_at(current_page.saturating_add(1)) + 0.001
             && effective_y.is_finite()
             && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
@@ -4074,15 +4420,23 @@ pub fn layout_pages_with_page_geometry_and_control(
                     });
                 *trailing_child == Some(node_id)
             });
+        // An item already at the top of its page, or one taller than the
+        // next page, would cross a page edge wherever it went: pushing it
+        // only leaves a blank page behind (CSS Fragmentation 3 §4.4 lets
+        // monolithic content overflow a fresh fragmentainer).
+        // The page top is judged by the margin box, since a block-start margin
+        // already at the page top would stay with the item.
+        let item_can_move = effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
+            && height <= page_step_at(current_page.saturating_add(1)) + 0.001;
         let flex_item_overflow = candidate.is_flex_item
             && !flex_item_is_last
+            && item_can_move
             && effective_y.is_finite()
-            && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
         let grid_item_overflow = candidate.is_grid_item
+            && item_can_move
             && effective_y.is_finite()
-            && effective_y >= page_origin(current_page)
             && effective_y < page_origin(current_page) + page_step_at(current_page)
             && effective_y + height > page_origin(current_page) + page_step_at(current_page);
 
@@ -4111,8 +4465,37 @@ pub fn layout_pages_with_page_geometry_and_control(
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
+                // CSS Fragmentation 3 §5.2: margins adjoining an unforced
+                // break are truncated, while a forced break keeps the
+                // block-start margin of the box after it.
+                let forced_transition = pending_break_applies
+                    || (forced_before && !forced_break_at_page_start)
+                    || named_page_change;
                 let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                    page_index_for_y(effective_y)
+                    let page = page_index_for_y(effective_y);
+                    // Preceding content that overflowed past the current
+                    // page (a tall box, or floats it contains) has put this
+                    // box partway down a later page. A page-type change sits
+                    // after all of that content, so it opens the page after
+                    // the one the box's margin box starts on, unless that
+                    // margin box is already at the top of a page. Content
+                    // kept on its page as monolithic (see
+                    // `monolithic_paper_fit`) has not opened that later page.
+                    let margin_box_y = effective_y - margin_top.max(0.0);
+                    if named_page_change
+                        && page > current_page
+                        && flow_max_page >= page
+                        && margin_box_y.is_finite()
+                    {
+                        let margin_box_page = page_index_for_y(margin_box_y.max(0.0));
+                        if (margin_box_y - page_origin(margin_box_page)).abs() <= 0.001 {
+                            margin_box_page
+                        } else {
+                            margin_box_page.saturating_add(1)
+                        }
+                    } else {
+                        page
+                    }
                 } else {
                     current_page
                 };
@@ -4125,12 +4508,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // this box at the underflowed coordinate.  This is the
                 // `underflow-from-next-page` case from CSS Break.
                 let underflow_y = target_y + margin_top;
-                // CSS Fragmentation 3 §5.2: margins adjoining an unforced
-                // break are truncated, while a forced break keeps the
-                // block-start margin of the box after it.
-                let forced_transition = pending_break_applies
-                    || (forced_before && !forced_break_at_page_start)
-                    || named_page_change;
                 let node_target_y =
                     if forced_transition && margin_top < 0.0 && underflow_y < target_y {
                         underflow_y
@@ -4335,6 +4712,9 @@ pub fn layout_pages_with_page_geometry_and_control(
         page_names[current_page as usize] = current_page_name.clone();
 
         max_page = max_page.max(current_page);
+        if !candidate.is_out_of_flow_descendant {
+            flow_max_page = flow_max_page.max(current_page);
+        }
         if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
             // A box ending exactly at a page edge belongs to the preceding
             // page.  `f32::EPSILON` is too small at ordinary CSS coordinates
@@ -4361,6 +4741,22 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let end_page = page_index_for_end(end);
                     control.check_discovery_page_index(end_page)?;
                     max_page = max_page.max(end_page);
+                    if !candidate.is_out_of_flow_descendant {
+                        flow_max_page = flow_max_page.max(end_page);
+                    }
+                    // The pages a box continues onto keep the page type it
+                    // started on until a later box names another, even when
+                    // an enclosing box running onto them named them first.
+                    let names_end = control.capped_page_index(end_page);
+                    if page_names.len() <= names_end as usize {
+                        page_names.resize(names_end as usize + 1, current_page_name.clone());
+                    }
+                    if !candidate.is_out_of_flow_descendant && names_end > current_page {
+                        for name in &mut page_names[current_page as usize + 1..=names_end as usize]
+                        {
+                            name.clone_from(&current_page_name);
+                        }
+                    }
                 }
             }
         }
@@ -4397,6 +4793,35 @@ pub fn layout_pages_with_page_geometry_and_control(
     super::table::headers::finish_boxes(document, &table_headers);
     table_headers.index();
     document.table_objects.headers = table_headers;
+
+    // The candidates above stand for the paginated flow only. Boxes outside
+    // it, such as a nested absolutely positioned box or the overflow of a
+    // monolithic box, still need pages to paint on, and so do table edges
+    // that `finish_boxes` grew over repeated headers.
+    if !control.page_limit_reached.get() {
+        // Pagination materialized the moved boxes in page coordinates, which
+        // already include `root_flow_offset`; boxes it left alone paint where
+        // their own coordinates put them.
+        let end =
+            content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
+        if end.is_finite() && end > 0.0 {
+            let end_page = page_index_for_end(end);
+            control.check_discovery_page_index(end_page)?;
+            max_page = max_page.max(end_page);
+        }
+    }
+    // Pages past the last one the normal flow reached hold only boxes outside
+    // it, and keep the page type the flow ended on, whatever page type was
+    // active when one of those boxes first reached them.
+    let names_end = control.capped_page_index(max_page);
+    if page_names.len() <= names_end as usize {
+        page_names.resize(names_end as usize + 1, current_page_name.clone());
+    }
+    if names_end > flow_max_page {
+        for name in &mut page_names[flow_max_page as usize + 1..=names_end as usize] {
+            name.clone_from(&current_page_name);
+        }
+    }
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.

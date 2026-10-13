@@ -10239,3 +10239,55 @@ fn positioned_inline_text_keeps_its_explicit_outer_anchor() {
         assert_eq!(positions(30.0), original);
     }
 }
+
+#[test]
+fn repeated_header_table_grows_over_anonymous_cells_on_later_pages() {
+    let (mut doc, _, root) = crate::layout::test_support::ahem_paragraph("A", "");
+    let body = doc.parent_of(root).unwrap();
+    let table = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:table;width:200px;border:5px solid"),
+    );
+    let header = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-header-group"),
+    );
+    doc.append_element(
+        Some(header),
+        "div",
+        Style::default(),
+        Some("display:block;height:100px"),
+    );
+    // Each row's block is wrapped in an anonymous cell.
+    for height in [450, 100] {
+        let row = doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{height}px")),
+        );
+    }
+    let last_row = *doc.nodes[table].children.last().unwrap();
+    doc.mark_in_document_flags();
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+    layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+
+    assert!(doc.table_objects.headers.headers.contains_key(&header));
+    let (_, row_y, _, row_height) = crate::layout::test_support::absolute_rect(&doc, last_row);
+    assert!(row_y >= 600.0, "the last row moves to the second page");
+    let (_, table_y, _, table_height) = crate::layout::test_support::absolute_rect(&doc, table);
+    assert!(
+        table_y + table_height >= row_y + row_height + 5.0 - 0.01,
+        "the table's border box must reach past its moved last row"
+    );
+}
