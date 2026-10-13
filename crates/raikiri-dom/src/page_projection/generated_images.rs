@@ -39,7 +39,7 @@ impl GeneratedImageId {
         let after = match self.kind {
             GeneratedKind::Before => false,
             GeneratedKind::After => true,
-            GeneratedKind::Marker => return None,
+            GeneratedKind::Marker | GeneratedKind::FirstLetter => return None,
         };
         Some((usize::try_from(self.owner.0).ok()?, after, self.index))
     }

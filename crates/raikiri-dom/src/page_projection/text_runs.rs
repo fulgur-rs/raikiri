@@ -308,8 +308,8 @@ pub enum RunSource {
     MarginBox(raikiri_style::PageMarginBoxSlot),
 }
 
-/// The pseudo-element generated text comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// The pseudo-element generated text or a generated box comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum GeneratedKind {
     /// `::before`.
@@ -318,6 +318,9 @@ pub enum GeneratedKind {
     After,
     /// `::marker`.
     Marker,
+    /// `::first-letter`. Only boxes carry it: the letter's text keeps the
+    /// source of the text it comes from.
+    FirstLetter,
 }
 
 /// A font face and its data.

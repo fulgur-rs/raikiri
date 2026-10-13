@@ -9,7 +9,7 @@ use crate::{
     paint_rules,
 };
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue};
-use raikiri_style::{CascadeResult, PseudoElem, StyleNodeId};
+use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintClip, PaintRect, PaintTransform};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -1104,13 +1104,18 @@ fn push_paragraph<'a>(
     if group.is_some() {
         elements.push((first, None));
     }
-    elements.push((first, Some(false)));
+    elements.push((first, Some(GeneratedKind::Before)));
+    if group.is_none() {
+        // The `::first-letter` boxes wrap the paragraph's first letter,
+        // which can come from the root's `::before`.
+        elements.push((first, Some(GeneratedKind::FirstLetter)));
+    }
     let mut nested = Vec::new();
     let mut texts = Vec::new();
     let mut stack: Vec<_> = children.iter().rev().map(|&id| (id, false)).collect();
     while let Some((node_id, after)) = stack.pop() {
         if after {
-            elements.push((node_id, Some(true)));
+            elements.push((node_id, Some(GeneratedKind::After)));
             continue;
         }
         if beside_lines.contains(&node_id) {
@@ -1134,7 +1139,7 @@ fn push_paragraph<'a>(
                     continue;
                 }
                 elements.push((node_id, None));
-                elements.push((node_id, Some(false)));
+                elements.push((node_id, Some(GeneratedKind::Before)));
                 stack.push((node_id, true));
                 stack.extend(node.children.iter().rev().map(|&id| (id, false)));
             }
@@ -1142,9 +1147,10 @@ fn push_paragraph<'a>(
             _ => {}
         }
     }
-    elements.push((first, Some(true)));
-    for (node_id, after) in elements {
-        match after {
+    elements.push((first, Some(GeneratedKind::After)));
+    let root_node_ifc = document.ifc_layout_node(root);
+    for (node_id, kind) in elements {
+        match kind {
             None if items
                 .cascade
                 .computed
@@ -1154,37 +1160,47 @@ fn push_paragraph<'a>(
                 push_kind(events, node_id, PageFragmentKind::Box);
             }
             None => {}
-            Some(after) => {
-                let pseudo = if after {
-                    PseudoElem::After
+            Some(kind) => {
+                // A `::first-letter` box belongs to the block whose first
+                // letter it is, which can be an ancestor of the paragraph.
+                let range = if kind == GeneratedKind::FirstLetter {
+                    (root, 0, kind)..=(root, usize::MAX, kind)
                 } else {
-                    PseudoElem::Before
+                    (root, node_id, kind)..=(root, node_id, kind)
                 };
-                for piece in items
+                for (&(_, owner, _), pieces) in items
                     .generated_boxes
-                    .and_then(|boxes| boxes.get(&(root, node_id, after)))
                     .into_iter()
-                    .flatten()
+                    .flat_map(|boxes| boxes.range(range.clone()))
+                    .filter(|((_, _, piece_kind), _)| *piece_kind == kind)
                 {
-                    let owner = NodeId::new(node_id as u64);
-                    events.push(PaintEvent::GeneratedBox(GeneratedBox {
-                        owner,
-                        line: crate::TextLineId {
-                            root: NodeId::new(root as u64),
-                            index: piece.line,
-                        },
-                        kind: if after {
-                            crate::GeneratedKind::After
-                        } else {
-                            crate::GeneratedKind::Before
-                        },
-                        rect: piece.rect,
-                        style: &items.cascade.pseudo[&(StyleNodeId::new(node_id as u64), pseudo)],
-                        clip_owner: owner,
-                        has_start_edge: piece.has_start_edge,
-                        has_end_edge: piece.has_end_edge,
-                    }));
+                    let owner_id = NodeId::new(owner as u64);
+                    for piece in pieces {
+                        let Some(style) = root_node_ifc
+                            .and_then(|node| column_projection_style(node, items.cascade, piece))
+                        else {
+                            continue; // cov:ignore: pieces are prepared only for boxes with a style
+                        };
+                        events.push(PaintEvent::GeneratedBox(GeneratedBox {
+                            owner: owner_id,
+                            line: crate::TextLineId {
+                                root: NodeId::new(root as u64),
+                                index: piece.line,
+                            },
+                            kind,
+                            rect: piece.rect,
+                            style,
+                            clip_owner: owner_id,
+                            has_start_edge: piece.has_start_edge,
+                            has_end_edge: piece.has_end_edge,
+                        }));
+                    }
                 }
+                let after = match kind {
+                    GeneratedKind::Before => false,
+                    GeneratedKind::After => true,
+                    _ => continue,
+                };
                 // The images are replaced content inside the pseudo-element's
                 // inline box, painted above its decoration (CSS 2.1 Appendix
                 // E, inline-level content in tree order).
@@ -1230,3 +1246,18 @@ fn is_inline_opacity_group(cv: &raikiri_style::ComputedValues) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// The style of a prepared generated box piece.
+fn column_projection_style<'a>(
+    root: &'a crate::Node,
+    cascade: &'a CascadeResult,
+    piece: &super::generated_boxes::BoxPiece,
+) -> Option<&'a raikiri_style::ComputedValues> {
+    crate::layout::generated_piece_style(
+        root,
+        cascade,
+        piece.node,
+        piece.source_container,
+        piece.source_owner,
+    )
+}

@@ -4,9 +4,9 @@ use super::flow_pages::FlowPages;
 use super::records::{PageFragment, ProjectedTextRoot};
 use super::text_runs::{RunContext, placement};
 use crate::{Document, GeneratedKind};
-use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
+use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::{NodeId, PaintRect};
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 
 /// The decoration of one generated inline box on one line.
 ///
@@ -39,14 +39,19 @@ pub struct GeneratedBox<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct BoxPiece {
+    /// The inline engine's node id of the box, with the ids that select the
+    /// retained style of a typographic pseudo-element.
+    pub node: usize,
+    pub source_container: Option<usize>,
+    pub source_owner: Option<usize>,
     pub line: usize,
     pub rect: PaintRect,
     pub has_start_edge: bool,
     pub has_end_edge: bool,
 }
 
-/// Page, paragraph root, originating element, and whether this is `::after`.
-pub(super) type PageGeneratedBoxes = BTreeMap<(usize, usize, bool), Vec<BoxPiece>>;
+/// Page, paragraph root, originating element, and the pseudo-element.
+pub(super) type PageGeneratedBoxes = BTreeMap<(usize, usize, GeneratedKind), Vec<BoxPiece>>;
 pub(super) type GeneratedBoxes = BTreeMap<u32, PageGeneratedBoxes>;
 
 pub(super) fn prepare(
@@ -57,30 +62,16 @@ pub(super) fn prepare(
     paragraphs: &crate::layout::ParagraphCache,
     work: &mut crate::layout::ProjectionWork<'_, '_>,
 ) -> Result<GeneratedBoxes, raikiri_traits::LayoutError> {
-    let candidates: HashSet<_> = cascade
-        .pseudo
-        .keys()
-        .filter_map(|&(owner, pseudo)| {
-            if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
-                return None;
-            }
-            let owner = usize::try_from(owner.0).ok()?;
-            if document
-                .get_node(owner)
-                .is_some_and(|node| node.is_ifc_root())
-            {
-                Some(owner)
-            } else {
-                document.ifc_root_of(owner)
-            }
-        })
-        .collect();
     let mut prepared = Vec::new();
     let context = RunContext::new(document, roots, pages);
     let mut eligible = HashMap::new();
     for root in roots {
         work.check()?;
-        if !candidates.contains(&root.node) {
+        // Only paragraphs that laid out a generated box are visited.
+        let pieces = paragraphs
+            .get(&root.node)
+            .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));
+        if pieces.is_empty() {
             continue;
         }
         if let std::collections::hash_map::Entry::Vacant(entry) = eligible.entry(root.node) {
@@ -98,9 +89,6 @@ pub(super) fn prepare(
         let Some(paint_shift) = eligible[&root.node] else {
             continue;
         };
-        let pieces = paragraphs
-            .get(&root.node)
-            .map_or(&[][..], |paragraph| paragraph.generated(root.fragmentainer));
         work.charge(pieces.len().saturating_add(1))?;
         prepared.push((*root, paint_shift, pieces));
     }
@@ -146,7 +134,7 @@ pub(super) fn prepare(
                 root.is_repeat = true;
             }
             let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
-            for &(owner, after, piece, offset, shift, top, height) in *pieces {
+            for &(owner, kind, piece, offset, shift, top, height) in *pieces {
                 work.charge(1)?;
                 if !root.is_repeat
                     && !crate::layout::line_center_on_page(
@@ -165,9 +153,12 @@ pub(super) fn prepare(
                 result
                     .entry(page.page_index)
                     .or_default()
-                    .entry((root.node, owner, after))
+                    .entry((root.node, owner, kind))
                     .or_default()
                     .push(BoxPiece {
+                        node: piece.node,
+                        source_container: piece.source_container,
+                        source_owner: piece.source_owner,
                         line: piece.line,
                         rect: PaintRect::new(
                             page.content_box.x

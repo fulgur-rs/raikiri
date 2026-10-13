@@ -265,3 +265,54 @@ fn transformed_inline_offsets_follow_the_text_omission_policy() {
             .all(|event| !matches!(event, PaintEvent::GeneratedBox(_)))
     );
 }
+
+#[test]
+fn first_letter_decorations_are_generated_boxes_after_before() {
+    let document = lay_out(
+        "<div><p>AB</p></div>",
+        "p{margin:0}p::before{content:'X';background:blue}\
+         div::first-letter{background:red;box-shadow:2px 2px green}",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let boxes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) => Some(piece),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boxes.len(), 2);
+    assert_eq!(boxes[0].kind, GeneratedKind::Before);
+    let letter = boxes[1];
+    assert_eq!(letter.kind, GeneratedKind::FirstLetter);
+    // The first letter comes from the `::before` text, so it wraps `X`.
+    assert_eq!(letter.rect, PaintRect::new(0.0, 0.0, 20.0, 20.0));
+    assert_eq!(letter.style.background_color.r, 255);
+    assert_eq!(letter.style.box_shadow.len(), 1);
+    // The letter belongs to the `div`, an ancestor of the paragraph.
+    assert_ne!(letter.owner, boxes[0].owner);
+    assert!(page.computed(letter.owner).is_some());
+    assert!(letter.has_start_edge && letter.has_end_edge);
+}
+
+#[test]
+fn first_letter_without_decoration_style_keeps_its_box_identity() {
+    let document = lay_out("<p>AB</p>", "p{margin:0}p::first-letter{color:red}");
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let letters: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::FirstLetter => {
+                Some(piece)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(letters.len(), 1);
+    assert_eq!(letters[0].rect, PaintRect::new(0.0, 0.0, 20.0, 20.0));
+    assert_eq!(letters[0].style.color.r, 255);
+}
