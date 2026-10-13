@@ -265,3 +265,224 @@ fn transformed_inline_offsets_follow_the_text_omission_policy() {
             .all(|event| !matches!(event, PaintEvent::GeneratedBox(_)))
     );
 }
+
+#[test]
+fn first_letter_decorations_are_generated_boxes_after_before() {
+    let document = lay_out(
+        "<div><p>AB</p></div>",
+        "p{margin:0}p::before{content:'X';background:blue}\
+         div::first-letter{background:red;box-shadow:2px 2px green}",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let boxes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) => Some(piece),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boxes.len(), 2);
+    assert_eq!(boxes[0].kind, GeneratedKind::Before);
+    let letter = boxes[1];
+    assert_eq!(letter.kind, GeneratedKind::FirstLetter);
+    // The first letter comes from the `::before` text, so it wraps `X`.
+    assert_eq!(letter.rect, PaintRect::new(0.0, 0.0, 20.0, 20.0));
+    assert_eq!(letter.style.background_color.r, 255);
+    assert_eq!(letter.style.box_shadow.len(), 1);
+    // The letter belongs to the `div`, an ancestor of the paragraph.
+    assert_ne!(letter.owner, boxes[0].owner);
+    assert!(page.computed(letter.owner).is_some());
+    assert!(letter.has_start_edge && letter.has_end_edge);
+}
+
+#[test]
+fn first_letter_without_decoration_style_keeps_its_box_identity() {
+    let document = lay_out("<p>AB</p>", "p{margin:0}p::first-letter{color:red}");
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let events = page.paint_order_for_text_runs(&runs);
+    let letters: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::FirstLetter => {
+                Some(piece)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(letters.len(), 1);
+    assert_eq!(letters[0].rect, PaintRect::new(0.0, 0.0, 20.0, 20.0));
+    assert_eq!(letters[0].style.color.r, 255);
+}
+
+fn first_letter_boxes(events: &[PaintEvent<'_>]) -> Vec<(usize, PaintRect)> {
+    events
+        .iter()
+        .enumerate()
+        .filter_map(|(index, event)| match event {
+            PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::FirstLetter => {
+                Some((index, piece.rect))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// The first letter moves with the relatively positioned inline element its
+/// letter comes from, as its glyphs do.
+#[test]
+fn a_first_letter_box_moves_with_its_relative_inline_source() {
+    let document = lay_out(
+        "<p><span>AB</span></p>",
+        "p{margin:0}span{position:relative;left:10px;top:5px}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    assert_eq!(letters[0].1, PaintRect::new(10.0, 5.0, 20.0, 20.0));
+}
+
+/// A first letter taken from an inline opacity group is composited with the
+/// group, as its glyphs are.
+#[test]
+fn a_first_letter_box_stays_inside_its_inline_opacity_group() {
+    let document = lay_out(
+        "<p><span>AB</span></p>",
+        "p{margin:0}span{opacity:.5}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    let push = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::PushOpacity(alpha) if *alpha == 0.5))
+        .unwrap();
+    let pop = events
+        .iter()
+        .rposition(|event| matches!(event, PaintEvent::PopOpacity))
+        .unwrap();
+    assert!(push < letters[0].0 && letters[0].0 < pop);
+}
+
+/// A first letter taken from an inline element is painted above that
+/// element's background, as its box nests inside the element's.
+#[test]
+fn a_first_letter_box_follows_the_box_of_its_inline_source() {
+    let document = lay_out(
+        "<p><span>AB</span></p>",
+        "p{margin:0}span{background:blue}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    // The span's box is the last box listed.
+    let span = events
+        .iter()
+        .rposition(|event| matches!(event, PaintEvent::Box(_)))
+        .unwrap();
+    assert!(span < letters[0].0);
+}
+
+/// A first letter taken from `::before` text is painted below that
+/// pseudo-element's images, as a line's inline boxes are painted before its
+/// replaced content.
+#[test]
+fn a_first_letter_box_precedes_the_images_of_its_before_source() {
+    let document = lay_out(
+        "<p>B</p>",
+        "p{margin:0}p::before{content:'A' url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E)}\
+         p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    let image = events
+        .iter()
+        .position(|event| matches!(event, PaintEvent::GeneratedImage(_)))
+        .expect("the image is listed");
+    assert!(letters[0].0 < image);
+}
+
+/// A first letter that an ancestor's `::first-letter` takes from a
+/// descendant block is clipped by that block, which holds its letters.
+#[test]
+fn a_first_letter_box_is_clipped_by_the_block_holding_its_letters() {
+    let document = lay_out(
+        "<div><p>AB</p></div>",
+        "p{margin:0;overflow:hidden}div::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::FirstLetter => {
+                Some(piece)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(letters.len(), 1);
+    let letter = letters[0];
+    assert_ne!(letter.clip_owner, letter.owner);
+    assert_eq!(
+        page.computed(letter.clip_owner).unwrap().overflow.x,
+        raikiri_html::computed::OverflowValue::Hidden
+    );
+}
+
+/// A first letter taken from `::after` text is painted above that
+/// pseudo-element's background, as its box nests inside it.
+#[test]
+fn a_first_letter_box_follows_the_after_box_it_comes_from() {
+    let document = lay_out(
+        "<p><span></span></p>",
+        "p{margin:0}span::after{content:'A';background:blue}p::first-letter{background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let letters = first_letter_boxes(&events);
+    assert_eq!(letters.len(), 1);
+    let after = events
+        .iter()
+        .position(|event| {
+            matches!(event, PaintEvent::GeneratedBox(piece) if piece.kind == GeneratedKind::After)
+        })
+        .unwrap();
+    assert!(after < letters[0].0);
+}
+
+/// A relatively positioned `::before` moves its own text and box, as a
+/// relatively positioned inline element does (CSS 2.1 §9.4.3).
+#[test]
+fn relative_pseudo_elements_move_their_text_and_box() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B';position:relative;left:20px;top:5px;background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let generated = runs
+        .iter()
+        .find(|run| run.text == "B")
+        .expect("generated run");
+    let own = runs.iter().find(|run| run.text == "A").expect("text run");
+    assert_eq!(generated.origin.0, 20.0);
+    assert_eq!(generated.origin.1, own.origin.1 + 5.0);
+    assert_eq!(own.origin.0, 20.0);
+    let events = page.paint_order_for_text_runs(&runs);
+    let piece = events
+        .iter()
+        .find_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) => Some(piece),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(piece.rect, PaintRect::new(20.0, 5.0, 20.0, 20.0));
+}

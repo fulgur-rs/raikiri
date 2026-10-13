@@ -370,3 +370,214 @@ fn content_images_project_onto_long_documents() {
         assert_eq!(images, 1, "page {index}");
     }
 }
+
+/// The images of a `content` list carry their place in the line's text, so
+/// a consumer can read them in order with the generated text although paint
+/// lists the images first.
+#[test]
+fn images_order_with_generated_text_by_text_offset() {
+    let pixels = Pixels::new();
+    let check = |css: &str, expected: &[&str]| {
+        let document = lay_out("<p>X</p>", css, &pixels);
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        let mut items: Vec<(usize, usize, String)> = runs
+            .iter()
+            .map(|run| (run.line.index, run.text_offset, run.text.to_owned()))
+            .collect();
+        for event in page.paint_order_for_text_runs(&runs) {
+            if let PaintEvent::GeneratedImage(image) = event {
+                let (line, offset) = page.generated_image_text_position(image).unwrap();
+                items.push((line.index, offset.unwrap(), format!("img{}", image.index)));
+            }
+        }
+        items.sort_by_key(|&(line, offset, _)| (line, offset));
+        let order: Vec<_> = items.iter().map(|(_, _, text)| text.as_str()).collect();
+        assert_eq!(order, expected, "{css}");
+    };
+    check(
+        "p::before{content:'N ' url(a.png) ' E'}",
+        &["N ", "img0", " E", "X"],
+    );
+    check(
+        "p::after{content:url(a.png) 'M' url(b.png)}",
+        &["X", "img0", "M", "img1"],
+    );
+    // Left-to-right text in a right-to-left line mixes directions, where
+    // the visual order does not give the logical one.
+    let document = lay_out(
+        "<p>X</p>",
+        "p{direction:rtl}p::before{content:'N' url(a.png) 'E'}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let positions: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => page.generated_image_text_position(image),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(positions.len(), 1);
+    assert_eq!(positions[0].1, None);
+    // Images alone in an override have no runs to show their reordering.
+    let document = lay_out(
+        "<p><span></span>X</p>",
+        "span{unicode-bidi:bidi-override;direction:rtl}\
+         span::before{content:url(a.png) url(b.png)}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let offsets: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => page.generated_image_text_position(image),
+            _ => None,
+        })
+        .map(|(_, offset)| offset)
+        .collect();
+    assert_eq!(offsets, [None, None]);
+    let offsets = |body: &str, css: &str| {
+        let document = lay_out(body, css, &pixels);
+        let page = document.page(0).unwrap();
+        let runs = page.text_runs();
+        page.paint_order_for_text_runs(&runs)
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::GeneratedImage(image) => page.generated_image_text_position(image),
+                _ => None,
+            })
+            .map(|(_, offset)| offset.is_some())
+            .collect::<Vec<_>>()
+    };
+    // An override closed on an earlier line leaves later lines alone.
+    assert_eq!(
+        offsets(
+            "<p><span>Z</span><br><i></i></p>",
+            "span{unicode-bidi:bidi-override;direction:rtl}             i::before{content:url(a.png) url(b.png)}",
+        ),
+        [true, true]
+    );
+    // One still open where the line starts reorders it.
+    assert_eq!(
+        offsets(
+            "<p><span>Z<br><i></i><br>W</span></p>",
+            "span{unicode-bidi:bidi-override;direction:rtl}             i::before{content:url(a.png) url(b.png)}",
+        ),
+        [false, false]
+    );
+}
+
+#[test]
+fn a_relative_pseudo_element_moves_its_images() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<p>AB</p>",
+        "p::before{content:url(icon.png);position:relative;left:10px;top:3px}",
+        &pixels,
+    );
+    let (images, runs) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect, PaintRect::new(10.0, 15.0, 8.0, 4.0));
+    // The offset moves the pseudo-element alone, not the text after it.
+    assert_eq!(run(&runs, "AB").origin.0, 8.0);
+    // With `display: contents` there is no box for the offset to move.
+    let document = lay_out(
+        "<p>AB</p>",
+        "p::before{content:url(icon.png);display:contents;position:relative;left:10px;top:3px}",
+        &pixels,
+    );
+    let (images, _) = images_and_runs(&document, &pixels);
+    assert_eq!(images.len(), 1);
+    assert_eq!(images[0].rect, PaintRect::new(0.0, 12.0, 8.0, 4.0));
+}
+
+/// An image alone in `content` replaces its pseudo-element, so `object-fit`
+/// and `object-position` place it in the box, which clips it.
+#[test]
+fn object_fit_places_a_replacing_image_in_its_box() {
+    let pixels = Pixels::new();
+    let image = |css: &str| {
+        let document = lay_out("<p>A</p>", css, &pixels);
+        let (images, _) = images_and_runs(&document, &pixels);
+        assert_eq!(images.len(), 1, "{css}");
+        images[0].clone()
+    };
+    // The 8x4 image in a 40x40 box. Its line's baseline is the box's
+    // bottom, 40px down.
+    let contain =
+        image("p::before{content:url(icon.png);width:40px;height:40px;object-fit:contain}");
+    assert_eq!(contain.rect, PaintRect::new(0.0, 10.0, 40.0, 20.0));
+    assert_eq!(contain.clip.rect, PaintRect::new(0.0, 0.0, 40.0, 40.0));
+    let cover = image(
+        "p::before{content:url(icon.png);width:40px;height:40px;object-fit:cover;object-position:left top}",
+    );
+    assert_eq!(cover.rect, PaintRect::new(0.0, 0.0, 80.0, 40.0));
+    assert_eq!(cover.clip.rect, PaintRect::new(0.0, 0.0, 40.0, 40.0));
+    // Among other content the image is not replaced content and fills its
+    // box.
+    let mixed =
+        image("p::before{content:url(icon.png) 'B';width:40px;height:40px;object-fit:contain}");
+    assert_eq!(mixed.rect, mixed.clip.rect);
+}
+
+/// A covering image whose `object-fit` rectangle is far larger than its box
+/// is rastered at the size layout prepared it at, not at the whole object.
+#[test]
+fn a_covering_image_is_rastered_at_its_prepared_size() {
+    /// A square image whose rasters above 10000 pixels are refused, as an
+    /// image budget would.
+    struct Bounded;
+    impl ImagePixelSource for Bounded {
+        fn get_decoded(&self, _: &Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+        fn intrinsic_size(&self, _: &Url) -> Option<raikiri_traits::ImageIntrinsicSize> {
+            Some(raikiri_traits::ImageIntrinsicSize {
+                width: Some(1.0),
+                height: Some(1.0),
+                aspect_ratio: Some(1.0),
+            })
+        }
+        fn get_decoded_at_size(
+            &self,
+            _: &Url,
+            size: raikiri_traits::ImageRasterSize,
+            _: Option<u64>,
+        ) -> Option<Arc<DecodedImage>> {
+            let width = size.width.ceil() as u32;
+            let height = size.height.ceil() as u32;
+            (width * height <= 10_000).then(|| {
+                Arc::new(DecodedImage {
+                    width,
+                    height,
+                    rgba: vec![0; (width * height * 4) as usize],
+                })
+            })
+        }
+    }
+    // The 200x2 box holds a 200x200 object.
+    let document = lay_out(
+        "<p>A</p>",
+        "p::before{content:url(icon.svg);width:200px;height:2px;object-fit:cover}",
+        &Bounded,
+    );
+    let page = document.page(0).unwrap();
+    let runs = page.text_runs();
+    let ids: Vec<_> = page
+        .paint_order_for_text_runs(&runs)
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedImage(image) => Some(*image),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 1);
+    let image = page.raster_generated_image(ids[0], &Bounded).unwrap();
+    assert_eq!((image.rect.width, image.rect.height), (200.0, 200.0));
+    assert_eq!((image.pixels.width, image.pixels.height), (20, 20));
+}

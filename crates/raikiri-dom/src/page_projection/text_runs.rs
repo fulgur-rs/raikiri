@@ -29,6 +29,8 @@ pub(super) struct MarkerText {
     color: CssColor,
     shadows: Vec<TextShadow>,
     first_page: Option<u32>,
+    /// The flow origin of [`Self::first_page`].
+    first_page_origin: Option<f32>,
     /// The middle of the item's first line from its border edge, when the
     /// marker is aligned with one.
     line_center: Option<f32>,
@@ -38,6 +40,40 @@ impl MarkerText {
     /// Number of stable line identities in the prepared standalone marker.
     pub(super) fn line_count(&self) -> usize {
         self.shaped.lines().len()
+    }
+
+    /// Whether the page whose flow starts at `content_origin_y` is the
+    /// item's first page, the one page that draws the marker. Unknown when
+    /// the item has no fragment on any page.
+    pub(super) fn is_on_page(&self, content_origin_y: f32) -> bool {
+        self.first_page_origin
+            .is_none_or(|origin| (origin - content_origin_y).abs() < 0.001)
+    }
+
+    /// The top of the marker's line for an item whose border edge is at
+    /// `top` on a page whose content ends at `page_bottom`.
+    ///
+    /// The marker is drawn only on its item's first page. When the line it
+    /// aligns with starts on a later page, the marker stays at the bottom of
+    /// this one rather than past its edge.
+    pub(super) fn line_top(&self, top: f32, page_bottom: f32) -> f32 {
+        let height = self
+            .shaped
+            .lines()
+            .first()
+            .map_or(0.0, |line| line.block_size());
+        let aligned = top + self.offset_y;
+        // The aligned line's page is decided by its middle, as it is for the
+        // line itself; without one, by the marker's top.
+        let next_page = match self.line_center {
+            Some(center) => top + center >= page_bottom - 0.001,
+            None => aligned >= page_bottom,
+        };
+        if next_page {
+            (page_bottom - height).max(top)
+        } else {
+            aligned
+        }
     }
 }
 
@@ -84,7 +120,7 @@ pub(super) fn prepare_markers(
             if item.fragment_index == 0 {
                 first_pages
                     .entry(item.node_id.0 as usize)
-                    .or_insert(page.page_index);
+                    .or_insert((page.page_index, page.content_origin_y));
             }
         }
     }
@@ -141,7 +177,8 @@ pub(super) fn prepare_markers(
                     offset_y,
                     color: style.color,
                     shadows: text_shadows(style),
-                    first_page: first_pages.get(&owner).copied(),
+                    first_page: first_pages.get(&owner).map(|&(index, _)| index),
+                    first_page_origin: first_pages.get(&owner).map(|&(_, origin)| origin),
                     line_center: item_line.map(|line| line.center),
                 },
             );
@@ -210,6 +247,11 @@ pub struct PositionedGlyphRun<'a> {
     /// The run's part of the processed text: after white-space collapsing
     /// and text transformation, as it was shaped.
     pub text: &'a str,
+    /// UTF-8 offset of [`Self::text`] in the processed text of its line.
+    /// Within one line, runs and the images of generated content (see
+    /// [`crate::Document::page_generated_image_text_position`]) follow the logical (reading)
+    /// order of these offsets, whatever their visual order.
+    pub text_offset: usize,
     /// The glyphs, left to right.
     pub glyphs: Vec<Glyph>,
     /// Maps the run's positions, decorations and shadows to the page, where
@@ -308,8 +350,8 @@ pub enum RunSource {
     MarginBox(raikiri_style::PageMarginBoxSlot),
 }
 
-/// The pseudo-element generated text comes from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// The pseudo-element generated text or a generated box comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum GeneratedKind {
     /// `::before`.
@@ -318,6 +360,9 @@ pub enum GeneratedKind {
     After,
     /// `::marker`.
     Marker,
+    /// `::first-letter`. Only boxes carry it: the letter's text keeps the
+    /// source of the text it comes from.
+    FirstLetter,
 }
 
 /// A font face and its data.
@@ -848,6 +893,40 @@ pub(super) fn paint_shift(
     Ok((dx, dy))
 }
 
+/// How far the painter moves the boxes around text root `root` down the
+/// page outside columns by offsets that only translate: the part of
+/// [`run_transform`] that the built-in painter adds to a box's position
+/// rather than to its transform.
+pub(super) fn run_translation_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    context: &RunContext,
+    root: usize,
+) -> f32 {
+    let mut dy = 0.0;
+    for (id, in_columns) in paint_chain(document, cascade, context, root)
+        .into_iter()
+        .rev()
+    {
+        if in_columns {
+            break;
+        }
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: the cascade has a value for every arena node
+        };
+        if cv.position == PositionValue::Fixed {
+            dy = 0.0;
+        }
+        let fragmented = context.fragmented.contains(&id);
+        if let Ok(shift) = box_paint_shift(document, cascade, context.body, id, cv, fragmented)
+            && !shift.general
+        {
+            dy += shift.offset.1;
+        }
+    }
+    dy
+}
+
 /// The transform from the coordinates the runs of text root `root` are
 /// placed in on `page` to the page: the moves of the boxes around them
 /// outside columns, outermost first, as the paint order lists them.
@@ -946,18 +1025,27 @@ struct FirstLine {
 /// The first line may belong to the first in-flow block child, and so on
 /// down (CSS Pseudo 4 §2.1.1); if that child has no line, neither has the
 /// item. Floats, absolutely positioned boxes and the marker itself are
-/// passed over, and a relative offset moves only the box it applies to. A flex or grid container orders its items itself, so tree
-/// order does not find its first line, and it is left to the fallback.
+/// passed over, and a relative offset moves only the box it applies to. A
+/// flex container orders its items itself, so its first line is the first
+/// baseline its layout recorded; a grid container is left to the fallback.
 fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
-    let in_flow = |id: usize| {
+    // `float` does not apply to flex items (CSS Flexbox 1 §3), so a flex
+    // container's items are checked without it.
+    let laid_out = |id: usize| {
         document.nodes.get(id).is_some_and(|node| {
             node.is_in_document()
                 && node.kind() != NodeKind::Text
                 && node.style.display != taffy::Display::None
                 && node.style.position != taffy::Position::Absolute
-                && node.style.float == taffy::Float::None
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
+    };
+    let in_flow = |id: usize| {
+        laid_out(id)
+            && document
+                .nodes
+                .get(id)
+                .is_some_and(|node| node.style.float == taffy::Float::None)
     };
     let (mut id, mut y) = (owner, 0.0);
     loop {
@@ -977,7 +1065,27 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             node.style.display,
             taffy::Display::Flex | taffy::Display::Grid
         ) {
-            return None;
+            // A flex or grid container orders its items itself. A flex
+            // layout records the first baseline they give it; a grid
+            // container is left to the fallback. The middle of that line
+            // comes from the first item, in layout order, whose first line
+            // has the baseline; when none matches, the baseline stands in.
+            let baseline = node.flex_first_baseline?;
+            let center = node
+                .layout_children()
+                .iter()
+                .filter(|&&child| laid_out(child))
+                .find_map(|&child| {
+                    let line = first_line(document, cascade, child)?;
+                    let top = document.nodes[child].unrounded_layout.location.y
+                        - layout_applied_relative_offset_y(document, cascade, child);
+                    ((top + line.baseline - baseline).abs() < 0.01).then_some(top + line.center)
+                })
+                .unwrap_or(baseline);
+            return Some(FirstLine {
+                baseline: y + baseline,
+                center: y + center,
+            });
         }
         let child = match node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {
             Some(lines) if !lines.lines.is_empty() => {
@@ -1006,13 +1114,23 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         };
         // A relative offset moves the child, not the item's marker, so the
         // offset that layout already applied is taken back out.
-        let relative = if document.nodes[child].needs_relative_block_paint_offset() {
-            0.0
-        } else {
-            layout_relative_offset_y(&cascade.computed[child])
-        };
-        y += document.nodes[child].unrounded_layout.location.y - relative;
+        y += document.nodes[child].unrounded_layout.location.y
+            - layout_applied_relative_offset_y(document, cascade, child);
         id = child;
+    }
+}
+
+/// The vertical relative offset that layout already applied to `id`'s
+/// location; the painter applies the others.
+fn layout_applied_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+) -> f32 {
+    if document.nodes[id].needs_relative_block_paint_offset() {
+        0.0
+    } else {
+        layout_relative_offset_y(&cascade.computed[id])
     }
 }
 
@@ -1066,27 +1184,7 @@ fn marker_runs<'a>(
         } else {
             page.content_origin_y
         };
-    // The marker is drawn only on its item's first page. When the line it
-    // aligns with starts on a later page, keep the marker at the bottom of
-    // this one rather than past its edge.
-    let height = marker
-        .shaped
-        .lines()
-        .first()
-        .map_or(0.0, |line| line.block_size());
-    let page_bottom = page.content_box.y + page.content_box.height;
-    let aligned = top + marker.offset_y;
-    // The aligned line's page is decided by its middle, as it is for the
-    // line itself; without one, by the marker's top.
-    let next_page = match marker.line_center {
-        Some(center) => top + center >= page_bottom - 0.001,
-        None => aligned >= page_bottom,
-    };
-    let y = if next_page {
-        (page_bottom - height).max(top)
-    } else {
-        aligned
-    };
+    let y = marker.line_top(top, page.content_box.y + page.content_box.height);
     standalone_runs(
         &marker.shaped,
         (x, y),
@@ -1201,6 +1299,7 @@ pub(crate) fn standalone_runs<'a>(
                 advance: run.inline_size(),
                 ascent: metrics.ascent,
                 descent: metrics.descent,
+                text_offset: text_range.start,
                 text: line.text().get(text_range).unwrap_or_default(),
                 glyphs,
                 color,
@@ -1371,6 +1470,7 @@ fn glyph_run<'a>(
         advance: run.inline_size(),
         ascent: metrics.ascent,
         descent: metrics.descent,
+        text_offset: text_range.start,
         text,
         glyphs,
         color,

@@ -880,7 +880,15 @@ impl<'a> RenderResources<'a> {
     ) {
         // Generated pseudo-elements carry their own styles; visit them by
         // owner node and pseudo name so attempt order stays deterministic.
-        let mut pseudo: Vec<_> = cascade.pseudo.iter().collect();
+        // A pseudo-element that generates no box paints nothing, so its
+        // images are not fetched.
+        let mut pseudo: Vec<_> = cascade
+            .pseudo
+            .iter()
+            .filter(|((node, pseudo), computed)| {
+                pseudo_generates_box(cascade, node.0, *pseudo, computed)
+            })
+            .collect();
         pseudo.sort_by_cached_key(|((node, pseudo), _)| (*node, format!("{pseudo:?}")));
         let raw_urls = cascade
             .computed
@@ -2173,6 +2181,34 @@ pub fn parse_html_with_resources<R: Read>(
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
     crate::document_parse::parse_html_with_limits(input, &options, resources.parse_limits())
+}
+
+/// Whether the `pseudo` of element `node` generates a box that can paint
+/// backgrounds and borders. `::before` and `::after` with `content: none` or
+/// `normal` generate none (CSS Pseudo 4 §2.1); `::marker` exists only on a
+/// list item whose marker is not suppressed (CSS Lists 3 §3.1);
+/// `::backdrop` and `::file-selector-button` are never rendered here.
+fn pseudo_generates_box(
+    cascade: &raikiri_style::CascadeResult,
+    node: u64,
+    pseudo: raikiri_style::PseudoElem,
+    computed: &raikiri_style::ComputedValues,
+) -> bool {
+    use raikiri_style::PseudoElem;
+    match pseudo {
+        PseudoElem::Before | PseudoElem::After => {
+            !computed.content.is_empty()
+                && !computed
+                    .content
+                    .iter()
+                    .any(|part| matches!(part, raikiri_style::property::ContentComponent::None))
+        }
+        PseudoElem::Marker => usize::try_from(node).is_ok_and(|element| {
+            raikiri_dom::generated_content::marker_is_enabled(cascade, element)
+        }),
+        PseudoElem::FirstLine | PseudoElem::FirstLetter => true,
+        _ => false,
+    }
 }
 
 #[cfg(test)]

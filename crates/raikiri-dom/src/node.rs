@@ -370,6 +370,9 @@ pub struct Node {
     pub(crate) table_grid_box: Option<PaintRect>,
     /// First-row baseline relative to the table wrapper's border edge.
     pub(crate) table_first_baseline: Option<f32>,
+    /// First baseline of a flex container from its border edge, as its last
+    /// layout found it (CSS Flexbox 1 §8.5).
+    pub(crate) flex_first_baseline: Option<f32>,
     /// Computed `break-before` value consumed by column fragmentation.
     pub(crate) break_before: BreakBetween,
     /// Computed `break-after` value consumed by column fragmentation.
@@ -496,6 +499,7 @@ impl Node {
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
+            flex_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -548,6 +552,7 @@ impl Node {
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
+            flex_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -604,6 +609,7 @@ impl Node {
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
+            flex_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -655,6 +661,7 @@ impl Node {
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
+            flex_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -703,6 +710,7 @@ impl Node {
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
+            flex_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
@@ -753,6 +761,7 @@ impl Node {
             caption_side: CaptionSideValue::Top,
             table_grid_box: None,
             table_first_baseline: None,
+            flex_first_baseline: None,
             border_collapse: BorderCollapseValue::Separate,
             computed_border: None,
             collapsed_border: None,
