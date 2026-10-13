@@ -2866,6 +2866,8 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::Isolation(_)
         | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
+        | PropertyValue::Contain(_)
+        | PropertyValue::WillChange(_)
         // mask-image (CSS Masking Level 1 §7.1) / clip-path (§5.1) —
         // non-inherited, `<url>`/`<gradient>`/`<geometry-box>` payloads
         // that don't depend on the inheritance parent — nothing for phase
@@ -3390,6 +3392,8 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Isolation(v) => target.isolation = v,
         PropertyValue::BoxDecorationBreak(v) => target.box_decoration_break = v,
         PropertyValue::MixBlendMode(v) => target.mix_blend_mode = v,
+        PropertyValue::Contain(v) => target.contain = v,
+        PropertyValue::WillChange(v) => target.will_change = v,
         PropertyValue::MaskImage(v) => target.mask_image = v,
         PropertyValue::ClipPath(v) => target.clip_path = v,
         PropertyValue::Transform(v) => target.transform = v,

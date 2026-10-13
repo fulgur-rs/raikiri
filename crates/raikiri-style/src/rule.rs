@@ -434,6 +434,8 @@ pub(crate) const fn classify(key: PropertyKey) -> KeyClass {
         | Isolation
         | BoxDecorationBreak
         | MixBlendMode
+        | Contain
+        | WillChange
         | MaskImage
         | ClipPath
         | Transform
@@ -943,6 +945,8 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         | PropertyValue::Isolation(_)
         | PropertyValue::BoxDecorationBreak(_)
         | PropertyValue::MixBlendMode(_)
+        | PropertyValue::Contain(_)
+        | PropertyValue::WillChange(_)
         // mask-image / clip-path (CSS Masking Level 1 §7.1/§5.1) — same
         // shape as isolation/mix-blend-mode above (`mask`/`mask-border`
         // shorthands stay unimplemented, pre-existing silent drop).

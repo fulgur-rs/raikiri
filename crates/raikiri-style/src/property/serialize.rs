@@ -621,6 +621,8 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::Isolation(..)
         | PropertyValue::BoxDecorationBreak(..)
         | PropertyValue::MixBlendMode(..)
+        | PropertyValue::Contain(..)
+        | PropertyValue::WillChange(..)
         | PropertyValue::MaskImage(..)
         | PropertyValue::ClipPath(..)
         | PropertyValue::Transform(..)

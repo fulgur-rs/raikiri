@@ -1256,6 +1256,10 @@ pub(crate) fn parse_property_grammar(
         // <https://www.w3.org/TR/compositing-1/#mix-blend-mode>. Grammar:
         // `<blend-mode>` — see `MixBlendMode` doc for the 16-keyword list.
         "mix-blend-mode" => parse_mix_blend_mode(input).map(PropertyValue::MixBlendMode),
+        // CSS Containment 2 §2 <https://www.w3.org/TR/css-contain-2/#contain-property>.
+        "contain" => parse_contain(input).map(PropertyValue::Contain),
+        // CSS Will Change 1 §3 <https://www.w3.org/TR/css-will-change-1/#will-change>.
+        "will-change" => parse_will_change(input).map(PropertyValue::WillChange),
         // CSS Masking Level 1 §7.1 <https://www.w3.org/TR/css-masking-1/#the-mask-image>.
         // Grammar (single-layer subset — see `MaskImage` doc's scope
         // carving note): `none | <image> | <mask-source>`.
