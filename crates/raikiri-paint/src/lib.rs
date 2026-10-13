@@ -404,6 +404,10 @@ fn paint_single_page_with_origin_and_page_context_impl(
         cascade.computed.len(),
         document.node_count(),
     );
+    if root_generates_no_box(cascade) {
+        walk::paint_blank_paper(scene, page_box);
+        return Ok(());
+    }
     let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let image_cache = walk::ImageBrushCache::for_document(document);
     let mut warnings = Vec::new();
@@ -573,6 +577,10 @@ pub fn paint_single_page_with_images_and_warnings(
         cascade.computed.len(),
         document.node_count(),
     );
+    if root_generates_no_box(cascade) {
+        walk::paint_blank_paper(scene, page_box);
+        return Ok(Vec::new());
+    }
     let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     // Single-page only (no pagination integration, see this crate's design
     // non-goals) — mirrors `paint_single_page`'s own single-page defaults
@@ -634,3 +642,11 @@ pub fn paint_single_page_with_images_and_warnings(
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the root element is `display: none`, so the document generates
+/// no boxes at all. Such a document prints as blank paper: the page
+/// background, border and margin boxes are not drawn either, as browsers
+/// do when printing it.
+fn root_generates_no_box(cascade: &CascadeResult) -> bool {
+    cascade.root_element_computed().display == raikiri_style::property::DisplayValue::None
+}

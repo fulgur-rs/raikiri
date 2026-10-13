@@ -982,6 +982,37 @@ fn canvas_background_with_page_margins_keeps_canvas_layer() {
     assert_eq!(fill_count(&document, &cascade), 2);
 }
 
+#[test]
+fn a_root_with_display_none_paints_blank_paper() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:none"));
+    let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
+    document.append_text(
+        style,
+        "@page { margin: 20px; background: red; border: 2px solid red; \
+         @top-center { content: 'x'; background: red; } }",
+    );
+    let body = document.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("background:blue"),
+    );
+    document.append_text(body, "hi");
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).unwrap();
+    raikiri_dom::layout_single_page(&mut document, &cascade, PageBox::A4).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page(&mut scene, &document, &cascade, PageBox::A4).expect("paint succeeds");
+
+    assert_eq!(scene.commands.len(), 1, "only the paper is painted");
+    let RenderCommand::Fill(fill) = &scene.commands[0] else {
+        panic!("expected a fill, got {:?}", scene.commands[0]);
+    };
+    assert_eq!(fill.brush, Color::from_rgba8(255, 255, 255, 255).into());
+}
+
 fn transformed_box_scene(transform: &str, origin: &str) -> Scene {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));

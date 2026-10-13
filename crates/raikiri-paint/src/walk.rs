@@ -49,6 +49,17 @@ use crate::text;
 
 use raikiri_dom::generated_content::markers::marker_render_info_with_snapshots;
 
+/// Cover the whole paper with the UA's white canvas and nothing else.
+pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) {
+    scene.fill(
+        Fill::NonZero,
+        Affine::IDENTITY,
+        Color::from_rgba8(255, 255, 255, 255),
+        None,
+        &Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64),
+    );
+}
+
 /// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
 ///
 /// Page backgrounds cover the paper.  When the page has a non-zero margin,
