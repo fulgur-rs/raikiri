@@ -33,13 +33,19 @@ use taffy::{
 };
 
 /// Whether the element generates a non-atomic inline box: an inline box that
-/// was not blockified.
+/// was not blockified and is not a replaced element or form control.
 fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.
+    let node = &document.nodes[id];
+    let tag = node.tag_name().unwrap_or("");
     cv.display == DisplayValue::Inline
         && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         && cv.float == FloatValue::None
+        && !node.is_inline_svg_root()
+        && !ATOMIC_TAGS.contains(&tag)
+        && !REPLACED_BOX_TAGS.contains(&tag)
         && !document.taffy_parent_of(id).is_some_and(|parent| {
             matches!(
                 document.nodes[parent].style.display,
@@ -52,16 +58,10 @@ fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> 
 fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
-    let node = &document.nodes[id];
     !matches!(
         cv.display,
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && (!generates_inline_box(document, id, cv)
-        || node.is_inline_svg_root()
-        || matches!(
-            node.tag_name(),
-            Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-        ))
+    ) && !generates_inline_box(document, id, cv)
 }
 
 /// Whether layout and paint containment apply to the element.
@@ -90,11 +90,14 @@ fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &Compu
     // A box that is not generated contains nothing (CSS Display 3 §2.5).
     let transformable = transformable(document, id, cv);
     let containable = containable(document, id, cv);
+    // A filter on the document root does not make it a containing block.
+    let root = document
+        .parent_of(id)
+        .is_some_and(|parent| document.parent_of(parent).is_none());
     cv.display != DisplayValue::Contents
         && ((transformable
             && (!cv.transform.is_empty() || cv.will_change.contains(WillChange::TRANSFORM)))
-            || !cv.filter.is_empty()
-            || cv.will_change.contains(WillChange::FILTER)
+            || (!root && (!cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER)))
             || (containable
                 && (cv.contain.contains_positioned_descendants()
                     || cv.will_change.contains(WillChange::CONTAIN))))

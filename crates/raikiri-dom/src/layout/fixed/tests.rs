@@ -864,3 +864,74 @@ fn min_content_fixed_paragraphs_take_their_longest_word() {
         laid_out_with_words("position:fixed;left:5px;top:6px;font:10px Ahem;width:min-content");
     assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 100.0, 100.0));
 }
+
+#[test]
+fn a_root_filter_does_not_contain_absolute_descendants() {
+    for root_css in [
+        "display:block;filter:blur(0)",
+        "display:block;will-change:filter",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some(root_css));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;margin-left:30px;margin-top:50px"),
+        );
+        let abspos = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:absolute;left:5px;top:6px;width:20px;height:10px"),
+        );
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+        assert_eq!(
+            absolute_rect(&doc, abspos),
+            (5.0, 6.0, 20.0, 10.0),
+            "{root_css}"
+        );
+    }
+}
+
+#[test]
+fn inline_form_controls_contain_fixed_descendants() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;margin-left:30px;margin-top:50px"),
+    );
+    let button = doc.append_element(
+        Some(parent),
+        "button",
+        Style::default(),
+        Some("display:inline;will-change:transform"),
+    );
+    let fixed = doc.append_element(
+        Some(button),
+        "div",
+        Style::default(),
+        Some("display:block;position:fixed;left:5px;top:6px;width:20px;height:10px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_ne!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
+}
