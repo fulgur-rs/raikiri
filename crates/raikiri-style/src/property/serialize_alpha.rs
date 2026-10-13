@@ -48,13 +48,16 @@ pub fn serialize_alpha_value(name: &str, raw_value: &str) -> Option<String> {
         }
         _ => return None,
     };
-    if !value.0.is_finite() {
+    // A result that is not finite as an `f32` (including one past its range)
+    // keeps its source text rather than reading back as a clamped number.
+    let folded = value.0 as f32;
+    if !folded.is_finite() {
         return None;
     }
     Some(if value.1 {
-        format!("calc({}%)", format_css_number(value.0 as f32))
+        format!("calc({}%)", format_css_number(folded))
     } else {
-        format!("calc({})", format_css_number(value.0 as f32))
+        format!("calc({})", format_css_number(folded))
     })
 }
 
