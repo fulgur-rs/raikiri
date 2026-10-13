@@ -56,3 +56,15 @@ fn invalid_alternative_text_and_other_properties_are_left_alone() {
     assert_eq!(content("none / \"alt\""), None);
     assert_eq!(serialize_content_value("quotes", "\"a\" \"b\""), None);
 }
+
+#[test]
+fn contents_and_attr_items_read_back() {
+    for value in [
+        "contents",
+        "attr(data-label)",
+        "attr(data-label, \"none\")",
+        "\"x\" / attr(title) counters(item, \"-\", lower-roman)",
+    ] {
+        assert_eq!(content(value).as_deref(), Some(value), "{value}");
+    }
+}
