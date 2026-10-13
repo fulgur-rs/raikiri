@@ -1198,7 +1198,10 @@ fn shift_margin_rules(state: &mut State, page: &RuleSlot, shift: impl Fn(usize) 
         .collect();
     for ((sheet, rule, margin), object) in rules {
         let new_index = shift(margin);
-        if let Some(data) = object.downcast_ref::<MarginRuleData>() {
+        {
+            let Some(data) = object.downcast_ref::<MarginRuleData>() else {
+                continue; // cov:ignore: The margin rule cache holds only `CSSMarginRule` objects.
+            };
             match (new_index, &data.slot.margin_index) {
                 (Some(index), Some(cell)) => cell.set(index),
                 _ => data.slot.removed.set(true),
@@ -1235,7 +1238,7 @@ impl IndexedSource for MarginRuleListSource {
                 page.rule_index,
                 index,
                 page.generation,
-            )?
+            )? // cov:ignore: A fresh ordinary object accepts the margin rule's own members.
             .into(),
         ))
     }

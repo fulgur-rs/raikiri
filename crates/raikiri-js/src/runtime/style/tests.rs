@@ -1874,6 +1874,13 @@ fn margin_rule_objects_follow_insert_and_delete_rule() {
          page.cssRules[0].style.color === 'blue' && \
          rightStyle.color === 'black' && styleElement.textContent.includes('color: black')",
     );
+    rt.evaluate("var center = page.cssRules[0]; page.deleteRule(1);")
+        .unwrap();
+    ok(
+        &mut rt,
+        "page.cssRules.length === 1 && page.cssRules[0] === center && \
+         center.name === 'top-center' && right.name === '' && rightStyle.color === ''",
+    );
 }
 
 #[test]
