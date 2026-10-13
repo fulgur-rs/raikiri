@@ -711,3 +711,28 @@ fn a_translucent_before_groups_its_boxes_without_runs() {
         .collect();
     assert_eq!(order, ["text", "push 0.5", "box Before", "image", "pop"]);
 }
+
+/// The translucent first letter of a block nests inside the translucent
+/// first letter of the block around it, which wraps the same letters.
+#[test]
+fn nested_translucent_first_letters_nest_their_groups() {
+    let document = lay_out(
+        "<div><p>AB</p></div>",
+        "p{margin:0}div::first-letter{background:red;opacity:.5}\
+         p::first-letter{background:blue;opacity:.25}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited(&page),
+        [
+            "text B",
+            "push 0.5",
+            "box FirstLetter",
+            "push 0.25",
+            "box FirstLetter",
+            "text A",
+            "pop",
+            "pop"
+        ]
+    );
+}

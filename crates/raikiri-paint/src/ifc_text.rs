@@ -112,6 +112,13 @@ pub(crate) fn draw_ifc_lines_with_resources(
     let offsets = positioned.offsets;
     let hit_layout =
         (!custom_highlights.is_empty()).then(|| LineLayout::new(positioned.all_lines()));
+    let root_node = document
+        .ifc_layout_node(root_id)
+        .expect("positioned lines require an existing IFC root");
+    // One set of groups serves every line, so a pseudo-element split over
+    // lines composites its complete paint at once (CSS Color 4 §3.3).
+    let all_pieces: Vec<_> = pieces_by_line.iter().flatten().cloned().collect();
+    let mut paint = typographic::TypographicPaint::new(root_node, &all_pieces, cascade);
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
         let line = positioned_line.line;
@@ -125,11 +132,6 @@ pub(crate) fn draw_ifc_lines_with_resources(
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
         ));
-        let root_node = document
-            .ifc_layout_node(root_id)
-            .expect("positioned lines require an existing IFC root");
-        let mut paint =
-            typographic::TypographicPaint::new(root_node, &pieces_by_line[line_index], cascade);
         let background_slices = &slices_by_line[line_index];
         for marker in &positioned_line.markers {
             let Some(image) = document.list_marker_image_shared(marker.owner) else {
@@ -425,17 +427,17 @@ pub(crate) fn draw_ifc_lines_with_resources(
                 }
             }
         }
-        paint.finish(
-            scene,
-            Rect::new(
-                0.0,
-                0.0,
-                f64::from(page_box.width.max(0.0)),
-                f64::from(page_box.height.max(0.0)),
-            ),
-            paint_transform,
-        );
     }
+    paint.finish(
+        scene,
+        Rect::new(
+            0.0,
+            0.0,
+            f64::from(page_box.width.max(0.0)),
+            f64::from(page_box.height.max(0.0)),
+        ),
+        paint_transform,
+    );
 }
 
 #[cfg(test)]

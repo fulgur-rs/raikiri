@@ -196,8 +196,11 @@ impl Document {
                 usize::try_from(run.line.root.0),
             ) {
                 lines.letters.entry((root, letter)).or_insert_with(|| {
-                    self.run_group_outside_letter(cascade, run)
-                        .and_then(|group| usize::try_from(group.0).ok())
+                    self.enclosing_letter_group(cascade, root, letter)
+                        .or_else(|| {
+                            self.run_group_outside_letter(cascade, run)
+                                .and_then(|group| usize::try_from(group.0).ok())
+                        })
                 });
             }
             if seen.insert((run.line, group)) {
@@ -246,6 +249,22 @@ impl Document {
             return Some(NodeId::new(letter as u64));
         }
         self.run_group_outside_letter(cascade, run)
+    }
+
+    /// The opacity group of the innermost `::first-letter` of an ancestor
+    /// block around the letters of `letter`, a `::first-letter` box of
+    /// paragraph `root`, if any.
+    fn enclosing_letter_group(
+        &self,
+        cascade: &CascadeResult,
+        root: usize,
+        letter: usize,
+    ) -> Option<usize> {
+        let node = self.ifc_layout_node(root)?;
+        std::iter::successors(node.ifc_typographic_parent(letter), |&parent| {
+            node.ifc_typographic_parent(parent)
+        })
+        .find_map(|parent| pseudo_opacity_group(cascade, parent))
     }
 
     /// The opacity group of `run` apart from that of a `::first-letter`
@@ -1467,13 +1486,17 @@ fn first_letter_pieces<'p>(
             let source = first_letter_anchor(document, root, piece);
             let anchor = source.map(|(anchor, _)| anchor);
             let pseudo = source.and_then(|(_, pseudo)| pseudo);
-            let held = match (anchor, pseudo) {
-                (Some(anchor), Some(kind)) => generated_group(items.cascade, anchor, kind),
-                _ => None,
-            }
-            .or_else(|| {
-                anchor.and_then(|anchor| document.inline_opacity_group(items.cascade, root, anchor))
-            });
+            let held = document
+                .enclosing_letter_group(items.cascade, root, piece.node)
+                .or_else(|| match (anchor, pseudo) {
+                    (Some(anchor), Some(kind)) => generated_group(items.cascade, anchor, kind),
+                    _ => None,
+                })
+                .or_else(|| {
+                    anchor.and_then(|anchor| {
+                        document.inline_opacity_group(items.cascade, root, anchor)
+                    })
+                });
             LetterPiece {
                 anchor,
                 after: pseudo == Some(GeneratedKind::After),
@@ -1542,6 +1565,9 @@ fn push_pseudo_group<'a>(
                     letter.piece,
                 );
             }
+            // The first letter of a nested block wraps letters inside this
+            // one's.
+            nested = letter_groups(&letters, lines, root, Some(group));
         }
         PseudoElem::Before | PseudoElem::After => {
             let (kind, after) = if pseudo == PseudoElem::After {

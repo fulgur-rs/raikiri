@@ -117,6 +117,24 @@ impl TypographicPaint {
             parents.entry(key).or_insert_with(|| {
                 root.ifc_typographic_parent(piece.node)
                     .map(|id| key.parent(id))
+                    // The outermost first letter taken from `::before` or
+                    // `::after` text is inside that pseudo-element's box.
+                    .or_else(|| {
+                        piece
+                            .source_owner
+                            .filter(|&owner| {
+                                owner != piece.node
+                                    && raikiri_dom::generated_content::generated_origin(owner)
+                                        .is_some_and(|(_, pseudo)| {
+                                            matches!(
+                                                pseudo,
+                                                raikiri_style::PseudoElem::Before
+                                                    | raikiri_style::PseudoElem::After
+                                            )
+                                        })
+                            })
+                            .map(|owner| key.parent(owner))
+                    })
             });
             if let Some((cv, _)) = root.ifc_typographic_fragment(
                 piece.node,
@@ -279,17 +297,21 @@ impl TypographicPaint {
                 std::mem::take(&mut group.scene),
                 std::mem::take(&mut group.children),
             );
+            // A group whose pieces are on lines painted elsewhere draws
+            // nothing here.
             let mut composite = Scene::new();
-            composite.push_layer(
-                Mix::Normal,
-                group.opacity,
-                clip_transform,
-                &clip,
-                None,
-                None,
-            );
-            composite.append_scene(content, Affine::IDENTITY);
-            composite.pop_layer();
+            if !content.commands.is_empty() {
+                composite.push_layer(
+                    Mix::Normal,
+                    group.opacity,
+                    clip_transform,
+                    &clip,
+                    None,
+                    None,
+                );
+                composite.append_scene(content, Affine::IDENTITY);
+                composite.pop_layer();
+            }
             let insertion = group.insertion;
             let parent = group.parent;
             let insertion = insertion.unwrap_or_else(|| self.target(parent).commands.len());
