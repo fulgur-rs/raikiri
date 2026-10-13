@@ -1990,6 +1990,8 @@ fn blocks_painting_whole_box_effects_are_not_sliced() {
         "box-shadow:0 0 2px black",
         "outline:1px solid",
         "border-image:linear-gradient(red,blue) 1;border-left:2px solid",
+        "opacity:0.5",
+        "mix-blend-mode:multiply",
     ] {
         let (doc, _, children) = lineless_fixture(
             "display:block;width:100px;height:100px;columns:2;column-gap:0;column-fill:auto",
@@ -2136,4 +2138,32 @@ fn a_decorated_block_too_long_for_the_budget_falls_back_whole() {
     page.height = 600.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
     assert!(fragment_rects(&doc, child).len() <= 1);
+}
+
+#[test]
+fn a_grid_stretched_multicol_keeps_its_area_height() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:grid;grid-template-rows:200px;grid-template-columns:100px"),
+    );
+    let parent = doc.append_element(
+        Some(grid),
+        "div",
+        Style::default(),
+        Some("display:block;columns:2;column-gap:0"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:200px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
+    assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
 }

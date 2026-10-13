@@ -225,19 +225,23 @@ pub(crate) fn compute_multicol_layout(
                     + multicol_resolve_inset(tree, css.border.bottom, basis)
             }
         });
-        // A row flex container stretches an auto-height item to its line,
-        // and the columns then take that height. Other known heights come
-        // from the item's own content and are rebalanced here.
+        // A row flex container or a grid container stretches an auto-height
+        // item to its line or area, and the columns then take that height.
+        // Other known heights come from the item's own content and are
+        // rebalanced here.
         let stretched_height = inputs.known_dimensions.height.is_some()
             && tree.parent_of(index).is_some_and(|parent| {
-                let flex = &tree.nodes[parent].style;
-                let align = tree.nodes[index].style.align_self.or(flex.align_items);
-                flex.display == Display::Flex
-                    && matches!(
-                        flex.flex_direction,
+                let container = &tree.nodes[parent].style;
+                let align = tree.nodes[index].style.align_self.or(container.align_items);
+                let block_axis_cross = match container.display {
+                    Display::Flex => matches!(
+                        container.flex_direction,
                         taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
-                    )
-                    && matches!(align, None | Some(taffy::AlignItems::STRETCH))
+                    ),
+                    Display::Grid => true,
+                    _ => false,
+                };
+                block_axis_cross && matches!(align, None | Some(taffy::AlignItems::STRETCH))
             });
         let used_height = if let Some(children) = &lineless_children {
             lineless::layout(

@@ -330,7 +330,9 @@ pub(crate) fn apply_computed_to_style(
 /// paragraph style of the inline engine.
 /// Whether painting `cv` draws effects sized from the whole border box
 /// (background and border images, rounded corners, shadows, outlines, masks,
-/// clips, transforms and filters), which a fragment cannot reproduce from its own slice.
+/// clips, transforms and filters) or composites the whole box as one group
+/// (opacity and blend modes), which a fragment cannot reproduce from its own
+/// slice.
 fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bool {
     cv.background_image != initial.background_image
         || cv.border_image != initial.border_image
@@ -341,6 +343,8 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
         || cv.clip_path != initial.clip_path
         || !cv.transform.is_empty()
         || !cv.filter.is_empty()
+        || cv.opacity != initial.opacity
+        || cv.mix_blend_mode != initial.mix_blend_mode
 }
 
 fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
