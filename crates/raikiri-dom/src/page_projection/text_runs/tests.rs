@@ -172,6 +172,24 @@ fn a_typographic_box_is_not_reported_as_generated_before_text() {
 /// A flex container of Ahem items, each given as its style and text, with
 /// 7px of padding above them.
 fn flex_items(items: &[&str]) -> (Document, CascadeResult, usize) {
+    container_items(
+        "display:flex;align-items:baseline;padding-top:7px;font:10px Ahem",
+        items,
+    )
+}
+
+/// A grid container of Ahem items with 20px lines, each given as its style,
+/// with 7px of padding above them. An item styled with `empty` has no text.
+fn grid_items(container: &str, items: &[&str]) -> (Document, CascadeResult, usize) {
+    container_items(
+        &format!("display:grid;padding-top:7px;font:10px/20px Ahem;{container}"),
+        items,
+    )
+}
+
+/// A container of the given style holding one `p` per item style, each
+/// with an X unless its style mentions `empty`.
+fn container_items(container: &str, items: &[&str]) -> (Document, CascadeResult, usize) {
     let mut document = Document::new();
     let body = document.append_element(
         Some(0),
@@ -179,20 +197,21 @@ fn flex_items(items: &[&str]) -> (Document, CascadeResult, usize) {
         taffy::Style::default(),
         Some("display:block;margin:0"),
     );
-    let flex = document.append_element(
-        Some(body),
-        "div",
-        taffy::Style::default(),
-        Some("display:flex;align-items:baseline;padding-top:7px;font:10px Ahem"),
-    );
+    let container_node =
+        document.append_element(Some(body), "div", taffy::Style::default(), Some(container));
     for style in items {
         let item = document.append_element(
-            Some(flex),
+            Some(container_node),
             "p",
             taffy::Style::default(),
-            Some(&format!("display:block;margin:0;{style}")),
+            Some(&format!(
+                "display:block;margin:0;{}",
+                style.replace("empty", "")
+            )),
         );
-        document.append_text(item, "X".to_string());
+        if !style.contains("empty") {
+            document.append_text(item, "X".to_string());
+        }
     }
     document.mark_in_document_flags();
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
@@ -204,7 +223,7 @@ fn flex_items(items: &[&str]) -> (Document, CascadeResult, usize) {
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
-    (document, cascade, flex)
+    (document, cascade, container_node)
 }
 
 /// A flex container's first line is the one its layout took the first
@@ -368,4 +387,143 @@ fn a_flex_first_line_includes_a_floated_item() {
     let line = first_line(&document, &cascade, flex).unwrap();
     assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
     assert_eq!(line.center, 7.0 + 25.0);
+}
+
+/// A grid container takes its first line from the first item of its first
+/// row, measured from that item's own line rather than its box.
+#[test]
+fn a_grid_first_line_is_the_line_of_its_first_row_item() {
+    let (document, cascade, grid) = grid_items("", &["padding-top:20px", ""]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    // Ahem's ascent is 0.8em, and the 10px of leading is split evenly.
+    assert_eq!(line.baseline, 7.0 + 20.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 20.0 + 10.0);
+}
+
+/// A first-row item that takes part in baseline alignment gives the line
+/// before an earlier item that does not.
+#[test]
+fn a_grid_first_line_prefers_a_baseline_aligned_item() {
+    let (document, cascade, grid) = grid_items(
+        "grid-template-columns:50px 50px",
+        &["padding-top:20px", "align-self:baseline"],
+    );
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 10.0);
+}
+
+/// Items are searched in order-modified grid order.
+#[test]
+fn a_grid_first_line_follows_the_order_of_the_items() {
+    let (document, cascade, grid) = grid_items(
+        "grid-template-columns:50px 50px",
+        &["padding-top:20px", "order:-1;line-height:40px"],
+    );
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 15.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 20.0);
+}
+
+/// An item with no line gives the bottom of its border box, and a relative
+/// offset does not move it.
+#[test]
+fn a_grid_first_line_synthesizes_the_baseline_of_an_empty_item() {
+    let (document, cascade, grid) =
+        grid_items("", &["empty;height:30px;position:relative;top:9px", ""]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 30.0);
+    assert_eq!(line.center, 7.0 + 30.0);
+}
+
+/// Items that only start in a later row do not give the line, even when
+/// they come first in the source.
+#[test]
+fn a_grid_first_line_skips_items_placed_in_later_rows() {
+    let (document, cascade, grid) = grid_items(
+        "grid-template-columns:50px",
+        &["grid-row:2;padding-top:20px", "grid-row:1;line-height:40px"],
+    );
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 15.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 20.0);
+}
+
+/// Grid order runs along the first row by column, so an item placed in the
+/// first column gives the line before one earlier in the source.
+#[test]
+fn a_grid_first_line_follows_the_columns_of_the_first_row() {
+    let (document, cascade, grid) = grid_items(
+        "grid-template-columns:50px 50px",
+        &[
+            "grid-row:1;grid-column:2;padding-top:20px",
+            "grid-row:1;grid-column:1;line-height:40px",
+        ],
+    );
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 15.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 20.0);
+}
+
+/// The line of a scrolling item that lies below its box is clamped to the
+/// bottom of the box.
+#[test]
+fn a_grid_first_line_clamps_the_baseline_of_a_scrolling_item() {
+    let (document, cascade, grid) = grid_items("", &["overflow:auto;height:10px;padding-top:20px"]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 30.0);
+    assert_eq!(line.center, 7.0 + 30.0);
+}
+
+/// Text directly in a grid is an anonymous item that gives its own line.
+#[test]
+fn a_grid_first_line_includes_text_directly_in_the_grid() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let grid = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:grid;padding-top:7px;font:10px/20px Ahem"),
+    );
+    document.append_text(grid, "X".to_string());
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 10.0);
+}
+
+/// A layout-contained item exports no baseline, so the bottom of its border
+/// box stands in for its line.
+#[test]
+fn a_grid_first_line_synthesizes_the_baseline_of_a_layout_contained_item() {
+    let (document, cascade, grid) = grid_items("", &["contain:layout;height:30px"]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 30.0);
+    assert_eq!(line.center, 7.0 + 30.0);
+}
+
+/// Items inside a `display: contents` child of the grid are grid items of
+/// their own.
+#[test]
+fn a_grid_first_line_finds_items_inside_display_contents() {
+    let (document, cascade, grid) = grid_items("", &["display:contents", ""]);
+    let line = first_line(&document, &cascade, grid).unwrap();
+    // The X inside the contents box is an anonymous item on the first row.
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 10.0);
 }

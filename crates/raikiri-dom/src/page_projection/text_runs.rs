@@ -1030,7 +1030,8 @@ struct FirstLine {
 /// item. Floats, absolutely positioned boxes and the marker itself are
 /// passed over, and a relative offset moves only the box it applies to. A
 /// flex container orders its items itself, so its first line is the first
-/// baseline its layout recorded; a grid container is left to the fallback.
+/// baseline its layout recorded; a grid container takes the line of an item
+/// in its first row.
 fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Option<FirstLine> {
     // `float` does not apply to flex items (CSS Flexbox 1 §3), so a flex
     // container's items are checked without it.
@@ -1064,15 +1065,22 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 center: y + baseline,
             });
         }
-        if matches!(
-            node.style.display,
-            taffy::Display::Flex | taffy::Display::Grid
-        ) {
-            // A flex or grid container orders its items itself. A flex
-            // layout records the first baseline they give it; a grid
-            // container is left to the fallback. The middle of that line
-            // comes from the first item, in layout order, whose first line
-            // has the baseline; when none matches, the baseline stands in.
+        // A text node keeps Taffy's default display, which is not its own;
+        // its lines are found below.
+        let is_text = node.kind() == NodeKind::Text;
+        if !is_text && node.style.display == taffy::Display::Grid {
+            let line = grid_first_line(document, cascade, id)?;
+            return Some(FirstLine {
+                baseline: y + line.baseline,
+                center: y + line.center,
+            });
+        }
+        if !is_text && node.style.display == taffy::Display::Flex {
+            // A flex container orders its items itself, and its layout
+            // records the first baseline they give it. The middle of that
+            // line comes from the first item, in layout order, whose first
+            // line has the baseline; when none matches, the baseline stands
+            // in.
             let baseline = node.flex_first_baseline?;
             let center = node
                 .layout_children()
@@ -1121,6 +1129,99 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             - layout_applied_relative_offset_y(document, cascade, child);
         id = child;
     }
+}
+
+/// A grid container's first line, from its border edge (CSS Grid 1 §11.5).
+///
+/// Among the items in the first row that holds any, in grid order (by
+/// column, then in order-modified document order), the first one that takes
+/// part in baseline alignment gives the line, or else the first one. An
+/// item with no line of its own gives the bottom of its border box (CSS Box
+/// Alignment 3 §9.1). Text directly in the grid is an anonymous item of its
+/// own.
+fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) -> Option<FirstLine> {
+    let node = document.nodes.get(grid)?;
+    let is_item = |id: usize| {
+        document.nodes.get(id).is_some_and(|item| {
+            item.is_in_document()
+                && item.style.display != taffy::Display::None
+                && item.style.position != taffy::Position::Absolute
+                && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
+        })
+    };
+    let first_row = node
+        .grid_item_row_starts
+        .iter()
+        .filter(|&&(item, _)| is_item(item))
+        .map(|&(_, row)| row)
+        .min()?;
+    let column_of = |child: usize| {
+        node.grid_item_column_starts
+            .iter()
+            .find(|&&(item, _)| item == child)
+            .map_or(0, |&(_, column)| column)
+    };
+    // The recorded items follow the children Taffy laid out: in
+    // order-modified document order, with `display: contents` flattened.
+    let mut first_row_items = node
+        .grid_item_row_starts
+        .iter()
+        .filter(|&&(item, row)| row == first_row && is_item(item))
+        .map(|&(item, _)| item)
+        .collect::<Vec<_>>();
+    // A stable sort keeps the order-modified document order within a column.
+    first_row_items.sort_by_key(|&child| column_of(child));
+    let item = first_row_items
+        .iter()
+        .copied()
+        .find(|&child| aligns_by_baseline(&node.style, &document.nodes[child].style))
+        .or_else(|| first_row_items.first().copied())?;
+    // A relative offset moves the item's box, not the line the grid
+    // takes its baseline from.
+    let item_node = &document.nodes[item];
+    let item_layout = item_node.unrounded_layout;
+    let top = item_layout.location.y - layout_applied_relative_offset_y(document, cascade, item);
+    let bottom = item_layout.size.height;
+    // Layout containment suppresses the item's own baseline, so one is
+    // synthesized (CSS Contain 2 §3.2).
+    let layout_contained = cascade.computed.get(item).is_some_and(|computed| {
+        computed
+            .contain
+            .contains(raikiri_style::property::Contain::LAYOUT)
+    });
+    let line = if layout_contained {
+        None
+    } else {
+        first_line(document, cascade, item)
+    };
+    Some(match line {
+        Some(mut line) => {
+            // A scroll container's baseline, and the line that decides its
+            // page, stay within its border box (CSS Box Alignment 3 §9.1).
+            if item_node.style.overflow.y.is_scroll_container() {
+                line.baseline = line.baseline.clamp(0.0, bottom);
+                line.center = line.center.clamp(0.0, bottom);
+            }
+            FirstLine {
+                baseline: top + line.baseline,
+                center: top + line.center,
+            }
+        }
+        None => FirstLine {
+            baseline: top + bottom,
+            center: top + bottom,
+        },
+    })
+}
+
+/// Whether a grid item takes part in baseline alignment in the block axis:
+/// its `align-self` resolves to `baseline` and neither block-axis margin is
+/// `auto` (CSS Box Alignment 3 §9.3).
+fn aligns_by_baseline(container: &taffy::Style, item: &taffy::Style) -> bool {
+    let align = item.align_self.or(container.align_items);
+    align.is_some_and(|align| align.keyword() == taffy::AlignItemsKeyword::Baseline)
+        && !item.margin.top.is_auto()
+        && !item.margin.bottom.is_auto()
 }
 
 /// The vertical relative offset that layout already applied to `id`'s

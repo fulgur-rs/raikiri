@@ -675,165 +675,24 @@ fn load_from_workspace_root_reads_the_header_only_files() {
         );
     }
 
-    // baseline populated via chore(wpt): check PASS file-level parsing tests + goal G (79) + selectors (14) (WPT 97ea26e)
-    // + grid reftest H (+20) + text reftest retry2 J2 (+176) + flexbox reftest retry2 I2 (+191)
-    // + css-tables reftest range (+29) + table-layout/border-collapse parsing-valid (+2)
-    // + css-tables parsing-8 (+7: border-spacing/caption-side/empty-cells valid + caption-side/empty-cells/table-layout/border-collapse computed)
-    // + css-tables reftest tables-range (+4: zero-rowspan-001, row-group-order, percent-height-replaced-in-percent-cell.tentative, table-cell-baseline-static-position).
-    // - min-height-table.html (4054 pixels) and min-height-table-2.html
-    //   (484054 pixels) (-2, baseline migration: merged content-box min/max
-    //   sizing behavior remains unpinned pending the table-height tranche).
-    // + css-text-decor parsing jqg8 (+10)
-    // + page-valid + flex-basis-valid + flex-invalid parsing tgag (+3).
-    // + segment-break removable/ignorable exact reftests (+5).
-    // + text-transform capitalize whitespace/abspos exact reftest (+1).
-    // - hyphens-punctuation-001 (-1, 9q1p: container-width re-break exposed
-    //   a false pass; genuine pass needs hyphenation dictionaries).
-    // + text-align end-001..008 (sans 009/010) + start-001..008 + start-010
-    //   (+17, dir-attribute UA rules: explicit-direction and dir=ltr/rtl/auto
-    //   cases now resolve; 009/010 need zero-width RLM handling, follow-up).
-    // - bidi-tab-001 (-1: dir rules made direction real, exposing
-    //   direction-naive tab-stop expansion in RTL spans; needs bidi-aware
-    //   tab stops, follow-up).
-    // + subpixel-table-cell-width-001/002 (+2, glk7 grid text-skip:
-    //   non-element children carry no grid structure).
-    // + segment-break-transformation-ignorable/removable x5 + text-transform-capitalize-034
-    //   (+6, css-text-whitespace #10: multi-node runs, ignorable neighbors, abspos inline).
-    // + CSS Text PASS-only WPT ranges (+25: white-space/text-wrap,
-    //   word-break/overflow-wrap, text-indent, tab-size).
-    // + text-align-last paint-time final-line alignment (+16).
-    // + letter-spacing bridge and hyphens PASS-only range (+6).
-    // + text-transform combinations, full-size-kana, and language tailoring
-    //   PASS-only range (+54).
-    // + css-color invalid parsing probe (9 files, WPT 97ea26e).
-    // + css-backgrounds reftest range (30 new current passes, 8 stale inherited
-    //   pins removed; 400x300 EXACT, WPT 97ea26e, net +22).
-    // quarantine and deprecated stay empty until a developer PR adds a flake or crasher.
-
-    // + flexbox_fbfc (+1, y0zo initial slice: exact 800x600 pass).
-    // + flexbox-overflow-vert-003 (+1, y0zo overflow clip: exact 800x600 pass).
-    // + flexbox gap/wrapping slice (+8, exact 800x600 pass).
-    // + grid item-sizing slice (+2, exact 800x600 pass).
-    // + table flex percentage width (+1, exact 800x600 pass).
-    // + abspos static-position slice (+9, exact 800x600 pass).
-    // + abspos static-position follow-up (+7, exact 800x600 pass).
-    // - inline-flex percentage sizing: one flex-item check restored after
-    //   the Taffy calc resolver was connected; one remains deferred.
-    // + white-space break-spaces narrow-container slice (+2, exact 800x600 pass).
-    // + word-break auto-phrase baseline slice (+2, exact 800x600 pass).
-    // + line-breaking segment-break slice (+3, exact 800x600 pass).
-    // + word-spacing `ch` shaping slice (+1, exact 800x600 pass).
-    // + white-space follow-up slice (+6, exact 800x600 pass).
-    // + CSS Lists marker-position foundation slice (+1, exact static reftest).
-    // + y0zo gap-008-ltr/gap-009-ltr (+2, exact 800x600 passes).
-    // + CSS Text control-chars-000 literal generated-content slice (+1).
-    // + CSS generated-content counter, attr fallback, quote, and image slices (+5).
-    // + CSS generated-content counters() nested-scope slice (+1).
-    // + CSS generated-content before/after literal string slice (+1).
-    // + CSS Text overflow-wrap cluster and min-content slice (+3).
-    // + CSS Text letter-spacing ligatures slice (+1).
-    // + CSS Text writing-system font slice (+1).
-    // + CSS Text text-group-align/text-spacing-trim/hanging-punctuation slice (+28).
-    // + CSS Text shaping slice (+17).
-    // + CSS Text text-autospace PASS-only slice (+2).
-    // + CSS Images gradients and CSS Page image-resource slices (+6).
-    // + CSS Page :left/:right spread-pseudo content-width slice (+1).
-    // + CSS Page named-page column-flex propagation slice (+2).
-    // + CSS Tables absolute-positioned auto-width slice (+2).
-    // + CSS Tables visibility-hidden collapsed-border slice (+1).
-    // + CSS Break forced page-break reftest (+1).
-    // + CSS Break Flexbox print Fulgur v0.40.0 PASS slice (+7).
-    // + CSS Break Flexbox additional Fulgur v0.40.0 PASS slice (+7).
-    // + CSS Break logical min-block-size Fulgur v0.40.0 PASS slice (+2).
-    // + CSS Multi-column nested block-flow exact slice (+4).
-    // + CSS Text white-space/line-breaking resource exact slice (+5).
-    // + CSS Text tab-size spacing-002/003 exact PASS slice (+2).
-    // + CSS Values exact calc nesting/rounding slice (+5).
-    // + CSS Selectors exact structural-selector slice (+23).
-    // + CSS Pseudo exact active-selection/first-letter slice (+2).
-    // + CSS Transforms exact 2D transform-origin/skew slice (+5).
-    // + CSS Borders exact current-color and sub-unit slice (+2).
-    // + CSS Text Decoration inset endpoint smoke (+1).
-    // + CSS Text Decoration fixed underline-offset horizontal smoke (+1).
-    // + CSS Inline block-in-inline margin-collapse smoke (+1).
-    // + CSS Text overflow-wrap continuation across inline spans (+2).
-    // + CSS Tables body stylesheet/subpixel padding exact slice (+1).
-    // + CSS Page out-of-flow named-page exact slice (+2).
-    // - Remove stale CSS Grid percentage-size-subitems-001 PASS pin (-1).
-    // + CSS Page hidden-child named-page boundary exact slice (+1).
-    // + CSS Page inline canvas named-page boundary exact slice (+2).
-    // + CSS Page nested named-page propagation exact slice (+2).
-    // + CSS Text text-indent exact 800x600 review-approved slice (+3).
-    // + CSS Text text-indent percentage content-box exact slice (+3, 002/003/004 with overflow:hidden clip edge).
-    // + CSS Text negative word-spacing exact 800x600 review-approved pair (+1).
-    // + CSS Text line-break:anywhere first-stage exact WPT PASS slice (+21).
-    // + CSS Inline anonymous inline/baseline PASS slice (+2).
-    // + CSS Text Decoration percentage underline-offset exact slice (+1).
-    // - Drop CSS Text shaping/autospace pins that do not pass exactly (-4).
-    // + CSS Text text-autospace vs/zh exact resource slice (+2).
-    // + CSS Inline collapsed whitespace between inline boxes (+1).
-    // + CSS Flexbox order-painting exact 800x600 pair (+1).
-    // + CSS Page basic-pagination exact 800x600 slice (+5).
-    // + CSS Page monolithic-overflow exact 800x600 slice (+5).
-    // + CSS Break widows-orphans paged-text exact 800x600 slice (+11).
-    // + CSS Page fixedpos exact 800x600 slice (+9).
-    // + css/printing fragmented-inline-block exact 800x600 slice (+2).
-    // + CSS Text letter-spacing preserved final newline exact slice (+1).
-    // + CSS Text text-autospace inline-element exact slice (+2).
-    // + CSS Text text-autospace font-backed Latin adjacency exact slice (+2).
-    // + CSS Text font-resolved Arabic ZWJ join exact slice (+2).
-    // + CSS Text writing-system script-tag casing exact slice (+1).
-    // + CSS Text basic overflow-wrap break-word exact slice (+1).
-    // + CSS Text nowrap suppresses overflow-wrap exact slice (+1).
-    // + CSS Text text-justify none exact slice (+1).
-    // + CSS Text word-space-transform:space ZWSP/wbr exact slice (+1).
-    // + CSS Text word-space-transform:ideographic-space ZWSP/wbr exact slice (+1).
-    // + CSS Text word-space-transform:none inline/wbr opt-out exact slice (+2).
-    // + CSS Text word-space-transform:space inline enable exact slice (+1).
-    // + CSS Text no virtual boundaries without auto-phrase exact slice (+1).
-    // + CSS Text no-autospace vs normal exact match+mismatch slice (+1).
-    // + CSS Text ideograph-numeric text-autospace Ahem exact slice (+1).
-    // + CSS Text supplementary ideograph text-autospace exact slice (+1).
-    // + CSS Text full-width collapsed spaces Ahem exact slice (+1).
-    // + CSS Text full-width preserved spaces Ahem exact slice (+1).
-    // + CSS Text Unicode full-width mapping exact slice (+1).
-    // + CSS Text hanging-punctuation last in RTL exact slice (+1).
-    // + CSS Overflow / UI text-overflow clip|ellipsis exact slice (+27).
-    // + CSS Text Decoration horizontal text-emphasis exact slice (+8).
-    // + CSS UI text-overflow into padding exact slice (+1).
-    // + CSS mediaqueries upstream exact pixel references (+22).
-    // + CSS Lists shorthand and inside marker text exact slice (+8).
-    // + CSS2 relative block positioning exact slice (+14).
-    // + CSS Inline image-loaded vertical-align length exact slice (+1).
-    // + Genuine non-floating first-letter pairs (+3), remove two vacuous pins (-2).
-    // + Remeasured baseline pins (+8 PASS, -7 inaccurate pins).
-    // + CSS Overflow inherited Ahem max-width:4ch exact slice (+1).
-    // + CSS2 table baseline, bottom caption and empty-cell exact slice (+18).
-    // + CSS Color contextual background and color-mix exact references (+5).
-    // + CSS Page page area inside page padding and border (+2).
-    // + CSS Backgrounds border-image reftests (+37).
-    // + CSS Display display: contents block, flex and text-only slice (+6).
-    // + CSS Display display: contents on unusual and SVG elements (+3).
-    // - Fourteen pins whose PASS predated the WPT fonts, now expected failures (-14).
-    // + text-spacing-trim-feature-001 pinned by its declared variants (-1, +8).
-    // - Five Ahem reftests whose monospace text hints past a 13px line (-5).
-    // - Pins that fail on Linux with the WPT fonts, now expected failures (-102).
-    // - Testharness and JS-dependent pins the runner cannot evaluate, or already listed in known-issues (-57).
-    // + Vertical flex gaps, a fieldset flex item's overflow clip, and flex item vertical-align fixed (+4).
-    // + A vertical flex container under a horizontal block sized by its content (+1).
-    // + A padded dotted page border inset by the right page margin (+1).
-    // + Sweep passes that survive the vacuous-PASS audit (+2,567).
-    // - Pins that matched only while gradients painted their first color (-14).
-    // + Named-page break candidates and forced-break margins in css-page (+11).
-    // + background-clip: border-area images clipped to the border shape (+3).
-    // + Page count from nested abspos, body height and contain:size overflow,
-    //   and a header repeated over anonymous cells (+5).
-    // + Parsing tests passing with canonical position, alpha, sizing, flex and font-family serialization (+13).
-    // + Ideographic spaces wrapping under break-spaces after the shodo update (+2).
-    // + Weekly vacuity sweep KEEP ids re-audited twice (+358).
-    // + Content alternative text and canonical calc() sums (+3).
-    // + A root element with display: none printing as blank paper (+1).
-    assert_eq!(set.baseline.entries.len(), 4315);
+    // The baseline count is derived from the file instead of pinned, so
+    // parallel changes to the baseline do not conflict on one number. A
+    // duplicated id would collapse in the set and lower `entries.len()`
+    // below the number of data lines, so equality also rejects duplicates.
+    let baseline_path = workspace_expectations_dir().join("raikiri-baseline.txt");
+    let baseline_content =
+        std::fs::read_to_string(&baseline_path).expect("raikiri-baseline.txt should be readable");
+    let baseline_lines = iter_data_lines(&baseline_content).count();
+    assert_eq!(
+        set.baseline.entries.len(),
+        baseline_lines,
+        "raikiri-baseline.txt has duplicate test ids"
+    );
+    // Floor against an accidental truncation or emptying of the file.
+    assert!(
+        baseline_lines >= 4000,
+        "raikiri-baseline.txt shrank to {baseline_lines} entries"
+    );
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
