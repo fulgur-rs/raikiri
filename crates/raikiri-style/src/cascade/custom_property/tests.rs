@@ -2257,6 +2257,17 @@ fn mixed_calc_in_flex_basis_keeps_its_percentage_for_used_value_time() {
         Some("font-size: 10px; flex-basis: calc(-10% + 1em - 10px)"),
     );
     assert_eq!(cv.flex_basis, ComputedFlexBasis::Percent(0.0));
+    // Terms that cancel leave a negative length, clamped as well.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; flex-basis: calc(1em - 1em - 10px)"),
+    );
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Px(0.0));
+    // An `lh` that `line-height: normal` leaves unresolved falls back to
+    // `auto`, as for `width`.
+    let cv = cascade_doc("", "div", Some("line-height: normal; flex-basis: 1lh"));
+    assert_eq!(cv.flex_basis, ComputedFlexBasis::Auto);
 }
 
 #[test]
