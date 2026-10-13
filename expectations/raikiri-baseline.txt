@@ -3072,6 +3072,7 @@ css/css-page/pseudo-first-margin-001-print.html
 css/css-page/pseudo-first-margin-002-print.html
 css/css-page/pseudo-first-margin-003-print.html
 css/css-page/pseudo-first-margin-004-print.html
+css/css-page/root-element-display-none-print.html
 css/css-page/subpixel-page-size-001-print.html
 css/css-page/subpixel-page-size-002-print.html
 css/css-position/absolute-pos-box-inside-fixed-pos-box-with-changing-height.html

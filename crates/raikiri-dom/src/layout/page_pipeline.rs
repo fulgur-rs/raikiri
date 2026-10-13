@@ -635,7 +635,7 @@ pub fn layout_single_page(
     cascade: &CascadeResult,
     page_box: PageBox,
 ) -> Result<(), LayoutError> {
-    layout_single_page_with_table_projection(document, cascade, page_box, false)
+    layout_single_page_with_table_projection(document, cascade, page_box, false, false)
 }
 
 /// The error a layout pass recorded on `document` while taffy ran: a
@@ -659,6 +659,7 @@ fn layout_single_page_with_table_projection(
     cascade: &CascadeResult,
     page_box: PageBox,
     project_explicit_table_parts: bool,
+    paged: bool,
 ) -> Result<(), LayoutError> {
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
@@ -714,6 +715,18 @@ fn layout_single_page_with_table_projection(
 
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
     apply_computed_to_style(document, cascade)?;
+    if paged {
+        if let Some(values) = document.clearance_page_values.clone() {
+            let mut named = cascade.clone();
+            named.page_values = values;
+            clear_floats_at_forced_breaks(document, &named);
+        } else {
+            clear_floats_at_forced_breaks(document, cascade);
+        }
+    } else if !document.forced_break_clearance.is_empty() {
+        document.forced_break_clearance.clear();
+        document.layout_dirty = true;
+    }
     document.table_objects.project_explicit_parts = project_explicit_table_parts;
 
     // Step 2: resolve the paper/content split before shaping.  Text wrapping
@@ -1570,7 +1583,10 @@ pub(crate) fn project_slices_with_control(
     );
     work.check()?;
     let mut text_roots = Vec::new();
-    let Some(body_id) = find_body(document) else {
+    // A root with `display: none` generates no boxes, so its pages carry no
+    // fragments, text, or links.
+    let root_generates_box = cascade.root_element_computed().display != DisplayValue::None;
+    let Some(body_id) = find_body(document).filter(|_| root_generates_box) else {
         return Ok((
             pages,
             text_roots,
@@ -2495,6 +2511,233 @@ fn finite_nonnegative(value: f32) -> f32 {
     }
 }
 
+/// Give the box after each forced page break clearance past the floats
+/// before it.
+///
+/// The box starts a new page, which the floats placed before the break do not
+/// reach. Layout places the whole flow in one pass and pagination then moves
+/// the box down to its page, so without clearance the earlier floats would
+/// still narrow the box and push its own floats aside on the new page
+/// (CSS Fragmentation 3, 3.1: content after a forced break goes to the next
+/// fragmentainer). A change of named page between siblings forces a break
+/// too (CSS Paged Media 3, 4.1).
+fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResult) {
+    let in_flow = |document: &Document, id: usize| {
+        let node = &document.nodes[id];
+        let computed = &cascade.computed[id];
+        node.kind() == NodeKind::Element
+            && node.is_in_document()
+            && !node.is_non_rendered_html_element()
+            && !matches!(
+                computed.display,
+                DisplayValue::None | DisplayValue::Contents
+            )
+            && !matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+    };
+    let is_float =
+        |document: &Document, id: usize| is_floating_box_for_pagination(document, cascade, id);
+    // The in-flow and floating child boxes of `parent`, and its nonempty text
+    // as `None`, with the children of a `display: contents` element standing
+    // in its place.
+    let child_boxes = |document: &Document, parent: usize| {
+        let mut boxes = Vec::new();
+        // `None` stands for the `::before` content of a flattened element.
+        let mut pending: Vec<Option<usize>> = document.nodes[parent]
+            .children
+            .iter()
+            .rev()
+            .map(|&child| Some(child))
+            .collect();
+        while let Some(item) = pending.pop() {
+            let Some(child) = item else {
+                boxes.push(None);
+                continue;
+            };
+            let node = &document.nodes[child];
+            if let crate::node::NodeData::Text(text) = &node.data {
+                if node.is_in_document() && !text.text_content.trim().is_empty() {
+                    boxes.push(None);
+                }
+            } else if node.kind() == NodeKind::Element
+                && node.is_in_document()
+                && !node.is_non_rendered_html_element()
+                && (cascade.computed[child].display == DisplayValue::Contents
+                    || cascade.computed[child].display == DisplayValue::Inline
+                        && in_flow(document, child)
+                        && !is_float(document, child)
+                        && !is_monolithic_for_pagination(document, cascade, child))
+            {
+                // An inline box is content of its parent's line, so its own
+                // break properties do not apply, but pagination still breaks
+                // at the blocks inside it. One without children still makes
+                // a line of its own.
+                if node.children.is_empty()
+                    && cascade.computed[child].display == DisplayValue::Inline
+                {
+                    boxes.push(None);
+                }
+                pending.extend(node.children.iter().rev().map(|&child| Some(child)));
+                if crate::generated_content::is_in_flow_generated_text(
+                    cascade,
+                    child,
+                    raikiri_style::PseudoElem::Before,
+                ) {
+                    pending.push(None);
+                }
+            } else if in_flow(document, child) {
+                // An atomic inline box, a replaced element among them, is
+                // content of its parent's line, which pagination does not
+                // break around or inside.
+                let inline_level = matches!(
+                    cascade.computed[child].display,
+                    DisplayValue::Inline
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::InlineGrid
+                        | DisplayValue::InlineTable
+                ) && !is_float(document, child);
+                boxes.push((!inline_level).then_some(child));
+            }
+        }
+        boxes
+    };
+    // The page value a box ends with: that of its last in-flow content, down
+    // to the deepest box, or `inherited` without one. A monolithic box does
+    // not pass up a descendant's. `trailing` keeps each box's own result, so
+    // nested boxes are each looked at once.
+    let end_page_name = |document: &Document,
+                         trailing: &mut HashMap<usize, Option<String>>,
+                         id: usize,
+                         inherited: Option<String>| {
+        let mut chain = Vec::new();
+        let mut id = id;
+        let mut name = loop {
+            if let Some(name) = trailing.get(&id) {
+                break name.clone();
+            }
+            chain.push(id);
+            if is_monolithic_for_pagination(document, cascade, id) {
+                break None;
+            }
+            let last = child_boxes(document, id)
+                .into_iter()
+                .rev()
+                .find(|child| child.is_none_or(|child| !is_float(document, child)));
+            match last {
+                Some(Some(child)) => id = child,
+                _ => break None,
+            }
+        };
+        for &id in chain.iter().rev() {
+            if page_applies_to_box(document, cascade, id) {
+                name = name.or_else(|| selected_page_name(cascade, id));
+            }
+            trailing.insert(id, name.clone());
+        }
+        name.or(inherited)
+    };
+    let mut trailing = HashMap::new();
+    // Walk the boxes with the page value each inherits. Floats take their
+    // parent's page, and their insides are not walked.
+    let mut cleared = Vec::new();
+    let mut pending = vec![(0_usize, None::<String>)];
+    while let Some((parent, inherited)) = pending.pop() {
+        let mut after_forced_break = false;
+        let mut float_after_break = false;
+        // Generated `::before` content is not an arena child; like text, it
+        // takes the parent's page.
+        let mut previous_page_name = crate::generated_content::is_in_flow_generated_text(
+            cascade,
+            parent,
+            raikiri_style::PseudoElem::Before,
+        )
+        .then(|| inherited.clone());
+        for item in child_boxes(document, parent) {
+            let Some(child) = item else {
+                // Text takes the parent's page and starts the new page itself.
+                after_forced_break = false;
+                float_after_break = false;
+                previous_page_name = Some(inherited.clone());
+                continue;
+            };
+            if is_float(document, child) {
+                // The first float right after a forced break goes to the new
+                // page, so it clears the earlier page's floats too; the floats
+                // after it line up beside it. The break still carries on to
+                // the next in-flow box, which pagination would otherwise leave
+                // on the earlier page. A float's own forced breaks move it
+                // and the boxes after it to the next page the same way, and so
+                // does a change of named page: pagination puts a float on its
+                // parent's page.
+                let named_break = previous_page_name
+                    .as_ref()
+                    .is_some_and(|previous| *previous != inherited);
+                previous_page_name = Some(inherited.clone());
+                if named_break
+                    || page_break_is_forced(document, child, cascade.computed[child].break_before)
+                {
+                    after_forced_break = true;
+                    float_after_break = false;
+                }
+                if after_forced_break && !float_after_break {
+                    document.nodes[child].style.clear = taffy::Clear::Both;
+                    cleared.push(child);
+                    float_after_break = true;
+                }
+                if page_break_is_forced(document, child, cascade.computed[child].break_after) {
+                    after_forced_break = true;
+                    float_after_break = false;
+                }
+                continue;
+            }
+            float_after_break = false;
+            let start_page_name =
+                match propagated_start_page_name(document, cascade, child, inherited.as_deref()) {
+                    (true, name) => name,
+                    (false, _) => inherited.clone(),
+                };
+            let named_break = previous_page_name
+                .as_ref()
+                .is_some_and(|previous| *previous != start_page_name);
+            let forced = after_forced_break
+                || named_break
+                || page_break_is_forced(document, child, cascade.computed[child].break_before);
+            // A break after the last box inside this one is carried out to
+            // the next box, as the paginator does.
+            after_forced_break = page_edge_constraint(document, cascade, child, false).0;
+            previous_page_name = Some(end_page_name(
+                document,
+                &mut trailing,
+                child,
+                inherited.clone(),
+            ));
+            let own_page_name = if page_applies_to_box(document, cascade, child) {
+                selected_page_name(cascade, child).or_else(|| inherited.clone())
+            } else {
+                inherited.clone()
+            };
+            // Pagination does not break inside a monolithic box.
+            if !is_monolithic_for_pagination(document, cascade, child) {
+                pending.push((child, own_page_name));
+            }
+            // Floats on either side belong to the earlier page, so a
+            // one-sided clear is widened too.
+            if forced {
+                document.nodes[child].style.clear = taffy::Clear::Both;
+                cleared.push(child);
+            }
+        }
+    }
+    cleared.sort_unstable();
+    if cleared != document.forced_break_clearance {
+        document.forced_break_clearance = cleared;
+        document.layout_dirty = true;
+    }
+}
+
 fn page_break_is_forced(document: &Document, node_id: usize, value: BreakBetween) -> bool {
     if matches!(value, BreakBetween::Page) {
         return true;
@@ -2696,13 +2939,7 @@ pub fn layout_pages_with_resolver_and_base_url_and_control(
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
     document.mark_in_document_flags();
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)?;
+    resolve_document_images(document, cascade, resolver, base_url)?;
     layout_pages_with_page_geometry_and_control(document, cascade, page_box, &[], &[], control)
 }
 
@@ -2767,13 +3004,7 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
     super::validate_layout_depth(document)?;
     document.page_projection.clear();
     document.mark_in_document_flags();
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)?;
+    resolve_document_images(document, cascade, resolver, base_url)?;
     layout_pages_with_page_geometry_and_control(
         document,
         cascade,
@@ -2782,6 +3013,27 @@ pub fn layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
         page_widths,
         control,
     )
+}
+
+/// Resolve the intrinsic sizes of the document's `<img>` elements. A root
+/// with `display: none` generates no boxes, so none of its images are
+/// rendered and the resolver is not asked for them.
+fn resolve_document_images(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    resolver: &dyn ReplacedResolver,
+    base_url: Option<&url::Url>,
+) -> Result<(), LayoutError> {
+    if cascade.root_element_computed().display == DisplayValue::None {
+        return Ok(());
+    }
+    match base_url {
+        Some(base_url) => {
+            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
+        }
+        None => crate::image_resolve::resolve_images(document, resolver),
+    }
+    .map_err(LayoutError::Resolver)
 }
 
 /// Layout ordinary block flow with an optional per-page content-height schedule.
@@ -2834,7 +3086,21 @@ pub fn layout_pages_with_page_geometry_and_control(
 ) -> Result<Vec<PageSlice>, LayoutError> {
     control.page_limit_reached.set(false);
     control.check_page_index(0)?;
-    layout_single_page_with_table_projection(document, cascade, page_box, true)?;
+    // A root with `display: none` generates no boxes, so there is nothing to
+    // lay out or break into later pages: the document prints as a single
+    // blank page.
+    if cascade.root_element_computed().display == DisplayValue::None {
+        // Fragments and a projection of an earlier layout no longer apply.
+        document.fragment_tree.clear();
+        document.column_rules.clear();
+        document.page_projection.clear();
+        return Ok(vec![PageSlice {
+            page_index: 0,
+            content_origin_y: 0.0,
+            page_name: None,
+        }]);
+    }
+    layout_single_page_with_table_projection(document, cascade, page_box, true, true)?;
     control.check_page_index(0)?;
 
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
@@ -5386,13 +5652,7 @@ pub fn layout_single_page_with_resolver_and_base_url(
     // See “Execution order” above — this must precede `resolve_images`, whose
     // membership gate reads the flags this refreshes.
     document.mark_in_document_flags();
-    match base_url {
-        Some(base_url) => {
-            crate::image_resolve::resolve_images_with_base(document, resolver, Some(base_url))
-        }
-        None => crate::image_resolve::resolve_images(document, resolver),
-    }
-    .map_err(LayoutError::Resolver)?;
+    resolve_document_images(document, cascade, resolver, base_url)?;
     layout_single_page(document, cascade, page_box)
 }
 

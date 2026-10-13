@@ -649,9 +649,12 @@ impl<'a> Page<'a> {
     /// paragraph's first line, listed
     /// before the paragraph's other inline groups: a
     /// [`PaintEvent::PushOpacity`], the content of the first line in the
-    /// order above, and the [`PaintEvent::PopOpacity`]. An inline element's
-    /// boxes go in it only when the element is on no later line; its floats
-    /// and atomic inlines stay with the other lines.
+    /// order above, and the [`PaintEvent::PopOpacity`]. An inline element on
+    /// the first line and on later ones is split by line: in place of its
+    /// [`PaintEvent::Box`], its piece on the first line is a
+    /// [`PaintEvent::LineBox`] in the group, and its other pieces are
+    /// [`PaintEvent::LineBox`] events with the other lines. Floats and atomic
+    /// inlines not on the first line stay with the other lines.
     /// [`Self::text_run_opacity_group`] tells
     /// which line event draws a run: a run of no group belongs to the
     /// `TextLine` event of its line, and any other run to the `GroupTextLine`
@@ -678,7 +681,12 @@ impl<'a> Page<'a> {
     /// The letters of a translucent `::first-letter` and the text of a
     /// translucent `::before` or `::after` belong to that pseudo-element's
     /// group. Its id is not a node of [`Self::dom`]; it is the group of the
-    /// matching [`PaintEvent::GroupTextLine`] events.
+    /// matching [`PaintEvent::GroupTextLine`] events. The fragments of a
+    /// `::first-letter` keep the style they are given for the text they wrap,
+    /// so where its letters come from text with different inherited values,
+    /// or lie in different inline groups, its fragments form one group per
+    /// opacity and enclosing group, each with an id of its own; a fragment
+    /// whose opacity is one forms none.
     pub fn text_run_opacity_group(&self, run: &PositionedGlyphRun<'_>) -> Option<NodeId> {
         self.document.text_run_opacity_group(self.cascade, run)
     }

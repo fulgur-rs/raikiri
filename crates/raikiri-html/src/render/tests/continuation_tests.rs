@@ -274,3 +274,103 @@ fn narrower_later_pages_count_toward_the_page_limit() {
         })
     ));
 }
+
+#[test]
+fn a_named_page_of_another_width_is_laid_out_at_its_own_width() {
+    // The change to the named page forces a break before the wide box, so
+    // the relayout starts the box on a page of its own.
+    let out = run("<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div>first</div><div id='wide' style='page:wide'>second</div>");
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    let (document, _) = out.layout_for_page(1);
+    let widths: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+        .filter(|fragment| {
+            document
+                .get_node(fragment.node().0 as usize)
+                .and_then(|node| node.tag_name())
+                == Some("div")
+        })
+        .map(|fragment| fragment.rect().width)
+        .collect();
+    assert_eq!(widths, vec![400.0]);
+}
+
+#[test]
+fn a_float_below_its_block_does_not_spill_onto_a_relaid_out_page() {
+    // The float hangs below its block on the wide page. A relayout of the
+    // last page without the forced breaks before it would carry the float
+    // onto that page, so the page keeps the earlier layout instead.
+    let out = run("<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div>first</div>\
+        <div style='page:wide'><div style='float:right;margin-top:150px;width:50px;height:50px'></div>x</div>\
+        <div>last</div>");
+    assert_eq!(out.slices.len(), 3);
+    let (document, _) = out.layout_for_page(2);
+    let floats = document
+        .page_fragments(2)
+        .filter(|fragment| fragment.rect().width == 50.0)
+        .count();
+    assert_eq!(floats, 0);
+    assert_eq!(page_lines(&out, 2), vec![vec!["last".to_owned()]]);
+}
+
+#[test]
+fn a_named_page_after_text_beside_a_float_is_laid_out_at_its_own_width() {
+    // The named page's box clears the tall float beside the text before it.
+    // The measurement keeps that clearance, so the box still continues at
+    // the named page's width.
+    let out = run("<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0; font: 10px/10px Ahem }\
+        </style><div style='float:right;width:50px;height:150px'></div>first\
+        <div style='page:wide'>second</div>");
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
+    assert_eq!(out.continuations.len(), 1);
+    let (document, _) = out.layout_for_page(1);
+    let widths: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+        .filter(|fragment| {
+            document
+                .get_node(fragment.node().0 as usize)
+                .and_then(|node| node.tag_name())
+                == Some("div")
+        })
+        .map(|fragment| fragment.rect().width)
+        .collect();
+    assert_eq!(widths, vec![400.0]);
+}
+
+#[test]
+fn a_float_continuing_onto_a_page_counts_as_content_before_its_start() {
+    // The float starts on the first page and continues onto the second,
+    // which starts with the paragraph's later lines.
+    let out = run(&format!(
+        "<style>@page {{ size: 200px 200px; margin: 0 }} body {{ margin: 0 }}\
+         p {{ margin: 0; font: 10px/10px Ahem }}</style>\
+         <div style='float:right;width:50px;height:300px'></div><p>{}</p>",
+        words(120).join(" ")
+    ));
+    assert!(out.slices.len() >= 2);
+    let (document, cascade) = out.layout_for_page(1);
+    let start = document.page_start(cascade, 1).expect("a page start");
+    let before = document.page_content_before(cascade, 1, start.token);
+    let floats: Vec<_> = before
+        .iter()
+        .filter(|&&node| document.get_node(node).and_then(|node| node.tag_name()) == Some("div"))
+        .collect();
+    assert_eq!(floats.len(), 1, "{before:?}");
+}
