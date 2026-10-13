@@ -2229,3 +2229,74 @@ fn a_column_flex_item_keeps_its_flexed_height() {
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 200.0);
     assert_eq!(fragment_rects(&doc, child), vec![(0, 0.0, 0.0, 200.0)]);
 }
+
+#[test]
+fn a_shrunk_column_flex_item_keeps_its_flexed_height() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column;height:100px"),
+    );
+    let parent = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;min-height:0;width:100px;columns:2;column-gap:0"),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:300px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    assert_eq!(
+        fragment_rects(&doc, child),
+        vec![
+            (0, 0.0, 0.0, 100.0),
+            (1, 50.0, 0.0, 100.0),
+            (2, 100.0, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn a_shrunk_column_flex_item_bounds_its_columns_inside_its_padding() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-direction:column;height:100px"),
+    );
+    // The looser maximum height leaves the flexed height in charge.
+    let parent = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;min-height:0;max-height:90px;padding:10px 0;width:100px;\
+             columns:2;column-gap:0",
+        ),
+    );
+    let child = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;height:300px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 100.0);
+    let heights: Vec<f32> = fragment_rects(&doc, child)
+        .into_iter()
+        .map(|(_, _, _, height)| height)
+        .collect();
+    assert_eq!(heights, vec![80.0, 80.0, 80.0, 60.0]);
+}
