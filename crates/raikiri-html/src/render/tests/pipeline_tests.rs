@@ -1562,10 +1562,15 @@ fn pipeline_prints_a_hidden_root_on_one_page() {
     let doc = parse(
         "<html style='display:none'><body>\
          <div style='height:2000px'>a</div>\
-         <div style='break-before:page'>b</div></body></html>",
+         <div style='break-before:page'>b <a href='#x'>c</a></div></body></html>",
     );
     let out = run(&doc);
     assert_eq!(out.slices.len(), 1);
+    // The hidden content leaves nothing on the page.
+    let (document, cascade) = out.layout_for_page(0);
+    assert_eq!(document.page_fragments(0).count(), 0);
+    assert!(document.page_text_runs(cascade, 0).is_empty());
+    assert_eq!(document.page_links(0).count(), 0);
 }
 
 #[test]
@@ -1689,4 +1694,46 @@ fn pipeline_clears_a_named_page_after_leading_text() {
         .map(|fragment| fragment.rect().x)
         .collect();
     assert_eq!(xs, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_a_float_with_its_own_break_before() {
+    // The float's own break moves it to the new page, clear of the earlier
+    // page's float.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div><div>a</div>\
+         <div class='f' style='break-before:page'></div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let floats: Vec<f32> = document
+        .page_fragments(1)
+        .filter(|fragment| fragment.rect().width == 100.0)
+        .map(|fragment| fragment.rect().x)
+        .collect();
+    assert_eq!(floats, vec![300.0]);
+}
+
+#[test]
+fn pipeline_clears_the_box_after_a_float_with_break_after() {
+    // The box after the float starts the new page and does not shorten
+    // beside the earlier page's floats.
+    let doc = parse(
+        "<style>@page { size: 400px 400px; margin: 0 } body { margin: 0 }\
+         .f { float: right; width: 100px; height: 100px }</style>\
+         <div><div class='f'></div></div>\
+         <div class='f' style='break-after:page'></div>\
+         <div style='height:50px; display:flow-root'>b</div>",
+    );
+    let out = run(&doc);
+    assert_eq!(out.slices.len(), 2);
+    let (document, _) = out.layout_for_page(1);
+    let block = document
+        .page_fragments(1)
+        .find(|fragment| fragment.rect().height == 50.0)
+        .expect("the block is on the new page");
+    assert_eq!(block.rect().width, 400.0);
 }

@@ -1508,7 +1508,10 @@ pub(crate) fn project_slices_with_control(
     let mut work = ProjectionWork::new(control, document.fragment_tree.limit);
     work.check()?;
     let mut text_roots = Vec::new();
-    let Some(body_id) = find_body(document) else {
+    // A root with `display: none` generates no boxes, so its pages carry no
+    // fragments, text, or links.
+    let root_generates_box = cascade.root_element_computed().display != DisplayValue::None;
+    let Some(body_id) = find_body(document).filter(|_| root_generates_box) else {
         return Ok((
             pages,
             text_roots,
@@ -2528,11 +2531,20 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 // page, so it clears the earlier page's floats too; the floats
                 // after it line up beside it. The break still carries on to
                 // the next in-flow box, which pagination would otherwise leave
-                // on the earlier page.
+                // on the earlier page. A float's own forced breaks move it
+                // and the boxes after it to the next page the same way.
+                if page_break_is_forced(document, child, cascade.computed[child].break_before) {
+                    after_forced_break = true;
+                    float_after_break = false;
+                }
                 if after_forced_break && !float_after_break {
                     document.nodes[child].style.clear = taffy::Clear::Both;
                     cleared.push(child);
                     float_after_break = true;
+                }
+                if page_break_is_forced(document, child, cascade.computed[child].break_after) {
+                    after_forced_break = true;
+                    float_after_break = false;
                 }
                 continue;
             }
