@@ -1583,6 +1583,34 @@ fn folded_math_functions_keep_a_calc_wrapper() {
     ok(
         &mut rt,
         "d.style.width === 'calc(30px)' && d.style.marginTop === 'calc(1px)' && \
-         d.style.height === '10px' && d.style.maxWidth === 'calc(10px + 5%)'",
+         d.style.height === '10px' && d.style.maxWidth === 'calc(5% + 10px)'",
+    );
+}
+
+#[test]
+fn calc_sums_and_content_read_back_in_canonical_form() {
+    assert_eq!(
+        inline_style_value(
+            Some("border-spacing: calc(10px + 0.5em) calc(10px - 0.5em)"),
+            "border-spacing",
+            false
+        ),
+        "calc(0.5em + 10px) calc(-0.5em + 10px)"
+    );
+    assert_eq!(
+        inline_style_value(Some("--x: calc(10px + 0.5em)"), "--x", false),
+        "calc(10px + 0.5em)"
+    );
+    assert_eq!(
+        inline_style_value(
+            Some("content: counter(n, DECIMAL) / \"alt\" counter(n)"),
+            "content",
+            false
+        ),
+        "counter(n) / \"alt\" counter(n)"
+    );
+    assert_eq!(
+        inline_style_value(Some("content: \"a\" / open-quote"), "content", false),
+        ""
     );
 }

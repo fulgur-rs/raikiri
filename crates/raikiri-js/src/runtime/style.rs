@@ -802,6 +802,18 @@ fn declaration_value(property: &str, value: &str, page: bool) -> Option<String> 
                     value,
                 )
             })
+            .or_else(|| {
+                raikiri_style::property::serialize_content_value(
+                    &property.to_ascii_lowercase(),
+                    value,
+                )
+            })
+            // A custom property keeps its tokens as written.
+            .or_else(|| {
+                (!is_custom)
+                    .then(|| raikiri_style::property::serialize_math_sums(value))
+                    .flatten()
+            })
             .unwrap_or_else(|| value.trim().to_owned()),
     )
 }

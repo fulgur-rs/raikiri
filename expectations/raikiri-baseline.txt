@@ -91,6 +91,8 @@ css/css-break/parsing/widows-valid.html
 css/css-cascade/parsing/all-invalid.html
 css/css-color-adjust/parsing/color-scheme-invalid.html
 css/css-contain/parsing/contain-invalid.html
+css/css-content/parsing/content-counter-valid.html
+css/css-content/parsing/content-valid.html
 css/css-flexbox/parsing/flex-basis-valid.html
 css/css-flexbox/parsing/flex-direction-valid.html
 css/css-flexbox/parsing/flex-flow-invalid.html
@@ -616,6 +618,7 @@ css/css-tables/out-of-order-elements-collapsed-border.html
 css/css-tables/paint/col-paint-htb-rtl.html
 css/css-tables/paint/table-border-paint-caption-change.html
 css/css-tables/parsing/border-collapse-valid.html
+css/css-tables/parsing/border-spacing-valid.html
 css/css-tables/parsing/table-layout-valid.html
 css/css-tables/rowspan-cell-border-after-color.html
 css/css-tables/rules-groups.html
@@ -1021,8 +1024,7 @@ css/css-flexbox/text-overflow-on-flexbox-001.html
 
 # --- css-tables parsing-8 pin 2026-09-15 (border-spacing/caption-side/empty-cells valid + 4 computed; raikiri-style parse+cascade+compute only, no layout wiring) ---
 # border-spacing-valid: all 3 valid accepted (plain lengths direct, calc pair via
-# Deferred — specified calc normalization serialization has no engine surface,
-# same as all calc properties); all 4 invalid rejected (unit tests pin each case).
+# Deferred); all 4 invalid rejected (unit tests pin each case).
 # caption-side / empty-cells valid+computed: keyword as-specified round-trip.
 # table-layout / border-collapse computed: keyword as-specified (valid files
 # already pinned 2026-09-14).

@@ -829,7 +829,8 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + Page count from nested abspos, body height and contain:size overflow,
     //   and a header repeated over anonymous cells (+5).
     // + Parsing tests passing with canonical position, alpha, sizing, flex and font-family serialization (+13).
-    assert_eq!(set.baseline.entries.len(), 3951);
+    // + Content alternative text and canonical calc() sums (+3).
+    assert_eq!(set.baseline.entries.len(), 3954);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
