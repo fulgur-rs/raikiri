@@ -169,15 +169,21 @@ fn an_untraceable_event_source_walks_every_node() {
 /// `spans` translucent spans, laid out and projected on one page.
 fn first_letter_spans(spans: usize) -> (Document, raikiri_style::CascadeResult) {
     let mut document = Document::new();
-    let style = document.append_element(
+    let html = document.append_element(
         Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let style = document.append_element(
+        Some(html),
         "style",
         taffy::Style::default(),
         Some("display:none"),
     );
     document.append_text(style, "p::first-letter{opacity:.5}");
     let body = document.append_element(
-        Some(0),
+        Some(html),
         "body",
         taffy::Style::default(),
         Some("display:block;margin:0;font:10px/10px Ahem"),
