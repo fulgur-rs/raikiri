@@ -2103,7 +2103,7 @@ pub fn resolve_length_or_normal(
 ) -> ComputedLength {
     match specified {
         // Only the gap properties parse a mixed `calc()`, and they resolve
-        // through [`resolve_length_percentage_or_normal`].
+        // through `resolve_length_percentage_or_normal`.
         LengthOrNormal::Normal | LengthOrNormal::Calc(_) => ComputedLength::ZERO,
         LengthOrNormal::Length(l) => resolve_length(l, font_size, own_line_height, ctx),
     }
