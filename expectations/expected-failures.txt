@@ -58,7 +58,6 @@ css/css-text/text-align/text-align-match-parent-02.html | Mismatches on Linux si
 css/css-text/word-break/word-break-keep-all-u002d.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/word-break/word-break-min-content-006.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/content-height-with-scrollbars.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/dynamic-isize-change-004.html | The automatic minimum size of a flex item resolves the percentage in a calc() padding against zero, so the item grows past its flex basis | RAIKIRI-177 | 2026-10-13 | 2026-12-13
 css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
