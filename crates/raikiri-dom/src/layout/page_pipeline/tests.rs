@@ -8552,6 +8552,91 @@ fn a_moved_box_after_a_wrappers_text_still_lengthens_it() {
 }
 
 #[test]
+fn a_moved_box_inside_a_contents_element_lengthens_the_box_around_it() {
+    let (mut wrapper, mut avoiding) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let contents = doc.append_element(
+            Some(wrapper),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        avoiding = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, avoiding), 100.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 110.0);
+}
+
+#[test]
+fn a_formatting_context_keeps_the_moved_boxs_margin_when_it_grows() {
+    // The flow root contains its last child's bottom margin, so a bound it
+    // reaches with that margin no longer holds it.
+    assert_eq!(
+        nested_avoiding_block(
+            "display:flow-root;min-height:100px",
+            "break-inside:avoid;margin-bottom:20px"
+        ),
+        (100.0, 120.0, 2)
+    );
+}
+
+#[test]
+fn an_avoiding_block_in_a_multi_column_body_grid_stays_in_its_column() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:grid;grid-template-columns:50px 50px;margin:0"),
+    );
+    let item = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;height:60px"),
+    );
+    let avoiding = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;height:60px;break-inside:avoid"),
+    );
+    let other = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(other),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(page_flow_y(&doc, avoiding), 60.0);
+    assert_eq!(page_flow_y(&doc, other), 0.0);
+}
+
+#[test]
 fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
     // Auto-height ancestors grow with the moved box and push the block after
     // them down; a fixed-height wrapper keeps its size, so the box overflows

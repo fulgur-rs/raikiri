@@ -4756,9 +4756,16 @@ pub fn layout_pages_with_page_geometry_and_control(
                     {
                         let mut child = node_id;
                         let mut delta = node_delta;
-                        while let Some(parent) = parent_of[child]
+                        let mut next = parent_of[child];
+                        while let Some(parent) = next
                             && parent != body_id
                         {
+                            next = parent_of[parent];
+                            // A `display: contents` element has no box to
+                            // grow; its parent lays the moved box out.
+                            if cascade.computed[parent].display == DisplayValue::Contents {
+                                continue;
+                            }
                             let height = document.nodes[parent].unrounded_layout.size.height;
                             let absorbed =
                                 grown_auto_height(document, cascade, parent, child, delta)
@@ -5243,31 +5250,45 @@ fn grown_auto_height(
     let old = layout.size.height;
     let bounded = old <= min + 0.001 || old >= max - 0.001;
     // The content extent before and after the shift, from the in-flow
-    // children's margin boxes when bottom padding or border keeps the last
-    // child's margin inside the box.
+    // children's margin boxes when bottom padding or border, or a formatting
+    // context of the box's own, keeps the last child's margin inside it
+    // (CSS 2.1 §8.3.1).
     let edges_below = layout.padding.bottom + layout.border.bottom;
+    let contains_margins = edges_below > 0.0
+        || matches!(
+            cascade.computed[parent].display,
+            DisplayValue::FlowRoot | DisplayValue::InlineBlock
+        )
+        || style.overflow.x.is_scroll_container()
+        || style.overflow.y.is_scroll_container();
     let mut before = f32::NEG_INFINITY;
     let mut after = f32::NEG_INFINITY;
     let mut shifted = false;
-    for &child in &node.children {
+    // `display: contents` children generate no box: their children are laid
+    // out as this box's children.
+    let mut children: Vec<usize> = node.children.iter().rev().copied().collect();
+    while let Some(child) = children.pop() {
         let child_node = &document.nodes[child];
+        if cascade.computed[child].display == DisplayValue::Contents {
+            children.extend(child_node.children.iter().rev().copied());
+            continue;
+        }
         if child_node.kind() == NodeKind::Text
-            || matches!(
-                cascade.computed[child].display,
-                DisplayValue::None | DisplayValue::Contents
-            )
+            || cascade.computed[child].display == DisplayValue::None
             || child_node.style.position == taffy::Position::Absolute
             || is_floating_box_for_pagination(document, cascade, child)
         {
             continue;
         }
         let child_layout = &child_node.unrounded_layout;
-        let margin = if edges_below > 0.0 {
+        let margin = if contains_margins {
             child_layout.margin.bottom.max(0.0)
         } else {
             0.0
         };
-        let bottom = child_layout.location.y + child_layout.size.height + margin;
+        let bottom = pagination_child_parent_y(document, parent, child, child_layout.location.y)
+            + child_layout.size.height
+            + margin;
         if child == moved {
             before = before.max(bottom - delta);
             after = after.max(bottom);
@@ -5288,8 +5309,9 @@ fn grown_auto_height(
     Some((unconstrained + growth).clamp(min, max).max(old))
 }
 
-/// Whether a grid, flex or multi-column container lies between `node_id`
-/// and `body_id`: moving such a box would also displace the boxes beside it.
+/// Whether a grid, flex or multi-column container contains `node_id`, up to
+/// and including `body_id`: moving such a box would also displace the boxes
+/// beside it.
 fn has_side_by_side_ancestor(
     document: &Document,
     cascade: &CascadeResult,
@@ -5297,9 +5319,7 @@ fn has_side_by_side_ancestor(
     body_id: usize,
 ) -> bool {
     let mut current = document.parent_of(node_id);
-    while let Some(id) = current
-        && id != body_id
-    {
+    while let Some(id) = current {
         if document.nodes[id].multicol.is_some()
             || matches!(
                 cascade.computed[id].display,
@@ -5310,6 +5330,9 @@ fn has_side_by_side_ancestor(
             )
         {
             return true;
+        }
+        if id == body_id {
+            break;
         }
         current = document.parent_of(id);
     }
