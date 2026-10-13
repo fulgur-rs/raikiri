@@ -388,7 +388,6 @@ pub(crate) fn draw_ifc_lines_with_resources(
                     draw.run.skew(),
                 );
                 let run_transform = run_transform(transform, draw);
-                paint.start_glyphs(draw.group);
                 let scene = paint.target(draw.group);
                 scene.draw_glyphs(
                     &font,

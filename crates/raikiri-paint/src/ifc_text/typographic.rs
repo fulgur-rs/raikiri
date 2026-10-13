@@ -68,7 +68,6 @@ struct Group {
     scene: Scene,
     opacity: f32,
     parent: Option<usize>,
-    insertion: Option<usize>,
     children: Vec<(usize, usize, Scene)>,
 }
 
@@ -183,7 +182,6 @@ impl TypographicPaint {
                                 scene: Scene::new(),
                                 opacity,
                                 parent: group,
-                                insertion: None,
                                 children: Vec::new(),
                             });
                             index
@@ -253,17 +251,6 @@ impl TypographicPaint {
         }
     }
 
-    pub(super) fn start_glyphs(&mut self, mut group: Option<usize>) {
-        while let Some(index) = group {
-            let parent = self.groups[index].parent;
-            if self.groups[index].insertion.is_some() {
-                break;
-            }
-            self.groups[index].insertion = Some(self.target(parent).commands.len());
-            group = parent;
-        }
-    }
-
     pub(super) fn finish(
         mut self,
         scene: &mut impl PaintScene,
@@ -312,9 +299,11 @@ impl TypographicPaint {
                 composite.append_scene(content, Affine::IDENTITY);
                 composite.pop_layer();
             }
-            let insertion = group.insertion;
+            // A group composites after the rest of its parent's paint, like
+            // the other stacking contexts with `z-index: auto` of the
+            // paragraph (CSS Color 4 §3.3; CSS 2.1 Appendix E step 8).
             let parent = group.parent;
-            let insertion = insertion.unwrap_or_else(|| self.target(parent).commands.len());
+            let insertion = self.target(parent).commands.len();
             let child = (insertion, index, composite);
             match parent {
                 Some(parent) => {

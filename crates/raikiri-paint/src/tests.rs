@@ -2309,7 +2309,8 @@ fn padded_dotted_page_border_stays_inside_the_right_page_margin() {
 }
 
 /// A translucent `::before` composites its background and its text as one
-/// group (CSS Color 4 §3.3), and the rest of the paragraph stays outside it.
+/// group (CSS Color 4 §3.3), after the rest of the paragraph, as a stacking
+/// context with `z-index: auto`.
 #[test]
 fn translucent_before_groups_its_box_and_text() {
     use raikiri_html::{ParseOptions, parse};
@@ -2355,7 +2356,7 @@ fn translucent_before_groups_its_box_and_text() {
             .any(|command| matches!(command, RenderCommand::Fill(_)))
     );
     assert_eq!(glyphs(inside), [1]);
-    assert_eq!(glyphs(&scene.commands[pop..]), [3]);
+    assert_eq!(glyphs(&scene.commands[..push]), [3]);
 }
 
 /// The scene of `html` laid out and painted on an A4 page.
@@ -2402,8 +2403,8 @@ fn translucent_before_over_several_lines_is_one_group() {
     assert_eq!(
         command_kinds(&scene),
         [
-            "fill", "push 0.5", "clip", "pop", "glyphs 5", "clip", "pop", "glyphs 5", "clip",
-            "pop", "glyphs 4", "pop", "glyphs 1"
+            "fill", "glyphs 1", "push 0.5", "clip", "pop", "glyphs 5", "clip", "pop", "glyphs 5",
+            "clip", "pop", "glyphs 4", "pop"
         ]
     );
 }

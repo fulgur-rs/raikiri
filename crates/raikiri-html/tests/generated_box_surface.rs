@@ -668,8 +668,8 @@ fn translucent_pseudo_groups_follow_tree_order_and_z_index() {
     );
     let document = lay_out(
         "<p>A<span>B</span></p>",
-        "p{margin:0}span{opacity:.5}\
-         p::before{content:'C';opacity:.25;position:relative;z-index:-1}",
+        "p{margin:0}span{opacity:.5;position:relative;z-index:2}\
+         p::after{content:'C';opacity:.25;position:relative;z-index:1}",
     );
     let page = document.page(0).unwrap();
     assert_eq!(
@@ -677,7 +677,7 @@ fn translucent_pseudo_groups_follow_tree_order_and_z_index() {
         [
             "text A",
             "push 0.25",
-            "box Before",
+            "box After",
             "text C",
             "pop",
             "push 0.5",
