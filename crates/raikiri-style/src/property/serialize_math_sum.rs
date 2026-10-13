@@ -13,13 +13,14 @@ use cssparser::{ParseError, Parser, ParserInput, Token};
 
 use super::calc_serialize::format_css_number;
 use super::css_component_values_are_bounded;
-use super::types::RelativeCalcLengthPercentage;
+use super::parse::parse_length_value;
 
 /// How deeply nested parentheses and `calc()` are followed.
 const MAX_SUM_NESTING: usize = 32;
 
-/// `raw_value` with every top-level `calc()` that is a sum of lengths and
-/// percentages rewritten in its canonical form, or `None` when there is no
+/// `raw_value` with every `calc()` that is a sum of lengths and percentages
+/// rewritten in its canonical form, including those inside other functions
+/// such as `translateX()`, or `None` when there is no
 /// such `calc()` (callers keep the source text).
 pub fn serialize_math_sums(raw_value: &str) -> Option<String> {
     if !css_component_values_are_bounded(raw_value) {
@@ -27,41 +28,97 @@ pub fn serialize_math_sums(raw_value: &str) -> Option<String> {
     }
     let mut input = ParserInput::new(raw_value);
     let mut parser = Parser::new(&mut input);
-    let mut out = String::with_capacity(raw_value.len());
-    let mut copied_up_to = 0;
-    let mut changed = false;
-    loop {
-        parser.skip_whitespace();
-        let start = parser.position().byte_index();
-        let Ok(token) = parser.next() else {
-            break;
-        };
-        let Token::Function(name) = token else {
-            continue;
-        };
-        if !name.eq_ignore_ascii_case("calc") {
-            continue;
-        }
-        let canonical = parser
-            .parse_nested_block(|block| {
-                let terms = parse_sum(block, 0).ok_or_else(|| block.new_custom_error(()))?;
-                block.expect_exhausted()?;
-                Ok::<_, ParseError<'_, ()>>(terms)
-            })
-            .ok()
-            .and_then(|terms| terms.serialize());
-        if let Some(canonical) = canonical {
-            out.push_str(&raw_value[copied_up_to..start]);
-            out.push_str(&canonical);
-            copied_up_to = parser.position().byte_index();
-            changed = true;
-        }
-    }
+    let mut rewrite = Rewrite {
+        source: raw_value,
+        out: String::with_capacity(raw_value.len()),
+        copied_up_to: 0,
+        changed: false,
+    };
+    rewrite.walk(&mut parser, 0);
+    let Rewrite {
+        mut out,
+        copied_up_to,
+        changed,
+        ..
+    } = rewrite;
     if !changed {
         return None;
     }
     out.push_str(&raw_value[copied_up_to..]);
     Some(out.trim().to_owned())
+}
+
+/// The source text being copied with its `calc()` sums rewritten.
+struct Rewrite<'s> {
+    source: &'s str,
+    out: String,
+    /// The end of the source text already copied into `out`.
+    copied_up_to: usize,
+    changed: bool,
+}
+
+impl Rewrite<'_> {
+    /// Rewrites the `calc()` sums among the component values of `parser`,
+    /// following other functions and blocks down to [`MAX_SUM_NESTING`].
+    /// Substitution functions are left as written: their arguments are not
+    /// values of the property.
+    fn walk(&mut self, parser: &mut Parser<'_, '_>, nesting: usize) {
+        loop {
+            parser.skip_whitespace();
+            let start = parser.position().byte_index();
+            let Ok(token) = parser.next() else {
+                break;
+            };
+            let name = match token {
+                Token::Function(name) => Some(name.clone()),
+                Token::ParenthesisBlock | Token::SquareBracketBlock | Token::CurlyBracketBlock => {
+                    None
+                }
+                _ => continue,
+            };
+            let is_calc = name
+                .as_ref()
+                .is_some_and(|name| name.eq_ignore_ascii_case("calc"));
+            if is_calc {
+                let canonical = parser
+                    .parse_nested_block(|block| {
+                        let terms =
+                            parse_sum(block, 0).ok_or_else(|| block.new_custom_error(()))?;
+                        block.expect_exhausted()?;
+                        Ok::<_, ParseError<'_, ()>>(terms)
+                    })
+                    .ok()
+                    .and_then(|terms| terms.serialize());
+                if let Some(canonical) = canonical {
+                    self.out.push_str(&self.source[self.copied_up_to..start]);
+                    self.out.push_str(&canonical);
+                    self.copied_up_to = parser.position().byte_index();
+                    self.changed = true;
+                }
+                continue;
+            }
+            let substitution = name.as_ref().is_some_and(|name| {
+                ["var", "env", "attr", "if", "inherit"]
+                    .iter()
+                    .any(|function| name.eq_ignore_ascii_case(function))
+            });
+            if substitution || nesting >= MAX_SUM_NESTING {
+                continue;
+            }
+            let _ = parser.parse_nested_block(|block| {
+                self.walk(block, nesting + 1);
+                Ok::<_, ParseError<'_, ()>>(())
+            });
+        }
+    }
+}
+
+/// Whether `unit` (ASCII lowercase) is a length unit values accept.
+fn is_length_unit(unit: &str) -> bool {
+    let text = format!("1{unit}");
+    let mut input = ParserInput::new(&text);
+    let mut parser = Parser::new(&mut input);
+    parse_length_value(&mut parser, false).is_some() && parser.is_exhausted()
 }
 
 /// The terms of a sum, one coefficient per unit: `""` for a plain number,
@@ -193,10 +250,8 @@ fn parse_value(input: &mut Parser<'_, '_>, nesting: usize) -> Option<Terms> {
             let unit = unit.to_ascii_lowercase();
             match absolute_length_in_px(&unit) {
                 Some(px) => Terms::single("px".to_owned(), value * px),
-                None => {
-                    RelativeCalcLengthPercentage::from_unit(1.0, &unit)?;
-                    Terms::single(unit, value)
-                }
+                None if is_length_unit(&unit) => Terms::single(unit, value),
+                None => return None,
             }
         }
         Token::ParenthesisBlock => parse_nested_sum(input, nesting)?,

@@ -60,6 +60,30 @@ fn text_around_the_sums_is_kept() {
 }
 
 #[test]
+fn sums_inside_other_functions_are_rewritten() {
+    assert_eq!(
+        sums("translateX(calc(10px + 0.5em)) rotate(1deg)").as_deref(),
+        Some("translateX(calc(0.5em + 10px)) rotate(1deg)")
+    );
+    assert_eq!(
+        sums("min(calc(1px + 1em), 5%)").as_deref(),
+        Some("min(calc(1em + 1px), 5%)")
+    );
+}
+
+#[test]
+fn every_length_unit_takes_part() {
+    assert_eq!(
+        sums("calc(10px + 1ch)").as_deref(),
+        Some("calc(1ch + 10px)")
+    );
+    assert_eq!(
+        sums("calc(1vw + 1ric + 1lh)").as_deref(),
+        Some("calc(1lh + 1ric + 1vw)")
+    );
+}
+
+#[test]
 fn values_it_cannot_fold_are_left_alone() {
     for raw in [
         "10px",
@@ -71,6 +95,8 @@ fn values_it_cannot_fold_are_left_alone() {
         "calc(var(--x) + 1px)",
         "min(1px, 1em)",
         "calc(1deg + 1em)",
+        "calc(1px + 1cap)",
+        "var(--x, calc(1px + 1em))",
     ] {
         assert_eq!(sums(raw), None, "{raw}");
     }
