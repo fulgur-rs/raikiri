@@ -162,9 +162,20 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
                 guard_node_budget(context)?;
             }
             let result = with_state(context, |s| {
-                s.host
+                let removed = s
+                    .host
+                    .document()
+                    .get_node(index)
+                    .map(|n| n.children.clone())
+                    .unwrap_or_default();
+                let result = s
+                    .host
                     .document_mut()
-                    .set_element_text_content(index, &value)
+                    .set_element_text_content(index, &value);
+                if result.is_ok() {
+                    super::stylesheet::note_child_list_change(s, index, &removed);
+                }
+                result
             })?;
             if result.is_err() {
                 // cov:ignore: `set_element_text_content` only rejects an out-of-range or
@@ -191,7 +202,11 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
         Some(NodeKind::Text | NodeKind::Comment | NodeKind::ProcessingInstruction) => {
             // DOM §4.4 textContent setter, CharacterData branch: replace data outright.
             let result = with_state(context, |s| {
-                s.host.document_mut().set_character_data(index, &value)
+                let result = s.host.document_mut().set_character_data(index, &value);
+                if result.is_ok() {
+                    super::stylesheet::note_character_data_change(s, index);
+                }
+                result
             })?;
             if result.is_err() {
                 // cov:ignore: `target_kind` above already resolved this index to a
@@ -269,9 +284,15 @@ pub(crate) fn write_attribute(
     value: &str,
 ) -> JsResult<()> {
     let result = with_state(context, |s| {
-        s.host
+        let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
+        let result = s
+            .host
             .document_mut()
-            .set_element_attribute(index, name, value)
+            .set_element_attribute(index, name, value);
+        if result.is_ok() {
+            super::stylesheet::note_attribute_change(s, index, had_css_type);
+        }
+        result
     })?;
     if let Err(message) = result {
         return Err(throw_dom_exception(
@@ -301,7 +322,10 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     let index = this_element(this, context)?;
     let name = dom_string(args, 0, context)?;
     let removed = with_state(context, |s| {
-        s.host.document_mut().remove_element_attribute(index, &name)
+        let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
+        let removed = s.host.document_mut().remove_element_attribute(index, &name);
+        super::stylesheet::note_attribute_change(s, index, had_css_type);
+        removed
     })?;
     if matches!(removed, Ok(Some(_))) {
         mark_dirty(context)?;
@@ -421,9 +445,16 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         return Err(super::event_loop::abort_error(reason));
     }
     with_state(context, |s| {
+        let removed = s
+            .host
+            .document()
+            .get_node(index)
+            .map(|n| n.children.clone())
+            .unwrap_or_default();
         s.host
             .document_mut()
             .replace_children_from(index, &fragment, root);
+        super::stylesheet::note_child_list_change(s, index, &removed);
     })?;
     mark_dirty(context)?;
     super::dispatch::sync_event_handlers_in_subtree(context, index)?;
