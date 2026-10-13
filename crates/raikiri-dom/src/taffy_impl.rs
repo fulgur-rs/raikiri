@@ -604,9 +604,10 @@ impl Document {
             }
         });
         // A flex container keeps the first baseline of its performed layout,
-        // which a list item's outside marker aligns with. Taffy's grid
-        // baseline does not yet follow the first row's items, so a grid
-        // container records none.
+        // which a list item's outside marker aligns with. A grid container's
+        // baseline is found from the first-row items its detailed grid
+        // information records instead, because Taffy's grid baseline does
+        // not measure an item's own first line.
         if inputs.run_mode == RunMode::PerformLayout
             && self.nodes[usize::from(node_id)].style.display == Display::Flex
         {
@@ -1850,9 +1851,15 @@ impl LayoutGridContainer for Document {
         let grid_column_count = detailed_grid_info.columns.positions.len();
         debug_assert_eq!(children.len(), detailed_grid_info.items.len());
         self.nodes[parent].grid_item_row_starts = children
+            .iter()
+            .zip(detailed_grid_info.items.iter())
+            .map(|(&child, item)| (child, item.row_start))
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        self.nodes[parent].grid_item_column_starts = children
             .into_iter()
             .zip(detailed_grid_info.items.iter())
-            .map(|(child, item)| (child, item.row_start))
+            .map(|(child, item)| (child, item.column_start))
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.nodes[parent].grid_column_count = grid_column_count;

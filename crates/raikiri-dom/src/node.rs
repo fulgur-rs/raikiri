@@ -416,6 +416,9 @@ pub struct Node {
     pub(crate) grid_item_row_starts: Box<[(usize, u16)]>,
     /// Resolved grid column count from Taffy's detailed layout information.
     pub(crate) grid_column_count: usize,
+    /// Taffy's resolved grid column start for each in-flow child, written
+    /// with `grid_item_row_starts` and read only for the children it lists.
+    pub(crate) grid_item_column_starts: Box<[(usize, u16)]>,
     /// Child arena indices (`usize` indices into `Document::nodes`).
     pub children: Vec<usize>,
     /// Arena index of the parent holding this node in its `children`, or
@@ -525,6 +528,7 @@ impl Node {
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
+            grid_item_column_starts: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -578,6 +582,7 @@ impl Node {
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
+            grid_item_column_starts: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -635,6 +640,7 @@ impl Node {
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
+            grid_item_column_starts: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -687,6 +693,7 @@ impl Node {
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
+            grid_item_column_starts: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -736,6 +743,7 @@ impl Node {
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
+            grid_item_column_starts: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -787,6 +795,7 @@ impl Node {
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
+            grid_item_column_starts: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
