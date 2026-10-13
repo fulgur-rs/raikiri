@@ -13,7 +13,7 @@ use cssparser::{ParseError, Parser, ParserInput, Token};
 
 use super::calc_serialize::format_css_number;
 use super::css_component_values_are_bounded;
-use super::parse::parse_length_value;
+use super::parse::{next_numeric_stable, parse_length_value};
 
 /// How deeply nested parentheses and `calc()` are followed.
 const MAX_SUM_NESTING: usize = 32;
@@ -48,6 +48,15 @@ pub fn serialize_math_sums(raw_value: &str) -> Option<String> {
     Some(out.trim().to_owned())
 }
 
+/// Functions whose arguments are substituted before the value is parsed.
+const SUBSTITUTION_FUNCTIONS: [&str; 5] = ["var", "env", "attr", "if", "inherit"];
+
+/// Math functions other than `calc()` (CSS Values 4 §10).
+const MATH_FUNCTIONS: [&str; 21] = [
+    "min", "max", "clamp", "round", "mod", "rem", "sin", "cos", "tan", "asin", "acos", "atan",
+    "atan2", "pow", "sqrt", "hypot", "log", "exp", "abs", "sign", "progress",
+];
+
 /// The source text being copied with its `calc()` sums rewritten.
 struct Rewrite<'s> {
     source: &'s str,
@@ -60,8 +69,9 @@ struct Rewrite<'s> {
 impl Rewrite<'_> {
     /// Rewrites the `calc()` sums among the component values of `parser`,
     /// following other functions and blocks down to [`MAX_SUM_NESTING`].
-    /// Substitution functions are left as written: their arguments are not
-    /// values of the property.
+    /// Substitution functions are left as written, since their arguments are
+    /// not values of the property, and so are other math functions, whose
+    /// canonical form folds a nested `calc()` into their own calculation.
     fn walk(&mut self, parser: &mut Parser<'_, '_>, nesting: usize) {
         loop {
             parser.skip_whitespace();
@@ -97,12 +107,13 @@ impl Rewrite<'_> {
                 }
                 continue;
             }
-            let substitution = name.as_ref().is_some_and(|name| {
-                ["var", "env", "attr", "if", "inherit"]
+            let opaque = name.as_ref().is_some_and(|name| {
+                SUBSTITUTION_FUNCTIONS
                     .iter()
+                    .chain(&MATH_FUNCTIONS)
                     .any(|function| name.eq_ignore_ascii_case(function))
             });
-            if substitution || nesting >= MAX_SUM_NESTING {
+            if opaque || nesting >= MAX_SUM_NESTING {
                 continue;
             }
             let _ = parser.parse_nested_block(|block| {
@@ -243,7 +254,7 @@ fn parse_product(input: &mut Parser<'_, '_>, nesting: usize) -> Option<Terms> {
 /// `<calc-value>`: a number, a percentage, a length, or a parenthesized or
 /// `calc()` sum.
 fn parse_value(input: &mut Parser<'_, '_>, nesting: usize) -> Option<Terms> {
-    let terms = match input.next().ok()?.clone() {
+    let terms = match next_numeric_stable(input).ok()? {
         Token::Number { value, .. } => Terms::single(String::new(), value),
         Token::Percentage { unit_value, .. } => Terms::single("%".to_owned(), unit_value * 100.0),
         Token::Dimension { value, unit, .. } => {

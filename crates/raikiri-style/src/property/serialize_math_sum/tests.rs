@@ -65,9 +65,16 @@ fn sums_inside_other_functions_are_rewritten() {
         sums("translateX(calc(10px + 0.5em)) rotate(1deg)").as_deref(),
         Some("translateX(calc(0.5em + 10px)) rotate(1deg)")
     );
+    // Math functions fold a nested calc() into their own calculation, so
+    // their arguments stay as written.
+    assert_eq!(sums("min(calc(1px + 1em), 5%)"), None);
+}
+
+#[test]
+fn numbers_parse_as_the_property_parsers_read_them() {
     assert_eq!(
-        sums("min(calc(1px + 1em), 5%)").as_deref(),
-        Some("min(calc(1em + 1px), 5%)")
+        sums("calc(0e999px + 1em)").as_deref(),
+        Some("calc(1em + 0px)")
     );
 }
 
