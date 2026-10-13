@@ -2498,7 +2498,8 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 && (cascade.computed[child].display == DisplayValue::Contents
                     || cascade.computed[child].display == DisplayValue::Inline
                         && in_flow(document, child)
-                        && !is_float(document, child))
+                        && !is_float(document, child)
+                        && !is_monolithic_for_pagination(document, cascade, child))
             {
                 // An inline box is content of its parent's line, so its own
                 // break properties do not apply, but pagination still breaks
@@ -2512,11 +2513,13 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                     pending.push(None);
                 }
             } else if in_flow(document, child) {
-                // An atomic inline box is content of its parent's line, which
-                // pagination does not break around or inside.
+                // An atomic inline box, a replaced element among them, is
+                // content of its parent's line, which pagination does not
+                // break around or inside.
                 let inline_level = matches!(
                     cascade.computed[child].display,
-                    DisplayValue::InlineBlock
+                    DisplayValue::Inline
+                        | DisplayValue::InlineBlock
                         | DisplayValue::InlineFlex
                         | DisplayValue::InlineGrid
                         | DisplayValue::InlineTable
