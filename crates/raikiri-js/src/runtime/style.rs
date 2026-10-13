@@ -771,6 +771,9 @@ fn declaration_value(property: &str, value: &str, page: bool) -> Option<String> 
     if !is_custom && !raikiri_style::property::is_supported_property_name(property) {
         return None;
     }
+    if page && raikiri_style::page_rule_drops_value(property, value) {
+        return None;
+    }
     if split_important(value)?.1 {
         return None;
     }

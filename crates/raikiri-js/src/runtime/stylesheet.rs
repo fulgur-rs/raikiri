@@ -104,8 +104,10 @@ const MARGIN_RULE_NAMES: [&str; 16] = [
     "left-top",
 ];
 
-/// Source ranges of the nested at-rules (margin rules) in an `@page` body,
-/// in source order. Declarations between them are skipped.
+/// Source ranges of the margin rules in an `@page` body, in source order:
+/// a margin at-keyword (compared after tokenization, ASCII
+/// case-insensitive) with an empty prelude and a block. Declarations and any
+/// other nested at-rule are skipped, as the `@page` grammar drops them.
 pub(crate) fn nested_at_rule_ranges(body: &str) -> Vec<Range<usize>> {
     let mut input = ParserInput::new(body);
     let mut parser = Parser::new(&mut input);
@@ -146,15 +148,21 @@ impl<'i> AtRuleParser<'i> for NestedRuleRangeParser {
 
     fn parse_prelude<'t>(
         &mut self,
-        _name: CowRcStr<'i>,
+        name: CowRcStr<'i>,
         input: &mut Parser<'i, 't>,
     ) -> Result<(), ParseError<'i, ()>> {
-        while input.next().is_ok() {}
+        if !MARGIN_RULE_NAMES
+            .iter()
+            .any(|margin| name.eq_ignore_ascii_case(margin))
+        {
+            return Err(input.new_custom_error(()));
+        }
+        input.expect_exhausted()?;
         Ok(())
     }
 
-    fn rule_without_block(&mut self, _: (), start: &ParserState) -> Result<Option<usize>, ()> {
-        Ok(Some(start.position().byte_index()))
+    fn rule_without_block(&mut self, _: (), _: &ParserState) -> Result<Option<usize>, ()> {
+        Err(())
     }
 
     fn parse_block<'t>(
@@ -188,19 +196,8 @@ impl<'i> RuleBodyItemParser<'i, Option<usize>, ()> for NestedRuleRangeParser {
 /// `None` when it is anything else.
 fn parse_margin_rule(rule: &str) -> Option<&str> {
     let trimmed = rule.trim();
-    let rules = parse_css_rules(trimmed);
-    let [only] = rules.as_slice() else {
-        return None;
-    };
-    only.body.as_ref()?;
-    if only.source != (0..trimmed.len()) {
-        return None;
-    }
-    let name = only.prelude.strip_prefix('@')?;
-    MARGIN_RULE_NAMES
-        .iter()
-        .any(|margin| name.eq_ignore_ascii_case(margin))
-        .then_some(trimmed)
+    let whole = 0..trimmed.len();
+    matches!(nested_at_rule_ranges(trimmed).as_slice(), [only] if *only == whole).then_some(trimmed)
 }
 
 /// A rule as [`RuleRangeParser`] reports it: the trimmed prelude text, the

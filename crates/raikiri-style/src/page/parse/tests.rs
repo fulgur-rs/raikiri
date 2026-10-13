@@ -12,3 +12,12 @@ fn page_descriptor_values_validate_against_their_grammar() {
     assert!(!is_valid_page_descriptor("bleed", "6pt !important"));
     assert!(!is_valid_page_descriptor("margin", "1in"));
 }
+
+#[test]
+fn page_rule_drops_viewport_lengths_outside_custom_properties() {
+    assert!(page_rule_drops_value("size", "50vw"));
+    assert!(page_rule_drops_value("margin", "1vh"));
+    assert!(!page_rule_drops_value("--x", "1vh"));
+    assert!(!page_rule_drops_value("bleed", "6pt"));
+    assert!(!is_valid_page_descriptor("bleed", "1vh"));
+}

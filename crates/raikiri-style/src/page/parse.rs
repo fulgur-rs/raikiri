@@ -533,10 +533,21 @@ pub(crate) fn parse_page_declaration_block(
 /// Level 3 §7): they are only valid inside a page rule's declaration block.
 pub const PAGE_DESCRIPTOR_NAMES: [&str; 4] = ["size", "marks", "bleed", "page-orientation"];
 
+/// Whether a page rule drops the declaration `name: value` before its
+/// grammar is even consulted: page-context lengths are resolved without a
+/// viewport, so a non-custom declaration using a viewport-percentage length
+/// is invalid there.
+pub fn page_rule_drops_value(name: &str, value: &str) -> bool {
+    !name.starts_with("--") && crate::property::has_viewport_length_in(value)
+}
+
 /// Whether `value` is a valid value for the `@page` descriptor `name`
 /// (ASCII case-insensitive), with no trailing `!important`. Any name outside
 /// [`PAGE_DESCRIPTOR_NAMES`] is not a descriptor and yields `false`.
 pub fn is_valid_page_descriptor(name: &str, value: &str) -> bool {
+    if page_rule_drops_value(name, value) {
+        return false;
+    }
     let mut input = ParserInput::new(value);
     let mut parser = Parser::new(&mut input);
     let parsed = match name.to_ascii_lowercase().as_str() {

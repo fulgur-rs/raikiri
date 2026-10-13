@@ -1425,3 +1425,54 @@ fn page_rule_css_rules_lists_margin_rules_live() {
         "list.length === 0 && first.cssText === '' && first.name === ''",
     );
 }
+
+#[test]
+fn page_rule_margin_rules_follow_the_page_grammar() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = '@page { @foo {} @top-left x {} @top-right; @top-center { content: \"a\" } }'; \
+         document.head.appendChild(styleElement); var pageRule = styleElement.sheet.cssRules[0];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules.length === 1 && pageRule.cssRules[0].name === 'top-center'",
+    );
+    rt.evaluate(
+        "pageRule.insertRule('@top-l\\\\65 ft {}'); pageRule.insertRule('@bottom-left/**/{}', 2);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.cssRules.length === 3 && pageRule.cssRules[0].name === 'top-left' && \
+         pageRule.cssRules[2].name === 'bottom-left' && \
+         (function() { try { pageRule.insertRule('@top-left x {}'); return false; } \
+           catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    rt.evaluate(
+        "pageRule.style.setProperty('size', '50vw'); pageRule.style.setProperty('margin', '1vh');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "pageRule.style.getPropertyValue('size') === '' && pageRule.style.getPropertyValue('margin') === ''",
+    );
+}
+
+#[test]
+fn svg_style_elements_expose_their_sheet() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var svgStyle = document.createElementNS('http://www.w3.org/2000/svg', 'style'); \
+         svgStyle.textContent = 'rect { fill: red }'; document.body.appendChild(svgStyle);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "Object.prototype.toString.call(svgStyle) === '[object SVGStyleElement]' && \
+         svgStyle.sheet === document.styleSheets[0] && svgStyle.sheet.cssRules[0].selectorText === 'rect'",
+    );
+}

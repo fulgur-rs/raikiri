@@ -13,6 +13,7 @@ use raikiri_dom::NodeKind;
 use super::webidl::{dom_string, with_state};
 
 pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// Native data of every node wrapper. The index is never exposed to scripts.
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -42,6 +43,7 @@ pub(crate) struct Protos {
     pub html_element: JsObject,
     pub html_canvas_element: JsObject,
     pub html_style_element: JsObject,
+    pub svg_style_element: JsObject,
     pub canvas_rendering_context_2d: JsObject,
     pub character_data: JsObject,
     pub text: JsObject,
@@ -381,6 +383,9 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &html_element,
         &style_element_members,
     )?;
+    // SVG 2 `SVGStyleElement` also includes `LinkStyle`; there is no
+    // `SVGElement` interface here, so it derives from `Element`.
+    let svg_style_element = derived(context, "SVGStyleElement", &element, &style_element_members)?;
     let canvas_2d_members = [&canvas::CANVAS_RENDERING_CONTEXT_2D_MEMBERS];
     let canvas_2d_result = interface(
         context,
@@ -591,6 +596,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         html_element: html_element.prototype,
         html_canvas_element: html_canvas_element.prototype,
         html_style_element: html_style_element.prototype,
+        svg_style_element: svg_style_element.prototype,
         canvas_rendering_context_2d: canvas_2d.prototype,
         character_data: character_data.prototype,
         text: text.prototype,
@@ -658,19 +664,22 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html, canvas, style) = with_state(context, |s| {
+    let (kind, html, canvas, style, svg_style) = with_state(context, |s| {
         let doc = s.host.document();
         let node = doc.get_node(index);
         let kind = node.map(|n| n.kind());
-        let html = doc.element_namespace_uri(index) == Some(HTML_NS);
+        let namespace = doc.element_namespace_uri(index);
+        let html = namespace == Some(HTML_NS);
         let canvas = doc.is_canvas_element(index);
-        let style = html && node.and_then(|n| n.tag_name()) == Some("style");
-        (kind, html, canvas, style)
+        let is_style = node.and_then(|n| n.tag_name()) == Some("style");
+        let svg_style = is_style && namespace == Some(SVG_NS);
+        (kind, html, canvas, html && is_style, svg_style)
     })?;
     let p = protos(context);
     Ok(match kind {
         Some(NodeKind::Element) if canvas => p.html_canvas_element.clone(),
         Some(NodeKind::Element) if style => p.html_style_element.clone(),
+        Some(NodeKind::Element) if svg_style => p.svg_style_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),
