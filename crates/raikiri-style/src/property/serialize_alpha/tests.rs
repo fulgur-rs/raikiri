@@ -35,6 +35,9 @@ fn unfoldable_text_and_other_properties_are_left_alone() {
     assert_eq!(opacity("calc(1 / 0)"), None);
     assert_eq!(opacity("calc(1e38 * 10)"), None);
     assert_eq!(opacity("calc(-1e38 * 10)"), None);
+    assert_eq!(opacity("1e400"), None);
+    assert_eq!(opacity("-1e400"), None);
+    assert_eq!(opacity("1e400%"), None);
     assert_eq!(opacity("var(--x)"), None);
     assert_eq!(opacity("clamp(1, 2)"), None);
     assert_eq!(serialize_alpha_value("width", "50%"), None);

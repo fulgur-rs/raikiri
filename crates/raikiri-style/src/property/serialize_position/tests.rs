@@ -107,6 +107,16 @@ fn substitution_functions_are_left_alone() {
     assert_eq!(position("var(--p)"), None);
     assert_eq!(position("left VAR(--y)"), None);
     assert_eq!(position("env(--x) top"), None);
+    assert_eq!(position("top calc(var(--y))"), None);
+    assert_eq!(position("left calc(1px + max(2px, ATTR(data-x px)))"), None);
+    assert_eq!(position("calc((var(--x))) top"), None);
+    assert_eq!(
+        serialize_position_value(
+            "background-image",
+            "radial-gradient(at calc(var(--p)) top, red, blue)"
+        ),
+        None
+    );
     assert_eq!(
         serialize_position_value(
             "background-image",

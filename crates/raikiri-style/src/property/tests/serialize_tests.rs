@@ -819,6 +819,8 @@ fn serialize_value_formats_font_family_lists() {
     for (name, expected) in [
         ("serif", "\"serif\""),
         ("Inherit", "\"Inherit\""),
+        ("caption", "\"caption\""),
+        ("Status-Bar", "\"Status-Bar\""),
         ("a  b", "\"a  b\""),
         ("1st", "\"1st\""),
         ("x\"y", "\"x\\\"y\""),

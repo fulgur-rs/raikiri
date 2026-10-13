@@ -52,6 +52,39 @@ impl Component<'_> {
     }
 }
 
+fn is_substitution_function(name: &str) -> bool {
+    ["var", "env", "attr"]
+        .iter()
+        .any(|function| name.eq_ignore_ascii_case(function))
+}
+
+/// Whether `block` uses a substitution function at any nesting depth, as
+/// in `calc(var(--y))`. Consumes the rest of `block`.
+fn contains_substitution(block: &mut Parser<'_, '_>) -> bool {
+    let mut found = false;
+    while let Ok(token) = block.next() {
+        let nested = match token {
+            Token::Function(name) if is_substitution_function(name) => {
+                found = true;
+                true
+            }
+            Token::Function(_)
+            | Token::ParenthesisBlock
+            | Token::SquareBracketBlock
+            | Token::CurlyBracketBlock => true,
+            _ => false,
+        };
+        if nested {
+            found |= block
+                .parse_nested_block(|inner| {
+                    Ok::<_, cssparser::ParseError<'_, ()>>(contains_substitution(inner))
+                })
+                .unwrap_or(false);
+        }
+    }
+    found
+}
+
 /// The canonical text of a whole `<position>` value, or `None` when
 /// `source` is not one.
 fn canonical_position(source: &str) -> Option<String> {
@@ -65,20 +98,16 @@ fn canonical_position(source: &str) -> Option<String> {
             Token::Dimension { .. } | Token::Percentage { .. } | Token::Number { .. } => None,
             // A substitution function may stand for any number of
             // components, so no axis can be inferred before substitution.
-            Token::Function(name)
-                if ["var", "env", "attr"]
-                    .iter()
-                    .any(|function| name.eq_ignore_ascii_case(function)) =>
-            {
-                return None;
-            }
+            Token::Function(name) if is_substitution_function(name) => return None,
             Token::Function(_) => {
-                parser
+                let substituted = parser
                     .parse_nested_block(|block| {
-                        while block.next().is_ok() {}
-                        Ok::<_, cssparser::ParseError<'_, ()>>(())
+                        Ok::<_, cssparser::ParseError<'_, ()>>(contains_substitution(block))
                     })
                     .ok()?;
+                if substituted {
+                    return None;
+                }
                 None
             }
             _ => return None,

@@ -31,10 +31,16 @@ pub fn serialize_alpha_value(name: &str, raw_value: &str) -> Option<String> {
     let value = match token {
         Token::Number { value, .. } => {
             parser.expect_exhausted().ok()?;
+            if !value.is_finite() {
+                return None;
+            }
             return Some(format_css_number(value));
         }
         Token::Percentage { unit_value, .. } => {
             parser.expect_exhausted().ok()?;
+            if !unit_value.is_finite() {
+                return None;
+            }
             return Some(format_css_number(unit_value));
         }
         Token::Function(name) => {

@@ -718,6 +718,12 @@ fn is_reserved_family_word(word: &str) -> bool {
         "ui-sans-serif",
         "ui-monospace",
         "ui-rounded",
+        "caption",
+        "icon",
+        "menu",
+        "message-box",
+        "small-caption",
+        "status-bar",
     ]
     .iter()
     .any(|reserved| word.eq_ignore_ascii_case(reserved))
