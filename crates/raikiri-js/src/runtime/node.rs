@@ -191,7 +191,9 @@ fn set_text_content(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
         Some(NodeKind::Text | NodeKind::Comment | NodeKind::ProcessingInstruction) => {
             // DOM §4.4 textContent setter, CharacterData branch: replace data outright.
             let result = with_state(context, |s| {
-                s.host.document_mut().set_character_data(index, &value)
+                let result = s.host.document_mut().set_character_data(index, &value);
+                super::stylesheet::note_character_data_change(s, index);
+                result
             })?;
             if result.is_err() {
                 // cov:ignore: `target_kind` above already resolved this index to a

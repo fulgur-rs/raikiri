@@ -1928,3 +1928,46 @@ fn detached_margin_rules_keep_their_declaration_object() {
          replaced.style === replacedStyle && replacedStyle.parentRule === null",
     );
 }
+
+#[test]
+fn rule_objects_are_detached_by_in_place_text_data_writes() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red }'; \
+         document.head.appendChild(styleElement); var text = styleElement.firstChild; \
+         var rule = styleElement.sheet.cssRules[0]; var style = rule.style; \
+         text.data = 'div {}'; text.nodeValue = 'p { color: red }'; \
+         var afterData = styleElement.sheet.cssRules[0]; \
+         text.appendData(''); var afterAppend = styleElement.sheet.cssRules[0]; \
+         var plain = document.createTextNode('x'); plain.data = 'y'; \
+         var threw = false; try { style.color = 'blue'; } catch (e) { threw = e instanceof TypeError; }",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "afterData !== rule && afterAppend !== afterData && threw && \
+         styleElement.textContent === 'p { color: red }'",
+    );
+}
+
+#[test]
+fn detached_rules_keep_their_declaration_object() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var styleElement = document.createElement('style'); \
+         styleElement.textContent = 'p { color: red } @page { margin: 1px }'; \
+         document.head.appendChild(styleElement); var rules = styleElement.sheet.cssRules; \
+         var rule = rules[0]; var page = rules[1]; \
+         var style = rule.style; style.expando = 1; var pageStyle = page.style; \
+         styleElement.textContent = '';",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "rule.style === style && rule.style.expando === 1 && page.style === pageStyle && \
+         style.parentRule === null && pageStyle.color === ''",
+    );
+}

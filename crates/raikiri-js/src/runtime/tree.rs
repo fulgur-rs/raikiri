@@ -311,7 +311,9 @@ fn set_node_value(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     })?;
     if is_character_data {
         let result = with_state(context, |s| {
-            s.host.document_mut().set_character_data(index, &value)
+            let result = s.host.document_mut().set_character_data(index, &value);
+            super::stylesheet::note_character_data_change(s, index);
+            result
         })?;
         if result.is_err() {
             // cov:ignore: `is_character_data` above already confirmed a Text,
@@ -735,7 +737,9 @@ fn set_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
         _ => dom_string(args, 0, context)?,
     };
     let result = with_state(context, |s| {
-        s.host.document_mut().set_character_data(index, &value)
+        let result = s.host.document_mut().set_character_data(index, &value);
+        super::stylesheet::note_character_data_change(s, index);
+        result
     })?;
     if result.is_err() {
         // cov:ignore: `this_character_data` above already confirmed a Text,
@@ -772,7 +776,9 @@ fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
     })?;
     let updated = current + &addition;
     let result = with_state(context, |s| {
-        s.host.document_mut().set_character_data(index, &updated)
+        let result = s.host.document_mut().set_character_data(index, &updated);
+        super::stylesheet::note_character_data_change(s, index);
+        result
     })?;
     if result.is_err() {
         // cov:ignore: `this_character_data` above already confirmed a Text,

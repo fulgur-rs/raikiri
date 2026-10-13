@@ -76,8 +76,6 @@ pub(crate) struct State {
     pub css_rule_lists: HashMap<usize, JsObject>,
     /// Per-style-rule `CSSStyleRule` wrappers.
     pub css_style_rules: HashMap<(usize, usize), JsObject>,
-    /// Per-style-rule `CSSStyleDeclaration` wrappers.
-    pub css_rule_styles: HashMap<(usize, usize), JsObject>,
     /// Per-margin-rule `CSSMarginRule` wrappers, keyed by sheet, page rule,
     /// and margin rule index.
     pub css_margin_rules: HashMap<(usize, usize, usize), JsObject>,
@@ -339,7 +337,6 @@ impl DomRuntime {
             style_sheets: HashMap::new(),
             css_rule_lists: HashMap::new(),
             css_style_rules: HashMap::new(),
-            css_rule_styles: HashMap::new(),
             css_margin_rules: HashMap::new(),
             css_sheet_versions: HashMap::new(),
             computed_style_objects: HashMap::new(),

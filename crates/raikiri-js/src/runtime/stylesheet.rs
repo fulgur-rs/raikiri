@@ -380,6 +380,20 @@ pub(crate) struct SheetVersion {
     children: Vec<usize>,
     text: String,
     generation: u64,
+    /// Set when a child text node's data was written in place, which
+    /// replaces the sheet even when the text ends up the same.
+    stale: bool,
+}
+
+/// Notes an in-place write to the data of `node`. When `node` is a child of
+/// a style element whose sheet the CSSOM has handed out objects for, that
+/// sheet was replaced (HTML "update a style block" runs on every child text
+/// content change).
+pub(crate) fn note_character_data_change(state: &mut State, node: usize) {
+    let parent = state.host.document().parent_of(node);
+    if let Some(version) = parent.and_then(|parent| state.css_sheet_versions.get_mut(&parent)) {
+        version.stale = true;
+    }
 }
 
 /// The style element's child node indices. Replacing its contents (a
@@ -412,19 +426,18 @@ fn sync_sheet(state: &mut State, style_element: usize) -> u64 {
             children: children.clone(),
             text: text.clone(),
             generation: 0,
+            stale: false,
         });
-    if version.children == children && version.text == text {
+    if !version.stale && version.children == children && version.text == text {
         return version.generation;
     }
+    version.stale = false;
     version.children = children;
     version.text = text;
     version.generation += 1;
     let generation = version.generation;
     state
         .css_style_rules
-        .retain(|&(sheet, _), _| sheet != style_element);
-    state
-        .css_rule_styles
         .retain(|&(sheet, _), _| sheet != style_element);
     state
         .css_margin_rules
@@ -691,6 +704,8 @@ struct StyleSheetData {
 struct CssStyleRuleData {
     #[unsafe_ignore_trace]
     slot: Rc<RuleSlot>,
+    /// The rule's `style`, created on first access.
+    style: GcRefCell<Option<JsObject>>,
 }
 
 fn define_getter(
@@ -828,8 +843,13 @@ pub(crate) fn css_style_rule_object(
     })?;
     let slot = RuleSlot::new(style_element, generation, rule_index, None);
     let prototype = context.intrinsics().constructors().object().prototype();
-    let object =
-        JsObject::from_proto_and_data(Some(prototype), CssStyleRuleData { slot: slot.clone() });
+    let object = JsObject::from_proto_and_data(
+        Some(prototype),
+        CssStyleRuleData {
+            slot: slot.clone(),
+            style: GcRefCell::new(None),
+        },
+    );
     define_getter(&object, "cssText", css_rule_text, context)?;
     if is_page {
         define_accessor(
@@ -933,21 +953,28 @@ fn css_rule_selector(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
 
 fn css_rule_style(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let slot = css_rule_data(this)?;
+    let Some(object) = this.as_object() else {
+        return Ok(JsValue::undefined()); // cov:ignore: `css_rule_data` accepted `this` as an object.
+    };
+    // Kept on the rule object itself, so a detached rule still returns the
+    // declaration object it handed out.
+    let existing = object
+        .downcast_ref::<CssStyleRuleData>()
+        .and_then(|data| data.style.borrow().clone());
+    if let Some(existing) = existing {
+        return Ok(existing.into());
+    }
     let (_, rule) = rule_info(context, &slot)?;
     if (rule.prelude.starts_with('@') && !is_page_prelude(&rule.prelude)) || rule.body.is_none() {
         return Ok(JsValue::undefined());
-    }
-    let key = (slot.style_element, slot.rule_index);
-    if let Some(existing) = with_state(context, |state| state.css_rule_styles.get(&key).cloned())? {
-        return Ok(existing.into());
     }
     let style = super::style::rule_style_object(context, slot)?;
     if is_page_prelude(&rule.prelude) {
         super::style::install_page_descriptor_accessors(context, &style)?;
     }
-    with_state(context, |state| {
-        state.css_rule_styles.insert(key, style.clone())
-    })?;
+    if let Some(data) = object.downcast_ref::<CssStyleRuleData>() {
+        *data.style.borrow_mut() = Some(style.clone());
+    }
     Ok(style.into())
 }
 
