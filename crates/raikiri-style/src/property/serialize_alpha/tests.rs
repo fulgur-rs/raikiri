@@ -19,6 +19,9 @@ fn math_functions_fold_to_one_calc_keeping_their_type() {
     assert_eq!(opacity("calc(25% * 2)").as_deref(), Some("calc(50%)"));
     assert_eq!(opacity("calc(2 * 25%)").as_deref(), Some("calc(50%)"));
     assert_eq!(opacity("calc(1 + 1)").as_deref(), Some("calc(2)"));
+    assert_eq!(opacity("calc(PI / pi)").as_deref(), Some("calc(1)"));
+    assert_eq!(opacity("calc(e - e)").as_deref(), Some("calc(0)"));
+    assert_eq!(opacity("calc(e / 10)").as_deref(), Some("calc(0.271828)"));
     assert_eq!(opacity("calc((1 + 1) / 4)").as_deref(), Some("calc(0.5)"));
     assert_eq!(
         opacity("clamp(50%, 80%, 70%)").as_deref(),
@@ -36,6 +39,13 @@ fn unfoldable_text_and_other_properties_are_left_alone() {
     assert_eq!(opacity("calc(1e38 * 10)"), None);
     assert_eq!(opacity("calc(-1e38 * 10)"), None);
     assert_eq!(opacity("1e400"), None);
+    assert_eq!(opacity("min(calc(0 / 0), 1)"), None);
+    assert_eq!(opacity("max(1, calc(0 / 0))"), None);
+    assert_eq!(opacity("clamp(0, calc(0 / 0), 1)"), None);
+    assert_eq!(opacity("calc(InFiNiTy)"), None);
+    assert_eq!(opacity("calc(-infinity)"), None);
+    assert_eq!(opacity("calc(nan)"), None);
+    assert_eq!(opacity("calc(foo)"), None);
     assert_eq!(opacity("-1e400"), None);
     assert_eq!(opacity("1e400%"), None);
     assert_eq!(opacity("var(--x)"), None);

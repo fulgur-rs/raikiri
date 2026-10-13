@@ -102,6 +102,10 @@ fn math_function_at(name: &str, block: &mut Parser<'_, '_>, depth: usize) -> Opt
                 return None;
             }
             let values: Vec<f64> = args.iter().map(|arg| arg.0).collect();
+            // NaN is infectious in CSS math, unlike `f64::min`/`f64::max`.
+            if values.iter().any(|value| value.is_nan()) {
+                return Some((f64::NAN, percent));
+            }
             let value = match (lower.as_str(), values.as_slice()) {
                 ("min", _) => values.iter().copied().fold(f64::INFINITY, f64::min),
                 ("max", _) => values.iter().copied().fold(f64::NEG_INFINITY, f64::max),
@@ -160,6 +164,19 @@ fn leaf(input: &mut Parser<'_, '_>, depth: usize) -> Option<Typed> {
     match next_numeric_stable(input).ok()? {
         Token::Number { value, .. } => Some((f64::from(value), false)),
         Token::Percentage { unit_value, .. } => Some((f64::from(unit_value) * 100.0, true)),
+        // Math constants. The non-finite ones fold to a value that keeps the
+        // source text, like any other non-finite result.
+        Token::Ident(ident) => {
+            let value = match ident.to_ascii_lowercase().as_str() {
+                "e" => std::f64::consts::E,
+                "pi" => std::f64::consts::PI,
+                "infinity" => f64::INFINITY,
+                "-infinity" => f64::NEG_INFINITY,
+                "nan" => f64::NAN,
+                _ => return None,
+            };
+            Some((value, false))
+        }
         Token::ParenthesisBlock => input
             .parse_nested_block(|block| {
                 let value = sum(block, depth + 1);
