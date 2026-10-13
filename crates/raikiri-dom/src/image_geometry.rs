@@ -182,9 +182,12 @@ pub struct BackgroundTiles {
 /// used size from [`background_image_dimensions`]. `repeat` tiles the origin
 /// tile in both directions to cover the painting area; `no-repeat` places
 /// only the origin tile; `space` pins the first and last tiles to the
-/// positioning edges with even gaps; `round` rescales the tile so a whole
-/// number fills the positioning area. Axes combine independently. Returns
-/// `None` when nothing can be painted.
+/// positioning edges with even gaps and keeps that pitch over the rest of the
+/// painting area; `round` rescales the tile so a whole number fills the
+/// positioning area, then places and repeats it like `repeat`. Axes combine
+/// independently, except that `round` axes give up tiles to keep the layer
+/// within a bounded tile count. Returns `None` when nothing can be painted,
+/// including a layer that would still need too many tiles.
 pub fn background_tiles(
     positioning: (f64, f64, f64, f64),
     painting: (f64, f64, f64, f64),
@@ -206,34 +209,89 @@ pub fn background_tiles(
     }
     // Effective tile size after `round` rescaling on each axis. `space` and
     // `repeat` never rescale, so their effective size stays the base size.
-    let (tile_w, x_count) = round_axis_tiles(pos_w, image_w, repeat.x);
-    let (tile_h, y_count) = round_axis_tiles(pos_h, image_h, repeat.y);
+    let (mut tile_w, mut x_count) = round_axis_tiles(pos_w, image_w, repeat.x);
+    let (mut tile_h, mut y_count) = round_axis_tiles(pos_h, image_h, repeat.y);
+    // `round` is free to pick fewer, larger tiles, so two `round` axes share
+    // the tile budget instead of filling it one axis at a time.
+    if let (Some(nx), Some(ny)) = (x_count, y_count)
+        && (nx as f64) * (ny as f64) > MAX_BACKGROUND_TILES as f64
+    {
+        let scale = (MAX_BACKGROUND_TILES as f64 / (nx as f64 * ny as f64)).sqrt();
+        let nx = ((nx as f64 * scale).floor() as i64).max(1);
+        let ny = ((ny as f64 * scale).floor() as i64).max(1);
+        (tile_w, x_count) = (pos_w / nx as f64, Some(nx));
+        (tile_h, y_count) = (pos_h / ny as f64, Some(ny));
+    }
     // cov:ignore: defensive for non-finite rescaled tiles; base and positioning are finite here
     if tile_w <= 0.0 || tile_h <= 0.0 || !tile_w.is_finite() || !tile_h.is_finite() {
         return None;
     }
-    let x = axis_origins(
-        pos_x,
-        pos_w,
-        paint_x,
-        paint_x + paint_w,
-        tile_w,
-        image_w,
-        &position.horizontal,
-        &repeat.x,
-        x_count,
-    )?;
-    let y = axis_origins(
-        pos_y,
-        pos_h,
-        paint_y,
-        paint_y + paint_h,
-        tile_h,
-        image_h,
-        &position.vertical,
-        &repeat.y,
-        y_count,
-    )?;
+    let x_origins = |tile_w: f64, x_count: Option<i64>| {
+        axis_origins(
+            pos_x,
+            pos_w,
+            paint_x,
+            paint_x + paint_w,
+            tile_w,
+            image_w,
+            &position.horizontal,
+            &repeat.x,
+            x_count,
+        )
+    };
+    let y_origins = |tile_h: f64, y_count: Option<i64>| {
+        axis_origins(
+            pos_y,
+            pos_h,
+            paint_y,
+            paint_y + paint_h,
+            tile_h,
+            image_h,
+            &position.vertical,
+            &repeat.y,
+            y_count,
+        )
+    };
+    let mut x = x_origins(tile_w, x_count)?;
+    let mut y = y_origins(tile_h, y_count)?;
+    // `round` axes give up tiles until the placed tiles fit; positioning can
+    // add a partial tile at each edge, so the count is checked after placing.
+    let product = |x: &[f64], y: &[f64]| x.len() as f64 * y.len() as f64;
+    for _ in 0..4 {
+        let excess = product(&x, &y) / MAX_BACKGROUND_TILES as f64;
+        if excess <= 1.0 {
+            break;
+        }
+        let fewer =
+            |count: i64, factor: f64| ((count as f64 / factor).floor() as i64).clamp(1, count - 1);
+        match (x_count, y_count) {
+            (Some(nx), Some(ny)) if nx > 1 || ny > 1 => {
+                let factor = excess.sqrt();
+                if nx > 1 {
+                    x_count = Some(fewer(nx, factor));
+                }
+                if ny > 1 {
+                    y_count = Some(fewer(ny, factor));
+                }
+            }
+            (Some(nx), None) if nx > 1 => x_count = Some(fewer(nx, excess)),
+            (None, Some(ny)) if ny > 1 => y_count = Some(fewer(ny, excess)),
+            _ => break,
+        }
+        if let Some(nx) = x_count {
+            tile_w = pos_w / nx as f64;
+            x = x_origins(tile_w, x_count)?;
+        }
+        if let Some(ny) = y_count {
+            tile_h = pos_h / ny as f64;
+            y = y_origins(tile_h, y_count)?;
+        }
+    }
+    // Beyond the budget, like an axis with too many tiles, nothing paints
+    // rather than emitting an unbounded number of tiles.
+    if product(&x, &y) > MAX_BACKGROUND_TILES as f64 {
+        return None;
+    }
     // cov:ignore: defensive for non-finite tiles; origins are finite here
     let x: Vec<f64> = x.into_iter().filter(|value| value.is_finite()).collect();
     let y: Vec<f64> = y.into_iter().filter(|value| value.is_finite()).collect();
@@ -268,17 +326,18 @@ fn round_axis_tiles(
     if positioning_len.is_nan() || positioning_len <= 0.0 || base_len.is_nan() || base_len <= 0.0 {
         return (base_len, Some(1));
     }
-    let count = (positioning_len / base_len).round() as i64;
-    let count = count.max(1);
-    // Guard against absurd counts from tiny base sizes; tiling is bounded by
-    // the painting-area `repeat` path, but `round`/`space` allocate one entry
-    // per tile inside `positioning`.
-    // cov:ignore: defensive bound for degenerate tiny tiles; tested via empty-repeat guard
-    if count > 10_000 {
-        return (base_len, Some(1));
-    }
+    // A tiny base size is capped at a bounded number of larger tiles, which
+    // still fill the positioning area a whole number of times.
+    let count = ((positioning_len / base_len).round() as i64).clamp(1, MAX_ROUND_TILES);
     (positioning_len / count as f64, Some(count))
 }
+
+/// Most tiles one background layer places: enough for one-pixel tiles over
+/// a whole page at 96 dpi, with room to spare.
+const MAX_BACKGROUND_TILES: usize = 1 << 22;
+
+/// Most tiles `round` fits into one axis of the positioning area.
+const MAX_ROUND_TILES: i64 = 10_000;
 
 /// Tile origins for one axis.
 ///
@@ -312,21 +371,7 @@ fn axis_origins(
             if !origin.is_finite() {
                 return None;
             }
-            // Bound the tile fan-out so a degenerate tiny tile cannot allocate
-            // an unbounded origin list; the painting clip keeps the visible
-            // result identical.
-            let start = ((painting_min - origin) / tile).floor() as i64;
-            let end = ((painting_max - origin) / tile).ceil() as i64;
-            // cov:ignore: `end <= start` is defensive for empty painting (checked earlier);
-            // the `> 10_000` bound is covered by the tiny-tile test below
-            if end <= start || end - start > 10_000 {
-                return Some(Vec::new());
-            }
-            Some(
-                (start..end)
-                    .map(|tile_index| origin + tile_index as f64 * tile)
-                    .collect(),
-            )
+            Some(covering_origins(origin, tile, painting_min, painting_max))
         }
         BackgroundRepeatKeyword::NoRepeat => {
             let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
@@ -358,24 +403,41 @@ fn axis_origins(
             if !gap.is_finite() {
                 return Some(Vec::new());
             }
-            Some(
-                (0..count)
-                    .map(|index| positioning_origin + index as f64 * (base + gap))
-                    .collect(),
-            )
+            // The spaced tiles continue at the same pitch over the rest of
+            // the painting area, such as a border box larger than the
+            // padding-box positioning area.
+            Some(covering_origins(
+                positioning_origin,
+                base + gap,
+                painting_min,
+                painting_max,
+            ))
         }
         BackgroundRepeatKeyword::Round => {
             let count = round_count.unwrap_or(1).max(1);
             // cov:ignore: defensive bound for degenerate tiny tiles
-            if count > 10_000 {
+            if count > MAX_ROUND_TILES {
                 let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
                 return origin.is_finite().then(|| vec![origin]);
             }
-            Some(
-                (0..count)
-                    .map(|index| positioning_origin + index as f64 * tile)
-                    .collect(),
-            )
+            // The rescaled tile is placed by `background-position` and then
+            // repeats over the painting area like `repeat`.
+            let origin = positioning_origin + position_offset(*offset, positioning_len - tile);
+            // cov:ignore: defensive for non-finite offsets; positioning and tile are finite here
+            if !origin.is_finite() {
+                return None;
+            }
+            let origins = covering_origins(origin, tile, painting_min, painting_max);
+            if origins.is_empty() {
+                // A painting area too large to cover tile by tile keeps the
+                // tiles that fill the positioning area.
+                return Some(
+                    (0..count)
+                        .map(|index| positioning_origin + index as f64 * tile)
+                        .collect(),
+                );
+            }
+            Some(origins)
         }
         // cov:ignore: defensive fallback for future repeat keywords
         _ => {
@@ -386,6 +448,24 @@ fn axis_origins(
             Some(vec![origin])
         }
     }
+}
+
+/// Tile origins at `pitch` intervals through `origin` that cover the painting
+/// span from `painting_min` to `painting_max`.
+///
+/// The fan-out is bounded so a degenerate tiny tile cannot allocate an
+/// unbounded origin list; such an axis paints nothing.
+fn covering_origins(origin: f64, pitch: f64, painting_min: f64, painting_max: f64) -> Vec<f64> {
+    let start = ((painting_min - origin) / pitch).floor() as i64;
+    let end = ((painting_max - origin) / pitch).ceil() as i64;
+    // cov:ignore: `end <= start` is defensive for empty painting (checked earlier);
+    // the `> 10_000` bound is covered by the tiny-tile test
+    if end <= start || end - start > 10_000 {
+        return Vec::new();
+    }
+    (start..end)
+        .map(|tile_index| origin + tile_index as f64 * pitch)
+        .collect()
 }
 
 /// Resolve one position edge against the free space on its axis.

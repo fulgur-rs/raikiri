@@ -6,6 +6,7 @@ use raikiri_style::property::ContentComponent;
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
+mod gradient_tests;
 mod image_sharing_tests;
 
 /// The conic gradient a computed `background-image` holds.
@@ -2920,8 +2921,9 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         &repeat,
     );
     assert_eq!(background_fill_count(&nonfinite_paint), 0);
-    // Round with zero positioning width falls back to one tile on that axis
-    // while the other axis still rounds (50/10 = 5 tiles).
+    // Round with zero positioning width keeps the natural tile width on that
+    // axis, which still repeats across the 100px painting area (5 columns),
+    // while the other axis rounds (50/10 = 5 rows).
     let (round_position, round) = background_repeat_fixture("round", "0px 0px");
     let mut zero_round = Scene::new();
     paint_background_image(
@@ -2935,7 +2937,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
         &round_position,
         &round,
     );
-    assert_eq!(background_fill_count(&zero_round), 5);
+    assert_eq!(background_fill_count(&zero_round), 25);
     // Space with zero positioning width falls back to a single tile on that axis.
     let (zero_space_position, zero_space) = background_repeat_fixture("space", "0px 0px");
     let mut zero_space_scene = Scene::new();
@@ -5592,4 +5594,89 @@ fn a_border_image_is_rasterized_at_the_scale_its_parts_are_drawn() {
         Some(&recorder),
     );
     assert_eq!(recorder.sizes.borrow().as_slice(), [(90.0, 90.0)]);
+}
+
+#[test]
+fn fixed_box_with_auto_insets_keeps_its_static_position_on_every_page() {
+    let mut document = Document::new();
+    let auto_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("position: fixed"),
+    );
+    let left_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("position: fixed; left: 10px"),
+    );
+    let percent_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("position: fixed; top: calc(10% + 5px)"),
+    );
+    let bottom_id = document.append_element(
+        Some(document.root_index()),
+        "div",
+        taffy::Style::default(),
+        Some("position: fixed; bottom: calc(50% - 10px)"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let layout = taffy::Layout::new();
+    let place = |id: usize, page_origin: f32| {
+        fixed_position_px(
+            &cascade.computed[id],
+            &layout,
+            (8.0, 48.0),
+            false,
+            800.0,
+            page_origin,
+            784.0,
+            1000.0,
+        )
+    };
+    // The static position is measured from the first page and repeated.
+    assert_eq!(place(auto_id, 0.0), Some((8.0, 48.0)));
+    assert_eq!(place(auto_id, 1000.0), Some((8.0, 1048.0)));
+    // Only the axis whose insets are both auto keeps the static position.
+    assert_eq!(place(left_id, 1000.0), Some((10.0, 1048.0)));
+    // Percentages resolve against the page area instead.
+    assert_eq!(place(percent_id, 1000.0), Some((8.0, 1105.0)));
+    assert_eq!(place(bottom_id, 1000.0), Some((8.0, 1510.0)));
+    // A static position far off the page is not pulled back onto it.
+    let off_page = fixed_position_px(
+        &cascade.computed[auto_id],
+        &layout,
+        (-5000.0, -9000.0),
+        false,
+        800.0,
+        1000.0,
+        784.0,
+        1000.0,
+    );
+    assert_eq!(off_page, Some((-5000.0, -8000.0)));
+}
+
+#[test]
+fn a_standalone_after_paints_after_its_deferred_lines() {
+    let (_, _, scene, _) = generated_scene(
+        r#"div::after { content: "YY"; position: absolute }"#,
+        |doc, div| {
+            doc.append_text(div, "x");
+        },
+    );
+    let runs: Vec<usize> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .collect();
+    // The paragraph's one-glyph line comes first, then the positioned
+    // two-glyph `::after`.
+    assert_eq!(runs, [1, 2]);
 }

@@ -681,16 +681,18 @@ fn deep_plain_wrapper_clips_use_the_padded_parent_and_column_origins() {
     let left = Some(raikiri_traits::PaintRect::new(6.0, 25.0, 40.0, 40.0));
     let middle = Some(raikiri_traits::PaintRect::new(66.0, 25.0, 40.0, 40.0));
     let right = Some(raikiri_traits::PaintRect::new(126.0, 25.0, 40.0, 40.0));
+    // The multicol block paints below the inline content of its layer, so
+    // the lines of the paragraphs around it come after its columns.
     assert_eq!(
         line_clips,
         [
-            (0, None),
             (0, left),
             (1, left),
             (2, middle),
             (3, middle),
             (4, right),
             (5, right),
+            (0, None),
             (0, None),
         ]
     );

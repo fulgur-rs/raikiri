@@ -823,8 +823,9 @@ fn load_from_workspace_root_reads_the_header_only_files() {
     // + A vertical flex container under a horizontal block sized by its content (+1).
     // + A padded dotted page border inset by the right page margin (+1).
     // + Sweep passes that survive the vacuous-PASS audit (+2,567).
+    // - Pins that matched only while gradients painted their first color (-14).
     // + Named-page break candidates and forced-break margins in css-page (+11).
-    assert_eq!(set.baseline.entries.len(), 3944);
+    assert_eq!(set.baseline.entries.len(), 3930);
     for id in [
         "css/css-pseudo/first-letter-004.html",
         "css/css-pseudo/first-letter-005.html",
