@@ -66,11 +66,16 @@ css/css-animations/parsing/animation-play-state-invalid.html
 css/css-animations/parsing/animation-range-end-invalid.html
 css/css-animations/parsing/animation-range-start-invalid.html
 css/css-animations/parsing/animation-timing-function-invalid.html
+css/css-backgrounds/parsing/background-attachment-valid.html
 css/css-backgrounds/parsing/background-clip-invalid.html
+css/css-backgrounds/parsing/background-clip-valid.html
 css/css-backgrounds/parsing/background-origin-invalid.html
+css/css-backgrounds/parsing/background-origin-valid.html
 css/css-backgrounds/parsing/background-position-valid.html
 css/css-backgrounds/parsing/background-position-x-invalid.html
 css/css-backgrounds/parsing/background-position-y-invalid.html
+css/css-backgrounds/parsing/background-repeat-valid.html
+css/css-backgrounds/parsing/background-size-valid.html
 css/css-backgrounds/parsing/border-color-invalid.html
 css/css-backgrounds/parsing/border-image-invalid.html
 css/css-backgrounds/parsing/border-image-outset-invalid.html
@@ -223,7 +228,6 @@ css/css-logical/parsing/min-inline-size-invalid.html
 css/css-backgrounds/background-attachment-fixed-border-radius-offset.html
 css/css-backgrounds/background-attachment-fixed-inline-scrolled.html
 css/css-backgrounds/background-attachment-fixed-inside-transform-1.html
-css/css-backgrounds/background-attachment-margin-root-001.html
 css/css-backgrounds/background-attachment-margin-root-002.html
 css/css-backgrounds/background-clip-007.html
 css/css-backgrounds/background-clip-008.html
