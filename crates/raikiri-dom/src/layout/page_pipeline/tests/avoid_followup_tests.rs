@@ -375,7 +375,11 @@ fn a_grid_item_in_an_explicit_auto_row_grows_the_grid() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:60px");
-        let grid = block(doc, body, "display:grid;grid-template-rows:auto");
+        let grid = block(
+            doc,
+            body,
+            "display:grid;grid-template-rows:auto repeat(2, auto)",
+        );
         ids.push(grid);
         let item = block(doc, grid, "display:block");
         block(doc, item, "display:block;height:20px");
