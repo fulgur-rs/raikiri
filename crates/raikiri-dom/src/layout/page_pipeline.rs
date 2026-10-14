@@ -4971,8 +4971,8 @@ pub fn layout_pages_with_page_geometry_and_control(
             let line_block_parent = parent_of[node_id]
                 .filter(|parent_id| {
                     !uses_positioned_coordinates
-                        && !(checked_block_text.contains(parent_id)
-                            && checked_orphans_widows.contains(parent_id))
+                        && (!checked_block_text.contains(parent_id)
+                            || !checked_orphans_widows.contains(parent_id))
                 })
                 .and_then(|parent_id| {
                     if document.layout_parent_of(parent_id)? == body_id {
