@@ -74,6 +74,15 @@ pub(crate) fn resolve_calc(val: *const (), basis: f32) -> f32 {
     }
 }
 
+/// Whether a `calc()` payload handle has a percentage term, which needs a
+/// basis to resolve.
+#[allow(unsafe_code)]
+pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
+    // The handle is valid for this layout pass, as in `resolve_calc`.
+    let calc = unsafe { &*(val as *const ArenaCalc) };
+    calc.value.percent != 0.0
+}
+
 /// Resolve a padding or border length of an ifc root against the containing
 /// block's inline size.
 fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> f32 {
@@ -911,11 +920,17 @@ fn ifc_content_width_bounds(
     )
 }
 
-/// Drops a percentage or `calc()` bound, which cannot resolve against an
-/// indefinite containing block (CSS 2.1 §10.7).
+/// Drops a percentage bound, or a `calc()` one with a percentage term, which
+/// cannot resolve against an indefinite containing block (CSS 2.1 §10.7).
 fn ifc_length_only(value: taffy::LengthPercentageAuto) -> taffy::LengthPercentageAuto {
     let raw = value.into_raw();
-    if !raw.is_calc() && raw.tag() == taffy::CompactLength::LENGTH_TAG {
+    // Calc pointers carry address bits in `tag()`, so test them first.
+    let length = if raw.is_calc() {
+        !calc_has_percentage(raw.calc_value())
+    } else {
+        raw.tag() == taffy::CompactLength::LENGTH_TAG
+    };
+    if length {
         value
     } else {
         taffy::LengthPercentageAuto::auto()
@@ -947,7 +962,6 @@ fn ifc_content_axis_bounds(
     dimension_basis: Option<f32>,
     edge_basis: Option<f32>,
 ) -> (f32, f32) {
-    let basis = dimension_basis.unwrap_or(0.0);
     let edge_basis = edge_basis.unwrap_or(0.0);
     let resolve_lp = |value: taffy::LengthPercentage| {
         let raw = value.into_raw();
@@ -968,12 +982,20 @@ fn ifc_content_axis_bounds(
     let resolve_dim = |value: taffy::LengthPercentageAuto, auto: f32| {
         let raw = value.into_raw();
         // Calc pointers carry address bits in `tag()`, so test them first.
+        // A percentage of an indefinite basis behaves as the initial value,
+        // as taffy's leaf sizing resolves it.
         let resolved = if raw.is_calc() {
-            resolve_calc(raw.calc_value(), basis)
+            match dimension_basis {
+                Some(basis) => resolve_calc(raw.calc_value(), basis),
+                None if !calc_has_percentage(raw.calc_value()) => {
+                    resolve_calc(raw.calc_value(), 0.0)
+                }
+                None => return auto,
+            }
         } else {
-            match raw.tag() {
-                taffy::CompactLength::LENGTH_TAG => raw.value(),
-                taffy::CompactLength::PERCENT_TAG => raw.value() * basis,
+            match (raw.tag(), dimension_basis) {
+                (taffy::CompactLength::LENGTH_TAG, _) => raw.value(),
+                (taffy::CompactLength::PERCENT_TAG, Some(basis)) => raw.value() * basis,
                 _ => return auto,
             }
         };
@@ -1039,7 +1061,8 @@ struct IfcMeasure {
     /// the height of its columns.
     column_height: Option<f32>,
     /// The root's definite content-box height, when it has one: the basis
-    /// for the percentage heights of its floats and atomic inlines.
+    /// for the percentage heights of its floats and atomic inlines and for
+    /// the vertical percentage offsets of its relative inline boxes.
     definite_height: Option<f32>,
 }
 
@@ -1219,9 +1242,28 @@ fn measure_ifc_root(
             height: known_height.unwrap_or(0.0),
         }
     };
+    // A percentage `top` or `bottom` of an inline element refers to the
+    // root's content height when it is definite: the known height or the
+    // root's own `height`. A vertical root's content-sized height is not.
+    let definite_height = known_height.or(measure.definite_height);
+    // A percentage `left` or `right` refers to the whole content box, not to
+    // the column the lines are broken in. A vertical root's physical width
+    // is settled by the layout below, which resolves against it.
+    let containing_width = (!vertical).then_some(width);
+    // The root's paragraph was taken above, so it is present.
+    tree.nodes[idx].ifc.iter_mut().for_each(|root| {
+        root.definite_height = definite_height;
+        root.containing_width = containing_width;
+    });
     let axes = IfcAxes::new(writing_mode, direction);
-    let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
-    geometry.definite_height = measure.definite_height;
+    // Every geometry of the root keeps its definite height, also when the
+    // auto-width loop below lays it out again at a new width.
+    let geometry_of = |content_size| {
+        let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+        geometry.definite_height = measure.definite_height;
+        geometry
+    };
+    let mut geometry = geometry_of(content_size);
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
@@ -1247,7 +1289,7 @@ fn measure_ifc_root(
                 break;
             }
             content_size.width = block_size;
-            geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+            geometry = geometry_of(content_size);
             lines = crate::layout::ifc::boxes::layout_with_boxes_in(
                 tree,
                 idx,
@@ -1263,7 +1305,7 @@ fn measure_ifc_root(
         }
         if (block_size - geometry.content_size.width).abs() > 0.01 {
             content_size.width = block_size;
-            geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+            geometry = geometry_of(content_size);
         }
         (lines, block_size)
     } else {

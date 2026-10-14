@@ -1252,7 +1252,7 @@ pub(super) fn parse_inset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    let length = parse_length_value(input, false)?;
+    let length = parse_length_value(input, true)?;
     Some(LengthOrAuto::Length(length))
 }
 
