@@ -337,6 +337,30 @@ fn the_first_letter_continues_after_annotations_in_the_base_text() {
 }
 
 #[test]
+fn annotations_of_an_unplanned_ruby_complete_the_first_letter() {
+    let mut text = 0;
+    let fixture = sheet_fixture(
+        "div::first-letter { font-size: 20px } rt::after { content: 'y' }",
+        "",
+        |doc, root| {
+            let container = ruby(doc, root);
+            rb(doc, container, "(");
+            rt(doc, container, "x");
+            text = doc.append_text(root, "AB");
+        },
+    );
+    let runs = runs(fixture);
+    let xs: Vec<f32> = runs
+        .iter()
+        .filter(|run| run.0 == text)
+        .map(|run| run.2.0)
+        .collect();
+    // Generated content keeps the ruby inline, so the visible `x` completes
+    // the first letter and `AB` stays one run.
+    assert_eq!(xs.len(), 1, "{runs:?}");
+}
+
+#[test]
 fn a_forced_break_in_a_base_ends_the_first_letter() {
     let mut text = 0;
     let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
@@ -509,6 +533,39 @@ fn annotations_sit_over_their_bases() {
     assert!(!base.1);
     assert!(annotation.1);
     assert!(annotation.2.1 < base.2.1, "{runs:?}");
+}
+
+#[test]
+fn inter_character_annotations_keep_their_glyphs_upright() {
+    let mut text = 0;
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aa");
+        let annotation = text_element(
+            doc,
+            container,
+            "rt",
+            "display:ruby-text;font-size:5px;ruby-position:inter-character",
+            "xx",
+        );
+        text = doc.nodes[annotation].children[0];
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = PositionedLines::new(&doc, &cascade, root, None).expect("lines");
+    let run = lines
+        .lines()
+        .flat_map(|line| line.runs)
+        .find(|run| run.owner == text)
+        .expect("annotation run");
+    // The annotation's vertical line is turned beside the base, and its
+    // upright glyphs turn back with it to stand upright in the paragraph.
+    let axes = run.glyph_transform();
+    assert_eq!(
+        (axes.inline_x, axes.inline_y, axes.block_x, axes.block_y),
+        (1.0, 0.0, 0.0, 1.0),
+        "{axes:?}"
+    );
 }
 
 #[test]

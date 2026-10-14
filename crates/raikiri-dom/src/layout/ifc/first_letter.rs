@@ -164,10 +164,13 @@ impl FirstLetter {
                             }
                             // Ruby annotations sit beside the base text: the
                             // first letter continues in the base text after them.
+                            // A ruby that falls back to inline layout keeps its
+                            // annotations in the text stream.
                             if matches!(
                                 cv.display,
                                 DisplayValue::RubyText | DisplayValue::RubyTextContainer
-                            ) {
+                            ) && is_planned_annotation(doc, cascade, id)
+                            {
                                 continue;
                             }
                             if cv.display != DisplayValue::Contents {
@@ -712,4 +715,17 @@ impl PredecessorCache {
         }
         blocked
     }
+}
+
+/// Whether the ruby annotation `id` is laid out beside its base, i.e. its
+/// nearest ruby container is planned as ruby rather than projected inline.
+fn is_planned_annotation(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let mut current = doc.parent_of(id);
+    while let Some(ancestor) = current {
+        if cascade.computed[ancestor].display.is_ruby_container() {
+            return super::ruby::plan(doc, cascade, ancestor).is_some();
+        }
+        current = doc.parent_of(ancestor);
+    }
+    false
 }

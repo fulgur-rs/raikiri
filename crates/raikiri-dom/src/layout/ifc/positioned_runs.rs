@@ -51,6 +51,16 @@ pub struct PositionedRun<'a> {
     pub annotation: Option<AnnotationRun<'a>>,
 }
 
+impl PositionedRun<'_> {
+    /// The run's glyph axes in the paragraph's logical coordinates.
+    pub fn glyph_transform(&self) -> shodo::GlyphTransform {
+        self.annotation.map_or_else(
+            || self.run.glyph_transform(),
+            |annotation| annotation.glyph_transform,
+        )
+    }
+}
+
 /// Where a run of a ruby annotation comes from.
 #[derive(Clone, Copy, Debug)]
 pub struct AnnotationRun<'a> {
@@ -64,6 +74,10 @@ pub struct AnnotationRun<'a> {
     /// Where the annotation falls in the reading order of the paragraph
     /// line's text: the end of the text of the base it annotates.
     pub text_offset: usize,
+    /// The run's glyph axes in the paragraph's logical coordinates: the
+    /// run's own axes turned with its annotation's placement, as for an
+    /// inter-character annotation laid out in a vertical line.
+    pub glyph_transform: shodo::GlyphTransform,
 }
 
 /// An affine map from the logical coordinates of a line holding ruby
@@ -79,6 +93,18 @@ impl Placement {
     pub(super) fn apply(self, inline: f32, block: f32) -> (f32, f32) {
         let [ii, ib, io, bi, bb, bo] = self.0;
         (ii * inline + ib * block + io, bi * inline + bb * block + bo)
+    }
+
+    /// The glyph axes `axes` of a run in the placed line, in the paragraph's
+    /// logical coordinates.
+    pub(super) fn glyph_transform(self, axes: shodo::GlyphTransform) -> shodo::GlyphTransform {
+        let [ii, ib, _, bi, bb, _] = self.0;
+        shodo::GlyphTransform {
+            inline_x: ii * axes.inline_x + ib * axes.block_x,
+            inline_y: ii * axes.inline_y + ib * axes.block_y,
+            block_x: bi * axes.inline_x + bb * axes.block_x,
+            block_y: bi * axes.inline_y + bb * axes.block_y,
+        }
     }
 
     /// The placement of an annotation of a line placed by `self`: shodo's
@@ -481,6 +507,7 @@ impl<'a> PositionedLines<'a> {
                             line,
                             baseline,
                             text_offset,
+                            glyph_transform: placement.glyph_transform(run.glyph_transform()),
                         }),
                     });
                 }
