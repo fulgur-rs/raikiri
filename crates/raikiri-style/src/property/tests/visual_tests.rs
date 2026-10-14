@@ -1455,13 +1455,16 @@ fn background_image_keeps_mixed_calc_stop_positions_and_radii() {
         RadialSize::Circle(LengthPercentageOrCalc::RelativeCalc(_))
     ));
     // A circle radius is a `<length>`, so a percentage term is invalid.
-    assert_eq!(
-        super::box_model_tests::parse_grammar(
-            "radial-gradient(circle calc(10% + 1em), red, blue)",
-            "background-image"
-        ),
-        None
-    );
+    for size in ["calc(10% + 1em)", "calc(10% - 10% + 5px)", "calc(0% + 1em)"] {
+        assert_eq!(
+            super::box_model_tests::parse_grammar(
+                &format!("radial-gradient(circle {size}, red, blue)"),
+                "background-image"
+            ),
+            None,
+            "{size}"
+        );
+    }
 }
 
 #[test]

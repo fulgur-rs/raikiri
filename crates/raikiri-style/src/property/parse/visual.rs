@@ -1895,11 +1895,14 @@ fn parse_radial_size<'i>(
         return Ok(RadialSizeAuthored::Ellipse(a, b));
     }
     // A circle radius is a `<length>`, so a `calc()` with a percentage term
-    // is invalid here.
+    // is invalid here, even one whose percentages cancel out.
     if let Ok(calc) = input.try_parse(|i| {
-        crate::cascade::parse_relative_calc_function(i)
-            .filter(|calc| calc.percent == 0.0)
-            .ok_or(())
+        let start = i.position();
+        let calc = crate::cascade::parse_relative_calc_function(i).ok_or(())?;
+        if crate::property::types::math_source_has_percentage(i.slice(start..i.position())) {
+            return Err(());
+        }
+        Ok(calc)
     }) {
         return Ok(RadialSizeAuthored::Circle(
             LengthPercentageOrCalc::from_non_negative_calc(calc),
