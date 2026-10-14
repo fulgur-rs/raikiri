@@ -145,3 +145,15 @@ fn transformed_canvas_images_stay_inside_the_canvas() {
     assert_eq!(pixel(&pages[0], 5, 5), WHITE);
     assert_eq!(pixel(&pages[0], 95, 95), WHITE);
 }
+
+#[test]
+fn page_area_clips_stay_put_under_the_root_transform() {
+    let pages = pages(
+        "<div style=\"height: 10px; background: green\"></div>",
+        "@page { margin: 20px } html { transform: translateX(-20px) }",
+    );
+    // The box moves left, but the page margin still clips its background.
+    assert_eq!(pixel(&pages[0], 10, 25), WHITE);
+    assert_eq!(pixel(&pages[0], 30, 25), GREEN);
+    assert_eq!(pixel(&pages[0], 70, 25), WHITE);
+}

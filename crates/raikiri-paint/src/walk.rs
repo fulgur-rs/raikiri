@@ -1809,6 +1809,7 @@ pub(crate) fn paint_document(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
 ) {
     let mut warnings = Vec::new();
     paint_document_impl(
@@ -1824,6 +1825,7 @@ pub(crate) fn paint_document(
         None,
         &mut warnings,
         custom_highlights,
+        root_transform,
         None,
     );
 }
@@ -1842,6 +1844,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
 ) {
     paint_document_impl(
         image_cache,
@@ -1856,6 +1859,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
         Some(pixel_source),
         warnings,
         custom_highlights,
+        root_transform,
         None,
     );
 }
@@ -1874,6 +1878,7 @@ pub(crate) fn paint_document_impl(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
     mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
     let Some(body_id) = raikiri_dom::paint_rules::find_paint_root(document) else {
@@ -2136,6 +2141,9 @@ pub(crate) fn paint_document_impl(
     // through negative margins. Clip those backgrounds to the physical
     // content box without clipping text ink, which may legitimately overflow
     // its box.
+    // `scene` paints through the root element's `root_transform`, which
+    // moves the document but not the page: page-area clips undo it.
+    let page_clip_transform = root_transform.inverse();
     let page_content_clip = if margins.left > 0.0
         || margins.right > 0.0
         || margins.top > 0.0
@@ -2358,7 +2366,7 @@ pub(crate) fn paint_document_impl(
                 }
                 let clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &clip {
-                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 let owner = document.ifc_source_owner(key);
                 if cascade.computed[owner].visibility != Visibility::Hidden
@@ -2499,7 +2507,7 @@ pub(crate) fn paint_document_impl(
             } => {
                 let text_clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &text_clip {
-                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 // A paragraph whose lines carry no visible text (only
                 // atomic inlines and whitespace) is not traced as text,
@@ -3301,7 +3309,7 @@ pub(crate) fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(page_clip_transform, &clip);
                         }
                         paint_element_box_shadows(
                             scene,
@@ -3588,7 +3596,7 @@ pub(crate) fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(page_clip_transform, &clip);
                         }
                         paint_element_background(
                             image_cache,
@@ -4262,7 +4270,7 @@ pub(crate) fn paint_document_impl(
                 {
                     let text_clip = text_page_clip(inside_fixed);
                     if let Some(clip) = &text_clip {
-                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                        scene.scene.push_clip_layer(page_clip_transform, clip);
                     }
                     if node.is_ifc_root() {
                         // A text node laid out as an anonymous flex or grid

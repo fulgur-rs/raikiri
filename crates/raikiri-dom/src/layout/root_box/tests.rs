@@ -213,4 +213,12 @@ fn an_over_constrained_rtl_root_keeps_its_right_margin() {
     );
     let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
     assert_eq!(root.border_box.x, -110.0);
+
+    // So does one with two auto margins.
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; direction: rtl; width: 300px; margin: 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, -100.0);
 }

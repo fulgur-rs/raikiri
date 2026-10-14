@@ -123,7 +123,7 @@ pub fn root_box(
     let free = area_width - width - margin_left.unwrap_or(0.0) - margin_right.unwrap_or(0.0);
     let rtl = matches!(computed.direction, Direction::Rtl);
     let margin_left = match (margin_left, margin_right) {
-        (None, None) => free.max(0.0) / 2.0,
+        (None, None) if free >= 0.0 => free / 2.0,
         (None, Some(right)) if free >= 0.0 => area_width - width - right,
         (Some(left), None) if free >= 0.0 => left,
         (_, right) if rtl => area_width - width - right.unwrap_or(0.0),

@@ -470,6 +470,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
             pixel_source,
             &mut warnings,
             custom_highlights,
+            transform,
         );
     } else {
         walk::paint_document(
@@ -483,6 +484,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
             active_page_name,
             fixed_page_width,
             custom_highlights,
+            transform,
         );
     }
     Ok(())
@@ -554,6 +556,7 @@ pub fn trace_paint_order(
         None,
         &mut warnings,
         &[],
+        kurbo::Affine::IDENTITY,
         Some(&mut events),
     );
     Ok(events)
@@ -657,6 +660,7 @@ pub fn paint_single_page_with_images_and_warnings(
         pixel_source,
         &mut warnings,
         &[],
+        transform,
     );
     Ok(warnings)
 }
