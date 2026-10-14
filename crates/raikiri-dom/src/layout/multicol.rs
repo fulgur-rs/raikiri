@@ -2348,24 +2348,6 @@ fn visit_top_down(parent_of: &[Option<usize>], mut visit: impl FnMut(Option<usiz
     }
 }
 
-/// Width inputs differ between pre-layout preparation and page-specific rebreaking.
-#[derive(Clone, Copy)]
-pub(crate) struct WidthPolicy {
-    resolved_ch: bool,
-    contents_width: bool,
-}
-
-impl WidthPolicy {
-    pub(crate) const PREPARATION: Self = Self {
-        resolved_ch: false,
-        contents_width: false,
-    };
-    pub(crate) const REBREAK: Self = Self {
-        resolved_ch: true,
-        contents_width: true,
-    };
-}
-
 // cov:ignore: exercised by ignored WPT regression and multicol reftests; default coverage skips ignored reftests.
 fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
     let is_zero = |value: ComputedLengthPercentageOrAuto| match value {
@@ -2392,7 +2374,7 @@ pub(crate) struct AncestorFacts {
     /// A strict ancestor establishes a flex, grid, or table formatting context.
     non_block_flow_ancestor: Vec<bool>,
     /// A definite width resolved against the parent, else the parent width;
-    /// measured `ch` and `contents` widths follow the caller's policy.
+    /// measured `ch` widths include their calc percentage and `contents` inherits.
     content_width: Vec<f32>,
     /// The nearest strict ancestor whose authored width is neither `auto`
     /// nor `min-content`; a `min-content` width is intrinsic, not an
@@ -2408,7 +2390,6 @@ impl AncestorFacts {
         cascade: &CascadeResult,
         parent_of: &[Option<usize>],
         fallback_width: f32,
-        policy: WidthPolicy,
     ) -> Self {
         let count = parent_of.len();
         let mut facts = Self {
@@ -2421,7 +2402,7 @@ impl AncestorFacts {
             min_content: vec![false; count],
         };
         visit_top_down(parent_of, |parent, id| {
-            facts.resolve(doc, cascade, parent, id, fallback_width, policy);
+            facts.resolve(doc, cascade, parent, id, fallback_width);
         });
         facts
     }
@@ -2433,7 +2414,6 @@ impl AncestorFacts {
         parent: Option<usize>,
         id: usize,
         fallback_width: f32,
-        policy: WidthPolicy,
     ) {
         let vertical_self = matches!(
             cascade
@@ -2449,16 +2429,10 @@ impl AncestorFacts {
         );
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
         let cv = &cascade.computed[id];
-        // Rebreaking uses the measured ch value already stored in Taffy's style.
-        let resolved_ch = if policy.resolved_ch && cv.width_ch.is_some() {
-            style_dimension_length(doc.nodes[id].style.size.width)
-        } else {
-            None
-        };
+        let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);
         self.content_width[id] = match (resolved_ch, cv.width) {
-            _ if !policy.contents_width && cv.display == DisplayValue::Contents => {
-                parent_width.max(0.0)
-            }
+            // Contents has no box; both preparation and rebreaking inherit its parent width.
+            _ if cv.display == DisplayValue::Contents => parent_width.max(0.0),
             (Some(width), _) => width.max(0.0),
             (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
                 value.max(0.0)
@@ -2671,13 +2645,7 @@ pub(crate) fn prepare_multicol_layout(
             }
         }
     }
-    let ancestors = AncestorFacts::new(
-        doc,
-        cascade,
-        &parent_of,
-        fallback_width,
-        WidthPolicy::PREPARATION,
-    );
+    let ancestors = AncestorFacts::new(doc, cascade, &parent_of, fallback_width);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;

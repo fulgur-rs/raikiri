@@ -2678,7 +2678,6 @@ fn relative_calc_parser_accepts_linear_sums_only() {
         "calc(1deg + 1em)",
         "calc(1svx + 1px)",
         "calc(1em + 1vw + 1rem)",
-        "calc(1ch + 1px)",
         "calc(1em) 2px",
         "calc(min(1em, 2px) + 1px)",
     ] {

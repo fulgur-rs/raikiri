@@ -270,7 +270,7 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
     // Reparent `half` under a node later in the arena: resolution must still
     // reach the parent before the child.
     parent_of[half] = Some(late_parent);
-    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0, WidthPolicy::PREPARATION);
+    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
 
     assert_eq!(facts.content_width[sized], 400.0);
     assert_eq!(facts.content_width[half], 15.0);
@@ -397,10 +397,97 @@ fn authored_containing_width_uses_the_resolved_ch_style_width() {
     let taffy_width = style_dimension_length(doc.nodes[container].style.size.width)
         .expect("resolved ch width should be a finite length");
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0, WidthPolicy::REBREAK)
-            .authored_containing_width(text),
+        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
         Some(taffy_width),
     );
+}
+
+#[test]
+fn content_widths_resolve_a_measured_ch_calc_with_a_percentage() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px"),
+    );
+    let sized = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;width:calc(50% + 2ch);font-family:Ahem;font-size:10px"),
+    );
+    let text = doc.append_text(sized, "x");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
+    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
+    prepare_ch_box_values_before_taffy(&mut doc, &cascade);
+
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            parent_of[child] = Some(parent);
+        }
+    }
+    // Half of the 200px container plus two 10px Ahem "0" advances.
+    assert_eq!(
+        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
+        Some(120.0),
+    );
+    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
+    assert_eq!(facts.content_width[sized], 120.0);
+}
+
+#[test]
+fn content_widths_skip_a_measured_ch_width_on_display_contents() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:800px"),
+    );
+    let contents = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:contents;width:calc(50% + 2ch);font-family:Ahem;font-size:10px"),
+    );
+    let half = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;width:50%"),
+    );
+    let text = doc.append_text(half, "x");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
+    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
+    prepare_ch_box_values_before_taffy(&mut doc, &cascade);
+
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            parent_of[child] = Some(parent);
+        }
+    }
+    // The contents element has no box, so the child halves the 800px container.
+    assert_eq!(
+        AncestorFacts::new(&doc, &cascade, &parent_of, 1000.0).authored_containing_width(text),
+        Some(400.0),
+    );
+    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 1000.0);
+    assert_eq!(facts.content_width[half], 400.0);
 }
 
 #[test]
@@ -434,13 +521,11 @@ fn authored_containing_width_preserves_percentage_fallback_behavior() {
         }
     }
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0, WidthPolicy::REBREAK)
-            .authored_containing_width(text),
+        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
         Some(100.0),
     );
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0, WidthPolicy::REBREAK)
-            .authored_containing_width(auto_text),
+        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(auto_text),
         None,
     );
 }
@@ -912,7 +997,7 @@ fn multicol_gap_fixture_metrics(style_attr: &str) -> MulticolMetrics {
             }
         }
     }
-    let ancestors = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0, WidthPolicy::PREPARATION);
+    let ancestors = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
     multicol_metrics_with_width(&cascade, container, ancestors.content_width[container])
         .expect("multicol metrics")
 }
@@ -2513,7 +2598,7 @@ fn compute_multicol_layout_keeps_foundational_child_layouts_when_slicing_fails()
 }
 
 #[test]
-fn width_tables_preserve_contents_percentage_and_min_content_policies() {
+fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -2534,20 +2619,17 @@ fn width_tables_preserve_contents_percentage_and_min_content_policies() {
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
     let parents: Vec<_> = (0..doc.nodes.len()).map(|id| doc.parent_of(id)).collect();
-    let preparation = AncestorFacts::new(&doc, &cascade, &parents, 800.0, WidthPolicy::PREPARATION);
-    let rebreak = AncestorFacts::new(&doc, &cascade, &parents, 800.0, WidthPolicy::REBREAK);
-    assert_eq!(preparation.authored_containing_width(half), Some(400.0));
-    assert_eq!(rebreak.authored_containing_width(half), Some(400.0));
-    assert_eq!(preparation.authored_containing_width(text), Some(200.0));
-    assert_eq!(rebreak.authored_containing_width(text), Some(40.0));
-    assert!(!rebreak.in_min_content(half));
-    assert!(rebreak.in_min_content(intrinsic));
-    assert!(rebreak.in_min_content(text));
-    assert_eq!(rebreak.authored_containing_width(doc.nodes.len()), None);
+    let widths = AncestorFacts::new(&doc, &cascade, &parents, 800.0);
+    assert_eq!(widths.authored_containing_width(half), Some(400.0));
+    assert_eq!(widths.authored_containing_width(text), Some(200.0));
+    assert!(!widths.in_min_content(half));
+    assert!(widths.in_min_content(intrinsic));
+    assert!(widths.in_min_content(text));
+    assert_eq!(widths.authored_containing_width(doc.nodes.len()), None);
 }
 
 #[test]
-fn width_tables_refresh_measured_ch_and_percentage_fallback_inputs() {
+fn ancestor_width_table_refreshes_measured_ch_and_percentage_inputs() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
@@ -2563,15 +2645,11 @@ fn width_tables_refresh_measured_ch_and_percentage_fallback_inputs() {
         panic!("ch cascade fallback must be px")
     };
     assert_ne!(fallback, 64.0);
-    let preparation = AncestorFacts::new(&doc, &cascade, &parents, 800.0, WidthPolicy::PREPARATION);
-    assert_eq!(
-        preparation.authored_containing_width(ch_text),
-        Some(fallback)
-    );
+    let preparation = AncestorFacts::new(&doc, &cascade, &parents, 800.0);
+    assert_eq!(preparation.authored_containing_width(ch_text), Some(64.0));
     for (page_width, measured_ch) in [(800.0, 64.0), (400.0, 96.0), (800.0, 64.0)] {
         doc.nodes[ch].style.size.width = Dimension::length(measured_ch);
-        let rebreak =
-            AncestorFacts::new(&doc, &cascade, &parents, page_width, WidthPolicy::REBREAK);
+        let rebreak = AncestorFacts::new(&doc, &cascade, &parents, page_width);
         assert_eq!(
             rebreak.authored_containing_width(text),
             Some(page_width / 2.0)

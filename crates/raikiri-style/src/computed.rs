@@ -415,6 +415,10 @@ pub struct VerticalLogicalSize {
 
 /// Authored `ch` provenance retained until the layout sink can probe the
 /// declaring font's U+0030 advance.
+///
+/// A `calc()` that mixes `ch` with other terms also records the rest of the
+/// sum, so the used value is `factor * advance + offset` plus `percent` of
+/// the property's percentage basis.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChLengthProvenance {
     /// Authored multiplier, for example `2` in `width: 2ch`.
@@ -422,6 +426,22 @@ pub struct ChLengthProvenance {
     /// Font matching data from the declaring node for this value; inherited
     /// values keep the ancestor's key.
     pub font: ChFontKey,
+    /// The absolute part of a `calc()` sum in CSS px, for example `10` in
+    /// `calc(2ch + 10px)`; zero for a plain `Nch` length.
+    pub offset: f32,
+    /// The percentage coefficient of a `calc()` sum (`100%` is `100.0`);
+    /// zero for a plain `Nch` length.
+    pub percent: f32,
+}
+
+impl ChLengthProvenance {
+    /// The used value once the declaring font's `0` advance is known.
+    pub fn with_advance(&self, advance: f32) -> crate::property::CalcLengthPercentage {
+        crate::property::CalcLengthPercentage {
+            percent: self.percent,
+            px: self.factor * advance + self.offset,
+        }
+    }
 }
 
 /// The most background layers a renderer paints for one box, top first.
