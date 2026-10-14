@@ -11,6 +11,7 @@
 use crate::generated_content::format_counter;
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
+use crate::running::element_string_value;
 use crate::{
     Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneStyle, StandaloneText,
     TextShadow,
@@ -947,23 +948,6 @@ fn inherited_margin_box_quotes(
         .iter()
         .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
         .collect()
-}
-
-fn element_string_value(document: &Document, root: usize) -> String {
-    let mut stack = vec![root];
-    let mut raw = String::new();
-    while let Some(idx) = stack.pop() {
-        let Some(node) = document.get_node(idx) else {
-            continue;
-        };
-        if let Some(text) = node.text_content() {
-            raw.push_str(text);
-        }
-        for &child in node.children.iter().rev() {
-            stack.push(child);
-        }
-    }
-    raw.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The document-wide values that page-margin `element()` and `string()`

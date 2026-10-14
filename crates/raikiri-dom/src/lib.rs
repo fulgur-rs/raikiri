@@ -54,9 +54,12 @@ mod margin_boxes;
 mod node;
 mod normal_line_height;
 mod page_projection;
-mod phase_b;
 mod running;
-pub use running::element_string_value;
+// cov:ignore: public re-exports have no runtime behavior to measure.
+pub use running::{
+    ResolvedPageGeometry, RunningElementPage, RunningIndex, element_string_value,
+    layout_running_element, resolve_page_geometry, used_running_element_width,
+};
 mod target;
 
 mod column_rules;

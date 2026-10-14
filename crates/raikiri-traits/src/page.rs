@@ -320,8 +320,7 @@ impl FormData {
 ///
 /// Wraps a subtree-root [`NodeId`]. The root of an element with
 /// `position: running(name)` is unique per element in the arena, so it
-/// provides a stable per-template key (matching the keying rationale
-/// for raikiri-dom's `RunningTemplateStore`). The newtype avoids mixing
+/// provides a stable per-template key. The newtype avoids mixing
 /// `NodeId` values used for other purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct RunningTemplateId(pub NodeId);
