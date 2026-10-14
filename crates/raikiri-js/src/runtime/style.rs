@@ -891,8 +891,20 @@ fn css_wide_keyword(value: &str) -> Option<&'static str> {
 ///
 /// A parsed value is stored in its canonical serialization where
 /// `raikiri_style` can produce one, and as given otherwise. CSS-wide
-/// keywords serialize ASCII-lowercased.
+/// keywords serialize ASCII-lowercased. Outside a custom property, each
+/// `<url>` then reads back as `url("...")` (CSSOM "serialize a URL") at any
+/// nesting depth, except in a value with a substitution function; see
+/// [`raikiri_style::property::serialize_urls`].
 fn declaration_value(property: &str, value: &str, page: bool) -> Option<String> {
+    let stored = canonical_declaration_value(property, value, page)?;
+    if property.starts_with("--") {
+        return Some(stored);
+    }
+    Some(raikiri_style::property::serialize_urls(&stored).unwrap_or(stored))
+}
+
+/// [`declaration_value`] before its `url()`s are canonicalized.
+fn canonical_declaration_value(property: &str, value: &str, page: bool) -> Option<String> {
     let is_custom = property.starts_with("--");
     if page && is_page_descriptor(property) {
         // Descriptors take neither CSS-wide keywords nor `!important` in
