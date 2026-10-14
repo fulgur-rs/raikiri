@@ -23,7 +23,7 @@ fn child_in(container: &str, child: &str) -> (Document, raikiri_style::CascadeRe
 
 fn offset(container: &str, child: &str) -> (f32, f32) {
     let (document, cascade, child) = child_in(container, child);
-    used_relative_offset(&document, &cascade.computed[child], child)
+    used_relative_offset(&document, &cascade, &cascade.computed[child], child)
 }
 
 #[test]
@@ -96,7 +96,13 @@ fn a_display_contents_ancestor_is_skipped() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[child], child),
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
+        (10.0, 20.0)
+    );
+    // A stale layout mirror must not override the supplied cascade's box tree.
+    document.nodes[contents].display = DisplayValue::Block;
+    assert_eq!(
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
         (10.0, 20.0)
     );
 }
@@ -116,11 +122,19 @@ fn only_relative_boxes_are_offset() {
     assert_eq!(
         used_relative_insets(
             &document,
+            &cascade,
             &cascade.computed[child],
             child,
             Precedence::WritingMode
         ),
         (None, Some(10.0))
+    );
+    let mut selected = cascade.computed[child].clone();
+    selected.position = PositionValue::Relative;
+    selected.left = ComputedLengthPercentageOrAuto::Px(17.0);
+    assert_eq!(
+        used_relative_offset(&document, &cascade, &selected, child),
+        (17.0, 10.0)
     );
 }
 
@@ -179,7 +193,7 @@ fn an_inline_ancestor_is_not_the_containing_block() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[child], child),
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
         (30.0, 10.0)
     );
 }
@@ -240,7 +254,7 @@ fn body_percentages_resolve_against_the_page_area() {
         "display:block;margin:0;position:relative;left:10%;top:10%",
     );
     let (width, height) = document.fixed_page_area;
-    let (dx, dy) = used_relative_offset(&document, &cascade.computed[body], body);
+    let (dx, dy) = used_relative_offset(&document, &cascade, &cascade.computed[body], body);
     assert!((dx - width * 0.1).abs() < 1e-3 && (dy - height * 0.1).abs() < 1e-3);
 }
 
@@ -269,7 +283,7 @@ fn the_body_takes_the_direction_of_the_root_element() {
         "display:block;margin:0;position:relative;left:10px;right:20px",
     );
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[body], body).0,
+        used_relative_offset(&document, &cascade, &cascade.computed[body], body).0,
         -20.0
     );
 }
@@ -324,7 +338,7 @@ fn a_stretched_flex_item_has_a_definite_height() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[child], child),
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
         (0.0, 10.0)
     );
 }
@@ -347,7 +361,7 @@ fn nested_offset(outer: &str, inner: &str, child: &str) -> (f32, f32) {
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
-    used_relative_offset(&document, &cascade.computed[child], child)
+    used_relative_offset(&document, &cascade, &cascade.computed[child], child)
 }
 
 #[test]
@@ -424,7 +438,7 @@ fn a_spanner_keeps_its_own_definite_height() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[child], child),
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
         (0.0, 50.0)
     );
 }
@@ -469,7 +483,7 @@ fn an_anonymous_table_cell_is_a_containing_block() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[child], child),
+        used_relative_offset(&document, &cascade, &cascade.computed[child], child),
         (25.0, 0.0)
     );
 }
@@ -508,7 +522,7 @@ fn a_table_cell_resolves_against_its_table() {
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
     assert_eq!(
-        used_relative_offset(&document, &cascade.computed[cell], cell),
+        used_relative_offset(&document, &cascade, &cascade.computed[cell], cell),
         (100.0, 50.0)
     );
 }
@@ -523,11 +537,11 @@ fn layout_precedence_takes_top_in_every_writing_mode() {
     );
     let cv = &cascade.computed[child];
     assert_eq!(
-        used_relative_insets(&document, cv, child, Precedence::WritingMode).1,
+        used_relative_insets(&document, &cascade, cv, child, Precedence::WritingMode).1,
         Some(-3.0)
     );
     assert_eq!(
-        used_relative_insets(&document, cv, child, Precedence::LeftTop).1,
+        used_relative_insets(&document, &cascade, cv, child, Precedence::LeftTop).1,
         Some(7.0)
     );
 }

@@ -322,9 +322,10 @@ fn grid_items_sharing_a_row_do_not_stack() {
         );
         grids.extend([stacked, shared, spanning]);
     });
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let stacks: Vec<bool> = grids
         .iter()
-        .map(|&id| grid_stacks_items(&doc, id))
+        .map(|&id| grid_stacks_items(&doc, &cascade, id))
         .collect();
     assert_eq!(stacks, vec![true, false, false]);
 }

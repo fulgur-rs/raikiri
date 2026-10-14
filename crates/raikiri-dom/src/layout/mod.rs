@@ -55,6 +55,7 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
 }
 
 mod body_block_margins;
+mod box_tree;
 mod bridge;
 mod depth;
 mod fixed;
@@ -69,6 +70,7 @@ pub(crate) mod sanitize;
 pub(crate) mod test_support;
 
 use body_block_margins::*;
+pub(crate) use box_tree::{BoxParentScope, box_parent};
 use fixed::place_fixed_boxes_in_page_area;
 use multicol::*;
 pub(crate) use page::used_style_length_percentage;
