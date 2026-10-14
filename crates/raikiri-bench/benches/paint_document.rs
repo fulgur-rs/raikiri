@@ -1,6 +1,7 @@
 //! Scene extraction, paint command recording, and paint/raster/PNG after layout.
 //! Parse/cascade/layout are untimed; timed outputs include their destruction.
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 mod common {
     pub mod workloads;
 }
@@ -11,12 +12,14 @@ use criterion::{Criterion, Throughput};
 use raikiri::{PageBox, build_page_scene};
 use std::{cell::OnceCell, hint::black_box};
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn record(dom: &raikiri::Document, cascade: &raikiri::CascadeResult, page: PageBox) -> Scene {
     let mut scene = Scene::new();
     raikiri_paint::paint_single_page(&mut scene, dom, cascade, page).expect("paint");
     scene
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn bench_paint(c: &mut Criterion) {
     let resources = workloads::resources();
     let mut page = PageBox::new();
@@ -117,6 +120,7 @@ fn bench_paint(c: &mut Criterion) {
     }
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn main() {
     let mut c = Criterion::default().configure_from_args();
     bench_paint(&mut c);

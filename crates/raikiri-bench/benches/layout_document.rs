@@ -1,6 +1,7 @@
 //! Fresh single-page layout by formatting context; parse/cascade and drops are untimed.
 //! A fresh DOM per iteration avoids timing a cached relayout. Fonts are bundled Ahem.
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 mod common {
     pub mod workloads;
 }
@@ -10,6 +11,7 @@ use criterion::{BatchSize, Criterion, Throughput};
 use raikiri::PageBox;
 use std::{cell::OnceCell, hint::black_box};
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn bench_layout(c: &mut Criterion) {
     let resources = workloads::resources();
     let mut page = PageBox::new();
@@ -59,6 +61,7 @@ fn bench_layout(c: &mut Criterion) {
     group.finish();
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn main() {
     let mut c = Criterion::default().configure_from_args();
     bench_layout(&mut c);

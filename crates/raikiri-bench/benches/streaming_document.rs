@@ -4,15 +4,18 @@
 //! First-page fixtures exceed the production checkpoint interval and every
 //! sample requires delivery during a write with more input still to follow.
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 mod common {
     pub mod workloads;
 }
 
 use criterion::{Criterion, Throughput};
+// cov:ignore: benchmark-only imports; this target is absent from workspace coverage.
 use raikiri_html::{
     ConsumerPropertyEvent, LayoutConfig, PageDefaults, PageSink, RenderResources, StreamPage,
     StreamStatus, StreamSummary, StreamingLayout,
 };
+// cov:ignore: benchmark-only imports; this target is absent from workspace coverage.
 use std::{
     cell::{Cell, OnceCell},
     hint::black_box,
@@ -21,6 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 struct Sink {
     start: Instant,
     first: Option<Duration>,
@@ -30,6 +34,7 @@ struct Sink {
     first_feed_bytes: Option<usize>,
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 struct StreamResult {
     pages: u32,
     first: Duration,
@@ -37,6 +42,7 @@ struct StreamResult {
     first_feed_bytes: Option<usize>,
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 impl StreamResult {
     fn check_incremental(&self, input_bytes: usize) {
         assert!(
@@ -47,6 +53,7 @@ impl StreamResult {
     }
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 impl PageSink for Sink {
     type Output = StreamResult;
 
@@ -81,6 +88,7 @@ impl PageSink for Sink {
     }
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn stream(html: &str, resources: &RenderResources<'_>, verify_text: bool) -> StreamResult {
     let fed_bytes = Rc::new(Cell::new(None));
     let sink = Sink {
@@ -110,6 +118,7 @@ fn stream(html: &str, resources: &RenderResources<'_>, verify_text: bool) -> Str
     result
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn bench_stream(c: &mut Criterion) {
     let resources = common::workloads::resources();
     for stage in ["streaming_document", "first_page_document"] {
@@ -172,6 +181,7 @@ fn bench_stream(c: &mut Criterion) {
     }
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn main() {
     let mut c = Criterion::default().configure_from_args();
     bench_stream(&mut c);

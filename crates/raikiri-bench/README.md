@@ -27,6 +27,10 @@ validation are lazy: a name filter does not prepare unrelated cases. Each
 case probes its output before measuring, so a missing stylesheet, lost text,
 empty paint recording or missing pages cannot silently appear as a speedup.
 
+Benchmark-only items carry explicit `cov:ignore` annotations because the
+workspace coverage run does not build benchmark targets. Their validation
+comes from the release smoke runs and untimed probes.
+
 New layout, page-output, paint and streaming targets use only the bundled
 Ahem font and ASCII content. They do not measure system font discovery,
 CJK shaping, remote resources or PDF generation. Stage names describe the

@@ -1,18 +1,21 @@
 //! Paged layout and consumer page-output extraction, excluding parsing and cascade.
 //! Layout includes text construction and fragmentation, not a pagination-only pass.
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 mod common {
     pub mod workloads;
 }
 
 use common::workloads::{self, Shape};
 use criterion::{Criterion, Throughput};
+// cov:ignore: benchmark-only imports; this target is absent from workspace coverage.
 use raikiri_html::{
     DocumentLayout, LayoutConfig, LayoutOptions, LayoutStatus, PageDefaults, RenderResources,
     layout,
 };
 use std::{cell::OnceCell, hint::black_box};
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn paged(document: &raikiri::HtmlDocument, resources: &RenderResources<'_>) -> DocumentLayout {
     let LayoutStatus::Completed(result) = layout(
         document,
@@ -26,6 +29,7 @@ fn paged(document: &raikiri::HtmlDocument, resources: &RenderResources<'_>) -> D
     result
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn bench_pages(c: &mut Criterion) {
     let resources = workloads::resources();
     for stage in ["pagination_document", "page_output_document"] {
@@ -89,7 +93,9 @@ fn bench_pages(c: &mut Criterion) {
                     } else {
                         b.iter(|| {
                             for page in black_box(result).pages() {
-                                black_box(page.fragments().count());
+                                for fragment in page.fragments() {
+                                    black_box(fragment);
+                                }
                                 let runs = page.text_runs();
                                 black_box(page.paint_order_for_text_runs(&runs));
                                 black_box(runs);
@@ -103,6 +109,7 @@ fn bench_pages(c: &mut Criterion) {
     }
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn main() {
     let mut c = Criterion::default().configure_from_args();
     bench_pages(&mut c);

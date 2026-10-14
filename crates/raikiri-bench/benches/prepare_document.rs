@@ -1,6 +1,7 @@
 //! HTML parsing and CSS rule-tree construction of the same report as cascade_document.
 //! Input generation and probes are untimed; output destruction is timed.
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 mod common {
     pub mod report;
 }
@@ -11,6 +12,7 @@ use criterion::{Criterion, Throughput};
 use raikiri_html::{ParseOptions, build_rule_tree, parse};
 use raikiri_style::{MediaContext, cascade_with_media_context};
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn bench_prepare(c: &mut Criterion) {
     let options = ParseOptions {
         extra_stylesheets: &[],
@@ -47,6 +49,7 @@ fn bench_prepare(c: &mut Criterion) {
     }
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 fn main() {
     let mut c = Criterion::default().configure_from_args();
     bench_prepare(&mut c);

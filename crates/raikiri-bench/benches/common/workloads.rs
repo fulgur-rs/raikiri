@@ -8,6 +8,7 @@ use std::fmt::Write as _;
 use raikiri::{FontCollectionBuilder, HtmlDocument, RenderResources, parse_html_with_resources};
 
 /// Resources with only the bundled Ahem font, independent of installed fonts.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn resources() -> RenderResources<'static> {
     let fonts = FontCollectionBuilder::new()
         .font_bytes(
@@ -21,6 +22,7 @@ pub fn resources() -> RenderResources<'static> {
 
 /// Formatting contexts whose costs should be tracked independently.
 #[derive(Clone, Copy)]
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub enum Shape {
     /// Paragraph construction, shaping and line breaking.
     Text,
@@ -40,6 +42,7 @@ pub enum Shape {
     Multicol,
 }
 
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 impl Shape {
     /// Stable benchmark identifier.
     pub fn name(self) -> &'static str {
@@ -57,6 +60,7 @@ impl Shape {
 }
 
 /// Build `items` paragraphs, items or table rows inside one formatting context.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn document(shape: Shape, items: usize) -> String {
     let css = match shape {
         Shape::Text | Shape::Inline => "",
@@ -128,6 +132,7 @@ pub fn document(shape: Shape, items: usize) -> String {
 }
 
 /// Forced page breaks with one short paragraph per section.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn pages(count: usize) -> String {
     let mut html = String::from(
         "<!doctype html><html><head><style>\
@@ -155,11 +160,13 @@ pub fn pages(count: usize) -> String {
 }
 
 /// Parse and cascade once, outside stage measurements.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn parse(html: &str, resources: &RenderResources<'_>) -> HtmlDocument {
     parse_html_with_resources(html.as_bytes(), resources).expect("the fixture parses and cascades")
 }
 
 /// Fresh DOM and cascade with fonts installed for the direct layout entry point.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn single_page_input(
     html: &str,
     resources: &RenderResources<'_>,
@@ -174,6 +181,7 @@ pub fn single_page_input(
 }
 
 /// Confirm the formatting context was selected rather than falling back to blocks.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn check_shape(dom: &raikiri::Document, cascade: &raikiri::CascadeResult, shape: Shape) {
     use raikiri_style::property::{ColumnCountValue, DisplayValue, TableLayoutValue};
     let table = matches!(
@@ -214,6 +222,7 @@ pub fn check_shape(dom: &raikiri::Document, cascade: &raikiri::CascadeResult, sh
 }
 
 /// A multiset of visible ASCII characters, ignoring collapsed whitespace.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn text_signature(dom: &raikiri::Document) -> Vec<u8> {
     let mut bytes = Vec::new();
     for id in 0..dom.node_count() {
@@ -233,6 +242,7 @@ pub fn text_signature(dom: &raikiri::Document) -> Vec<u8> {
 }
 
 /// Verify every text node has lines and every visible element has geometry.
+// cov:ignore: bench-only item; workspace tests do not instrument this target.
 pub fn check_layout(dom: &raikiri::Document, expected_items: usize) {
     let mut text_nodes = 0;
     for id in 0..dom.node_count() {
