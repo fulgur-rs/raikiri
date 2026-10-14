@@ -284,9 +284,10 @@ pub(crate) struct OpenBlock {
     /// The box starts the paragraph: nothing is above it.
     starts_paragraph: bool,
     has_clearance: bool,
-    /// The box started in an earlier fragmentainer: this fragment's height
-    /// is that of its content.
-    continued: bool,
+    /// The content height the box took in earlier fragmentainers, which its
+    /// own height, min-height and max-height still count (CSS Fragmentation
+    /// 3, 4.4).
+    consumed: f32,
     /// The physical left and right insets of the box's lines.
     pub(crate) inline: (f32, f32),
     /// The paragraph is right-to-left: the left side is the end side.
@@ -294,14 +295,18 @@ pub(crate) struct OpenBlock {
 }
 
 impl OpenBlock {
-    /// The box as it goes on at the top of the next fragmentainer.
-    pub(crate) fn continued(self) -> Self {
+    /// The box as it goes on at the top of the next fragmentainer, after a
+    /// fragmentainer whose `lines` end at `end`: the box fills it to there.
+    pub(crate) fn continued(self, lines: &[shodo::Line], end: f32) -> Self {
+        let top = self
+            .content_top
+            .or_else(|| lines.get(self.lines_before).map(|line| line.block_offset()));
         Self {
             lines_before: 0,
             content_top: Some(0.0),
             starts_paragraph: false,
             has_clearance: false,
-            continued: true,
+            consumed: self.consumed + top.map_or(0.0, |top| (end - top).max(0.0)),
             ..self
         }
     }
@@ -314,16 +319,28 @@ impl OpenBlock {
         width: f32,
     ) -> super::flow::LineSpace {
         // A negative end-side inset, from a negative margin or a box wider
-        // than the paragraph, moves the end of the lines out past the line
-        // space. The start of a line cannot move before the content box.
+        // than the paragraph, moves the end of the lines out past the
+        // paragraph's content box, but not into the room a float takes. The
+        // start of a line cannot move before the content box.
         let (left, right) = self.inline;
-        let (left_out, right_out) = if self.rtl {
-            (left.min(0.0), 0.0)
+        let space_end = space.inline_start + space.inline_size;
+        let float_start = if space.inline_start > 0.0 {
+            space.inline_start
         } else {
-            (0.0, right.min(0.0))
+            f32::NEG_INFINITY
         };
-        let start = space.inline_start.max(left.max(0.0)) + left_out;
-        let end = (space.inline_start + space.inline_size).min(width - right.max(0.0)) - right_out;
+        let float_end = if space_end < width {
+            space_end
+        } else {
+            f32::INFINITY
+        };
+        let mut start = left.max(float_start);
+        let mut end = (width - right).min(float_end);
+        if self.rtl {
+            end = end.min(width);
+        } else {
+            start = start.max(0.0);
+        }
         super::flow::LineSpace {
             inline_start: start,
             inline_size: (end - start).max(0.0),
@@ -386,7 +403,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         top_set,
         starts_paragraph: flow.at_start,
         has_clearance: clearance.is_some(),
-        continued: false,
+        consumed: 0.0,
         inline: block.inline_insets(flow.width, flow.rtl, &edges),
         rtl: flow.rtl,
     }
@@ -403,11 +420,12 @@ pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>)
         .content_top
         .or_else(|| first_line.map(|line| line.block_offset()));
     let content = content_top.map_or(0.0, |top| (*flow.y - top).max(0.0));
-    let height = if open.continued {
-        content
-    } else {
-        block.used_height(content, edges.top + edges.bottom, flow.definite_height)
-    };
+    let height = (block.used_height(
+        open.consumed + content,
+        edges.top + edges.bottom,
+        flow.definite_height,
+    ) - open.consumed)
+        .max(0.0);
     let Some(top) = content_top.or_else(|| {
         // An empty box whose margins collapse through it (CSS 2.1 8.3.1)
         // adds them to the margins above it.

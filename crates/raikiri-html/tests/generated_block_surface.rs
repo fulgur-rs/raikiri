@@ -342,3 +342,13 @@ fn a_vertical_shrink_to_fit_box_takes_no_inline_extent_from_its_block_before() {
     );
     assert_eq!(boxes(&document, "span")[0].3, 20.0);
 }
+
+#[test]
+fn a_block_after_wider_than_its_element_keeps_out_of_a_float() {
+    let document = lay_out(
+        "<div><span></span>X</div>",
+        "span{float:right;width:20px;height:40px}div::after{content:'XXXXX';display:block;width:120px}",
+    );
+    // The 100px line does not fit beside the float: it goes below it.
+    assert_eq!(runs(&document)[1].2.1, 56.0);
+}

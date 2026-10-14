@@ -134,11 +134,11 @@ fn a_clamped_auto_width_is_placed_as_a_definite_one() {
 
 #[test]
 fn a_negative_end_inset_moves_the_line_ends_out_past_the_line_space() {
-    let space = super::super::flow::LineSpace {
-        inline_start: 0.0,
-        inline_size: 100.0,
-    };
-    let narrowed = |css: &str, rtl: bool| {
+    let narrowed = |css: &str, rtl: bool, (inline_start, inline_size)| {
+        let space = super::super::flow::LineSpace {
+            inline_start,
+            inline_size,
+        };
         let block = block(css);
         let mut bfc = taffy::BlockFormattingContext::new();
         let ctx = bfc.root_block_context();
@@ -148,9 +148,19 @@ fn a_negative_end_inset_moves_the_line_ends_out_past_the_line_space() {
         let line = open(&block, flow).narrow(space, 100.0);
         (line.inline_start, line.inline_size)
     };
-    assert_eq!(narrowed("margin: 0 -20px 0 -10px", false), (0.0, 120.0));
-    assert_eq!(narrowed("margin: 0 -20px 0 -10px", true), (-10.0, 110.0));
-    assert_eq!(narrowed("margin: 0 15px 0 5px", false), (5.0, 80.0));
+    let all = (0.0, 100.0);
+    assert_eq!(
+        narrowed("margin: 0 -20px 0 -10px", false, all),
+        (0.0, 120.0)
+    );
+    assert_eq!(
+        narrowed("margin: 0 -20px 0 -10px", true, all),
+        (-10.0, 110.0)
+    );
+    assert_eq!(narrowed("margin: 0 15px 0 5px", false, all), (5.0, 80.0));
+    // A float at the end or the start keeps its room.
+    assert_eq!(narrowed("width: 120px", false, (0.0, 80.0)), (0.0, 80.0));
+    assert_eq!(narrowed("width: 120px", true, (20.0, 80.0)), (20.0, 80.0));
 }
 
 #[test]
@@ -221,15 +231,24 @@ fn flow<'a, 'b>(
 }
 
 #[test]
-fn a_continued_box_is_as_tall_as_its_content_in_the_next_fragmentainer() {
-    let block = block("height: 100px; padding-bottom: 5px; margin-bottom: 3px");
-    let mut bfc = taffy::BlockFormattingContext::new();
-    let ctx = bfc.root_block_context();
-    let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
-    let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx)).continued();
-    // The lines of the box in this fragmentainer took 30px.
-    y = 30.0;
-    close(&block, open, flow(&mut y, &mut pending, &mut leading, &ctx));
-    assert_eq!(y, 35.0);
-    assert_eq!(pending.resolve(), 3.0);
+fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
+    let close_after = |css: &str| {
+        let block = block(&format!("padding-top: 10px; {css}"));
+        let mut bfc = taffy::BlockFormattingContext::new();
+        let ctx = bfc.root_block_context();
+        let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+        let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
+        // The box fills two 40px fragmentainers, 70px of content, then its
+        // lines take 30px of the next.
+        let open = open.continued(&[], 40.0).continued(&[], 40.0);
+        y = 30.0;
+        close(&block, open, flow(&mut y, &mut pending, &mut leading, &ctx));
+        (y, pending.resolve())
+    };
+    assert_eq!(
+        close_after("height: 140px; padding-bottom: 5px; margin-bottom: 3px"),
+        (75.0, 3.0)
+    );
+    assert_eq!(close_after("max-height: 50px"), (0.0, 0.0));
+    assert_eq!(close_after(""), (30.0, 0.0));
 }
