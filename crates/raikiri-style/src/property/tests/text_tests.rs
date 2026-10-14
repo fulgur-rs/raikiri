@@ -5186,6 +5186,27 @@ fn font_shorthand_absolute_size_keyword() {
 }
 
 #[test]
+fn font_shorthand_calc_size_expands_to_the_longhand() {
+    let calc = crate::property::RelativeCalcLengthPercentage::from_unit(50.0, "%")
+        .and_then(|half| {
+            half.add_scaled(
+                crate::property::RelativeCalcLengthPercentage::from_unit(2.0, "px")?,
+                1.0,
+            )
+        })
+        .unwrap();
+    let mut shorthand = expect_font(parse_entire("16px serif", "font"));
+    shorthand.size = FontShorthandSize::Calc(calc);
+    let mut longhands = Vec::new();
+    crate::rule::expand_font(&shorthand, |value| longhands.push(value));
+    assert!(longhands.contains(&PropertyValue::FontSizeCalc(calc)));
+    assert_eq!(
+        crate::property::serialize_value(&PropertyValue::FontSizeCalc(calc)).as_deref(),
+        Some("calc(50% + 2px)")
+    );
+}
+
+#[test]
 fn font_shorthand_slash_line_height_length_and_percentage() {
     assert_eq!(
         expect_font(parse_entire("16px/24px serif", "font")).line_height,
