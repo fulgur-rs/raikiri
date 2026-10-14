@@ -159,15 +159,19 @@ fn content_overflow_end(
         }
         // A `display: contents` element generates no box and clips nothing,
         // as in painting.
-        let clips = node_id != body_id
-            && !matches!(computed.overflow.y, OverflowValue::Visible)
-            && crate::paint_rules::clips_element_overflow(document, cascade, node_id);
+        let clips = node_id != body_id && element_clips_overflow(document, cascade, node_id);
         if clips {
             continue;
         }
         if in_columns.is_none() {
             let roots = fragment_roots.get(&node_id).map_or(&[][..], Vec::as_slice);
-            end = end.max(fragment_tree_end(fragments, &fragment_children, roots, y));
+            end = end.max(fragment_tree_end(
+                fragments,
+                &fragment_children,
+                roots,
+                y,
+                |node_id| element_clips_overflow(document, cascade, node_id),
+            ));
         }
         let in_columns = if let Some(outside) = in_columns {
             Some(
@@ -186,17 +190,25 @@ fn content_overflow_end(
     end
 }
 
+/// Whether the element hides block-axis overflow when painted.
+fn element_clips_overflow(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    !matches!(cascade.computed[node_id].overflow.y, OverflowValue::Visible)
+        && crate::paint_rules::clips_element_overflow(document, cascade, node_id)
+}
+
 /// The lowest edge painted by the fragments under `roots`, placed at the
 /// block offset `y`.
 ///
 /// A fragment paints at its parent's origin plus its own offset, and a
 /// fragmentainer clip, intersected with the clips of the enclosing
-/// fragments, hides what extends past its column.
+/// fragments, hides what extends past its column. A fragment whose element
+/// `clips_overflow` also hides what its descendants paint past its own box.
 fn fragment_tree_end(
     fragments: &[crate::fragment::LayoutFragment],
     fragment_children: &HashMap<usize, Vec<usize>>,
     roots: &[usize],
     y: f32,
+    clips_overflow: impl Fn(usize) -> bool,
 ) -> f32 {
     let mut end = f32::NEG_INFINITY;
     let mut pending: Vec<(usize, f32, f32)> = roots
@@ -215,6 +227,11 @@ fn fragment_tree_end(
         if rect.height > 0.0 && bottom.is_finite() {
             end = end.max(bottom);
         }
+        let clip_end = if clips_overflow(fragments[index].node_id) {
+            bottom
+        } else {
+            clip_end
+        };
         pending.extend(
             fragment_children
                 .get(&index)

@@ -13198,12 +13198,49 @@ fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
         fragment(Some(1), 20.0, 400.0, None),
     ];
     let children = HashMap::from([(0, vec![1]), (1, vec![2])]);
-    assert_eq!(fragment_tree_end(&fragments, &children, &[0], 100.0), 150.0);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        150.0
+    );
     // Without the outer clip, the deepest fragment paints to its own end.
     let fragments = [fragment(None, 0.0, 300.0, None), fragments[1], fragments[2]];
-    assert_eq!(fragment_tree_end(&fragments, &children, &[0], 100.0), 520.0);
     assert_eq!(
-        fragment_tree_end(&fragments, &children, &[], 100.0),
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        520.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[], 100.0, |_| false),
         f32::NEG_INFINITY
+    );
+}
+
+#[test]
+fn fragment_tree_end_caps_descendants_of_overflow_clipping_fragments() {
+    let fragment = |node_id, parent, height| crate::fragment::LayoutFragment {
+        node_id,
+        parent,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height,
+        },
+        fragmentainer_clip: None,
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // A 30px wrapper that clips its overflow holds a 400px fragment.
+    let fragments = [fragment(1, None, 30.0), fragment(2, Some(0), 400.0)];
+    let children = HashMap::from([(0, vec![1])]);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |node_id| node_id == 1),
+        30.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |_| false),
+        400.0
     );
 }
