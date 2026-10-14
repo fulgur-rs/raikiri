@@ -6066,11 +6066,11 @@ fn adjoins_previous_sibling(
         let Some(index) = siblings.iter().position(|&id| id == current) else {
             return false;
         };
-        for found in siblings[..index]
-            .iter()
-            .rev()
-            .filter_map(|&id| last_in_flow_box(document, cascade, id))
-        {
+        let mut boxes = Vec::new();
+        for &id in siblings[..index].iter().rev() {
+            push_in_flow_boxes_rev(document, cascade, id, &mut boxes);
+        }
+        for found in boxes {
             if found == previous {
                 return true;
             }
@@ -6100,9 +6100,15 @@ fn takes_no_block_space(document: &Document, cascade: &CascadeResult, node_id: u
             <= 0.0
 }
 
-/// `node_id` when it is an in-flow box, or the last such box that a
-/// `display: contents` element lifts into its parent.
-fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
+/// Pushes `node_id` onto `boxes` when it is an in-flow box, or else the
+/// in-flow boxes that a `display: contents` element lifts into its parent,
+/// last first.
+fn push_in_flow_boxes_rev(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    boxes: &mut Vec<usize>,
+) {
     let node = &document.nodes[node_id];
     // White space that `white-space` preserves still generates lines.
     let collapse = cascade.computed[node_id].effective_white_space_collapse;
@@ -6126,17 +6132,16 @@ fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize
         || node.style.position == taffy::Position::Absolute
         || is_floating_box_for_pagination(document, cascade, node_id)
     {
-        return None;
+        return;
     }
     if node.kind() != NodeKind::Text && cascade.computed[node_id].display == DisplayValue::Contents
     {
-        return node
-            .children
-            .iter()
-            .rev()
-            .find_map(|&id| last_in_flow_box(document, cascade, id));
+        for &id in node.children.iter().rev() {
+            push_in_flow_boxes_rev(document, cascade, id, boxes);
+        }
+        return;
     }
-    Some(node_id)
+    boxes.push(node_id);
 }
 
 /// Grows the auto-height ancestors of `node_id`, which moved down by

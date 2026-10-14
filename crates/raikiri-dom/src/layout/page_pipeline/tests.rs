@@ -13126,3 +13126,43 @@ fn a_sticky_avoiding_float_moves_by_its_normal_flow_position() {
     });
     assert_eq!(page_flow_y(&doc, id), 100.0);
 }
+
+#[test]
+fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px;break-inside:avoid"),
+        );
+        let contents = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;height:0px"),
+        );
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 140.0);
+}
