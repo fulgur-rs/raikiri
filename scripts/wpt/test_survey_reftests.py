@@ -13,6 +13,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from survey_reftests import checkout_revision, main, make_report, read_baseline, scan_reftests  # noqa: E402
 
+# Fixture repos are removed by TemporaryDirectory; `git commit` may spawn
+# detached auto-maintenance that keeps writing under `.git/objects/pack`
+# during removal and fails cleanup with ENOTEMPTY.
+GIT_NO_AUTO_MAINTENANCE = {
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "maintenance.auto",
+    "GIT_CONFIG_VALUE_0": "false",
+    "GIT_CONFIG_KEY_1": "gc.auto",
+    "GIT_CONFIG_VALUE_1": "0",
+}
+
 
 class SurveyReftestsTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -235,7 +246,12 @@ class SurveyReftestsTests(unittest.TestCase):
         )
 
     def git(self, args: list[str]) -> None:
-        subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(self.root), *args],
+            check=True,
+            capture_output=True,
+            env={**os.environ, **GIT_NO_AUTO_MAINTENANCE},
+        )
 
     def test_revision_is_unknown_for_non_git_wpt_root_inside_parent_repo(self) -> None:
         repository_root = Path(__file__).resolve().parents[2]
