@@ -23,6 +23,26 @@ fn an_empty_block_follows_a_forced_break_sibling() {
 }
 
 #[test]
+fn boxes_after_a_contents_wrapper_follow_a_forced_break_inside_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let wrapper = block(doc, body, "display:block");
+        let contents = block(doc, wrapper, "display:contents");
+        ids.push(block(
+            doc,
+            contents,
+            "display:block;height:60px;break-before:page",
+        ));
+        ids.push(block(doc, contents, "display:block;height:20px"));
+        ids.push(block(doc, wrapper, "display:block;height:20px"));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 180.0, 200.0]);
+}
+
+#[test]
 fn an_avoiding_box_in_a_single_column_grid_item_moves() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {

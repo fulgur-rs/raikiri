@@ -5516,10 +5516,17 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // A forced break ends its ancestors' fragments on
                         // this page, which their continuations account for;
                         // only the boxes after it in block flow follow it.
+                        // A `display: contents` ancestor has no box; its
+                        // parent lays the moved box out among its siblings.
                         let mut child = node_id;
-                        while let Some(parent) = parent_of[child]
+                        let mut next = parent_of[node_id];
+                        while let Some(parent) = next
                             && parent != body_id
                         {
+                            next = parent_of[parent];
+                            if cascade.computed[parent].display == DisplayValue::Contents {
+                                continue;
+                            }
                             shift_later_block_siblings(
                                 document, cascade, parent, child, node_delta,
                             );
