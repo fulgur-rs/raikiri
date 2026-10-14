@@ -13791,3 +13791,17 @@ fn a_box_crossing_a_page_edge_by_more_than_rounding_is_split() {
         Some((0.0, 10.0)),
     );
 }
+
+#[test]
+fn a_box_within_both_rounding_bands_stays_on_the_page_it_starts_on() {
+    // Past 2^23px one ulp is 1px, so a whole box can lie within one ulp of
+    // each side of a page edge. It must land on exactly one page.
+    let page_end = 16_777_216.0_f32;
+    let top = page_end.next_down();
+    let height = page_end.next_up() - top;
+    assert!(flow_page_overlap(top, height, page_end - 1_000.0, page_end).is_some());
+    assert_eq!(
+        flow_page_overlap(top, height, page_end, page_end + 1_000.0),
+        None
+    );
+}
