@@ -54,6 +54,13 @@ fn lay_out(page: &str, css: &str, body: &str) -> (std::time::Duration, u32) {
     (started.elapsed(), document.page_count())
 }
 
+/// A wrapper chain of depth `n`, kept short enough that the body, the column
+/// container and the content inside the chain stay within the layout depth
+/// limit of 256 nested elements.
+fn wrappers(n: usize) -> usize {
+    n.min(250)
+}
+
 // Paginating the column group before a spanner fills one page at a time. Each
 // page must cost its own paragraphs, not the whole group's, or a long group
 // exhausts the layout work budget.
@@ -106,9 +113,9 @@ fn case(kind: &str, n: usize) -> (String, String, String) {
             ".mc{column-count:4;column-gap:0}".into(),
             format!(
                 "{}<p>{}</p>{}",
-                "<div>".repeat(n),
+                "<div>".repeat(wrappers(n)),
                 vec!["<span>A</span>"; 64].join("<br>"),
-                "</div>".repeat(n)
+                "</div>".repeat(wrappers(n))
             ),
         ),
         // n inline boxes spread over a fixed column count.
@@ -135,9 +142,9 @@ fn case(kind: &str, n: usize) -> (String, String, String) {
             ".mc{column-count:4;column-gap:0}".into(),
             format!(
                 "{}{}{}",
-                "<div>".repeat(n),
+                "<div>".repeat(wrappers(n)),
                 "<p>A</p>".repeat(2000),
-                "</div>".repeat(n)
+                "</div>".repeat(wrappers(n))
             ),
         ),
         // n small paginated column containers, each ending in a spanner.

@@ -51,9 +51,6 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.style.inset != Rect::auto()
             || block_margins(node).is_none()
             || node.style.overflow != defaults.overflow
-            // A logical minimum block size keeps the boxes on the projection
-            // that preserves their unfragmented minimum.
-            || node.has_logical_min_block_size
             || node.tag_name().is_some_and(|tag| {
                 ATOMIC_TAGS.contains(&tag)
                     || REPLACED_BOX_TAGS.contains(&tag)
@@ -171,8 +168,10 @@ struct Placement {
 
 /// Fill columns of `column_height` with `items` in order. A splittable box
 /// continues at the top of the next column; a box that avoids breaks moves
-/// to the next column when it does not fit below earlier content, and
-/// overflows a column it starts at the top of (CSS Fragmentation 3, 4.4).
+/// to the next column when it does not fit below earlier content, overflows
+/// a column it starts at the top of, and breaks anyway when it is taller than
+/// a whole column (CSS Fragmentation 3, 4.4). A box that avoids breaks and
+/// must stay whole overflows instead.
 /// Adjoining sibling margins collapse, and a margin at a break is truncated
 /// (CSS Fragmentation 3, 5.2). Stops with [`Stop::Exhausted`] once more
 /// than `max_pieces` pieces or skipped columns would be needed, so a tall box
@@ -236,7 +235,11 @@ fn place_within(
         }
         cursor += gap;
         pending_margin = item.margin_bottom;
-        if item.splittable {
+        // A box that avoids breaks but is taller than a whole column breaks
+        // anyway (CSS Fragmentation 3, 4.4), unless painting cannot slice it.
+        let breaks_anyway =
+            !item.splittable && !item.whole && item.height > column_height + EPSILON;
+        if item.splittable || breaks_anyway {
             let mut left = item.height;
             loop {
                 let room = column_height - cursor;
