@@ -94,14 +94,7 @@ pub(crate) fn read_font_file(
 ) -> Result<Option<Vec<u8>>, FontError> {
     match raikiri_traits::io::read_bounded_contained_file(path, canonical_root, size_cap) {
         Ok(bytes) => Ok(Some(bytes)),
-        Err(
-            reason @ (RejectReason::Symlink
-            | RejectReason::NotRegularFile
-            | RejectReason::NotRegularFilePostOpen
-            | RejectReason::Oversized { .. }
-            | RejectReason::PathEscape { .. }
-            | RejectReason::PathEscapePostOpen { .. }),
-        ) => {
+        Err(reason) if is_skipped_read_reject(&reason) => {
             emit_warn(
                 observer,
                 FontWarn::ReadRejected {
@@ -116,6 +109,23 @@ pub(crate) fn read_font_file(
             source: reject_into_io(reason),
         }),
     }
+}
+
+/// Whether [`read_font_file`] warns about and skips a candidate rejected for
+/// `reason`. The walker already filtered these kinds, so each one means the
+/// tree changed between walk and read; skipping one file keeps the rest of
+/// the collection. `Io` and any reason added to `RejectReason` later are
+/// hard errors.
+fn is_skipped_read_reject(reason: &RejectReason) -> bool {
+    matches!(
+        reason,
+        RejectReason::Symlink
+            | RejectReason::NotRegularFile
+            | RejectReason::NotRegularFilePostOpen
+            | RejectReason::Oversized { .. }
+            | RejectReason::PathEscape { .. }
+            | RejectReason::PathEscapePostOpen { .. }
+    )
 }
 
 /// The I/O error a hard-failing read reject propagates as: `Io`'s own
@@ -313,9 +323,8 @@ pub enum FontError {
     /// An io failure during the dir walk, or a [`RejectReason::Io`] (or a
     /// reject reason this module does not classify) propagated from a font
     /// read.
-    /// Other reject reasons are warn+skipped (see the callsite comment on
-    /// [`build_wpt_font_collection`] for details — one source of
-    /// truth for the full variant list, so this doc doesn't drift from it).
+    /// The reject reasons a read warns about and skips instead are listed in
+    /// one place, the read stage's `is_skipped_read_reject`.
     Io {
         /// Path where the io error occurred (during the walk or read stage)
         path: PathBuf,
@@ -1160,7 +1169,10 @@ mod tests {
         );
         assert_eq!(
             events,
-            [OwnedWarn::ReadRejected(link, "path is a symlink".into())]
+            [OwnedWarn::ReadRejected(
+                link.clone(),
+                format!("skipping {} (path is a symlink)", link.display())
+            )]
         );
     }
 
@@ -1209,7 +1221,10 @@ mod tests {
             events,
             [OwnedWarn::ReadRejected(
                 tmp.path().into(),
-                "path is not a regular file".into()
+                format!(
+                    "skipping {} (path is not a regular file)",
+                    tmp.path().display()
+                )
             )]
         );
     }
@@ -1237,8 +1252,11 @@ mod tests {
         assert_eq!(
             events,
             [OwnedWarn::ReadRejected(
-                path,
-                "file size 8 bytes exceeds cap 4 bytes".into()
+                path.clone(),
+                format!(
+                    "skipping {} (file size 8 bytes exceeds cap 4 bytes)",
+                    path.display()
+                )
             )]
         );
     }
@@ -1324,15 +1342,16 @@ mod tests {
             matches!(result, Ok(None)),
             "expected a skip for intermediate-symlink escape, got {result:?}"
         );
-        let expected = RejectReason::PathEscape {
-            canonical: outside_leaf,
-            root: canonical_root,
-        };
         assert_eq!(
             events,
             [OwnedWarn::ReadRejected(
-                leaf_via_intermediate,
-                expected.to_string()
+                leaf_via_intermediate.clone(),
+                format!(
+                    "skipping {} (canonicalizes to {} which escapes fonts root {})",
+                    leaf_via_intermediate.display(),
+                    outside_leaf.display(),
+                    canonical_root.display()
+                )
             )]
         );
     }
@@ -1359,6 +1378,43 @@ mod tests {
             other => panic!("expected Io(NotFound) for missing path, got {other:?}"),
         }
         assert!(events.is_empty(), "unexpected warns: {events:?}");
+    }
+
+    /// Every reject reason the walker pre-filters is warned about and
+    /// skipped, including the ones only a walk-then-read race produces, and
+    /// `Io` is not. A reason dropped from the skip list would otherwise turn
+    /// a single swapped file into a failure of the whole collection.
+    #[test]
+    fn is_skipped_read_reject_skips_every_pre_filtered_reason() {
+        let skipped = [
+            RejectReason::Symlink,
+            RejectReason::NotRegularFile,
+            RejectReason::NotRegularFilePostOpen,
+            RejectReason::Oversized {
+                size: 8,
+                cap: 4,
+                phase: OversizePhase::PreOpen,
+            },
+            RejectReason::Oversized {
+                size: 101,
+                cap: 100,
+                phase: OversizePhase::DuringRead,
+            },
+            RejectReason::PathEscape {
+                canonical: PathBuf::from("/outside/a.ttf"),
+                root: PathBuf::from("/fonts"),
+            },
+            RejectReason::PathEscapePostOpen {
+                canonical: PathBuf::from("/outside/b.ttf"),
+                root: PathBuf::from("/fonts"),
+            },
+        ];
+        for reason in &skipped {
+            assert!(is_skipped_read_reject(reason), "{reason:?} must be skipped");
+        }
+        assert!(!is_skipped_read_reject(&RejectReason::Io(
+            std::io::Error::other("boom")
+        )));
     }
 
     /// `reject_into_io` passes an `Io` reason's own error through and folds
@@ -1419,7 +1475,7 @@ mod tests {
         WalkerSkippedSymlink(PathBuf),
         WalkerSkippedNonRegular(PathBuf),
         WalkerSkippedOversized(PathBuf, u64, u64),
-        /// Path and the reject reason's own `Display` text.
+        /// Path and the full warn message, as operators see it.
         ReadRejected(PathBuf, String),
         RegisterEmpty(PathBuf),
     }
@@ -1434,8 +1490,8 @@ mod tests {
                 FontWarn::WalkerSkippedOversized { path, size, cap } => {
                     Self::WalkerSkippedOversized(path.into(), size, cap)
                 }
-                FontWarn::ReadRejected { path, reason } => {
-                    Self::ReadRejected(path.into(), reason.to_string())
+                FontWarn::ReadRejected { path, .. } => {
+                    Self::ReadRejected(path.into(), w.to_string())
                 }
                 FontWarn::RegisterEmpty { path } => Self::RegisterEmpty(path.into()),
             }

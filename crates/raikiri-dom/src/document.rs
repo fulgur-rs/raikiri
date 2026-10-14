@@ -43,7 +43,7 @@ const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
 
 /// Width and height of an HTML `<canvas>` whose `width` or `height` content
 /// attribute is missing or unparsable (HTML Standard §4.12.5).
-pub(crate) const DEFAULT_CANVAS_SIZE: (u32, u32) = (300, 150);
+pub const DEFAULT_CANVAS_SIZE: (u32, u32) = (300, 150);
 // Bound all size variants retained beyond the source cache's current raster.
 const MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -2294,7 +2294,7 @@ impl Document {
 
     /// Current width/height of an HTML `<canvas>` element (HTML Standard §4.12.5).
     ///
-    /// Missing or unparsable attributes fall back to 300×150. Returns `None`
+    /// Missing or unparsable attributes fall back to [`DEFAULT_CANVAS_SIZE`]. Returns `None`
     /// for non-canvas nodes.
     pub fn canvas_size(&self, id: usize) -> Option<(u32, u32)> {
         if !self.is_canvas_element(id) {
