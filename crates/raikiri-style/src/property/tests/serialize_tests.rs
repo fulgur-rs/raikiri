@@ -66,7 +66,7 @@ fn serialize_length_or_auto_formats_relative_calc_terms_in_canonical_order() {
         "calc(-10vh)"
     );
     for unit in [
-        "em", "rem", "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax",
+        "em", "ch", "rem", "lh", "rlh", "vw", "vh", "vi", "vb", "vmin", "vmax",
     ] {
         assert_eq!(
             serialize_length_or_auto(&LengthOrAuto::RelativeCalc(term(2.0, unit))),
