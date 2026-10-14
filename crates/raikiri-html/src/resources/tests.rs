@@ -2241,3 +2241,343 @@ fn cache_evicts_svg_rasters_for_the_process_budget() {
     small(&mut cache).unwrap();
     assert_eq!(budget.retained(), 4);
 }
+
+/// Policy that denies one host and one scheme for images and restricts the
+/// MIME types of every response.
+struct ScopedPolicy {
+    denied_host: &'static str,
+    denied_scheme: &'static str,
+    mime_types: Vec<String>,
+}
+
+impl ScopedPolicy {
+    fn new() -> Self {
+        Self {
+            denied_host: "denied.test",
+            denied_scheme: "data",
+            mime_types: Vec::new(),
+        }
+    }
+}
+
+impl raikiri_traits::ResourcePolicy for ScopedPolicy {
+    fn is_scheme_allowed(&self, scheme: &str, _kind: ResourceKind) -> bool {
+        scheme != self.denied_scheme
+    }
+    fn is_host_allowed(&self, host: &str, _kind: ResourceKind) -> bool {
+        host != self.denied_host
+    }
+    fn allow_redirect(&self, _from: &Url, _to: &Url, _hop: u32) -> bool {
+        true
+    }
+    fn max_redirect_hops(&self, _kind: ResourceKind) -> u32 {
+        10
+    }
+    fn max_fetch_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn max_decoded_bytes(&self, _kind: ResourceKind) -> Option<u64> {
+        None
+    }
+    fn fetch_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn decode_timeout(&self, _kind: ResourceKind) -> Duration {
+        Duration::from_secs(10)
+    }
+    fn allowed_mime_types(&self, _kind: ResourceKind) -> Vec<String> {
+        self.mime_types.clone()
+    }
+    fn max_import_depth(&self) -> u32 {
+        10
+    }
+    fn max_svg_recursion_depth(&self) -> u32 {
+        10
+    }
+}
+
+fn warnings_of(warnings: &SharedRenderWarnings) -> Vec<RenderWarning> {
+    warnings
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
+#[test]
+fn background_urls_denied_by_policy_warn_without_fetching() {
+    let provider = CountingPngProvider::new(png_bytes(1, 1));
+    let policy = ScopedPolicy::new();
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = std::collections::HashSet::new();
+    let mut attempts = 0;
+    resources.preload_background_urls(
+        [
+            "relative.png",
+            "mailto:someone@example.test",
+            "https://user:pw@denied.test/a.png?token=secret",
+            "data:image/png;base64,AAAA",
+        ],
+        None,
+        &warnings,
+        &mut seen,
+        &mut attempts,
+        None,
+    );
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 0);
+    let seen = warnings_of(&warnings);
+    let violations: Vec<_> = seen
+        .iter()
+        .map(|warning| match &warning.kind {
+            WarningKind::PolicyWarning { violation } => (
+                violation.url.as_str(),
+                matches!(violation.violation_type, ViolationType::SchemeNotAllowed),
+            ),
+            other => panic!("expected a policy warning, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        violations,
+        vec![
+            ("https://denied.test/a.png", false),
+            ("data:image/png;base64,AAAA", true),
+        ]
+    );
+}
+
+#[test]
+fn inline_background_images_denied_by_policy_warn_once() {
+    let policy = ScopedPolicy::new();
+    let resources = RenderResources::new().network_policy(&policy);
+    let url = Url::parse("data:image/png;base64,AAAA").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings_of(&warnings);
+    assert_eq!(seen.len(), 1, "got {seen:?}");
+    assert!(matches!(
+        &seen[0].kind,
+        WarningKind::PolicyWarning { violation }
+            if matches!(violation.violation_type, ViolationType::SchemeNotAllowed)
+    ));
+}
+
+#[test]
+fn cached_raster_backgrounds_answer_the_pixel_source_queries() {
+    let provider = CountingPngProvider::new(png_bytes(4, 2));
+    let resources = RenderResources::new().network_provider(&provider);
+    let url = Url::parse("https://images.test/wide.png").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(warnings_of(&warnings).is_empty());
+
+    let with_fragment = Url::parse("https://images.test/wide.png#part").unwrap();
+    let decoded = resources
+        .get_decoded(&with_fragment)
+        .expect("cached raster");
+    assert_eq!((decoded.width, decoded.height), (4, 2));
+    assert_eq!(
+        resources.intrinsic_size(&url),
+        Some(ImageIntrinsicSize {
+            width: Some(4.0),
+            height: Some(2.0),
+            aspect_ratio: Some(2.0),
+        })
+    );
+    assert_eq!(resources.decoded_byte_len(&url), Some(4 * 2 * 4));
+    let size = ImageRasterSize {
+        width: 8.0,
+        height: 4.0,
+    };
+    assert!(resources.get_decoded_at_size(&url, size, None).is_some());
+    assert!(
+        resources
+            .get_decoded_at_size(&url, size, Some(32))
+            .is_some()
+    );
+    assert!(
+        resources
+            .get_decoded_at_size(&url, size, Some(31))
+            .is_none()
+    );
+}
+
+#[test]
+fn pixel_source_queries_for_denied_urls_answer_nothing() {
+    let policy = ScopedPolicy::new();
+    let resources = RenderResources::new().network_policy(&policy);
+    let url = Url::parse("https://denied.test/a.png").unwrap();
+    assert!(resources.get_decoded(&url).is_none());
+    assert!(resources.intrinsic_size(&url).is_none());
+    assert!(resources.decoded_byte_len(&url).is_none());
+    let size = ImageRasterSize {
+        width: 1.0,
+        height: 1.0,
+    };
+    assert!(resources.get_decoded_at_size(&url, size, None).is_none());
+}
+
+#[test]
+fn default_background_raster_size_fills_missing_dimensions() {
+    use super::decode::default_background_raster_size;
+
+    let size = |width: Option<f32>, height: Option<f32>, aspect_ratio: Option<f32>| {
+        let size = default_background_raster_size(ImageIntrinsicSize {
+            width,
+            height,
+            aspect_ratio,
+        });
+        (size.width, size.height)
+    };
+    assert_eq!(size(Some(10.0), Some(20.0), Some(4.0)), (10.0, 20.0));
+    assert_eq!(size(Some(10.0), None, Some(2.0)), (10.0, 5.0));
+    assert_eq!(size(None, Some(10.0), Some(2.0)), (20.0, 10.0));
+    // A ratio alone fits the 300x150 default box.
+    assert_eq!(size(None, None, Some(4.0)), (300.0, 75.0));
+    assert_eq!(size(None, None, Some(1.0)), (150.0, 150.0));
+    // Without a usable ratio, the missing dimension takes its default.
+    assert_eq!(size(Some(10.0), None, Some(0.0)), (10.0, 150.0));
+    assert_eq!(size(None, Some(10.0), None), (300.0, 10.0));
+    assert_eq!(size(None, None, None), (300.0, 150.0));
+}
+
+#[test]
+fn image_warning_helpers_redact_urls() {
+    use super::decode::{push_image_fallback_warning, push_image_limit_warning};
+
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    push_image_limit_warning(&warnings, 4, 8, "too large");
+    let url = Url::parse("https://user:pw@images.test/a.png?token=secret#frag").unwrap();
+    push_image_fallback_warning(&warnings, &url, "skipped");
+    let seen = warnings_of(&warnings);
+    assert!(matches!(
+        seen[0].kind,
+        WarningKind::ResourceLimitExceeded {
+            kind: ResourceKind::Image,
+            limit: 4,
+            actual: 8,
+        }
+    ));
+    assert_eq!(seen[0].details, "too large");
+    assert!(matches!(
+        &seen[1].kind,
+        WarningKind::ResourceFallback {
+            kind: ResourceKind::Image,
+            url: Some(url),
+        } if url.as_str() == "https://images.test/a.png"
+    ));
+    assert_eq!(seen[1].details, "skipped");
+}
+
+/// Provider answering every request with fixed CSS and `content_type`.
+struct TypedProvider {
+    content_type: Option<&'static str>,
+}
+
+impl NetworkProvider for TypedProvider {
+    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+        Ok(FetchOutcome::Body(FetchedResource {
+            bytes: bytes::Bytes::from_static(b"p {}"),
+            content_type: self.content_type.map(str::to_owned),
+            final_url: request.url,
+            encoding: None,
+        }))
+    }
+}
+
+fn adapter_fetch(
+    content_type: Option<&'static str>,
+) -> Result<raikiri_traits::FetchedResource, NetworkError> {
+    let provider = TypedProvider { content_type };
+    let mut policy = ScopedPolicy::new();
+    policy.mime_types = vec!["text/css".to_owned()];
+    let resources = RenderResources::new()
+        .network_provider(&provider)
+        .network_policy(&policy);
+    let adapter = resources.network_adapter().expect("provider configured");
+    let url = Url::parse("https://styles.test/a.css").unwrap();
+    adapter.fetch(crate::fetch::get_request(
+        url,
+        ResourceKind::ExternalStylesheet,
+        None,
+    ))
+}
+
+#[test]
+fn the_network_adapter_enforces_the_policy_mime_types() {
+    let fetched = adapter_fetch(Some("Text/CSS; charset=utf-8")).expect("allowed MIME type");
+    assert_eq!(&fetched.bytes[..], b"p {}");
+    for (content_type, mime) in [(None, "<missing>"), (Some("text/plain"), "text/plain")] {
+        let Err(NetworkError::PolicyViolation(violation)) = adapter_fetch(content_type) else {
+            panic!("{content_type:?} must be denied");
+        };
+        assert!(
+            matches!(&violation.violation_type, ViolationType::MimeNotAllowed { mime: denied } if denied == mime),
+            "got {:?}",
+            violation.violation_type
+        );
+    }
+}
+
+#[test]
+fn font_loader_failures_warn_and_successes_are_reused() {
+    use raikiri_dom::FontFaceLoader;
+
+    let warnings: SharedRenderWarnings = Arc::new(Mutex::new(Vec::new()));
+    let loader = NetworkFontFaceLoader::new(None, None, Arc::clone(&warnings));
+    assert!(loader.load("relative.woff2").is_none());
+    assert!(
+        loader
+            .load("https://fonts.test/a.woff2?key=secret")
+            .is_none()
+    );
+    let seen = warnings_of(&warnings);
+    assert!(matches!(
+        seen[0].kind,
+        WarningKind::ResourceFallback {
+            kind: ResourceKind::Font,
+            url: None,
+        }
+    ));
+    assert!(matches!(
+        &seen[1].kind,
+        WarningKind::ResourceFallback {
+            kind: ResourceKind::Font,
+            url: Some(url),
+        } if url.as_str() == "https://fonts.test/a.woff2"
+    ));
+
+    let failing = FailingProvider;
+    let warnings: SharedRenderWarnings = Arc::new(Mutex::new(Vec::new()));
+    let loader = NetworkFontFaceLoader::new(Some(&failing), None, Arc::clone(&warnings));
+    assert!(loader.load("https://fonts.test/b.woff2").is_none());
+    assert!(matches!(
+        &warnings_of(&warnings)[0].kind,
+        WarningKind::NetworkFallback { url } if url.as_str() == "https://fonts.test/b.woff2"
+    ));
+
+    let provider = CountingPngProvider::new(b"font".to_vec());
+    let warnings: SharedRenderWarnings = Arc::new(Mutex::new(Vec::new()));
+    let loader = NetworkFontFaceLoader::new(Some(&provider), None, Arc::clone(&warnings));
+    let url = "https://fonts.test/c.woff2";
+    assert_eq!(loader.load(url).as_deref(), Some(&b"font"[..]));
+    assert_eq!(loader.load(url).as_deref(), Some(&b"font"[..]));
+    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    assert!(warnings_of(&warnings).is_empty());
+}
+
+#[test]
+fn malformed_inline_background_images_report_a_fallback() {
+    let resources = RenderResources::new();
+    let url = Url::parse("data:image/png;base64").unwrap();
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    resources.fetch_background_image(url.clone(), &warnings, None);
+    assert!(resources.cached_background_image(&url).is_none());
+    let seen = warnings_of(&warnings);
+    assert_eq!(
+        seen[0].details,
+        "inline CSS background image data URL was malformed"
+    );
+}

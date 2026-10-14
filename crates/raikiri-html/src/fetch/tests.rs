@@ -70,3 +70,19 @@ fn min_limit_treats_none_as_unlimited() {
     assert_eq!(min_limit(None, Some(5)), Some(5));
     assert_eq!(min_limit::<u64>(None, None), None);
 }
+
+#[test]
+fn network_error_summaries_omit_provider_details() {
+    assert_eq!(
+        network_error_summary(&NetworkError::Aborted),
+        "request aborted"
+    );
+    assert_eq!(
+        network_error_summary(&NetworkError::Io(std::io::Error::other("secret"))),
+        "network I/O error"
+    );
+    assert_eq!(
+        network_error_summary(&NetworkError::Other("secret".to_owned())),
+        "provider returned a network error"
+    );
+}
