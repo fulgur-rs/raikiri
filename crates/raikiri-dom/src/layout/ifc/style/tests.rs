@@ -273,6 +273,24 @@ fn inline_edges_in_calc_ch_add_the_rest_of_the_sum() {
 }
 
 #[test]
+fn inline_edges_in_calc_ch_clamp_negative_padding_but_not_margin() {
+    let fixture = block_fixture(
+        "padding-left:calc(1ch - 100px);margin-left:calc(1ch - 100px)",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let edges = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    assert_eq!(edges.padding.inline_start, 0.0);
+    assert_eq!(edges.margin.inline_start, -90.0);
+}
+
+#[test]
 fn inline_edges_in_ch_use_the_declaring_element_font() {
     let fixture = block_fixture("", |doc, root| {
         let inner = span(

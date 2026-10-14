@@ -891,7 +891,8 @@ pub(crate) fn inline_edges(
         ch_px(ch),
         value,
     ) {
-        (Some(px), _) => Ok::<f32, IfcError>(px),
+        // A calc() sum can go negative; padding cannot.
+        (Some(px), _) => Ok::<f32, IfcError>(px.max(0.0)),
         (None, ComputedLengthPercentageOrCalc::Px(value)) => Ok(value),
         _ => Ok(0.0),
     };
