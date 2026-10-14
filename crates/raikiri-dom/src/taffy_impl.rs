@@ -1256,8 +1256,14 @@ fn measure_ifc_root(
         root.containing_width = containing_width;
     });
     let axes = IfcAxes::new(writing_mode, direction);
-    let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
-    geometry.definite_height = measure.definite_height;
+    // Every geometry of the root keeps its definite height, also when the
+    // auto-width loop below lays it out again at a new width.
+    let geometry_of = |content_size| {
+        let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
+        geometry.definite_height = measure.definite_height;
+        geometry
+    };
+    let mut geometry = geometry_of(content_size);
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
@@ -1283,8 +1289,7 @@ fn measure_ifc_root(
                 break;
             }
             content_size.width = block_size;
-            geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
-            geometry.definite_height = measure.definite_height;
+            geometry = geometry_of(content_size);
             lines = crate::layout::ifc::boxes::layout_with_boxes_in(
                 tree,
                 idx,
@@ -1300,8 +1305,7 @@ fn measure_ifc_root(
         }
         if (block_size - geometry.content_size.width).abs() > 0.01 {
             content_size.width = block_size;
-            geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
-            geometry.definite_height = measure.definite_height;
+            geometry = geometry_of(content_size);
         }
         (lines, block_size)
     } else {
