@@ -1910,6 +1910,13 @@ fn legacy_page_area_survives_percentage_padding_and_margins() {
         laid_out_page_area(&page, page_box_from_cascade(&page, base)),
         (200.0, 100.0),
     );
+    // A border on a side without padding still sits around the page area.
+    let page =
+        page_context("@page { width: 100px; height: 100px; border: 10px solid; padding: 0 10% }");
+    close(
+        laid_out_page_area(&page, page_box_from_cascade(&page, base)),
+        (100.0, 100.0),
+    );
     // With `size`, margins keep the paper as their basis.
     let page = page_context(
         "@page { size: 500px 700px; margin: 10%; padding: 10%; width: 200px; height: 300px }",

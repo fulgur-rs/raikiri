@@ -345,12 +345,17 @@ impl Default for ReftestConfig {
 }
 
 impl ReftestConfig {
-    /// This configuration with the print paper as its viewport.
-    fn printed(self) -> Self {
-        Self {
-            width: self.print_page_width,
-            height: self.print_page_height,
-            ..self
+    /// This configuration with the paper `test` renders on: the print paper
+    /// for a print reftest, the viewport otherwise.
+    pub(crate) fn for_test(self, test: &Path) -> Self {
+        if is_print_reftest(test) {
+            Self {
+                width: self.print_page_width,
+                height: self.print_page_height,
+                ..self
+            }
+        } else {
+            self
         }
     }
 }
@@ -2515,7 +2520,8 @@ fn self_consistent_page_box(
     height: f32,
 ) -> Option<raikiri_traits::PageBox> {
     // The edge sizes are linear in the page box, so two samples give the
-    // fixed part and the ratio.
+    // fixed part and the ratio. Both are nonzero boxes: a border is dropped
+    // where its side has no padding or margin, which a zero box would hit.
     const SAMPLE: f32 = 1000.0;
     let edges = |side: f32| {
         let mut sample = raikiri_traits::PageBox::new();
@@ -2528,16 +2534,17 @@ fn self_consistent_page_box(
             margins.top + margins.bottom + insets.top + insets.bottom,
         )
     };
-    let (fixed_x, fixed_y) = edges(0.0);
-    let (sample_x, sample_y) = edges(SAMPLE);
-    let solve = |area: f32, fixed: f32, sample: f32| {
-        let ratio = (sample - fixed) / SAMPLE;
+    let (small_x, small_y) = edges(SAMPLE);
+    let (large_x, large_y) = edges(2.0 * SAMPLE);
+    let solve = |area: f32, small: f32, large: f32| {
+        let ratio = (large - small) / SAMPLE;
+        let fixed = small - ratio * SAMPLE;
         let side = (area + fixed) / (1.0 - ratio);
         (ratio < 1.0 && side.is_finite() && side > 0.0).then_some(side)
     };
     let mut page_box = raikiri_traits::PageBox::new();
-    page_box.width = solve(width, fixed_x, sample_x)?;
-    page_box.height = solve(height, fixed_y, sample_y)?;
+    page_box.width = solve(width, small_x, large_x)?;
+    page_box.height = solve(height, small_y, large_y)?;
     Some(page_box)
 }
 
@@ -3998,13 +4005,14 @@ where
     let ref_html = read_html(&pair.reference)?;
     let fuzzy = fuzzy::metadata(&test_html, pair)?;
     let selections = page_selections_for_pair(&test_html, &pair.reference);
-    // wptrunner prints both sides of a print reftest on its paper, with its
-    // page margins.
-    let print = is_print_reftest(&pair.test);
-    let config = if print { config.printed() } else { config };
+    // Scripts run in wptrunner's window; only the printout is on its paper.
     let test_prepared = dynamic::prepare(&test_html, &pair.test, variant_query, config)?;
     let reference_suffix = with_variant_query(&pair.reference_suffix, variant_query);
     let ref_prepared = dynamic::prepare(&ref_html, &pair.reference, &reference_suffix, config)?;
+    // wptrunner prints both sides of a print reftest on its paper, with its
+    // page margins.
+    let print = is_print_reftest(&pair.test);
+    let config = config.for_test(&pair.test);
     // A printed reference gets the print page margin on its own.
     let ref_html = if print {
         ref_prepared.html
@@ -4169,7 +4177,10 @@ pub fn run_all_pairs(pairs: &[ReftestPair], config: ReftestConfig) -> Vec<Reftes
                 pair_test_id: pair.test.display().to_string(),
                 outcome: TestOutcome::Error(format!("render error: {e}")),
                 mismatched_pixels: 0,
-                total_pixels: u64::from(config.width) * u64::from(config.height),
+                total_pixels: {
+                    let paper = config.for_test(&pair.test);
+                    u64::from(paper.width) * u64::from(paper.height)
+                },
             },
         })
         .collect()
