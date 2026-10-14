@@ -2,6 +2,7 @@
 //! applies instead of layout.
 
 use super::ifc::style::inset_precedence;
+use super::multicol::spanning::is_spanner;
 use super::page::{find_body, used_computed_length_percentage_or_auto};
 use super::page_pipeline::{box_parent, definite_content_height};
 use crate::document::Document;
@@ -17,7 +18,8 @@ use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
 /// Percentages and `calc()` resolve against the content box of the
 /// containing block: the nearest ancestor box that is not a non-atomic
 /// inline, and inside a multi-column container the column box of a child
-/// that does not span the columns. The body is laid out in the page area,
+/// that does not span the columns. The used size of a flex or grid item is
+/// definite. The body is laid out in the page area,
 /// so that is its containing block. The width is always known; a
 /// percentage of the height counts as `auto` unless that height is definite
 /// (CSS 2.1 §9.3.2, §10.5), as in layout.
@@ -61,7 +63,7 @@ pub(crate) fn used_relative_insets(
             return Some(document.fixed_page_area.0);
         }
         let block = block?;
-        Some(if document.nodes[node_id].column_span_all {
+        Some(if is_spanner(document, node_id) {
             content_width(document, block)
         } else {
             column_content_width(document, block)
@@ -71,7 +73,11 @@ pub(crate) fn used_relative_insets(
         if is_body() {
             return Some(document.fixed_page_area.1);
         }
-        block.and_then(|block| definite_content_height(document, block))
+        let block = block?;
+        if is_flex_or_grid_item(document, block) {
+            return Some(content_height(document, block));
+        }
+        definite_content_height(document, block)
     };
     let pick = |start: Option<f32>, end: Option<f32>, end_wins: bool| {
         if end_wins {
@@ -98,6 +104,29 @@ fn containing_block(document: &Document, node_id: usize) -> Option<usize> {
         block = box_parent(document, block)?;
     }
     Some(block)
+}
+
+/// Whether `block` is laid out as a flex or grid item. Its used size is
+/// definite once the container has sized it, auto height or not (CSS Flexbox
+/// 1 §9.8, CSS Grid 1 §6.1), so layout resolves percentages inside it
+/// against that size.
+fn is_flex_or_grid_item(document: &Document, block: usize) -> bool {
+    box_parent(document, block).is_some_and(|parent| {
+        matches!(
+            document.nodes[parent].style.display,
+            taffy::Display::Flex | taffy::Display::Grid
+        )
+    })
+}
+
+/// The content-box height of `block`.
+fn content_height(document: &Document, block: usize) -> f32 {
+    let layout = &document.nodes[block].unrounded_layout;
+    layout.size.height
+        - layout.padding.top
+        - layout.padding.bottom
+        - layout.border.top
+        - layout.border.bottom
 }
 
 /// The content-box width of `block`.

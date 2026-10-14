@@ -187,10 +187,20 @@ fn a_column_spanner_takes_the_full_multicol_width() {
     assert_eq!(
         offset(
             container,
-            "column-span:all;float:left;position:relative;left:50%"
+            "display:block;column-span:all;position:relative;left:50%"
         )
         .0,
         100.0
+    );
+    // A float does not span the columns, whatever its `column-span`, so it
+    // stays inside a 90px column.
+    assert_eq!(
+        offset(
+            container,
+            "column-span:all;float:left;position:relative;left:50%"
+        )
+        .0,
+        45.0
     );
 }
 
@@ -253,5 +263,44 @@ fn a_sideways_containing_block_takes_its_start_side_inset() {
     assert_eq!(
         offset(container, "float:left;position:relative;top:5px;bottom:10%").1,
         -10.0
+    );
+}
+
+#[test]
+fn a_stretched_flex_item_has_a_definite_height() {
+    // CSS Flexbox 1 §9.8: the item is stretched to the container's definite
+    // 100px, so layout resolves `top: 10%` of an in-flow child to 10px.
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let flex = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:flex;height:100px"),
+    );
+    let item = document.append_element(
+        Some(flex),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:50px"),
+    );
+    let child = document.append_element(
+        Some(item),
+        "div",
+        taffy::Style::default(),
+        Some("float:left;position:relative;top:10%;width:5px;height:5px"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    assert_eq!(
+        used_relative_offset(&document, &cascade.computed[child], child),
+        (0.0, 10.0)
     );
 }
