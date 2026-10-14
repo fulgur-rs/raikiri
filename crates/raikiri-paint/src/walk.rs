@@ -3536,7 +3536,9 @@ pub(crate) fn paint_document_impl(
                         let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
                             bitmap
                         } else {
-                            let (w, h) = document.canvas_size(node_id).unwrap_or((300, 150));
+                            let (w, h) = document
+                                .canvas_size(node_id)
+                                .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
                             fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
                             &fallback_bitmap
                         };
