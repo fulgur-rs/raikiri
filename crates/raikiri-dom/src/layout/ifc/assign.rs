@@ -65,7 +65,8 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
 
 /// Whether `idx` is the body layout starts at.
 pub(crate) fn is_layout_root(doc: &Document, idx: usize) -> bool {
-    doc.nodes[idx].tag_name() == Some("body") && crate::layout::find_body(doc) == Some(idx)
+    // The tag check spares the document walk for every other element.
+    crate::layout::is_body_element(doc, idx) && crate::layout::find_body(doc) == Some(idx)
 }
 
 /// Whether `idx` is an ancestor of the body layout starts at: it is not laid
@@ -131,6 +132,14 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         | DisplayValue::Inline
         | DisplayValue::TableCell
         | DisplayValue::TableCaption => true,
+        // A row or row group outside any table is laid out as a block (no
+        // anonymous table wraps it, see the taffy bridge), so it lays its own
+        // inline content out. Inside a table that content belongs to
+        // anonymous cells instead.
+        DisplayValue::TableRow
+        | DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup => !doc.table_objects.lays_out_children(idx),
         // The body is a block whatever its display (see `generates_own_box`).
         DisplayValue::Contents => is_layout_root(doc, idx),
         _ => false,

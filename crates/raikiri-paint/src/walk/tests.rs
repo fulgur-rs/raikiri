@@ -974,6 +974,23 @@ fn canvas_background_without_body_color_paints_page_only() {
 }
 
 #[test]
+fn canvas_background_ignores_a_frameset_background() {
+    // Only a `body` propagates its background to the canvas.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(
+        Some(html),
+        "frameset",
+        Style::default(),
+        Some("background-color: blue"),
+    );
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    assert_eq!(fill_count(&document, &cascade), 1);
+}
+
+#[test]
 fn canvas_background_with_page_margins_keeps_canvas_layer() {
     let (document, cascade) = canvas_fixture(
         Some("@page { margin: 5px; }"),
