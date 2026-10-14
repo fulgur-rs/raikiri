@@ -8109,6 +8109,30 @@ fn ch_box_values_resolve_through_the_engine() {
 }
 
 #[test]
+fn calc_ch_box_values_add_the_measured_advance_to_the_rest_of_the_sum() {
+    // Ahem's "0" advance is 1 em (10px here) and the containing block is
+    // 800px wide, so each sum is hand-computable.
+    for (css, expected) in [
+        ("width:calc(10ch + 5px)", (105.0, 10.0, 0.0, 0.0)),
+        ("width:calc(50% + 2ch)", (420.0, 10.0, 0.0, 0.0)),
+        ("width:calc(1ch - 50%)", (0.0, 10.0, 0.0, 0.0)),
+        ("height:calc(3ch - 1em)", (800.0, 20.0, 0.0, 0.0)),
+        ("padding-left:calc(2ch + 1px)", (800.0, 10.0, 21.0, 0.0)),
+        ("margin-left:calc(5% - 1ch)", (770.0, 10.0, 0.0, 30.0)),
+        (
+            "width:10px;min-width:calc(2ch + 50%)",
+            (420.0, 10.0, 0.0, 0.0),
+        ),
+        (
+            "height:100px;max-height:calc(1ch + 2px)",
+            (800.0, 12.0, 0.0, 0.0),
+        ),
+    ] {
+        assert_eq!(ch_box_size(css), expected, "{css}");
+    }
+}
+
+#[test]
 fn ch_min_max_constraints_use_the_selected_ahem_zero_advance() {
     let widths = [
         "font-size:16px;width:100px;max-width:4ch",

@@ -851,8 +851,10 @@ pub struct CalcLengthPercentage {
 /// as `0.5em` and `ic` as `1em` (the style layer has no font metrics, as for
 /// [`Length::Ex`]), their root counterparts likewise fold into `rem`, and the
 /// small / large / dynamic viewport units fold into their default-viewport
-/// forms. `ch` is not accepted: a plain `ch` length is measured against the
-/// declaring font by layout, which this representation cannot carry.
+/// forms. A `ch` term keeps its own basis: style resolves it with the same
+/// `0.5em` fallback as a plain [`Length::Ch`], and the box properties whose
+/// layout measures the declaring font's `0` advance carry the coefficient as
+/// [`crate::ChLengthProvenance`].
 ///
 /// At most [`Self::MAX_RELATIVE_TERMS`] distinct relative bases are kept, so
 /// the value stays `Copy` and fixed-size inside [`LengthOrAuto`]; a sum with
@@ -875,6 +877,8 @@ pub struct RelativeCalcLengthPercentage {
 pub enum RelativeCalcUnit {
     /// The element's computed font size.
     Em,
+    /// The advance of `0` in the element's first available font.
+    Ch,
     /// The root element's computed font size.
     Rem,
     /// The element's own `lh`.
@@ -897,8 +901,9 @@ pub enum RelativeCalcUnit {
 
 impl RelativeCalcUnit {
     /// Every unit, in declaration order.
-    pub(crate) const ALL: [Self; 10] = [
+    pub(crate) const ALL: [Self; 11] = [
         Self::Em,
+        Self::Ch,
         Self::Rem,
         Self::Lh,
         Self::Rlh,
@@ -966,6 +971,7 @@ impl RelativeCalcLengthPercentage {
             "pc" => absolute(0.0, value * 16.0),
             "em" | "ic" => relative(RelativeCalcUnit::Em, 1.0),
             "ex" => relative(RelativeCalcUnit::Em, 0.5),
+            "ch" => relative(RelativeCalcUnit::Ch, 1.0),
             "rem" | "ric" => relative(RelativeCalcUnit::Rem, 1.0),
             "rex" | "rch" => relative(RelativeCalcUnit::Rem, 0.5),
             "lh" => relative(RelativeCalcUnit::Lh, 1.0),
@@ -1023,6 +1029,17 @@ impl RelativeCalcLengthPercentage {
             .iter()
             .flatten()
             .map(|term| (term.unit, term.coefficient))
+    }
+
+    /// The `ch` coefficient and the rest of the sum, when the value has a
+    /// `ch` term.
+    pub(crate) fn split_ch(mut self) -> Option<(f32, Self)> {
+        let slot = self
+            .terms
+            .iter_mut()
+            .find(|slot| slot.is_some_and(|term| term.unit == RelativeCalcUnit::Ch))?;
+        let factor = slot.take()?.coefficient;
+        Some((factor, self.normalized()?))
     }
 
     /// The value without font-relative or viewport terms, when it has none.

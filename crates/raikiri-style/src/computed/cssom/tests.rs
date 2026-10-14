@@ -265,8 +265,15 @@ fn text_decoration_inset_measures_ch_lengths_through_the_callback() {
     computed.text_decoration_inset_start_ch = Some(crate::ChLengthProvenance {
         factor: 2.0,
         font: font.clone(),
+        offset: 0.0,
+        percent: 0.0,
     });
-    computed.text_decoration_inset_end_ch = Some(crate::ChLengthProvenance { factor: 1.0, font });
+    computed.text_decoration_inset_end_ch = Some(crate::ChLengthProvenance {
+        factor: 1.0,
+        font,
+        offset: 0.0,
+        percent: 0.0,
+    });
     let mut calls = 0;
     let mut ch_advance = |_: &ChFontKey| {
         calls += 1;

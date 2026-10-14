@@ -878,11 +878,14 @@ pub(crate) fn inline_edges(
     fonts: &FontCollection,
 ) -> Result<InlineEdges, IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    // An edge in `ch` records the font of the element that declared it.
+    // An edge in `ch` records the font of the element that declared it; one
+    // whose calc() also has a percentage is taken as zero like other
+    // percentage edges.
     let ch_px = |provenance: &Option<ChLengthProvenance>| {
-        provenance
-            .as_ref()
-            .map(|value| value.factor * ch_advance(fonts, &value.font))
+        provenance.as_ref().map(|value| {
+            let used = value.with_advance(ch_advance(fonts, &value.font));
+            if used.percent == 0.0 { used.px } else { 0.0 }
+        })
     };
     let padding = |value: ComputedLengthPercentageOrCalc, ch: &Option<ChLengthProvenance>| match (
         ch_px(ch),

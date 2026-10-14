@@ -254,6 +254,25 @@ fn inline_edges_in_ch_are_measured() {
 }
 
 #[test]
+fn inline_edges_in_calc_ch_add_the_rest_of_the_sum() {
+    let fixture = block_fixture(
+        "padding-left:calc(2ch + 3px);margin-right:calc(1ch + 10%)",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let edges = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    assert_eq!(edges.padding.inline_start, 23.0);
+    // A percentage needs the containing block, as for other calc() edges.
+    assert_eq!(edges.margin.inline_end, 0.0);
+}
+
+#[test]
 fn inline_edges_in_ch_use_the_declaring_element_font() {
     let fixture = block_fixture("", |doc, root| {
         let inner = span(
