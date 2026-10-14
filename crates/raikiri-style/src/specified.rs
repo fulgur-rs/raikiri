@@ -1796,8 +1796,18 @@ impl SpecifiedValues {
         // initial values' line height as their self-reference basis (see above). Other
         // font-relative units, such as `em`, still use this element's own font size through the
         // same `resolve_line_height` call as in `finalize`.
-        let line_height =
-            resolve_line_height(self.line_height, font_size, initial_line_height, &initial);
+        // `rem` in `line-height` refers to the root's own computed font size,
+        // since the initial-value basis applies to `font-size` alone.
+        let line_height_ctx = ResolveContext {
+            root_font_size: font_size,
+            ..initial
+        };
+        let line_height = resolve_line_height(
+            self.line_height,
+            font_size,
+            initial_line_height,
+            &line_height_ctx,
+        );
         // Phase 3 context: `rem` uses the root element's computed font size (its own); `rlh`
         // similarly uses its resolved line height. Box properties are outside the self-reference
         // rule above. `used_line_height_length` derives the same value as the `child_ctx` that

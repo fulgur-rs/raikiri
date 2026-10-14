@@ -873,6 +873,21 @@ fn line_height_resolves_a_mixed_calc_against_its_own_font_size() {
         r.computed[html].line_height,
         ComputedLineHeight::Length(ComputedLength(22.0))
     );
+    // On the root, `rem` in `line-height` refers to the root's own size.
+    for (line_height, expected) in [("calc(1rem + 2px)", 22.0), ("1rem", 20.0)] {
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(
+            0,
+            "html",
+            Some(&format!("font-size: 20px; line-height: {line_height}")),
+        );
+        let (r, _) = cascade_measuring_normal(&doc);
+        assert_eq!(
+            r.computed[html].line_height,
+            ComputedLineHeight::Length(ComputedLength(expected)),
+            "{line_height}"
+        );
+    }
 }
 
 #[test]

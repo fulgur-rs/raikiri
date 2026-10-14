@@ -18,9 +18,9 @@ use crate::{
 use raikiri_style::property::{
     BackgroundImage, BackgroundLayerSpec, BackgroundRepeat, Border, BorderColor, BorderStyle,
     ContentComponent, CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto,
-    LengthPercentageOrCalc, LineHeight, PropertyKey, PropertyValue, QuoteKeyword,
-    RelativeCalcLengthPercentage, Sides, StringFetchMode, TextAlign, TextShadowColor,
-    TextShadowLength, VerticalAlign, VisualBox, WritingMode,
+    LengthPercentageOrCalc, PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcLengthPercentage,
+    Sides, StringFetchMode, TextAlign, TextShadowColor, TextShadowLength, VerticalAlign, VisualBox,
+    WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength,
@@ -782,26 +782,10 @@ fn inherited_margin_box_font(
         // `lh` to the page's line height and `rlh` to the root's.
         Some(PropertyValue::FontSizeCalc(calc)) => {
             let root_line_height = root.and_then(ComputedValues::lh_basis);
-            let page_line_height = match page_property(page, PropertyKey::LineHeight) {
-                Some(PropertyValue::LineHeight(LineHeight::Length(Length::Px(px)))) => {
-                    Some(ComputedLength(*px))
-                }
-                Some(PropertyValue::LineHeight(LineHeight::Number(factor))) => {
-                    Some(ComputedLength(factor * page_size))
-                }
-                // The page inherits the root's line height; a number scales
-                // with the page's own size.
-                _ => match root.map(|computed| computed.line_height) {
-                    Some(raikiri_style::ComputedLineHeight::Number(factor)) => {
-                        Some(ComputedLength(factor * page_size))
-                    }
-                    _ => root_line_height,
-                },
-            };
             resolve_font_size_calc(
                 *calc,
                 ComputedLength(page_size),
-                page_line_height,
+                page.line_height_basis(),
                 &ResolveContext::with_root_line_height(ComputedLength(root_size), root_line_height),
             )
             .px()
