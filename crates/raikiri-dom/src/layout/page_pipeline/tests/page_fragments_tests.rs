@@ -2984,3 +2984,124 @@ fn page_local_footnote_keeps_its_text_attached_inside_flex() {
         .unwrap();
     assert_eq!(rendered_text.rect.y, 40.0);
 }
+
+/// `html > body > (spacer, [section >] root, after)`: a spacer, then an
+/// Ahem paragraph ("aaaa bbbb cccc", width 40, line height 10) either
+/// directly in the body or wrapped in a section, then a 5px block. Returns
+/// the page count, the text's fragments, the section's border box height
+/// (the root's when not nested) and the top of the block after.
+fn paragraph_after_a_spacer(
+    nested: bool,
+    spacer_height: f32,
+    root_css: &str,
+    page_height: f32,
+) -> (usize, Vec<(u32, Option<PageFragmentLineRange>)>, f32, f32) {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let spacer_css = format!("display:block;height:{spacer_height}px");
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(spacer_css.as_str()),
+    );
+    let parent = if nested {
+        doc.append_element(
+            Some(body),
+            "section",
+            Style::default(),
+            Some("display:block"),
+        )
+    } else {
+        body
+    };
+    let style = format!(
+        "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
+    );
+    let root = doc.append_element(Some(parent), "div", Style::default(), Some(style.as_str()));
+    let text = doc.append_text(root, "aaaa bbbb cccc");
+    let after = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = page_height;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert!(doc.nodes[root].is_ifc_root());
+    let fragments = text_fragments(&doc, &cascade, page, &slices, text);
+    let holder = if nested { parent } else { root };
+    let holder_height = absolute_rect(&doc, holder).3;
+    (
+        slices.len(),
+        fragments,
+        holder_height,
+        absolute_rect(&doc, after).1,
+    )
+}
+
+#[test]
+fn a_nested_paragraph_that_would_leave_a_widow_moves_to_the_next_page() {
+    // Lines at 15, 25 and 35 on a 40px page: the last line would be a
+    // widow, so the whole paragraph starts page 1 (y 40), as it does when
+    // it is a direct child of the body.
+    for nested in [false, true] {
+        let (pages, fragments, _, after_top) =
+            paragraph_after_a_spacer(nested, 15.0, "orphans:2;widows:2", 40.0);
+        assert_eq!(pages, 2, "nested={nested}");
+        assert_eq!(
+            fragments,
+            [(1, Some(PageFragmentLineRange::new(0, 3)))],
+            "nested={nested}"
+        );
+        assert_eq!(after_top, 70.0, "nested={nested}: the flow after follows");
+    }
+}
+
+#[test]
+fn the_section_around_a_moved_paragraph_grows_to_hold_it() {
+    // The section starts at 15 and its paragraph moves to 40, so it ends at
+    // 70: 55px tall.
+    let (_, _, section_height, _) =
+        paragraph_after_a_spacer(true, 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(section_height, 55.0);
+}
+
+#[test]
+fn a_nested_paragraph_split_within_its_line_constraints_stays() {
+    for nested in [false, true] {
+        let (_, fragments, _, _) =
+            paragraph_after_a_spacer(nested, 15.0, "orphans:1;widows:1", 40.0);
+        assert_eq!(
+            fragments,
+            [
+                (0, Some(PageFragmentLineRange::new(0, 2))),
+                (1, Some(PageFragmentLineRange::new(2, 3))),
+            ],
+            "nested={nested}"
+        );
+    }
+}
+
+#[test]
+fn a_nested_fixed_height_paragraph_whose_first_line_overflows_moves() {
+    // The 30px paragraph at y 10 ends at 40 on a 35px page: it moves to
+    // page 1 as a unit, nested or not.
+    for nested in [false, true] {
+        let (_, fragments, _, _) =
+            paragraph_after_a_spacer(nested, 10.0, "height:30px;orphans:1;widows:1", 35.0);
+        assert_eq!(
+            fragments,
+            [(1, Some(PageFragmentLineRange::new(0, 3)))],
+            "nested={nested}"
+        );
+    }
+}

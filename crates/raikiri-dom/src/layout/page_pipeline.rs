@@ -2210,14 +2210,15 @@ pub(crate) fn project_slices_with_control(
     // A relayout resumed at a page start lays the content before it out
     // without the elements wholly before it, so a box crossing the start
     // begins lower than in the earlier layout. It keeps the top the earlier
-    // layout gave it; its end, after the start, is the same in both.
+    // layout gave it; its end, after the start, is the same in both. A box
+    // with no border or padding above the start begins at the start itself.
     if let Some(earlier) = &document.earlier_fragments
         && let Some((page_start, _)) = pages.first().and_then(|page| page.flow_range)
     {
         for source in &mut nodes {
             if let Some(crossing) = earlier.get(&source.node_id)
                 && !source.is_repeat
-                && source.abs_y < page_start
+                && source.abs_y <= page_start + 0.01
             {
                 let bottom = source.abs_y + source.height;
                 source.abs_y = page_start + crossing.top;
@@ -4924,19 +4925,47 @@ pub fn layout_pages_with_page_geometry_and_control(
             } else {
                 raw_y + flow_shift
             };
-            // A fixed-height direct block whose first line would straddle the
+            // A fixed-height block whose first line would straddle the
             // current fragmentainer is pushed as a unit. This matches normal
             // block fragmentation for monolithic content while leaving tall
             // blocks and already-forced page transitions to the existing
             // fragment logic.
             // A block inside an inline element of an inline engine paragraph
             // is laid out from the paragraph's root, as a direct child is.
-            let direct_block_parent = parent_of[node_id].and_then(|parent_id| {
-                (!uses_positioned_coordinates
-                    && document.layout_parent_of(parent_id) == Some(body_id))
-                .then_some(parent_id)
+            // A block nested in plain block flow is moved the same way; its
+            // ancestors then grow to hold it.
+            let line_block_parent = parent_of[node_id].filter(|_| !uses_positioned_coordinates);
+            let line_block_parent = line_block_parent.and_then(|parent_id| {
+                let layout_parent = document.layout_parent_of(parent_id)?;
+                if layout_parent == body_id {
+                    return Some((parent_id, false));
+                }
+                (!candidate.is_float_descendant
+                    && !candidate.is_out_of_flow_descendant
+                    && is_block_flow_paragraph(document, cascade, parent_id, body_id))
+                .then_some((parent_id, true))
             });
-            if let Some(block_id) = direct_block_parent
+            let mut move_line_block = |document: &mut Document,
+                                       block_id: usize,
+                                       nested: bool,
+                                       from_y: f32,
+                                       delta: f32| {
+                materialize_y(document, block_id, from_y + delta, &parent_of);
+                if nested {
+                    grow_ancestors_for_shift(
+                        document,
+                        cascade,
+                        block_id,
+                        delta,
+                        body_id,
+                        &parent_of,
+                        &mut pending_bounded_shifts,
+                        &mut pending_context_growth,
+                        page_before_candidate,
+                    );
+                }
+            };
+            if let Some((block_id, nested)) = line_block_parent
                 && checked_block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)
                     .is_some_and(|value| value >= 0.0)
@@ -4963,20 +4992,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let target_y = page_origin(target_page);
                     let delta = target_y - block_effective_y;
                     if delta.is_finite() && delta > 0.0 {
-                        materialize_y(document, block_id, block_effective_y + delta, &parent_of);
+                        move_line_block(document, block_id, nested, block_effective_y, delta);
                         flow_shift += delta;
                         effective_y += delta;
                     }
                 }
             }
             // `orphans` and `widows` constrain breaks between line boxes, not
-            // breaks between block-level children.  The current paginator keeps
-            // a paragraph in one piece, so the safe first step is to
-            // move a fitting direct block as a unit when its natural split would
-            // violate either constraint.  Oversized blocks stay on the
-            // existing whole-box path; their line-level fragment map is a
-            // separate concern.
-            if let Some(block_id) = direct_block_parent
+            // breaks between block-level children.  A fitting block is moved
+            // as a unit when its natural split would violate either
+            // constraint.  Oversized blocks stay on the existing whole-box
+            // path; their line-level fragment map is a separate concern.
+            if let Some((block_id, nested)) = line_block_parent
                 && checked_orphans_widows.insert(block_id)
                 && let Some(line_metrics) = text_line_bounds(document, node_id, &text_lines)
             {
@@ -5011,7 +5038,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     check_candidate_page!('candidate_loop, target_page);
                     let delta = page_origin(target_page) - block_effective_y;
                     if delta.is_finite() && delta > 0.0 {
-                        materialize_y(document, block_id, block_effective_y + delta, &parent_of);
+                        move_line_block(document, block_id, nested, block_effective_y, delta);
                         flow_shift += delta;
                         effective_y += delta;
                     }
@@ -6493,6 +6520,44 @@ fn grow_ancestors_for_shift(
         child = parent;
     }
     bounded
+}
+
+/// Whether `block` is a block-level box laid out in plain block flow up to
+/// the body: every box from it to the body stacks its children in block
+/// order and none is floated or absolutely positioned, so moving `block`
+/// down moves the boxes after it and grows its ancestors.
+fn is_block_flow_paragraph(
+    document: &Document,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+) -> bool {
+    if !matches!(
+        cascade.computed[block].display,
+        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+    ) {
+        return false;
+    }
+    let mut child = block;
+    while let Some(parent) = document.layout_parent_of(child) {
+        let computed = &cascade.computed[child];
+        if is_floating_box_for_pagination(document, cascade, child)
+            || matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+        {
+            return false;
+        }
+        if parent == body_id {
+            return true;
+        }
+        if !moves_later_siblings(document, cascade, parent) {
+            return false;
+        }
+        child = parent;
+    }
+    false
 }
 
 /// Whether `parent` is a block container whose later children follow a
