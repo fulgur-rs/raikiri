@@ -349,14 +349,7 @@ fn has_auto_direction(document: &Document, id: usize) -> bool {
 }
 
 fn is_inline_level(values: &ComputedValues) -> bool {
-    matches!(
-        values.display,
-        DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    )
+    values.display.is_inline_level()
 }
 
 /// Whether `id` can belong to the inline formatting context of its parent:

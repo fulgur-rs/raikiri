@@ -171,7 +171,7 @@ fn is_table_part(document: &Document, node_id: usize) -> bool {
 /// replaced elements, which are atomic inlines.
 fn is_non_atomic_inline(document: &Document, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
-    node.display == DisplayValue::Inline
+    node.display.is_inline_flow()
         && node.style.position != taffy::Position::Absolute
         && !node
             .tag_name()

@@ -28,7 +28,13 @@ use std::collections::HashSet;
 /// `inline`; only the taffy bridge maps them to blocks.
 pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     let cv = &cascade.computed[idx];
-    match cv.display {
+    // Ruby boxes are inline boxes here, as in the rest of the block layout.
+    let display = if cv.display.is_inline_flow() {
+        DisplayValue::Inline
+    } else {
+        cv.display
+    };
+    match display {
         // Layout starts at the body, which always generates a block box: CSS
         // Display 3, 2.7 blockifies the root element (`inline` and
         // `contents` alike), and the body is the root of what raikiri lays
@@ -124,6 +130,7 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         return false;
     }
     match cascade.computed[idx].display {
+        display if display.is_ruby() => true,
         DisplayValue::Block
         | DisplayValue::FlowRoot
         | DisplayValue::InlineBlock
@@ -193,7 +200,7 @@ fn needs_ifc_layout(
                     if has_in_flow_generated_text(doc, cascade, id, counters)? {
                         return Ok(true);
                     }
-                    if cv.display == DisplayValue::Inline {
+                    if cv.display.is_inline_flow() {
                         if node.tag_name() == Some("br") {
                             return Ok(true);
                         }
@@ -682,7 +689,7 @@ pub(super) fn text_makes_a_line(doc: &Document, cascade: &CascadeResult, id: usi
     }
 }
 
-fn is_css_whitespace(c: char) -> bool {
+pub(super) fn is_css_whitespace(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')
 }
 

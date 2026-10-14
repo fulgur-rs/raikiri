@@ -1933,14 +1933,7 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
                 _ => None,
             })
         });
-        let inline_level = matches!(
-            tree.nodes[node].display,
-            raikiri_style::property::DisplayValue::Inline
-                | raikiri_style::property::DisplayValue::InlineBlock
-                | raikiri_style::property::DisplayValue::InlineFlex
-                | raikiri_style::property::DisplayValue::InlineGrid
-                | raikiri_style::property::DisplayValue::InlineTable
-        );
+        let inline_level = tree.nodes[node].display.is_inline_level();
         let (static_x, static_y) = match anchor {
             Some((index, position)) => {
                 let line = &lines.lines[index];

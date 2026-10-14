@@ -4547,10 +4547,8 @@ css/css-ruby/abs-in-ruby-container.html
 css/css-ruby/empty-ruby-text-container-abs.html
 css/css-ruby/empty-ruby-text-container-float.html
 css/css-ruby/empty-ruby-text-container.html
-css/css-ruby/nested-ruby-pairing-001.html
 css/css-ruby/pseudo-first-letter.html
 css/css-ruby/ruby-bidi-001.html
-css/css-ruby/ruby-bidi-002.html
 css/css-ruby/ruby-dynamic-removal-001.html
 css/css-ruby/ruby-dynamic-removal-002.html
 css/css-ruby/ruby-dynamic-removal-003.html
@@ -4651,3 +4649,19 @@ css/css-values/viewport-page-print.html
 # --- later pages of another content width laid out again (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
 # Pass once the harness relays pages of another width out from the document; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-004-print.html
+
+# --- ruby annotations placed over their bases (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once ruby annotations are placed over their bases; KEEP in two audit-vacuous-passes runs.
+css/css-ruby/rb-display-001.html
+css/css-ruby/rt-display-001.html
+css/css-ruby/ruby-autohide-001.html
+css/css-ruby/ruby-autohide-004.html
+css/css-ruby/ruby-base-different-size.html
+css/css-ruby/ruby-bidi-004.html
+css/css-ruby/ruby-text-collapse.html
+css/css-text-decor/ruby-text-decoration-01.html
+css/css-text-decor/text-emphasis-style-002.html
+css/css-text-decor/text-emphasis-style-007.html
+css/css-text-decor/text-emphasis-style-016.html
+css/css-text-decor/text-emphasis-style-021.html
+css/css-text-decor/text-emphasis-style-string-001.xht

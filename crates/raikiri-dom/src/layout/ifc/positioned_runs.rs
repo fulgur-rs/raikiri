@@ -46,6 +46,57 @@ pub struct PositionedRun<'a> {
     /// The sum of the relative offsets of the run's inline ancestors, which
     /// move it after its line is laid out.
     pub offset: (f32, f32),
+    /// Set for a run of a ruby annotation, which shodo lays out on a line of
+    /// its own beside its base.
+    pub annotation: Option<AnnotationRun<'a>>,
+}
+
+/// Where a run of a ruby annotation comes from.
+#[derive(Clone, Copy, Debug)]
+pub struct AnnotationRun<'a> {
+    /// The annotation's own line, which holds the run's text: the run's text
+    /// range is in this line's text, not in the paragraph line's.
+    pub line: &'a shodo::Line,
+    /// The block position of the run's baseline in the paragraph's logical
+    /// coordinates, the counterpart of the line's block offset plus the
+    /// run's baseline for a run of the paragraph line.
+    pub baseline: f32,
+    /// Where the annotation falls in the reading order of the paragraph
+    /// line's text: the end of the text of the base it annotates.
+    pub text_offset: usize,
+}
+
+/// An affine map from the logical coordinates of a line holding ruby
+/// annotations to those of the paragraph: `inline` and `block` of the result
+/// are `[inline_inline, inline_block, inline_offset]` and `[block_inline,
+/// block_block, block_offset]` applied to `(inline, block, 1)`.
+#[derive(Clone, Copy, Debug)]
+struct Placement([f32; 6]);
+
+impl Placement {
+    const IDENTITY: Self = Self([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+
+    fn apply(self, inline: f32, block: f32) -> (f32, f32) {
+        let [ii, ib, io, bi, bb, bo] = self.0;
+        (ii * inline + ib * block + io, bi * inline + bb * block + bo)
+    }
+
+    /// The placement of an annotation of a line placed by `self`: shodo's
+    /// `transform` maps the annotation's line to the line's own coordinates,
+    /// which start `block_offset` below the line's block origin.
+    fn annotation(self, transform: shodo::RubyTransform, block_offset: f32) -> Self {
+        let [ii, ib, _, bi, bb, _] = self.0;
+        let t = transform;
+        let (x, y) = self.apply(t.inline_offset, t.block_offset + block_offset);
+        Self([
+            ii * t.inline_inline + ib * t.block_inline,
+            ii * t.inline_block + ib * t.block_block,
+            x,
+            bi * t.inline_inline + bb * t.block_inline,
+            bi * t.inline_block + bb * t.block_block,
+            y,
+        ])
+    }
 }
 
 /// One image marker at its physical rectangle relative to the line origin.
@@ -285,6 +336,16 @@ impl<'a> PositionedLines<'a> {
                 }
                 continue;
             }
+            if let Fragment::RubyAnnotation(annotation) = fragment {
+                self.annotation_runs(
+                    annotation,
+                    Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
+                    annotation.base_text_range().end,
+                    &converter,
+                    &mut runs,
+                );
+                continue;
+            }
             let Fragment::GlyphRun(run) = fragment else {
                 continue;
             };
@@ -340,6 +401,7 @@ impl<'a> PositionedLines<'a> {
                         self.offsets,
                         letter.map_or(owner, |letter| letter.source_owner),
                     ),
+                    annotation: None,
                 });
             }
         }
@@ -351,6 +413,78 @@ impl<'a> PositionedLines<'a> {
             runs,
             markers,
             content_images,
+        }
+    }
+}
+
+impl<'a> PositionedLines<'a> {
+    /// Add the runs of the visible ruby `annotation`, whose line `placement`
+    /// maps to the paragraph, and of the annotations nested in it. They are
+    /// read at `text_offset` of the paragraph line's text.
+    fn annotation_runs(
+        &self,
+        annotation: shodo::RubyAnnotationView<'a>,
+        placement: Placement,
+        text_offset: usize,
+        converter: &PhysicalConverter,
+        runs: &mut Vec<PositionedRun<'a>>,
+    ) {
+        if annotation.visibility() != shodo::RubyVisibility::Visible {
+            return;
+        }
+        let line = annotation.line();
+        for fragment in line.fragments() {
+            match fragment {
+                Fragment::RubyAnnotation(nested) => self.annotation_runs(
+                    nested,
+                    placement.annotation(nested.transform(), line.block_offset()),
+                    text_offset,
+                    converter,
+                    runs,
+                ),
+                Fragment::GlyphRun(run) => {
+                    let Some(owner) = run.node().map(|node| node.0 as usize) else {
+                        continue; // cov:ignore: every text of ruby content is pushed with its DOM node.
+                    };
+                    let Some(style) = computed_for_id(self.cascade, owner) else {
+                        continue; // cov:ignore: ruby content is laid out only from cascaded text nodes.
+                    };
+                    if style.visibility != Visibility::Visible || run.font_data().is_none() {
+                        continue;
+                    }
+                    let glyphs: Vec<LineGlyph> = run
+                        .glyphs()
+                        .enumerate()
+                        .filter_map(|(glyph_index, glyph)| {
+                            let (inline, block) = run.glyph_origin(glyph_index)?;
+                            let (inline, block) =
+                                placement.apply(inline, block + line.block_offset());
+                            let (x, y) = converter.point(inline, block);
+                            Some(LineGlyph { id: glyph.id, x, y })
+                        })
+                        .collect();
+                    if glyphs.is_empty() {
+                        continue; // cov:ignore: shodo gives every glyph of a laid-out run an origin.
+                    }
+                    let baseline = placement
+                        .apply(run.inline_start(), line.block_offset() + run.baseline())
+                        .1;
+                    runs.push(PositionedRun {
+                        run,
+                        owner,
+                        style_owner: owner,
+                        style,
+                        glyphs,
+                        offset: cumulative_offset(self.document, self.root_id, self.offsets, owner),
+                        annotation: Some(AnnotationRun {
+                            line,
+                            baseline,
+                            text_offset,
+                        }),
+                    });
+                }
+                _ => {}
+            }
         }
     }
 }

@@ -50,6 +50,9 @@ struct RunDraw<'a> {
     /// The box the run's text belongs to: a typographic pseudo's box, or
     /// the parent element of a text node.
     paint_box: usize,
+    /// The baseline of a ruby annotation's run, which lies outside the
+    /// line's own runs; `None` for a run of the line.
+    annotation_baseline: Option<f32>,
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -465,6 +468,9 @@ pub(crate) fn hold_ifc_lines<'a>(
                 offset,
                 group,
                 paint_box,
+                annotation_baseline: positioned_run
+                    .annotation
+                    .map(|annotation| annotation.baseline),
             });
         }
         // Consecutive runs of one box paint in phases: every shadow, then
@@ -798,7 +804,12 @@ struct ShadowRun<'a, 'b> {
 fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>) -> (f32, f32) {
     (
         position.x + draw.offset.0,
-        position.y + position.shift_y + draw.offset.1 + block_offset + draw.run.baseline(),
+        position.y
+            + position.shift_y
+            + draw.offset.1
+            + draw
+                .annotation_baseline
+                .unwrap_or(block_offset + draw.run.baseline()),
     )
 }
 

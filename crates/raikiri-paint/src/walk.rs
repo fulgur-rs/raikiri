@@ -1243,7 +1243,7 @@ fn generated_flow_height(
                 .iter()
                 .filter_map(|&child| {
                     let child_cv = cascade.computed.get(child)?;
-                    (child_cv.display == DisplayValue::Inline).then_some(
+                    (child_cv.display.is_inline_flow()).then_some(
                         generated_pseudo_text_height(
                             document,
                             cascade,
@@ -1287,7 +1287,7 @@ fn generated_flow_block_children(
                 PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
             );
             (child_node.kind() != NodeKind::Text
-                && child_cv.display != DisplayValue::Inline
+                && !child_cv.display.is_inline_flow()
                 && normal_flow)
                 .then_some(child)
         })
@@ -2928,15 +2928,7 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::TableHeaderGroup
                             | DisplayValue::TableFooterGroup
                     );
-                let (pos_dx, pos_dy) = if needs_paint_inset
-                    && !matches!(
-                        cv.display,
-                        DisplayValue::Inline
-                            | DisplayValue::InlineBlock
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::InlineGrid
-                            | DisplayValue::InlineTable
-                    ) {
+                let (pos_dx, pos_dy) = if needs_paint_inset && !cv.display.is_inline_level() {
                     raikiri_dom::used_relative_offset(document, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
@@ -2953,7 +2945,7 @@ pub(crate) fn paint_document_impl(
                 let transformable = !matches!(
                     cv.display,
                     DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) && (cv.display != DisplayValue::Inline
+                ) && (!cv.display.is_inline_flow()
                     || node.is_inline_svg_root()
                     || matches!(
                         node.tag_name(),
@@ -3839,36 +3831,37 @@ pub(crate) fn paint_document_impl(
                 // remains in source order.  This is deliberately limited to
                 // siblings that actually carry generated content; ordinary
                 // inline layout remains unchanged until a full IFC lands.
-                let child_generated_advances: Vec<(usize, bool, f32)> =
-                    children
-                        .iter()
-                        .map(|&child| {
-                            let is_text = document
-                                .get_node(child)
-                                .is_some_and(|child_node| child_node.kind() == NodeKind::Text);
-                            let advance = if !is_text
-                                && cascade.computed.get(child).is_some_and(|child_cv| {
-                                    child_cv.display == DisplayValue::Inline
-                                }) {
-                                generated_pseudo_text_advance(
-                                    document,
-                                    cascade,
-                                    child,
-                                    raikiri_style::PseudoElem::Before,
-                                    counter_snapshots,
-                                ) + generated_pseudo_text_advance(
-                                    document,
-                                    cascade,
-                                    child,
-                                    raikiri_style::PseudoElem::After,
-                                    counter_snapshots,
-                                )
-                            } else {
-                                0.0
-                            };
-                            (child, is_text, advance)
-                        })
-                        .collect();
+                let child_generated_advances: Vec<(usize, bool, f32)> = children
+                    .iter()
+                    .map(|&child| {
+                        let is_text = document
+                            .get_node(child)
+                            .is_some_and(|child_node| child_node.kind() == NodeKind::Text);
+                        let advance = if !is_text
+                            && cascade
+                                .computed
+                                .get(child)
+                                .is_some_and(|child_cv| child_cv.display.is_inline_flow())
+                        {
+                            generated_pseudo_text_advance(
+                                document,
+                                cascade,
+                                child,
+                                raikiri_style::PseudoElem::Before,
+                                counter_snapshots,
+                            ) + generated_pseudo_text_advance(
+                                document,
+                                cascade,
+                                child,
+                                raikiri_style::PseudoElem::After,
+                                counter_snapshots,
+                            )
+                        } else {
+                            0.0
+                        };
+                        (child, is_text, advance)
+                    })
+                    .collect();
                 let inline_offsets = if child_generated_advances
                     .iter()
                     .any(|(_, _, advance)| *advance > 0.0)
@@ -3908,7 +3901,7 @@ pub(crate) fn paint_document_impl(
                 } else {
                     Vec::new()
                 };
-                let vertical_generated_offsets = if cv.display != DisplayValue::Inline {
+                let vertical_generated_offsets = if !cv.display.is_inline_flow() {
                     let mut flow_extra = generated_pseudo_text_height(
                         document,
                         cascade,
@@ -3928,7 +3921,7 @@ pub(crate) fn paint_document_impl(
                             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
                         );
                         if child_node.kind() != NodeKind::Text
-                            && child_cv.display != DisplayValue::Inline
+                            && !child_cv.display.is_inline_flow()
                             && child_is_normal_flow
                         {
                             let required_height = generated_flow_height(
@@ -7276,7 +7269,7 @@ fn vertical_align_shift_px(
     display: DisplayValue,
     parent_font_size_px: f32,
 ) -> f32 {
-    if !matches!(display, DisplayValue::Inline | DisplayValue::InlineBlock) {
+    if !display.is_inline_flow() && display != DisplayValue::InlineBlock {
         return 0.0;
     }
     match va {

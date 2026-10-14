@@ -559,14 +559,7 @@ impl RunContext {
 /// Whether `cv`'s box sits on an inline formatting context line, where its
 /// relative offset is already part of its layout location.
 fn inline_level(cv: &ComputedValues) -> bool {
-    matches!(
-        cv.display,
-        DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    )
+    cv.display.is_inline_level()
 }
 
 /// The block offset that layout applies to a box in normal flow for its
@@ -692,7 +685,7 @@ pub(super) fn transformable(document: &Document, id: usize, cv: &ComputedValues)
     !matches!(
         cv.display,
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && (cv.display != DisplayValue::Inline
+    ) && (!cv.display.is_inline_flow()
         || node.is_inline_svg_root()
         || matches!(
             node.tag_name(),
@@ -1232,8 +1225,8 @@ fn first_block_child(
             raikiri_style::property::DisplayValue::Contents => {
                 first_block_child(document, child, in_flow)
             }
-            raikiri_style::property::DisplayValue::Inline
-            | raikiri_style::property::DisplayValue::InlineBlock
+            display if display.is_inline_flow() => None,
+            raikiri_style::property::DisplayValue::InlineBlock
             | raikiri_style::property::DisplayValue::InlineFlex
             | raikiri_style::property::DisplayValue::InlineGrid
             | raikiri_style::property::DisplayValue::InlineTable => None,
@@ -1491,8 +1484,12 @@ fn glyph_run<'a>(
         ellipsis_text(shaped.len(), runs > 1)
     } else {
         let clusters: Vec<u32> = shaped.iter().map(|glyph| glyph.cluster).collect();
+        // An annotation's text is in its own line.
+        let text_line = positioned
+            .annotation
+            .map_or(line.line, |annotation| annotation.line);
         (
-            line.line.text().get(text_range.clone()).unwrap_or_default(),
+            text_line.text().get(text_range.clone()).unwrap_or_default(),
             glyph_text_ranges(&clusters, text_range.start, text_range.end),
         )
     };
@@ -1509,10 +1506,11 @@ fn glyph_run<'a>(
     if run.bidi_level() % 2 == 1 {
         placed.reverse();
     }
-    let origin = (
-        placed.first()?.0,
-        dy + line.line.block_offset() + run.baseline(),
+    let baseline = positioned.annotation.map_or_else(
+        || line.line.block_offset() + run.baseline(),
+        |annotation| annotation.baseline,
     );
+    let origin = (placed.first()?.0, dy + baseline);
     let mut pen = origin.0;
     let glyphs = placed
         .into_iter()
@@ -1552,7 +1550,9 @@ fn glyph_run<'a>(
         advance: run.inline_size(),
         ascent: metrics.ascent,
         descent: metrics.descent,
-        text_offset: text_range.start,
+        text_offset: positioned
+            .annotation
+            .map_or(text_range.start, |annotation| annotation.text_offset),
         text,
         glyphs,
         color,

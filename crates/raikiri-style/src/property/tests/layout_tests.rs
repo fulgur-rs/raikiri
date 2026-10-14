@@ -393,6 +393,47 @@ fn clear_key_maps_to_clear_property_key() {
     assert_eq!(v.key(), PropertyKey::Clear);
 }
 
+// ── Ruby display types (CSS Ruby 1 §2.1) ──
+
+#[test]
+fn display_parse_ruby_types() {
+    for (keyword, display) in [
+        ("ruby", DisplayValue::Ruby),
+        ("ruby-base", DisplayValue::RubyBase),
+        ("ruby-text", DisplayValue::RubyText),
+        ("ruby-base-container", DisplayValue::RubyBaseContainer),
+        ("ruby-text-container", DisplayValue::RubyTextContainer),
+    ] {
+        assert_eq!(
+            parse(keyword, "display"),
+            Some(PropertyValue::Display(display))
+        );
+        assert!(display.is_inline_flow());
+        assert!(display.is_ruby());
+    }
+    assert!(DisplayValue::Inline.is_inline_flow());
+    assert!(!DisplayValue::Inline.is_ruby());
+    assert!(!DisplayValue::InlineBlock.is_inline_flow());
+    assert!(!DisplayValue::Block.is_ruby());
+}
+
+#[test]
+fn resolve_display_for_float_blockifies_ruby_types() {
+    // CSS Display 3 §2.7: a floated ruby box becomes a block box.
+    for display in [
+        DisplayValue::Ruby,
+        DisplayValue::RubyBase,
+        DisplayValue::RubyText,
+        DisplayValue::RubyBaseContainer,
+        DisplayValue::RubyTextContainer,
+    ] {
+        assert_eq!(
+            resolve_display_for_float(display, FloatValue::Left),
+            DisplayValue::Block
+        );
+    }
+}
+
 // ── resolve_display_for_float (CSS2 §9.7) ──
 
 #[test]

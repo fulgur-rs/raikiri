@@ -272,7 +272,7 @@ pub(crate) fn has_in_flow_generated_text(
 /// Record the paint offset of `id` when it is relatively positioned, with
 /// its insets, by index in `offsets`, when the offset depends on the root's
 /// size or writing mode. `rtl` is the root's direction.
-fn push_relative_offset(
+pub(super) fn push_relative_offset(
     offsets: &mut Vec<(usize, (f32, f32))>,
     percent_insets: &mut Vec<(usize, style::InlineRelativeInsets)>,
     id: usize,
@@ -420,10 +420,10 @@ fn push_generated(
         );
     }
     let inline_level = pseudo == PseudoElem::Marker
+        || cv.display.is_inline_flow()
         || matches!(
             cv.display,
-            DisplayValue::Inline
-                | DisplayValue::Contents
+            DisplayValue::Contents
                 | DisplayValue::InlineBlock
                 | DisplayValue::InlineFlex
                 | DisplayValue::InlineGrid
@@ -548,7 +548,7 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
             | DisplayValue::InlineTable
     );
     let tag = node.tag_name().unwrap_or("");
-    let replaced = cv.display == DisplayValue::Inline
+    let replaced = cv.display.is_inline_flow()
         && (ATOMIC_TAGS.contains(&tag) || REPLACED_BOX_TAGS.contains(&tag));
     if inline_block || replaced {
         return Some(IfcBoxKind::Atomic);
@@ -1125,8 +1125,31 @@ fn project_children_builder(
                     }
                     continue;
                 }
-                if cv.display != DisplayValue::Inline {
+                if !cv.display.is_inline_flow() {
                     return Err(unsupported("only inline-level boxes are projected"));
+                }
+                if cv.display == DisplayValue::Ruby
+                    && let Some(plan) = super::ruby::plan(doc, cascade, id)
+                {
+                    super::ruby::push(
+                        &mut builder,
+                        doc,
+                        cascade,
+                        id,
+                        &plan,
+                        fonts,
+                        limits,
+                        &mut super::ruby::Sink {
+                            boxes: &mut boxes,
+                            text_nowrap: &mut text_nowrap,
+                            offsets: &mut offsets,
+                            percent_insets: &mut percent_insets,
+                            first_letter: &mut first_letter,
+                            counters,
+                            rtl: root_cv.direction == Direction::Rtl,
+                        },
+                    )?; // cov:ignore: ruby content fails only on the style and counter errors the plain inline path reports for the same content.
+                    continue;
                 }
                 let edges = style::inline_edges(cv, id, fonts)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;

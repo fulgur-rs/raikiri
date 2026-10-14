@@ -2825,11 +2825,10 @@ pub(crate) fn prepare_multicol_layout(
             element_children.iter().any(|&child| {
                 let mut pending = vec![child];
                 while let Some(descendant) = pending.pop() {
-                    if matches!(
-                        cascade.computed[descendant].display,
-                        DisplayValue::Inline | DisplayValue::InlineBlock
-                    ) && style_dimension_length(doc.nodes[descendant].style.size.height)
-                        .is_some_and(|descendant_height| descendant_height > height + 0.001)
+                    let display = cascade.computed[descendant].display;
+                    if (display.is_inline_flow() || display == DisplayValue::InlineBlock)
+                        && style_dimension_length(doc.nodes[descendant].style.size.height)
+                            .is_some_and(|descendant_height| descendant_height > height + 0.001)
                     {
                         return true;
                     }
@@ -2985,13 +2984,12 @@ pub(crate) fn prepare_multicol_layout(
 /// Whether `idx`, an element, generates an inline-level box (or none of its
 /// own, for `display: contents`).
 fn is_inline_element_box(cascade: &CascadeResult, idx: usize) -> bool {
-    matches!(
-        cascade.computed[idx].display,
-        DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineTable
-            | DisplayValue::Contents
-    )
+    let display = cascade.computed[idx].display;
+    display.is_inline_flow()
+        || matches!(
+            display,
+            DisplayValue::InlineBlock | DisplayValue::InlineTable | DisplayValue::Contents
+        )
 }
 
 #[cfg(test)]

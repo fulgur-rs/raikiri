@@ -1281,14 +1281,7 @@ pub(crate) fn page_applies_to_box(
             cascade.computed[node_id].position,
             PositionValue::Absolute | PositionValue::Fixed
         )
-        || !matches!(
-            cascade.computed[node_id].display,
-            DisplayValue::Inline
-                | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        )
+        || !cascade.computed[node_id].display.is_inline_level()
 }
 
 /// Whether `node_id` is an absolutely positioned box whose block-start and

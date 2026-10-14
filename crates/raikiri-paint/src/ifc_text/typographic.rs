@@ -497,8 +497,8 @@ fn inline_ancestors(
             let node = paragraph.document.get_node(id)?;
             let cv = paragraph.cascade.computed.get(id)?;
             (node.kind() == NodeKind::Element
-                && matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents))
-            .then(|| (id, raikiri_dom::paint_rules::opacity_layer(cv)))
+                && (cv.display.is_inline_flow() || cv.display == DisplayValue::Contents))
+                .then(|| (id, raikiri_dom::paint_rules::opacity_layer(cv)))
         })
 }
 

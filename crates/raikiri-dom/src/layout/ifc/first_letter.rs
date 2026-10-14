@@ -133,14 +133,14 @@ impl FirstLetter {
                         continue; // cov:ignore: in-flow generated text requires a retained pseudo style and nonempty content, so generated_text always returns Some.
                     };
                     if value.is_empty()
-                        && matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents)
+                        && (cv.display.is_inline_flow() || cv.display == DisplayValue::Contents)
                     {
                         continue;
                     }
                     (
                         generated_node_id(id, pseudo),
                         std::borrow::Cow::Owned(value),
-                        !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents),
+                        !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents),
                         preserves_segment_breaks(cv),
                     )
                 }
@@ -552,17 +552,18 @@ pub(crate) fn typographic_origins(
         let transparent =
             cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
         if !transparent
-            && (!matches!(
-                cv.display,
-                DisplayValue::Block
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::InlineBlock
-                    | DisplayValue::TableCell
-                    | DisplayValue::TableCaption
-                    | DisplayValue::Inline
-                    | DisplayValue::Contents
-            ) || !super::assign::can_be_ifc_root(doc, cascade, id))
+            && (!(cv.display.is_inline_flow()
+                || matches!(
+                    cv.display,
+                    DisplayValue::Block
+                        | DisplayValue::FlowRoot
+                        | DisplayValue::ListItem
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                        | DisplayValue::Contents
+                ))
+                || !super::assign::can_be_ifc_root(doc, cascade, id))
         {
             break;
         }

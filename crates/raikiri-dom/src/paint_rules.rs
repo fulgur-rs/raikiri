@@ -30,7 +30,7 @@ pub fn named_page_matches(
             let is_inline_canvas = document.get_node(node_id).is_some_and(|node| {
                 node.tag_name()
                     .is_some_and(|tag| tag.eq_ignore_ascii_case("canvas"))
-                    && matches!(cascade.computed[node_id].display, DisplayValue::Inline)
+                    && cascade.computed[node_id].display.is_inline_flow()
             });
             if is_inline_canvas {
                 true
@@ -98,7 +98,7 @@ pub(crate) fn clips_element_overflow(
         // A non-replaced inline box has no overflow clip, but the cascade
         // keeps `inline` on elements that layout blockifies (flex and grid
         // items, absolutely positioned boxes) or lays out as atomic inlines.
-        || (cv.display == DisplayValue::Inline
+        || (cv.display.is_inline_flow()
             && !node.is_inline_svg_root()
             && !matches!(node.tag_name(), Some("img" | "canvas"))
             && !crate::layout::ifc::assign::generates_own_box(document, cascade, node_id))
@@ -616,7 +616,7 @@ pub fn holds_negative_stack_level(
         if pseudos(id).into_iter().any(negative) {
             return true;
         }
-        if matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+        if cv.display.is_inline_flow() || cv.display == DisplayValue::Contents {
             stack.extend(node.children.iter().copied());
         }
     }

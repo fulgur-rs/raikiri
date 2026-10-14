@@ -3438,6 +3438,22 @@ pub enum DisplayValue {
     TableCell,
     /// `table-caption` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: caption (`<caption>`).
     TableCaption,
+    /// `ruby` — CSS Display 3 §2 / CSS Ruby 1 §2.1: an inline-level ruby
+    /// container (`<ruby>`), short for `inline ruby`.
+    /// <https://www.w3.org/TR/css-ruby-1/#ruby-display>
+    Ruby,
+    /// `ruby-base` — CSS Ruby 1 §2.1 `<display-internal>`: a ruby base box
+    /// (`<rb>`).
+    RubyBase,
+    /// `ruby-text` — CSS Ruby 1 §2.1 `<display-internal>`: a ruby annotation
+    /// box (`<rt>`).
+    RubyText,
+    /// `ruby-base-container` — CSS Ruby 1 §2.1 `<display-internal>`: a box
+    /// grouping ruby bases.
+    RubyBaseContainer,
+    /// `ruby-text-container` — CSS Ruby 1 §2.1 `<display-internal>`: a box
+    /// grouping ruby annotations of one level (`<rtc>`).
+    RubyTextContainer,
 }
 
 css_keywords!(DisplayValue {
@@ -3462,7 +3478,49 @@ css_keywords!(DisplayValue {
     TableColumn => "table-column",
     TableCell => "table-cell",
     TableCaption => "table-caption",
+    Ruby => "ruby",
+    RubyBase => "ruby-base",
+    RubyText => "ruby-text",
+    RubyBaseContainer => "ruby-base-container",
+    RubyTextContainer => "ruby-text-container",
 });
+
+impl DisplayValue {
+    /// Whether the box takes part in its parent's inline formatting context
+    /// as an inline box: `inline`, a ruby container, or an internal ruby box.
+    ///
+    /// Layout that does not lay ruby out (CSS Ruby 1 §2) treats ruby boxes
+    /// as inline boxes, which keeps their content in the line as plain text.
+    #[must_use]
+    pub fn is_inline_flow(self) -> bool {
+        matches!(
+            self,
+            Self::Inline
+                | Self::Ruby
+                | Self::RubyBase
+                | Self::RubyText
+                | Self::RubyBaseContainer
+                | Self::RubyTextContainer
+        )
+    }
+
+    /// Whether this is one of the ruby display types (CSS Ruby 1 §2.1).
+    #[must_use]
+    pub fn is_ruby(self) -> bool {
+        self.is_inline_flow() && self != Self::Inline
+    }
+
+    /// Whether the box is inline-level: an inline box, a ruby box, or an
+    /// atomic inline (CSS Display 3 §2.4).
+    #[must_use]
+    pub fn is_inline_level(self) -> bool {
+        self.is_inline_flow()
+            || matches!(
+                self,
+                Self::InlineBlock | Self::InlineFlex | Self::InlineGrid | Self::InlineTable
+            )
+    }
+}
 
 /// The value of the `flex-direction` property.
 ///
@@ -6467,6 +6525,14 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         | DisplayValue::TableRow
         | DisplayValue::TableCell
         | DisplayValue::TableCaption => DisplayValue::Block,
+        // CSS Display 3 §2.7: a blockified `ruby` becomes `block ruby`, laid
+        // out here as a block container; internal ruby boxes blockify to
+        // `block`.
+        DisplayValue::Ruby
+        | DisplayValue::RubyBase
+        | DisplayValue::RubyText
+        | DisplayValue::RubyBaseContainer
+        | DisplayValue::RubyTextContainer => DisplayValue::Block,
         // The remaining variants are "others" — same as specified. Explicitly list
         // `Block` / `Table` / `Flex` / `Grid` / `ListItem` / `FlowRoot` so
         // adding a future variant causes a non-exhaustive-match compile error

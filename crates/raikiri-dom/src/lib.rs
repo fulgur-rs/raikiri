@@ -86,7 +86,7 @@ pub use fragment::{FragmentRect, LayoutFragment};
 #[doc(hidden)]
 // cov:ignore: this attribute controls rustdoc metadata and has no runtime coverage.
 pub use layout::{
-    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph,
+    AnnotationRun, BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph,
     PositionedContentImage, PositionedLine, PositionedLines, PositionedMarker, PositionedRun,
     cumulative_offset, relative_offset, used_relative_offset,
 };

@@ -574,3 +574,80 @@ fn a_grid_first_line_finds_items_inside_display_contents() {
     assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
     assert_eq!(line.center, 7.0 + 10.0);
 }
+
+#[test]
+fn ruby_annotations_project_above_their_base_without_its_decorations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem;text-decoration:underline"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(annotation, "xx");
+    let underlined = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:overline"),
+    );
+    document.append_text(underlined, "yy");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base run");
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    assert!(annotation.origin.1 < base.origin.1);
+    assert!(!base.decorations.is_empty());
+    assert!(annotation.decorations.is_empty());
+    // An annotation's own decorations are drawn.
+    let own = runs
+        .iter()
+        .find(|run| run.text == "yy")
+        .expect("second level");
+    assert_eq!(own.decorations.len(), 1);
+    // Annotations are read after their base.
+    assert!(annotation.text_offset >= base.text_offset + base.text.len());
+}

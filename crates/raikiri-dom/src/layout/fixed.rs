@@ -43,7 +43,7 @@ fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> 
     // Out-of-flow boxes and flex and grid items are blockified.
     let node = &document.nodes[id];
     let tag = node.tag_name().unwrap_or("");
-    cv.display == DisplayValue::Inline
+    cv.display.is_inline_flow()
         && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         && cv.float == FloatValue::None
         && !node.is_inline_svg_root()
@@ -341,7 +341,7 @@ fn visit_out_of_flow_boxes(
         // paragraph, not to the inline elements between them.
         let inline = in_paragraph
             && !node.is_ifc_root()
-            && cv.display == DisplayValue::Inline
+            && cv.display.is_inline_flow()
             && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
         let (origin, in_paragraph) = if inline {
             (parent_origin, true)
