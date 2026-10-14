@@ -25,7 +25,7 @@ use raikiri_style::{
 };
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree_with_limits;
+use crate::cascade::{build_rule_tree_with_limits, first_page_query};
 use crate::fetch::{redacted_url, sanitize_policy_violation, url_policy_violation};
 #[cfg(doc)]
 use crate::parse_html_with_resources;
@@ -851,9 +851,7 @@ pub(crate) fn run_pipeline(
 
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.
-    let mut first_query = PageContextQuery::default();
-    first_query.is_first = true;
-    first_query.is_right = true;
+    let mut first_query = first_page_query();
     // The fonts are given to the document before the element cascade, which
     // measures `line-height: normal` in the document's fonts for the `lh`
     // unit, and before

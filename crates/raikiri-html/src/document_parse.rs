@@ -31,10 +31,10 @@ use crate::parse::parse_with_budgets;
 use crate::{ParseOptions, UncascadedDocument, effective_document_base_url};
 use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 
-use raikiri_style::{CascadeOptions, PageContextQuery};
+use raikiri_style::CascadeOptions;
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree_with_limits;
+use crate::cascade::{build_rule_tree_with_limits, first_page_query};
 
 /// Parse an HTML byte stream and return a fully cascaded [`HtmlDocument`].
 ///
@@ -176,9 +176,6 @@ pub(crate) fn assemble_document(
         uncascaded.dom.set_font_collection(fonts);
     }
     let effective_base_url = effective_document_base_url(&uncascaded, options.base_url.as_ref());
-    let mut first_page = PageContextQuery::default();
-    first_page.is_first = true;
-    first_page.is_right = true;
     let rule_tree = build_rule_tree_with_limits(&uncascaded, &[], &limits.rule_tree_limits())?;
     let media_context = raikiri_style::MediaContext::default();
     let font_faces = rule_tree.font_faces_for(&media_context);
@@ -188,7 +185,7 @@ pub(crate) fn assemble_document(
         &uncascaded.dom,
         &rule_tree,
         &media_context,
-        &first_page,
+        &first_page_query(),
         &cascade_options,
     )?;
     Ok(HtmlDocument {

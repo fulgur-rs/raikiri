@@ -29,6 +29,7 @@ use super::{
     AnchorIndex, DocumentLayout, LayoutOptions, LayoutStatus, Page, RunningElementLayout,
     layout_resumed,
 };
+use crate::cascade::{build_rule_tree_with_limits, first_page_query};
 use crate::document_parse::assemble_document;
 use crate::input::Utf8Feed;
 use crate::parse::finish_document;
@@ -455,16 +456,15 @@ impl Settings<'_, '_> {
         if *media_context == raikiri_style::MediaContext::default() {
             return Ok(());
         }
-        let mut first_page = raikiri_style::PageContextQuery::default();
-        first_page.is_first = true;
-        first_page.is_right = true;
+        let rule_tree =
+            build_rule_tree_with_limits(&document.uncascaded, &[], &limits.rule_tree_limits())?;
         let mut options = raikiri_style::CascadeOptions::default();
         options.limits = limits.cascade_limits();
         document.cascade = raikiri_style::cascade_with_options(
             &document.uncascaded.dom,
-            &build_rule_tree(&document.uncascaded),
+            &rule_tree,
             media_context,
-            &first_page,
+            &first_page_query(),
             &options,
         )?;
         Ok(())
