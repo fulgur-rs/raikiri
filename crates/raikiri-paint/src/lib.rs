@@ -109,6 +109,11 @@ pub fn paint_single_page(
 /// translated by the origin before the normal walk.  This lets callers render
 /// independent page buffers without cloning the DOM or repainting another
 /// page's content into the current one.
+///
+/// Without the number of pages, an auto-height root element is taken to end
+/// with this page, so canvas images sized or placed against its height can
+/// differ from page to page. Callers that know the page count should use
+/// [`paint_single_page_with_origin_and_page`].
 pub fn paint_single_page_with_origin(
     scene: &mut impl PaintScene,
     document: &Document,

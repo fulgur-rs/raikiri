@@ -9,7 +9,7 @@
 
 use super::page::{page_content_insets, page_margins, used_computed_length_percentage_or_auto};
 use crate::Document;
-use raikiri_style::property::BoxSizing;
+use raikiri_style::property::{BoxSizing, Direction, DisplayValue};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect, PaintTransform};
 
@@ -41,7 +41,7 @@ pub struct RootBox {
 
 /// The box of the root element on the page whose share of the flow starts
 /// at `content_origin_y`, in a document of `page_count` pages, or `None`
-/// when there is no root element.
+/// when there is no root element or it generates no box.
 ///
 /// The box is placed in the page area, inside the page margins, border and
 /// padding, moved in by the root's margins. A root with a definite `width`
@@ -51,7 +51,8 @@ pub struct RootBox {
 /// does not size the root by its content, so an auto height is the extent
 /// of the pages the flow runs through; pages of different sizes and a
 /// root margin cut at a page break are not followed. `auto` margins
-/// center a root of definite width and are zero otherwise.
+/// share what the root's used width leaves of the page area. A root with
+/// `display: none` generates no box.
 pub fn root_box(
     document: &Document,
     cascade: &CascadeResult,
@@ -61,6 +62,10 @@ pub fn root_box(
 ) -> Option<RootBox> {
     let root = root_element(document)?;
     let computed = cascade.computed.get(root)?;
+    // A root with `display: none` generates no box.
+    if matches!(computed.display, DisplayValue::None) {
+        return None;
+    }
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
     let area_x = margins.left + insets.left;
@@ -89,39 +94,40 @@ pub fn root_box(
     let horizontal_edges = border.left + border.right + padding.left + padding.right;
     let vertical_edges = border.top + border.bottom + padding.top + padding.bottom;
 
-    let definite_width = definite_border_box_size(
+    // CSS 2.1 §10.3.3 and §10.4: the used width comes first, from a
+    // definite `width` or by filling what the margins leave, clamped by the
+    // width limits. The margins then solve the block-width equation with
+    // that width: `auto` margins share what is left, and are zero when the
+    // box overflows the page area; an over-constrained equation gives up
+    // the end margin of the root's direction.
+    let (margin_left, margin_right) = (margin(computed.margin.left), margin(computed.margin.right));
+    let width = definite_border_box_size(
         computed,
         computed.width,
         computed.min_width,
         computed.max_width,
         area_width,
         horizontal_edges,
-    );
-    // CSS 2.1 §10.3.3: `auto` margins share what a definite width leaves
-    // of the page area, and an auto width fills what the margins leave.
-    let (margin_left, margin_right) = (margin(computed.margin.left), margin(computed.margin.right));
-    let (width, margin_left) = match definite_width {
-        Some(width) => {
-            let free = area_width - width;
-            let left = match (margin_left, margin_right) {
-                (None, None) => free / 2.0,
-                (None, Some(right)) => free - right,
-                (Some(left), _) => left,
-            };
-            (width, left)
-        }
-        None => {
-            let (left, right) = (margin_left.unwrap_or(0.0), margin_right.unwrap_or(0.0));
-            let content = clamp_auto_size(
-                computed,
-                (area_width - left - right - horizontal_edges).max(0.0),
-                computed.min_width,
-                computed.max_width,
-                area_width,
-                horizontal_edges,
-            );
-            (content + horizontal_edges, left)
-        }
+    )
+    .unwrap_or_else(|| {
+        let fill = area_width - margin_left.unwrap_or(0.0) - margin_right.unwrap_or(0.0);
+        clamp_auto_size(
+            computed,
+            (fill - horizontal_edges).max(0.0),
+            computed.min_width,
+            computed.max_width,
+            area_width,
+            horizontal_edges,
+        ) + horizontal_edges
+    });
+    let free = area_width - width - margin_left.unwrap_or(0.0) - margin_right.unwrap_or(0.0);
+    let rtl = matches!(computed.direction, Direction::Rtl);
+    let margin_left = match (margin_left, margin_right) {
+        (None, None) => free.max(0.0) / 2.0,
+        (None, Some(right)) if free >= 0.0 => area_width - width - right,
+        (Some(left), None) if free >= 0.0 => left,
+        (_, right) if rtl => area_width - width - right.unwrap_or(0.0),
+        (left, _) => left.unwrap_or(0.0),
     };
     let height = definite_border_box_size(
         computed,

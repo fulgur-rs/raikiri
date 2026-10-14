@@ -155,3 +155,55 @@ fn auto_height_root_reaches_at_least_the_page_painted() {
     assert_eq!(root.border_box.y, -200.0);
     assert_eq!(root.border_box.height, 300.0);
 }
+
+#[test]
+fn a_root_without_a_box_has_no_root_box() {
+    let (document, cascade) = fixture("", "display: none");
+    assert_eq!(root_box(&document, &cascade, PageBox::A4, 0.0, 1), None);
+}
+
+#[test]
+fn auto_margins_center_a_clamped_auto_width() {
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; max-width: 100px; margin: 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!((root.border_box.x, root.border_box.width), (50.0, 100.0));
+}
+
+#[test]
+fn auto_margins_are_zero_on_an_overflowing_root() {
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; width: 300px; margin: 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, 0.0);
+
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; width: 300px; margin: 0 10px 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, 0.0);
+}
+
+#[test]
+fn an_over_constrained_rtl_root_keeps_its_right_margin() {
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; direction: rtl; width: 100px; margin: 0 20px 0 10px",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, 80.0);
+
+    // An overflowing RTL root with an auto margin also ends at its right
+    // margin.
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; direction: rtl; width: 300px; margin: 0 10px 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, -110.0);
+}
