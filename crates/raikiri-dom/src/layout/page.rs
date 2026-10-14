@@ -114,14 +114,17 @@ impl BodyInlineInsets {
 /// Whether `id` can be the body element. HTML defines the body element as
 /// the first `body` or `frameset` child of the root `html` element; a
 /// frameset document has no `body`. A `frameset` elsewhere (one a script
-/// inserted into the head, say) is not the body.
+/// inserted into the head, say) or in another namespace is not the body.
 pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
+    const HTML: Option<&str> = Some("http://www.w3.org/1999/xhtml");
     let node = &doc.nodes[id];
     match node.tag_name() {
         Some("body") => true,
         Some("frameset") => node.parent.is_some_and(|parent| {
             doc.nodes[parent].tag_name() == Some("html")
                 && doc.nodes[parent].parent == Some(doc.root)
+                && doc.element_namespace_uri(id) == HTML
+                && doc.element_namespace_uri(parent) == HTML
         }),
         _ => false,
     }

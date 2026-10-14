@@ -1544,4 +1544,14 @@ fn find_body_takes_a_frameset_only_as_a_child_of_the_root_element() {
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
     doc.mark_in_document_flags();
     assert_eq!(find_body(&doc), Some(body));
+
+    // A foreign `frameset` child of `html` is not the body element either.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let svg = doc.append_element(Some(html), "frameset", Style::default(), None::<&str>);
+    doc.nodes[svg].data.as_element_mut().unwrap().namespace =
+        Some("http://www.w3.org/2000/svg".into());
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    assert_eq!(find_body(&doc), Some(body));
 }
