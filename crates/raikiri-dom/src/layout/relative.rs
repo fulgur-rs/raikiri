@@ -4,7 +4,7 @@
 use super::ifc::projection::REPLACED_BOX_TAGS;
 use super::ifc::style::inset_precedence;
 use super::multicol::spanning::is_spanner;
-use super::page::{find_body, used_computed_length_percentage_or_auto};
+use super::page::used_computed_length_percentage_or_auto;
 use super::page_pipeline::box_parent;
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
@@ -33,10 +33,7 @@ pub(crate) fn used_relative_insets(
     precedence: Precedence,
 ) -> (Option<f32>, Option<f32>) {
     let block = containing_block(document, node_id);
-    // The tag check spares the document walk for every other element.
-    let is_body = || {
-        document.nodes[node_id].tag_name() == Some("body") && find_body(document) == Some(node_id)
-    };
+    let is_body = || super::ifc::assign::is_layout_root(document, node_id);
     // An anonymous cell takes its direction and writing mode from its row,
     // and the initial containing block of the body from the root element
     // (CSS Writing Modes 4 §8).

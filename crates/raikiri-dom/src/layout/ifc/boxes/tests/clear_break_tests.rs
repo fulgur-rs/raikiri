@@ -56,9 +56,10 @@ fn paragraph_lines(root: &IfcRoot) -> Vec<shodo::Line> {
 #[test]
 fn clear_break_lookup_preserves_first_entries_and_replayed_queries() {
     let mut projected = projected_breaks(9, 16);
-    let expected = projected.cleared_breaks.clone();
-    projected.cleared_breaks.reverse();
+    let expected = projected.meta.cleared_breaks.clone();
+    projected.meta.cleared_breaks.reverse();
     projected
+        .meta
         .cleared_breaks
         .push((expected[0].0, taffy::Clear::Right));
     let root = IfcRoot::new(projected);

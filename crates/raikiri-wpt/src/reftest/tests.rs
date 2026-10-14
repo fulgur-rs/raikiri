@@ -2868,3 +2868,62 @@ fn blitz_oracle_renders_a_print_reftest_on_the_print_paper() {
     assert_eq!(raikiri.total_pixels, paper);
     assert_eq!(oracle.total_pixels, paper);
 }
+
+#[test]
+fn a_later_page_of_another_width_lays_its_blocks_out_at_that_width() {
+    let html = "<!DOCTYPE html><style>@page{size:200px 100px;margin:0}\
+                @page wide{size:300px 100px}html,body{margin:0}\
+                div{height:100px;background:rgb(0,128,0)}</style>\
+                <div></div><div style=\"page:wide\">\
+                <img src=\"https://example.invalid/a.png\" style=\"display:block\"></div>";
+    let rendered = render_raikiri_pages(html, 800, 600).expect("pages should render");
+    assert_eq!(rendered.pages.len(), 2);
+    let wide = &rendered.pages[1];
+    assert_eq!((wide.width, wide.height), (300, 100));
+    let offset = ((50 * wide.width + 250) * 4) as usize;
+    assert_eq!(
+        &wide.rgba[offset..offset + 4],
+        &[0, 128, 0, 255],
+        "the block on the wide page should fill the wide page"
+    );
+}
+
+#[test]
+fn a_canvas_on_a_later_page_of_another_width_keeps_its_bitmap() {
+    let dir = tempfile::tempdir().unwrap();
+    let html = "<!DOCTYPE html><style>@page{size:200px 100px;margin:0}\
+                @page wide{size:300px 100px}html,body{margin:0}\
+                canvas{display:block;width:10px;height:10px}</style>\
+                <div style=\"height:100px\"></div>\
+                <div style=\"page:wide\"><canvas width=\"10\" height=\"10\"></canvas></div>";
+    let green = raikiri_dom::CanvasBitmap {
+        width: 10,
+        height: 10,
+        rgba: [0, 128, 0, 255].repeat(100),
+    };
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+        print_page_margin: false,
+    };
+    // A resource base gives the rendering an image resolver and cascade
+    // image preparation, which the relayout of the wide page uses too.
+    let rendered = render_raikiri_pages_inner_with_canvases(
+        html,
+        800,
+        600,
+        Some(dir.path()),
+        None,
+        engine,
+        None,
+        Some(vec![green]),
+        None,
+    )
+    .expect("pages should render");
+    assert_eq!(rendered.pages.len(), 2);
+    let wide = &rendered.pages[1];
+    assert_eq!(wide.width, 300);
+    assert_eq!(
+        &wide.rgba[(5 * wide.width as usize + 5) * 4..][..4],
+        &[0, 128, 0, 255]
+    );
+}

@@ -166,3 +166,31 @@ fn cell_padding_hint_beats_ua_padding_but_author_css_still_wins() {
         }
     }
 }
+
+#[test]
+fn rows_outside_a_table_lay_out_their_own_text() {
+    // No table wraps these rows: each is laid out as a block holding its
+    // text, the way a single-column table would stack them.
+    let document = lay_out(
+        "<div style='display:table-row'>A<div style='height:10px'></div></div>\
+         <div style='display:table-row-group'>B</div>\
+         <div style='display:table-header-group'>C</div>\
+         <div style='display:table-footer-group'>D</div>",
+        "",
+    );
+    let page = document.page(0).unwrap();
+    let origins: Vec<_> = page
+        .text_runs()
+        .iter()
+        .map(|run| (run.text.to_owned(), run.origin))
+        .collect();
+    assert_eq!(
+        origins,
+        [
+            ("A".to_owned(), (0.0, 13.0)),
+            ("B".to_owned(), (0.0, 43.0)),
+            ("C".to_owned(), (0.0, 63.0)),
+            ("D".to_owned(), (0.0, 83.0)),
+        ]
+    );
+}

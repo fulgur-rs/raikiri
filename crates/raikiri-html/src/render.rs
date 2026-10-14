@@ -33,7 +33,7 @@ use crate::resources::{
     redacted_url, sanitize_policy_violation,
 };
 
-mod continuation;
+pub(crate) mod continuation;
 pub(crate) use continuation::Continuation;
 
 struct RenderExecutionResources<'a> {
@@ -1004,6 +1004,21 @@ pub(crate) fn run_pipeline(
             },
         );
     }
+    // A relayout of later pages runs the run's element cascade, on the same
+    // input and with the same options, with the page context of its first
+    // page; the run's own element cascade above already succeeded on them.
+    let cascade_for_page = |slice: &PageSlice| {
+        cascade_with_options(
+            &doc.uncascaded.dom,
+            &tree,
+            media_context,
+            &page_query_for_slice(slice),
+            &cascade_options,
+        )
+        .expect("cascade は常に Ok のはず")
+    };
+    let page_geometries_for =
+        |slices: &[PageSlice]| resolve_page_geometries(&page_cascader, &defaults, slices).0;
     // Pages whose content width differs from the first page's are laid out
     // again from a copy of the document as it is before any layout.
     let pristine = dom.clone();
@@ -1024,12 +1039,8 @@ pub(crate) fn run_pipeline(
         let resumed = continuation::resume_at(
             &continuation::ContinuationInputs {
                 pristine: &pristine,
-                source: &doc.uncascaded.dom,
-                tree: &tree,
-                media_context,
-                cascade_options: &cascade_options,
-                cascader: &page_cascader,
-                defaults: &defaults,
+                cascade_for_page: &cascade_for_page,
+                page_geometries: &page_geometries_for,
                 resolver: &resolver,
                 base_url: runtime.effective_base_url,
                 max_pages: config.limits.max_document_pages,
@@ -1213,12 +1224,8 @@ pub(crate) fn run_pipeline(
         let continuations = match continuation::continue_at_page_widths(
             &continuation::ContinuationInputs {
                 pristine: &pristine,
-                source: &doc.uncascaded.dom,
-                tree: &tree,
-                media_context,
-                cascade_options: &cascade_options,
-                cascader: &page_cascader,
-                defaults: &defaults,
+                cascade_for_page: &cascade_for_page,
+                page_geometries: &page_geometries_for,
                 resolver: &resolver,
                 base_url: runtime.effective_base_url,
                 max_pages: config.limits.max_document_pages,

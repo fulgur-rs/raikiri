@@ -66,7 +66,7 @@ fn line_texts(projected: &ProjectedIfc, width: f32) -> Vec<String> {
     let mut cx = LayoutContext::new();
     projected
         .paragraph
-        .break_all(&mut cx, &projected.options, width, &AtomicSizes::EMPTY)
+        .break_all(&mut cx, &projected.meta.options, width, &AtomicSizes::EMPTY)
         .iter()
         .map(|line| {
             line.text()[line.text_range()]
@@ -94,12 +94,12 @@ fn projected_paragraph_shapes_with_its_computed_writing_mode() {
             doc.append_text(root, "x");
         });
         let projected = project(&fixture).expect("project");
-        assert_eq!(projected.writing_mode, expected, "{css}");
+        assert_eq!(projected.meta.writing_mode, expected, "{css}");
         let line = projected
             .paragraph
             .break_all(
                 &mut LayoutContext::new(),
-                &projected.options,
+                &projected.meta.options,
                 100.0,
                 &AtomicSizes::EMPTY,
             )
@@ -187,8 +187,8 @@ fn an_inline_block_is_recorded_as_an_atomic_box() {
         doc.append_text(root, " bb");
     });
     let projected = project(&fixture).expect("project");
-    assert_eq!(projected.boxes.len(), 1);
-    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic);
+    assert_eq!(projected.meta.boxes.len(), 1);
+    assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Atomic);
     // The atomic's own text is not part of the paragraph.
     assert!(
         line_texts(&projected, 500.0)
@@ -210,8 +210,8 @@ fn an_img_and_an_inline_svg_are_atomic() {
             );
         });
         let projected = project(&fixture).expect(tag);
-        assert_eq!(projected.boxes.len(), 1, "{tag}");
-        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic, "{tag}");
+        assert_eq!(projected.meta.boxes.len(), 1, "{tag}");
+        assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Atomic, "{tag}");
     }
 }
 
@@ -245,8 +245,8 @@ fn replaced_elements_and_form_controls_are_boxes_of_the_paragraph() {
             doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
         });
         let projected = project(&fixture).expect(css);
-        assert_eq!(projected.boxes.len(), 1, "{tag} {css}");
-        assert_eq!(projected.boxes[0].kind, kind, "{tag} {css}");
+        assert_eq!(projected.meta.boxes.len(), 1, "{tag} {css}");
+        assert_eq!(projected.meta.boxes[0].kind, kind, "{tag} {css}");
     }
 }
 
@@ -269,9 +269,9 @@ fn positioned_boxes_of_every_kind_are_out_of_flow_boxes() {
             doc.append_element(Some(root), tag, taffy::Style::default(), Some(css));
         });
         let projected = project(&fixture).expect(css);
-        assert_eq!(projected.boxes.len(), 1, "{tag} {css}");
+        assert_eq!(projected.meta.boxes.len(), 1, "{tag} {css}");
         assert_eq!(
-            projected.boxes[0].kind,
+            projected.meta.boxes[0].kind,
             IfcBoxKind::OutOfFlow,
             "{tag} {css}"
         );
@@ -352,7 +352,7 @@ fn an_image_marker_without_text_or_pixels_projects_nothing() {
     );
     let projected = project(&fixture).expect("projection");
     assert_eq!(projected.paragraph.text(), "aa");
-    assert!(projected.marker_atomic.is_none());
+    assert!(projected.meta.marker_atomic.is_none());
 }
 
 #[test]
@@ -387,7 +387,7 @@ fn text_align_is_inherited_from_ancestors() {
     )
     .expect("project");
     assert_eq!(
-        projected.options.text_align,
+        projected.meta.options.text_align,
         shodo::style::TextAlign::Center
     );
 }
@@ -486,8 +486,8 @@ fn a_float_child_is_recorded_as_a_box_and_anchored() {
         doc.append_text(root, " bb");
     });
     let projected = project(&fixture).expect("project");
-    assert_eq!(projected.boxes.len(), 1);
-    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Float);
+    assert_eq!(projected.meta.boxes.len(), 1);
+    assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Float);
     // The float's own text is not part of the paragraph. The float anchor is
     // transparent to white-space collapsing, so the two spaces around it
     // collapse into one (and `line_texts` drops the U+FFFC placeholder).
@@ -503,8 +503,8 @@ fn a_block_child_is_recorded_as_a_block_box() {
         doc.append_text(root, "cc");
     });
     let projected = project(&fixture).expect("project");
-    assert_eq!(projected.boxes.len(), 1);
-    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block);
+    assert_eq!(projected.meta.boxes.len(), 1);
+    assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Block);
     // The block's text is not part of the paragraph; "aa" and "cc" are on
     // separate lines on either side of it.
     assert_eq!(line_texts(&projected, 500.0), ["aa", "cc"]);
@@ -523,8 +523,8 @@ fn a_block_child_with_vertical_margins_is_a_box_of_the_paragraph() {
             doc.append_text(block, "bb");
         });
         let projected = project(&fixture).expect(css);
-        assert_eq!(projected.boxes.len(), 1, "{css}");
-        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
+        assert_eq!(projected.meta.boxes.len(), 1, "{css}");
+        assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
 }
 
@@ -541,8 +541,8 @@ fn a_block_level_image_or_svg_is_a_block_child() {
             );
         });
         let projected = project(&fixture).expect(tag);
-        assert_eq!(projected.boxes.len(), 1, "{tag}");
-        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{tag}");
+        assert_eq!(projected.meta.boxes.len(), 1, "{tag}");
+        assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Block, "{tag}");
     }
 }
 
@@ -566,8 +566,8 @@ fn every_block_level_box_is_a_block_child() {
             doc.append_text(block, "bb");
         });
         let projected = project(&fixture).expect(css);
-        assert_eq!(projected.boxes.len(), 1, "{css}");
-        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
+        assert_eq!(projected.meta.boxes.len(), 1, "{css}");
+        assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
 }
 
@@ -586,6 +586,7 @@ fn a_cleared_line_break_is_recorded_with_its_physical_side() {
     });
     let projected = project(&fixture).expect("project");
     let sides: Vec<taffy::Clear> = projected
+        .meta
         .cleared_breaks
         .iter()
         .map(|(_, clear)| *clear)
@@ -602,8 +603,8 @@ fn a_relative_block_child_with_no_offset_is_accepted() {
         doc.append_text(b, "bb");
     });
     let projected = project(&fixture).expect("a relative block with no offset");
-    assert_eq!(projected.boxes.len(), 1);
-    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block);
+    assert_eq!(projected.meta.boxes.len(), 1);
+    assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Block);
 }
 
 #[test]
@@ -623,7 +624,7 @@ fn a_relative_block_child_with_an_offset_or_a_stacking_context_is_a_block_child(
             doc.append_text(b, "bb");
         });
         let projected = project(&fixture).expect(css);
-        assert_eq!(projected.boxes[0].kind, IfcBoxKind::Block, "{css}");
+        assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Block, "{css}");
     }
 }
 
@@ -637,8 +638,8 @@ fn a_float_inside_an_inline_element_is_a_box_of_the_paragraph() {
         doc.append_text(float, "x");
     });
     let projected = project(&fixture).expect("a float inside an inline");
-    assert_eq!(projected.boxes.len(), 1);
-    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Float);
+    assert_eq!(projected.meta.boxes.len(), 1);
+    assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Float);
 }
 
 #[test]
@@ -649,8 +650,8 @@ fn an_atomic_inside_an_inline_element_is_a_box_of_the_paragraph() {
         span(doc, inner, "display:inline-block;width:10px;height:10px");
     });
     let projected = project(&fixture).expect("an atomic inside an inline");
-    assert_eq!(projected.boxes.len(), 1);
-    assert_eq!(projected.boxes[0].kind, IfcBoxKind::Atomic);
+    assert_eq!(projected.meta.boxes.len(), 1);
+    assert_eq!(projected.meta.boxes[0].kind, IfcBoxKind::Atomic);
 }
 
 #[test]
@@ -661,7 +662,7 @@ fn a_float_and_an_atomic_directly_under_the_root_are_still_projected() {
         span(doc, root, "display:inline-block;width:10px;height:10px");
     });
     let projected = project(&fixture).expect("boxes directly under the root");
-    assert_eq!(projected.boxes.len(), 2);
+    assert_eq!(projected.meta.boxes.len(), 2);
 }
 
 #[test]
@@ -719,7 +720,7 @@ fn a_contents_element_that_is_floated_or_positioned_is_still_transparent() {
             doc.append_text(wrapper, "bb");
         });
         let projected = project(&fixture).expect(css);
-        assert!(projected.boxes.is_empty(), "{css}");
+        assert!(projected.meta.boxes.is_empty(), "{css}");
         assert_eq!(line_texts(&projected, 500.0), ["aabb"], "{css}");
     }
 }
@@ -747,7 +748,7 @@ fn boxes_inside_inline_and_contents_elements_are_boxes_of_the_paragraph() {
                 span(doc, parent, css);
             });
             let projected = project(&fixture).expect(css);
-            assert_eq!(projected.boxes.len(), 1, "{css} in {wrappers:?}");
+            assert_eq!(projected.meta.boxes.len(), 1, "{css} in {wrappers:?}");
         }
     }
 }
@@ -789,8 +790,8 @@ fn building_in_two_steps_gives_the_same_paragraph() {
     let split = project_in_two_steps(&fixture).expect("project in two steps");
     assert_eq!(line_texts(&split, 50.0), line_texts(&whole, 50.0));
     assert_eq!(line_texts(&split, 500.0), line_texts(&whole, 500.0));
-    assert_eq!(split.rtl, whole.rtl);
-    assert_eq!(split.boxes.len(), whole.boxes.len());
+    assert_eq!(split.meta.rtl, whole.meta.rtl);
+    assert_eq!(split.meta.boxes.len(), whole.meta.boxes.len());
 }
 
 #[test]
@@ -838,7 +839,7 @@ fn a_text_node_projects_as_a_paragraph_of_its_own() {
         &Limits::default(),
     )
     .expect("project");
-    assert!(projected.boxes.is_empty());
+    assert!(projected.meta.boxes.is_empty());
     assert_eq!(line_texts(&projected, 50.0), ["aaaa", "bbbb", "cccc"]);
     // An element is not a text node.
     let mut cx = LayoutContext::new();
@@ -871,7 +872,7 @@ fn an_inline_table_is_an_atomic_and_table_internal_boxes_are_blocks() {
             doc.append_text(child, "bb");
         });
         let projected = project(&fixture).expect(css);
-        assert_eq!(projected.boxes.first().map(|b| b.kind), kind, "{css}");
+        assert_eq!(projected.meta.boxes.first().map(|b| b.kind), kind, "{css}");
     }
 }
 
@@ -887,7 +888,7 @@ fn generated_first_letter_retains_the_originating_elements_language() {
     let projected = project(&fixture).unwrap();
     let lines = projected.paragraph.break_all(
         &mut LayoutContext::new(),
-        &projected.options,
+        &projected.meta.options,
         100.0,
         &AtomicSizes::EMPTY,
     );
@@ -980,7 +981,7 @@ fn inside_marker_precedes_before_and_increases_empty_item_height() {
     assert_eq!(line_texts(&projected_empty, 100.0), ["X"]);
     let lines = projected_empty.paragraph.break_all(
         &mut LayoutContext::new(),
-        &projected_empty.options,
+        &projected_empty.meta.options,
         100.0,
         &AtomicSizes::EMPTY,
     );
@@ -1037,7 +1038,7 @@ fn suppressed_inside_image_marker_consumes_no_inline_space() {
         .doc
         .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
     let projected = project(&fixture).unwrap();
-    assert!(projected.marker_atomic.is_none());
+    assert!(projected.meta.marker_atomic.is_none());
     assert_eq!(projected.paragraph.text(), "a");
 }
 
@@ -1073,7 +1074,7 @@ fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rt
             .doc
             .prepare_list_marker_images(&fixture.cascade, &Pixels, None);
         let projected = project(&fixture).expect("project marker");
-        let (_, size) = projected.marker_atomic.unwrap();
+        let (_, size) = projected.meta.marker_atomic.unwrap();
         assert_eq!((size.inline_size, size.block_size), expected);
         fixture.doc.set_font_collection(ahem_fonts());
         crate::layout::layout_single_page(
@@ -1136,9 +1137,9 @@ fn an_atomic_or_out_of_flow_letter_does_not_inherit_ancestor_pseudo_boxes() {
             },
         );
         let projected = project(&fixture).unwrap();
-        assert_eq!(projected.letter_styles.len(), 1, "{css}");
+        assert_eq!(projected.meta.letter_styles.len(), 1, "{css}");
         assert_eq!(
-            projected.letter_styles[0].computed.font_size.0, 20.0,
+            projected.meta.letter_styles[0].computed.font_size.0, 20.0,
             "{css}"
         );
     }
@@ -1154,8 +1155,8 @@ fn an_ancestors_generated_prefix_keeps_a_childs_letter_local() {
         },
     );
     let projected = project(&fixture).unwrap();
-    assert_eq!(projected.letter_styles.len(), 1);
-    assert_eq!(projected.letter_styles[0].computed.font_size.0, 20.0);
+    assert_eq!(projected.meta.letter_styles.len(), 1);
+    assert_eq!(projected.meta.letter_styles[0].computed.font_size.0, 20.0);
 }
 
 #[test]
@@ -1252,8 +1253,8 @@ fn inside_marker_does_not_consume_the_first_letter_of_body_or_before_content() {
         );
         let body_text = fixture.doc.get_node(fixture.root).unwrap().children[0];
         let projected = project(&fixture).unwrap();
-        assert_eq!(projected.letter_styles.len(), 1);
-        let letter = &projected.letter_styles[0];
+        assert_eq!(projected.meta.letter_styles.len(), 1);
+        let letter = &projected.meta.letter_styles[0];
         assert_eq!(letter.computed.font_size.0, 20.0);
         assert_eq!(
             letter.source_owner,
@@ -1272,7 +1273,7 @@ fn inside_marker_does_not_consume_the_first_letter_of_body_or_before_content() {
         assert!(projected.paragraph.text().ends_with("AB"));
         let lines = projected.paragraph.break_all(
             &mut LayoutContext::new(),
-            &projected.options,
+            &projected.meta.options,
             100.0,
             &AtomicSizes::EMPTY,
         );
@@ -1311,7 +1312,7 @@ fn typographic_punctuation_crosses_non_atomic_inline_boundaries() {
         let projected = project(&fixture).unwrap();
         let lines = projected.paragraph.break_all(
             &mut LayoutContext::new(),
-            &projected.options,
+            &projected.meta.options,
             100.0,
             &AtomicSizes::EMPTY,
         );
@@ -1329,8 +1330,8 @@ fn typographic_punctuation_crosses_non_atomic_inline_boundaries() {
             glyphs.iter().map(|(_, size)| *size).collect::<Vec<_>>(),
             [20.0, 20.0, 10.0]
         );
-        assert_eq!(projected.letter_styles.len(), 2);
-        for style in &projected.letter_styles {
+        assert_eq!(projected.meta.letter_styles.len(), 2);
+        for style in &projected.meta.letter_styles {
             assert!(
                 fixture
                     .doc
@@ -1363,8 +1364,8 @@ fn transparent_contents_ancestors_preserve_the_first_block_descendant_letter() {
         &Limits::default(),
     )
     .unwrap();
-    assert_eq!(projected.letter_styles.len(), 1);
-    assert_eq!(projected.letter_styles[0].computed.font_size.0, 20.0);
+    assert_eq!(projected.meta.letter_styles.len(), 1);
+    assert_eq!(projected.meta.letter_styles[0].computed.font_size.0, 20.0);
 }
 
 #[test]
@@ -1399,8 +1400,8 @@ fn blockified_inline_items_and_absolute_roots_admit_their_own_first_letter() {
             &Limits::default(),
         )
         .unwrap();
-        assert_eq!(projected.letter_styles.len(), 1, "{container}");
-        assert_eq!(projected.letter_styles[0].computed.font_size.0, 20.0);
+        assert_eq!(projected.meta.letter_styles.len(), 1, "{container}");
+        assert_eq!(projected.meta.letter_styles[0].computed.font_size.0, 20.0);
     }
 }
 
@@ -1449,6 +1450,7 @@ fn generated_punctuation_lookahead_reuses_counters_and_keeps_each_original_owner
         );
         assert_eq!(
             projected
+                .meta
                 .letter_styles
                 .iter()
                 .map(|style| style.source_owner)
@@ -1461,6 +1463,7 @@ fn generated_punctuation_lookahead_reuses_counters_and_keeps_each_original_owner
         );
         assert!(
             projected
+                .meta
                 .letter_styles
                 .iter()
                 .all(|style| style.computed.font_size.0 == 20.0)
@@ -1491,6 +1494,6 @@ fn contents_siblings_block_ancestor_selection_only_when_they_render_content() {
             &Limits::default(),
         )
         .unwrap();
-        assert_eq!(projected.letter_styles.len(), expected, "{prefix}");
+        assert_eq!(projected.meta.letter_styles.len(), expected, "{prefix}");
     }
 }

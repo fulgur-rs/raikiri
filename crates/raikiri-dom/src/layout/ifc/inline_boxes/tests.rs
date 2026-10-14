@@ -223,6 +223,50 @@ fn a_span_that_wraps_has_a_piece_per_line_and_only_the_ends_keep_their_edges() {
 }
 
 #[test]
+fn a_cloned_span_keeps_both_edges_on_every_line_and_breaks_for_them() {
+    // Sliced, "aa aa" and the start edges (59px) fit the first 60px line.
+    // Cloned, every piece also carries its end edges at the break, so only
+    // one word fits per line (CSS Fragmentation 3 §5.4).
+    for (rtl, x) in [(false, 4.0), (true, 26.0)] {
+        let direction = if rtl { "rtl" } else { "ltr" };
+        let lines = lines_of(
+            &format!("width:60px;direction:{direction}"),
+            60.0,
+            |doc, root| {
+                let inner = span(
+                    doc,
+                    root,
+                    &format!("display:inline;{EDGES};box-decoration-break:clone"),
+                );
+                doc.append_text(inner, "aa aa bbbb");
+            },
+        );
+        assert_eq!(lines.len(), 3, "{direction}");
+        let pieces = pieces_of(&lines, 60.0, rtl);
+        assert_eq!(pieces.len(), 3, "{direction}");
+        assert!(
+            pieces
+                .iter()
+                .all(|piece| piece.has_start_edge && piece.has_end_edge),
+            "{direction}: {pieces:?}"
+        );
+        // Line 1: margin 4, then border 2 + padding 3, "aa" 20 and padding 3
+        // + border 2 from the line's start edge.
+        assert_eq!(
+            pieces[0].border_box,
+            BoxRect {
+                x,
+                y: 0.0,
+                width: 30.0,
+                height: 10.0
+            },
+            "{direction}"
+        );
+        assert_eq!(pieces[0].content_box.width, 20.0, "{direction}");
+    }
+}
+
+#[test]
 fn the_hung_trailing_space_is_not_part_of_a_continuing_piece() {
     // The line "aaaa " keeps the collapsible space hanging at its end.
     let lines = lines_of("width:60px", 60.0, |doc, root| {

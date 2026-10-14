@@ -605,8 +605,8 @@ fn review_nested_first_lines_supply_the_full_letter_parent() {
         &Limits::default(),
     )
     .unwrap();
-    assert_eq!(projected.letter_styles.len(), 1);
-    let cv = &projected.letter_styles[0].computed;
+    assert_eq!(projected.meta.letter_styles.len(), 1);
+    let cv = &projected.meta.letter_styles[0].computed;
     assert_eq!((cv.color.r, cv.color.g, cv.color.b), (255, 0, 0));
     assert_eq!(
         cv.border.top.color,
@@ -636,7 +636,7 @@ fn review_block_after_does_not_join_punctuation_on_the_previous_line() {
             &Limits::default(),
         )
         .unwrap();
-        assert_eq!(projected.letter_styles.is_empty(), display == "block");
+        assert_eq!(projected.meta.letter_styles.is_empty(), display == "block");
     }
     let fixture = sheet_fixture(
         "div::before{display:block;content:'A'} div::first-letter{font-size:20px}",
@@ -654,9 +654,9 @@ fn review_block_after_does_not_join_punctuation_on_the_previous_line() {
         &Limits::default(),
     )
     .unwrap();
-    assert_eq!(projected.letter_styles.len(), 1);
+    assert_eq!(projected.meta.letter_styles.len(), 1);
     assert_eq!(
-        projected.letter_styles[0].source_owner,
+        projected.meta.letter_styles[0].source_owner,
         generated_node_id(fixture.root, PseudoElem::Before)
     );
 }
@@ -688,7 +688,7 @@ fn review_atomic_generated_text_is_outside_the_parent_first_letter() {
             )
             .unwrap();
             assert_eq!(
-                projected.letter_styles.is_empty(),
+                projected.meta.letter_styles.is_empty(),
                 !matches!(display, "inline" | "contents"),
                 "{pseudo} {display}"
             );
@@ -706,6 +706,7 @@ fn ancestor_letter_projection(fixture: &Fixture, root: usize) -> Vec<LetterStyle
         &Limits::default(),
     )
     .unwrap()
+    .meta
     .letter_styles
 }
 
@@ -1166,7 +1167,7 @@ fn review_adjacent_owners_use_their_own_segment_break_modes() {
             .unwrap();
             let lines = projected.paragraph.break_all(
                 &mut cx,
-                &projected.options,
+                &projected.meta.options,
                 200.0,
                 &AtomicSizes::EMPTY,
             );
@@ -1176,7 +1177,7 @@ fn review_adjacent_owners_use_their_own_segment_break_modes() {
                         && run.font_size() == if selected { 20.0 } else { 10.0 }
                 }), "owner={owner} first={first_mode} second={second_mode} generated={generated}");
             }
-            let styles = projected.letter_styles;
+            let styles = projected.meta.letter_styles;
             assert_eq!(
                 styles.len(),
                 if selected { 2 } else { 0 },

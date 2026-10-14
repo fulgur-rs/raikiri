@@ -95,6 +95,7 @@ struct MarginBoxInheritance {
     background_color_expression: Option<SmolStr>,
     font_size: ComputedLength,
     direction: Direction,
+    line_height: Option<ComputedLength>,
     custom_properties: Arc<CustomPropertyEnvironment>,
 }
 
@@ -106,6 +107,7 @@ impl Default for MarginBoxInheritance {
             background_color_expression: None,
             font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
             direction: Direction::Ltr,
+            line_height: None,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -751,6 +753,13 @@ impl PageCascadeResult {
     /// declared.
     pub fn page_orientation(&self) -> Option<PageRotation> {
         self.page_orientation
+    }
+
+    /// The page context's used line height as an absolute length: the `lh`
+    /// basis its margin boxes inherit. `None` when it is `normal` and the
+    /// page's font could not be measured.
+    pub fn line_height_basis(&self) -> Option<ComputedLength> {
+        self.margin_box_inheritance.line_height
     }
 
     /// Cascade a margin-box slot against this page's computed inheritance values.
@@ -1651,6 +1660,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
         },
         font_size,
         direction: flow.direction,
+        line_height: own_line_height,
         custom_properties,
     };
     PageCascadeResult {

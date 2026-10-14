@@ -53,7 +53,7 @@ fn find_body_in_document_tree(document: &Document) -> Option<usize> {
     let mut pending = vec![document.root];
     while let Some(node_id) = pending.pop() {
         let node = document.nodes.get(node_id)?;
-        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
+        if node.kind() == NodeKind::Element && super::page::is_body_element(document, node_id) {
             return Some(node_id);
         }
         pending.extend(node.children.iter().rev().copied());
