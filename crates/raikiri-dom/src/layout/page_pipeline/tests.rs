@@ -13748,3 +13748,62 @@ fn a_relative_block_in_an_rtl_vertical_mixed_root_prefers_bottom() {
     let moved_y = doc.nodes[moved].unrounded_layout.location.y;
     assert_eq!(moved_y - still_y, -4.0);
 }
+
+#[test]
+fn a_box_one_ulp_above_a_page_end_starts_on_the_next_page() {
+    // A box the paginator moved to a page origin can read back one ulp above
+    // it once its position is summed from its ancestors'. At a flow offset
+    // past 8192px one ulp is 2^-10 px, so the earlier page would get a
+    // sliver of the box.
+    let (page_start, page_end) = (10_102.677_f32, 11_225.197_f32);
+    let top = page_end.next_down();
+    assert_eq!(flow_page_overlap(top, 27.6, page_start, page_end), None);
+    assert_eq!(
+        flow_page_overlap(top, 27.6, page_end, page_end + 1_122.52),
+        Some((0.0, top + 27.6 - top)),
+    );
+}
+
+#[test]
+fn a_box_ending_one_ulp_below_a_page_start_stays_on_the_earlier_page() {
+    let (page_start, page_end) = (10_102.677_f32, 11_225.197_f32);
+    let top = page_start - 30.0;
+    let height = page_start.next_up() - top;
+    assert_eq!(flow_page_overlap(top, height, page_start, page_end), None);
+    let earlier_start = page_start - 1_122.52;
+    assert_eq!(
+        flow_page_overlap(top, height, earlier_start, page_start),
+        Some((top - earlier_start, height)),
+    );
+}
+
+#[test]
+fn a_box_crossing_a_page_edge_by_more_than_rounding_is_split() {
+    let (page_start, page_end) = (1_000.0_f32, 2_000.0_f32);
+    assert_eq!(
+        flow_page_overlap(1_990.0, 20.0, page_start, page_end),
+        Some((990.0, 10.0)),
+    );
+    assert_eq!(
+        flow_page_overlap(1_990.0, 20.0, page_end, 3_000.0),
+        Some((0.0, 10.0)),
+    );
+}
+
+#[test]
+fn a_box_within_both_rounding_bands_stays_on_the_page_it_starts_on() {
+    // Past 2^23px one ulp is 1px, so a whole box can lie within one ulp of
+    // each side of a page edge. It must land whole on exactly one page.
+    let page_end = 16_777_216.0_f32;
+    let page_start = page_end - 1_000.0;
+    let top = page_end.next_down();
+    let height = page_end.next_up() - top;
+    assert_eq!(
+        flow_page_overlap(top, height, page_start, page_end),
+        Some((top - page_start, height)),
+    );
+    assert_eq!(
+        flow_page_overlap(top, height, page_end, page_end + 1_000.0),
+        None
+    );
+}
