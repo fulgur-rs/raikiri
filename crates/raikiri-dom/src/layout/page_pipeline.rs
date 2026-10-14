@@ -5428,10 +5428,14 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 + height
                                 + document.nodes[node_id].unrounded_layout.margin.bottom;
                             let layout = &document.nodes[context].unrounded_layout;
-                            let growth = float_bottom - context_top
+                            let grown = (float_bottom - context_top
                                 + layout.padding.bottom
-                                + layout.border.bottom
-                                - layout.size.height;
+                                + layout.border.bottom)
+                                .min(
+                                    max_border_box_height(document, cascade, context)
+                                        .unwrap_or(f32::INFINITY),
+                                );
+                            let growth = grown - layout.size.height;
                             if growth > 0.001 {
                                 document.nodes[context].unrounded_layout.size.height += growth;
                                 grow_ancestors_for_shift(
@@ -5903,6 +5907,9 @@ fn grown_auto_height(
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container();
     let contains_margins = edges_below > 0.0 || contains_floats;
+    // The boxes after the moved one already sit at their new places when
+    // the container moved them along with it.
+    let siblings_moved = moves_later_siblings(document, cascade, parent);
     let mut before = f32::NEG_INFINITY;
     let mut after = f32::NEG_INFINITY;
     let mut shifted = false;
@@ -5933,6 +5940,8 @@ fn grown_auto_height(
                 let (old_bottom, new_bottom) = if child == moved {
                     shifted = true;
                     (bottom - delta, bottom)
+                } else if shifted && siblings_moved {
+                    (bottom - delta, bottom)
                 } else if shifted {
                     (bottom, bottom + delta)
                 } else {
@@ -5949,6 +5958,8 @@ fn grown_auto_height(
             - relative_offset;
         let edges = if child == moved {
             shifted = true;
+            (bottom - delta, bottom)
+        } else if shifted && siblings_moved {
             (bottom - delta, bottom)
         } else if shifted {
             (bottom, bottom + delta)
@@ -6169,19 +6180,12 @@ fn grow_ancestors_for_shift(
     bounded
 }
 
-/// Moves the boxes that follow `child` in the block container `parent`
-/// down by `delta`, the distance `child`'s block-end edge moved: in block
-/// flow they follow it. Flex, grid and table containers place their
-/// children themselves, and a paragraph's lines follow a moved block child
-/// through its line shifts.
-fn shift_later_block_siblings(
-    document: &mut Document,
-    cascade: &CascadeResult,
-    parent: usize,
-    child: usize,
-    delta: f32,
-) {
-    let block_container = matches!(
+/// Whether `parent` is a block container whose later children follow a
+/// moved child. Flex, grid and table containers place their children
+/// themselves, and a paragraph's lines follow a moved block child through
+/// its line shifts.
+fn moves_later_siblings(document: &Document, cascade: &CascadeResult, parent: usize) -> bool {
+    matches!(
         cascade.computed[parent].display,
         DisplayValue::Block
             | DisplayValue::FlowRoot
@@ -6190,8 +6194,20 @@ fn shift_later_block_siblings(
     ) && document.nodes[parent].multicol.is_none()
         && document
             .ifc_layout_node(parent)
-            .is_none_or(|node| node.ifc.is_none());
-    if !block_container || delta <= 0.0 {
+            .is_none_or(|node| node.ifc.is_none())
+}
+
+/// Moves the boxes that follow `child` in the block container `parent`
+/// down by `delta`, the distance `child`'s block-end edge moved: in block
+/// flow they follow it.
+fn shift_later_block_siblings(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    child: usize,
+    delta: f32,
+) {
+    if !moves_later_siblings(document, cascade, parent) || delta <= 0.0 {
         return;
     }
     // `display: contents` children generate no box: their children are laid
@@ -6329,22 +6345,33 @@ fn clears_float_side(clear: ClearValue, side: FloatValue) -> bool {
 /// Whether a grid, flex or multi-column container contains `node_id`, up to
 /// and including `body_id`: moving such a box would also displace the boxes
 /// beside it.
-/// Whether the `max-height` of `node_id` already limits its height.
-fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+/// The border-box height that the `max-height` of `node_id` allows, when
+/// it resolves. A percentage needs a containing block of definite height.
+fn max_border_box_height(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<f32> {
     let basis =
         box_parent(document, node_id).and_then(|parent| definite_content_height(document, parent));
     let max = match cascade.computed[node_id].max_height {
         ComputedLengthPercentageOrAuto::Px(max) => Some(max),
         value => basis.and_then(|basis| used_computed_length_percentage_or_auto(value, basis)),
+    }?;
+    let node = &document.nodes[node_id];
+    let layout = &node.unrounded_layout;
+    let edges = if node.style.box_sizing == taffy::BoxSizing::ContentBox {
+        layout.padding.top + layout.padding.bottom + layout.border.top + layout.border.bottom
+    } else {
+        0.0
     };
-    let layout = &document.nodes[node_id].unrounded_layout;
-    let content = layout.size.height
-        - layout.padding.top
-        - layout.padding.bottom
-        - layout.border.top
-        - layout.border.bottom;
-    // Either box-sizing: the used height is at its maximum.
-    max.is_some_and(|max| content >= max - 0.01 || layout.size.height >= max - 0.01)
+    Some(max + edges)
+}
+
+/// Whether the `max-height` of `node_id` already limits its height.
+fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    max_border_box_height(document, cascade, node_id)
+        .is_some_and(|max| document.nodes[node_id].unrounded_layout.size.height >= max - 0.01)
 }
 
 /// Whether an ancestor of `node_id` inside the body clips its overflow in

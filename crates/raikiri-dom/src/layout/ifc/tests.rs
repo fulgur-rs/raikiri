@@ -631,6 +631,9 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
             // A horizontal scrollbar's gutter, when there is one, leaves the
             // basis too.
             ("height:100px;overflow-x:scroll", expected),
+            // The basis is the physical height in a vertical writing mode
+            // too.
+            ("writing-mode:vertical-rl;height:100px", expected),
             ("", 10.0),
             // The body fills the 600px page, so half of it is definite too.
             ("height:50%", expected * 3.0),

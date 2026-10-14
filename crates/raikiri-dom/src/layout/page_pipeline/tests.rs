@@ -12979,3 +12979,103 @@ fn a_formatting_context_grows_around_a_moved_float() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 160.0]);
 }
+
+#[test]
+fn a_formatting_context_grows_around_a_moved_float_up_to_its_max_height() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;max-height:80px"),
+        );
+        ids.push(root);
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((root_height, page_flow_y(&doc, ids[1])), (80.0, 140.0));
+}
+
+#[test]
+fn an_ancestor_grows_only_past_its_min_height_when_later_boxes_follow_a_moved_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;min-height:100px"),
+        );
+        ids.push(wrapper);
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((wrapper_height, page_flow_y(&doc, ids[1])), (120.0, 180.0));
+}
+
+#[test]
+fn a_content_box_max_height_is_compared_with_the_content_height() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;overflow:hidden;max-height:100px;padding:45px 0"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 100.0);
+}

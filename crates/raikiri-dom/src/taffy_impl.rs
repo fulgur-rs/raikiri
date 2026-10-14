@@ -1221,9 +1221,7 @@ fn measure_ifc_root(
     };
     let axes = IfcAxes::new(writing_mode, direction);
     let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
-    if !vertical {
-        geometry.definite_height = measure.definite_height;
-    }
+    geometry.definite_height = measure.definite_height;
     // Lines, and the paragraph's own floats, are laid out by one loop; it
     // takes the engine state only around each call into the engine.
     let perform = measure.run_mode == RunMode::PerformLayout;
