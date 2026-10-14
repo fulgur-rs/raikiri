@@ -469,3 +469,16 @@ fn vertical_child_padding_percentages_follow_the_container_inline_size() {
     );
     assert_eq!(rects[1].2, 60.0);
 }
+
+#[test]
+fn vertical_container_padding_percentages_follow_a_horizontal_parent() {
+    // The containing block of the vertical container is the horizontal
+    // body, 784px wide: `padding-right: 25%` is 196px, and the first child
+    // stacks against it.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:100px;padding-right:25%",
+        &["width:20px"],
+    );
+    assert_eq!(rects[0].2, 396.0);
+    assert_eq!(rects[1].0, 188.0);
+}

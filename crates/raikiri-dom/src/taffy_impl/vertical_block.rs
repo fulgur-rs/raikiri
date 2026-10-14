@@ -253,7 +253,7 @@ fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
 /// and bottom padding against the container's height, which is its
 /// physical width here, while percentages of padding refer to the inline
 /// size of the containing block on every side (CSS Writing Modes 4 §7.1).
-fn resolve_child_padding(tree: &mut Document, width: f32, basis: Option<f32>) {
+fn resolve_child_padding(tree: &mut Document, width: f32) {
     let block = tree
         .transposed_blocks
         .last_mut()
@@ -261,11 +261,11 @@ fn resolve_child_padding(tree: &mut Document, width: f32, basis: Option<f32>) {
     let padding = block
         .container_style
         .padding
-        .resolve_or_zero(basis, resolve_calc);
+        .resolve_or_zero(None, resolve_calc);
     let border = block
         .container_style
         .border
-        .resolve_or_zero(basis, resolve_calc);
+        .resolve_or_zero(None, resolve_calc);
     let inline_size = (width - padding.left - padding.right - border.left - border.right).max(0.0);
     for style in block.child_styles.values_mut() {
         style.padding = style
@@ -286,7 +286,23 @@ pub(super) fn compute_vertical_block(
     right_to_left: bool,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let container_style = transpose_style(&tree.nodes[idx].style, right_to_left);
+    let mut container_style = transpose_style(&tree.nodes[idx].style, right_to_left);
+    // Percentages of the container's padding refer to the inline size of
+    // its containing block (CSS Writing Modes 4 §7.1): the physical height
+    // of a vertical parent, the physical width of a horizontal one.
+    let mut parent = tree.parent_of(idx);
+    while let Some(id) = parent.filter(|&id| tree.nodes[id].display == DisplayValue::Contents) {
+        parent = tree.parent_of(id);
+    }
+    let containing_inline_size = if parent.is_some_and(|parent| is_vertical(tree, parent)) {
+        inputs.parent_size.height
+    } else {
+        inputs.parent_size.width
+    };
+    container_style.padding = container_style
+        .padding
+        .resolve_or_zero(containing_inline_size, resolve_calc)
+        .map(LengthPercentage::length);
     let child_styles = tree
         .child_ids(node_id)
         .map(usize::from)
@@ -299,9 +315,8 @@ pub(super) fn compute_vertical_block(
         .collect();
     let mut inputs = transpose_inputs(inputs);
     let block_space = inputs.known_dimensions.height.map(|height| {
-        let basis = inputs.parent_size.width;
-        let padding = container_style.padding.resolve_or_zero(basis, resolve_calc);
-        let border = container_style.border.resolve_or_zero(basis, resolve_calc);
+        let padding = container_style.padding.resolve_or_zero(None, resolve_calc);
+        let border = container_style.border.resolve_or_zero(None, resolve_calc);
         (height - padding.top - padding.bottom - border.top - border.bottom).max(0.0)
     });
     tree.transposed_blocks.push(TransposedBlock {
@@ -315,7 +330,7 @@ pub(super) fn compute_vertical_block(
         inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
     }
     if let Some(width) = inputs.known_dimensions.width {
-        resolve_child_padding(tree, width, inputs.parent_size.width);
+        resolve_child_padding(tree, width);
     }
     let output = compute_block_layout(tree, node_id, inputs, None);
     let mut block = tree.transposed_blocks.pop().expect("pushed above");
