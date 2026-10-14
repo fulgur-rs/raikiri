@@ -8027,7 +8027,9 @@ css_keywords!(RadialShape {
 /// The parser enforces the non-negative constraint (`[0,∞]`) on `Circle` and
 /// `Ellipse` variants. The type does not encode this constraint, following
 /// the convention for other non-negative contexts of [`Length`], such as
-/// `border-width`.
+/// `border-width`. A mixed-unit `calc()` radius is kept as
+/// [`LengthPercentageOrCalc::Calc`] or [`LengthPercentageOrCalc::RelativeCalc`]
+/// and clamped to zero once its percentage basis is known.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RadialSize {
@@ -8036,10 +8038,10 @@ pub enum RadialSize {
     Extent(RadialExtent),
     /// Explicit `<length [0,∞]>` — usable only with [`RadialShape::Circle`]
     /// (enforced by the parser).
-    Circle(Length),
+    Circle(LengthPercentageOrCalc),
     /// Explicit `<length-percentage [0,∞]>{2}` (horizontal and vertical radii) —
     /// usable only with [`RadialShape::Ellipse`] (enforced by the parser).
-    Ellipse(Length, Length),
+    Ellipse(LengthPercentageOrCalc, LengthPercentageOrCalc),
 }
 
 /// Keyword for [`RadialSize::Extent`].
@@ -8136,8 +8138,9 @@ pub struct GradientColorStop {
     /// Position of the stop (`<length-percentage>`). If omitted, fixup
     /// determines it automatically (CSS Images 3 §3.4.3 "Color Stop \"Fixup\"").
     /// That decision requires the length of the gradient line, so it belongs
-    /// to the used-value layer (paint); this crate retains `None`.
-    pub position: Option<Length>,
+    /// to the used-value layer (paint); this crate retains `None`. A
+    /// mixed-unit `calc()` keeps its percentage for the same reason.
+    pub position: Option<LengthPercentageOrCalc>,
 }
 
 /// `<angular-color-stop>` — the conic-gradient counterpart to

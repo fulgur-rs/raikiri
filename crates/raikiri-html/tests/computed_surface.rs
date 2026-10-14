@@ -9,7 +9,7 @@ use raikiri_html::computed::{
     ComputedBoxShadowItem, ComputedDisplay, ComputedGradient, ComputedLengthPercentageOrCalc,
     ComputedOverflow, ComputedTextDecorationColor, ComputedTextDecorationLine,
     ComputedTextDecorationStyle, ComputedValues, ComputedVisibility, CornerRadius, CssColor,
-    GradientColorStop, Length, OverflowValue, Sides, TextShadowColor,
+    GradientColorStop, Length, LengthPercentageOrCalc, OverflowValue, Sides, TextShadowColor,
 };
 use raikiri_html::{
     LayoutOptions, LayoutStatus, NodeId, PageSize, RenderResources, layout,
@@ -71,7 +71,7 @@ fn first_stop_px(image: &ComputedBackgroundImage) -> Option<f32> {
     let stop: &GradientColorStop = linear.stops.first()?;
     match stop.position {
         // Font-relative stop positions are absolutized by the cascade.
-        Some(Length::Px(px)) => Some(px),
+        Some(LengthPercentageOrCalc::Length(Length::Px(px))) => Some(px),
         _ => None,
     }
 }
