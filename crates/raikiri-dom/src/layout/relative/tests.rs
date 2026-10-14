@@ -365,3 +365,87 @@ fn a_blockified_inline_flex_item_is_a_containing_block() {
         (50.0, 25.0)
     );
 }
+
+#[test]
+fn a_spanner_keeps_its_own_definite_height() {
+    // Multicol lays a spanner out with no height of its own to impose, so
+    // its `height: 100px` is the percentage basis.
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let multicol = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:200px;column-count:2;column-gap:20px"),
+    );
+    let spanner = document.append_element(
+        Some(multicol),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;column-span:all;height:100px"),
+    );
+    let child = document.append_element(
+        Some(spanner),
+        "div",
+        taffy::Style::default(),
+        Some("float:left;position:relative;width:5px;height:5px;top:50%"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    assert_eq!(
+        used_relative_offset(&document, &cascade.computed[child], child),
+        (0.0, 50.0)
+    );
+}
+
+#[test]
+fn an_anonymous_table_cell_is_a_containing_block() {
+    // CSS Tables 3 §3.9: the floated row child is wrapped in a 50px
+    // anonymous cell beside a 150px cell, so `left: 50%` is 25px.
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:table;width:200px;border-spacing:0"),
+    );
+    let row = document.append_element(
+        Some(table),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-row"),
+    );
+    let child = document.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some("float:left;position:relative;width:50px;height:5px;left:50%"),
+    );
+    document.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-cell;width:150px"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    assert_eq!(
+        used_relative_offset(&document, &cascade.computed[child], child),
+        (25.0, 0.0)
+    );
+}

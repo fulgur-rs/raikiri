@@ -8,6 +8,7 @@ use super::page::{find_body, used_computed_length_percentage_or_auto};
 use super::page_pipeline::box_parent;
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
+use crate::node::Node;
 use raikiri_style::property::{DisplayValue, PositionValue, WritingMode};
 use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
 
@@ -30,9 +31,11 @@ pub(crate) fn used_relative_insets(
     node_id: usize,
 ) -> (Option<f32>, Option<f32>) {
     let block = containing_block(document, node_id);
+    // An anonymous cell takes its direction and writing mode from its row.
+    let source = block.map(|block| block.source);
     let rtl =
-        block.is_some_and(|block| document.nodes[block].style.direction == taffy::Direction::Rtl);
-    let mode = match crate::taffy_impl::used_writing_mode(document, block.unwrap_or(node_id)) {
+        source.is_some_and(|block| document.nodes[block].style.direction == taffy::Direction::Rtl);
+    let mode = match crate::taffy_impl::used_writing_mode(document, source.unwrap_or(node_id)) {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
         WritingMode::SidewaysRl => shodo::geometry::WritingMode::SidewaysRl,
@@ -63,18 +66,18 @@ pub(crate) fn used_relative_insets(
         if is_body() {
             return Some(document.fixed_page_area.0);
         }
-        let block = block?;
+        let block = document.ifc_layout_node(block?.key)?;
         Some(if is_spanner(document, node_id) {
-            content_width(document, block)
+            content_width(block)
         } else {
-            column_content_width(document, block)
+            column_content_width(block)
         })
     };
     let height = || {
         if is_body() {
             return Some(document.fixed_page_area.1);
         }
-        block.and_then(|block| document.nodes[block].percent_basis_height)
+        document.ifc_layout_node(block?.key)?.percent_basis_height
     };
     let pick = |start: Option<f32>, end: Option<f32>, end_wins: bool| {
         if end_wins {
@@ -93,14 +96,28 @@ pub(crate) fn used_relative_insets(
     )
 }
 
+/// The containing block of a box: `key` names the box laid out, which may
+/// be an anonymous table cell, and `source` the element whose style it
+/// takes.
+#[derive(Clone, Copy)]
+struct ContainingBlock {
+    key: usize,
+    source: usize,
+}
+
 /// The nearest ancestor of `node_id` that can be its containing block:
-/// `display: contents` elements and non-atomic inlines are skipped.
-fn containing_block(document: &Document, node_id: usize) -> Option<usize> {
+/// `display: contents` elements and non-atomic inlines are skipped, and a
+/// box that table fixup wrapped in an anonymous cell (CSS Tables 3 §3.9)
+/// has that cell instead of its parent.
+fn containing_block(document: &Document, node_id: usize) -> Option<ContainingBlock> {
+    let mut child = node_id;
     let mut block = box_parent(document, node_id)?;
     while is_non_atomic_inline(document, block) {
+        child = block;
         block = box_parent(document, block)?;
     }
-    Some(block)
+    let key = document.anonymous_cell_of(child).unwrap_or(block);
+    Some(ContainingBlock { key, source: block })
 }
 
 /// Whether `node_id` lays out as a non-atomic inline box. The cascade keeps
@@ -126,8 +143,8 @@ fn is_non_atomic_inline(document: &Document, node_id: usize) -> bool {
 }
 
 /// The content-box width of `block`.
-fn content_width(document: &Document, block: usize) -> f32 {
-    let layout = &document.nodes[block].unrounded_layout;
+fn content_width(block: &Node) -> f32 {
+    let layout = &block.unrounded_layout;
     layout.size.width
         - layout.padding.left
         - layout.padding.right
@@ -137,9 +154,9 @@ fn content_width(document: &Document, block: usize) -> f32 {
 
 /// The content-box width of `block`, or of one of its columns when it is a
 /// multi-column container.
-fn column_content_width(document: &Document, block: usize) -> f32 {
-    let width = content_width(document, block);
-    document.nodes[block]
+fn column_content_width(block: &Node) -> f32 {
+    let width = content_width(block);
+    block
         .multicol
         .and_then(|style| FragmentationContext::resolve(width, None, style))
         .map_or(width, |context| context.column_width)

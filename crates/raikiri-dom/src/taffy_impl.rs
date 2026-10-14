@@ -1737,31 +1737,34 @@ impl Document {
     /// `None` when there is none yet), and the padding, border and vertical
     /// scrollbar gutter that separate it from the content box.
     fn block_definite_width(&self, idx: usize, inputs: &LayoutInput) -> (Option<f32>, f32) {
-        let (size, inset) = self.block_definite_size(idx, inputs);
+        let (size, inset, _) = self.block_definite_size(idx, inputs);
         (size.width, inset.width)
     }
 
     /// The content-box height that percentages inside block container `idx`
     /// resolve against when taffy's block algorithm lays it out with
-    /// `inputs`: `None` unless that height is definite.
+    /// `inputs`: the definite height it is given, else its own `height`
+    /// (at least its `min-height`), else `None`.
     fn block_percent_basis_height(&self, idx: usize, inputs: &LayoutInput) -> Option<f32> {
-        let (size, inset) = self.block_definite_size(idx, inputs);
+        let (size, inset, style_height) = self.block_definite_size(idx, inputs);
         size.height
             .filter(|_| inputs.known_dimensions_are_definite.height)
+            .or(style_height)
             .map(|height| height - inset.height)
     }
 
     /// The border-box size of block container `idx` that taffy's block
     /// algorithm derives from `inputs` before it lists the container's
-    /// children, and the padding, border and scrollbar gutters that separate
-    /// it from the content box along each axis.
+    /// children, the padding, border and scrollbar gutters that separate it
+    /// from the content box along each axis, and the border-box height its
+    /// own `height` and `min-height` give it.
     ///
     /// Mirrors [`taffy::compute_block_layout`] and its `compute_inner`.
     fn block_definite_size(
         &self,
         idx: usize,
         inputs: &LayoutInput,
-    ) -> (Size<Option<f32>>, Size<f32>) {
+    ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
         use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
 
         let style = &self.nodes[idx].style;
@@ -1789,13 +1792,13 @@ impl Document {
             .maybe_resolve(parent_size, resolve_calc)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
+        let style_size = style
+            .size
+            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_add(box_sizing_adjustment);
         let clamped_style_size = if inputs.sizing_mode == SizingMode::InherentSize {
-            style
-                .size
-                .maybe_resolve(parent_size, resolve_calc)
-                .maybe_apply_aspect_ratio(aspect_ratio)
-                .maybe_add(box_sizing_adjustment)
-                .maybe_clamp(min_size, max_size)
+            style_size.maybe_clamp(min_size, max_size)
         } else {
             Size::NONE
         };
@@ -1833,6 +1836,7 @@ impl Document {
                     + border.vertical_axis_sum()
                     + gutter(style.overflow.x),
             },
+            style_size.height.maybe_max(min_size.height),
         )
     }
 
