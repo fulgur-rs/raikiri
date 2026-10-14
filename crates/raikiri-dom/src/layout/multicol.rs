@@ -2387,6 +2387,8 @@ impl ResolvedChWidths {
             let cv = &cascade.computed[id];
             let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);
             widths.content_width[id] = match (resolved_ch, cv.width) {
+                // A `display: contents` element has no box, so no width of its own.
+                _ if cv.display == DisplayValue::Contents => parent_width.max(0.0),
                 (Some(width), _) => width.max(0.0),
                 (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
                     value.max(0.0)

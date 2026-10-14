@@ -444,6 +444,53 @@ fn content_widths_resolve_a_measured_ch_calc_with_a_percentage() {
 }
 
 #[test]
+fn content_widths_skip_a_measured_ch_width_on_display_contents() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:800px"),
+    );
+    let contents = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:contents;width:calc(50% + 2ch);font-family:Ahem;font-size:10px"),
+    );
+    let half = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;width:50%"),
+    );
+    let text = doc.append_text(half, "x");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    apply_computed_to_style(&mut doc, &cascade).expect("styles");
+    doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
+    prepare_ch_box_values_before_taffy(&mut doc, &cascade);
+
+    let mut parent_of = vec![None; doc.nodes.len()];
+    for parent in 0..doc.nodes.len() {
+        for &child in &doc.nodes[parent].children {
+            parent_of[child] = Some(parent);
+        }
+    }
+    // The contents element has no box, so the child halves the 800px container.
+    assert_eq!(
+        ResolvedChWidths::new(&doc, &cascade, &parent_of, 1000.0).authored_containing_width(text),
+        Some(400.0),
+    );
+    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 1000.0);
+    assert_eq!(facts.content_width[half], 400.0);
+}
+
+#[test]
 fn authored_containing_width_preserves_percentage_fallback_behavior() {
     use raikiri_style::{build_rule_tree, cascade};
 
