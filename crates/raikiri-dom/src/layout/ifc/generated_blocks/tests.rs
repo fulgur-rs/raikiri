@@ -30,6 +30,11 @@ fn lengths_resolve_against_a_basis_only_when_there_is_one() {
     });
     assert_eq!(length_or_auto(calc, Some(100.0)), Some(55.0));
     assert_eq!(length_or_auto(calc, None), None);
+    let absolute = ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+        percent: 0.0,
+        px: 40.0,
+    });
+    assert_eq!(length_or_auto(absolute, None), Some(40.0));
     assert_eq!(
         length_or_auto(ComputedLengthPercentageOrAuto::Percent(10.0), Some(100.0)),
         Some(10.0)

@@ -220,10 +220,13 @@ impl GeneratedBlock {
 
 /// A length, or a percentage of `basis` when there is one; `None` for `auto`
 /// and the other keywords, for a percentage without a basis, and for a value
-/// that is not finite.
+/// that is not finite. A `calc()` with no percentage needs no basis.
 fn length_or_auto(value: ComputedLengthPercentageOrAuto, basis: Option<f32>) -> Option<f32> {
     match (value, basis) {
         (ComputedLengthPercentageOrAuto::Px(_), None) => {
+            crate::layout::page::used_computed_length_percentage_or_auto(value, 0.0)
+        }
+        (ComputedLengthPercentageOrAuto::Calc(calc), None) if calc.percent == 0.0 => {
             crate::layout::page::used_computed_length_percentage_or_auto(value, 0.0)
         }
         (_, Some(basis)) => {
