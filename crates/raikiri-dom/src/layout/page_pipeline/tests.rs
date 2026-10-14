@@ -8133,6 +8133,27 @@ fn calc_ch_box_values_add_the_measured_advance_to_the_rest_of_the_sum() {
 }
 
 #[test]
+fn ch_box_values_reach_every_padding_and_margin_side() {
+    // Ahem's "0" advance is 1 em, 10px here, so each side is hand-computable.
+    let (mut doc, cascade, root) = ahem_paragraph(
+        "aa",
+        "padding:1ch calc(2ch + 1px) 3ch 4ch;margin:1ch calc(2ch - 1px) 3ch 4ch",
+    );
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[root].unrounded_layout;
+    let padding = layout.padding;
+    let margin = layout.margin;
+    assert_eq!(
+        (padding.top, padding.right, padding.bottom, padding.left),
+        (10.0, 21.0, 30.0, 40.0)
+    );
+    assert_eq!(
+        (margin.top, margin.right, margin.bottom, margin.left),
+        (10.0, 19.0, 30.0, 40.0)
+    );
+}
+
+#[test]
 fn ch_min_max_constraints_use_the_selected_ahem_zero_advance() {
     let widths = [
         "font-size:16px;width:100px;max-width:4ch",
