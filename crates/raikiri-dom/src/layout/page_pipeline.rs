@@ -4755,12 +4755,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             // it clears (CSS 2.1 §9.5.2).
             let layout = &document.nodes[node_id].unrounded_layout;
             let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
-            let context_layout = &document.nodes[float_context].unrounded_layout;
-            let context_width = context_layout.size.width
-                - context_layout.padding.left
-                - context_layout.padding.right
-                - context_layout.border.left
-                - context_layout.border.right;
+            let context_width = document.nodes[float_context]
+                .unrounded_layout
+                .content_box_width();
             let cleared = float_edges
                 .iter()
                 .filter(|edge| {
@@ -6308,14 +6305,7 @@ fn definite_content_height(
     } else {
         raw.tag() == taffy::CompactLength::LENGTH_TAG
     };
-    definite.then(|| {
-        let layout = &node.unrounded_layout;
-        layout.size.height
-            - layout.padding.top
-            - layout.padding.bottom
-            - layout.border.top
-            - layout.border.bottom
-    })
+    definite.then(|| node.unrounded_layout.content_box_height())
 }
 
 /// Whether only margins separate `previous` from `node_id`: `previous` is

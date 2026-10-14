@@ -723,12 +723,7 @@ fn used_columns(document: &Document, id: usize) -> usize {
     let Some(style) = node.multicol else {
         return 1;
     };
-    let layout = node.unrounded_layout;
-    let content_width = layout.size.width
-        - layout.border.left
-        - layout.border.right
-        - layout.padding.left
-        - layout.padding.right;
+    let content_width = node.unrounded_layout.content_box_width();
     crate::fragment::FragmentationContext::resolve(content_width, None, style)
         .map_or(1, |context| context.column_count)
 }
