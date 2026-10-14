@@ -290,3 +290,62 @@ fn a_one_column_grid_grows_from_its_items_in_row_order() {
     // The avoiding box in the second row moves from 80 to 100.
     assert_eq!((ys, grid_height), (vec![60.0, 240.0], 180.0));
 }
+
+#[test]
+fn grid_items_sharing_a_row_do_not_stack() {
+    let mut grids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let stacked = block(doc, body, "display:grid");
+        block(doc, stacked, "display:block;height:20px");
+        block(doc, stacked, "display:block;height:20px");
+        let shared = block(doc, body, "display:grid");
+        block(
+            doc,
+            shared,
+            "display:block;height:20px;grid-row:1;grid-column:1",
+        );
+        block(
+            doc,
+            shared,
+            "display:block;height:20px;grid-row:1;grid-column:1",
+        );
+        let spanning = block(doc, body, "display:grid");
+        block(
+            doc,
+            spanning,
+            "display:block;height:40px;grid-row:1 / 3;grid-column:1",
+        );
+        block(
+            doc,
+            spanning,
+            "display:block;height:20px;grid-row:2;grid-column:1",
+        );
+        grids.extend([stacked, shared, spanning]);
+    });
+    let stacks: Vec<bool> = grids
+        .iter()
+        .map(|&id| grid_stacks_items(&doc, id))
+        .collect();
+    assert_eq!(stacks, vec![true, false, false]);
+}
+
+#[test]
+fn a_grid_item_in_a_fixed_row_keeps_its_track_size() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(doc, body, "display:grid;grid-template-rows:150px");
+        ids.push(grid);
+        let item = block(doc, grid, "display:block");
+        block(doc, item, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            item,
+            "display:block;height:60px;break-inside:avoid",
+        ));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((ys, grid_height), (vec![60.0, 100.0, 210.0], 150.0));
+}

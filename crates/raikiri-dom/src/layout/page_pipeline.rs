@@ -6056,7 +6056,7 @@ struct GrownHeight {
 /// the lines of `parent`'s paragraph after `moved` already carry the shift.
 ///
 /// Layout also grows a box that does not hold its floats to the floats'
-/// bottom (see `propagate_float_bottoms_to_auto_height_ancestors`), while
+/// bottom (see [`propagate_float_bottoms_to_auto_height_ancestors`]), while
 /// the flow after it follows only its in-flow content (CSS 2.1 §10.6.3).
 /// Both edges are tracked, so the content moving inside a float that hangs
 /// below it does not also push the flow after the box.
@@ -6076,6 +6076,17 @@ fn grown_auto_height(
     // A percentage height against an indefinite containing block behaves
     // as `auto` (CSS 2.1 §10.5).
     if !style.size.height.is_auto() && definite_content_height(document, parent).is_some() {
+        return None;
+    }
+    // A grid area of a sized row fixes the height of the item stretched
+    // into it.
+    if let Some(grid) = box_parent(document, parent)
+        && matches!(
+            cascade.computed[grid].display,
+            DisplayValue::Grid | DisplayValue::InlineGrid
+        )
+        && !grid_rows_size_to_content(document, grid)
+    {
         return None;
     }
     let layout = &node.unrounded_layout;
@@ -6706,8 +6717,45 @@ fn has_bounded_clipping_ancestor(
     false
 }
 
-/// Whether a flex or multi-column container, or a grid of more than one
-/// column, contains `node_id`, up to and including `body_id`: moving such a
+/// Whether the items of `grid` stack in block order like blocks, none
+/// beside or over another: the grid has one column track, and its items
+/// sit in rows that follow one another without overlapping.
+fn grid_stacks_items(document: &Document, grid: usize) -> bool {
+    let node = &document.nodes[grid];
+    if node.grid_column_count != 1 {
+        return false;
+    }
+    let mut items: Vec<(u16, f32, f32)> = node
+        .grid_item_row_starts
+        .iter()
+        .map(|&(item, row)| {
+            let layout = &document.nodes[item].unrounded_layout;
+            (
+                row,
+                layout.location.y,
+                layout.location.y + layout.size.height,
+            )
+        })
+        .collect();
+    items.sort_by_key(|&(row, ..)| row);
+    items
+        .windows(2)
+        .all(|pair| pair[0].0 < pair[1].0 && pair[1].1 >= pair[0].2 - 0.01)
+}
+
+/// Whether the rows of `grid` all size to their content: the grid has
+/// only implicit `auto` rows, so its items grow with what they hold.
+fn grid_rows_size_to_content(document: &Document, grid: usize) -> bool {
+    let style = &document.nodes[grid].style;
+    style.grid_template_rows.is_empty()
+        && style
+            .grid_auto_rows
+            .iter()
+            .all(|track| track.min.is_auto() && track.max.is_auto())
+}
+
+/// Whether a flex or multi-column container, or a grid whose items do not
+/// stack in block order, contains `node_id`, up to and including `body_id`: moving such a
 /// box would also displace the boxes beside it.
 fn has_side_by_side_ancestor(
     document: &Document,
@@ -6718,12 +6766,10 @@ fn has_side_by_side_ancestor(
     let mut current = document.parent_of(node_id);
     while let Some(id) = current {
         let display = cascade.computed[id].display;
-        // The items of a grid with one column track stack in block order
-        // like blocks: none sits beside a moved one.
         if document.nodes[id].multicol.is_some()
             || matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex)
             || matches!(display, DisplayValue::Grid | DisplayValue::InlineGrid)
-                && document.nodes[id].grid_column_count != 1
+                && !grid_stacks_items(document, id)
         {
             return true;
         }
@@ -6752,7 +6798,7 @@ fn stacks_in_block_flow(
         if display != DisplayValue::Contents
             && !moves_later_siblings(document, cascade, id)
             && !(matches!(display, DisplayValue::Grid | DisplayValue::InlineGrid)
-                && document.nodes[id].grid_column_count == 1)
+                && grid_stacks_items(document, id))
         {
             return false;
         }
