@@ -418,6 +418,8 @@ fn paint_single_page_with_origin_and_page_context_impl(
         document,
         cascade,
         page_box,
+        content_origin_y,
+        page_count,
         pixel_source,
         &mut warnings,
     );
@@ -445,6 +447,12 @@ fn paint_single_page_with_origin_and_page_context_impl(
         pixel_source,
         &mut warnings,
     );
+    let Some(transform) =
+        root_content_transform(document, cascade, page_box, content_origin_y, page_count)
+    else {
+        return Ok(());
+    };
+    let scene = &mut transform::TransformScene { scene, transform };
     if let Some(pixel_source) = pixel_source {
         walk::paint_document_with_images_and_warnings(
             &image_cache,
@@ -599,6 +607,8 @@ pub fn paint_single_page_with_images_and_warnings(
         document,
         cascade,
         page_box,
+        0.0,
+        1,
         Some(pixel_source),
         &mut warnings,
     );
@@ -626,9 +636,12 @@ pub fn paint_single_page_with_images_and_warnings(
         Some(pixel_source),
         &mut warnings,
     );
+    let Some(transform) = root_content_transform(document, cascade, page_box, 0.0, 1) else {
+        return Ok(warnings);
+    };
     walk::paint_document_with_images_and_warnings(
         &image_cache,
-        scene,
+        &mut transform::TransformScene { scene, transform },
         document,
         cascade,
         &counter_snapshots,
@@ -647,6 +660,27 @@ pub fn paint_single_page_with_images_and_warnings(
 
 #[cfg(test)]
 mod tests;
+
+/// The transform the document's boxes paint through: the root element's
+/// `transform`, which moves the whole canvas (CSS Transforms 1 §6), or the
+/// identity. `None` when that transform is singular, so the root and its
+/// content are not rendered.
+fn root_content_transform(
+    document: &Document,
+    cascade: &CascadeResult,
+    page_box: PageBox,
+    content_origin_y: f32,
+    page_count: u32,
+) -> Option<kurbo::Affine> {
+    let Some(transform) =
+        raikiri_dom::root_box(document, cascade, page_box, content_origin_y, page_count)
+            .and_then(|root| root.transform)
+    else {
+        return Some(kurbo::Affine::IDENTITY);
+    };
+    let matrix = transform::affine(transform);
+    (matrix.is_finite() && matrix.determinant() != 0.0).then_some(matrix)
+}
 
 /// Whether the root element is `display: none`, so the document generates
 /// no boxes at all. Such a document prints as blank paper: the page

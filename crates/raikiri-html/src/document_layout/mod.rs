@@ -20,7 +20,8 @@ pub use raikiri_dom::{
     DeferredSlot, DeferredValue, FontBlob, FontId, FontRef, FontVariation, Fragment, FragmentKind,
     GeneratedBox, GeneratedImageId, GeneratedKind, Glyph, LineBox, MarginBox,
     MarginBoxBackgroundImage, MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip,
-    PaintEvent, PositionedGlyphRun, RepeatKind, RunSource, Synthesis, Tag, TextLineId, TextShadow,
+    PaintEvent, PositionedGlyphRun, RepeatKind, RootBox, RunSource, Synthesis, Tag, TextLineId,
+    TextShadow,
 };
 
 use crate::render::{PipelineInputs, PipelineOutput, PipelineRun, run_pipeline};

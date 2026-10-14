@@ -6,6 +6,14 @@ use kurbo::{Affine, Rect, Shape, Stroke, Vec2};
 use peniko::{BlendMode, Color, Fill, FontData, StyleRef};
 use std::{any::Any, sync::Arc};
 
+/// The matrix of a [`raikiri_traits::PaintTransform`].
+pub(crate) fn affine(transform: raikiri_traits::PaintTransform) -> Affine {
+    let raikiri_traits::PaintTransform {
+        a, b, c, d, e, f, ..
+    } = transform;
+    Affine::new([a, b, c, d, e, f].map(f64::from))
+}
+
 pub(crate) struct TransformScene<'a, S> {
     pub scene: &'a mut S,
     pub transform: Affine,

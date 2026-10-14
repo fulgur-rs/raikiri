@@ -509,6 +509,8 @@ fn canvas_background_paints_a_propagated_body_gradient() {
         &document,
         &cascade,
         page_box,
+        0.0,
+        1,
         None,
         &mut warnings,
     );
@@ -543,6 +545,8 @@ fn canvas_gradient_ignores_background_clip() {
             &document,
             &cascade,
             page_box,
+            0.0,
+            1,
             None,
             &mut warnings,
         );
@@ -613,6 +617,8 @@ fn page_box_paints_its_gradient_over_its_color() {
         &document,
         &cascade,
         page_box,
+        0.0,
+        1,
         None,
         &mut warnings,
     );
@@ -871,6 +877,8 @@ fn page_gradients_resolve_font_lengths_with_the_page_font() {
         &document,
         &cascade,
         page_box,
+        0.0,
+        1,
         None,
         &mut warnings,
     );
@@ -903,6 +911,8 @@ fn page_gradients_inherit_current_color_from_the_root() {
         &document,
         &cascade,
         page_box,
+        0.0,
+        1,
         None,
         &mut warnings,
     );

@@ -948,6 +948,8 @@ fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
         document,
         cascade,
         PageBox::A4,
+        0.0,
+        1,
         None,
         &mut warnings,
     );
@@ -2670,7 +2672,7 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
         &mut scene,
         &document,
         &cascade,
-        area,
+        &CanvasArea::new(area, area, None),
         Some(&source),
         &mut warnings,
     );
@@ -2693,7 +2695,7 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
             &mut clip_scene,
             &document,
             &clip_cascade,
-            area,
+            &CanvasArea::new(area, area, None),
             Some(&source),
             &mut clip_warnings,
         );
@@ -3274,24 +3276,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
 }
 
 #[test]
-fn background_canvas_percent_padding_and_empty_painting() {
-    // Percent padding exercises the percent branch of `canvas_used_padding`.
-    let computed = ComputedValues::initial();
-    let (left, _, _, _) = canvas_used_padding(&computed, 200.0);
-    let _ = left;
-    let mut percent_computed = ComputedValues::initial();
-    percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Percent(10.0);
-    let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
-    assert!((pl - 20.0).abs() < 0.001);
-    percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Calc(
-        raikiri_style::property::CalcLengthPercentage {
-            percent: 10.0,
-            px: 3.0,
-        },
-    );
-    let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
-    assert!((pl - 23.0).abs() < 0.001);
-
+fn background_canvas_empty_painting() {
     // An empty canvas area skips silently.
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
@@ -3320,7 +3305,11 @@ fn background_canvas_percent_padding_and_empty_painting() {
         &mut scene,
         &document,
         &cascade,
-        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+        &CanvasArea::new(
+            kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+            kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+            None,
+        ),
         Some(&source),
         &mut warnings,
     );
