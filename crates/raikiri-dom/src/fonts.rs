@@ -17,6 +17,7 @@
 //! rejects); without one, warnings go to stderr.
 
 use raikiri_style::FontFaceRegistry;
+use raikiri_traits::io::RejectReason;
 use std::path::{Path, PathBuf};
 
 /// Maximum byte count [`build_wpt_font_collection`] allows when reading an
@@ -69,179 +70,62 @@ use std::path::{Path, PathBuf};
 /// TODO: wire this up to `RenderLimits` in the future.
 pub(crate) const FONT_SIZE_CAP: u64 = 100 * 1024 * 1024;
 
-/// Reason `read_bounded_font_file` rejected a candidate font path.
+/// Read one walked font file, warning and skipping the candidates the read
+/// stage rejects.
 ///
-/// Mirrors the shape of `raikiri_traits::io::RejectReason` (which this
-/// module's leaf-swap / kind / size gates now delegate to via
-/// `raikiri_traits::io::open_bounded_regular_file` and
-/// `read_bounded_from_open_file`) so the callsite policy (`Io` → propagate,
-/// other reasons → warn+skip) reads the same as before the delegation. A
-/// local enum is kept alongside the traits crate's `RejectReason` so the
-/// `Display` wording and the walker-vs-read warn taxonomy stay specific to
-/// the fonts directory.
-#[derive(Debug)]
-pub(crate) enum FontReadReject {
-    /// `symlink_metadata().file_type().is_symlink()` returned true, **or**
-    /// the open returned an errno consistent with `O_NOFOLLOW` refusing to
-    /// follow a symlink (POSIX `ELOOP`; a fallback `symlink_metadata` recheck
-    /// covers errno values that don't distinguish this case, including
-    /// FreeBSD's `EMLINK` at every version, not just older BSDs).  Either
-    /// way the leaf was a symlink at reject time and no read happened
-    /// through it.
-    Symlink,
-    /// Path is neither a regular file nor a symlink (device, fifo, socket,
-    /// directory, block/char device).  Rejected at pre-open metadata time —
-    /// `File::open` on a fifo with no writer would block indefinitely.
-    NotRegularFile,
-    /// The fd returned by `safe_open` resolves to something other than a
-    /// regular file (FIFO / character device / block device / socket).
-    /// Rejected via a fd-based `File::metadata()` fstat after open, so the
-    /// check is race-free against a path-swap between pre-open
-    /// `symlink_metadata` and `safe_open`.  Paired with `O_NONBLOCK` in
-    /// `safe_open` (unix) so a writer-less FIFO swapped in mid-window cannot
-    /// block `open()` before the fstat is reached.  Callsite policy:
-    /// warn+skip (analogous to `NotRegularFile`).  Variant is split by
-    /// callsite (pre-open vs post-open) rather than reusing `NotRegularFile`
-    /// so the TOCTOU signal — regular at walk, non-regular at read — remains
-    /// distinguishable to observers (same philosophy as [`FontWarn`]'s
-    /// per-stage split).  Closes the FIFO/device leaf-swap gap.
-    NotRegularFilePostOpen,
-    /// Pre-open `metadata.len() > cap` reject.  The file was never opened.
-    /// `cap` carries the configured cap (rather than deferring to
-    /// `FONT_SIZE_CAP`) so tests that pass a small cap get honest messages.
-    OversizedPreOpen { size: u64, cap: u64 },
-    /// The file grew past `cap` between the metadata check and the bounded
-    /// read (TOCTOU-grow race), caught by the `+1-probe` pattern:
-    /// `take(cap + 1)` then post-read `bytes.len() > cap`.
-    OversizedDuringRead { size: u64, cap: u64 },
-    /// After canonicalization, the candidate path resolves outside the
-    /// walker's canonical root — the intermediate-symlink escape vector
-    /// (`fonts_dir/subdir/` swapped into a symlink to `/tmp/evil/` between
-    /// walk and read, with `subdir/Ahem.ttf` still a regular file leaf so
-    /// `is_symlink()` on the leaf does not fire).  Belt-and-suspenders: given
-    /// the walker's `is_symlink()` skip on directory entries this branch is
-    /// only reachable if the tree changed between walk and read, but the
-    /// containment check is what makes that safe.  Mirrors
-    /// `raikiri_vrt::reference::FixtureError::PathEscape`.
-    /// Closes the intermediate-directory-swap PathEscape gap.
-    PathEscape {
-        /// Canonicalized target path that fell outside the root.
-        canonical: PathBuf,
-        /// Canonicalized fonts root that the target should have stayed under.
-        root: PathBuf,
-    },
-    /// Post-open, fd-bound containment recheck (inside
-    /// [`raikiri_traits::io::read_bounded_contained_file`]) found the
-    /// already-opened descriptor resolves outside `canonical_root`.
-    /// Unlike [`FontReadReject::PathEscape`] (a fresh, path-based
-    /// `canonicalize` re-resolution, run after the open and itself
-    /// TOCTOU-vulnerable to a second swap before this recheck runs),
-    /// this variant is derived from the fd the open actually returned —
-    /// on Linux via `/proc/self/fd/<fd>`, on Apple platforms via
-    /// `fcntl(fd, F_GETPATH, ..)` — so firing here
-    /// means the intermediate-directory swap happened inside the window
-    /// between the open and this fd-based recheck (the exact gap left
-    /// surviving the earlier fixes). Split by path-based-vs-fd-based
-    /// callsite for the same reason `NotRegularFile`/`NotRegularFilePostOpen`
-    /// are split: the distinction is the TOCTOU signal, not which one runs
-    /// first (both now run after the open).
-    PathEscapePostOpen {
-        /// fd-derived canonical path (post-open) that fell outside the root.
-        canonical: PathBuf,
-        /// Canonicalized fonts root that the target should have stayed under.
-        root: PathBuf,
-    },
-    /// I/O error from `symlink_metadata`, `safe_open`, `canonicalize`, or
-    /// `read_to_end` that is not consistent with a symlink-swap.  Callsite
-    /// propagates as [`FontError::Io`].
-    Io(std::io::Error),
-}
-
-impl std::fmt::Display for FontReadReject {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            FontReadReject::Symlink => write!(f, "path is a symlink"),
-            FontReadReject::NotRegularFile => write!(f, "path is not a regular file"),
-            FontReadReject::NotRegularFilePostOpen => write!(
-                f,
-                "opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)"
-            ),
-            FontReadReject::OversizedPreOpen { size, cap } => {
-                write!(f, "file size {size} bytes exceeds cap {cap} bytes")
-            }
-            FontReadReject::OversizedDuringRead { size, cap } => write!(
-                f,
-                "file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow)"
-            ),
-            FontReadReject::PathEscape { canonical, root } => write!(
-                f,
-                "canonicalizes to {} which escapes fonts root {}",
-                canonical.display(),
-                root.display()
-            ),
-            FontReadReject::PathEscapePostOpen { canonical, root } => write!(
-                f,
-                "opened fd resolves to {} which escapes fonts root {} (TOCTOU-swap between the open and this containment recheck)",
-                canonical.display(),
-                root.display()
-            ),
-            FontReadReject::Io(source) => write!(f, "I/O error: {source}"),
-        }
-    }
-}
-
-/// Map a [`raikiri_traits::io::RejectReason`] onto this module's
-/// [`FontReadReject`] taxonomy, one variant to one variant.
-///
-/// `RejectReason` and `OversizePhase` are both `#[non_exhaustive]`; a future
-/// variant this match has not been updated for falls through to the
-/// wildcard arm and is treated as an I/O-shaped hard error (this module's
-/// existing fail-closed policy for anything it cannot classify), rather
-/// than being silently downgraded to warn+skip.
-fn map_reject_reason(reason: raikiri_traits::io::RejectReason) -> FontReadReject {
-    use raikiri_traits::io::{OversizePhase, RejectReason};
-    match reason {
-        RejectReason::Symlink => FontReadReject::Symlink,
-        RejectReason::NotRegularFile => FontReadReject::NotRegularFile,
-        RejectReason::NotRegularFilePostOpen => FontReadReject::NotRegularFilePostOpen,
-        RejectReason::Oversized {
-            size,
-            cap,
-            phase: OversizePhase::PreOpen,
-        } => FontReadReject::OversizedPreOpen { size, cap },
-        RejectReason::Oversized {
-            size,
-            cap,
-            phase: OversizePhase::DuringRead,
-        } => FontReadReject::OversizedDuringRead { size, cap },
-        RejectReason::PathEscape { canonical, root } => {
-            FontReadReject::PathEscape { canonical, root }
-        }
-        RejectReason::PathEscapePostOpen { canonical, root } => {
-            FontReadReject::PathEscapePostOpen { canonical, root }
-        }
-        RejectReason::Io(source) => FontReadReject::Io(source),
-        // cov:ignore: unreachable while every current RejectReason variant is
-        // matched explicitly above; required for its #[non_exhaustive]
-        // contract.
-        other => FontReadReject::Io(std::io::Error::other(other.to_string())),
-    }
-}
-
-/// Read a regular font file that must stay inside the walked fonts
-/// directory, via `raikiri_traits::io::read_bounded_contained_file` (leaf
+/// Delegates to `raikiri_traits::io::read_bounded_contained_file` (leaf
 /// symlink / kind / size gates, containment under `canonical_root` including
 /// an fd-derived post-open recheck, and a bounded read). `canonical_root` is
 /// the pre-canonicalized walker root; the containment checks reject an
 /// intermediate directory swapped into a symlink pointing outside it
 /// between the walk and the read.
-pub(crate) fn read_bounded_font_file(
+///
+/// Returns `Ok(None)` after emitting [`FontWarn::ReadRejected`] for a
+/// symlink, non-regular, oversized, or escaping candidate. An I/O failure is
+/// a hard [`FontError::Io`], so a missing Ahem never falls back silently. So
+/// is any reason this module does not classify yet (`RejectReason` is
+/// `#[non_exhaustive]`): an unknown reason fails closed rather than being
+/// downgraded to warn+skip.
+pub(crate) fn read_font_file(
     path: &Path,
     canonical_root: &Path,
     size_cap: u64,
-) -> Result<Vec<u8>, FontReadReject> {
-    raikiri_traits::io::read_bounded_contained_file(path, canonical_root, size_cap)
-        .map_err(map_reject_reason)
+    observer: &mut FontWarnObserver<'_>,
+) -> Result<Option<Vec<u8>>, FontError> {
+    match raikiri_traits::io::read_bounded_contained_file(path, canonical_root, size_cap) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(
+            reason @ (RejectReason::Symlink
+            | RejectReason::NotRegularFile
+            | RejectReason::NotRegularFilePostOpen
+            | RejectReason::Oversized { .. }
+            | RejectReason::PathEscape { .. }
+            | RejectReason::PathEscapePostOpen { .. }),
+        ) => {
+            emit_warn(
+                observer,
+                FontWarn::ReadRejected {
+                    path,
+                    reason: &reason,
+                },
+            );
+            Ok(None)
+        }
+        Err(reason) => Err(FontError::Io {
+            path: path.to_path_buf(),
+            source: reject_into_io(reason),
+        }),
+    }
+}
+
+/// The I/O error a hard-failing read reject propagates as: `Io`'s own
+/// source, or an unclassified reason's message wrapped as
+/// [`std::io::ErrorKind::Other`].
+fn reject_into_io(reason: RejectReason) -> std::io::Error {
+    match reason {
+        RejectReason::Io(source) => source,
+        other => std::io::Error::other(other.to_string()),
+    }
 }
 
 /// Structured warn event emitted while building the WPT font collection
@@ -255,16 +139,16 @@ pub(crate) fn read_bounded_font_file(
 ///
 /// Sibling convention: `#[non_exhaustive]` mirrors the taxonomy enums in
 /// `crates/raikiri-traits/src/error.rs`.  Variants are
-/// **split by callsite** (walker vs read) rather than sharing a single
-/// [`FontReadReject`]-shaped taxonomy because the walker-vs-read distinction
-/// is the exact TOCTOU signal that matters here: a walker `Symlink` is a
-/// mundane cycle-safe skip, whereas a read-time `Symlink` means the tree
-/// changed between walk and read (leaf-swap TOCTOU).  Collapsing them would
-/// destroy that signal.
+/// **split by callsite** (walker vs read) because the walker-vs-read
+/// distinction is the exact TOCTOU signal that matters here: a walker
+/// `Symlink` is a mundane cycle-safe skip, whereas a read-time
+/// [`RejectReason::Symlink`] means the tree changed between walk and read
+/// (leaf-swap TOCTOU).  Collapsing them would destroy that signal.  The read
+/// stage carries the shared [`RejectReason`] instead of a parallel taxonomy.
 ///
 /// # Not surfaced
 ///
-/// `FontReadReject::Io(_)` never becomes a `FontWarn` variant.  It is
+/// [`RejectReason::Io`] never becomes a `FontWarn` event.  It is
 /// hard-propagated as [`FontError::Io`] (preserves the
 /// "Ahem.ttf silent-fallback prevention" guarantee), never warn+skip, so an
 /// observer never sees it.
@@ -298,93 +182,17 @@ pub enum FontWarn<'a> {
         /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
         cap: u64,
     },
-    /// Read stage rejected a candidate as a symlink.  The walker had already
-    /// accepted the path as a regular file, so surfacing here signals a
-    /// **leaf-swap TOCTOU race** between walk and read.
-    ReadRejectedSymlink {
-        /// Path that was a regular file at walk time and a symlink at read.
+    /// Read stage rejected a candidate the walker had already accepted.
+    /// The walker pre-filters symlinks, non-regular entries, and oversized
+    /// files, so any reason here means the tree changed between walk and
+    /// read (a leaf swap, an intermediate-directory swap, or a grow past the
+    /// cap). `reason` is never [`RejectReason::Io`], which is
+    /// hard-propagated as [`FontError::Io`].
+    ReadRejected {
+        /// Path the walker accepted and the read stage rejected.
         path: &'a Path,
-    },
-    /// Read stage rejected a candidate whose kind was neither regular file
-    /// nor symlink.  As with [`FontWarn::ReadRejectedSymlink`], the walker
-    /// had already accepted the path, so this is a TOCTOU-swap signal.
-    ReadRejectedNotRegularFile {
-        /// Path that was a regular file at walk time and something else at read.
-        path: &'a Path,
-    },
-    /// Read stage's **post-open fd-based fstat** rejected a candidate whose
-    /// opened descriptor did not resolve to a regular file.  This is the
-    /// race-free complement to [`FontWarn::ReadRejectedNotRegularFile`]: the
-    /// pre-open path-based check is TOCTOU-vulnerable (a regular file can be
-    /// swapped for a FIFO / device between pre-open metadata and
-    /// `safe_open`), whereas the post-open fstat consults the inode already
-    /// bound to the fd.  Firing here means the swap happened inside the
-    /// pre-open→open window; paired with `O_NONBLOCK` in `safe_open` (unix)
-    /// so a writer-less FIFO cannot block `open()` before this fstat runs.
-    /// Closes the FIFO/device leaf-swap gap.
-    ReadRejectedNotRegularFilePostOpen {
-        /// Path whose opened fd resolved to a non-regular kind
-        /// (swap window between pre-open metadata and open).
-        path: &'a Path,
-    },
-    /// Read stage rejected a candidate whose `metadata.len()` exceeded the
-    /// cap between walk and read (TOCTOU-swap to a larger file, or racy
-    /// grow-in-place before the pre-open metadata check).
-    ReadRejectedOversizedPreOpen {
-        /// Path whose size crossed the cap between walk and read.
-        path: &'a Path,
-        /// Post-swap logical file size (`metadata.len()`) at read time.
-        size: u64,
-        /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
-        cap: u64,
-    },
-    /// Read stage caught a **TOCTOU-grow** race via the `+1-probe` pattern:
-    /// the file grew past the cap between the pre-open metadata check and
-    /// the bounded read.  The load-bearing observability signal this
-    /// enum was designed for.
-    ReadRejectedOversizedDuringRead {
-        /// Path that grew past the cap during the bounded read.
-        path: &'a Path,
-        /// Number of bytes actually read before the `+1-probe` fired
-        /// (`bytes.len() as u64`, `> cap`).
-        size: u64,
-        /// The size cap being enforced (currently [`FONT_SIZE_CAP`]).
-        cap: u64,
-    },
-    /// Read stage caught an **intermediate-symlink escape**: the leaf
-    /// resolved (via `canonicalize` then `starts_with(canonical_root)`)
-    /// outside the walker's canonical root after an intermediate directory
-    /// was swapped into a symlink between walk and read.  Mirror of
-    /// `raikiri_vrt::reference::FixtureError::PathEscape`.
-    /// Closes the intermediate-directory-swap PathEscape gap.
-    ReadRejectedPathEscape {
-        /// Walker-observed candidate path (pre-canonicalization).
-        path: &'a Path,
-        /// Canonicalized target path that fell outside the root.
-        canonical: &'a Path,
-        /// Canonicalized fonts root that the target should have stayed under.
-        root: &'a Path,
-    },
-    /// Read stage's **post-open fd-bound containment recheck** rejected a
-    /// candidate whose opened descriptor resolved outside the walker's
-    /// canonical root. This is the race-free complement to
-    /// [`FontWarn::ReadRejectedPathEscape`]: that check's `canonicalize`
-    /// (run after the open, see
-    /// [`raikiri_traits::io::read_bounded_contained_file`]) re-resolves the pathname a second time
-    /// (independently of the open's own resolution), leaving a window for
-    /// an intermediate-directory swap between the two lookups; this fd-bound
-    /// recheck (Linux: `/proc/self/fd/<fd>` readlink; Apple platforms:
-    /// `fcntl(fd, F_GETPATH, ..)`) is derived from the fd the open actually
-    /// returned, so firing here means the swap happened inside the window
-    /// between the open and this recheck itself. Closes the
-    /// intermediate-directory-swap PathEscape residual.
-    ReadRejectedPathEscapePostOpen {
-        /// Walker-observed candidate path (pre-canonicalization).
-        path: &'a Path,
-        /// fd-derived canonical path (post-open) that fell outside the root.
-        canonical: &'a Path,
-        /// Canonicalized fonts root that the target should have stayed under.
-        root: &'a Path,
+        /// Why the read stage rejected it.
+        reason: &'a RejectReason,
     },
     /// the font library registered no family for the read blob
     /// (parse-invalid font, corrupt asset, etc.).  Handled by the aggregate
@@ -421,51 +229,25 @@ impl<'a> std::fmt::Display for FontWarn<'a> {
                 "skipping oversized font {} ({size} bytes > cap {cap})",
                 path.display()
             ),
-            FontWarn::ReadRejectedSymlink { path } => {
-                write!(f, "skipping {} (path is a symlink)", path.display())
-            }
-            FontWarn::ReadRejectedNotRegularFile { path } => write!(
-                f,
-                "skipping {} (path is not a regular file)",
-                path.display()
-            ),
-            FontWarn::ReadRejectedNotRegularFilePostOpen { path } => write!(
-                f,
-                "skipping {} (opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open))",
-                path.display()
-            ),
-            FontWarn::ReadRejectedOversizedPreOpen { path, size, cap } => write!(
-                f,
-                "skipping {} (file size {size} bytes exceeds cap {cap} bytes)",
-                path.display()
-            ),
-            FontWarn::ReadRejectedOversizedDuringRead { path, size, cap } => write!(
-                f,
-                "skipping {} (file grew past cap during read: {size} bytes read, cap {cap} bytes (TOCTOU-grow))",
-                path.display()
-            ),
-            FontWarn::ReadRejectedPathEscape {
-                path,
-                canonical,
-                root,
-            } => write!(
-                f,
-                "skipping {} (canonicalizes to {} which escapes fonts root {})",
-                path.display(),
-                canonical.display(),
-                root.display()
-            ),
-            FontWarn::ReadRejectedPathEscapePostOpen {
-                path,
-                canonical,
-                root,
-            } => write!(
-                f,
-                "skipping {} (opened fd resolves to {} which escapes fonts root {} (TOCTOU-swap between the open and this containment recheck))",
-                path.display(),
-                canonical.display(),
-                root.display()
-            ),
+            FontWarn::ReadRejected { path, reason } => match reason {
+                // The two escape reasons keep their fonts-root wording, which
+                // differs from `RejectReason`'s own `Display`.
+                RejectReason::PathEscape { canonical, root } => write!(
+                    f,
+                    "skipping {} (canonicalizes to {} which escapes fonts root {})",
+                    path.display(),
+                    canonical.display(),
+                    root.display()
+                ),
+                RejectReason::PathEscapePostOpen { canonical, root } => write!(
+                    f,
+                    "skipping {} (opened fd resolves to {} which escapes fonts root {} (TOCTOU-swap between the open and this containment recheck))",
+                    path.display(),
+                    canonical.display(),
+                    root.display()
+                ),
+                other => write!(f, "skipping {} ({other})", path.display()),
+            },
             FontWarn::RegisterEmpty { path } => {
                 write!(f, "skipping {}: no family registered", path.display())
             }
@@ -491,62 +273,6 @@ pub(crate) type FontWarnObserver<'o> = Option<&'o mut dyn FnMut(&FontWarn<'_>)>;
 /// monomorphic generic parameter cannot express.
 pub(crate) fn emit_warn(observer: &mut FontWarnObserver<'_>, event: FontWarn<'_>) {
     crate::diag::emit_warn_via!(observer, "[raikiri-dom::fonts]", event);
-}
-
-/// Map a non-`Io` [`FontReadReject`] to its `FontWarn::ReadRejected*`
-/// counterpart.  Extracted as a pure function so the observer-event shape
-/// can be unit-tested without needing to trigger a real TOCTOU race: the
-/// read-time `ReadRejected*` arms are cov:ignore in the callsite loop
-/// (walker pre-filters symlink/non-regular/oversized), so this helper is
-/// the sole deterministic coverage of the mapping.
-///
-/// # Panics
-///
-/// Debug-asserts on `FontReadReject::Io(_)`: `Io` is hard-propagated as
-/// [`FontError::Io`] before the observer emit site, so it must never reach
-/// this mapping.  Release builds fall back to a defensive no-op path via
-/// `ReadRejectedNotRegularFile` (least-surprising residual); the debug
-/// assert exists to catch a future refactor that routes `Io` through here
-/// by mistake.
-pub(crate) fn read_reject_to_warn<'a>(path: &'a Path, reject: &'a FontReadReject) -> FontWarn<'a> {
-    match reject {
-        FontReadReject::Symlink => FontWarn::ReadRejectedSymlink { path },
-        FontReadReject::NotRegularFile => FontWarn::ReadRejectedNotRegularFile { path },
-        FontReadReject::NotRegularFilePostOpen => {
-            FontWarn::ReadRejectedNotRegularFilePostOpen { path }
-        }
-        FontReadReject::OversizedPreOpen { size, cap } => FontWarn::ReadRejectedOversizedPreOpen {
-            path,
-            size: *size,
-            cap: *cap,
-        },
-        FontReadReject::OversizedDuringRead { size, cap } => {
-            FontWarn::ReadRejectedOversizedDuringRead {
-                path,
-                size: *size,
-                cap: *cap,
-            }
-        }
-        FontReadReject::PathEscape { canonical, root } => FontWarn::ReadRejectedPathEscape {
-            path,
-            canonical: canonical.as_path(),
-            root: root.as_path(),
-        },
-        FontReadReject::PathEscapePostOpen { canonical, root } => {
-            FontWarn::ReadRejectedPathEscapePostOpen {
-                path,
-                canonical: canonical.as_path(),
-                root: root.as_path(),
-            }
-        }
-        FontReadReject::Io(_) => {
-            debug_assert!(
-                false,
-                "read_reject_to_warn called with Io(_); Io must be peeled off before observer emit"
-            );
-            FontWarn::ReadRejectedNotRegularFile { path }
-        }
-    }
 }
 
 /// Build the shared font layer from a verified WPT font directory, with
@@ -584,9 +310,9 @@ pub enum FontError {
         /// The fonts dir that was scanned
         dir: PathBuf,
     },
-    /// An io failure during the dir walk, or a `FontReadReject::Io(_)`
-    /// propagated from a font read (via the callsite-local
-    /// `read_bounded_font_file`).
+    /// An io failure during the dir walk, or a [`RejectReason::Io`] (or a
+    /// reject reason this module does not classify) propagated from a font
+    /// read.
     /// Other reject reasons are warn+skipped (see the callsite comment on
     /// [`build_wpt_font_collection`] for details — one source of
     /// truth for the full variant list, so this doc doesn't drift from it).
@@ -1045,6 +771,7 @@ pub fn build_inline_document_fonts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use raikiri_traits::io::OversizePhase;
     use std::io::Write;
     use std::path::Path;
 
@@ -1391,7 +1118,22 @@ mod tests {
         }
     }
 
-    /// End-to-end check: `read_bounded_font_file` rejects a symlink at the
+    /// Run [`read_font_file`] with a capturing observer and return its result
+    /// alongside the warn events it emitted.
+    fn read_font_file_with_events(
+        path: &Path,
+        canonical_root: &Path,
+        size_cap: u64,
+    ) -> (Result<Option<Vec<u8>>, FontError>, Vec<OwnedWarn>) {
+        let mut events: Vec<OwnedWarn> = Vec::new();
+        let result = {
+            let mut cb = |w: &FontWarn<'_>| events.push(OwnedWarn::from_ref(w));
+            read_font_file(path, canonical_root, size_cap, &mut Some(&mut cb))
+        };
+        (result, events)
+    }
+
+    /// End-to-end check: `read_font_file` rejects a symlink at the
     /// pre-open `symlink_metadata` check.  This test does NOT exercise the
     /// `O_NOFOLLOW` path (the open never runs because the pre-open check
     /// short-circuits) — that unit is covered by
@@ -1400,7 +1142,7 @@ mod tests {
     /// that might reorder the checks.
     #[cfg(unix)]
     #[test]
-    fn read_bounded_font_file_rejects_symlink_via_pre_open_check() {
+    fn read_font_file_rejects_symlink_via_pre_open_check() {
         let tmp = tempfile::tempdir().unwrap();
         let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let target = tmp.path().join("target.ttf");
@@ -1411,10 +1153,15 @@ mod tests {
         let link = tmp.path().join("link.ttf");
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
-        match read_bounded_font_file(&link, &canonical_root, FONT_SIZE_CAP) {
-            Err(FontReadReject::Symlink) => {}
-            other => panic!("expected Symlink, got {other:?}"),
-        }
+        let (result, events) = read_font_file_with_events(&link, &canonical_root, FONT_SIZE_CAP);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected a skip, got {result:?}"
+        );
+        assert_eq!(
+            events,
+            [OwnedWarn::ReadRejected(link, "path is a symlink".into())]
+        );
     }
 
     /// Regression check: O_NOFOLLOW on the internal open path does not reject a
@@ -1422,7 +1169,7 @@ mod tests {
     /// broke the safe_open fallback (e.g. accidentally always returning
     /// ELOOP) would be missed by the symlink-only tests.
     #[test]
-    fn read_bounded_font_file_accepts_regular_file_with_nofollow() {
+    fn read_font_file_accepts_regular_file_with_nofollow() {
         let tmp = tempfile::tempdir().unwrap();
         // `tmp.path()` may contain symlinked components (e.g. macOS
         // /tmp → /private/tmp, or `TMPDIR` on some Linux distros).  The
@@ -1436,31 +1183,43 @@ mod tests {
             .write_all(b"regular content")
             .unwrap();
 
-        let bytes = read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP)
-            .expect("regular file should be accepted");
+        let (result, events) = read_font_file_with_events(&path, &canonical_root, FONT_SIZE_CAP);
+        let bytes = result
+            .expect("regular file should be accepted")
+            .expect("regular file should not be skipped");
         assert_eq!(bytes, b"regular content");
+        assert!(events.is_empty(), "unexpected warns: {events:?}");
     }
 
-    /// `read_bounded_font_file` rejects a directory as `NotRegularFile`
+    /// `read_font_file` rejects a directory as `NotRegularFile`
     /// (structural coverage for the `!file_type.is_file()` branch — the same
     /// arm also fires on FIFO / device / socket paths, whose behavior is
     /// pinned separately by `walker_skips_named_pipe_font_entry`).
     #[test]
-    fn read_bounded_font_file_rejects_directory_as_not_regular_file() {
+    fn read_font_file_rejects_directory_as_not_regular_file() {
         let tmp = tempfile::tempdir().unwrap();
         let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
-        match read_bounded_font_file(tmp.path(), &canonical_root, FONT_SIZE_CAP) {
-            Err(FontReadReject::NotRegularFile) => {}
-            other => panic!("expected NotRegularFile, got {other:?}"),
-        }
+        let (result, events) =
+            read_font_file_with_events(tmp.path(), &canonical_root, FONT_SIZE_CAP);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected a skip, got {result:?}"
+        );
+        assert_eq!(
+            events,
+            [OwnedWarn::ReadRejected(
+                tmp.path().into(),
+                "path is not a regular file".into()
+            )]
+        );
     }
 
-    /// `read_bounded_font_file` rejects an oversized regular file at the
+    /// `read_font_file` rejects an oversized regular file at the
     /// pre-open metadata check (`metadata.len() > cap`).  Uses a small cap
     /// against a tiny file so the test doesn't need `set_len(FONT_SIZE_CAP + 1)`
     /// (that alternative is exercised by `walker_skips_oversized_font_file`).
     #[test]
-    fn read_bounded_font_file_rejects_oversized_pre_open() {
+    fn read_font_file_rejects_oversized_pre_open() {
         let cap = 4u64;
         let tmp = tempfile::tempdir().unwrap();
         let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
@@ -1470,13 +1229,18 @@ mod tests {
             .write_all(&[0u8; 8])
             .unwrap();
 
-        match read_bounded_font_file(&path, &canonical_root, cap) {
-            Err(FontReadReject::OversizedPreOpen { size, cap: c }) => {
-                assert_eq!(size, 8);
-                assert_eq!(c, cap);
-            }
-            other => panic!("expected OversizedPreOpen, got {other:?}"),
-        }
+        let (result, events) = read_font_file_with_events(&path, &canonical_root, cap);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected a skip, got {result:?}"
+        );
+        assert_eq!(
+            events,
+            [OwnedWarn::ReadRejected(
+                path,
+                "file size 8 bytes exceeds cap 4 bytes".into()
+            )]
+        );
     }
 
     /// Happy path: a regular font file inside the canonical root reads
@@ -1486,7 +1250,7 @@ mod tests {
     /// canonicalization but not before) would fail silently on tmpdir
     /// layouts with symlinked prefixes.
     #[test]
-    fn read_bounded_font_file_accepts_regular_file_inside_canonical_root() {
+    fn read_font_file_accepts_regular_file_inside_canonical_root() {
         let tmp = tempfile::tempdir().unwrap();
         let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let path = tmp.path().join("inside.ttf");
@@ -1495,8 +1259,10 @@ mod tests {
             .write_all(b"inside canonical root")
             .unwrap();
 
-        let bytes = read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP)
-            .expect("regular file inside canonical root should be accepted");
+        let bytes = read_font_file_with_events(&path, &canonical_root, FONT_SIZE_CAP)
+            .0
+            .expect("regular file inside canonical root should be accepted")
+            .expect("regular file inside canonical root should not be skipped");
         assert_eq!(bytes, b"inside canonical root");
     }
 
@@ -1509,11 +1275,11 @@ mod tests {
     /// non-regular-file, and size gates all pass. The containment check
     /// is the load-bearing defense: canonicalize resolves the leaf to
     /// `outside/font.ttf`, which does not `starts_with(canonical_root)`,
-    /// producing `FontReadReject::PathEscape`. Closes the
+    /// producing `RejectReason::PathEscape`. Closes the
     /// intermediate-directory-swap PathEscape gap.
     #[cfg(unix)]
     #[test]
-    fn read_bounded_font_file_rejects_intermediate_symlink_escape() {
+    fn read_font_file_rejects_intermediate_symlink_escape() {
         // Two separate tempdirs so `outside` genuinely lives outside the
         // canonical root of `fonts`.
         let fonts_tmp = tempfile::tempdir().unwrap();
@@ -1552,128 +1318,77 @@ mod tests {
             "leaf must be a regular file"
         );
 
-        match read_bounded_font_file(&leaf_via_intermediate, &canonical_root, FONT_SIZE_CAP) {
-            Err(FontReadReject::PathEscape { canonical, root }) => {
-                assert_eq!(canonical, outside_leaf);
-                assert_eq!(root, canonical_root);
-            }
-            other => panic!("expected PathEscape for intermediate-symlink escape, got {other:?}"),
-        }
+        let (result, events) =
+            read_font_file_with_events(&leaf_via_intermediate, &canonical_root, FONT_SIZE_CAP);
+        assert!(
+            matches!(result, Ok(None)),
+            "expected a skip for intermediate-symlink escape, got {result:?}"
+        );
+        let expected = RejectReason::PathEscape {
+            canonical: outside_leaf,
+            root: canonical_root,
+        };
+        assert_eq!(
+            events,
+            [OwnedWarn::ReadRejected(
+                leaf_via_intermediate,
+                expected.to_string()
+            )]
+        );
     }
 
     /// Nonexistent path is caught by the pre-open `symlink_metadata` gate
-    /// and surfaced as the existing `FontReadReject::Io` variant (not
+    /// and surfaced as a hard `FontError::Io` (not a
     /// `PathEscape`). Regression check — without this an implementation
     /// that reordered the canonicalize call before the pre-open gate
     /// would silently reclassify NotFound as an Io-under-canonicalize
     /// (still Io, but with confusing provenance) or worse, the pre-open
     /// error message would move.
     #[test]
-    fn read_bounded_font_file_returns_io_for_nonexistent_path() {
+    fn read_font_file_returns_io_for_nonexistent_path() {
         let tmp = tempfile::tempdir().unwrap();
         let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let missing = tmp.path().join("does-not-exist.ttf");
 
-        match read_bounded_font_file(&missing, &canonical_root, FONT_SIZE_CAP) {
-            Err(FontReadReject::Io(source)) => {
+        let (result, events) = read_font_file_with_events(&missing, &canonical_root, FONT_SIZE_CAP);
+        match result {
+            Err(FontError::Io { path, source }) => {
+                assert_eq!(path, missing);
                 assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
             }
             other => panic!("expected Io(NotFound) for missing path, got {other:?}"),
         }
+        assert!(events.is_empty(), "unexpected warns: {events:?}");
     }
 
-    /// `map_reject_reason` translates every `raikiri_traits::io::RejectReason`
-    /// variant to its `FontReadReject` counterpart. `NotRegularFilePostOpen`
-    /// and `Oversized { phase: DuringRead }` are only reachable through
-    /// `read_bounded_font_file` via a genuine TOCTOU race (cov:ignore at
-    /// that callsite, same shape as `read_reject_to_warn`'s race-only
-    /// variants above), so this is the sole deterministic check that a future
-    /// match reorder can't silently reroute a race-detected reject into the
-    /// wildcard `Io` arm (which this module treats as a hard-propagate,
-    /// not warn+skip).
+    /// `reject_into_io` passes an `Io` reason's own error through and folds
+    /// any other reason into an `Other` error carrying its message, which is
+    /// how a reason `read_font_file` does not classify fails closed.
     #[test]
-    fn map_reject_reason_maps_all_variants() {
-        use raikiri_traits::io::{OversizePhase, RejectReason};
-
-        assert!(matches!(
-            map_reject_reason(RejectReason::Symlink),
-            FontReadReject::Symlink
-        ));
-        assert!(matches!(
-            map_reject_reason(RejectReason::NotRegularFile),
-            FontReadReject::NotRegularFile
-        ));
-        assert!(matches!(
-            map_reject_reason(RejectReason::NotRegularFilePostOpen),
-            FontReadReject::NotRegularFilePostOpen
-        ));
-        assert!(matches!(
-            map_reject_reason(RejectReason::Oversized {
-                size: 42,
-                cap: 10,
-                phase: OversizePhase::PreOpen,
-            }),
-            FontReadReject::OversizedPreOpen { size: 42, cap: 10 }
-        ));
-        assert!(matches!(
-            map_reject_reason(RejectReason::Oversized {
-                size: 101,
-                cap: 100,
-                phase: OversizePhase::DuringRead,
-            }),
-            FontReadReject::OversizedDuringRead {
-                size: 101,
-                cap: 100
-            }
-        ));
-        assert!(matches!(
-            map_reject_reason(RejectReason::PathEscape {
-                canonical: PathBuf::from("/outside/a.ttf"),
-                root: PathBuf::from("/fonts"),
-            }),
-            FontReadReject::PathEscape { canonical, root }
-                if canonical == Path::new("/outside/a.ttf") && root == Path::new("/fonts")
-        ));
-        assert!(matches!(
-            map_reject_reason(RejectReason::PathEscapePostOpen {
-                canonical: PathBuf::from("/outside/b.ttf"),
-                root: PathBuf::from("/fonts"),
-            }),
-            FontReadReject::PathEscapePostOpen { canonical, root }
-                if canonical == Path::new("/outside/b.ttf") && root == Path::new("/fonts")
-        ));
+    fn reject_into_io_keeps_io_and_folds_other_reasons() {
         let io_err = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
-        assert!(matches!(
-            map_reject_reason(RejectReason::Io(io_err)),
-            FontReadReject::Io(source) if source.kind() == std::io::ErrorKind::PermissionDenied
-        ));
+        let source = reject_into_io(RejectReason::Io(io_err));
+        assert_eq!(source.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(source.to_string(), "denied");
+
+        let folded = reject_into_io(RejectReason::Symlink);
+        assert_eq!(folded.kind(), std::io::ErrorKind::Other);
+        assert_eq!(folded.to_string(), "path is a symlink");
     }
 
-    /// `FontReadReject::PathEscapePostOpen`'s `Display` output. Constructed
-    /// directly (no filesystem I/O) since this is a pure formatting check.
-    #[test]
-    fn font_read_reject_path_escape_post_open_display_contains_paths() {
-        let err = FontReadReject::PathEscapePostOpen {
-            canonical: PathBuf::from("/outside/leaf.ttf"),
-            root: PathBuf::from("/fonts/root"),
-        };
-        let s = err.to_string();
-        assert!(s.contains("/outside/leaf.ttf"), "missing canonical: {s}");
-        assert!(s.contains("/fonts/root"), "missing root: {s}");
-    }
-
-    /// `FontWarn::ReadRejectedPathEscape`'s `Display` output (the
-    /// non-post-open variant — `font_warn_display_reproduces_legacy_message_bodies`
-    /// below only pins `ReadRejectedPathEscapePostOpen`).
+    /// `FontWarn::ReadRejected`'s `Display` output for a `PathEscape` reason
+    /// keeps the fonts-root wording rather than `RejectReason`'s own.
     #[test]
     fn font_warn_display_read_rejected_path_escape_contains_paths() {
         let p = Path::new("/tmp/fake.ttf");
         let s = format!(
             "{}",
-            FontWarn::ReadRejectedPathEscape {
+            FontWarn::ReadRejected {
                 path: p,
-                canonical: Path::new("/tmp/outside/font.ttf"),
-                root: Path::new("/tmp/fonts"),
+                reason: &RejectReason::PathEscape {
+                    canonical: PathBuf::from("/tmp/outside/font.ttf"),
+                    root: PathBuf::from("/tmp/fonts"),
+                },
             }
         );
         assert_eq!(
@@ -1691,9 +1406,9 @@ mod tests {
     // - Deterministic font-library register-empty site fires.
     // - Default None-observer path still writes to eprintln! and does not
     //   panic.
-    // - The `read_reject_to_warn` mapping covers all non-Io variants
-    //   (including `NotRegularFilePostOpen`)
-    //   without needing a TOCTOU race (that path is cov:ignore in the loop).
+    // - `read_font_file` warns with the read-stage reason; the
+    //   `read_font_file_*` tests drive it directly, without needing a
+    //   walk-then-read TOCTOU race.
 
     /// Owned copy of a [`FontWarn`] event for observer test assertions.
     /// `FontWarn<'a>` borrows the path from the walker's iteration variable,
@@ -1704,13 +1419,8 @@ mod tests {
         WalkerSkippedSymlink(PathBuf),
         WalkerSkippedNonRegular(PathBuf),
         WalkerSkippedOversized(PathBuf, u64, u64),
-        ReadRejectedSymlink(PathBuf),
-        ReadRejectedNotRegularFile(PathBuf),
-        ReadRejectedNotRegularFilePostOpen(PathBuf),
-        ReadRejectedOversizedPreOpen(PathBuf, u64, u64),
-        ReadRejectedOversizedDuringRead(PathBuf, u64, u64),
-        ReadRejectedPathEscape(PathBuf, PathBuf, PathBuf),
-        ReadRejectedPathEscapePostOpen(PathBuf, PathBuf, PathBuf),
+        /// Path and the reject reason's own `Display` text.
+        ReadRejected(PathBuf, String),
         RegisterEmpty(PathBuf),
     }
 
@@ -1724,92 +1434,12 @@ mod tests {
                 FontWarn::WalkerSkippedOversized { path, size, cap } => {
                     Self::WalkerSkippedOversized(path.into(), size, cap)
                 }
-                FontWarn::ReadRejectedSymlink { path } => Self::ReadRejectedSymlink(path.into()),
-                FontWarn::ReadRejectedNotRegularFile { path } => {
-                    Self::ReadRejectedNotRegularFile(path.into())
-                }
-                FontWarn::ReadRejectedNotRegularFilePostOpen { path } => {
-                    Self::ReadRejectedNotRegularFilePostOpen(path.into())
-                }
-                FontWarn::ReadRejectedOversizedPreOpen { path, size, cap } => {
-                    Self::ReadRejectedOversizedPreOpen(path.into(), size, cap)
-                }
-                FontWarn::ReadRejectedOversizedDuringRead { path, size, cap } => {
-                    Self::ReadRejectedOversizedDuringRead(path.into(), size, cap)
-                }
-                FontWarn::ReadRejectedPathEscape {
-                    path,
-                    canonical,
-                    root,
-                } => Self::ReadRejectedPathEscape(path.into(), canonical.into(), root.into()),
-                FontWarn::ReadRejectedPathEscapePostOpen {
-                    path,
-                    canonical,
-                    root,
-                } => {
-                    Self::ReadRejectedPathEscapePostOpen(path.into(), canonical.into(), root.into())
+                FontWarn::ReadRejected { path, reason } => {
+                    Self::ReadRejected(path.into(), reason.to_string())
                 }
                 FontWarn::RegisterEmpty { path } => Self::RegisterEmpty(path.into()),
             }
         }
-    }
-
-    /// `OwnedWarn::from_ref` maps every `FontWarn::ReadRejected*` variant.
-    /// The real observer call sites for these all require a genuine
-    /// walk-then-read TOCTOU race (see `ifc::font::wpt_collection`'s
-    /// `Err(reason)` arm, `cov:ignore`d for the same reason), so — mirroring
-    /// `read_reject_to_warn_maps_all_non_io_variants`'s direct-construction
-    /// approach — this constructs each `FontWarn` variant directly rather
-    /// than trying to trigger the race.
-    #[test]
-    fn owned_warn_from_ref_maps_all_read_rejected_variants() {
-        let p = Path::new("/tmp/fake.ttf");
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedSymlink { path: p }),
-            OwnedWarn::ReadRejectedSymlink(p.into())
-        );
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedNotRegularFile { path: p }),
-            OwnedWarn::ReadRejectedNotRegularFile(p.into())
-        );
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedNotRegularFilePostOpen { path: p }),
-            OwnedWarn::ReadRejectedNotRegularFilePostOpen(p.into())
-        );
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedOversizedPreOpen {
-                path: p,
-                size: 8,
-                cap: 4
-            }),
-            OwnedWarn::ReadRejectedOversizedPreOpen(p.into(), 8, 4)
-        );
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedOversizedDuringRead {
-                path: p,
-                size: 101,
-                cap: 100
-            }),
-            OwnedWarn::ReadRejectedOversizedDuringRead(p.into(), 101, 100)
-        );
-        let canonical = Path::new("/tmp/outside/font.ttf");
-        let root = Path::new("/tmp/fonts");
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedPathEscape {
-                path: p,
-                canonical,
-                root,
-            }),
-            OwnedWarn::ReadRejectedPathEscape(p.into(), canonical.into(), root.into())
-        );
-        assert_eq!(
-            OwnedWarn::from_ref(&FontWarn::ReadRejectedPathEscapePostOpen {
-                path: p,
-                canonical,
-                root,
-            }),
-            OwnedWarn::ReadRejectedPathEscapePostOpen(p.into(), canonical.into(), root.into())
-        );
     }
 
     /// Observer fires `WalkerSkippedSymlink` when a symlink entry sits
@@ -1968,107 +1598,6 @@ mod tests {
         let _ = build_wpt_font_collection(tmp.path());
     }
 
-    /// `read_reject_to_warn` maps every non-Io `FontReadReject` variant to
-    /// its `FontWarn::ReadRejected*` counterpart.  The read-time observer
-    /// arm in `ifc::font::wpt_collection` is `cov:ignore` (the
-    /// walker pre-filters symlink/non-regular/oversized, so the arm only
-    /// fires on a real TOCTOU race), which would otherwise leave the
-    /// TOCTOU-observability deliverable untested.  This unit test closes
-    /// that coverage gap deterministically.
-    #[test]
-    fn read_reject_to_warn_maps_all_non_io_variants() {
-        let path = Path::new("/tmp/fake.ttf");
-
-        assert!(matches!(
-            read_reject_to_warn(path, &FontReadReject::Symlink),
-            FontWarn::ReadRejectedSymlink { path: p } if p == path
-        ));
-        assert!(matches!(
-            read_reject_to_warn(path, &FontReadReject::NotRegularFile),
-            FontWarn::ReadRejectedNotRegularFile { path: p } if p == path
-        ));
-        // NotRegularFilePostOpen: the read-time arm is cov:ignore
-        // (pre-open+O_NONBLOCK+fstat window race required to fire), so
-        // this is the sole deterministic check of the new mapping.
-        assert!(matches!(
-            read_reject_to_warn(path, &FontReadReject::NotRegularFilePostOpen),
-            FontWarn::ReadRejectedNotRegularFilePostOpen { path: p } if p == path
-        ));
-        assert!(matches!(
-            read_reject_to_warn(
-                path,
-                &FontReadReject::OversizedPreOpen { size: 42, cap: 10 }
-            ),
-            FontWarn::ReadRejectedOversizedPreOpen { path: p, size: 42, cap: 10 }
-                if p == path
-        ));
-        assert!(matches!(
-            read_reject_to_warn(
-                path,
-                &FontReadReject::OversizedDuringRead {
-                    size: 101,
-                    cap: 100
-                }
-            ),
-            FontWarn::ReadRejectedOversizedDuringRead { path: p, size: 101, cap: 100 }
-                if p == path
-        ));
-        // PathEscape: since the loop's read-time arm is cov:ignore
-        // (walker pre-filter + intermediate-symlink race required to fire),
-        // this is the sole deterministic check of the new mapping.
-        let canonical = PathBuf::from("/tmp/outside/font.ttf");
-        let root = PathBuf::from("/tmp/fonts");
-        assert!(matches!(
-            read_reject_to_warn(
-                path,
-                &FontReadReject::PathEscape {
-                    canonical: canonical.clone(),
-                    root: root.clone(),
-                }
-            ),
-            FontWarn::ReadRejectedPathEscape {
-                path: p,
-                canonical: c,
-                root: r,
-            } if p == path && c == canonical.as_path() && r == root.as_path()
-        ));
-        // PathEscapePostOpen: the read-time arm requires a genuine race
-        // between the open and the fd-based containment recheck (cov:ignore
-        // in the loop, same shape as PathEscape above), so this is the sole
-        // deterministic check of the mapping.
-        assert!(matches!(
-            read_reject_to_warn(
-                path,
-                &FontReadReject::PathEscapePostOpen {
-                    canonical: canonical.clone(),
-                    root: root.clone(),
-                }
-            ),
-            FontWarn::ReadRejectedPathEscapePostOpen {
-                path: p,
-                canonical: c,
-                root: r,
-            } if p == path && c == canonical.as_path() && r == root.as_path()
-        ));
-    }
-
-    /// `read_reject_to_warn`'s `FontReadReject::Io(_)` arm is a defensive
-    /// contract check, not a normal mapping: `Io` is always hard-propagated
-    /// as `FontError::Io` before the observer emit site (see this
-    /// function's own doc), so reaching this arm at all means a future
-    /// refactor routed `Io` through here by mistake. The `debug_assert!`
-    /// exists to catch exactly that, so this test drives the arm directly
-    /// and checks it actually fires rather than silently falling back.
-    /// Debug-assert-only: release builds skip the assert and return the
-    /// fallback value instead of panicking, so this is gated the same way.
-    #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "Io must be peeled off before observer emit")]
-    fn read_reject_to_warn_debug_asserts_on_io_variant() {
-        let path = Path::new("/tmp/fake.ttf");
-        let _ = read_reject_to_warn(path, &FontReadReject::Io(std::io::Error::other("boom")));
-    }
-
     /// `FontWarn`'s `Display` output must reproduce the pre-observer
     /// `eprintln!` message bodies verbatim.  Warn-message wording is a
     /// behavior-change surface; this test pins
@@ -2100,45 +1629,45 @@ mod tests {
         );
 
         // Read-time sites — bodies mirror the original eprintln! wording
-        // "skipping <path> (<FontReadReject Display>)".
+        // "skipping <path> (<reject reason>)".
+        let read_rejected = |reason: RejectReason| {
+            format!(
+                "{}",
+                FontWarn::ReadRejected {
+                    path: p,
+                    reason: &reason,
+                }
+            )
+        };
         assert_eq!(
-            format!("{}", FontWarn::ReadRejectedSymlink { path: p }),
+            read_rejected(RejectReason::Symlink),
             "skipping /tmp/fake.ttf (path is a symlink)"
         );
         assert_eq!(
-            format!("{}", FontWarn::ReadRejectedNotRegularFile { path: p }),
+            read_rejected(RejectReason::NotRegularFile),
             "skipping /tmp/fake.ttf (path is not a regular file)"
         );
         // NotRegularFilePostOpen: message body pins the TOCTOU-swap
         // wording so operators can grep for "TOCTOU-swap" and distinguish
         // this from a mundane pre-open non-regular reject.
         assert_eq!(
-            format!(
-                "{}",
-                FontWarn::ReadRejectedNotRegularFilePostOpen { path: p }
-            ),
+            read_rejected(RejectReason::NotRegularFilePostOpen),
             "skipping /tmp/fake.ttf (opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open))"
         );
         assert_eq!(
-            format!(
-                "{}",
-                FontWarn::ReadRejectedOversizedPreOpen {
-                    path: p,
-                    size: 8,
-                    cap: 4
-                }
-            ),
+            read_rejected(RejectReason::Oversized {
+                size: 8,
+                cap: 4,
+                phase: OversizePhase::PreOpen,
+            }),
             "skipping /tmp/fake.ttf (file size 8 bytes exceeds cap 4 bytes)"
         );
         assert_eq!(
-            format!(
-                "{}",
-                FontWarn::ReadRejectedOversizedDuringRead {
-                    path: p,
-                    size: 101,
-                    cap: 100
-                }
-            ),
+            read_rejected(RejectReason::Oversized {
+                size: 101,
+                cap: 100,
+                phase: OversizePhase::DuringRead,
+            }),
             "skipping /tmp/fake.ttf (file grew past cap during read: 101 bytes read, cap 100 bytes (TOCTOU-grow))"
         );
         // PathEscapePostOpen: message
@@ -2147,14 +1676,10 @@ mod tests {
         // "TOCTOU-swap" and distinguish this fd-bound, race-free reject
         // from `PathEscape`'s path-based one.
         assert_eq!(
-            format!(
-                "{}",
-                FontWarn::ReadRejectedPathEscapePostOpen {
-                    path: p,
-                    canonical: Path::new("/tmp/outside/font.ttf"),
-                    root: Path::new("/tmp/fonts"),
-                }
-            ),
+            read_rejected(RejectReason::PathEscapePostOpen {
+                canonical: PathBuf::from("/tmp/outside/font.ttf"),
+                root: PathBuf::from("/tmp/fonts"),
+            }),
             "skipping /tmp/fake.ttf (opened fd resolves to /tmp/outside/font.ttf which escapes fonts root /tmp/fonts (TOCTOU-swap between the open and this containment recheck))"
         );
 
@@ -2434,7 +1959,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // FontError / FontReadReject — Display and Error::source coverage.
+    // FontError — Display and Error::source coverage.
     // ------------------------------------------------------------------
 
     #[test]
@@ -2488,45 +2013,6 @@ mod tests {
 
         let non_io_err = FontError::EmptyDir(PathBuf::from("/fonts/wpt"));
         assert!(non_io_err.source().is_none());
-    }
-
-    /// `FontReadReject::PathEscapePostOpen`'s Display is already pinned by
-    /// `font_read_reject_path_escape_post_open_display_contains_paths` above;
-    /// this covers the remaining seven variants.
-    #[test]
-    fn font_read_reject_display_reproduces_expected_message_bodies() {
-        assert_eq!(FontReadReject::Symlink.to_string(), "path is a symlink");
-        assert_eq!(
-            FontReadReject::NotRegularFile.to_string(),
-            "path is not a regular file"
-        );
-        assert_eq!(
-            FontReadReject::NotRegularFilePostOpen.to_string(),
-            "opened fd resolves to a non-regular file (TOCTOU-swap between pre-open metadata and open)"
-        );
-        assert_eq!(
-            FontReadReject::OversizedPreOpen { size: 8, cap: 4 }.to_string(),
-            "file size 8 bytes exceeds cap 4 bytes"
-        );
-        assert_eq!(
-            FontReadReject::OversizedDuringRead {
-                size: 101,
-                cap: 100
-            }
-            .to_string(),
-            "file grew past cap during read: 101 bytes read, cap 100 bytes (TOCTOU-grow)"
-        );
-        assert_eq!(
-            FontReadReject::PathEscape {
-                canonical: PathBuf::from("/outside/leaf.ttf"),
-                root: PathBuf::from("/fonts/root"),
-            }
-            .to_string(),
-            "canonicalizes to /outside/leaf.ttf which escapes fonts root /fonts/root"
-        );
-        let display = FontReadReject::Io(std::io::Error::other("boom")).to_string();
-        assert!(display.starts_with("I/O error: "));
-        assert!(display.contains("boom"));
     }
 
     // ------------------------------------------------------------------

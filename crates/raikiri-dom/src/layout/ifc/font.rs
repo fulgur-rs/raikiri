@@ -5,8 +5,8 @@
 //! order, so results do not depend on the fonts installed on the host.
 
 use crate::fonts::{
-    FONT_SIZE_CAP, FontError, FontReadReject, FontWarn, FontWarnObserver, PREFERRED_FIRST,
-    emit_warn, read_bounded_font_file, read_reject_to_warn, walk_fonts,
+    FONT_SIZE_CAP, FontError, FontWarn, FontWarnObserver, PREFERRED_FIRST, emit_warn,
+    read_font_file, walk_fonts,
 };
 use shodo::font::{FontCollection, FontOptions};
 use shodo::limits::Limits;
@@ -180,18 +180,9 @@ pub(crate) fn wpt_collection(
     let mut families: Vec<String> = Vec::new();
     let mut registered_preferred: HashSet<String> = HashSet::new();
     for path in paths {
-        let bytes = match read_bounded_font_file(&path, &canonical_root, FONT_SIZE_CAP) {
-            Ok(bytes) => bytes,
-            Err(FontReadReject::Io(source)) => {
-                return Err(FontError::Io {
-                    path: path.clone(),
-                    source,
-                });
-            }
-            Err(reason) => {
-                emit_warn(&mut observer, read_reject_to_warn(&path, &reason));
-                continue;
-            }
+        let Some(bytes) = read_font_file(&path, &canonical_root, FONT_SIZE_CAP, &mut observer)?
+        else {
+            continue;
         };
         let family = family_name(&bytes);
         if collection.register(bytes).is_err() {

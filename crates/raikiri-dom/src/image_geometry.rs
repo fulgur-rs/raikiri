@@ -11,6 +11,10 @@ use raikiri_traits::ImageIntrinsicSize;
 mod border_image;
 pub use border_image::{BorderImageGeometry, BorderImagePart, border_image_geometry};
 
+/// The default object size, in CSS pixels, for a replaced element or image
+/// without natural dimensions: 300×150 (CSS Images 3 §4.3, CSS 2.1 §10.3.2).
+pub(crate) const DEFAULT_OBJECT_SIZE: (f32, f32) = (300.0, 150.0);
+
 /// The object rectangle inside a used content box, in CSS pixels.
 ///
 /// Input and output tuples contain x, y, width, and height. Double precision
@@ -54,8 +58,8 @@ pub fn object_image_rect(
 }
 
 fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
-    const DEFAULT_WIDTH: f64 = 300.0;
-    const DEFAULT_HEIGHT: f64 = 150.0;
+    const DEFAULT_WIDTH: f64 = DEFAULT_OBJECT_SIZE.0 as f64;
+    const DEFAULT_HEIGHT: f64 = DEFAULT_OBJECT_SIZE.1 as f64;
     let valid = |value: Option<f32>| {
         value
             .filter(|value| value.is_finite() && *value > 0.0)
@@ -109,8 +113,8 @@ pub fn background_image_dimensions(
     area_h: f64,
     intrinsic: ImageIntrinsicSize,
 ) -> Option<(f64, f64)> {
-    const DEFAULT_WIDTH: f64 = 300.0;
-    const DEFAULT_HEIGHT: f64 = 150.0;
+    const DEFAULT_WIDTH: f64 = DEFAULT_OBJECT_SIZE.0 as f64;
+    const DEFAULT_HEIGHT: f64 = DEFAULT_OBJECT_SIZE.1 as f64;
 
     let (intrinsic_w, intrinsic_h) = match (
         intrinsic.width.map(f64::from),

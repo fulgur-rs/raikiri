@@ -40,6 +40,10 @@ const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
 // A WPT pair can hold one sidecar beside the other document and its paint blob.
 // Capping each side at 32 MiB keeps these three canvas buffers at 96 MiB total.
 const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
+
+/// Width and height of an HTML `<canvas>` whose `width` or `height` content
+/// attribute is missing or unparsable (HTML Standard §4.12.5).
+pub(crate) const DEFAULT_CANVAS_SIZE: (u32, u32) = (300, 150);
 // Bound all size variants retained beyond the source cache's current raster.
 const MAX_DOCUMENT_LIST_MARKER_IMAGE_BYTES: u64 = 128 * 1024 * 1024;
 
@@ -2266,8 +2270,8 @@ impl Document {
     /// Uses the rules for parsing non-negative integers: surrounding ASCII
     /// whitespace is ignored, an optional leading `+` is stripped, and the
     /// remainder must be ASCII digits. Returns `None` when parsing fails so
-    /// the caller falls back to the default (300 for width, 150 for height).
-    fn parse_canvas_dimension(value: &str) -> Option<u32> {
+    /// the caller falls back to [`DEFAULT_CANVAS_SIZE`].
+    pub(crate) fn parse_canvas_dimension(value: &str) -> Option<u32> {
         let trimmed = value.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r'));
         let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
         if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -2300,11 +2304,11 @@ impl Document {
         let width = node
             .attribute("width")
             .and_then(Self::parse_canvas_dimension)
-            .unwrap_or(300);
+            .unwrap_or(DEFAULT_CANVAS_SIZE.0);
         let height = node
             .attribute("height")
             .and_then(Self::parse_canvas_dimension)
-            .unwrap_or(150);
+            .unwrap_or(DEFAULT_CANVAS_SIZE.1);
         Some((width, height))
     }
 
@@ -2612,7 +2616,7 @@ impl Document {
         self.canvas_ids_in_tree_order()
             .into_iter()
             .map(|index| {
-                let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
+                let (width, height) = self.canvas_size(index).unwrap_or(DEFAULT_CANVAS_SIZE);
                 match self.canvas_bitmap_ref(index) {
                     Some(bitmap)
                         if sidecar_bytes
@@ -2637,7 +2641,7 @@ impl Document {
         self.canvas_ids_in_tree_order()
             .into_iter()
             .map(|index| {
-                let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
+                let (width, height) = self.canvas_size(index).unwrap_or(DEFAULT_CANVAS_SIZE);
                 self.take_canvas_bitmap_storage(index)
                     .unwrap_or_else(|| CanvasBitmap::transparent(width, height))
             })
@@ -3329,7 +3333,7 @@ fn content_image_size(
     style: Option<&raikiri_style::ComputedValues>,
 ) -> raikiri_traits::ImageRasterSize {
     use raikiri_style::ComputedLengthPercentageOrAuto as Length;
-    const DEFAULT: (f32, f32) = (300.0, 150.0);
+    const DEFAULT: (f32, f32) = crate::image_geometry::DEFAULT_OBJECT_SIZE;
     let valid = |value: f32| value.is_finite() && value > 0.0;
     let natural_width = intrinsic.width.filter(|value| valid(*value));
     let natural_height = intrinsic.height.filter(|value| valid(*value));
@@ -3399,7 +3403,7 @@ fn default_object_size(
     natural_height: Option<f32>,
     ratio: Option<f32>,
 ) -> (f32, f32) {
-    const DEFAULT: (f32, f32) = (300.0, 150.0);
+    const DEFAULT: (f32, f32) = crate::image_geometry::DEFAULT_OBJECT_SIZE;
     match (natural_width, natural_height, ratio) {
         (Some(width), Some(height), _) => (width, height),
         (Some(width), None, Some(ratio)) => (width, width / ratio),
