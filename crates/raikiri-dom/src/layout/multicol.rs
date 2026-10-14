@@ -327,18 +327,19 @@ fn space_min_constrained_children(
                     && tree.nodes[child].style.display != Display::None
             })
             .collect();
-        if let Some(&first) = children.first() {
-            let child_height = tree.nodes[first].unrounded_layout.size.height;
-            // `break-inside: avoid` consumes the unfragmented overflow on both
-            // sides of a too-short/too-tall fragmentainer. Taffy does not
-            // expose that fragmentation marker on its foundational block
-            // path, so express the equivalent separation as a direct-child
-            // block offset.
-            let step = child_height + 2.0 * (parent_height - child_height).abs();
-            for (order, child) in children.into_iter().enumerate() {
-                tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
-                tree.nodes[child].needs_relative_block_paint_offset = true;
-            }
+        // The minimum-sized child makes the list non-empty.
+        let child_height = children
+            .first()
+            .map_or(0.0, |&first| tree.nodes[first].unrounded_layout.size.height);
+        // `break-inside: avoid` consumes the unfragmented overflow on both
+        // sides of a too-short/too-tall fragmentainer. Taffy does not
+        // expose that fragmentation marker on its foundational block
+        // path, so express the equivalent separation as a direct-child
+        // block offset.
+        let step = child_height + 2.0 * (parent_height - child_height).abs();
+        for (order, child) in children.into_iter().enumerate() {
+            tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
+            tree.nodes[child].needs_relative_block_paint_offset = true;
         }
     }
     if !height_definite && multicol_has_min_constrained_child(tree, index) {
