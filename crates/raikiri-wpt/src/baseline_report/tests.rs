@@ -231,6 +231,14 @@ fn expected_failure_classification_only_accepts_assertion_and_pixel_failures() {
     assert!(detail.contains("unexpected pass"));
     assert!(detail.contains(&expected.issue_id));
 
+    // A pass only without local resources still fails with them loaded.
+    let (status, detail) =
+        classify_expected_failure(Status::Pass, FALLBACK_NOTE.to_owned(), &expected);
+    assert_eq!(status, Status::XFail);
+    assert!(detail.starts_with(FALLBACK_NOTE));
+    assert!(detail.contains(&expected.reason));
+    assert!(detail.contains(&expected.issue_id));
+
     for status in [Status::Error, Status::Skip, Status::XFail, Status::XPass] {
         let (actual, detail) =
             classify_expected_failure(status, "must remain visible".to_owned(), &expected);

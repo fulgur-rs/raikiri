@@ -587,19 +587,25 @@ fn classify_expected_failure(
     detail: String,
     expected: &ExpectedFailure,
 ) -> (Status, String) {
+    let xfail = |detail: String| {
+        (
+            Status::XFail,
+            format!(
+                "{detail}; expected: {} (issue {})",
+                expected.reason, expected.issue_id
+            ),
+        )
+    };
     match status {
+        Status::Fail => xfail(detail),
+        // A pass that needed the run without local resources is the failure
+        // the entry records: with its resources loaded the page differs.
+        Status::Pass if detail == FALLBACK_NOTE => xfail(detail),
         Status::Pass => (
             Status::XPass,
             format!(
                 "unexpected pass; remove the expectation and promote if in scope (issue {}): {}",
                 expected.issue_id, expected.reason
-            ),
-        ),
-        Status::Fail => (
-            Status::XFail,
-            format!(
-                "{}; expected: {} (issue {})",
-                detail, expected.reason, expected.issue_id
             ),
         ),
         Status::Error | Status::Skip | Status::XFail | Status::XPass => (status, detail),
