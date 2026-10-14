@@ -6743,15 +6743,19 @@ fn grid_stacks_items(document: &Document, grid: usize) -> bool {
         .all(|pair| pair[0].0 < pair[1].0 && pair[1].1 >= pair[0].2 - 0.01)
 }
 
-/// Whether the rows of `grid` all size to their content: the grid has
-/// only implicit `auto` rows, so its items grow with what they hold.
+/// Whether the rows of `grid` all size to their content: every explicit
+/// and implicit row track is `auto`, so its items grow with what they hold.
 fn grid_rows_size_to_content(document: &Document, grid: usize) -> bool {
     let style = &document.nodes[grid].style;
-    style.grid_template_rows.is_empty()
-        && style
-            .grid_auto_rows
-            .iter()
-            .all(|track| track.min.is_auto() && track.max.is_auto())
+    let auto = |track: &taffy::TrackSizingFunction| track.min.is_auto() && track.max.is_auto();
+    style
+        .grid_template_rows
+        .iter()
+        .all(|component| match component {
+            taffy::GridTemplateComponent::Single(track) => auto(track),
+            taffy::GridTemplateComponent::Repeat(repetition) => repetition.tracks.iter().all(auto),
+        })
+        && style.grid_auto_rows.iter().all(auto)
 }
 
 /// Whether a flex or multi-column container, or a grid whose items do not
@@ -6783,19 +6787,34 @@ fn has_side_by_side_ancestor(
 
 /// Whether the boxes from `node_id`'s parent up to `body_id` each stack
 /// their children in block order, so that the boxes after a moved one in
-/// each of them follow it: block containers, and grids of one column.
+/// each of them follow it: block containers, and grids of one column. The
+/// paragraph that lays `node_id` out as a block among its lines also
+/// counts; its content after the block follows it with its lines.
 fn stacks_in_block_flow(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
     body_id: usize,
 ) -> bool {
+    let paragraph = document.layout_parent_of(node_id).filter(|&root| {
+        document
+            .ifc_layout_node(root)
+            .and_then(|node| node.ifc.as_ref())
+            .and_then(|ifc| ifc.lines.as_ref())
+            .is_some_and(|lines| {
+                lines
+                    .block_line_starts
+                    .iter()
+                    .any(|&(block, _)| block == node_id)
+            })
+    });
     let mut current = document.parent_of(node_id);
     while let Some(id) = current
         && id != body_id
     {
         let display = cascade.computed[id].display;
         if display != DisplayValue::Contents
+            && Some(id) != paragraph
             && !moves_later_siblings(document, cascade, id)
             && !(matches!(display, DisplayValue::Grid | DisplayValue::InlineGrid)
                 && grid_stacks_items(document, id))

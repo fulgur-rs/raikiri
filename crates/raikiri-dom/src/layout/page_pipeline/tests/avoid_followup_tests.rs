@@ -349,3 +349,45 @@ fn a_grid_item_in_a_fixed_row_keeps_its_track_size() {
     let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
     assert_eq!((ys, grid_height), (vec![60.0, 100.0, 210.0], 150.0));
 }
+
+#[test]
+fn boxes_after_a_paragraph_follow_a_forced_break_inside_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let outer = block(doc, body, "display:block");
+        let paragraph = block(doc, outer, "display:block;font-size:10px;line-height:10px");
+        doc.append_text(paragraph, "x");
+        ids.push(block(
+            doc,
+            paragraph,
+            "display:block;height:20px;break-before:page",
+        ));
+        ids.push(block(doc, outer, "display:block;height:20px"));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 120.0, 140.0]);
+}
+
+#[test]
+fn a_grid_item_in_an_explicit_auto_row_grows_the_grid() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(doc, body, "display:grid;grid-template-rows:auto");
+        ids.push(grid);
+        let item = block(doc, grid, "display:block");
+        block(doc, item, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            item,
+            "display:block;height:60px;break-inside:avoid",
+        ));
+        ids.push(block(doc, item, "display:block;height:80px"));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((ys, grid_height), (vec![60.0, 100.0, 160.0, 240.0], 180.0));
+}
