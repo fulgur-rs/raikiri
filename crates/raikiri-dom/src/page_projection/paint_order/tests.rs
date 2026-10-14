@@ -278,3 +278,25 @@ fn letter_groups_past_the_id_limit_stay_inside_one_parent_group() {
         2
     );
 }
+
+#[test]
+fn letter_groups_up_to_the_id_limit_keep_their_own_opacity() {
+    let limit = crate::generated_content::MAX_LETTER_GROUPS;
+    // Each span's quote and the paragraph's own letter form one group each.
+    for spans in [limit - 2, limit - 1] {
+        let (document, cascade) = first_letter_spans(spans);
+        let runs = document.page_text_runs(&cascade, 0);
+        let root = usize::try_from(runs[0].line.root.0).unwrap();
+        let table = document.letter_groups(&cascade, root);
+        assert_eq!(table.fragments.len(), spans + 1);
+        let mut seen = HashSet::new();
+        for &(own, held) in table.fragments.values() {
+            let own = own.expect("a group of its own");
+            assert!(seen.insert(own), "group {own} opened twice");
+            assert_eq!(table.opacity(own), Some(0.5));
+            assert_eq!(table.around(own), held);
+        }
+        assert!(!table.approximated, "{spans} spans");
+        assert!(document.paint_order_approximations(&cascade).is_empty());
+    }
+}
