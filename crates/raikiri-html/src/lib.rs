@@ -70,12 +70,15 @@ pub use ua::MINIMAL_UA_CSS;
 pub use raikiri_style::{
     CascadeResult, ComputedValues, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
     Declaration, MediaContext, MediaType, Origin, PageBleed, PageCascadeResult, PageContextQuery,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageSize,
-    PageSizeKeyword,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot, PageMarks, PageOrientation, PageRotation,
+    PageSize, PageSizeKeyword,
 };
 // `PageCascadeResult` (see `Page::page_style`) reports declarations keyed and
 // valued by these.
 pub use raikiri_style::property::{PropertyKey, PropertyValue};
+// Resource loading fetches images only for the top this many background
+// layers of a box, so a painter drawing backgrounds itself draws no more.
+pub use raikiri_style::MAX_PAINTED_BACKGROUND_LAYERS;
 // `Page::running_element` selects with the `element()` keyword.
 pub use raikiri_style::property::StringFetchMode;
 
