@@ -473,6 +473,11 @@ pub struct Document {
     /// innermost last; taffy sees no children under them; see
     /// [`mod@crate::taffy_impl`]'s `size_contained_inputs`.
     pub(crate) size_contained_measure: Vec<usize>,
+    /// The tracks of the grid container taffy laid out last, kept from
+    /// [`taffy::LayoutGridContainer::set_detailed_grid_info`] until
+    /// [`crate::taffy_impl::grid_layout`] resolves the grid areas of its
+    /// absolutely positioned children from them.
+    pub(crate) last_grid_info: Option<(usize, taffy::DetailedGridInfo<String>)>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -665,6 +670,7 @@ impl Document {
             block_item_percent_bases: Vec::new(),
             flex_item_percent_bases: Vec::new(),
             size_contained_measure: Vec::new(),
+            last_grid_info: None,
             quirks_mode: QuirksMode::default(),
             base_url: None,
         }
@@ -1953,6 +1959,7 @@ impl Document {
             block_item_percent_bases: _,
             flex_item_percent_bases: _,
             size_contained_measure: _,
+            last_grid_info: _,
             quirks_mode,
             base_url,
         } = self;

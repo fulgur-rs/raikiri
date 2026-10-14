@@ -164,6 +164,30 @@ fn auto_vertical_margins_of_flex_and_grid_children_split_negative_free_space() {
 }
 
 #[test]
+fn auto_vertical_margins_of_grid_children_split_the_free_space_of_their_grid_area() {
+    // The rows are 50px and 150px tall. A line left `auto` stands for the
+    // padding edge, so each placement below resolves to one grid area.
+    for (rows, area_top, area_height) in [
+        ("grid-row-start:2", 50.0, 150.0),
+        ("grid-row:-2 / -1", 50.0, 150.0),
+        ("grid-row-end:2", 0.0, 50.0),
+        ("grid-row:1 / 2", 0.0, 50.0),
+    ] {
+        let (doc, abs) = laid_out(
+            "position:relative;height:200px;display:grid;grid-template-rows:50px 150px",
+            &format!(
+                "position:absolute;{rows};top:50%;bottom:50%;height:100px;width:10px;margin:auto"
+            ),
+            "",
+        );
+        // Centered on the middle of the area: half the free space of
+        // `area_height - 100px` goes to each margin.
+        let expected = 50.0 + area_top + area_height / 2.0 - 50.0;
+        assert_eq!(absolute_rect(&doc, abs).1, expected, "{rows}");
+    }
+}
+
+#[test]
 fn auto_vertical_margins_of_absolute_boxes_in_sideways_containers_stay_zero() {
     // The physical height of a sideways container is its inline axis.
     for mode in ["sideways-rl", "sideways-lr"] {

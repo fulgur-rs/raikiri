@@ -256,3 +256,13 @@ fn inline_size_containment_follows_a_vertical_writing_mode() {
     let (_, _, width, height) = first(body, "c");
     assert_eq!((width, height), (40.0, 0.0));
 }
+
+#[test]
+fn a_vertical_box_keeps_its_logical_size_under_containment() {
+    // `inline-size` sizes the physical height of a vertical box, and its
+    // own sizing properties still apply under containment.
+    let body = "<div><span id=c style=\"display: inline-block; writing-mode: vertical-rl; \
+                contain: inline-size; inline-size: 100px\"><p>XX</p><p>XX</p></span></div>";
+    let (_, _, width, height) = first(body, "c");
+    assert_eq!((width, height), (40.0, 100.0));
+}

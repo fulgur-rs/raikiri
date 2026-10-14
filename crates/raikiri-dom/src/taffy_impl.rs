@@ -1779,7 +1779,7 @@ pub(crate) fn block_layout(
         output = compute_block_layout(tree, node_id, inputs, None);
         tree.block_item_percent_bases.pop();
     }
-    center_absolute_children_vertically(tree, idx, &inputs, output.size);
+    center_absolute_children_vertically(tree, idx, &inputs, output.size, None);
     output
 }
 
@@ -1836,8 +1836,11 @@ fn size_contained_inputs(tree: &mut Document, node_id: NodeId, inputs: LayoutInp
 /// overconstrained box at its `top` edge rather than centered on its
 /// insets. A container in a vertical or sideways writing mode is left
 /// alone: its physical height is the inline axis, where the horizontal rule
-/// is the right one. So is a grid item placed in grid rows, whose
-/// containing block is its grid area rather than the padding box.
+/// is the right one.
+///
+/// The children's containing block is the container's padding box, or for
+/// the children of a grid container, the grid area their grid-placement
+/// properties resolve to in `grid` (CSS Grid 1 §9.1).
 ///
 /// `size` is the container's border box from the layout taffy just
 /// performed; the children's positions are recomputed from their insets, so
@@ -1847,6 +1850,7 @@ fn center_absolute_children_vertically(
     idx: usize,
     inputs: &LayoutInput,
     size: Size<f32>,
+    grid: Option<&DetailedGridInfo<String>>,
 ) {
     use taffy::{MaybeResolve, Overflow, ResolveOrZero};
 
@@ -1866,8 +1870,13 @@ fn center_absolute_children_vertically(
     } else {
         0.0
     };
-    let area_height = size.height - border.top - border.bottom - gutter;
-    let grid = style.display == Display::Grid;
+    let padding_box = taffy::Rect {
+        left: border.left,
+        right: size.width - border.right,
+        top: border.top,
+        bottom: size.height - border.bottom - gutter,
+    };
+    let direction = style.direction;
     let children: Vec<usize> = TaffyChildIter::new(tree, NodeId::from(idx))
         .map(usize::from)
         .filter(|&child| {
@@ -1876,14 +1885,24 @@ fn center_absolute_children_vertically(
                 && style.display != Display::None
                 && style.margin.top.is_auto()
                 && style.margin.bottom.is_auto()
-                && (!grid
-                    || style.grid_row.start == taffy::GridPlacement::Auto
-                        && style.grid_row.end == taffy::GridPlacement::Auto)
         })
         .collect();
     for child in children {
         let node = &tree.nodes[child];
         let style = &node.style;
+        let (area_top, area_bottom) = match grid {
+            Some(grid) => {
+                let area = grid.resolve_absolute_grid_area(
+                    style.grid_row.clone(),
+                    style.grid_column.clone(),
+                    direction,
+                    padding_box,
+                );
+                (area.top, area.bottom)
+            }
+            None => (padding_box.top, padding_box.bottom),
+        };
+        let area_height = area_bottom - area_top;
         let top = style.inset.top.maybe_resolve(area_height, resolve_calc);
         let bottom = style.inset.bottom.maybe_resolve(area_height, resolve_calc);
         let (Some(top), Some(bottom)) = (top, bottom) else {
@@ -1897,7 +1916,7 @@ fn center_absolute_children_vertically(
         let margin = free_space / 2.0;
         layout.margin.top = margin;
         layout.margin.bottom = margin;
-        layout.location.y = border.top + top + margin;
+        layout.location.y = area_top + top + margin;
         tree.set_unrounded_layout(NodeId::from(child), &layout);
     }
 }
@@ -1920,7 +1939,7 @@ pub(crate) fn flex_layout(
     tree.flex_item_percent_bases.push((idx, basis));
     let output = compute_flexbox_layout(tree, node_id, inputs);
     tree.flex_item_percent_bases.pop();
-    center_absolute_children_vertically(tree, idx, &inputs, output.size);
+    center_absolute_children_vertically(tree, idx, &inputs, output.size, None);
     output
 }
 
@@ -1930,8 +1949,13 @@ pub(crate) fn grid_layout(
     node_id: NodeId,
     inputs: LayoutInput,
 ) -> LayoutOutput {
+    let idx = usize::from(node_id);
     let output = compute_grid_layout(tree, node_id, inputs);
-    center_absolute_children_vertically(tree, usize::from(node_id), &inputs, output.size);
+    // Taffy reports the tracks only from a layout it performs.
+    let grid = tree.last_grid_info.take().filter(|&(grid, _)| grid == idx);
+    if let Some((_, grid)) = grid {
+        center_absolute_children_vertically(tree, idx, &inputs, output.size, Some(&grid));
+    }
     output
 }
 
@@ -2343,6 +2367,7 @@ impl LayoutGridContainer for Document {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.nodes[parent].grid_column_count = grid_column_count;
+        self.last_grid_info = Some((parent, detailed_grid_info));
     }
 }
 

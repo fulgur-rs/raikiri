@@ -313,7 +313,10 @@ pub(crate) fn apply_computed_to_style(
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }
-        let cv = &cascade.computed[idx];
+        // The sizes bridged above, which a vertical box takes from its
+        // logical sizing properties.
+        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
         // Replaced content with size containment has no natural size or
