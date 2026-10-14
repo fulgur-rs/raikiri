@@ -688,8 +688,11 @@ impl Content<'_, '_> {
             }
             let cv = &self.cascade.computed[id];
             if node.tag_name() == Some("br") {
-                // A forced break ends the first formatted line.
-                self.sink.first_letter.stop();
+                // A forced break in base text ends the first formatted line;
+                // one in an annotation is on the annotation's own line.
+                if letter == Letter::Base {
+                    self.sink.first_letter.stop();
+                }
                 builder.push_forced_break(NodeId(id as u64));
                 continue;
             }
@@ -697,7 +700,7 @@ impl Content<'_, '_> {
                 && let Some(plan) = plan(self.doc, self.cascade, id)
             {
                 // The outer ruby container anchors what this one sets aside.
-                self.ruby(builder, id, &plan.segments, &[], false)?;
+                self.ruby(builder, id, &plan.segments, &[], false, letter)?;
                 continue;
             }
             if cv.display == DisplayValue::Contents {
@@ -802,7 +805,8 @@ impl Content<'_, '_> {
     /// and each segment's box takes the id of a text of the segment, so the
     /// container's own box is the only one with its id. A container that is
     /// the paragraph's root (`root`) is a block box of its own and gets no
-    /// inline box.
+    /// inline box. Its base text is laid out as `letter` says: a ruby inside
+    /// an annotation holds annotation text only.
     fn ruby(
         &mut self,
         builder: &mut ParagraphBuilder,
@@ -810,6 +814,7 @@ impl Content<'_, '_> {
         segments: &[Segment],
         out_of_flow: &[(usize, usize)],
         root: bool,
+        letter: Letter,
     ) -> Result<(), IfcError> {
         let cv = &self.cascade.computed[ruby];
         let container = styled(self.doc, self.cascade, cv, ruby, self.fonts)?;
@@ -823,7 +828,7 @@ impl Content<'_, '_> {
             while let Some(&(_, id)) = anchors.next_if(|&&(before, _)| before <= index) {
                 self.anchor(builder, id);
             }
-            self.push_nodes(builder, &segment.gap, (None, None), Letter::Base)?;
+            self.push_nodes(builder, &segment.gap, (None, None), letter)?;
             // A segment names its boxes without an element of their own
             // after its first text, or else after its first node; one without
             // any content draws nothing.
@@ -861,7 +866,7 @@ impl Content<'_, '_> {
             let spaces = intra_level_spaces(segment);
             let mut bases = Vec::with_capacity(segment.bases.len());
             for (index, part) in segment.bases.iter().enumerate() {
-                let (node, content) = self.part(part, Letter::Base, id)?;
+                let (node, content) = self.part(part, letter, id)?;
                 bases.push(shodo::RubyBase {
                     node,
                     content,
@@ -1051,7 +1056,14 @@ pub(super) fn push(
         limits,
         sink,
     }
-    .ruby(builder, ruby, &plan.segments, &plan.out_of_flow, root)
+    .ruby(
+        builder,
+        ruby,
+        &plan.segments,
+        &plan.out_of_flow,
+        root,
+        Letter::Base,
+    )
 }
 
 #[cfg(test)]

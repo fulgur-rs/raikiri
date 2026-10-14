@@ -381,6 +381,51 @@ fn annotations_outside_a_ruby_complete_the_first_letter() {
 }
 
 #[test]
+fn a_forced_break_in_an_annotation_keeps_the_first_letter() {
+    let mut text = 0;
+    let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "(");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        element(doc, annotation, "br", "");
+        doc.append_text(annotation, "x");
+        text = doc.append_text(root, "AB");
+    });
+    let runs = runs(fixture);
+    let xs: Vec<f32> = runs
+        .iter()
+        .filter(|run| run.0 == text)
+        .map(|run| run.2.0)
+        .collect();
+    // `A` completes the first letter at 20px; `B` follows it at 10px.
+    assert_eq!(xs.len(), 2, "{runs:?}");
+    assert_eq!(xs[1] - xs[0], 20.0, "{runs:?}");
+}
+
+#[test]
+fn bases_of_rubies_in_annotations_are_annotation_text() {
+    let mut text = 0;
+    let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
+        let container = ruby(doc, root);
+        element(doc, container, "rb", "display:ruby-base");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        let nested = ruby(doc, annotation);
+        rb(doc, nested, "y");
+        rt(doc, nested, "z");
+        text = doc.append_text(root, "AB");
+    });
+    let runs = runs(fixture);
+    let xs: Vec<f32> = runs
+        .iter()
+        .filter(|run| run.0 == text)
+        .map(|run| run.2.0)
+        .collect();
+    // The nested base `y` is annotation text: `A` is the first letter.
+    assert_eq!(xs.len(), 2, "{runs:?}");
+    assert_eq!(xs[1] - xs[0], 20.0, "{runs:?}");
+}
+
+#[test]
 fn a_forced_break_in_a_base_ends_the_first_letter() {
     let mut text = 0;
     let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
