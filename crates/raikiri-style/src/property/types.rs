@@ -3072,7 +3072,7 @@ pub enum ContentComponent {
     /// [`SmolStr`] stores up to 22 bytes inline; longer values use an internal
     /// `Arc<str>`, making a clone an O(1) bump. This is a secondary defense
     /// against the direct DoS vector `content: "<large>"`; the primary defense
-    /// is the [`Arc<Vec<..>>`] wrapper on the outer [`PropertyValue::Content`].
+    /// is the [`Arc<ContentList>`] wrapper on the outer [`PropertyValue::Content`].
     ///
     /// **For consumers**:
     /// The previous payload type was `String`. SmolStr provides
@@ -9620,7 +9620,7 @@ pub enum PropertyValue {
     /// (A downstream layer decides whether to generate pseudo-elements.) CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// The [`Arc<Vec<..>>`] wrapper makes cloning a cascade winner, cloning an
+    /// The [`Arc<ContentList>`] wrapper makes cloning a cascade winner, cloning an
     /// inheritance-walk stack entry, and writing each node **shallow (only an Arc
     /// reference-count increment)**. Sharing one heap slot prevents the O(N × M)
     /// memory blow-up from `* { content: "<large>" }` across N elements (a
@@ -9642,7 +9642,8 @@ pub enum PropertyValue {
     /// Name resolution and runtime `string()` references belong to the downstream
     /// layer (raikiri-dom).
     ///
-    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as [`Self::Content`]: it
+    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as the
+    /// [`Arc<ContentList>`] of [`Self::Content`]: it
     /// prevents the same kind of DoS along the `* { string-set: name "<large>" }`
     /// path across N elements.
     ///
