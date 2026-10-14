@@ -3056,7 +3056,6 @@ css/css-page/page-size-002-print.html
 css/css-page/page-size-003-print.html
 css/css-page/page-size-004-print.html
 css/css-page/page-size-005-print.html
-css/css-page/page-size-006-print.html
 css/css-page/page-size-009-print.html
 css/css-page/page-size-010-print.html
 css/css-page/page-size-011-print.html
@@ -4643,3 +4642,7 @@ css/css-page/monolithic-overflow-030-print.html
 css/css-page/page-orientation-on-landscape-001-print.html
 css/css-page/page-orientation-on-portrait-001-print.html
 css/css-values/viewport-page-print.html
+
+# --- later pages of another content width laid out again (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once the harness relays pages of another width out from the document; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-box-004-print.html
