@@ -9182,11 +9182,11 @@ pub enum TransformFunction {
     Matrix([f32; 6]),
     /// `translate(<length-percentage>, <length-percentage>?)` — the second
     /// argument defaults to `0` (see the [`parse_translate_args`] docs).
-    Translate(Length, Length),
+    Translate(LengthPercentageOrCalc, LengthPercentageOrCalc),
     /// `translateX(<length-percentage>)`.
-    TranslateX(Length),
+    TranslateX(LengthPercentageOrCalc),
     /// `translateY(<length-percentage>)`.
-    TranslateY(Length),
+    TranslateY(LengthPercentageOrCalc),
     /// `scale(<number>, <number>?)` — when omitted, the second argument copies
     /// the first (see the [`parse_scale_args`] docs).
     Scale(f32, f32),

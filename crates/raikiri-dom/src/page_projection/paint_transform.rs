@@ -9,7 +9,7 @@ use super::records::PageFragment;
 use super::text_runs::{RunContext, box_paint_shift, column_clip_owner, transformable};
 use crate::Document;
 use crate::image_geometry::position_offset;
-use raikiri_style::resolve::{ComputedLengthPercentage, ComputedTransformFunction};
+use raikiri_style::resolve::{ComputedLengthPercentageOrCalc, ComputedTransformFunction};
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::PaintTransform;
 use std::collections::HashMap;
@@ -137,9 +137,12 @@ impl Affine {
 /// The product of `cv`'s transform functions, with percentages resolved
 /// against a `width` by `height` box.
 fn function_matrix(cv: &ComputedValues, width: f64, height: f64) -> Affine {
-    let resolve = |value: ComputedLengthPercentage, basis: f64| match value {
-        ComputedLengthPercentage::Px(px) => f64::from(px),
-        ComputedLengthPercentage::Percent(percent) => basis * f64::from(percent) / 100.0,
+    let resolve = |value: ComputedLengthPercentageOrCalc, basis: f64| match value {
+        ComputedLengthPercentageOrCalc::Px(px) => f64::from(px),
+        ComputedLengthPercentageOrCalc::Percent(percent) => basis * f64::from(percent) / 100.0,
+        ComputedLengthPercentageOrCalc::Calc(calc) => {
+            f64::from(calc.px) + basis * f64::from(calc.percent) / 100.0
+        }
     };
     let skew = |x: f32, y: f32| {
         Affine([

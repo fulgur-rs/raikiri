@@ -32,9 +32,10 @@ use raikiri_style::property::{
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
-    ComputedCssPosition, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext,
-    resolve_background_size, resolve_border, resolve_css_position,
+    ComputedCssPosition, ComputedLength, ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrCalc, ComputedTransformFunction, ComputedValues,
+    MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext, resolve_background_size, resolve_border,
+    resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -7079,9 +7080,12 @@ fn translation_only(cv: &ComputedValues) -> bool {
 // the border-box origin in that same coordinate space, then compose with the
 // ancestor context. This also keeps transforms out of layout geometry.
 fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
-    let resolve = |value: ComputedLengthPercentage, basis: f64| match value {
-        ComputedLengthPercentage::Px(px) => px as f64,
-        ComputedLengthPercentage::Percent(percent) => basis * percent as f64 / 100.0,
+    let resolve = |value: ComputedLengthPercentageOrCalc, basis: f64| match value {
+        ComputedLengthPercentageOrCalc::Px(px) => px as f64,
+        ComputedLengthPercentageOrCalc::Percent(percent) => basis * percent as f64 / 100.0,
+        ComputedLengthPercentageOrCalc::Calc(calc) => {
+            calc.px as f64 + basis * calc.percent as f64 / 100.0
+        }
     };
     // Border backgrounds and borders use this same snapped paint box.
     let paint_x = (x as f64).round();
@@ -7140,10 +7144,7 @@ fn transform_translation(
     }
     let mut dx = 0.0_f32;
     let mut dy = 0.0_f32;
-    let resolve = |value: ComputedLengthPercentage, basis: f32| match value {
-        ComputedLengthPercentage::Px(px) => px,
-        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
-    };
+    let resolve = |value: ComputedLengthPercentageOrCalc, basis: f32| value.resolve_signed(basis);
     for function in cv.transform.iter() {
         match *function {
             ComputedTransformFunction::Translate(x, y) => {

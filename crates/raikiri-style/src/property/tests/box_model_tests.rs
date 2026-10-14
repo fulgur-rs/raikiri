@@ -3774,7 +3774,7 @@ fn border_top_and_bottom_expand_in_declaration_block_and_reset_omitted_parts() {
 
 /// Parse with the property grammar itself, past the deferral of math
 /// functions that `parse` applies.
-fn parse_grammar(css: &str, property: &str) -> Option<PropertyValue> {
+pub(super) fn parse_grammar(css: &str, property: &str) -> Option<PropertyValue> {
     let mut input = cssparser::ParserInput::new(css);
     let mut parser = cssparser::Parser::new(&mut input);
     let value = crate::property::parse::parse_property_grammar(property, &mut parser)?;

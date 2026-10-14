@@ -3,7 +3,7 @@ use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use raikiri_dom::Document;
 use raikiri_style::property::ContentComponent;
-use raikiri_style::{build_rule_tree, cascade};
+use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use taffy::Style;
 
 mod gradient_tests;
@@ -1540,6 +1540,22 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
     let actual =
         element_transform(&cascade.computed[1], 0.4, 0.4, 100.2, 10.4) * Point::new(0.0, 0.0);
     assert_eq!(actual, Point::new(101.0, 11.0));
+
+    // A mixed calc resolves its percentage against the same paint box.
+    let mut document = Document::new();
+    document.append_element(
+        Some(0),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-size:10px;\
+             transform:translate(calc(50% + 1em), calc(-100% - 2px));transform-origin:0 0",
+        ),
+    );
+    let rules = build_rule_tree(&document);
+    let computed = raikiri_style::cascade(&document, &rules).unwrap().computed;
+    let actual = element_transform(&computed[1], 0.4, 0.4, 100.2, 10.4) * Point::new(0.0, 0.0);
+    assert_eq!(actual, Point::new(60.5, -13.0));
 }
 
 fn background_repeat_fixture(

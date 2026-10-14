@@ -9,7 +9,7 @@ use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextShadowColor,
 };
 use raikiri_style::resolve::{
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedTransformFunction,
 };
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintTransform};
@@ -663,12 +663,11 @@ pub(super) fn box_paint_shift(
     let size = node.unrounded_layout.size;
     // A fragment's percentages resolve against that fragment, which the
     // runs of a paragraph do not know.
-    let resolve = |value, basis: f32| match value {
-        ComputedLengthPercentage::Px(px) => Ok(px),
-        ComputedLengthPercentage::Percent(_) if fragmented => {
-            Err(TextRunOmission::FragmentedTransform)
+    let resolve = |value: ComputedLengthPercentageOrCalc, basis: f32| {
+        if fragmented && value.has_percent() {
+            return Err(TextRunOmission::FragmentedTransform);
         }
-        ComputedLengthPercentage::Percent(percent) => Ok(basis * percent / 100.0),
+        Ok(value.resolve_signed(basis))
     };
     for function in cv.transform.iter() {
         match *function {
