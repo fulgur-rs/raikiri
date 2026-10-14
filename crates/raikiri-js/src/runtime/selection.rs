@@ -269,22 +269,11 @@ fn tree_walker_set_current_node(
     value: &JsValue,
     context: &mut Context,
 ) -> JsResult<()> {
+    // DOM Standard: the setter stores the node as-is. The root only bounds
+    // later traversal, so a node outside it is accepted without a check.
+    // https://dom.spec.whatwg.org/#dom-treewalker-currentnode
     let object = tree_walker_object(this)?;
-    let root = object
-        .downcast_ref::<TreeWalkerData>()
-        .expect("TreeWalker brand was checked")
-        .root;
     let index = arg_node(std::slice::from_ref(value), 0, context)?;
-    let inside = with_state(context, |state| {
-        state.host.document().is_ancestor_or_self(root, index)
-    })?;
-    if !inside {
-        return Err(throw_dom_exception(
-            context,
-            "NotSupportedError",
-            "currentNode is outside the TreeWalker root",
-        ));
-    }
     object
         .downcast_ref::<TreeWalkerData>()
         .expect("TreeWalker brand was checked")
@@ -314,6 +303,11 @@ fn tree_walker_what_to_show(this: &JsValue, _: &[JsValue], _: &mut Context) -> J
     Ok(JsValue::from(what_to_show))
 }
 
+/// The node after `current` in tree order, stopping at the end of `root`'s
+/// subtree. When `current` lies outside `root` (the `currentNode` setter
+/// allows that), the walk runs to the end of the document and then returns
+/// `None`, as browsers do; the spec's nextNode steps would instead filter
+/// the unchanged node again once no following node is left.
 fn next_tree_node(document: &raikiri_dom::Document, root: usize, current: usize) -> Option<usize> {
     if let Some(child) = document.get_node(current)?.children.first() {
         return Some(*child);
