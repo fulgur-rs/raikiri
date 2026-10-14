@@ -168,25 +168,42 @@ fn review_container_fragment_keeps_its_border_box_width() {
 }
 
 #[test]
-fn review_an_oversized_unbreakable_box_moves_once_to_an_empty_column() {
+fn review_an_oversized_box_avoiding_breaks_moves_once_then_breaks_anyway() {
     let doc = laid_out(
         r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
-        <div style="height:30px"></div><div id="atomic" style="height:150px;break-inside:avoid-column"></div>
+        <div style="height:30px"></div><div id="tall" style="height:150px;break-inside:avoid-column"></div>
         <div id="next" style="height:20px"></div></div>"#,
     );
-    assert_eq!(boxes(&doc, "atomic"), vec![(1, 50.0, 0.0, 50.0, 150.0)]);
-    assert_eq!(boxes(&doc, "next"), vec![(2, 100.0, 0.0, 50.0, 20.0)]);
+    assert_eq!(
+        boxes(&doc, "tall"),
+        vec![(1, 50.0, 0.0, 50.0, 100.0), (2, 100.0, 0.0, 50.0, 50.0)]
+    );
+    assert_eq!(boxes(&doc, "next"), vec![(2, 100.0, 50.0, 50.0, 20.0)]);
 }
 
 #[test]
-fn review_an_oversized_first_box_keeps_progress_on_the_empty_column() {
+fn review_an_oversized_first_box_breaks_anyway_in_the_first_column() {
     let doc = laid_out(
         r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
-        <div id="atomic" style="height:150px;break-inside:avoid-column"></div>
+        <div id="tall" style="height:150px;break-inside:avoid-column"></div>
         <div id="next" style="height:20px"></div></div>"#,
     );
-    assert_eq!(boxes(&doc, "atomic"), vec![(0, 0.0, 0.0, 50.0, 150.0)]);
-    assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 0.0, 50.0, 20.0)]);
+    assert_eq!(
+        boxes(&doc, "tall"),
+        vec![(0, 0.0, 0.0, 50.0, 100.0), (1, 50.0, 0.0, 50.0, 50.0)]
+    );
+    assert_eq!(boxes(&doc, "next"), vec![(1, 50.0, 50.0, 50.0, 20.0)]);
+}
+
+#[test]
+fn review_an_oversized_decorated_box_avoiding_breaks_overflows_whole() {
+    let doc = laid_out(
+        r#"<div style="columns:2;column-fill:auto;gap:0;width:100px;height:100px">
+        <div style="height:30px"></div><div id="tall" style="height:150px;border-radius:4px;break-inside:avoid-column"></div>
+        <div id="next" style="height:20px"></div></div>"#,
+    );
+    assert_eq!(boxes(&doc, "tall"), vec![(1, 50.0, 0.0, 50.0, 150.0)]);
+    assert_eq!(boxes(&doc, "next"), vec![(2, 100.0, 0.0, 50.0, 20.0)]);
 }
 
 #[test]

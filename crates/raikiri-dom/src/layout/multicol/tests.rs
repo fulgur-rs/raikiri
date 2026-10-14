@@ -446,7 +446,7 @@ fn authored_containing_width_preserves_percentage_fallback_behavior() {
 }
 
 #[test]
-fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_definite_height() {
+fn compute_multicol_layout_moves_break_avoid_min_height_children_to_the_next_column() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -459,10 +459,8 @@ fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_defin
         Style::default(),
         Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
     );
-    // `min-block-size` + `break-inside:avoid` (no direct `<br>`) keeps
-    // this multicol container on the foundational block projection
-    // instead of the custom nested-fragmentation path (see the doc
-    // comment above `compute_multicol_layout`'s `custom_scope`).
+    // Children that hold no lines are cut at the column edges, minimum
+    // block size and all.
     let a = doc.append_element(
         Some(container),
         "div",
@@ -483,21 +481,67 @@ fn compute_multicol_layout_spaces_break_avoid_min_height_children_across_a_defin
     page.height = 200.0;
     layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
 
-    // Taffy's foundational block algorithm cannot express a
-    // fragmentainer break here, so each break-avoid min-height child is
-    // pushed into its own vertical slot: `child_height + 2 *
-    // |fragmentainer_height - child_height|` apart, consuming the
-    // unfragmented overflow on both sides of the mismatch instead of
-    // packing contiguously.
-    let child_height = doc.nodes[a].unrounded_layout.size.height;
-    assert!(child_height > 0.0, "child_height={child_height}");
-    let step = child_height + 2.0 * (60.0_f32 - child_height).abs();
-    assert!((doc.nodes[a].unrounded_layout.location.y - 0.0).abs() < 0.01);
-    assert!(
-        (doc.nodes[b].unrounded_layout.location.y - step).abs() < 0.01,
-        "b.y={}, expected step={step}",
-        doc.nodes[b].unrounded_layout.location.y
+    // The second box does not fit below the first, and avoids a break
+    // inside, so it starts the second column.
+    let location = |id: usize| {
+        let layout = doc.nodes[id].unrounded_layout;
+        (layout.location.x, layout.location.y, layout.size.height)
+    };
+    assert_eq!(location(a), (0.0, 0.0, 40.0));
+    assert_eq!(location(b), (110.0, 0.0, 40.0));
+    assert!(!doc.nodes[b].needs_relative_block_paint_offset);
+}
+
+#[test]
+fn compute_multicol_layout_spaces_min_height_children_when_slicing_fails() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
     );
+    let a = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;min-block-size:40px;break-inside:avoid"),
+    );
+    let b = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;min-block-size:40px;break-inside:avoid"),
+    );
+    // A bordered box taller than a column would be cut, and painting
+    // cannot slice its borders, so the children are not sliced at all.
+    doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;height:70px;border:2px solid"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 200.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    // The children keep the stacked approximation: `child_height + 2 *
+    // |fragmentainer_height - child_height|` apart.
+    let child_height = doc.nodes[a].unrounded_layout.size.height;
+    let step = child_height + 2.0 * (60.0_f32 - child_height).abs();
+    assert_eq!(child_height, 40.0);
+    assert_eq!(doc.nodes[a].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[b].unrounded_layout.location.y, step);
+    assert!(doc.nodes[b].needs_relative_block_paint_offset);
 }
 
 #[test]

@@ -67,10 +67,11 @@ pub(crate) fn compute_multicol_layout(
     // multicol boxes and for deferred out-of-flow cases. The custom path is
     // entered only at a real nested block-flow boundary.
     // A logical min-block-size + break-inside:avoid child with no direct
-    // line-break flow must stay on the foundational block projection: that
-    // path preserves the item's unfragmented minimum before we apply the
-    // column offsets below. Text-bearing children retain the existing custom
-    // line-range projection.
+    // line-break flow stays off the custom path: children that hold no lines
+    // are sliced at the column edges, and any other such child keeps the
+    // foundational block projection, which preserves the item's unfragmented
+    // minimum before the column offsets below. Text-bearing children retain
+    // the existing custom line-range projection.
     let span_scope = tree.nodes[index]
         .children
         .iter()
@@ -112,49 +113,16 @@ pub(crate) fn compute_multicol_layout(
             parent_width,
         )
     });
-    if let Some(parent_height) = available_height.filter(|_| {
-        multicol_has_min_constrained_child(tree, index)
-            && !multicol_has_direct_break_flow(tree, index)
-    }) {
-        let children: Vec<usize> = tree.nodes[index]
-            .children
-            .iter()
-            .copied()
-            .filter(|&child| {
-                tree.nodes[child].is_in_document()
-                    && tree.nodes[child].kind() == NodeKind::Element
-                    && tree.nodes[child].style.display != Display::None
-            })
-            .collect();
-        if let Some(&first) = children.first() {
-            let child_height = tree.nodes[first].unrounded_layout.size.height;
-            // `break-inside: avoid` consumes the unfragmented overflow on both
-            // sides of a too-short/too-tall fragmentainer. Taffy does not
-            // expose that fragmentation marker on its foundational block
-            // path, so express the equivalent separation as a direct-child
-            // block offset.
-            let step = child_height + 2.0 * (parent_height - child_height).abs();
-            for (order, child) in children.into_iter().enumerate() {
-                tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
-                tree.nodes[child].needs_relative_block_paint_offset = true;
-            }
-        }
-    }
-    if !style.height_definite && multicol_has_min_constrained_child(tree, index) {
-        // The minimum-sized children overflow the auto multicol box, but the
-        // auto box's used block-size remains the minimum child size rather
-        // than the sum of those overflowing children.
-        let min_child_height = tree.nodes[index]
-            .children
-            .iter()
-            .filter(|&&child| {
-                tree.nodes[child].is_in_document()
-                    && tree.nodes[child].kind() == NodeKind::Element
-                    && tree.nodes[child].style.display != Display::None
-            })
-            .map(|&child| tree.nodes[child].unrounded_layout.size.height)
-            .fold(0.0_f32, f32::max);
-        output.size.height = output.size.height.min(min_child_height);
+    // Children that hold no lines are sliced below instead, minimum and all,
+    // unless the slicing fails.
+    if lineless_children.is_none() {
+        space_min_constrained_children(
+            tree,
+            index,
+            available_height,
+            style.height_definite,
+            &mut output.size.height,
+        );
     }
     let break_flow_scope =
         !span_scope && lineless_children.is_none() && break_flow::supports(tree, index, context);
@@ -291,7 +259,16 @@ pub(crate) fn compute_multicol_layout(
                 lineless_definite,
                 lineless_maximum,
             )
-            .unwrap_or(output.size.height)
+            .unwrap_or_else(|| {
+                space_min_constrained_children(
+                    tree,
+                    index,
+                    available_height,
+                    style.height_definite,
+                    &mut output.size.height,
+                );
+                output.size.height
+            })
         } else if let Some(chain) = constrained_chain {
             constrained_chain::layout(tree, index, &chain, resolved, output.size, content_origin)
                 .unwrap_or(output.size.height)
@@ -323,6 +300,63 @@ pub(crate) fn compute_multicol_layout(
     // future child strategy starts pushing a nested context of its own.
     tree.fragmentation_stack.truncate(stack_depth);
     output
+}
+
+/// Space children with a logical minimum block size that avoid breaks
+/// inside across the definite `available_height` of the container `index`,
+/// and keep an auto `height` at the tallest such child. The foundational
+/// block path cannot break between them, so this approximates the columns.
+fn space_min_constrained_children(
+    tree: &mut Document,
+    index: usize,
+    available_height: Option<f32>,
+    height_definite: bool,
+    height: &mut f32,
+) {
+    if let Some(parent_height) = available_height.filter(|_| {
+        multicol_has_min_constrained_child(tree, index)
+            && !multicol_has_direct_break_flow(tree, index)
+    }) {
+        let children: Vec<usize> = tree.nodes[index]
+            .children
+            .iter()
+            .copied()
+            .filter(|&child| {
+                tree.nodes[child].is_in_document()
+                    && tree.nodes[child].kind() == NodeKind::Element
+                    && tree.nodes[child].style.display != Display::None
+            })
+            .collect();
+        if let Some(&first) = children.first() {
+            let child_height = tree.nodes[first].unrounded_layout.size.height;
+            // `break-inside: avoid` consumes the unfragmented overflow on both
+            // sides of a too-short/too-tall fragmentainer. Taffy does not
+            // expose that fragmentation marker on its foundational block
+            // path, so express the equivalent separation as a direct-child
+            // block offset.
+            let step = child_height + 2.0 * (parent_height - child_height).abs();
+            for (order, child) in children.into_iter().enumerate() {
+                tree.nodes[child].unrounded_layout.location.y = order as f32 * step;
+                tree.nodes[child].needs_relative_block_paint_offset = true;
+            }
+        }
+    }
+    if !height_definite && multicol_has_min_constrained_child(tree, index) {
+        // The minimum-sized children overflow the auto multicol box, but the
+        // auto box's used block-size remains the minimum child size rather
+        // than the sum of those overflowing children.
+        let min_child_height = tree.nodes[index]
+            .children
+            .iter()
+            .filter(|&&child| {
+                tree.nodes[child].is_in_document()
+                    && tree.nodes[child].kind() == NodeKind::Element
+                    && tree.nodes[child].style.display != Display::None
+            })
+            .map(|&child| tree.nodes[child].unrounded_layout.size.height)
+            .fold(0.0_f32, f32::max);
+        *height = height.min(min_child_height);
+    }
 }
 
 /// How the parent of an in-flow multicol container sizes its block axis.

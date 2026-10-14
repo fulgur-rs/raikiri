@@ -44,9 +44,12 @@ fn pagination_child_parent_y(document: &Document, parent: usize, child: usize, r
 ///
 /// The in-flow content of a multicol container is projected into columns,
 /// so its unfragmented layout position says nothing about the page it paints
-/// on. An absolutely positioned box in it whose containing block is the
-/// container or one of its ancestors is not projected, though: it paints at
-/// its laid-out position and is measured there.
+/// on. Where a column layout cut that content into fragments, the fragments
+/// are measured instead: a box that cannot break and is taller than its
+/// column overflows it (CSS Fragmentation 3, 4.4). An absolutely positioned
+/// box in the columns whose containing block is the container or one of its
+/// ancestors is not projected, though: it paints at its laid-out position
+/// and is measured there.
 fn content_overflow_end(
     document: &Document,
     cascade: &CascadeResult,
@@ -62,6 +65,20 @@ fn content_overflow_end(
         .any(|id| !matches!(cascade.computed[id].overflow.y, OverflowValue::Visible))
     {
         return f32::NEG_INFINITY;
+    }
+    // The records below each column fragment, and the container records
+    // placed against their own node.
+    let fragments = document.layout_fragments();
+    let mut fragment_children = HashMap::<usize, Vec<usize>>::new();
+    let mut fragment_roots = HashMap::<usize, Vec<usize>>::new();
+    for (index, fragment) in fragments.iter().enumerate() {
+        match fragment.parent {
+            Some(parent) => fragment_children.entry(parent).or_default().push(index),
+            None => fragment_roots
+                .entry(fragment.node_id)
+                .or_default()
+                .push(index),
+        }
     }
     let mut end = f32::NEG_INFINITY;
     // `Some(true)` marks the in-flow content of a multicol container where an
@@ -147,6 +164,35 @@ fn content_overflow_end(
             && crate::paint_rules::clips_element_overflow(document, cascade, node_id);
         if clips {
             continue;
+        }
+        // A fragment paints at its parent's origin plus its own offset, and
+        // a fragmentainer clip hides what extends past its column.
+        if in_columns.is_none() {
+            let mut pending: Vec<(usize, f32)> = fragment_roots
+                .get(&node_id)
+                .into_iter()
+                .flatten()
+                .map(|&index| (index, y))
+                .collect();
+            while let Some((index, parent_origin)) = pending.pop() {
+                let rect = fragments[index].rect;
+                let origin = parent_origin + rect.y;
+                let bottom = fragments[index]
+                    .fragmentainer_clip
+                    .map_or(origin + rect.height, |clip| {
+                        (origin + rect.height).min(parent_origin + clip.y + clip.height)
+                    });
+                if rect.height > 0.0 && bottom.is_finite() {
+                    end = end.max(bottom);
+                }
+                pending.extend(
+                    fragment_children
+                        .get(&index)
+                        .into_iter()
+                        .flatten()
+                        .map(|&child| (child, origin)),
+                );
+            }
         }
         let in_columns = if let Some(outside) = in_columns {
             Some(
