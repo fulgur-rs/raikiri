@@ -6742,10 +6742,16 @@ fn grid_stacks_items(document: &Document, grid: usize) -> bool {
 }
 
 /// Whether the rows of `grid` all size to their content: every explicit
-/// and implicit row track is `auto`, so its items grow with what they hold.
+/// and implicit row track is intrinsic and uncapped, so its items grow
+/// with what they hold.
 fn grid_rows_size_to_content(document: &Document, grid: usize) -> bool {
     let style = &document.nodes[grid].style;
-    let auto = |track: &taffy::TrackSizingFunction| track.min.is_auto() && track.max.is_auto();
+    // `auto`, `min-content` and `max-content` grow with the content;
+    // `fit-content()` caps it.
+    let auto = |track: &taffy::TrackSizingFunction| {
+        track.min.is_intrinsic()
+            && (track.max.is_auto() || track.max.is_min_content() || track.max.is_max_content())
+    };
     style
         .grid_template_rows
         .iter()

@@ -436,3 +436,27 @@ fn boxes_after_a_forced_break_in_a_two_column_grid_item_follow_it() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 120.0]);
 }
+
+#[test]
+fn an_avoiding_box_in_a_grid_with_intrinsic_rows_moves() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(
+            doc,
+            body,
+            "display:grid;grid-template-rows:min-content;grid-auto-rows:max-content",
+        );
+        let item = block(doc, grid, "display:block");
+        block(doc, item, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            item,
+            "display:block;height:60px;break-inside:avoid",
+        ));
+        block(doc, item, "display:block;height:80px");
+        ids.push(block(doc, grid, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 240.0]);
+}
