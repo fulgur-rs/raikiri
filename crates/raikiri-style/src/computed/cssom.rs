@@ -632,6 +632,7 @@ fn own_ch_font(computed: &ComputedValues) -> ChFontKey {
         size: computed.font_size,
         weight: computed.font_weight,
         style: computed.font_style,
+        optical_sizing: computed.font_optical_sizing,
     }
 }
 

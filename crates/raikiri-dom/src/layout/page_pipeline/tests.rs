@@ -8201,6 +8201,7 @@ fn measure_ch_advance_uses_the_engine_fonts() {
         size: raikiri_style::ComputedLength(16.0),
         weight: 400.0,
         style: raikiri_style::property::FontStyle::Normal,
+        optical_sizing: raikiri_style::property::FontOpticalSizing::Auto,
     };
     assert_eq!(
         crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
@@ -8216,6 +8217,7 @@ fn measure_normal_line_height_uses_the_engine_fonts() {
         size: raikiri_style::ComputedLength(20.0),
         weight: 400.0,
         style: raikiri_style::property::FontStyle::Normal,
+        optical_sizing: raikiri_style::property::FontOpticalSizing::Auto,
     };
     assert_eq!(
         crate::layout::measure_normal_line_height(&ifc_ahem_fonts(), &key),

@@ -256,6 +256,7 @@ fn text_decoration_inset_measures_ch_lengths_through_the_callback() {
         size: computed.font_size,
         weight: computed.font_weight,
         style: computed.font_style,
+        optical_sizing: computed.font_optical_sizing,
     };
     computed.text_decoration_inset = crate::resolve::ComputedTextDecorationInset::Lengths {
         start: crate::resolve::ComputedLength(1.0),
@@ -343,6 +344,7 @@ fn ch_spacing_and_indent_are_measured_through_the_callback() {
         size: crate::resolve::ComputedLength(40.0),
         weight: computed.font_weight,
         style: computed.font_style,
+        optical_sizing: computed.font_optical_sizing,
     };
     computed.text_indent_ch_font = Some(declaring_font.clone());
     let own_size = computed.font_size;
