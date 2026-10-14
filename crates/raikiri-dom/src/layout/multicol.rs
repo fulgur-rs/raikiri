@@ -2348,95 +2348,22 @@ fn visit_top_down(parent_of: &[Option<usize>], mut visit: impl FnMut(Option<usiz
     }
 }
 
-/// The widths text is broken at when lines are broken again for a page,
-/// derived once for every node of the arena with each parent resolved before
-/// its children. Searching the ancestors of every paragraph instead would
-/// cost the paragraph count times the tree depth.
-pub(crate) struct ResolvedChWidths {
-    /// The content width with a resolved `ch` width: the measured length a
-    /// `ch` width resolved to, a definite `px` or percentage width resolved
-    /// against the parent's, else the parent's own.
-    content_width: Vec<f32>,
-    /// The nearest strict ancestor whose authored width is neither `auto`
-    /// nor `min-content`.
-    authored_ancestor: Vec<Option<usize>>,
-    /// The node or an ancestor has a `min-content` width.
-    min_content: Vec<bool>,
+/// Width inputs differ between pre-layout preparation and page-specific rebreaking.
+#[derive(Clone, Copy)]
+pub(crate) struct WidthPolicy {
+    resolved_ch: bool,
+    contents_width: bool,
 }
 
-impl ResolvedChWidths {
-    // Text shaping must use the same measured `ch` width that Taffy will use.
-    // The cascade retains a style-layer fallback, while pre-Taffy preparation
-    // has already written the measured value to the node style. This avoids
-    // shaping text against a narrower fallback than its containing block.
-    // cov:ignore: exercised by resource-enabled CSS Text WPT runs.
-    pub(crate) fn new(
-        doc: &Document,
-        cascade: &CascadeResult,
-        parent_of: &[Option<usize>],
-        fallback: f32,
-    ) -> Self {
-        let count = parent_of.len();
-        let mut widths = Self {
-            content_width: vec![0.0; count],
-            authored_ancestor: vec![None; count],
-            min_content: vec![false; count],
-        };
-        visit_top_down(parent_of, |parent, id| {
-            let parent_width = parent.map_or(fallback, |parent| widths.content_width[parent]);
-            let cv = &cascade.computed[id];
-            let resolved_ch = cv
-                .width_ch
-                .as_ref()
-                .and_then(|_| style_dimension_length(doc.nodes[id].style.size.width));
-            widths.content_width[id] = match (resolved_ch, cv.width) {
-                (Some(width), _) => width.max(0.0),
-                (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
-                    value.max(0.0)
-                }
-                (None, ComputedLengthPercentageOrAuto::Percent(value)) if value.is_finite() => {
-                    (parent_width * value / 100.0).max(0.0)
-                }
-                _ => parent_width.max(0.0),
-            };
-            let self_min_content = cv.width == ComputedLengthPercentageOrAuto::MinContent;
-            let Some(parent) = parent else {
-                widths.min_content[id] = self_min_content;
-                return;
-            };
-            widths.min_content[id] = self_min_content || widths.min_content[parent];
-            // A `min-content` width is intrinsic, not an authored containing
-            // width; keep searching like `auto`.
-            let values = &cascade.computed[parent];
-            widths.authored_ancestor[id] = if values.display == DisplayValue::Contents
-                || matches!(
-                    values.width,
-                    ComputedLengthPercentageOrAuto::Auto
-                        | ComputedLengthPercentageOrAuto::MinContent
-                ) {
-                widths.authored_ancestor[parent]
-            } else {
-                Some(parent)
-            };
-        });
-        widths
-    }
-
-    /// The content width of the nearest strict ancestor of `id` with an
-    /// authored width.
-    // cov:ignore: exercised by the resource-enabled line-break:anywhere WPT run.
-    pub(crate) fn authored_containing_width(&self, id: usize) -> Option<f32> {
-        self.authored_ancestor
-            .get(id)
-            .copied()
-            .flatten()
-            .map(|ancestor| self.content_width[ancestor])
-    }
-
-    /// `id` or one of its ancestors has a `min-content` width.
-    pub(crate) fn in_min_content(&self, id: usize) -> bool {
-        self.min_content[id]
-    }
+impl WidthPolicy {
+    pub(crate) const PREPARATION: Self = Self {
+        resolved_ch: false,
+        contents_width: false,
+    };
+    pub(crate) const REBREAK: Self = Self {
+        resolved_ch: true,
+        contents_width: true,
+    };
 }
 
 // cov:ignore: exercised by ignored WPT regression and multicol reftests; default coverage skips ignored reftests.
@@ -2453,8 +2380,9 @@ fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
 /// Ancestor-chain facts for every node of the arena, derived once with each
 /// parent resolved before its children. The multicol preparation pass asks
 /// these questions of every element; walking to the root for each one would
-/// cost the node count times the tree depth.
-struct AncestorFacts {
+/// cost the node count times the tree depth. Rebreaking uses the same table
+/// with fresh page-width and measured-font inputs.
+pub(crate) struct AncestorFacts {
     /// A strict ancestor is a multicol container.
     multicol_ancestor: Vec<bool>,
     /// The node or an ancestor has a vertical or sideways writing mode.
@@ -2463,21 +2391,24 @@ struct AncestorFacts {
     out_of_flow_ancestor: Vec<bool>,
     /// A strict ancestor establishes a flex, grid, or table formatting context.
     non_block_flow_ancestor: Vec<bool>,
-    /// The cascade-derived content width: a definite `px` or percentage
-    /// width resolved against the parent's, else the parent's own.
+    /// A definite width resolved against the parent, else the parent width;
+    /// measured `ch` and `contents` widths follow the caller's policy.
     content_width: Vec<f32>,
     /// The nearest strict ancestor whose authored width is neither `auto`
     /// nor `min-content`; a `min-content` width is intrinsic, not an
     /// authored containing width.
     authored_ancestor: Vec<Option<usize>>,
+    /// The node or an ancestor has a `min-content` width.
+    min_content: Vec<bool>,
 }
 
 impl AncestorFacts {
-    fn new(
+    pub(crate) fn new(
         doc: &Document,
         cascade: &CascadeResult,
         parent_of: &[Option<usize>],
         fallback_width: f32,
+        policy: WidthPolicy,
     ) -> Self {
         let count = parent_of.len();
         let mut facts = Self {
@@ -2487,9 +2418,10 @@ impl AncestorFacts {
             non_block_flow_ancestor: vec![false; count],
             content_width: vec![0.0; count],
             authored_ancestor: vec![None; count],
+            min_content: vec![false; count],
         };
         visit_top_down(parent_of, |parent, id| {
-            facts.resolve(doc, cascade, parent, id, fallback_width);
+            facts.resolve(doc, cascade, parent, id, fallback_width, policy);
         });
         facts
     }
@@ -2501,6 +2433,7 @@ impl AncestorFacts {
         parent: Option<usize>,
         id: usize,
         fallback_width: f32,
+        policy: WidthPolicy,
     ) {
         let vertical_self = matches!(
             cascade
@@ -2515,15 +2448,28 @@ impl AncestorFacts {
             )
         );
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
-        self.content_width[id] = match cascade.computed[id].width {
-            // A `display: contents` element has no box, so no width of its own.
-            _ if cascade.computed[id].display == DisplayValue::Contents => parent_width.max(0.0),
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-            ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
+        let cv = &cascade.computed[id];
+        // Rebreaking uses the measured ch value already stored in Taffy's style.
+        let resolved_ch = if policy.resolved_ch && cv.width_ch.is_some() {
+            style_dimension_length(doc.nodes[id].style.size.width)
+        } else {
+            None
+        };
+        self.content_width[id] = match (resolved_ch, cv.width) {
+            _ if !policy.contents_width && cv.display == DisplayValue::Contents => {
+                parent_width.max(0.0)
+            }
+            (Some(width), _) => width.max(0.0),
+            (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
+                value.max(0.0)
+            }
+            (None, ComputedLengthPercentageOrAuto::Percent(value)) if value.is_finite() => {
                 (parent_width * value / 100.0).max(0.0)
             }
             _ => parent_width.max(0.0),
         };
+        self.min_content[id] = cv.width == ComputedLengthPercentageOrAuto::MinContent
+            || parent.is_some_and(|parent| self.min_content[parent]);
         let Some(parent) = parent else {
             self.vertical[id] = vertical_self;
             return;
@@ -2564,8 +2510,17 @@ impl AncestorFacts {
     }
 
     /// The content width of the nearest authored-width ancestor.
-    fn authored_containing_width(&self, id: usize) -> Option<f32> {
-        self.authored_ancestor[id].map(|ancestor| self.content_width[ancestor])
+    pub(crate) fn authored_containing_width(&self, id: usize) -> Option<f32> {
+        self.authored_ancestor
+            .get(id)
+            .copied()
+            .flatten()
+            .map(|ancestor| self.content_width[ancestor])
+    }
+
+    /// `id` or one of its ancestors has a `min-content` width.
+    pub(crate) fn in_min_content(&self, id: usize) -> bool {
+        self.min_content[id]
     }
 }
 
@@ -2716,7 +2671,13 @@ pub(crate) fn prepare_multicol_layout(
             }
         }
     }
-    let ancestors = AncestorFacts::new(doc, cascade, &parent_of, fallback_width);
+    let ancestors = AncestorFacts::new(
+        doc,
+        cascade,
+        &parent_of,
+        fallback_width,
+        WidthPolicy::PREPARATION,
+    );
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
