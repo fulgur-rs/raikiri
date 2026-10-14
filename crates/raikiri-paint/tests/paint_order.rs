@@ -633,6 +633,18 @@ fn table_backgrounds_paint_below_the_layer_text() {
     let [c1, c2] = ["c1", "c2"].map(|id| by_id(&result, id));
     assert!(step_at(&result, Step::Box(c2)) < step_at(&result, Step::Text(c1)));
     assert!(step_at(&result, Step::Text(c1)) < step_at(&result, Step::Text(c2)));
+
+    // An inline table keeps its cells' text above its cells' backgrounds
+    // too, inside its own layer.
+    let result = same_order(
+        "<div>a <span style=\"display: inline-table; border-spacing: 0\">\
+         <span style=\"display: table-row\">\
+         <span id=c1 style=\"display: table-cell; width: 20px\">overflowing_text</span>\
+         <span id=c2 style=\"display: table-cell; width: 20px; background: teal\"></span>\
+         </span></span></div>",
+    );
+    let [c1, c2] = ["c1", "c2"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(c2)) < step_at(&result, Step::Text(c1)));
 }
 
 /// A block inside a paragraph's inline content paints its background before
@@ -660,6 +672,18 @@ fn blocks_inside_paragraphs_with_negative_content_stay_with_it() {
     );
     let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
     assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Box(k)));
+}
+
+/// A box in a paragraph's lines that closes the deferred text of the
+/// paragraph's blocks paints above that text.
+#[test]
+fn closing_boxes_in_paragraph_lines_paint_above_block_text() {
+    let result = same_order(
+        "<div id=m style=\"position: relative\">over<div id=k style=\"height: 0\">inner</div>\
+         <span id=o style=\"display: inline-block; opacity: 0.5; background: blue\">x</span></div>",
+    );
+    let [k, o] = ["k", "o"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Text(k)) < step_at(&result, Step::Box(o)));
 }
 
 /// A positioned box waits for the end of its layer, so a block that

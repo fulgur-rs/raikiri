@@ -440,35 +440,34 @@ pub fn defers_to_positioned_layer(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let Some(cv) = cascade.computed.get(node_id) else {
-        return false;
-    };
-    let positioned = !matches!(cv.position, PositionValue::Static);
-    let negative = positioned && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0);
-    document
-        .get_node(node_id)
-        .is_some_and(|node| node.kind() == NodeKind::Element)
-        && generates_box(cv)
-        && (positioned || establishes_stacking_context(cv))
-        && !negative
-        && box_parent(document, cascade, node_id).is_some_and(|parent| {
-            document
-                .get_node(parent)
-                .is_some_and(|node| !node.is_ifc_root())
-                && cascade.computed.get(parent).is_some_and(|parent| {
-                    // A child of a table part sits in an anonymous cell.
-                    is_block_container(parent.display)
-                        || matches!(
-                            parent.display,
-                            DisplayValue::Table
-                                | DisplayValue::InlineTable
-                                | DisplayValue::TableRowGroup
-                                | DisplayValue::TableHeaderGroup
-                                | DisplayValue::TableFooterGroup
-                                | DisplayValue::TableRow
-                        )
-                })
-        })
+    cascade.computed.get(node_id).is_some_and(|cv| {
+        let positioned = !matches!(cv.position, PositionValue::Static);
+        let negative = positioned && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0);
+        document
+            .get_node(node_id)
+            .is_some_and(|node| node.kind() == NodeKind::Element)
+            && generates_box(cv)
+            && (positioned || establishes_stacking_context(cv))
+            && !negative
+            && box_parent(document, cascade, node_id).is_some_and(|parent| {
+                document
+                    .get_node(parent)
+                    .is_some_and(|node| !node.is_ifc_root())
+                    && cascade.computed.get(parent).is_some_and(|parent| {
+                        // A child of a table part sits in an anonymous cell.
+                        is_block_container(parent.display)
+                            || matches!(
+                                parent.display,
+                                DisplayValue::Table
+                                    | DisplayValue::InlineTable
+                                    | DisplayValue::TableRowGroup
+                                    | DisplayValue::TableHeaderGroup
+                                    | DisplayValue::TableFooterGroup
+                                    | DisplayValue::TableRow
+                            )
+                    })
+            })
+    })
 }
 
 /// Whether a float hands the positioned boxes it holds to the enclosing
