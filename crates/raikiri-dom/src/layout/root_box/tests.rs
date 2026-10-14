@@ -134,6 +134,13 @@ fn auto_margins_center_a_root_of_definite_width() {
     );
     let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
     assert_eq!(root.border_box.x, 70.0);
+
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; width: 100px; margin: 0 auto 0 30px",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, 30.0);
 }
 
 #[test]
