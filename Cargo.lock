@@ -232,7 +232,7 @@ dependencies = [
  "bitflags",
  "blitz-traits",
  "color",
- "cssparser",
+ "cssparser 0.37.0",
  "cursor-icon",
  "debug_timer",
  "euclid",
@@ -246,7 +246,7 @@ dependencies = [
  "parley",
  "percent-encoding",
  "rayon",
- "selectors",
+ "selectors 0.40.0",
  "skrifa 0.44.0",
  "slotmap",
  "smallvec",
@@ -847,6 +847,19 @@ dependencies = [
  "itoa",
  "phf 0.13.1",
  "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "cssparser"
+version = "0.38.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11119743ad110e8c1bdccd930d7f5c30c99e5fc76a7b63ec9807e84eef0c5f59"
+dependencies = [
+ "cssparser-macros",
+ "dtoa-short",
+ "itoa",
+ "phf 0.14.0",
  "smallvec",
 ]
 
@@ -2575,7 +2588,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "bytes",
- "cssparser",
+ "cssparser 0.37.0",
  "png",
  "raikiri-dom",
  "raikiri-html",
@@ -2617,7 +2630,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags",
  "criterion",
- "cssparser",
+ "cssparser 0.37.0",
  "raikiri-html",
  "raikiri-style",
  "raikiri-traits",
@@ -2640,7 +2653,7 @@ version = "0.1.0"
 dependencies = [
  "bytes",
  "criterion",
- "cssparser",
+ "cssparser 0.37.0",
  "data-url",
  "html5ever 0.40.1",
  "image",
@@ -2662,7 +2675,7 @@ version = "0.1.0"
 dependencies = [
  "boa_engine",
  "boa_gc",
- "cssparser",
+ "cssparser 0.37.0",
  "raikiri-dom",
  "raikiri-style",
  "raikiri-traits",
@@ -2721,7 +2734,7 @@ dependencies = [
  "anyrender",
  "anyrender_vello_cpu",
  "criterion",
- "cssparser",
+ "cssparser 0.37.0",
  "kurbo",
  "peniko",
  "raikiri-dom",
@@ -2739,10 +2752,10 @@ name = "raikiri-style"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "cssparser",
+ "cssparser 0.37.0",
  "precomputed-hash",
  "rustc-hash",
- "selectors",
+ "selectors 0.41.0",
  "smol_str",
  "triomphe",
 ]
@@ -2751,7 +2764,7 @@ dependencies = [
 name = "raikiri-svg"
 version = "0.1.0"
 dependencies = [
- "cssparser",
+ "cssparser 0.37.0",
  "raikiri-traits",
  "resvg",
  "roxmltree 0.21.1",
@@ -2799,7 +2812,7 @@ dependencies = [
  "blitz-html",
  "blitz-paint",
  "blitz-traits",
- "cssparser",
+ "cssparser 0.37.0",
  "html5ever 0.40.1",
  "insta",
  "markup5ever 0.40.0",
@@ -3086,7 +3099,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eeee001a77567bb05e71652718d3ff76d8697c151ac523e68e9513194eb2b75a"
 dependencies = [
  "bitflags",
- "cssparser",
+ "cssparser 0.37.0",
  "derive_more",
  "log",
  "new_debug_unreachable",
@@ -3094,10 +3107,27 @@ dependencies = [
  "phf_codegen 0.13.1",
  "precomputed-hash",
  "rustc-hash",
- "servo_arc",
+ "servo_arc 0.4.3",
  "smallvec",
  "to_shmem",
  "to_shmem_derive",
+]
+
+[[package]]
+name = "selectors"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8322aebea94a6cc288ff884e8a49bdbceef60206c400c6c46d22e62fc4fd91a6"
+dependencies = [
+ "bitflags",
+ "cssparser 0.38.0",
+ "derive_more",
+ "log",
+ "new_debug_unreachable",
+ "precomputed-hash",
+ "rustc-hash",
+ "servo_arc 0.5.0",
+ "smallvec",
 ]
 
 [[package]]
@@ -3165,6 +3195,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "170fb83ab34de17dc69aa7c67482b22218ddb85da56546f9bd6b929e32a05930"
 dependencies = [
  "serde",
+ "stable_deref_trait",
+]
+
+[[package]]
+name = "servo_arc"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4eceb519ec34d8290aaf6e46f435102f2bfa63f22b05a144fb16ab266d3b198"
+dependencies = [
  "stable_deref_trait",
 ]
 
@@ -3415,7 +3454,7 @@ dependencies = [
  "atomic_refcell",
  "bitflags",
  "byteorder",
- "cssparser",
+ "cssparser 0.37.0",
  "derive_more",
  "encoding_rs",
  "euclid",
@@ -3436,9 +3475,9 @@ dependencies = [
  "rayon",
  "rayon-core",
  "rustc-hash",
- "selectors",
+ "selectors 0.40.0",
  "serde",
- "servo_arc",
+ "servo_arc 0.4.3",
  "smallbitvec",
  "smallvec",
  "static_assertions",
@@ -3501,10 +3540,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a1ee5ec323e0207ebaafff2210fec808214575d67cfe25e288d34a12010e2b3"
 dependencies = [
  "app_units",
- "cssparser",
+ "cssparser 0.37.0",
  "euclid",
- "selectors",
- "servo_arc",
+ "selectors 0.40.0",
+ "servo_arc 0.4.3",
  "smallbitvec",
  "smallvec",
  "string_cache 0.9.0",
@@ -3540,12 +3579,12 @@ checksum = "00a8d2ca5b29c7f5dd94ec66fbb256b274b76ecaab164417c92ce9a4586c8259"
 dependencies = [
  "app_units",
  "bitflags",
- "cssparser",
+ "cssparser 0.37.0",
  "euclid",
  "malloc_size_of_derive",
- "selectors",
+ "selectors 0.40.0",
  "serde",
- "servo_arc",
+ "servo_arc 0.4.3",
  "stylo_atoms",
  "stylo_malloc_size_of",
  "thin-vec",
@@ -3808,8 +3847,8 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8c81cee0d28327337a94f3f32a1a77c03bbfd926510f3b42956f9d914e7810c"
 dependencies = [
- "cssparser",
- "servo_arc",
+ "cssparser 0.37.0",
+ "servo_arc 0.4.3",
  "smallbitvec",
  "smallvec",
  "string_cache 0.9.0",
