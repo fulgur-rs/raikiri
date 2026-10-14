@@ -1257,4 +1257,10 @@ fn auto_margins_of_absolute_boxes_in_paragraphs_follow_the_axes_of_the_root() {
         "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
     );
     assert_eq!(absolute_rect(&doc, abs).0, 100.0);
+    // In a right-to-left root the end margin is the left one.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "direction:rtl;width:200px;height:200px",
+        "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs).0, 0.0);
 }
