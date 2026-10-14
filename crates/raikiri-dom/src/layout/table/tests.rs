@@ -1973,17 +1973,44 @@ fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
     }
 }
 
+// WPT css/css-values/calc-width-table-fixed-1 and
+// css/css-tables/fixed-layout-calc-width-001: a calc() width that sums a
+// percentage and a length leaves its column auto even in fixed layout.
 #[test]
-fn fixed_table_first_row_calc_width_leaves_the_remainder_for_the_auto_column() {
-    assert_eq!(fixed_table_calc_column_geometry(false), (60.0, 140.0, 60.0));
+fn fixed_table_first_row_mixed_calc_width_leaves_the_column_auto() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(false, "calc(25% + 10px)"),
+        (100.0, 100.0, 100.0)
+    );
 }
 
 #[test]
-fn fixed_table_col_calc_width_leaves_the_remainder_for_the_auto_column() {
-    assert_eq!(fixed_table_calc_column_geometry(true), (60.0, 140.0, 60.0));
+fn fixed_table_col_mixed_calc_width_leaves_the_column_auto() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(true, "calc(25% + 10px)"),
+        (100.0, 100.0, 100.0)
+    );
 }
 
-fn fixed_table_calc_column_geometry(from_column: bool) -> (f32, f32, f32) {
+// A calc() width with a single kind of term folds into the plain length or
+// percentage it stands for, which fixes its column.
+#[test]
+fn fixed_table_length_only_calc_width_fixes_the_column() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(false, "calc(2 * 30px)"),
+        (60.0, 140.0, 60.0)
+    );
+}
+
+#[test]
+fn fixed_table_percentage_only_calc_width_fixes_the_column() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(true, "calc(2 * 12.5%)"),
+        (50.0, 150.0, 50.0)
+    );
+}
+
+fn fixed_table_calc_column_geometry(from_column: bool, width: &str) -> (f32, f32, f32) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -1998,7 +2025,7 @@ fn fixed_table_calc_column_geometry(from_column: bool) -> (f32, f32, f32) {
             Some(table),
             "col",
             Style::default(),
-            Some("display:table-column;width:calc(25% + 10px)"),
+            Some(&format!("display:table-column;width:{width}")),
         );
     }
     let row = doc.append_element(
@@ -2011,10 +2038,10 @@ fn fixed_table_calc_column_geometry(from_column: bool) -> (f32, f32, f32) {
         Some(row),
         "td",
         Style::default(),
-        Some(if from_column {
-            "display:table-cell"
+        Some(&if from_column {
+            "display:table-cell".to_owned()
         } else {
-            "display:table-cell;width:calc(25% + 10px)"
+            format!("display:table-cell;width:{width}")
         }),
     );
     let second = doc.append_element(
