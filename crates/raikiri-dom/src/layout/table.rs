@@ -1502,16 +1502,7 @@ fn flush_pending(
         return Ok(());
     }
     // Anonymous row: borrow first cell's id as row marker (not used for layout beyond count)
-    push_row(
-        doc,
-        pending[0],
-        pending.iter().copied(),
-        rows,
-        cells,
-        n_cols,
-    )?;
-    pending.clear();
-    Ok(())
+    push_row(doc, pending[0], pending.drain(..), rows, cells, n_cols)
 }
 
 fn collect_cells_in_row(
