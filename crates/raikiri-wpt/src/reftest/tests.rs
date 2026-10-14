@@ -1928,6 +1928,19 @@ fn legacy_page_area_survives_percentage_padding_and_margins() {
 }
 
 #[test]
+fn legacy_page_area_with_auto_margins_keeps_the_base_resolution() {
+    // An auto margin takes whatever the page box leaves, so any box fits;
+    // keep the one sized against the default paper, which the auto margin
+    // fills.
+    let page =
+        page_context("@page { width: 100px; height: 100px; margin-left: auto; padding: 0 10% }");
+    let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
+    let a4 = raikiri_traits::PageBox::from_page_size(None);
+    assert!((page_box.width - a4.width).abs() < 0.01, "{page_box:?}");
+    assert_eq!(page_box.height, 100.0);
+}
+
+#[test]
 fn legacy_page_area_with_percentages_of_100_or_more_keeps_the_base_resolution() {
     let page = page_context("@page { width: 100px; height: 100px; padding: 0 50%; margin: 0 }");
     let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
@@ -1951,6 +1964,7 @@ fn print_reftests_are_recognized_by_type_flag_or_directory() {
     )));
     assert!(!is_print_reftest(Path::new("css/css-page/printing.html")));
     assert!(!is_print_reftest(Path::new("print.html")));
+    assert!(!is_print_reftest(Path::new("")));
     // A `print` directory above the WPT root is not part of the test's path.
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("print").join("wpt");
