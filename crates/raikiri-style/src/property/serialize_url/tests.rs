@@ -14,6 +14,12 @@ fn top_level_urls_serialize_as_quoted_strings() {
         serialize_urls("url(hand.cur) 2 3, pointer").as_deref(),
         Some(r#"url("hand.cur") 2 3, pointer"#)
     );
+    // An escaped function name is still `url`.
+    assert_eq!(
+        serialize_urls(r"u\72l(foo)").as_deref(),
+        Some(r#"url("foo")"#)
+    );
+    assert_eq!(serialize_urls(r"\61 bc"), None);
     // Surrounding whitespace is not kept.
     assert_eq!(
         serialize_urls("  url(a.png) ").as_deref(),

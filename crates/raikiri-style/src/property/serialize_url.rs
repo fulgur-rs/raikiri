@@ -22,11 +22,13 @@ use super::serialize_position::contains_substitution;
 /// substitution. So does a `url()` with modifiers after its string, and a
 /// value this tokenizer bounds check rejects.
 pub fn serialize_urls(raw_value: &str) -> Option<String> {
-    // Most values have no URL; skip tokenizing them.
-    if !raw_value
-        .as_bytes()
-        .windows(3)
-        .any(|window| window.eq_ignore_ascii_case(b"url"))
+    // Most values have no URL; skip tokenizing them. A backslash may spell
+    // `url` with an escape (`u\72l(a.png)`), so it is tokenized too.
+    if !raw_value.contains('\\')
+        && !raw_value
+            .as_bytes()
+            .windows(3)
+            .any(|window| window.eq_ignore_ascii_case(b"url"))
     {
         return None;
     }
