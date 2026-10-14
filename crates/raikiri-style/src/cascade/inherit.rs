@@ -2091,7 +2091,7 @@ fn border_image_defaulting_value(
         PropertyKey::BorderImageSource => PropertyValue::BorderImageSource(image.source.clone()),
         PropertyKey::BorderImageSlice => PropertyValue::BorderImageSlice(image.slice),
         PropertyKey::BorderImageWidth => {
-            PropertyValue::BorderImageWidth(image.width.map(|side| match side {
+            PropertyValue::BorderImageWidth(Box::new(image.width.map(|side| match side {
                 BorderImageWidthSide::LengthPercentage(length) => {
                     BorderImageWidthSide::LengthPercentage(
                         crate::resolve::lift_length_percentage_or_calc(length),
@@ -2099,7 +2099,7 @@ fn border_image_defaulting_value(
                 }
                 BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
                 _ => BorderImageWidthSide::Auto,
-            }))
+            })))
         }
         PropertyKey::BorderImageOutset => {
             PropertyValue::BorderImageOutset(image.outset.map(|side| match side {
@@ -2366,12 +2366,12 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::MarginLeftInherit => {
             PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left))
         }
-        PropertyValue::MarginInherit => PropertyValue::Margin(Sides {
+        PropertyValue::MarginInherit => PropertyValue::Margin(Box::new(Sides {
             top: inherited_margin_length(inherited.margin.top),
             right: inherited_margin_length(inherited.margin.right),
             bottom: inherited_margin_length(inherited.margin.bottom),
             left: inherited_margin_length(inherited.margin.left),
-        }),
+        })),
         PropertyValue::TextDecorationThicknessInherit => {
             PropertyValue::TextDecorationThickness(inherited_text_decoration_thickness(inherited))
         }
@@ -3176,7 +3176,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        PropertyValue::Padding(sides) => expand_padding(sides, |v| apply_value(v, target)),
+        PropertyValue::Padding(sides) => expand_padding(*sides, |v| apply_value(v, target)),
         PropertyValue::PaddingInline(pair) => {
             expand_padding_inline(pair, |v| apply_value(v, target))
         }
@@ -3192,7 +3192,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        PropertyValue::Margin(sides) => expand_margin(sides, |v| apply_value(v, target)),
+        PropertyValue::Margin(sides) => expand_margin(*sides, |v| apply_value(v, target)),
         PropertyValue::MarginInline(pair) => expand_margin_inline(pair, |v| apply_value(v, target)),
         PropertyValue::MarginBlock(pair) => expand_margin_block(pair, |v| apply_value(v, target)),
         PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
@@ -3438,7 +3438,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         PropertyValue::BorderImageSource(v) => target.border_image_source = v,
         PropertyValue::BorderImageSlice(v) => target.border_image_slice = v,
-        PropertyValue::BorderImageWidth(v) => target.border_image_width = v,
+        PropertyValue::BorderImageWidth(v) => target.border_image_width = *v,
         PropertyValue::BorderImageOutset(v) => target.border_image_outset = v,
         PropertyValue::BorderImageRepeat(v) => target.border_image_repeat = v,
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, |v| apply_value(v, target)),

@@ -1453,7 +1453,8 @@ fn margin_box_margins(
     ctx: &ResolveContext,
 ) -> [f32; 4] {
     let shorthand = margin_box_property(rule, PropertyKey::Margin).and_then(|value| match value {
-        PropertyValue::Margin(sides) => Some(*sides),
+        // cov:ignore: page rules expand the margin shorthand into longhands when parsed
+        PropertyValue::Margin(sides) => Some(**sides),
         _ => None,
     });
     [
@@ -1499,7 +1500,8 @@ fn margin_box_padding(
     ctx: &ResolveContext,
 ) -> [f32; 4] {
     let shorthand = margin_box_property(rule, PropertyKey::Padding).and_then(|value| match value {
-        PropertyValue::Padding(sides) => Some(*sides),
+        // cov:ignore: page rules expand the padding shorthand into longhands when parsed
+        PropertyValue::Padding(sides) => Some(**sides),
         _ => None,
     });
     let side = |key: PropertyKey, fallback: Option<LengthPercentageOrCalc>| {

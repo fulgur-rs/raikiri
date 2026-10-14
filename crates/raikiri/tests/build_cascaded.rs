@@ -417,12 +417,13 @@ fn umbrella_re_exports_cover_sides_and_specified_payload_types() {
     // `Padding(Sides<LengthPercentageOrCalc>)`: `Sides<T>`, `Length`, and
     // `LengthPercentageOrCalc` are re-exported and can be constructed directly
     // without a struct-literal restriction.
-    let _specified_padding: PropertyValue =
-        PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Px(4.0))));
+    let _specified_padding: PropertyValue = PropertyValue::Padding(Box::new(Sides::all(
+        LengthPercentageOrCalc::Length(Length::Px(4.0)),
+    )));
 
     // `Margin(Sides<LengthOrAuto>)`: LengthOrAuto is also constructible directly.
     let _specified_margin: PropertyValue =
-        PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(8.0))));
+        PropertyValue::Margin(Box::new(Sides::all(LengthOrAuto::Length(Length::Px(8.0)))));
 
     // `LineHeight(LineHeight)`: the enum is `#[non_exhaustive]`, but its
     // existing variants can still be constructed externally, like `Length`.

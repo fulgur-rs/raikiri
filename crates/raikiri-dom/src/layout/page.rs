@@ -507,7 +507,8 @@ pub fn page_margins_for_page(
         page_box
     };
     let shorthand = match declarations.get(&PropertyKey::Margin) {
-        Some(PropertyValue::Margin(sides)) => Some(*sides),
+        // cov:ignore: page rules expand the margin shorthand into longhands when parsed
+        Some(PropertyValue::Margin(sides)) => Some(**sides),
         _ => None,
     };
     let top_value = page_margin_value(

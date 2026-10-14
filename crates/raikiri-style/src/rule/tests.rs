@@ -1479,7 +1479,7 @@ fn border_expansion_keeps_each_side_apart() {
             PropertyValue::BorderLeftColor(BorderColor::CurrentColor),
             PropertyValue::BorderImageSource(BackgroundImage::None),
             PropertyValue::BorderImageSlice(BorderImageSlice::INITIAL),
-            PropertyValue::BorderImageWidth(BORDER_IMAGE_WIDTH_INITIAL),
+            PropertyValue::BorderImageWidth(Box::new(BORDER_IMAGE_WIDTH_INITIAL)),
             PropertyValue::BorderImageOutset(BORDER_IMAGE_OUTSET_INITIAL),
             PropertyValue::BorderImageRepeat(BorderImageRepeat::INITIAL),
         ]

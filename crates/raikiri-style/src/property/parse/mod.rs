@@ -464,7 +464,9 @@ pub(crate) fn parse_property_grammar(
         // CSS Box 3 §4.2 padding shorthand: `<'padding-top'>{1,4}`
         // <https://www.w3.org/TR/css-box-3/#padding-shorthand>.
         // parse_padding_shorthand applies the spec's 1–4 value expansion verbatim.
-        "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
+        "padding" => {
+            parse_padding_shorthand(input).map(|sides| PropertyValue::Padding(Box::new(sides)))
+        }
         // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
         // padding-block-start/-end — parsed into the padding physical longhand
         // they map to in horizontal-tb ltr; the cascade moves them by the
@@ -498,7 +500,9 @@ pub(crate) fn parse_property_grammar(
         // `PropertyValue::Margin` expands into four longhands when the declaration is
         // parsed and is therefore not normally observed (see the `PropertyValue::Margin`
         // doc and `crate::rule::expand_shorthand_into`).
-        "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
+        "margin" => {
+            parse_margin_shorthand(input).map(|sides| PropertyValue::Margin(Box::new(sides)))
+        }
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
         // margin-block-start/-end — same pattern as
         // padding-inline-*/padding-block-* above, reusing `parse_margin_side`
@@ -1063,7 +1067,7 @@ pub(crate) fn parse_property_grammar(
         // CSS Fonts 4 §2.1 font shorthand — 16 longhands (6 grammar components plus
         // 10 modeled reset-only subproperties) are expanded by
         // `crate::rule::expand_shorthand_into` (see its doc).
-        "font" => parse_font_shorthand(input).map(PropertyValue::Font),
+        "font" => parse_font_shorthand(input).map(|font| PropertyValue::Font(Box::new(font))),
         // CSS Text Module Level 3 §4.2
         // <https://www.w3.org/TR/css-text-3/#tab-size-property>.
         "tab-size" => parse_tab_size(input).map(PropertyValue::TabSize),
@@ -1256,9 +1260,8 @@ pub(crate) fn parse_property_grammar(
         "border-image-slice" => {
             parse_border_image_slice(input).map(PropertyValue::BorderImageSlice)
         }
-        "border-image-width" => {
-            parse_border_image_width(input).map(PropertyValue::BorderImageWidth)
-        }
+        "border-image-width" => parse_border_image_width(input)
+            .map(|sides| PropertyValue::BorderImageWidth(Box::new(sides))),
         "border-image-outset" => {
             parse_border_image_outset(input).map(PropertyValue::BorderImageOutset)
         }
