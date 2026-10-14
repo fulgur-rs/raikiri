@@ -3,7 +3,7 @@ mod constrained_chain;
 mod lineless;
 mod paged_spanning;
 mod paragraph_group;
-mod spanning;
+pub(super) mod spanning;
 
 use super::*;
 

@@ -400,6 +400,15 @@ impl Document {
         })
     }
 
+    /// The layout key of the anonymous cell that wraps the source box `id`,
+    /// if table fixup wrapped it in one.
+    pub(crate) fn anonymous_cell_of(&self, id: usize) -> Option<usize> {
+        self.table_objects
+            .cell_by_content
+            .get(&Content::Node(id))
+            .map(|&index| self.table_objects.arena_len + index)
+    }
+
     pub(crate) fn table_layout_node_mut(&mut self, key: usize) -> &mut Node {
         if key < self.nodes.len() {
             &mut self.nodes[key]

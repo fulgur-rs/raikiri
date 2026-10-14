@@ -571,35 +571,16 @@ fn inline_level(cv: &ComputedValues) -> bool {
     )
 }
 
-/// The offset of a `position: relative` box as the built-in painter applies
-/// it: `left` over `-right` and `top` over `-bottom` (CSS 2.1 §9.4.3), where
-/// an inset that is not a length counts as `auto`.
-fn paint_relative_offset(cv: &ComputedValues) -> (f32, f32) {
-    if cv.position != PositionValue::Relative {
-        return (0.0, 0.0);
-    }
-    let length = |inset| match inset {
-        ComputedLengthPercentageOrAuto::Px(px) => Some(px),
-        _ => None,
-    };
-    let dx = length(cv.left).or(length(cv.right).map(|right| -right));
-    let dy = length(cv.top).or(length(cv.bottom).map(|bottom| -bottom));
-    (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
-}
-
 /// The block offset that layout applies to a box in normal flow for its
 /// `position: relative` or `position: sticky` insets, which layout treats
-/// alike.
-fn layout_relative_offset_y(cv: &ComputedValues) -> f32 {
-    if cv.position != PositionValue::Sticky {
-        return paint_relative_offset(cv).1;
+/// alike, resolved against the containing block as layout resolves them.
+fn layout_relative_offset_y(document: &Document, cv: &ComputedValues, id: usize) -> f32 {
+    if !matches!(cv.position, PositionValue::Relative | PositionValue::Sticky) {
+        return 0.0;
     }
-    let length = |inset| match inset {
-        ComputedLengthPercentageOrAuto::Px(px) => Some(px),
-        _ => None,
-    };
-    length(cv.top)
-        .or(length(cv.bottom).map(|bottom| -bottom))
+    // Layout takes `top` over `-bottom` in every writing mode.
+    crate::layout::used_relative_insets(document, cv, id, crate::layout::Precedence::LeftTop)
+        .1
         .unwrap_or(0.0)
 }
 
@@ -658,9 +639,9 @@ pub(super) fn box_paint_shift(
                 | DisplayValue::TableFooterGroup
         );
     let (mut dx, mut dy) = if painted_inset && !inline_level(cv) {
-        paint_relative_offset(cv)
+        crate::layout::used_relative_offset(document, cv, id)
     } else if node.needs_relative_block_paint_offset() {
-        (0.0, paint_relative_offset(cv).1)
+        (0.0, crate::layout::used_relative_offset(document, cv, id).1)
     } else {
         (0.0, 0.0)
     };
@@ -1235,7 +1216,7 @@ fn layout_applied_relative_offset_y(
     if document.nodes[id].needs_relative_block_paint_offset() {
         0.0
     } else {
-        layout_relative_offset_y(&cascade.computed[id])
+        layout_relative_offset_y(document, &cascade.computed[id], id)
     }
 }
 

@@ -261,6 +261,53 @@ fn a_flex_first_line_ignores_the_relative_offset_of_its_item() {
     assert_eq!(line.center, 7.0 + 25.0);
 }
 
+/// A percentage offset resolves against the container's definite height,
+/// as layout resolves it, so taking it back out leaves the line in place.
+#[test]
+fn a_first_line_ignores_a_percentage_relative_offset() {
+    let (document, cascade, flex) = container_items(
+        "display:flex;align-items:baseline;height:100px;padding-top:7px;font:10px Ahem",
+        &["line-height:50px;position:relative;top:calc(10% - 1px)"],
+    );
+    let line = first_line(&document, &cascade, flex).unwrap();
+    assert_eq!(line.baseline, 7.0 + 20.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 25.0);
+    // Hand-computed: the 20px line of the X starts 7px down, with its
+    // baseline 5px of half-leading plus 8px of ascent below that, whatever
+    // the 50px offset that 50% of the 100px container gives the block.
+    let (document, cascade, block) = container_items(
+        "display:block;height:100px;padding-top:7px;font:10px/20px Ahem",
+        &["position:relative;top:50%"],
+    );
+    let line = first_line(&document, &cascade, block).unwrap();
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+    assert_eq!(line.center, 7.0 + 10.0);
+}
+
+/// Manual column placement leaves the block offset of a relative box to the
+/// painter, which resolves a percentage against the multicol container.
+#[test]
+fn a_column_box_shift_resolves_a_percentage_relative_offset() {
+    let (document, cascade, multicol) = container_items(
+        "display:block;column-count:2;width:200px;height:60px;font:10px/20px Ahem",
+        &["min-block-size:40px;break-inside:avoid;position:relative;left:10%;top:calc(10% + 2px)"],
+    );
+    let item = document.nodes[multicol].children[0];
+    assert!(document.nodes[item].needs_relative_block_paint_offset());
+    let shift = box_paint_shift(
+        &document,
+        &cascade,
+        None,
+        item,
+        &cascade.computed[item],
+        false,
+    )
+    .unwrap();
+    // Hand-computed: 10% of 60px plus 2px; the horizontal offset is
+    // already part of the layout location.
+    assert_eq!(shift.offset, (0.0, 8.0));
+}
+
 /// Two Ahem paragraphs, one X per 10px line: 25 lines, then 3 lines below.
 fn tall_paragraphs() -> (Document, CascadeResult, [usize; 2]) {
     let mut document = Document::new();

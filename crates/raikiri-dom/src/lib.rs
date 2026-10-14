@@ -84,7 +84,7 @@ pub use fragment::{FragmentRect, LayoutFragment};
 pub use layout::{
     BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph,
     PositionedContentImage, PositionedLine, PositionedLines, PositionedMarker, PositionedRun,
-    cumulative_offset, relative_offset,
+    cumulative_offset, relative_offset, used_relative_offset,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
 pub use column_rules::ColumnRule;

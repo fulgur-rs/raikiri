@@ -492,6 +492,10 @@ impl Document {
             self.layout_dirty = false;
         }
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
+        if inputs.run_mode == taffy::RunMode::PerformLayout {
+            let idx = usize::from(node_id);
+            self.nodes[idx].percent_basis_height = self.block_percent_basis_height(idx, &inputs);
+        }
         // Taffy's cache does not key on the parent size, so an ifc root item
         // whose edges take their basis from the flex container instead is
         // measured afresh: the same container may be laid out at another
@@ -710,6 +714,7 @@ mod tests;
 
 mod orthogonal_flow;
 mod vertical_oof;
+pub(crate) use vertical_oof::used_writing_mode;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.
@@ -1731,9 +1736,35 @@ impl Document {
     /// children (the definite size the container is given or styled with,
     /// `None` when there is none yet), and the padding, border and vertical
     /// scrollbar gutter that separate it from the content box.
+    fn block_definite_width(&self, idx: usize, inputs: &LayoutInput) -> (Option<f32>, f32) {
+        let (size, inset, _) = self.block_definite_size(idx, inputs);
+        (size.width, inset.width)
+    }
+
+    /// The content-box height that percentages inside block container `idx`
+    /// resolve against when taffy's block algorithm lays it out with
+    /// `inputs`: the definite height it is given, else its own `height`
+    /// (at least its `min-height`), else `None`.
+    fn block_percent_basis_height(&self, idx: usize, inputs: &LayoutInput) -> Option<f32> {
+        let (size, inset, style_height) = self.block_definite_size(idx, inputs);
+        size.height
+            .filter(|_| inputs.known_dimensions_are_definite.height)
+            .or(style_height)
+            .map(|height| height - inset.height)
+    }
+
+    /// The border-box size of block container `idx` that taffy's block
+    /// algorithm derives from `inputs` before it lists the container's
+    /// children, the padding, border and scrollbar gutters that separate it
+    /// from the content box along each axis, and the border-box height its
+    /// own `height` and `min-height` give it.
     ///
     /// Mirrors [`taffy::compute_block_layout`] and its `compute_inner`.
-    fn block_definite_width(&self, idx: usize, inputs: &LayoutInput) -> (Option<f32>, f32) {
+    fn block_definite_size(
+        &self,
+        idx: usize,
+        inputs: &LayoutInput,
+    ) -> (Size<Option<f32>>, Size<f32>, Option<f32>) {
         use taffy::{BoxSizing, MaybeMath, MaybeResolve, Overflow, ResolveOrZero, SizingMode};
 
         let style = &self.nodes[idx].style;
@@ -1761,13 +1792,13 @@ impl Document {
             .maybe_resolve(parent_size, resolve_calc)
             .maybe_apply_aspect_ratio(aspect_ratio)
             .maybe_add(box_sizing_adjustment);
+        let style_size = style
+            .size
+            .maybe_resolve(parent_size, resolve_calc)
+            .maybe_apply_aspect_ratio(aspect_ratio)
+            .maybe_add(box_sizing_adjustment);
         let clamped_style_size = if inputs.sizing_mode == SizingMode::InherentSize {
-            style
-                .size
-                .maybe_resolve(parent_size, resolve_calc)
-                .maybe_apply_aspect_ratio(aspect_ratio)
-                .maybe_add(box_sizing_adjustment)
-                .maybe_clamp(min_size, max_size)
+            style_size.maybe_clamp(min_size, max_size)
         } else {
             Size::NONE
         };
@@ -1780,19 +1811,32 @@ impl Document {
             .or(min_max_definite_size)
             .or(clamped_style_size)
             .maybe_max(padding_border_size);
-        let width = known.width.or(known
+        let derived = known
             .maybe_apply_aspect_ratio(aspect_ratio)
-            .maybe_clamp(min_size, max_size)
-            .width);
-        // A vertical scrollbar takes its gutter from the inline axis.
-        let gutter = if style.overflow.y == Overflow::Scroll {
-            style.scrollbar_width
-        } else {
-            0.0
+            .maybe_clamp(min_size, max_size);
+        // A vertical scrollbar takes its gutter from the inline axis, and a
+        // horizontal one from the block axis.
+        let gutter = |overflow| {
+            if overflow == Overflow::Scroll {
+                style.scrollbar_width
+            } else {
+                0.0
+            }
         };
         (
-            width,
-            padding.horizontal_axis_sum() + border.horizontal_axis_sum() + gutter,
+            Size {
+                width: known.width.or(derived.width),
+                height: known.height.or(derived.height),
+            },
+            Size {
+                width: padding.horizontal_axis_sum()
+                    + border.horizontal_axis_sum()
+                    + gutter(style.overflow.y),
+                height: padding.vertical_axis_sum()
+                    + border.vertical_axis_sum()
+                    + gutter(style.overflow.x),
+            },
+            style_size.height.maybe_max(min_size.height),
         )
     }
 

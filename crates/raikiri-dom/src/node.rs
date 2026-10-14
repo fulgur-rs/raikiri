@@ -488,6 +488,10 @@ pub struct Node {
     /// access pattern are unchanged; this documentation states only the
     /// behavioral contract for the **set of observable values** at that boundary.
     pub unrounded_layout: Layout,
+    /// The content-box height that percentages inside this box resolved
+    /// against at its last final layout, as taffy's block algorithm derives
+    /// it: `None` when that height was not definite.
+    pub(crate) percent_basis_height: Option<f32>,
     /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
     pub(crate) flags: NodeFlags,
     /// Node kind and kind-specific fields (tagged union).
@@ -539,6 +543,7 @@ impl Node {
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Document,
         }
@@ -594,6 +599,7 @@ impl Node {
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Element(Box::new(ElementData {
                 tag_name: tag,
@@ -653,6 +659,7 @@ impl Node {
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Text(TextData { text_content: text }),
         }
@@ -707,6 +714,7 @@ impl Node {
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Comment(text),
         }
@@ -758,6 +766,7 @@ impl Node {
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::ProcessingInstruction { target, data },
         }
@@ -811,6 +820,7 @@ impl Node {
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::DocumentFragment,
         }

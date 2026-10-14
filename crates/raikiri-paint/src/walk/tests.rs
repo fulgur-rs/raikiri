@@ -1269,6 +1269,44 @@ fn manually_placed_roots_floats_and_multicol_children_keep_relative_offsets() {
 }
 
 #[test]
+fn painted_relative_offsets_resolve_percentages_against_the_containing_block() {
+    // Hand-computed: the containing block's content box is 100px wide. A
+    // percentage of its height applies only where that height is definite,
+    // and otherwise counts as `auto` (CSS 2.1 §9.3.2), so `bottom` applies.
+    for (markup, expected) in [
+        (
+            "<body style='margin:0'><div style='width:100px;height:200px'><div style='float:left;position:relative;left:10%;top:10%;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 20.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:100px;height:200px'><div style='float:left;position:relative;left:calc(5% + 5px);top:calc(10% - 8px);width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:100px'><div style='float:left;position:relative;right:10%;top:10%;bottom:4px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(-10.0, -4.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:200px;column-count:2;column-gap:0;height:100px'><div style='display:grid;position:relative;top:calc(10% + 2px);width:20px;height:20px;background:green'></div></div>",
+            Point::new(0.0, 12.0),
+        ),
+    ] {
+        let scene = transform_markup_scene(markup);
+        let fill = scene
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .expect("child background");
+        let rect = kurbo::Shape::bounding_box(&fill.shape);
+        assert_eq!(fill.transform * rect.origin(), expected, "{markup}");
+    }
+}
+
+#[test]
 fn transformed_opacity_group_keeps_its_clip_in_page_coordinates() {
     let scene = transform_markup_scene(
         "<body style='margin:0'><div style='position:absolute;left:900px;top:0;width:100px;height:100px;background:green;opacity:.5;transform:matrix(1,0,0,1,-900,0)'></div>",
