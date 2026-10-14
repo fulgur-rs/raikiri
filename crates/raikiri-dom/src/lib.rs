@@ -55,6 +55,7 @@ mod node;
 mod normal_line_height;
 mod page_projection;
 mod running;
+// cov:ignore: public re-exports have no runtime behavior to measure.
 pub use running::{
     ResolvedPageGeometry, RunningElementPage, RunningIndex, element_string_value,
     layout_running_element, resolve_page_geometry, used_running_element_width,
