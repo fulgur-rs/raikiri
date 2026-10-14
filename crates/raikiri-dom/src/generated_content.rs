@@ -47,10 +47,10 @@ const LETTER_GROUP_BITS: u32 = 8;
 ///
 /// A fragment past the limit shares an earlier group inside the same group
 /// around it, or has none of its own, so its opacity is approximated and
-/// `Document::paint_order_approximations` reports the paragraph. Every bit
-/// added to the limit halves the elements whose groups can be named: with
-/// 8 bits, ids reach elements below 2^21 on 32-bit targets, and with 16
-/// bits only below 2^13.
+/// [`crate::Document::paint_order_approximations`] reports the paragraph.
+/// Every bit added to the limit halves the elements whose groups can be
+/// named: with 8 bits, ids reach elements below 2^21 on 32-bit targets, and
+/// with 16 bits only below 2^13.
 pub const MAX_LETTER_GROUPS: usize = 1 << LETTER_GROUP_BITS;
 
 /// The node id the inline engine gives the `pseudo` of `element`.
