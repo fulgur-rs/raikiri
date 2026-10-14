@@ -1654,6 +1654,31 @@ pub(crate) fn project_slices(
     (pages, roots, clips, placements)
 }
 
+/// The part of a box of height `height` whose top is at flow offset `top`
+/// that lies on the page spanning `[page_start, page_end)`, as its top
+/// relative to the page and its height, or `None` when the box misses it.
+///
+/// The paginator moves a box to a page origin, but its offset is read back
+/// as a sum over its ancestors, which can round one ulp either way. Past
+/// 8192px one ulp is 2^-10 px, so an overlap of one ulp at either edge of a
+/// box that crosses it would leave a sliver of the box on the other page.
+/// Such an overlap is rounding, as for the paginator's page ends.
+fn flow_page_overlap(top: f32, height: f32, page_start: f32, page_end: f32) -> Option<(f32, f32)> {
+    let bottom = top + height;
+    let starts_after = top >= page_end || (bottom > page_end && top.next_up() >= page_end);
+    let ends_before =
+        bottom <= page_start || (top < page_start && bottom.next_down() <= page_start);
+    if starts_after || ends_before {
+        return None;
+    }
+    let visible_top = top.max(page_start);
+    let visible_bottom = bottom.min(page_end);
+    Some((
+        (visible_top - page_start).max(0.0),
+        (visible_bottom - visible_top).max(0.0),
+    ))
+}
+
 pub(crate) fn project_slices_with_control(
     document: &Document,
     cascade: &CascadeResult,
@@ -2276,15 +2301,10 @@ pub(crate) fn project_slices_with_control(
                 continue;
             }
             let (intersects, fragment_y, fragment_height) = if source.height > 0.0 {
-                let bottom = source.abs_y + source.height;
-                let intersects = source.abs_y < page_end && bottom > page_start;
-                let top = source.abs_y.max(page_start);
-                let bottom = bottom.min(page_end);
-                (
-                    intersects,
-                    (top - page_start).max(0.0),
-                    (bottom - top).max(0.0),
-                )
+                match flow_page_overlap(source.abs_y, source.height, page_start, page_end) {
+                    Some((y, height)) => (true, y, height),
+                    None => (false, 0.0, 0.0),
+                }
             } else {
                 (
                     source.abs_y >= page_start && source.abs_y <= page_end,
