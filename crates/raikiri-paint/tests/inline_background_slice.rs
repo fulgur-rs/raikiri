@@ -127,3 +127,24 @@ fn a_right_to_left_box_joins_later_lines_to_the_left() {
         assert_eq!(pixel(&pixels, x, 25), [255, 0, 0], "second line at x={x}");
     }
 }
+
+#[test]
+fn a_cloned_fragment_draws_both_borders_beside_its_own_content() {
+    let pixels = paint(
+        "display:inline;box-decoration-break:clone;\
+         border:solid 4px rgb(0,0,255);border-width:0 4px;background:rgb(255,0,0)",
+    );
+    // Every fragment is laid out with both borders, so each line holds the
+    // left border, the 40px of red content and then the right border.
+    for y in [5, 25] {
+        assert_eq!(pixel(&pixels, 2, y), [0, 0, 255], "left border at y={y}");
+        assert_eq!(pixel(&pixels, 6, y), [255, 0, 0], "content at y={y}");
+        assert_eq!(pixel(&pixels, 42, y), [255, 0, 0], "content end at y={y}");
+        assert_eq!(pixel(&pixels, 46, y), [0, 0, 255], "right border at y={y}");
+        assert_eq!(
+            pixel(&pixels, 50, y),
+            [255, 255, 255],
+            "after the box at y={y}"
+        );
+    }
+}

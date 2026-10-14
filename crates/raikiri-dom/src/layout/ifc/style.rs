@@ -594,6 +594,8 @@ pub(crate) fn inline_style(
         WordSpaceTransform, cv.word_space_transform, node;
         None, Space, IdeographicSpace, SpaceAutoPhrase, IdeographicSpaceAutoPhrase
     )?;
+    let box_decoration_break =
+        same_enum!(BoxDecorationBreak, cv.box_decoration_break, node; Slice, Clone)?;
     let text_orientation = map_text_orientation(cv.text_orientation).map_err(unsupported)?;
     let text_combine_upright =
         map_text_combine_upright(cv.text_combine_upright).map_err(unsupported)?;
@@ -638,6 +640,7 @@ pub(crate) fn inline_style(
         text_combine_upright,
         hanging_punctuation: Some(hanging_punctuation(cv.hanging_punctuation, node)?),
         text_emphasis: text_emphasis(cv),
+        box_decoration_break,
         ..Default::default()
     })
 }
