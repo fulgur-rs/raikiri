@@ -2,6 +2,7 @@ pub(crate) mod column_projection;
 mod sibling_shifts;
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 
+use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::TextLineIndex;
 use super::*;
 use crate::page_projection::records::OverflowClipSource;
@@ -763,8 +764,11 @@ fn layout_single_page_with_table_projection(
         } else {
             clear_floats_at_forced_breaks(document, cascade);
         }
-    } else if !document.forced_break_clearance.is_empty() {
+    } else if !document.forced_break_clearance.is_empty()
+        || !document.forced_break_line_clearance.is_empty()
+    {
         document.forced_break_clearance.clear();
+        document.forced_break_line_clearance.clear();
         document.layout_dirty = true;
     }
     document.table_objects.project_explicit_parts = project_explicit_table_parts;
@@ -2680,13 +2684,23 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         name.or(inherited)
     };
     let mut trailing = HashMap::new();
+    // Whether a box with the page value `name` after content that ended with
+    // `previous` starts a new page.
+    let changes_page = |previous: &Option<Option<String>>, name: &Option<String>| {
+        previous.as_ref().is_some_and(|previous| previous != name)
+    };
     // Walk the boxes with the page value each inherits. Floats take their
     // parent's page, and their insides are not walked.
     let mut cleared = Vec::new();
+    let mut cleared_lines = Vec::new();
     let mut pending = vec![(0_usize, None::<String>)];
     while let Some((parent, inherited)) = pending.pop() {
         let mut after_forced_break = false;
         let mut float_after_break = false;
+        // The last in-flow block among the parent's boxes: when the parent
+        // is a paragraph of the inline engine, the lines after it are laid
+        // out from its bottom.
+        let mut last_block = None;
         // Generated `::before` content is not an arena child; like text, it
         // takes the parent's page.
         let mut previous_page_name = crate::generated_content::is_in_flow_generated_text(
@@ -2698,6 +2712,14 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         for item in child_boxes(document, parent) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
+                // Its lines have no element to give clearance to, so the
+                // paragraph starts them below the earlier floats after the
+                // block that ends right before the break.
+                if let Some(block) = last_block.take()
+                    && (after_forced_break || changes_page(&previous_page_name, &inherited))
+                {
+                    cleared_lines.push(block);
+                }
                 after_forced_break = false;
                 float_after_break = false;
                 previous_page_name = Some(inherited.clone());
@@ -2712,36 +2734,44 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 // and the boxes after it to the next page the same way, and so
                 // does a change of named page: pagination puts a float on its
                 // parent's page.
-                let named_break = previous_page_name
-                    .as_ref()
-                    .is_some_and(|previous| *previous != inherited);
+                let named_break = changes_page(&previous_page_name, &inherited);
                 previous_page_name = Some(inherited.clone());
+                let forced_after =
+                    page_break_is_forced(document, child, cascade.computed[child].break_after);
                 if named_break
                     || page_break_is_forced(document, child, cascade.computed[child].break_before)
                 {
                     after_forced_break = true;
                     float_after_break = false;
                 }
+                // A break of the float's own is not right after the block
+                // before it, so the lines after that block stay where they
+                // are.
+                if named_break
+                    || forced_after
+                    || page_break_is_forced(document, child, cascade.computed[child].break_before)
+                {
+                    last_block = None;
+                }
                 if after_forced_break && !float_after_break {
                     document.nodes[child].style.clear = taffy::Clear::Both;
                     cleared.push(child);
                     float_after_break = true;
                 }
-                if page_break_is_forced(document, child, cascade.computed[child].break_after) {
+                if forced_after {
                     after_forced_break = true;
                     float_after_break = false;
                 }
                 continue;
             }
             float_after_break = false;
+            last_block = Some(child);
             let start_page_name =
                 match propagated_start_page_name(document, cascade, child, inherited.as_deref()) {
                     (true, name) => name,
                     (false, _) => inherited.clone(),
                 };
-            let named_break = previous_page_name
-                .as_ref()
-                .is_some_and(|previous| *previous != start_page_name);
+            let named_break = changes_page(&previous_page_name, &start_page_name);
             let forced = after_forced_break
                 || named_break
                 || page_break_is_forced(document, child, cascade.computed[child].break_before);
@@ -2770,10 +2800,25 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 cleared.push(child);
             }
         }
+        // Generated `::after` content ends the parent's lines like text.
+        if let Some(block) = last_block
+            && (after_forced_break || changes_page(&previous_page_name, &inherited))
+            && crate::generated_content::is_in_flow_generated_text(
+                cascade,
+                parent,
+                raikiri_style::PseudoElem::After,
+            )
+        {
+            cleared_lines.push(block);
+        }
     }
     cleared.sort_unstable();
-    if cleared != document.forced_break_clearance {
+    cleared_lines.sort_unstable();
+    if cleared != document.forced_break_clearance
+        || cleared_lines != document.forced_break_line_clearance
+    {
         document.forced_break_clearance = cleared;
+        document.forced_break_line_clearance = cleared_lines;
         document.layout_dirty = true;
     }
 }
@@ -3432,9 +3477,10 @@ pub fn layout_pages_with_page_geometry_and_control(
 
     /// A block child of a paragraph laid out by the inline engine was moved
     /// by `delta` (to a later page): the lines after it and the paragraph's
-    /// boxes below it move with it, as the content that follows a block
-    /// follows it in the block's formatting context. Lines and boxes above
-    /// it stay where they are.
+    /// boxes after it in source order move with it, as the content that
+    /// follows a block follows it in the block's formatting context. Lines
+    /// and boxes before it stay where they are. A later box that a negative
+    /// margin pulls up beside the block still follows it.
     fn follow_moved_ifc_block(document: &mut Document, node_id: usize, delta: f32) {
         if delta == 0.0 || !delta.is_finite() || document.nodes[node_id].in_ifc_subtree() {
             return;
@@ -3442,8 +3488,9 @@ pub fn layout_pages_with_page_geometry_and_control(
         let Some(root) = document.layout_parent_of(node_id) else {
             return;
         };
-        let old_bottom = document.nodes[node_id].unrounded_layout.location.y - delta
-            + document.nodes[node_id].unrounded_layout.size.height;
+        let layout = document.nodes[node_id].unrounded_layout;
+        let old_top = layout.location.y - delta;
+        let old_bottom = old_top + layout.size.height;
         let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
             return;
         };
@@ -3458,15 +3505,28 @@ pub fn layout_pages_with_page_geometry_and_control(
             return;
         };
         lines.shifts.push(first_after, delta);
-        let boxes: Vec<usize> = ifc
+        // The root's boxes are kept in source order. A later box in flow
+        // follows the block from as high as the block's top, which covers a
+        // negative top margin but not a box in a later column of the same
+        // paragraph. An absolutely positioned box is placed against the
+        // root, so one follows the block only from below its old bottom.
+        let boxes: Vec<(usize, IfcBoxKind, bool)> = ifc
             .boxes
             .iter()
-            .map(|b| b.node)
-            .filter(|&b| b != node_id)
+            .scan(false, |after, b| {
+                let later = *after;
+                *after |= b.node == node_id;
+                Some((b.node, b.kind, later))
+            })
             .collect();
-        for b in boxes {
+        for (b, kind, later) in boxes {
             let location = &mut document.nodes[b].unrounded_layout.location;
-            if location.y >= old_bottom - 0.01 {
+            let follows = if kind == IfcBoxKind::OutOfFlow {
+                location.y >= old_bottom - 0.01
+            } else {
+                later && location.y >= old_top - 0.01
+            };
+            if follows {
                 location.y += delta;
             }
         }
