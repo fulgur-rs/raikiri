@@ -127,12 +127,25 @@ fn same(left: &str, right: &str) -> bool {
         let mut parts = Vec::new();
         let mut rest = text;
         while !rest.is_empty() {
-            let numeric = |c: char| c.is_ascii_digit() || c == '.' || c == '-';
-            let end = if rest.starts_with(|c: char| c.is_ascii_digit()) {
-                rest.find(|c: char| !numeric(c)).unwrap_or(rest.len())
+            let numeric = |c: char| c.is_ascii_digit() || c == '.';
+            // A sign belongs to the number after it: noise around zero can
+            // flip it.
+            let signed = rest
+                .strip_prefix('-')
+                .is_some_and(|tail| tail.starts_with(|c: char| c.is_ascii_digit()));
+            let end = if signed || rest.starts_with(|c: char| c.is_ascii_digit()) {
+                let digits = usize::from(signed);
+                rest[digits..]
+                    .find(|c: char| !numeric(c))
+                    .map_or(rest.len(), |end| end + digits)
             } else {
-                rest.find(|c: char| c.is_ascii_digit())
-                    .unwrap_or(rest.len())
+                rest.char_indices()
+                    .find(|&(index, c)| {
+                        c.is_ascii_digit()
+                            || (c == '-'
+                                && rest[index + 1..].starts_with(|c: char| c.is_ascii_digit()))
+                    })
+                    .map_or(rest.len(), |(index, _)| index)
             };
             let (part, tail) = rest.split_at(end);
             parts.push(part.parse::<f32>().map_err(|_| part));
@@ -235,14 +248,11 @@ fn list_numbers_and_page_counters_resume_like_batch() {
 
 #[test]
 fn named_pages_sides_and_strings_resume_like_batch() {
-    // Each chapter starts a page at its top, where a layout can resume
-    // whatever the font, as a line nested in it can be cut at a page edge.
     let mut html = String::from(
         "<!doctype html><style>@page :left { margin-left: 2cm } \
          @page :right { margin-right: 2cm } @page wide { size: A4 landscape } \
          .wide { page: wide } @page { @top-center { content: string(title) } } \
-         h2 { string-set: title content() } \
-         div + div { break-before: page }</style><body>",
+         h2 { string-set: title content() }</style><body>",
     );
     for chapter in 0..6 {
         let class = if chapter % 3 == 2 { " class=wide" } else { "" };
@@ -486,12 +496,7 @@ impl PageSink for Events {
 
 #[test]
 fn events_of_elements_spanning_delivered_pages_arrive_once() {
-    // Paragraphs nested in a section can be cut inside a line at a page
-    // edge, which no layout resumes at. A forced break gives each section a
-    // page that starts at its top, whatever the font.
-    let mut html = String::from(
-        "<!doctype html><style>section + section { break-before: page }</style><body>",
-    );
+    let mut html = String::from("<!doctype html><body>");
     for _ in 0..3 {
         html.push_str("<section style='bookmark-level: 1'>");
         html.push_str(&paragraphs(40, 50));

@@ -2984,3 +2984,349 @@ fn page_local_footnote_keeps_its_text_attached_inside_flex() {
         .unwrap();
     assert_eq!(rendered_text.rect.y, 40.0);
 }
+
+/// `html > body > (spacer, [section >] root, after)`: a spacer, then an
+/// Ahem paragraph ("aaaa bbbb cccc", width 40, line height 10) either
+/// directly in the body (`section` is `None`) or in a section with that
+/// style, then a 5px block.
+fn paragraph_after_a_spacer(
+    section: Option<&str>,
+    spacer_height: f32,
+    root_css: &str,
+    page_height: f32,
+) -> MovedParagraph {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let spacer_css = format!("display:block;height:{spacer_height}px");
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(spacer_css.as_str()),
+    );
+    let parent = match section {
+        Some(css) => {
+            let css = format!("display:block;{css}");
+            doc.append_element(Some(body), "section", Style::default(), Some(css.as_str()))
+        }
+        None => body,
+    };
+    let style = format!(
+        "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
+    );
+    let root = doc.append_element(Some(parent), "div", Style::default(), Some(style.as_str()));
+    let text = doc.append_text(root, "aaaa bbbb cccc");
+    let after = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = page_height;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert!(doc.nodes[root].is_ifc_root());
+    let (_, section_y, _, section_height) = absolute_rect(&doc, parent);
+    MovedParagraph {
+        pages: slices.len(),
+        fragments: text_fragments(&doc, &cascade, page, &slices, text),
+        section: (section_y, section_height),
+        after_top: absolute_rect(&doc, after).1,
+    }
+}
+
+/// What `paragraph_after_a_spacer` laid out.
+struct MovedParagraph {
+    pages: usize,
+    /// The text's fragments.
+    fragments: Vec<(u32, Option<PageFragmentLineRange>)>,
+    /// The top and height of the section's border box.
+    section: (f32, f32),
+    /// The top of the block after the paragraph.
+    after_top: f32,
+}
+
+/// The paragraph's three lines, all on page 1.
+fn whole_on_page_1() -> Vec<(u32, Option<PageFragmentLineRange>)> {
+    vec![(1, Some(PageFragmentLineRange::new(0, 3)))]
+}
+
+#[test]
+fn a_nested_paragraph_that_would_leave_a_widow_moves_to_the_next_page() {
+    // Lines at 15, 25 and 35 on a 40px page: the last line would be a
+    // widow, so the whole paragraph starts page 1 (y 40), as it does when
+    // it is a direct child of the body.
+    for section in [None, Some("")] {
+        let laid_out = paragraph_after_a_spacer(section, 15.0, "orphans:2;widows:2", 40.0);
+        assert_eq!(laid_out.pages, 2, "{section:?}");
+        assert_eq!(laid_out.fragments, whole_on_page_1(), "{section:?}");
+        assert_eq!(
+            laid_out.after_top, 70.0,
+            "{section:?}: the flow after follows"
+        );
+    }
+}
+
+#[test]
+fn a_section_that_a_moved_paragraph_begins_moves_with_it() {
+    // Nothing of the section precedes the paragraph, so the section starts
+    // page 1 with it rather than leaving an empty start on page 0.
+    let laid_out = paragraph_after_a_spacer(Some(""), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.section, (40.0, 30.0));
+}
+
+#[test]
+fn a_padded_section_grows_to_hold_its_moved_paragraph() {
+    // The section starts at 15 and its padding stays there; the paragraph
+    // moves from 17 to 40, so the section ends at 70.
+    let laid_out =
+        paragraph_after_a_spacer(Some("padding-top:2px"), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section, (15.0, 55.0));
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_relatively_offset_section_moves_by_its_flow_position() {
+    // The section's flow position moves to the page start at 40; its offset
+    // still paints it 3px lower, and the flow after it is not overlapped.
+    let laid_out = paragraph_after_a_spacer(
+        Some("position:relative;top:3px"),
+        15.0,
+        "orphans:2;widows:2",
+        40.0,
+    );
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section.0, 43.0);
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_paragraph_in_a_display_contents_wrapper_moves() {
+    let laid_out =
+        paragraph_after_a_spacer(Some("display:contents"), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_paragraph_in_a_fixed_height_section_is_not_moved_out_of_it() {
+    // The section ends at 45, so moving the paragraph to 40 would push its
+    // lines past that end: it stays split inside the section.
+    let laid_out = paragraph_after_a_spacer(Some("height:30px"), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.fragments[0].0, 0);
+    assert_eq!(laid_out.section, (15.0, 30.0));
+}
+
+#[test]
+fn a_nested_paragraph_split_within_its_line_constraints_stays() {
+    for section in [None, Some("")] {
+        let laid_out = paragraph_after_a_spacer(section, 15.0, "orphans:1;widows:1", 40.0);
+        assert_eq!(
+            laid_out.fragments,
+            [
+                (0, Some(PageFragmentLineRange::new(0, 2))),
+                (1, Some(PageFragmentLineRange::new(2, 3))),
+            ],
+            "{section:?}"
+        );
+    }
+}
+
+#[test]
+fn a_fixed_height_paragraph_whose_first_line_overflows_moves_only_as_a_direct_child() {
+    // The 30px paragraph at y 10 ends at 40 on a 35px page. As a direct
+    // child of the body it moves to page 1 as a unit; nested in a section it
+    // fragments at the break, as the same box does as a flex item.
+    let direct = paragraph_after_a_spacer(None, 10.0, "height:30px;orphans:1;widows:1", 35.0);
+    assert_eq!(direct.fragments, whole_on_page_1());
+    let nested = paragraph_after_a_spacer(Some(""), 10.0, "height:30px;orphans:1;widows:1", 35.0);
+    assert_eq!(
+        nested.fragments,
+        vec![
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+}
+
+#[test]
+fn a_nested_paragraph_moved_for_a_widow_leaves_an_earlier_float_behind() {
+    // `body > (spacer, section > (float, paragraph))`: the 5px float and the
+    // paragraph beside it both start the section at y 15. The paragraph's
+    // lines at 15, 25 and 35 on a 40px page would leave a widow, so it moves
+    // to page 1; the float, already placed on page 0, stays there.
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block"),
+    );
+    let float = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:5px;height:5px"),
+    );
+    let root = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:50px;\
+             orphans:2;widows:2",
+        ),
+    );
+    let text = doc.append_text(root, "aaaa bbbb cccc");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        whole_on_page_1()
+    );
+    assert_eq!(absolute_rect(&doc, float).1, 15.0);
+}
+
+#[test]
+fn a_nested_paragraph_does_not_move_a_section_whose_height_ignores_its_content() {
+    // A section whose height `min-height` or `contain: size` sets keeps its
+    // place at y 15 and the block after it its place below the section:
+    // moving the section with the paragraph would move that block as well.
+    for (section, height) in [("min-height:100px", 100.0), ("contain:size", 0.0)] {
+        let laid_out = paragraph_after_a_spacer(Some(section), 15.0, "orphans:2;widows:2", 40.0);
+        assert_eq!(laid_out.section, (15.0, height), "{section}");
+        assert_eq!(laid_out.after_top, 15.0 + height, "{section}");
+    }
+}
+
+#[test]
+fn a_zero_min_height_does_not_keep_a_nested_paragraph_from_moving() {
+    // A `min-height: 0` reset on the section and the paragraph leaves both
+    // heights to their content, so the widow move still applies.
+    let laid_out = paragraph_after_a_spacer(
+        Some("min-height:0"),
+        15.0,
+        "orphans:2;widows:2;min-height:0",
+        40.0,
+    );
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+}
+
+#[test]
+fn a_paragraph_in_a_floated_section_is_not_moved_for_its_widow() {
+    // A float is placed by the float rules rather than by the block flow, so
+    // its paragraph keeps the existing whole-box path.
+    let laid_out = paragraph_after_a_spacer(
+        Some("float:left;width:100px"),
+        15.0,
+        "orphans:2;widows:2",
+        40.0,
+    );
+    assert_eq!(
+        laid_out.fragments,
+        vec![
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+}
+
+#[test]
+fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let aside = doc.append_element(Some(body), "aside", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).expect("pages");
+    assert!(super::super::is_block_flow_paragraph(
+        &doc, &cascade, paragraph, body
+    ));
+    // No ancestor of the paragraph is the aside, so it is not in that flow.
+    assert!(!super::super::is_block_flow_paragraph(
+        &doc, &cascade, paragraph, aside
+    ));
+}
+
+#[test]
+fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
+    // `body > (spacer, section[relative] > (paragraph, abs[top:0]))`: the
+    // positioned box is placed at the section's top on page 0. The
+    // paragraph moves to page 1 for its widow; the section, and the box
+    // placed against it, stay where they are.
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;position:relative"),
+    );
+    let root = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
+             orphans:2;widows:2",
+        ),
+    );
+    let text = doc.append_text(root, "aaaa bbbb cccc");
+    let positioned = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;top:0;width:5px;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        whole_on_page_1()
+    );
+    assert_eq!(absolute_rect(&doc, section).1, 15.0);
+    assert_eq!(absolute_rect(&doc, positioned).1, 15.0);
+}
