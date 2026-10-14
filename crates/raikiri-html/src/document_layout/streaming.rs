@@ -504,12 +504,8 @@ impl Settings<'_, '_> {
         let uncascaded = finish_document(parsed, &options).map_err(RenderError::Parse)?;
         let forward_dependent =
             forward_dependent && build_rule_tree(&uncascaded).has_forward_dependent_selectors();
-        let mut document = assemble_document(
-            uncascaded,
-            &options,
-            &limits,
-            self.resources.configured_fonts(),
-        )?;
+        let fonts = self.resources.configured_fonts();
+        let mut document = assemble_document(uncascaded, &options, &limits, fonts)?;
         self.recascade_for_layout(&mut document, &limits)?;
 
         let late =
@@ -546,12 +542,8 @@ impl Settings<'_, '_> {
         for &id in ids {
             hide_element(&mut uncascaded.dom, id);
         }
-        let mut document = assemble_document(
-            uncascaded,
-            &options,
-            &limits,
-            self.resources.configured_fonts(),
-        )?;
+        let fonts = self.resources.configured_fonts();
+        let mut document = assemble_document(uncascaded, &options, &limits, fonts)?;
         self.recascade_for_layout(&mut document, &limits)?;
         Ok(document)
     }
