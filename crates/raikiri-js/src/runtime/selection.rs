@@ -303,6 +303,11 @@ fn tree_walker_what_to_show(this: &JsValue, _: &[JsValue], _: &mut Context) -> J
     Ok(JsValue::from(what_to_show))
 }
 
+/// The node after `current` in tree order, stopping at the end of `root`'s
+/// subtree. When `current` lies outside `root` (the `currentNode` setter
+/// allows that), the walk runs to the end of the document and then returns
+/// `None`, as browsers do; the spec's nextNode steps would instead filter
+/// the unchanged node again once no following node is left.
 fn next_tree_node(document: &raikiri_dom::Document, root: usize, current: usize) -> Option<usize> {
     if let Some(child) = document.get_node(current)?.children.first() {
         return Some(*child);

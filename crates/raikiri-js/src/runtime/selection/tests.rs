@@ -125,6 +125,23 @@ fn tree_walker_next_node_from_outside_the_root_walks_to_the_document_end() {
 }
 
 #[test]
+fn tree_walker_next_node_from_an_ancestor_or_a_detached_node() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var root = document.createElement('div'); \
+         var inside = document.createTextNode('A'); root.appendChild(inside); \
+         document.body.append(root); \
+         var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
+         walker.currentNode = document.body; \
+         var fromAncestor = walker.nextNode() === inside && walker.nextNode() === null; \
+         var detached = document.createTextNode('x'); \
+         walker.currentNode = detached; \
+         fromAncestor && walker.nextNode() === null && walker.currentNode === detached",
+    );
+}
+
+#[test]
 fn range_set_start_and_end_use_utf16_offsets_and_highlights_store_ranges() {
     let mut rt = rt();
     ok(
