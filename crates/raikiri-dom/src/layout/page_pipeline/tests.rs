@@ -10502,3 +10502,72 @@ fn only_in_flow_generated_content_takes_the_parent_page() {
         assert_eq!(doc.forced_break_clearance, expected, "{before:?}");
     }
 }
+
+/// The block positions of `position: relative` children inside a parent
+/// with the style `parent`.
+fn relative_child_positions(parent: &str, children: &[&str]) -> Vec<f32> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{parent}")),
+    );
+    let children: Vec<_> = children
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some(&format!(
+                    "display:block;position:relative;height:10px;{style}"
+                )),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 500.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    children
+        .into_iter()
+        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .collect()
+}
+
+#[test]
+fn a_percentage_relative_offset_resolves_against_a_definite_height() {
+    // CSS 2.1 §9.4.3: `top` and `bottom` percentages refer to the height of
+    // the containing block.
+    let positions = relative_child_positions(
+        "height:100px",
+        &["top:30%", "bottom:20%", "top:calc(10% + 5px)"],
+    );
+    assert_eq!(positions.len(), 3);
+    assert!((positions[0] - 30.0).abs() < 1e-3, "{positions:?}");
+    assert!((positions[1] - (10.0 - 20.0)).abs() < 1e-3, "{positions:?}");
+    assert!((positions[2] - (20.0 + 15.0)).abs() < 1e-3, "{positions:?}");
+}
+
+#[test]
+fn a_percentage_relative_offset_is_auto_without_a_definite_height() {
+    // With an auto-height containing block the percentage computes to `auto`.
+    assert_eq!(
+        relative_child_positions("", &["top:30%", "bottom:50%"]),
+        vec![0.0, 10.0]
+    );
+}

@@ -1805,7 +1805,6 @@ css/CSS2/pagination/row-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-5-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-7-print.html
-css/CSS2/positioning/absolute-non-replaced-height-013.html
 css/CSS2/positioning/absolute-non-replaced-max-001.html
 css/CSS2/positioning/absolute-non-replaced-min-001.html
 css/CSS2/positioning/absolute-non-replaced-min-max-001.html
