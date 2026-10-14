@@ -2997,3 +2997,47 @@ fn first_letter_fragments_composite_with_their_retained_opacity() {
         ]
     );
 }
+
+#[test]
+fn paint_with_images_skips_the_content_of_a_singular_root() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block; transform: scale(0)"),
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let img = doc.append_element(
+        Some(body),
+        "img",
+        Style::default(),
+        Some("width:10px;height:10px"),
+    );
+    doc.set_element_attributes(img, vec![("src".into(), "file:///x.png".into())]);
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
+    struct RedPixel;
+    impl raikiri_traits::ImagePixelSource for RedPixel {
+        fn get_decoded(
+            &self,
+            _: &url::Url,
+        ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+            Some(std::sync::Arc::new(raikiri_traits::DecodedImage {
+                width: 1,
+                height: 1,
+                rgba: vec![255, 0, 0, 255],
+            }))
+        }
+    }
+    let pixel_source = RedPixel;
+    let mut scene = Scene::new();
+    paint_single_page_with_images(&mut scene, &doc, &cr, PageBox::A4, &pixel_source)
+        .expect("paint succeeds");
+    // Only the paper is painted: the image is in the root's content.
+    assert!(!scene.commands.iter().any(|cmd| matches!(
+        cmd,
+        RenderCommand::Fill(f) if matches!(f.brush, anyrender::types::Paint::Image(_))
+    )));
+}

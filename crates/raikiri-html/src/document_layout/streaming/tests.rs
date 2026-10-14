@@ -307,6 +307,7 @@ fn running_elements_are_laid_out_from_the_streamed_page() {
                 .layout_running_element(node, 200.0)
                 .expect("layout")
                 .expect("running element");
+            assert!(format!("{laid_out:?}").contains("height"));
             self.0 = Some(laid_out.height());
             Ok(())
         }

@@ -75,7 +75,7 @@ struct PreparedSvg {
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
     pub(super) slice: &'a raikiri_dom::PageSlice,
-    pub(super) geometry: &'a crate::render::ResolvedPageGeometry,
+    pub(super) geometry: &'a raikiri_dom::ResolvedPageGeometry,
     pub(super) style: &'a PageCascadeResult,
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,
@@ -312,6 +312,33 @@ impl<'a> Page<'a> {
     ) -> Option<(TextLineId, Option<usize>)> {
         self.document
             .page_generated_image_text_position(self.index(), image)
+    }
+
+    /// The alternative text of the `content` of the `kind` pseudo-element of
+    /// `owner`: the components after `/`, such as `"Note"` in
+    /// `content: url(icon.png) / "Note"`, with `attr()` and counters
+    /// resolved (CSS Content 3 <https://www.w3.org/TR/css-content-3/#alt>).
+    ///
+    /// Assistive technology reads it in place of the pseudo-element's text
+    /// and images; an empty string marks them as decorative. `None` when
+    /// the value gives no alternative text, and for `::first-letter`, which
+    /// has no `content`.
+    pub fn generated_alt_text(&self, owner: NodeId, kind: crate::GeneratedKind) -> Option<String> {
+        let pseudo = match kind {
+            crate::GeneratedKind::Before => raikiri_style::PseudoElem::Before,
+            crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
+            crate::GeneratedKind::Marker => raikiri_style::PseudoElem::Marker,
+            _ => return None,
+        };
+        let element = usize::try_from(owner.0).ok()?;
+        let snapshots = self.document.shared_counter_snapshots(self.cascade).ok()?;
+        raikiri_dom::generated_content::generated_alt_text(
+            self.document,
+            self.cascade,
+            element,
+            pseudo,
+            &snapshots,
+        )
     }
 
     /// Cached raster pixels of an image of `::before` or `::after` content
@@ -758,6 +785,38 @@ impl<'a> Page<'a> {
         )
     }
 
+    /// The root element's box on this page, which the canvas background's
+    /// images are sized and positioned against (CSS Backgrounds 3 §2.11.2).
+    ///
+    /// The canvas runs through every page as one surface, so on a later page
+    /// the box sits above the page by the flow the earlier pages hold: an
+    /// image that does not repeat shows only where the box reaches, and
+    /// tiles continue from the page before. Paint the canvas background
+    /// over the page area whatever the box covers.
+    ///
+    /// The box carries the root's `transform`, which [`Self::paint_order`]
+    /// leaves out: it moves the whole canvas, its background images and
+    /// every paint event included (CSS Transforms 1 §6). `None` when the
+    /// document has no root element.
+    ///
+    /// An auto-height root spans the pages of the document. On a page
+    /// streamed before the number of pages is known, it spans the pages
+    /// streamed so far.
+    pub fn root_box(&self) -> Option<super::RootBox> {
+        let page_count = if self.page_count_deferred {
+            self.slice.page_index + 1
+        } else {
+            self.page_count
+        };
+        raikiri_dom::root_box(
+            self.document,
+            self.cascade,
+            self.geometry.page_box,
+            self.slice.content_origin_y,
+            page_count,
+        )
+    }
+
     /// The running element (`position: running(<name>)`) that a page margin
     /// box with `content: element(<name>, <fetch>)` shows on this page, per
     /// CSS GCPM 3 §1.2.2 <https://www.w3.org/TR/css-gcpm-3/#element-syntax>.
@@ -879,6 +938,10 @@ impl<'a> Page<'a> {
     /// space positions of the node to the page. Text takes the transform of
     /// the element it is in and, inside columns, the offsets that move its
     /// lines.
+    ///
+    /// Like the paint events, the transform is inside the root element's
+    /// own transform, which [`Self::root_box`] reports and the painter
+    /// applies around the whole page.
     ///
     /// `None` when the painter draws nothing of `node` because a transform
     /// on it or an ancestor is singular, and for an out-of-range node.

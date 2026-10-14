@@ -295,7 +295,7 @@ fn non_initial_parent() -> ComputedValues {
         counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
         counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
         counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
-        content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))]),
+        content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))].into()),
         string_set: Arc::new(vec![(SmolStr::new("s"), Vec::new())]),
         running_templates: vec![RunningTemplate::new("hdr")],
         text_align: TextAlign::Center,
@@ -679,7 +679,7 @@ fn non_initial_parent() -> ComputedValues {
         // transform and filter are non-inherited, so use values different
         // from their initial `none` (empty lists) in non_initial_parent.
         transform: Arc::new(vec![ComputedTransformFunction::TranslateX(
-            ComputedLengthPercentage::Px(32.0),
+            ComputedLengthPercentageOrCalc::Px(32.0),
         )]),
         filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
         // CSS Tables 3 §4: table-layout is non-inherited, so use a value

@@ -1,18 +1,19 @@
 //! Resource-aware layout pipeline shared by document layout.
 
 use raikiri_dom::{
-    FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageContentInsets,
-    PageLayoutControl, PageMargins, PageSlice, first_page_name,
+    FontFaceLoader, InitialPageContextError, InitialPageProbeResources, PageLayoutControl,
+    PageSlice, first_page_name,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
-    layout_pages_with_resolver_and_base_url_and_control, page_content_insets_for_page,
-    page_margins_for_page, resolve_initial_page_context, validate_layout_depth,
+    layout_pages_with_resolver_and_base_url_and_control, resolve_initial_page_context,
+    validate_layout_depth,
 };
+use raikiri_dom::{ResolvedPageGeometry, resolve_page_geometry};
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,
-    LayoutConfig, LayoutError, PageBox, PageDefaults, PaintRect, PolicyViolation, RenderError,
-    RenderWarning, ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError,
-    ResolverRequest, ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    LayoutConfig, LayoutError, PageBox, PageDefaults, PolicyViolation, RenderError, RenderWarning,
+    ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
+    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -594,34 +595,6 @@ fn cascade_page_for_query(
     query: &PageContextQuery,
 ) -> PageCascadeResult {
     base.cascade_page_from_root(tree, query, media_context)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct ResolvedPageGeometry {
-    pub(crate) page_box: PageBox,
-    pub(crate) margins: PageMargins,
-    pub(crate) content_insets: PageContentInsets,
-    pub(crate) content_box: PaintRect,
-}
-
-pub(crate) fn resolve_page_geometry(
-    page: &PageCascadeResult,
-    page_box: PageBox,
-) -> ResolvedPageGeometry {
-    let margins = page_margins_for_page(page, page_box);
-    let content_insets = page_content_insets_for_page(page, page_box);
-    let content_box = PaintRect::new(
-        margins.left + content_insets.left,
-        margins.top + content_insets.top,
-        content_insets.page_area_width(margins, page_box),
-        content_insets.page_area_height(margins, page_box),
-    );
-    ResolvedPageGeometry {
-        page_box,
-        margins,
-        content_insets,
-        content_box,
-    }
 }
 
 fn resolve_page_geometries(

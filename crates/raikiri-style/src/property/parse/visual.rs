@@ -1107,9 +1107,18 @@ pub(crate) fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> 
 /// [`parse_length_value`] already routes through `next_numeric_stable`
 /// (module doc above), so this is likewise defense-in-depth in ordinary
 /// use.
-pub(crate) fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
+///
+/// A mixed-unit `calc()` reaches this parser only after substitution or
+/// simplification failed to fold it to one dimension; it keeps its terms
+/// until the box it translates is known.
+pub(crate) fn parse_transform_length_percentage(
+    input: &mut Parser<'_, '_>,
+) -> Option<LengthPercentageOrCalc> {
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LengthPercentageOrCalc::from_relative_calc(calc));
+    }
     let length = parse_length_value(input, true)?;
-    (!length.payload().is_nan()).then_some(length)
+    (!length.payload().is_nan()).then_some(LengthPercentageOrCalc::Length(length))
 }
 
 /// `[<angle> | <zero>]` for `transform`'s `rotate()`/`skew()`/`skewX()`/
@@ -1157,11 +1166,11 @@ pub(crate) fn parse_translate_args<'i>(
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
     let tx = parse_transform_length_percentage(input).ok_or_else(|| input.new_custom_error(()))?;
     let ty = input
-        .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+        .try_parse(|i| -> Result<LengthPercentageOrCalc, ParseError<'_, ()>> {
             i.expect_comma()?;
             parse_transform_length_percentage(i).ok_or_else(|| i.new_custom_error(()))
         })
-        .unwrap_or(Length::Px(0.0));
+        .unwrap_or(LengthPercentageOrCalc::Length(Length::Px(0.0)));
     Ok(TransformFunction::Translate(tx, ty))
 }
 

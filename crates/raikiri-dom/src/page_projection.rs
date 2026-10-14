@@ -7,7 +7,7 @@ pub(crate) mod generated_boxes;
 pub(crate) mod generated_images;
 mod image_markers;
 pub(crate) mod paint_order;
-mod paint_transform;
+pub(crate) mod paint_transform;
 pub(crate) mod records;
 pub(crate) mod text_runs;
 

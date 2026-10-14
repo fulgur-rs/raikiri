@@ -32,9 +32,9 @@ use raikiri_style::property::{
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
-    ComputedCssPosition, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext,
-    resolve_background_size, resolve_border, resolve_css_position,
+    ComputedCssPosition, ComputedLength, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
+    ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext, resolve_background_size,
+    resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -61,19 +61,27 @@ pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) 
     );
 }
 
-/// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
+/// Canvas background fill site — CSS Backgrounds 3 §2.11 canvas propagation.
 ///
 /// Page backgrounds cover the paper.  When the page has a non-zero margin,
 /// the html/body canvas background is painted only in the page content area;
 /// this is the geometry that makes `@page { margin: 5px }` visibly different
-/// from a zero-margin page.  With zero page margins the historical canvas
-/// propagation remains a single full-page fill.
+/// from a zero-margin page.  With zero page margins the canvas background
+/// covers the whole paper.
+///
+/// The canvas images are sized and positioned against the root element's
+/// box (§2.11.2), which runs through every page as one surface:
+/// `root` is the root element's box on this page, which sits higher on each
+/// later page, so a later page continues the tiles of the earlier ones and
+/// shows a `no-repeat` image only where the root's box reaches it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_canvas_background(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
+    root: Option<&raikiri_dom::RootBox>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -92,38 +100,11 @@ pub(crate) fn paint_canvas_background(
         );
     }
 
-    if margins.is_zero() {
-        let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
-        // Keep the page and propagated canvas backgrounds as separate layers.
-        // A canvas color may be translucent; selecting it with `or` would
-        // discard the opaque page color instead of compositing over it.
-        fill_rect(scene, page_color.unwrap_or(white), page_rect);
-        paint_page_background_image(
-            image_cache,
-            scene,
-            document,
-            cascade,
-            page_rect,
-            pixel_source,
-            warnings,
-        );
-        if let Some(color) = canvas_color {
-            fill_rect(scene, color, page_rect);
-        }
-        paint_canvas_background_image(
-            image_cache,
-            scene,
-            document,
-            cascade,
-            page_rect,
-            pixel_source,
-            warnings,
-        );
-        return;
-    }
-
     // The paper is always covered, even when the page background is
-    // transparent; the UA canvas default is white in that case.
+    // transparent; the UA canvas default is white in that case. The page
+    // and propagated canvas backgrounds stay separate layers: a canvas
+    // color may be translucent, and selecting it with `or` would discard
+    // the opaque page color instead of compositing over it.
     let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
     paint_page_background_image(
@@ -135,24 +116,122 @@ pub(crate) fn paint_canvas_background(
         pixel_source,
         warnings,
     );
-    let canvas_rect = kurbo::Rect::new(
-        margins.left as f64,
-        margins.top as f64,
-        (page_box.width - margins.right) as f64,
-        (page_box.height - margins.bottom) as f64,
-    );
+    let canvas_rect = if margins.is_zero() {
+        page_rect
+    } else {
+        kurbo::Rect::new(
+            margins.left as f64,
+            margins.top as f64,
+            (page_box.width - margins.right) as f64,
+            (page_box.height - margins.bottom) as f64,
+        )
+    };
     if let Some(color) = canvas_color {
         fill_rect(scene, color, canvas_rect);
     }
+    let insets = raikiri_dom::page_content_insets(cascade, page_box);
+    let page_area = kurbo::Rect::from_origin_size(
+        (
+            f64::from(margins.left + insets.left),
+            f64::from(margins.top + insets.top),
+        ),
+        (
+            f64::from(insets.page_area_width(margins, page_box)),
+            f64::from(insets.page_area_height(margins, page_box)),
+        ),
+    );
     paint_canvas_background_image(
         image_cache,
         scene,
         document,
         cascade,
-        canvas_rect,
+        &CanvasArea::new(canvas_rect, page_area, root),
         pixel_source,
         warnings,
     );
+}
+
+/// Where the images of the canvas background paint and are placed.
+pub(crate) struct CanvasArea {
+    /// The canvas on this page, which every layer covers whatever its
+    /// `background-clip` (CSS Backgrounds 3 §2.11.1).
+    painting: Rect,
+    /// The page area, the initial containing block, which `fixed` layers
+    /// are positioned in (CSS Backgrounds 3 §2.5).
+    viewport: Rect,
+    /// The root element's border box, which the other layers are
+    /// positioned in.
+    root: Rect,
+    /// The root's border widths: left, top, right, bottom.
+    border: (f64, f64, f64, f64),
+    /// The root's padding: left, top, right, bottom.
+    padding: (f64, f64, f64, f64),
+    /// The root's transform, which moves the images with the rest of the
+    /// canvas.
+    transform: Option<Affine>,
+}
+
+impl CanvasArea {
+    /// The canvas `painting` on this page, with its images placed in the
+    /// root element's box `root`, or the page area `viewport` for a `fixed`
+    /// layer. Without a root box the images are placed in the painting area
+    /// itself.
+    pub(crate) fn new(painting: Rect, viewport: Rect, root: Option<&raikiri_dom::RootBox>) -> Self {
+        let Some(root) = root else {
+            return Self {
+                painting,
+                viewport,
+                root: painting,
+                border: (0.0, 0.0, 0.0, 0.0),
+                padding: (0.0, 0.0, 0.0, 0.0),
+                transform: None,
+            };
+        };
+        let edges = |insets: PaintInsets| {
+            (
+                f64::from(insets.left),
+                f64::from(insets.top),
+                f64::from(insets.right),
+                f64::from(insets.bottom),
+            )
+        };
+        let rect = root.border_box;
+        Self {
+            painting,
+            viewport,
+            root: Rect::new(
+                f64::from(rect.x),
+                f64::from(rect.y),
+                f64::from(rect.x + rect.width),
+                f64::from(rect.y + rect.height),
+            ),
+            border: edges(root.border),
+            padding: edges(root.padding),
+            transform: root.transform.map(crate::transform::affine),
+        }
+    }
+
+    /// The positioning area of `layer`: the page area for a `fixed` layer,
+    /// whatever its origin, and otherwise the root's box inset as its
+    /// origin says.
+    fn positioning(
+        &self,
+        layer: &raikiri_style::ComputedBackgroundLayer,
+        image_url: Option<&url::Url>,
+        warnings: &mut Vec<RenderWarning>,
+    ) -> Rect {
+        if layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed {
+            return self.viewport;
+        }
+        origin_inset_rect(
+            self.root,
+            layer.origin,
+            self.border,
+            self.padding,
+            image_url,
+            warnings,
+        )
+    }
 }
 
 /// Paint the root element border at the page edge when the document uses it
@@ -832,24 +911,12 @@ fn paint_page_background_layer(
     }
 }
 
-fn canvas_used_padding(computed: &ComputedValues, area_width: f64) -> (f64, f64, f64, f64) {
-    let resolve = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc| {
-        f64::from(value.resolve(area_width as f32))
-    };
-    (
-        resolve(computed.padding.left),
-        resolve(computed.padding.top),
-        resolve(computed.padding.right),
-        resolve(computed.padding.bottom),
-    )
-}
-
 fn paint_canvas_background_image(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    area: Rect,
+    area: &CanvasArea,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -859,36 +926,74 @@ fn paint_canvas_background_image(
     let Some(computed) = cascade.computed.get(node_id) else {
         return;
     };
+    // spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
+    // A transform on the root moves the whole canvas, its images included,
+    // while the canvas still covers the page: paint the images through the
+    // transform over the part of the canvas that lands on this page, clipped
+    // to it. A singular transform renders none of the root.
+    let (transform, painting) = match area.transform {
+        None => (Affine::IDENTITY, area.painting),
+        Some(transform) if crate::transform::is_invertible(transform) => (
+            transform,
+            transform.inverse().transform_rect_bbox(area.painting),
+        ),
+        Some(_) => return,
+    };
+    let clipped = transform != Affine::IDENTITY;
+    if clipped {
+        scene.push_clip_layer(Affine::IDENTITY, &area.painting);
+    }
+    let mut scene = crate::transform::TransformScene { scene, transform };
     // CSS Backgrounds 3 §2.1: paint from the last layer to the first.
     let painted = painted_background_layers(computed.background_layers(), warnings);
     for layer in painted.iter().rev() {
         paint_canvas_background_layer(
             image_cache,
-            scene,
+            &mut scene,
             computed,
             layer,
             area,
+            painting,
             pixel_source,
             warnings,
         );
     }
+    if clipped {
+        scene.scene.pop_layer();
+    }
 }
 
-/// Paint one background layer propagated to the canvas over the canvas
-/// border box `area`.
+/// Paint one background layer propagated to the canvas over `painting`,
+/// positioned in the root element's box.
+#[allow(clippy::too_many_arguments)]
 fn paint_canvas_background_layer(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     computed: &ComputedValues,
     layer: &raikiri_style::ComputedBackgroundLayer,
-    area: Rect,
+    area: &CanvasArea,
+    painting: Rect,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
+    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
+        return;
+    }
     if let BackgroundImage::Gradient(gradient) = &layer.image
         && paints_gradient_image(&layer.image)
     {
-        paint_canvas_gradient(scene, computed, layer, gradient, area, warnings);
+        let positioning = area.positioning(layer, None, warnings);
+        gradient::paint_gradient_layer(
+            scene,
+            gradient,
+            positioning,
+            painting,
+            None,
+            &layer.size,
+            &layer.position,
+            &layer.repeat,
+            computed.color,
+        );
         return;
     }
     let Some(pixel_source) = pixel_source else {
@@ -900,30 +1005,18 @@ fn paint_canvas_background_layer(
     let Some(url) = image_cache.image_url(raw_url) else {
         return;
     };
-    // Canvas positioning area with nonzero page margins and root borders
-    // (CSS Backgrounds 3 section 2.11 propagation plus section 2.8): `area`
-    // is the canvas border box (page content area inside margins, or full
-    // paper when margins are zero). Origin insets it by the canvas owner's
-    // border and padding. `background-clip` has no effect on a propagated
-    // background (CSS Backgrounds 3 §2.11.1), so the image paints over the
-    // whole of `area`, as the gradient path does.
-    let border = (
-        computed.border.left.width().px() as f64,
-        computed.border.top.width().px() as f64,
-        computed.border.right.width().px() as f64,
-        computed.border.bottom.width().px() as f64,
-    );
-    let padding = canvas_used_padding(computed, area.width());
-    let positioning = origin_inset_rect(area, layer.origin, border, padding, Some(&url), warnings);
-    if area.x1 <= area.x0 || area.y1 <= area.y0 {
-        return;
-    }
+    // The propagated values are treated as the root element's own (CSS
+    // Backgrounds 3 §2.11.2), so origin insets the root's border box by the
+    // root's border and padding. `background-clip` has no effect on a
+    // propagated background (§2.11.1): the image paints over the whole
+    // canvas, as the gradient does.
+    let positioning = area.positioning(layer, Some(&url), warnings);
     paint_background_from_source(
         image_cache,
         scene,
         &url,
         positioning,
-        area,
+        painting,
         &layer.size,
         &layer.position,
         &layer.repeat,
@@ -939,43 +1032,6 @@ fn paints_gradient_image(image: &BackgroundImage) -> bool {
         BackgroundImage::Gradient(gradient)
             if matches!(&**gradient, Gradient::Linear(_) | Gradient::Radial(_))
     )
-}
-
-/// Paint a linear or radial gradient propagated to the canvas (CSS
-/// Backgrounds 3 §2.11.2) over the canvas border box `area`.
-fn paint_canvas_gradient(
-    scene: &mut impl PaintScene,
-    computed: &ComputedValues,
-    layer: &raikiri_style::ComputedBackgroundLayer,
-    gradient: &Gradient,
-    area: Rect,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let border = (
-        computed.border.left.width().px() as f64,
-        computed.border.top.width().px() as f64,
-        computed.border.right.width().px() as f64,
-        computed.border.bottom.width().px() as f64,
-    );
-    let padding = canvas_used_padding(computed, area.width());
-    let positioning = origin_inset_rect(area, layer.origin, border, padding, None, warnings);
-    // The canvas background covers the whole canvas, so the root's
-    // background-clip has no effect (CSS Backgrounds 3 §2.11.1).
-    let painting = area;
-    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
-        return;
-    }
-    gradient::paint_gradient_layer(
-        scene,
-        gradient,
-        positioning,
-        painting,
-        None,
-        &layer.size,
-        &layer.position,
-        &layer.repeat,
-        computed.color,
-    );
 }
 
 fn background_color_with_image_source(
@@ -1753,6 +1809,7 @@ pub(crate) fn paint_document(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
 ) {
     let mut warnings = Vec::new();
     paint_document_impl(
@@ -1768,6 +1825,7 @@ pub(crate) fn paint_document(
         None,
         &mut warnings,
         custom_highlights,
+        root_transform,
         None,
     );
 }
@@ -1786,6 +1844,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
 ) {
     paint_document_impl(
         image_cache,
@@ -1800,6 +1859,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
         Some(pixel_source),
         warnings,
         custom_highlights,
+        root_transform,
         None,
     );
 }
@@ -1818,6 +1878,7 @@ pub(crate) fn paint_document_impl(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
     mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
     let Some(body_id) = raikiri_dom::paint_rules::find_paint_root(document) else {
@@ -2080,6 +2141,9 @@ pub(crate) fn paint_document_impl(
     // through negative margins. Clip those backgrounds to the physical
     // content box without clipping text ink, which may legitimately overflow
     // its box.
+    // `scene` paints through the root element's `root_transform`, which
+    // moves the document but not the page: page-area clips undo it.
+    let page_clip_transform = root_transform.inverse();
     let page_content_clip = if margins.left > 0.0
         || margins.right > 0.0
         || margins.top > 0.0
@@ -2302,7 +2366,7 @@ pub(crate) fn paint_document_impl(
                 }
                 let clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &clip {
-                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 let owner = document.ifc_source_owner(key);
                 if cascade.computed[owner].visibility != Visibility::Hidden
@@ -2443,7 +2507,7 @@ pub(crate) fn paint_document_impl(
             } => {
                 let text_clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &text_clip {
-                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 // A paragraph whose lines carry no visible text (only
                 // atomic inlines and whitespace) is not traced as text,
@@ -3245,7 +3309,7 @@ pub(crate) fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(page_clip_transform, &clip);
                         }
                         paint_element_box_shadows(
                             scene,
@@ -3532,7 +3596,7 @@ pub(crate) fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(page_clip_transform, &clip);
                         }
                         paint_element_background(
                             image_cache,
@@ -4206,7 +4270,7 @@ pub(crate) fn paint_document_impl(
                 {
                     let text_clip = text_page_clip(inside_fixed);
                     if let Some(clip) = &text_clip {
-                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                        scene.scene.push_clip_layer(page_clip_transform, clip);
                     }
                     if node.is_ifc_root() {
                         // A text node laid out as an anonymous flex or grid
@@ -7079,10 +7143,6 @@ fn translation_only(cv: &ComputedValues) -> bool {
 // the border-box origin in that same coordinate space, then compose with the
 // ancestor context. This also keeps transforms out of layout geometry.
 fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
-    let resolve = |value: ComputedLengthPercentage, basis: f64| match value {
-        ComputedLengthPercentage::Px(px) => px as f64,
-        ComputedLengthPercentage::Percent(percent) => basis * percent as f64 / 100.0,
-    };
     // Border backgrounds and borders use this same snapped paint box.
     let paint_x = (x as f64).round();
     let paint_y = (y as f64).round();
@@ -7096,15 +7156,13 @@ fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f3
     for function in cv.transform.iter() {
         matrix *= match *function {
             ComputedTransformFunction::Matrix(coeffs) => Affine::new(coeffs.map(f64::from)),
-            ComputedTransformFunction::Translate(x, y) => {
-                Affine::translate((resolve(x, paint_width), resolve(y, paint_height)))
-            }
-            ComputedTransformFunction::TranslateX(x) => {
-                Affine::translate((resolve(x, paint_width), 0.0))
-            }
-            ComputedTransformFunction::TranslateY(y) => {
-                Affine::translate((0.0, resolve(y, paint_height)))
-            }
+            ComputedTransformFunction::Translate(..)
+            | ComputedTransformFunction::TranslateX(..)
+            | ComputedTransformFunction::TranslateY(..) => Affine::translate(
+                function
+                    .translation(paint_width, paint_height)
+                    .unwrap_or_default(),
+            ),
             ComputedTransformFunction::Scale(x, y) => Affine::scale_non_uniform(x as f64, y as f64),
             ComputedTransformFunction::ScaleX(x) => Affine::scale_non_uniform(x as f64, 1.0),
             ComputedTransformFunction::ScaleY(y) => Affine::scale_non_uniform(1.0, y as f64),
@@ -7138,24 +7196,12 @@ fn transform_translation(
     if !translation_only(cv) {
         return (0.0, 0.0);
     }
-    let mut dx = 0.0_f32;
-    let mut dy = 0.0_f32;
-    let resolve = |value: ComputedLengthPercentage, basis: f32| match value {
-        ComputedLengthPercentage::Px(px) => px,
-        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
-    };
-    for function in cv.transform.iter() {
-        match *function {
-            ComputedTransformFunction::Translate(x, y) => {
-                dx += resolve(x, width);
-                dy += resolve(y, height);
-            }
-            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, width),
-            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, height),
-            _ => {}
-        }
-    }
-    (dx, dy)
+    let (dx, dy) = cv
+        .transform
+        .iter()
+        .filter_map(|function| function.translation(f64::from(width), f64::from(height)))
+        .fold((0.0, 0.0), |(dx, dy), (x, y)| (dx + x, dy + y));
+    (dx as f32, dy as f32)
 }
 
 /// Page-local paint origin of a viewport-fixed box.

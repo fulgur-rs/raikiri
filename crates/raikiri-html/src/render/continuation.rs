@@ -16,7 +16,9 @@ use raikiri_style::property::PageValue;
 use raikiri_style::{CascadeOptions, CascadeResult, MediaContext, RuleTree, cascade_with_options};
 use raikiri_traits::{LayoutError, ReplacedResolver};
 
-use super::{PageCascader, ResolvedPageGeometry, content_width_for_geometry, page_query_for_slice};
+use raikiri_dom::ResolvedPageGeometry;
+
+use super::{PageCascader, content_width_for_geometry, page_query_for_slice};
 
 /// Pages laid out again at their own content width.
 pub(crate) struct Continuation {

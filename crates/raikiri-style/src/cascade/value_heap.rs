@@ -21,10 +21,10 @@ use crate::computed::{
     ComputedBackgroundLayer, CustomPropertyEnvironment, initial_background_layers,
 };
 use crate::property::{
-    BackgroundImage, BasicShape, ClipPath, ContentComponent, CounterStyle, FilterFunction,
-    FontFeatureSettings, FontLanguageOverride, FontPaletteValue, FontVariationSettings, Gradient,
-    GridLineValue, GridTemplateAreasValue, HyphenateCharacter, ListStyleType, PositionValue,
-    TextEmphasisStyle,
+    BackgroundImage, BasicShape, ClipPath, ContentComponent, ContentList, CounterStyle,
+    FilterFunction, FontFeatureSettings, FontLanguageOverride, FontPaletteValue,
+    FontVariationSettings, Gradient, GridLineValue, GridTemplateAreasValue, HyphenateCharacter,
+    ListStyleType, PositionValue, TextEmphasisStyle,
 };
 use crate::resolve::{ComputedGridTemplateTracks, ComputedGridTrackListComponent};
 
@@ -245,7 +245,7 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         + list(counter_reset, &parent.counter_reset, |(name, _)| str_heap(name))
         + list(counter_increment, &parent.counter_increment, |(name, _)| str_heap(name))
         + list(counter_set, &parent.counter_set, |(name, _)| str_heap(name))
-        + list(content, &parent.content, content_component)
+        + content_list(content, &parent.content)
         + list(string_set, &parent.string_set, |(name, components)| str_heap(name) + vec_heap(components, content_component))
         + vec_heap(running_templates, |template| str_heap(&template.name))
         + str_of(position_str(position), position_str(&parent.position))
@@ -300,6 +300,18 @@ fn list<T>(value: &Arc<Vec<T>>, parent: &Arc<Vec<T>>, item: impl Fn(&T) -> u64) 
         return 0;
     }
     vec_heap(value, item)
+}
+
+/// The heap of a `content` value not shared with the parent: its items and
+/// its alternative text.
+fn content_list(value: &Arc<ContentList>, parent: &Arc<ContentList>) -> u64 {
+    if Arc::ptr_eq(value, parent) {
+        return 0;
+    }
+    vec_heap(value, content_component)
+        + value
+            .alt()
+            .map_or(0, |alt| slice_heap(alt, content_component))
 }
 
 /// The heap of a vector: its whole buffer, spare capacity included, and
