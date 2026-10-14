@@ -11,7 +11,18 @@ fn rowspan_clamps_after_parsing_a_wide_integer() {
         ("65536", 65534),
         ("70000", 65534),
         ("4294967295", 65534),
+        ("4294967296", 65534),
+        ("18446744073709551616", 65534),
+        ("99999999999999999999999999999999999999999999999999", 65534),
+        ("+4294967296", 65534),
+        ("00000000000000000000000000000000000000000000070000", 65534),
+        ("+2", 2),
         ("0", u16::MAX),
+        ("+0", u16::MAX),
+        (
+            "00000000000000000000000000000000000000000000000000",
+            u16::MAX,
+        ),
     ] {
         let mut doc = Document::new();
         let cell = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
@@ -25,7 +36,18 @@ fn missing_or_invalid_rowspan_keeps_the_single_row_default() {
     let mut doc = Document::new();
     let cell = doc.append_element(Some(0), "td", Style::default(), None::<&str>);
     assert_eq!(super::super::get_rowspan(&doc, cell), 1);
-    for value in ["", "-1", "invalid"] {
+    for value in [
+        "",
+        "-1",
+        "invalid",
+        "+",
+        "++1",
+        " 2",
+        "2 ",
+        "２",
+        "4294967296x",
+        "99999999999999999999999999999999999999999999999999x",
+    ] {
         doc.set_element_attribute(cell, "rowspan", value).unwrap();
         assert_eq!(super::super::get_rowspan(&doc, cell), 1, "{value}");
     }
