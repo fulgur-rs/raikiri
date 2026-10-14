@@ -1585,12 +1585,24 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
     doc.ifc_layout_node(node_id)
         .expect("table box layout view")
         .attribute("rowspan")
-        .and_then(|value| value.parse::<u16>().ok())
+        .and_then(|value| {
+            let digits = value.strip_prefix('+').unwrap_or(value);
+            if digits.is_empty() {
+                return None;
+            }
+            // Saturate any digit count, but still reject invalid suffixes.
+            digits.bytes().try_fold(0_u16, |span, digit| {
+                digit.is_ascii_digit().then(|| {
+                    span.saturating_mul(10)
+                        .saturating_add(u16::from(digit - b'0'))
+                })
+            })
+        })
         .map_or(1, |v| {
             // HTML §4.9.9: rowspan=0 spans to the end of the table section.
             // The reservation pass clamps this sentinel to the source row
             // group before layout consumes the grid.
-            if v == 0 { u16::MAX } else { v.clamp(1, 65534) }
+            if v == 0 { u16::MAX } else { v.min(65534) }
         })
 }
 

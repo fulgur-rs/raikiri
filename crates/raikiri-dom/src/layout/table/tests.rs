@@ -8,6 +8,7 @@ use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 mod cell_index_tests;
+mod rowspan_tests;
 
 fn append_grid_part(
     doc: &mut Document,
