@@ -451,9 +451,8 @@ impl TargetRegistry {
     ///
     /// **The bulk-replace path via
     /// [`super::context::PageContext::set_targets`] still needs a direct
-    /// call here.** A registry built externally (e.g. by
-    /// `raikiri_dom::target::build_target_registry`'s register-site walker)
-    /// is not yet owned by any `PageContext` — this method must be called
+    /// call here.** A registry built externally (e.g. by a DOM register-site
+    /// walker) is not yet owned by any `PageContext` — this method must be called
     /// on it directly, before it is wired in via `set_targets`, if its
     /// page-index/sequence state needs to be anything other than the
     /// freshly-`Default`-constructed `(0, 0)`. See
@@ -483,10 +482,8 @@ impl TargetRegistry {
     /// `next_sequence` independently before the re-run, or `begin_page` must
     /// gain a force-reset variant — tracked as a follow-up, not fixed here.
     ///
-    /// No production driver calls this directly yet —
-    /// `raikiri_dom::phase_b`'s per-page walk now reaches this method through
-    /// [`super::context::PageContext::begin_page`], but that driver is still
-    /// `#[allow(dead_code)]` and is exercised only by tests. Until a
+    /// No production driver calls this yet, directly or through
+    /// [`super::context::PageContext::begin_page`]. Until a
     /// production driver calls it, every slot is tagged to page 0 — correct
     /// for a single-page document, harmless (just uninformative) for a
     /// multi-page one.

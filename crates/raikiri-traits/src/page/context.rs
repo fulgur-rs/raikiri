@@ -32,9 +32,8 @@
 //! was initially left in place after this promotion landed, since integration a
 //! real DOM-tree-walking driver against it — `CounterStack::pop_scope` /
 //! `NamedStringState` page-boundary call sites — was out of this
-//! promotion's scope. raikiri-dom's `crate::phase_b` driver has since been
-//! built against this promoted type directly, and the dom-local mirror
-//! (having no remaining caller once that driver existed) has been deleted.
+//! promotion's scope. The dom-local mirror has since been deleted; no
+//! DOM-tree-walking driver in this repository drives this type yet.
 //!
 //! **Field-shape divergence from the dom-local mirror, now resolved**: the
 //! dom-local `NamedStringState` stores `Option<StringSnapshot>` (a
@@ -96,19 +95,16 @@ use crate::dom::Symbol;
 /// [`Self::pop_scope`] exists for a DOM-tree-driven walker to call at the
 /// right point (subtree exit, matching the real CSS scoping rule where two
 /// *sibling* elements each resetting the same counter get independent,
-/// same-depth scopes, not accumulating nesting). `raikiri_dom::phase_b`'s
-/// walker now does exactly this, via [`PageContext::pop_counter_scope`]'s
-/// forwarding call at the resetting element's own parent's subtree exit.
-/// `raikiri_dom::phase_b` also implements CSS Lists 3 §4.3's separate
-/// "obscuring" rule this way, using the same [`Self::pop_scope`] primitive:
-/// a later sibling's reset of the same name is specified to evict an
-/// earlier sibling's still-open frame outright rather than merely sit above
-/// it, so that walker calls [`Self::pop_scope`] (via
-/// [`PageContext::pop_counter_scope`]) on the earlier sibling's frame right
-/// before applying the later sibling's own reset, instead of leaving both
-/// frames on the stack for [`Self::values`]'s callers to see joined
-/// together — see `raikiri_dom::phase_b`'s module doc "Counter-scope exit"
-/// for the full mechanism. [`Self::reset`] itself still only ever pushes,
+/// same-depth scopes, not accumulating nesting). Such a walker calls
+/// [`PageContext::pop_counter_scope`] at the resetting element's own
+/// parent's subtree exit. CSS Lists 3 §4.3's separate "obscuring" rule uses
+/// the same [`Self::pop_scope`] primitive: a later sibling's reset of the
+/// same name is specified to evict an earlier sibling's still-open frame
+/// outright rather than merely sit above it, so the walker pops the earlier
+/// sibling's frame right before applying the later sibling's own reset,
+/// instead of leaving both frames on the stack for [`Self::values`]'s
+/// callers to see joined together. `raikiri_dom`'s counter-snapshot walk
+/// applies the same scope model to its own stacks. [`Self::reset`] itself still only ever pushes,
 /// never replaces in place; the eviction is the caller's own extra
 /// `pop_scope` call, not a change to this method.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -167,9 +163,8 @@ impl CounterStack {
 
     /// Exit the innermost nested scope, returning its value (`None` if the
     /// stack was already empty). See the type-level "Caller invariant" note
-    /// — `raikiri_dom::phase_b`'s walker now calls this, via
-    /// [`PageContext::pop_counter_scope`]'s forwarding call, at the
-    /// resetting element's own parent's subtree exit.
+    /// for when a DOM-tree walker calls this (via
+    /// [`PageContext::pop_counter_scope`]'s forwarding call).
     pub fn pop_scope(&mut self) -> Option<i32> {
         self.frames.pop()
     }
@@ -255,10 +250,8 @@ impl NamedStringState {
     /// page's entry/start value, and clear the per-page first/last-use
     /// trackers (a fresh page starts with no assignments of its own).
     ///
-    /// No production driver calls this yet — `raikiri_dom::phase_b`'s
-    /// per-page walk now reaches the promoted state through
-    /// [`PageContext::begin_page`], but that driver is still
-    /// `#[allow(dead_code)]` and is exercised only by tests.
+    /// No production driver calls this yet; it is reached through
+    /// [`PageContext::begin_page`].
     pub fn begin_page(&mut self) {
         self.on_page_start = self.running.clone();
         self.on_page_first_use = None;
@@ -535,10 +528,7 @@ impl PageContext {
                 // skipping registration altogether: TargetInfo::text_part's
                 // own documented "" fallback for absent parts is pre-existing
                 // blessed semantics (CSS Content 3 §2.6.3 is itself marked
-                // not-ready-for-implementation on this point), and
-                // `raikiri_dom::target::build_target_registry` already ships
-                // with 3 of 4 ContentPart variants absent by design (module
-                // doc "Text parts — ContentPart::Content only"). The
+                // not-ready-for-implementation on this point). The
                 // counters snapshot registered here is independently useful
                 // on its own. A caller wanting real text must use
                 // `Self::set_targets` instead — see the call-order note
@@ -611,9 +601,7 @@ impl PageContext {
     /// [`TargetRegistry::begin_page`]). Design §7.2 names `PageContext` as
     /// sole owner of `page_index` and `targets` as sibling fields; this
     /// method is what actually keeps the two paired on a transition. No
-    /// production caller exists yet — `raikiri_dom::phase_b`'s per-page walk
-    /// now calls this method, but that driver is still
-    /// `#[allow(dead_code)]` and is exercised only by tests.
+    /// production caller exists yet.
     ///
     /// **The sole sanctioned way to advance `page_index` from here on.**
     /// `page_index` remains a directly-writable `pub` field (see its own
@@ -700,13 +688,10 @@ impl PageContext {
     }
 
     /// Replace `targets` wholesale with a pre-built [`TargetRegistry`] — the
-    /// bulk-integration path for
-    /// `raikiri_dom::target::build_target_registry`'s register-site walker,
-    /// which produces a complete registry (counters *and* descendant text)
-    /// from a dedicated DOM walk rather than from a `GcpmDirective` stream
-    /// (see that function's module doc — `RegisterTarget` is synthesized,
-    /// not consumed, there). raikiri-dom drives (runs the walk, calls this
-    /// setter); raikiri-traits owns the resulting data (design §7.0's
+    /// bulk-integration path for a register-site walker that produces a
+    /// complete registry (counters *and* descendant text) from a dedicated
+    /// DOM walk rather than from a `GcpmDirective` stream. raikiri-dom
+    /// drives (runs the walk, calls this setter); raikiri-traits owns the resulting data (design §7.0's
     /// "runtime side raikiri-dom / shared types raikiri-traits" split).
     ///
     /// Not itself an [`Self::apply_directive`] arm — `GcpmDirective` has no
