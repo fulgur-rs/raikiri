@@ -637,7 +637,7 @@ fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexible
     {
         return Some(GridInflexibleBreadth::MaxContent);
     }
-    // See the `calc()` note in [`parse_track_breadth`].
+    // See the `calc()` note in `parse_track_breadth`.
     if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
         return Some(GridInflexibleBreadth::Calc(
             LengthPercentageOrCalc::from_non_negative_calc(calc),
