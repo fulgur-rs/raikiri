@@ -329,6 +329,59 @@ fn anonymous_block_direction_reaches_the_native_callback() {
 }
 
 #[test]
+fn laying_out_an_anonymous_cell_puts_its_source_owner_back() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(0),
+        "div",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let block = doc.append_element(
+        Some(row),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(doc.table_objects.cells.len(), 1);
+    let cell = &doc.table_objects.cells[0];
+    assert_eq!(cell.owner, row);
+    let view_children = cell.node.children.clone();
+    let row_children = doc.nodes[row].children.clone();
+    let row_display = doc.nodes[row].display;
+    let mut inputs = column_probe_input();
+    inputs.known_dimensions.width = Some(100.0);
+    // A single layout of the cell key: an even number of them would hide a
+    // missing swap back.
+    let key = doc.table_objects.arena_len;
+    let output =
+        taffy::LayoutPartialTree::compute_child_layout(&mut doc, taffy::NodeId::from(key), inputs);
+    assert_eq!(
+        output.size,
+        Size {
+            width: 100.0,
+            height: 10.0
+        }
+    );
+    // The source row is back in its slot, and the view, laid out in the
+    // row's place, is back in the cell.
+    assert_eq!(doc.nodes[row].children, row_children);
+    assert_eq!(doc.nodes[row].display, row_display);
+    let cell = &doc.table_objects.cells[0];
+    assert_eq!(cell.node.children, view_children);
+    assert_eq!(doc.parent_of(block), Some(row));
+}
+
+#[test]
 fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

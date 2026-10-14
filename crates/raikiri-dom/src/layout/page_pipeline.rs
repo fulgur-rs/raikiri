@@ -1308,13 +1308,14 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
         let cv = &cascade.computed[idx];
         let measure = |provenance: &Option<ChLengthProvenance>| {
             provenance.as_ref().map(|provenance| {
-                let used = provenance.factor
-                    * crate::layout::ifc::ch::ch_advance(&fonts, &provenance.font);
-                if used.is_nan() {
+                let mut used = provenance
+                    .with_advance(crate::layout::ifc::ch::ch_advance(&fonts, &provenance.font));
+                used.px = if used.px.is_nan() {
                     0.0
                 } else {
-                    used.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
-                }
+                    used.px.clamp(-MAX_TAFFY_MAGNITUDE, MAX_TAFFY_MAGNITUDE)
+                };
+                used
             })
         };
         // A box sized by its vertical logical sizes takes their `ch` lengths
@@ -1324,9 +1325,9 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
                 Some(size) => (&size.width_ch, &size.height_ch),
                 None => (&cv.width_ch, &cv.height_ch),
             };
-        let width = measure(width_ch).map(|value| value.max(0.0));
-        let height = measure(height_ch).map(|value| value.max(0.0));
-        let min_width = measure(&cv.min_width_ch).map(|value| value.max(0.0));
+        let width = measure(width_ch);
+        let height = measure(height_ch);
+        let min_width = measure(&cv.min_width_ch);
         // Use the same normalized logical block axis as the min/max bridge.
         let min_height_ch = if cv.writing_mode == WritingMode::HorizontalTb
             && cv.cssom_writing_mode != WritingMode::HorizontalTb
@@ -1336,63 +1337,80 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
         } else {
             &cv.min_height_ch
         };
-        let min_height = measure(min_height_ch).map(|value| value.max(0.0));
-        let max_width = measure(&cv.max_width_ch).map(|value| value.max(0.0));
-        let max_height = measure(&cv.max_height_ch).map(|value| value.max(0.0));
-        let padding = (
-            measure(&cv.padding_ch.top).map(|value| value.max(0.0)),
-            measure(&cv.padding_ch.right).map(|value| value.max(0.0)),
-            measure(&cv.padding_ch.bottom).map(|value| value.max(0.0)),
-            measure(&cv.padding_ch.left).map(|value| value.max(0.0)),
-        );
-        let margin = (
-            measure(&cv.margin_ch.top),
-            measure(&cv.margin_ch.right),
-            measure(&cv.margin_ch.bottom),
-            measure(&cv.margin_ch.left),
-        );
+        let min_height = measure(min_height_ch);
+        let max_width = measure(&cv.max_width_ch);
+        let max_height = measure(&cv.max_height_ch);
+        let sides = |sides: &raikiri_style::property::Sides<Option<ChLengthProvenance>>| {
+            [
+                measure(&sides.top),
+                measure(&sides.right),
+                measure(&sides.bottom),
+                measure(&sides.left),
+            ]
+        };
+        let [padding_top, padding_right, padding_bottom, padding_left] = sides(&cv.padding_ch);
+        let [margin_top, margin_right, margin_bottom, margin_left] = sides(&cv.margin_ch);
+        let calc_values = &mut doc.calc_values;
         let style = &mut doc.nodes[idx].style;
+        // A sum with a percentage resolves against the containing block in
+        // taffy, through the same arena as other calc() values. Sizes and
+        // padding cannot be negative; margins can.
+        let mut used = |value: CalcLengthPercentage, non_negative: bool| {
+            if value.percent == 0.0 {
+                LengthPercentage::length(if non_negative {
+                    value.px.max(0.0)
+                } else {
+                    value.px
+                })
+            } else {
+                LengthPercentage::calc(crate::taffy_impl::push_calc(
+                    calc_values,
+                    value,
+                    non_negative,
+                ))
+            }
+        };
         if let Some(width) = width {
-            style.size.width = Dimension::length(width);
+            style.size.width = used(width, true).into();
         }
         if let Some(height) = height {
-            style.size.height = Dimension::length(height);
+            style.size.height = used(height, true).into();
         }
         if let Some(width) = min_width {
-            style.min_size.width = LengthPercentageAuto::length(width);
+            style.min_size.width = used(width, true).into();
         }
         if let Some(height) = min_height {
-            style.min_size.height = LengthPercentageAuto::length(height);
+            style.min_size.height = used(height, true).into();
         }
         if let Some(width) = max_width {
-            style.max_size.width = LengthPercentageAuto::length(width);
+            style.max_size.width = used(width, true).into();
         }
         if let Some(height) = max_height {
-            style.max_size.height = LengthPercentageAuto::length(height);
+            style.max_size.height = used(height, true).into();
         }
-        if let Some(top) = padding.0 {
-            style.padding.top = LengthPercentage::length(top);
+        if let Some(top) = padding_top {
+            style.padding.top = used(top, true);
         }
-        if let Some(right) = padding.1 {
-            style.padding.right = LengthPercentage::length(right);
+        if let Some(right) = padding_right {
+            style.padding.right = used(right, true);
         }
-        if let Some(bottom) = padding.2 {
-            style.padding.bottom = LengthPercentage::length(bottom);
+        if let Some(bottom) = padding_bottom {
+            style.padding.bottom = used(bottom, true);
         }
-        if let Some(left) = padding.3 {
-            style.padding.left = LengthPercentage::length(left);
+        if let Some(left) = padding_left {
+            style.padding.left = used(left, true);
         }
-        if let Some(top) = margin.0 {
-            style.margin.top = LengthPercentageAuto::length(top);
+        if let Some(top) = margin_top {
+            style.margin.top = used(top, false).into();
         }
-        if let Some(right) = margin.1 {
-            style.margin.right = LengthPercentageAuto::length(right);
+        if let Some(right) = margin_right {
+            style.margin.right = used(right, false).into();
         }
-        if let Some(bottom) = margin.2 {
-            style.margin.bottom = LengthPercentageAuto::length(bottom);
+        if let Some(bottom) = margin_bottom {
+            style.margin.bottom = used(bottom, false).into();
         }
-        if let Some(left) = margin.3 {
-            style.margin.left = LengthPercentageAuto::length(left);
+        if let Some(left) = margin_left {
+            style.margin.left = used(left, false).into();
         }
     }
 }

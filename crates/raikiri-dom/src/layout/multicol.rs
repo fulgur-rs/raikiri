@@ -2385,11 +2385,10 @@ impl ResolvedChWidths {
         visit_top_down(parent_of, |parent, id| {
             let parent_width = parent.map_or(fallback, |parent| widths.content_width[parent]);
             let cv = &cascade.computed[id];
-            let resolved_ch = cv
-                .width_ch
-                .as_ref()
-                .and_then(|_| style_dimension_length(doc.nodes[id].style.size.width));
+            let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);
             widths.content_width[id] = match (resolved_ch, cv.width) {
+                // A `display: contents` element has no box, so no width of its own.
+                _ if cv.display == DisplayValue::Contents => parent_width.max(0.0),
                 (Some(width), _) => width.max(0.0),
                 (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
                     value.max(0.0)
@@ -2515,14 +2514,21 @@ impl AncestorFacts {
             )
         );
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
-        self.content_width[id] = match cascade.computed[id].width {
+        let values = &cascade.computed[id];
+        self.content_width[id] = if values.display == DisplayValue::Contents {
             // A `display: contents` element has no box, so no width of its own.
-            _ if cascade.computed[id].display == DisplayValue::Contents => parent_width.max(0.0),
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-            ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
-                (parent_width * value / 100.0).max(0.0)
+            parent_width.max(0.0)
+        } else if let Some(width) = measured_ch_width(doc, cascade, id, parent_width) {
+            // A `ch` width was measured before Taffy, including any calc() sum.
+            width.max(0.0)
+        } else {
+            match values.width {
+                ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
+                ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
+                    (parent_width * value / 100.0).max(0.0)
+                }
+                _ => parent_width.max(0.0),
             }
-            _ => parent_width.max(0.0),
         };
         let Some(parent) = parent else {
             self.vertical[id] = vertical_self;

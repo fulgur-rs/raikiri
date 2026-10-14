@@ -51,6 +51,27 @@ fn style_dimension_length(value: Dimension) -> Option<f32> {
     resolve_dimension(value, None).filter(|value| value.is_finite())
 }
 
+/// The used width a measured `ch` width was given before Taffy: a length, or
+/// a calc() sum whose percentage resolves against `parent_width`.
+fn measured_ch_width(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    parent_width: f32,
+) -> Option<f32> {
+    cascade.computed[id].width_ch.as_ref()?;
+    let width = doc.nodes[id].style.size.width;
+    let raw = width.into_raw();
+    if raw.is_calc() {
+        Some(crate::taffy_impl::resolve_calc(
+            raw.calc_value(),
+            parent_width,
+        ))
+    } else {
+        style_dimension_length(width)
+    }
+}
+
 mod body_block_margins;
 mod box_tree;
 mod bridge;

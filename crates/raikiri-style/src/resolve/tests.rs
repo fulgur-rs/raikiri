@@ -2149,7 +2149,47 @@ fn relative_calc_arithmetic_rejects_non_finite_results() {
     assert_eq!(two.add_scaled(rem, 1.0), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1e38, "in"), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "svx"), None);
-    assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "ch"), None);
+    assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "deg"), None);
+}
+
+#[test]
+fn relative_calc_ch_terms_fall_back_to_half_an_em_and_split_for_layout() {
+    let calc =
+        crate::cascade::parse_relative_calc_length_percentage("calc(50% + 2ch + 1em + 10px)")
+            .unwrap();
+    let font_size = ComputedLength(20.0);
+    // Style resolves `ch` as `0.5em`, like a plain `ch` length.
+    assert_eq!(
+        resolve_length_percentage_or_auto(LengthOrAuto::RelativeCalc(calc), font_size, None, &CTX),
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 50.0,
+        })
+    );
+    // Layout gets the `ch` coefficient and the rest of the sum.
+    assert_eq!(
+        relative_calc_ch_parts(calc, font_size, None, &CTX),
+        Some((
+            2.0,
+            CalcLengthPercentage {
+                percent: 50.0,
+                px: 30.0,
+            }
+        ))
+    );
+    let without_ch =
+        crate::cascade::parse_relative_calc_length_percentage("calc(1em + 10px)").unwrap();
+    assert_eq!(
+        relative_calc_ch_parts(without_ch, font_size, None, &CTX),
+        None
+    );
+    // An `lh` term without a basis leaves the rest unresolved.
+    let unresolved =
+        crate::cascade::parse_relative_calc_length_percentage("calc(2ch + 1lh)").unwrap();
+    assert_eq!(
+        relative_calc_ch_parts(unresolved, font_size, None, &CTX),
+        None
+    );
 }
 
 #[test]
