@@ -481,3 +481,26 @@ fn only_in_flow_typographic_pseudo_elements_form_opacity_groups() {
     assert_eq!(pseudo_opacity_layer(&cascade, id(PseudoElem::Marker)), None);
     assert_eq!(pseudo_opacity_layer(&cascade, p), None);
 }
+
+#[test]
+fn generated_boxes_below_a_paragraph_hold_a_negative_stack_level() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let style = doc.append_element(Some(html), "style", Style::default(), Some("display:none"));
+    doc.append_text(
+        style,
+        "p::before{content:'a';position:relative;z-index:-1} p+p::before{z-index:1}",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let paragraph = |doc: &mut Document| {
+        let p = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+        doc.append_text(p, "text");
+        p
+    };
+    let low = paragraph(&mut doc);
+    let high = paragraph(&mut doc);
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    assert!(holds_negative_stack_level(&doc, &cascade, low));
+    assert!(!holds_negative_stack_level(&doc, &cascade, high));
+}

@@ -544,6 +544,183 @@ fn display_contents_stays_inside_the_deferral_layer() {
     assert!(at(Step::Box(c)) < at(Step::Text(b)));
 }
 
+/// Compares both sequences of a fixture without extra style.
+fn same_order(body: &str) -> DocumentLayout {
+    assert_same_order(body, "")
+}
+
+/// The position of `step` in the walker's sequence of the first page.
+fn step_at(result: &DocumentLayout, step: Step) -> usize {
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    steps
+        .iter()
+        .position(|s| *s == step)
+        .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+}
+
+/// A block that clips hands its text to the enclosing layer inside its
+/// clip, so a later block's background stays below the clipped text.
+#[test]
+fn clipped_text_paints_above_later_block_backgrounds() {
+    let result = same_order(
+        "<div id=a style=\"overflow: hidden; height: 20px\">\
+         <div id=b style=\"height: 0\">clip text</div></div>\
+         <div id=c style=\"margin-top: -10px; height: 20px; background: teal\"></div>",
+    );
+    let [a, b, c] = ["a", "b", "c"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(a)) < step_at(&result, Step::Box(c)));
+    assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Text(b)));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    let text = step_at(&result, Step::Text(b));
+    assert_eq!(steps[text - 1], Step::PushClip);
+    assert_eq!(steps[text + 1], Step::PopClip);
+}
+
+/// A positioned box inside a clipping block waits for the end of the
+/// enclosing layer, still inside the block's clip.
+#[test]
+fn positioned_boxes_in_clipping_blocks_keep_the_clip() {
+    let result = same_order(
+        "<div id=a style=\"overflow: hidden; height: 20px\">\
+         <div id=b style=\"position: relative; height: 5px; background: red\"></div></div>\
+         <div id=c style=\"height: 20px; background: teal\"></div>",
+    );
+    let [b, c] = ["b", "c"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Box(b)));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(b)) - 1], Step::PushClip);
+}
+
+/// A float paints its own content, but the positioned boxes inside it
+/// belong to the enclosing layer and paint after its text.
+#[test]
+fn positioned_boxes_in_floats_paint_after_the_layer_text() {
+    let result = same_order(
+        "<div id=a style=\"height: 0\">over</div>\
+         <div id=f style=\"float: left; width: 50px; height: 20px; background: gray\">\
+         <div id=p style=\"position: relative; height: 5px; background: red\"></div></div>",
+    );
+    let [a, f, p] = ["a", "f", "p"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(f)) < step_at(&result, Step::Text(a)));
+    assert!(step_at(&result, Step::Text(a)) < step_at(&result, Step::Box(p)));
+}
+
+/// The backgrounds of a table and its cells are block backgrounds of the
+/// layer: text before the table and in earlier cells stays above them.
+#[test]
+fn table_backgrounds_paint_below_the_layer_text() {
+    let result = same_order(
+        "<div id=a style=\"height: 0\">over</div>\
+         <table id=t style=\"border-spacing: 0; background: lime\"><tr>\
+         <td id=c1 style=\"width: 20px\">overflowing_text</td>\
+         <td id=c2 style=\"width: 20px; background: teal\"></td></tr></table>",
+    );
+    let [a, t, c1, c2] = ["a", "t", "c1", "c2"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(t)) < step_at(&result, Step::Text(a)));
+    assert!(step_at(&result, Step::Box(c2)) < step_at(&result, Step::Text(c1)));
+    assert!(step_at(&result, Step::Text(a)) < step_at(&result, Step::Text(c1)));
+
+    // A cell that clips paints its background below the earlier cells' text
+    // too.
+    let result = same_order(
+        "<table style=\"border-spacing: 0\"><tr>\
+         <td id=c1 style=\"width: 20px\">overflowing_text</td>\
+         <td id=c2 style=\"width: 20px; overflow: hidden; background: teal\">x</td></tr></table>",
+    );
+    let [c1, c2] = ["c1", "c2"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(c2)) < step_at(&result, Step::Text(c1)));
+    assert!(step_at(&result, Step::Text(c1)) < step_at(&result, Step::Text(c2)));
+
+    // An inline table keeps its cells' text above its cells' backgrounds
+    // too, inside its own layer.
+    let result = same_order(
+        "<div>a <span style=\"display: inline-table; border-spacing: 0\">\
+         <span style=\"display: table-row\">\
+         <span id=c1 style=\"display: table-cell; width: 20px\">overflowing_text</span>\
+         <span id=c2 style=\"display: table-cell; width: 20px; background: teal\"></span>\
+         </span></span></div>",
+    );
+    let [c1, c2] = ["c1", "c2"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(c2)) < step_at(&result, Step::Text(c1)));
+}
+
+/// A block inside a paragraph's inline content paints its background before
+/// the paragraph's lines, whether the paragraph defers its content or not.
+#[test]
+fn blocks_inside_paragraphs_paint_before_the_lines() {
+    for style in ["height: 0", "position: relative; height: 0"] {
+        let result = same_order(&format!(
+            "<div id=m style=\"{style}\">over\
+             <div id=k style=\"background: gray; height: 10px\">inner</div>tail</div>"
+        ));
+        let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+        assert!(step_at(&result, Step::Box(k)) < step_at(&result, Step::Text(m)));
+        assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Text(k)));
+    }
+}
+
+/// A paragraph with content positioned below its blocks keeps the blocks
+/// with that content.
+#[test]
+fn blocks_inside_paragraphs_with_negative_content_stay_with_it() {
+    let result = same_order(
+        "<div id=m>over<span style=\"position: relative; z-index: -1\">x</span>\
+         <div id=k style=\"background: gray; height: 10px\"></div></div>",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Text(m)) < step_at(&result, Step::Box(k)));
+}
+
+/// A box in a paragraph's lines that closes the deferred text of the
+/// paragraph's blocks paints above that text.
+#[test]
+fn closing_boxes_in_paragraph_lines_paint_above_block_text() {
+    let result = same_order(
+        "<div id=m style=\"position: relative\">over<div id=k style=\"height: 0\">inner</div>\
+         <span id=o style=\"display: inline-block; opacity: 0.5; background: blue\">x</span></div>",
+    );
+    let [k, o] = ["k", "o"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Text(k)) < step_at(&result, Step::Box(o)));
+}
+
+/// A positioned box waits for the end of its layer, so a block that
+/// follows its parent paints its background below it.
+#[test]
+fn positioned_boxes_paint_after_later_block_backgrounds() {
+    let result = same_order(
+        "<div><div id=a style=\"height: 0\">over</div>\
+         <div id=r style=\"position: relative; height: 5px; background: red\"></div>\
+         <div id=o style=\"opacity: 0.5; height: 5px; background: blue\"></div></div>\
+         <div id=d style=\"height: 20px; background: gray\"></div>",
+    );
+    let [a, r, o, d] = ["a", "r", "o", "d"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(d)) < step_at(&result, Step::Text(a)));
+    assert!(step_at(&result, Step::Text(a)) < step_at(&result, Step::Box(r)));
+    assert!(step_at(&result, Step::Text(a)) < step_at(&result, Step::Box(o)));
+}
+
+/// Positioned boxes inside a flex container or a flex item keep tree order
+/// with the positioned boxes before them.
+#[test]
+fn positioned_boxes_in_flex_containers_keep_tree_order() {
+    let green = "<div id=g style=\"position: absolute; width: 10px; height: 10px; \
+                 background: green\"></div>";
+    for inner in [green.to_string(), format!("<div>{green}</div>")] {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 20px\">\
+             <div id=r style=\"position: absolute; width: 20px; height: 20px; background: red\"></div>\
+             <div style=\"display: flex; height: 20px\">{inner}</div></div>\
+             <div id=d style=\"height: 20px; background: gray\"></div>"
+        ));
+        let [r, g, d] = ["r", "g", "d"].map(|id| by_id(&result, id));
+        assert!(step_at(&result, Step::Box(d)) < step_at(&result, Step::Box(g)));
+        assert!(step_at(&result, Step::Box(r)) < step_at(&result, Step::Box(g)));
+    }
+}
+
 /// The walker draws an inline element's background with the paragraph's
 /// lines and records only the paragraph's `Text`; `paint_order` lists the
 /// inline element's `Box` on its own, before the paragraph's text. The
@@ -831,7 +1008,9 @@ fn overflow_clip_rectangles_match() {
     assert_eq!(result.page_count(), 1);
     let page = result.pages().next().expect("a page");
     let (walker, api) = clip_rects(&page);
-    assert_eq!(walker.len(), 2, "{walker:?}");
+    // The middle box's clip opens again around the translucent box, which
+    // waits for the end of the outer group's layer.
+    assert_eq!(walker.len(), 3, "{walker:?}");
     assert_rects_match(&walker, &api, "page 0");
 }
 
@@ -843,7 +1022,18 @@ fn assert_clip_rects_on_every_page(body: &str) {
     assert!(result.page_count() > 1, "{} pages", result.page_count());
     for page in result.pages() {
         let (walker, api) = clip_rects(&page);
-        assert_eq!(walker.len(), 1, "page {}: {walker:?}", page.index());
+        // The clip opens around the box's subtree, and again around the
+        // text it defers to the end of the enclosing layer when the page
+        // has any.
+        let has_text = walker_steps(&page)
+            .iter()
+            .any(|step| matches!(step, Step::Text(_)));
+        assert_eq!(
+            walker.len(),
+            1 + usize::from(has_text),
+            "page {}: {walker:?}",
+            page.index()
+        );
         assert_rects_match(&walker, &api, &format!("page {}", page.index()));
     }
 }
@@ -920,4 +1110,39 @@ fn atomic_inlines_beside_inline_opacity_groups() {
          <b style=\"display:inline-block;width:5px;height:5px;background:blue\"></b></span></p>",
         "",
     );
+}
+
+/// A flex or grid item with an integer `z-index` forms a stacking context,
+/// so the positioned boxes inside it stay below a later item with a higher
+/// stack level.
+#[test]
+fn z_indexed_flex_and_grid_items_keep_their_positioned_boxes() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style=\"display: {display}\">\
+             <div id=x style=\"z-index: 1; width: 20px; height: 20px\">\
+             <div id=p style=\"position: relative; height: 5px; background: red\"></div></div>\
+             <div id=y style=\"z-index: 2; margin-left: -20px; width: 20px; height: 20px; \
+             background: teal\"></div></div>"
+        ));
+        let [p, y] = ["p", "y"].map(|id| by_id(&result, id));
+        assert!(
+            step_at(&result, Step::Box(p)) < step_at(&result, Step::Box(y)),
+            "{display}"
+        );
+    }
+}
+
+/// Content positioned below the blocks inside an inline box that forms a
+/// stacking context stays in that box, so the paragraph's blocks still
+/// paint before its lines.
+#[test]
+fn negative_content_inside_inline_stacking_contexts_keeps_blocks_before_the_lines() {
+    let result = same_order(
+        "<div id=m>over<span style=\"position: relative; z-index: 0\">\
+         <span style=\"position: relative; z-index: -1\">x</span></span>\
+         <div id=k style=\"background: gray; height: 10px\"></div></div>",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(k)) < step_at(&result, Step::Text(m)));
 }

@@ -333,39 +333,294 @@ pub fn pseudo_stack_level(cascade: &CascadeResult, id: usize) -> i32 {
 /// inline content of a plain block in a block container until the end of
 /// the nearest ancestor that does not defer, which closes the layer.
 ///
-/// A block that clips, groups, transforms, fragments into columns, floats or
-/// is positioned paints its content in place: deferring past it would move
-/// the content out of its clip or group.
+/// The parts of a table in such a block defer too: the table's, rows' and
+/// cells' backgrounds are block backgrounds of the layer, below the text of
+/// every cell.
+///
+/// A block that groups, transforms, fragments into columns, floats or is
+/// positioned paints its content in place: deferring past it would move the
+/// content out of its group. A block that clips defers its content in a
+/// layer of its own instead (see [`merges_clipped_inline_content`]).
 pub fn defers_inline_content(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    cascade
+        .computed
+        .get(node_id)
+        .is_some_and(|cv| !clips_overflow(cv))
+        && defers_unless_clipped(document, cascade, node_id)
+}
+
+/// Whether a block that clips its overflow would otherwise defer its inline
+/// content (see [`defers_inline_content`]).
+///
+/// The painters collect the block's inline content, and the positioned boxes
+/// inside it, in a layer of its own, and hand that layer to the enclosing
+/// one inside the block's clip once the block's subtree is done. The text
+/// stays clipped, and still paints above the backgrounds of the blocks that
+/// follow (CSS 2.1 Appendix E steps 4 and 7).
+pub fn merges_clipped_inline_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    cascade.computed.get(node_id).is_some_and(clips_overflow)
+        && defers_unless_clipped(document, cascade, node_id)
+}
+
+/// [`defers_inline_content`] without its overflow condition.
+fn defers_unless_clipped(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let Some(cv) = cascade.computed.get(node_id) else {
         return false;
     };
-    let block_container = |display: DisplayValue| {
-        matches!(
-            display,
-            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-        )
+    let parent_display = box_parent(document, cascade, node_id)
+        .and_then(|parent| cascade.computed.get(parent))
+        .map(|parent| parent.display);
+    let fits_parent = match cv.display {
+        DisplayValue::Block
+        | DisplayValue::FlowRoot
+        | DisplayValue::ListItem
+        | DisplayValue::Table => parent_display.is_some_and(is_block_container),
+        DisplayValue::TableCaption
+        | DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup => parent_display == Some(DisplayValue::Table),
+        DisplayValue::TableRow => matches!(
+            parent_display,
+            Some(
+                DisplayValue::Table
+                    | DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            )
+        ),
+        DisplayValue::TableCell => parent_display == Some(DisplayValue::TableRow),
+        _ => false,
     };
-    block_container(cv.display)
+    fits_parent
         && matches!(cv.position, PositionValue::Static)
         && matches!(cv.float, FloatValue::None)
-        && opacity_layer(cv).is_none()
-        && cv.transform.is_empty()
-        && cv.filter.is_empty()
-        && !clips_overflow(cv)
+        && !establishes_stacking_context(cv)
         && matches!(cv.column_count, ColumnCountValue::Auto)
         && matches!(cv.column_width, ComputedColumnWidth::Auto)
+}
+
+/// Whether boxes of `display` hold the block-level boxes they contain in
+/// a block formatting context of their own or of their parent.
+fn is_block_container(display: DisplayValue) -> bool {
+    matches!(
+        display,
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::InlineBlock
+            | DisplayValue::TableCell
+            | DisplayValue::TableCaption
+    )
+}
+
+/// Whether a non-positioned box still forms a group of its own: an opacity
+/// group, a transform or a filter.
+fn establishes_stacking_context(cv: &ComputedValues) -> bool {
+    opacity_layer(cv).is_some() || !cv.transform.is_empty() || !cv.filter.is_empty()
+}
+
+/// Whether a positioned box, or a box that forms a stacking context, waits
+/// for the end of the enclosing layer.
+///
+/// Such boxes with a stack level of zero or more paint after the in-flow
+/// blocks of their stacking context and after its inline content (CSS 2.1
+/// Appendix E steps 8 and 9), so a block that follows one in the tree still
+/// paints its background below it. The painters keep these boxes in tree
+/// order at the end of the layer of the nearest ancestor that closes one.
+///
+/// Boxes laid out beside the lines of a paragraph keep their place among the
+/// paragraph's content, as do boxes with a negative stack level, which
+/// paint below the blocks of the layer.
+pub fn defers_to_positioned_layer(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    cascade.computed.get(node_id).is_some_and(|cv| {
+        let positioned = !matches!(cv.position, PositionValue::Static);
+        let negative = positioned && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0);
+        document
+            .get_node(node_id)
+            .is_some_and(|node| node.kind() == NodeKind::Element)
+            && generates_box(cv)
+            && (positioned || establishes_stacking_context(cv))
+            && !negative
+            && box_parent(document, cascade, node_id).is_some_and(|parent| {
+                document
+                    .get_node(parent)
+                    .is_some_and(|node| !node.is_ifc_root())
+                    && cascade.computed.get(parent).is_some_and(|parent| {
+                        // A child of a table part sits in an anonymous cell;
+                        // the children of flex and grid containers join the
+                        // layer the same way.
+                        is_block_container(parent.display)
+                            || matches!(
+                                parent.display,
+                                DisplayValue::Flex
+                                    | DisplayValue::InlineFlex
+                                    | DisplayValue::Grid
+                                    | DisplayValue::InlineGrid
+                                    | DisplayValue::Table
+                                    | DisplayValue::InlineTable
+                                    | DisplayValue::TableRowGroup
+                                    | DisplayValue::TableHeaderGroup
+                                    | DisplayValue::TableFooterGroup
+                                    | DisplayValue::TableRow
+                            )
+                    })
+            })
+    })
+}
+
+/// Whether a box hands the positioned boxes it holds to the enclosing layer.
+///
+/// Positioned descendants belong to the nearest stacking context, where they
+/// paint after its inline content (CSS 2.1 Appendix E step 8), whatever box
+/// between holds them. A float or a flex or grid item paints as if it formed
+/// a stacking context, but passes them on too. A box that clips or forms a
+/// stacking context of its own keeps them, as does a box laid out beside the
+/// lines of a paragraph, which paints among the paragraph's content.
+pub fn hoists_positioned_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    cascade.computed.get(node_id).is_some_and(|cv| {
+        matches!(cv.position, PositionValue::Static)
+            && !establishes_stacking_context(cv)
+            && !is_z_indexed_item(document, cascade, node_id, cv)
+            && !clips_overflow(cv)
+            && (!matches!(cv.float, FloatValue::None)
+                || box_parent(document, cascade, node_id).is_some_and(|parent| {
+                    document
+                        .get_node(parent)
+                        .is_some_and(|node| !node.is_ifc_root())
+                }))
+    })
+}
+
+/// Whether a flex or grid item with computed values `cv` has an integer
+/// `z-index`, which makes it a stacking context even when it is not
+/// positioned (CSS Flexbox 1 §4.3, CSS Grid 1 §9.5).
+fn is_z_indexed_item(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    matches!(cv.z_index, ZIndexValue::Integer(_))
         && box_parent(document, cascade, node_id)
             .and_then(|parent| cascade.computed.get(parent))
             .is_some_and(|parent| {
-                block_container(parent.display)
-                    || matches!(
-                        parent.display,
-                        DisplayValue::InlineBlock
-                            | DisplayValue::TableCell
-                            | DisplayValue::TableCaption
-                    )
+                matches!(
+                    parent.display,
+                    DisplayValue::Flex
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::Grid
+                        | DisplayValue::InlineGrid
+                )
             })
+}
+
+/// Whether box `id`, laid out in paragraph `root`, is an in-flow block
+/// inside the paragraph's inline content (CSS 2.1 §9.2.1.1) that paints
+/// before the paragraph's lines.
+///
+/// Its background is a block background of the layer (CSS 2.1 Appendix E
+/// step 4), below the lines around it (step 7), and its own inline content
+/// defers like any other block's. Blocks inside an inline element, or on
+/// the first line, stay with the paragraph's content and its groups. The
+/// painters keep all blocks of a paragraph with the paragraph's content when
+/// [`holds_negative_stack_level`] says it holds content that paints below
+/// the blocks.
+pub fn paints_before_paragraph_lines(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    id: usize,
+) -> bool {
+    cascade.computed.get(id).is_some_and(|cv| {
+        matches!(
+            cv.display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Table
+        ) && matches!(cv.position, PositionValue::Static)
+            && matches!(cv.float, FloatValue::None)
+            && !establishes_stacking_context(cv)
+    }) && document
+        .get_node(id)
+        .is_some_and(|node| node.kind() == NodeKind::Element)
+        && box_parent(document, cascade, id) == Some(root)
+        && !atomic_on_first_line(document, root, id)
+}
+
+/// Whether the inline content of paragraph `root` holds a box, an inline
+/// element or a `::before` or `::after` positioned with a negative
+/// `z-index`.
+///
+/// Such content paints below the in-flow blocks of the layer (CSS 2.1
+/// Appendix E step 3), and the painters list it with the paragraph, so the
+/// blocks inside the paragraph (see [`paints_before_paragraph_lines`]) stay
+/// there too. Only the paragraph's own inline content is searched, not the
+/// blocks inside it or the content of inline boxes that form stacking
+/// contexts.
+pub fn holds_negative_stack_level(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+) -> bool {
+    let negative = |key: usize| {
+        crate::generated_content::computed_for_id(cascade, key).is_some_and(|cv| {
+            !matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(level) if level < 0)
+        })
+    };
+    let pseudos = |id: usize| {
+        [PseudoElem::Before, PseudoElem::After]
+            .map(|pseudo| crate::generated_content::generated_node_id(id, pseudo))
+    };
+    if pseudos(root).into_iter().any(negative) {
+        return true;
+    }
+    let mut stack = document
+        .get_node(root)
+        .map(|node| node.children.clone())
+        .unwrap_or_default();
+    while let Some(id) = stack.pop() {
+        let Some(node) = document
+            .get_node(id)
+            .filter(|node| node.kind() == NodeKind::Element)
+        else {
+            continue;
+        };
+        if negative(id) {
+            return true;
+        }
+        // Content inside an inline box that forms a stacking context paints
+        // within that box, not below the paragraph's blocks.
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: elements in a laid-out paragraph have computed values
+        };
+        let stacking = establishes_stacking_context(cv)
+            || (!matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_)));
+        if stacking {
+            continue;
+        }
+        if pseudos(id).into_iter().any(negative) {
+            return true;
+        }
+        if matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+            stack.extend(node.children.iter().copied());
+        }
+    }
+    false
 }
 
 /// The nearest ancestor that generates a box, skipping `display: contents`
@@ -386,9 +641,10 @@ fn box_parent(document: &Document, cascade: &CascadeResult, node_id: usize) -> O
 /// before it.
 ///
 /// Positioned boxes and other stacking contexts paint above inline content
-/// (CSS 2.1 Appendix E steps 8 and 9), and so do tables, flex containers,
-/// atomic inlines and other boxes that are not block containers, which keep
-/// the inline content before them in tree order. Floats (step 5) and in-flow
+/// (CSS 2.1 Appendix E steps 8 and 9); most of them wait for the end of the
+/// layer instead (see [`defers_to_positioned_layer`]). Flex containers,
+/// atomic inlines, tables that do not defer and other boxes that are not
+/// block containers keep the inline content before them in tree order. Floats (step 5) and in-flow
 /// blocks that clip or fragment into columns (step 4) paint below it, so
 /// the earlier text stays above them. An element without a box, such as a
 /// `display: none` or `display: contents` one, closes nothing.
@@ -401,9 +657,7 @@ pub fn closes_deferred_inline_content(
         return false;
     };
     let below_inline_content = matches!(cv.position, PositionValue::Static)
-        && opacity_layer(cv).is_none()
-        && cv.transform.is_empty()
-        && cv.filter.is_empty()
+        && !establishes_stacking_context(cv)
         && (!matches!(cv.float, FloatValue::None)
             || matches!(
                 cv.display,
@@ -415,6 +669,7 @@ pub fn closes_deferred_inline_content(
         && generates_box(cv)
         && !below_inline_content
         && !defers_inline_content(document, cascade, node_id)
+        && !merges_clipped_inline_content(document, cascade, node_id)
 }
 
 /// A `visibility: hidden` table does not paint its own box.
