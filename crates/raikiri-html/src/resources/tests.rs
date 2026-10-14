@@ -1,3 +1,6 @@
+use super::image_cache::{
+    PROCESS_MAX_CONCURRENT_IMAGE_DECODES, PROCESS_MAX_RETAINED_DECODED_BYTES,
+};
 use super::*;
 use raikiri_traits::{
     Body, FetchOutcome, FetchedResource, ImagePixelSource, ImageRasterSize, Method, NetworkError,
