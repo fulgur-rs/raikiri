@@ -3067,18 +3067,6 @@ pub fn resolve_gradient(
     }
 }
 
-fn absolutized_length(
-    specified: Length,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Length {
-    match resolve_length_percentage(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentage::Px(v) => Length::Px(v),
-        ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-    }
-}
-
 fn absolutized_css_position(
     specified: CssPosition,
     font_size: ComputedLength,
@@ -3116,9 +3104,14 @@ fn resolve_gradient_color_stops(
             .iter()
             .map(|stop| GradientColorStop {
                 color: stop.color,
-                position: stop
-                    .position
-                    .map(|l| absolutized_length(l, font_size, own_line_height, ctx)),
+                position: stop.position.map(|l| {
+                    lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
+                        l,
+                        font_size,
+                        own_line_height,
+                        ctx,
+                    ))
+                }),
             })
             .collect(),
     )
@@ -3130,15 +3123,18 @@ fn resolve_radial_size(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> RadialSize {
+    let radius = |l| {
+        lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
+            l,
+            font_size,
+            own_line_height,
+            ctx,
+        ))
+    };
     match specified {
         RadialSize::Extent(e) => RadialSize::Extent(e),
-        RadialSize::Circle(l) => {
-            RadialSize::Circle(absolutized_length(l, font_size, own_line_height, ctx))
-        }
-        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(
-            absolutized_length(a, font_size, own_line_height, ctx),
-            absolutized_length(b, font_size, own_line_height, ctx),
-        ),
+        RadialSize::Circle(l) => RadialSize::Circle(radius(l)),
+        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(radius(a), radius(b)),
     }
 }
 

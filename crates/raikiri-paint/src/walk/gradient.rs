@@ -7,8 +7,8 @@
 use super::*;
 use raikiri_style::property::{
     BackgroundRepeatKeyword, GradientColorInterpolation, GradientColorStop, HorizontalSide,
-    LinearGradient, LinearGradientDirection, RadialExtent, RadialGradient, RadialShape, RadialSize,
-    VerticalSide,
+    LengthPercentageOrCalc, LinearGradient, LinearGradientDirection, RadialExtent, RadialGradient,
+    RadialShape, RadialSize, VerticalSide,
 };
 
 /// What one gradient tile is filled with.
@@ -411,15 +411,32 @@ pub(super) fn radial_radii(radial: &RadialGradient, center: Point, tile: Rect) -
             through_corner(far_x, far_y, far_x, far_y)
         }
         RadialSize::Circle(length) => {
-            let r = f64::from(length_to_px(length, 0.0, DEFAULT_FONT_SIZE));
+            let r = radial_radius(length, 0.0);
             (r, r)
         }
         RadialSize::Ellipse(rx, ry) => (
-            f64::from(length_to_px(rx, tile.width() as f32, DEFAULT_FONT_SIZE)),
-            f64::from(length_to_px(ry, tile.height() as f32, DEFAULT_FONT_SIZE)),
+            radial_radius(rx, tile.width()),
+            radial_radius(ry, tile.height()),
         ),
         // cov:ignore: defensive fallback for future size variants
         _ => through_corner(far_x, far_y, far_x, far_y),
+    }
+}
+
+/// An explicit radius against its percentage basis. A `calc()` radius that
+/// resolves below zero clamps to zero (CSS Values 4 "Range Checking",
+/// <https://www.w3.org/TR/css-values-4/#calc-range>).
+fn radial_radius(radius: LengthPercentageOrCalc, basis: f64) -> f64 {
+    match radius {
+        LengthPercentageOrCalc::Length(length) => {
+            f64::from(length_to_px(length, basis as f32, DEFAULT_FONT_SIZE))
+        }
+        LengthPercentageOrCalc::Calc(calc) => f64::from(
+            raikiri_style::resolve::ComputedLengthPercentageOrCalc::Calc(calc)
+                .resolve(basis as f32),
+        ),
+        // The cascade absolutizes font-relative and viewport terms.
+        _ => 0.0, // cov:ignore: a computed radius has no relative terms left
     }
 }
 
@@ -529,14 +546,23 @@ fn resolved_stops(
         .map(|stop| {
             stop.position.map(|position| {
                 let fraction = match position {
-                    Length::Percent(percent) if length > 0.0 => {
+                    LengthPercentageOrCalc::Length(Length::Percent(percent)) if length > 0.0 => {
                         f64::from(percent) / 100.0 * percent_basis / length
                     }
-                    Length::Percent(percent) => f64::from(percent) / 100.0,
-                    Length::Px(px) if length > 0.0 => f64::from(px) / length,
-                    other if length > 0.0 => {
+                    LengthPercentageOrCalc::Length(Length::Percent(percent)) => {
+                        f64::from(percent) / 100.0
+                    }
+                    LengthPercentageOrCalc::Length(Length::Px(px)) if length > 0.0 => {
+                        f64::from(px) / length
+                    }
+                    LengthPercentageOrCalc::Length(other) if length > 0.0 => {
                         f64::from(length_to_px(other, 0.0, DEFAULT_FONT_SIZE)) / length
                     }
+                    LengthPercentageOrCalc::Calc(calc) if length > 0.0 => {
+                        (f64::from(calc.px) + f64::from(calc.percent) / 100.0 * percent_basis)
+                            / length
+                    }
+                    LengthPercentageOrCalc::Calc(calc) => f64::from(calc.percent) / 100.0,
                     _ => 0.0,
                 };
                 if fraction.is_finite() {

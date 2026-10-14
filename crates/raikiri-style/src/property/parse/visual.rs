@@ -1653,7 +1653,13 @@ fn parse_gradient_color_stop<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorStop, ParseError<'i, ()>> {
     let color = parse_gradient_stop_color(input).ok_or_else(|| input.new_custom_error(()))?;
-    let position = input.try_parse(parse_length_percentage_res).ok();
+    let position = match crate::cascade::parse_relative_calc_function(input) {
+        Some(calc) => Some(LengthPercentageOrCalc::from_relative_calc(calc)),
+        None => input
+            .try_parse(parse_length_percentage_res)
+            .ok()
+            .map(LengthPercentageOrCalc::Length),
+    };
     Ok(GradientColorStop { color, position })
 }
 
@@ -1861,8 +1867,8 @@ fn parse_radial_extent<'i>(input: &mut Parser<'i, '_>) -> Result<RadialExtent, P
 /// the same meanings as in [`RadialSize`], but compatibility with `shape` is not yet checked.
 enum RadialSizeAuthored {
     Extent(RadialExtent),
-    Circle(Length),
-    Ellipse(Length, Length),
+    Circle(LengthPercentageOrCalc),
+    Ellipse(LengthPercentageOrCalc, LengthPercentageOrCalc),
 }
 
 /// Return-value shape of [`parse_radial_shape_size_position_group`]: an alias
@@ -1888,16 +1894,41 @@ fn parse_radial_size<'i>(
     if let Ok((a, b)) = input.try_parse(parse_two_non_negative_length_percentages) {
         return Ok(RadialSizeAuthored::Ellipse(a, b));
     }
+    // A circle radius is a `<length>`, so a `calc()` with a percentage term
+    // is invalid here.
+    if let Ok(calc) = input.try_parse(|i| {
+        crate::cascade::parse_relative_calc_function(i)
+            .filter(|calc| calc.percent == 0.0)
+            .ok_or(())
+    }) {
+        return Ok(RadialSizeAuthored::Circle(
+            LengthPercentageOrCalc::from_non_negative_calc(calc),
+        ));
+    }
     let length = parse_non_negative_length(input).ok_or_else(|| input.new_custom_error(()))?;
-    Ok(RadialSizeAuthored::Circle(length))
+    Ok(RadialSizeAuthored::Circle(LengthPercentageOrCalc::Length(
+        length,
+    )))
 }
 
 fn parse_two_non_negative_length_percentages<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<(Length, Length), ParseError<'i, ()>> {
-    let a = parse_non_negative_length_percentage_res(input)?;
-    let b = parse_non_negative_length_percentage_res(input)?;
+) -> Result<(LengthPercentageOrCalc, LengthPercentageOrCalc), ParseError<'i, ()>> {
+    let a = parse_radial_ellipse_radius(input)?;
+    let b = parse_radial_ellipse_radius(input)?;
     Ok((a, b))
+}
+
+/// One `<length-percentage [0,∞]>` radius of the ellipse form of
+/// `<radial-size>`. A mixed-unit `calc()` is clamped to zero once its
+/// percentage basis is known.
+fn parse_radial_ellipse_radius<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthPercentageOrCalc, ParseError<'i, ()>> {
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Ok(LengthPercentageOrCalc::from_non_negative_calc(calc));
+    }
+    parse_non_negative_length_percentage_res(input).map(LengthPercentageOrCalc::Length)
 }
 
 /// Resolve omitted `shape`/`size` under CSS Images 3 §3.2.1; see the

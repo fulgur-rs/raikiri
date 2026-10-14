@@ -2503,6 +2503,51 @@ fn mixed_calc_in_a_position_is_measured_from_the_start_edge() {
 }
 
 #[test]
+fn gradient_mixed_calc_stops_and_radii_absolutize_font_terms() {
+    let calc = |percent, px| LengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    let gradient = |declarations: &str| {
+        let cv = cascade_doc("", "div", Some(declarations));
+        let crate::property::BackgroundImage::Gradient(gradient) = &cv.background_layers[0].image
+        else {
+            panic!("expected a gradient"); // cov:ignore: every declaration below sets a gradient
+        };
+        gradient.as_ref().clone()
+    };
+    let crate::property::Gradient::Linear(linear) = gradient(
+        "font-size: 10px; background-image: linear-gradient(red calc(50% + 1em), blue calc(100% - 1em))",
+    ) else {
+        panic!("expected a linear gradient"); // cov:ignore: the declaration sets a linear gradient
+    };
+    assert_eq!(linear.stops[0].position, Some(calc(50.0, 10.0)));
+    assert_eq!(linear.stops[1].position, Some(calc(100.0, -10.0)));
+    let crate::property::Gradient::Radial(radial) = gradient(
+        "font-size: 10px; background-image: radial-gradient(calc(10% + 1em) calc(50% - 1em), red, blue)",
+    ) else {
+        panic!("expected a radial gradient"); // cov:ignore: the declaration sets a radial gradient
+    };
+    assert_eq!(
+        radial.size,
+        crate::property::RadialSize::Ellipse(calc(10.0, 10.0), calc(50.0, -10.0))
+    );
+    // A circle radius has no percentage, so it resolves to a length and a
+    // negative sum clamps to zero.
+    for (size, expected) in [("calc(1em + 2px)", 12.0), ("calc(1em - 20px)", 0.0)] {
+        let crate::property::Gradient::Radial(radial) = gradient(&format!(
+            "font-size: 10px; background-image: radial-gradient({size}, red, blue)"
+        )) else {
+            panic!("expected a radial gradient"); // cov:ignore: the declaration sets a radial gradient
+        };
+        assert_eq!(
+            radial.size,
+            crate::property::RadialSize::Circle(LengthPercentageOrCalc::Length(
+                crate::property::Length::Px(expected)
+            )),
+            "{size}"
+        );
+    }
+}
+
+#[test]
 fn mixed_calc_with_viewport_terms_resolves_against_the_viewport() {
     let media = crate::media::MediaContext::print();
     let (width, height) = (

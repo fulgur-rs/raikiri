@@ -5575,8 +5575,15 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         g: &crate::property::Gradient,
                         length: fn(crate::property::Length) -> Option<&'static str>,
                     ) -> Option<&'static str> {
+                        let value_residue = |v: crate::property::LengthPercentageOrCalc| match v {
+                            crate::property::LengthPercentageOrCalc::Length(l) => length(l),
+                            crate::property::LengthPercentageOrCalc::Calc(_) => None,
+                            crate::property::LengthPercentageOrCalc::RelativeCalc(_) => {
+                                Some("LengthPercentageOrCalc::RelativeCalc")
+                            }
+                        };
                         let stop_residue = |s: &crate::property::GradientColorStop| {
-                            s.position.and_then(length)
+                            s.position.and_then(value_residue)
                         };
                         let offset_residue = |o: crate::property::CssPositionOffset| match o {
                             crate::property::CssPositionOffset::Start(l)
@@ -5591,9 +5598,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             crate::property::Gradient::Radial(rg) => {
                                 let size_residue = match rg.size {
                                     crate::property::RadialSize::Extent(_) => None,
-                                    crate::property::RadialSize::Circle(l) => length(l),
+                                    crate::property::RadialSize::Circle(l) => value_residue(l),
                                     crate::property::RadialSize::Ellipse(a, b) => {
-                                        length(a).or_else(|| length(b))
+                                        value_residue(a).or_else(|| value_residue(b))
                                     }
                                 };
                                 size_residue
@@ -5643,7 +5650,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     g: &crate::property::Gradient,
                     length: fn(crate::property::Length) -> Option<&'static str>,
                 ) -> Option<&'static str> {
-                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(length);
+                    let value_residue = |v: crate::property::LengthPercentageOrCalc| match v {
+                        crate::property::LengthPercentageOrCalc::Length(l) => length(l),
+                        crate::property::LengthPercentageOrCalc::Calc(_) => None,
+                        crate::property::LengthPercentageOrCalc::RelativeCalc(_) => {
+                            Some("LengthPercentageOrCalc::RelativeCalc")
+                        }
+                    };
+                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(value_residue);
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
@@ -5655,8 +5669,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::Gradient::Radial(rg) => {
                             let size_residue = match rg.size {
                                 crate::property::RadialSize::Extent(_) => None,
-                                crate::property::RadialSize::Circle(l) => length(l),
-                                crate::property::RadialSize::Ellipse(a, b) => length(a).or_else(|| length(b)),
+                                crate::property::RadialSize::Circle(l) => value_residue(l),
+                                crate::property::RadialSize::Ellipse(a, b) => value_residue(a).or_else(|| value_residue(b)),
                             };
                             size_residue
                                 .or_else(|| offset_residue(rg.position.horizontal))
@@ -5677,7 +5691,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     g: &crate::property::Gradient,
                     length: fn(crate::property::Length) -> Option<&'static str>,
                 ) -> Option<&'static str> {
-                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(length);
+                    let value_residue = |v: crate::property::LengthPercentageOrCalc| match v {
+                        crate::property::LengthPercentageOrCalc::Length(l) => length(l),
+                        crate::property::LengthPercentageOrCalc::Calc(_) => None,
+                        crate::property::LengthPercentageOrCalc::RelativeCalc(_) => {
+                            Some("LengthPercentageOrCalc::RelativeCalc")
+                        }
+                    };
+                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(value_residue);
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
@@ -5689,8 +5710,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::Gradient::Radial(rg) => {
                             let size_residue = match rg.size {
                                 crate::property::RadialSize::Extent(_) => None,
-                                crate::property::RadialSize::Circle(l) => length(l),
-                                crate::property::RadialSize::Ellipse(a, b) => length(a).or_else(|| length(b)),
+                                crate::property::RadialSize::Circle(l) => value_residue(l),
+                                crate::property::RadialSize::Ellipse(a, b) => value_residue(a).or_else(|| value_residue(b)),
                             };
                             size_residue
                                 .or_else(|| offset_residue(rg.position.horizontal))

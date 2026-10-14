@@ -1237,3 +1237,36 @@ fn average_colors_of_few_or_transparent_stops() {
         Color::from_rgba8(0, 0, 0, 0)
     );
 }
+
+#[test]
+fn mixed_calc_stops_and_radii_resolve_against_the_gradient_box() {
+    let rgba = raster_layer(
+        "font-size: 10px; background-image: linear-gradient(to right, red calc(50% - 1em), blue calc(50% - 1em))",
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 15, 5), BLUE);
+    let tile = Rect::new(0.0, 0.0, 40.0, 20.0);
+    let center = Point::new(20.0, 10.0);
+    let radii = |style: &str| match gradient_of(&computed_for(style)) {
+        Gradient::Radial(radial) => gradient::radial_radii(&radial, center, tile),
+        other => panic!("expected radial, got {other:?}"), // cov:ignore: every style below is radial
+    };
+    // A calc radius that resolves below zero clamps to zero.
+    assert_eq!(
+        radii(
+            "font-size: 10px; background-image: radial-gradient(calc(25% + 1em) calc(100% - 25px), red, blue)"
+        ),
+        (20.0, 0.0)
+    );
+    // On a gradient line of no length only the percentages of calc stops
+    // count, so these two stops share one position.
+    let cv = computed_for(
+        "background-image: repeating-linear-gradient(to right, red calc(10% + 1px), blue calc(10% + 2px))",
+    );
+    assert!(matches!(
+        gradient::gradient_fill(&gradient_of(&cv), Rect::new(0.0, 0.0, 0.0, 100.0), cv.color),
+        Some(gradient::GradientFill::Solid(_))
+    ));
+}
