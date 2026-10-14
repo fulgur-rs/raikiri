@@ -14,6 +14,12 @@ pub(crate) fn affine(transform: raikiri_traits::PaintTransform) -> Affine {
     Affine::new([a, b, c, d, e, f].map(f64::from))
 }
 
+/// Whether `transform` maps the plane onto itself, so that what is painted
+/// through it is rendered (CSS Transforms 1 §6).
+pub(crate) fn is_invertible(transform: Affine) -> bool {
+    transform.is_finite() && transform.determinant() != 0.0
+}
+
 pub(crate) struct TransformScene<'a, S> {
     pub scene: &'a mut S,
     pub transform: Affine,

@@ -132,3 +132,16 @@ fn a_singular_root_transform_renders_only_the_canvas_color() {
     assert_eq!(pixel(&pages[0], 5, 5), YELLOW);
     assert_eq!(pixel(&pages[0], 50, 50), YELLOW);
 }
+
+#[test]
+fn transformed_canvas_images_stay_inside_the_canvas() {
+    let pages = pages(
+        "",
+        "@page { margin: 20px } html { transform: rotate(30deg); \
+         background: linear-gradient(red, red) }",
+    );
+    assert_eq!(pixel(&pages[0], 50, 50), RED);
+    // The page margins are outside the canvas.
+    assert_eq!(pixel(&pages[0], 5, 5), WHITE);
+    assert_eq!(pixel(&pages[0], 95, 95), WHITE);
+}

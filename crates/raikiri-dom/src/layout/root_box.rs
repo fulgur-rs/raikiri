@@ -49,7 +49,9 @@ pub struct RootBox {
 /// between its margins and its height fills the flow of all `page_count`
 /// pages, each as tall as this page's area, between its margins. Layout
 /// does not size the root by its content, so an auto height is the extent
-/// of the pages the flow runs through. `auto` margins are zero.
+/// of the pages the flow runs through; pages of different sizes and a
+/// root margin cut at a page break are not followed. `auto` margins
+/// center a root of definite width and are zero otherwise.
 pub fn root_box(
     document: &Document,
     cascade: &CascadeResult,
@@ -69,15 +71,9 @@ pub fn root_box(
     // Margins and padding resolve against the width of the root's
     // containing block, the page area. Layout clamps the root's block-start
     // margin to zero; the box follows it.
-    let margin = |value| {
-        used_computed_length_percentage_or_auto(value, area_width)
-            .unwrap_or(0.0)
-            .max(0.0)
-    };
-    let margin_top = margin(computed.margin.top);
-    let margin_right = margin(computed.margin.right);
-    let margin_bottom = margin(computed.margin.bottom);
-    let margin_left = margin(computed.margin.left);
+    let margin = |value| used_computed_length_percentage_or_auto(value, area_width);
+    let margin_top = margin(computed.margin.top).unwrap_or(0.0).max(0.0);
+    let margin_bottom = margin(computed.margin.bottom).unwrap_or(0.0);
     let border = PaintInsets::new(
         computed.border.top.width().px(),
         computed.border.right.width().px(),
@@ -93,15 +89,40 @@ pub fn root_box(
     let horizontal_edges = border.left + border.right + padding.left + padding.right;
     let vertical_edges = border.top + border.bottom + padding.top + padding.bottom;
 
-    let width = definite_border_box_size(
+    let definite_width = definite_border_box_size(
         computed,
         computed.width,
         computed.min_width,
         computed.max_width,
         area_width,
         horizontal_edges,
-    )
-    .unwrap_or_else(|| (area_width - margin_left - margin_right).max(horizontal_edges));
+    );
+    // CSS 2.1 §10.3.3: `auto` margins share what a definite width leaves
+    // of the page area, and an auto width fills what the margins leave.
+    let (margin_left, margin_right) = (margin(computed.margin.left), margin(computed.margin.right));
+    let (width, margin_left) = match definite_width {
+        Some(width) => {
+            let free = area_width - width;
+            let left = match (margin_left, margin_right) {
+                (None, None) => free / 2.0,
+                (None, Some(right)) => free - right,
+                (Some(left), _) => left,
+            };
+            (width, left)
+        }
+        None => {
+            let (left, right) = (margin_left.unwrap_or(0.0), margin_right.unwrap_or(0.0));
+            let content = clamp_auto_size(
+                computed,
+                (area_width - left - right - horizontal_edges).max(0.0),
+                computed.min_width,
+                computed.max_width,
+                area_width,
+                horizontal_edges,
+            );
+            (content + horizontal_edges, left)
+        }
+    };
     let height = definite_border_box_size(
         computed,
         computed.height,
@@ -111,7 +132,8 @@ pub fn root_box(
         vertical_edges,
     )
     .unwrap_or_else(|| {
-        let flow = area_height * page_count.max(1) as f32;
+        // The flow runs at least to the end of this page.
+        let flow = (area_height * page_count.max(1) as f32).max(content_origin_y + area_height);
         let content = (flow - margin_top - margin_bottom - vertical_edges).max(0.0);
         clamp_auto_size(
             computed,

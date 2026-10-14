@@ -948,8 +948,7 @@ fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
         document,
         cascade,
         PageBox::A4,
-        0.0,
-        1,
+        None,
         None,
         &mut warnings,
     );

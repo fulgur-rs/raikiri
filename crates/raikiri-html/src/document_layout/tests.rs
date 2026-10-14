@@ -1802,3 +1802,23 @@ fn a_layout_without_a_base_url_uses_the_parse_time_base_url() {
     assert_eq!(layout.base_url(), Some(&base));
     assert_eq!(layout.out.document.base_url(), Some(&base));
 }
+
+#[test]
+fn root_box_spans_the_pages_known_on_its_page() {
+    let result = laid_out(
+        "<style>@page { size: 200px 100px; margin: 0 } body { margin: 0 }</style>\
+         <div style=\"height: 250px\"></div>",
+    );
+    assert_eq!(result.page_count(), 3);
+    let page = result.page(1).expect("second page");
+    let root = page.root_box().expect("root box");
+    assert_eq!(root.border_box.y, -100.0);
+    assert_eq!(root.border_box.height, 300.0);
+    // Before the number of pages is known, the root reaches through the
+    // pages streamed so far.
+    let streamed = page.with_deferred_page_count(999_999_999);
+    assert_eq!(
+        streamed.root_box().expect("root box").border_box.height,
+        200.0
+    );
+}

@@ -118,3 +118,40 @@ fn no_root_element_has_no_root_box() {
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     assert_eq!(root_box(&document, &cascade, PageBox::A4, 0.0, 1), None);
 }
+
+#[test]
+fn auto_margins_center_a_root_of_definite_width() {
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; width: 100px; margin: 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, 50.0);
+
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; width: 100px; margin: 0 30px 0 auto",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.x, 70.0);
+}
+
+#[test]
+fn auto_width_root_keeps_its_width_limits() {
+    let (document, cascade) = fixture(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; max-width: 80px; padding: 0 10px",
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!(root.border_box.width, 100.0);
+}
+
+#[test]
+fn auto_height_root_reaches_at_least_the_page_painted() {
+    // A caller that does not know the number of pages still sees the root
+    // run down through the page it paints.
+    let (document, cascade) = fixture("@page { size: 200px 100px; margin: 0 }", "display: block");
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 1).expect("root box");
+    assert_eq!(root.border_box.y, -200.0);
+    assert_eq!(root.border_box.height, 300.0);
+}

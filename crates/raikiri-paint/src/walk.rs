@@ -71,9 +71,9 @@ pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) 
 ///
 /// The canvas images are sized and positioned against the root element's
 /// box (§2.11.2), which runs through every page as one surface:
-/// `content_origin_y` is this page's start in the shared flow of
-/// `page_count` pages, so a later page continues the tiles of the earlier
-/// ones and shows a `no-repeat` image only where the root's box reaches it.
+/// `root` is the root element's box on this page, which sits higher on each
+/// later page, so a later page continues the tiles of the earlier ones and
+/// shows a `no-repeat` image only where the root's box reaches it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_canvas_background(
     image_cache: &crate::walk::ImageBrushCache,
@@ -81,8 +81,7 @@ pub(crate) fn paint_canvas_background(
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
-    content_origin_y: f32,
-    page_count: u32,
+    root: Option<&raikiri_dom::RootBox>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -141,13 +140,12 @@ pub(crate) fn paint_canvas_background(
             f64::from(insets.page_area_height(margins, page_box)),
         ),
     );
-    let root = raikiri_dom::root_box(document, cascade, page_box, content_origin_y, page_count);
     paint_canvas_background_image(
         image_cache,
         scene,
         document,
         cascade,
-        &CanvasArea::new(canvas_rect, page_area, root.as_ref()),
+        &CanvasArea::new(canvas_rect, page_area, root),
         pixel_source,
         warnings,
     );
@@ -931,16 +929,20 @@ fn paint_canvas_background_image(
     // spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
     // A transform on the root moves the whole canvas, its images included,
     // while the canvas still covers the page: paint the images through the
-    // transform over the part of the canvas that lands on this page. A
-    // singular transform renders none of the root.
+    // transform over the part of the canvas that lands on this page, clipped
+    // to it. A singular transform renders none of the root.
     let (transform, painting) = match area.transform {
         None => (Affine::IDENTITY, area.painting),
-        Some(transform) if transform.determinant() != 0.0 && transform.is_finite() => (
+        Some(transform) if crate::transform::is_invertible(transform) => (
             transform,
             transform.inverse().transform_rect_bbox(area.painting),
         ),
         Some(_) => return,
     };
+    let clipped = transform != Affine::IDENTITY;
+    if clipped {
+        scene.push_clip_layer(Affine::IDENTITY, &area.painting);
+    }
     let mut scene = crate::transform::TransformScene { scene, transform };
     // CSS Backgrounds 3 §2.1: paint from the last layer to the first.
     let painted = painted_background_layers(computed.background_layers(), warnings);
@@ -955,6 +957,9 @@ fn paint_canvas_background_image(
             pixel_source,
             warnings,
         );
+    }
+    if clipped {
+        scene.scene.pop_layer();
     }
 }
 
