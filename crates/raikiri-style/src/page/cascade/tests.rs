@@ -7572,6 +7572,9 @@ fn margin_box_logical_margins_follow_the_margin_context_direction() {
          margin-right: 2px; margin-inline-start: 1px } }",
         "@page { direction: rtl; @top-left { content: 'X'; \
          margin-right: 2px; margin-inline-start: 1px } }",
+        // An invalid own `direction` leaves the page context's in place.
+        "@page { direction: rtl; @top-left { content: 'X'; direction: var(--missing); \
+         margin-right: 2px; margin-inline-start: 1px } }",
     ] {
         assert_eq!(
             margins(css),

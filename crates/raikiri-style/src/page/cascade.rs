@@ -937,14 +937,14 @@ fn margin_box_direction(
         })?;
     let value = match &decl.value {
         PropertyValue::Deferred(deferred) => {
-            resolve_page_deferred_value(deferred, custom_properties)?
+            resolve_page_deferred_value(deferred, custom_properties)
         }
-        value => value.clone(),
+        value => Some(value.clone()),
     };
-    match value {
-        PropertyValue::Direction(direction) => Some(direction),
-        _ => None,
-    }
+    let Some(PropertyValue::Direction(direction)) = value else {
+        return None;
+    };
+    Some(direction)
 }
 
 /// The writing mode and direction of the page context: its own winning
@@ -1346,7 +1346,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
         &candidates,
         inherited,
         custom_properties.as_ref(),
-        &candidate_rollback,
+        candidate_rollback,
     );
     for ((value, ..), side) in candidates.iter_mut().zip(&sides) {
         if let Some(side) = *side {
