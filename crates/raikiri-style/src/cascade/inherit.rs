@@ -1492,6 +1492,9 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // reused under a different generic family keeps the size of the
         // family where it is defined.
         PropertyValue::FontSizeKeyword(_) => None,
+        // SVG 1.1 lengths have no `calc()`, so a mixed calc keeps its
+        // computed px size, as the keywords above do.
+        PropertyValue::FontSizeCalc(_) => None,
         _ => None,
     }
 }

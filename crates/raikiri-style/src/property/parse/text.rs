@@ -2382,7 +2382,8 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
 }
 
 /// The `font-size` component of the `font` shorthand. [`parse_font_size`] returns
-/// three forms (`FontSize` / `FontSizeRelative` / `FontSizeKeyword`); carry them
+/// four forms (`FontSize` / `FontSizeRelative` / `FontSizeKeyword` /
+/// `FontSizeCalc`); carry them
 /// unchanged in a small enum. This is private to the [`FontShorthand`] payload and
 /// never enters [`ComputedValues`] / [`SpecifiedValues`] or gets re-exported by
 /// the umbrella crate (as with [`BackgroundShorthand`]).

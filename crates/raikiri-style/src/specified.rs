@@ -183,10 +183,13 @@ pub struct SpecifiedValues {
     /// Staging value for [`ComputedValues::font_family`]; computed-equivalent.
     pub font_family: Arc<Vec<FontFamilyName>>,
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
-    /// against the **parent's** computed font size.
+    /// against the **parent's** computed font size. Ignored while
+    /// [`Self::font_size_calc`] is set.
     pub font_size: Length,
     /// A declared mixed-unit `font-size: calc()`, which phase 2 resolves in
-    /// place of [`Self::font_size`].
+    /// place of [`Self::font_size`]. Like [`Self::font_size_keyword_declared`],
+    /// [`crate::cascade::apply_value`] clears it whenever another `font-size`
+    /// value wins.
     pub(crate) font_size_calc: Option<RelativeCalcLengthPercentage>,
     /// Staging value for [`ComputedValues::font_size_keyword`]. Seeded from
     /// the parent's computed value and updated by

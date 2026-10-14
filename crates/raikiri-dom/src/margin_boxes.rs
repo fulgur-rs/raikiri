@@ -27,7 +27,7 @@ use raikiri_style::{
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
     CounterStyleRegistry, MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
     PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_background_size,
-    resolve_css_position, resolve_margin_length_or_auto,
+    resolve_css_position, resolve_font_size_calc, resolve_margin_length_or_auto,
     resolve_non_negative_length_percentage_or_calc,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
@@ -778,6 +778,14 @@ fn inherited_margin_box_font(
     let font_size = match margin_box_property(rule, PropertyKey::FontSize) {
         Some(PropertyValue::FontSize(value)) => length_to_px(*value, page_size, page_size),
         Some(PropertyValue::FontSizeKeyword(keyword)) => keyword.px_for_medium(16.0),
+        // A mixed calc's percentage and `em` terms refer to the page's size.
+        Some(PropertyValue::FontSizeCalc(calc)) => resolve_font_size_calc(
+            *calc,
+            ComputedLength(page_size),
+            None,
+            &ResolveContext::new(ComputedLength(root_size)),
+        )
+        .px(),
         _ => page_size,
     };
     let family = match margin_box_property(rule, PropertyKey::FontFamily)
