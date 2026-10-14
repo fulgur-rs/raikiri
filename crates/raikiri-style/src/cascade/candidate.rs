@@ -16,6 +16,7 @@ use std::borrow::Cow;
 use crate::PseudoElem;
 use crate::error::CascadeError;
 use crate::layer::LayerPosition;
+use crate::logical::{FlowMapping, LogicalSide};
 use crate::property::{CustomProperty, PropertyKey, PropertyValue};
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
@@ -60,12 +61,14 @@ pub(crate) struct Candidate {
     value: ValueRef,
     key: PropertyKey,
     rollback: Rollback,
+    /// The flow-relative side the declaration was written for, copied from it.
+    logical: Option<LogicalSide>,
     precedence: Precedence,
 }
 
 // One candidate is kept per matched declaration of the element being resolved
 // and of every input kept for sharing, so its size bounds what the cascade
-// holds. Its fields take 30 bytes padded to 32.
+// holds. Its fields take 31 bytes padded to 32.
 const _: () = assert!(
     std::mem::size_of::<Candidate>() <= 32,
     "Candidate grew past 32 bytes: raise the bound together with a cascade memory measurement"
@@ -88,6 +91,22 @@ impl Candidate {
     #[inline]
     pub(crate) fn rollback(self) -> Rollback {
         self.rollback
+    }
+
+    /// The flow-relative side the declaration was written for.
+    #[inline]
+    pub(crate) fn logical(self) -> Option<LogicalSide> {
+        self.logical
+    }
+
+    /// The cascade slot of the declaration under `flow`: a flow-relative
+    /// declaration competes for the physical side `flow` maps its side to.
+    #[inline]
+    pub(crate) fn slot(self, flow: Option<FlowMapping>) -> PropertyKey {
+        match (self.logical, flow) {
+            (Some(side), Some(flow)) => flow.key(self.key, side),
+            _ => self.key,
+        }
     }
 
     #[inline]
@@ -529,6 +548,7 @@ fn push_candidate(
             value,
             key: decl.key,
             rollback: decl.rollback,
+            logical: decl.logical,
             precedence,
         });
     }

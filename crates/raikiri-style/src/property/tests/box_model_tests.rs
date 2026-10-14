@@ -1313,15 +1313,14 @@ fn sides_all_spreads_value_to_all_four() {
 //    margin-block-*/padding-inline-*/padding-block-* longhand +
 //    margin-inline/margin-block/padding-inline/padding-block shorthand ──
 //
-// Physical fixed-mapping rationale (writing-mode always HorizontalTb
-// since raikiri does not implement a vertical-writing rendering
-// pipeline, inline axis additionally assumes `direction: ltr`) is
-// `PropertyValue::PaddingInline` doc's canonical record — not repeated
-// per test here.
+// The parser stores each flow-relative longhand under its horizontal-tb,
+// ltr physical side; the cascade remaps it by writing mode and direction.
+// `PropertyValue::PaddingInline` doc's "Physical mapping" section is the
+// canonical record — not repeated per test here.
 
 #[test]
 fn margin_inline_start_parses_to_margin_left() {
-    // §4.2 physical fixed-mapping: `margin-inline-start` produces the
+    // §4.2 parse-time mapping: `margin-inline-start` produces the
     // exact same `PropertyValue` as `margin-left` (no dedicated variant
     // — see the "Why the eight longhands do not have dedicated
     // variants" section of the `PropertyValue::PaddingInline` doc).

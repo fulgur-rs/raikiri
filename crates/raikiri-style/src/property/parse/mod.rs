@@ -466,11 +466,12 @@ pub(crate) fn parse_property_grammar(
         // parse_padding_shorthand applies the spec's 1–4 value expansion verbatim.
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
         // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
-        // padding-block-start/-end — physically fixed-mapped onto the
-        // matching padding physical longhand (`PropertyValue::PaddingInline`
-        // doc's Non-goal section covers the writing-mode/direction
-        // rationale). Grammar/non-negative constraint is identical to the
-        // physical longhand, so this reuses `parse_padding_side` verbatim.
+        // padding-block-start/-end — parsed into the padding physical longhand
+        // they map to in horizontal-tb ltr; the cascade moves them by the
+        // element's writing mode (`PropertyValue::PaddingInline` doc's
+        // "Physical mapping" section). Grammar/non-negative constraint is
+        // identical to the physical longhand, so this reuses
+        // `parse_padding_side` verbatim.
         "padding-inline-start" => parse_padding_side(input).map(PropertyValue::PaddingLeft),
         "padding-inline-end" => parse_padding_side(input).map(PropertyValue::PaddingRight),
         "padding-block-start" => parse_padding_side(input).map(PropertyValue::PaddingTop),
@@ -499,7 +500,7 @@ pub(crate) fn parse_property_grammar(
         // doc and `crate::rule::expand_shorthand_into`).
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
-        // margin-block-start/-end — same physically fixed-mapped pattern as
+        // margin-block-start/-end — same pattern as
         // padding-inline-*/padding-block-* above, reusing `parse_margin_side`
         // verbatim (grammar `<'margin-top'>` = `<length-percentage> | auto`
         // is identical to the physical longhand).

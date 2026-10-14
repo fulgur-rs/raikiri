@@ -10,8 +10,9 @@ use selectors::parser::Selector;
 use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
 use crate::error::CascadeError;
+use crate::logical::FlowMapping;
 use crate::media::MediaContext;
-use crate::property::PropertyKey;
+use crate::property::{Direction, PropertyKey, PropertyValue, WritingMode};
 use crate::rule::{Declaration, parse_declaration_block_within};
 
 use super::candidate::{
@@ -815,6 +816,7 @@ pub(crate) fn specificity_of(selector: &Selector<RaikiriSelectorImpl>) -> Specif
 pub(crate) fn pick_winners(
     candidates: ElementCandidates<'_>,
     winners: &mut Vec<Option<RankedDecl>>,
+    flow: Option<FlowMapping>,
 ) {
     debug_assert!(
         winners.iter().all(Option::is_none),
@@ -833,7 +835,7 @@ pub(crate) fn pick_winners(
         }
         // Use the fieldless enum discriminant directly as the slot index.
         // `resize` handles new variants; no fixed upper bound is needed.
-        let slot = candidate.key() as usize;
+        let slot = candidate.slot(flow) as usize;
         if winners.len() <= slot {
             winners.resize(slot + 1, None);
         }
@@ -847,12 +849,12 @@ pub(crate) fn pick_winners(
             let Some(existing) = *winner else {
                 continue;
             };
-            let key = decls[existing.idx].key();
+            let key = decls[existing.idx].slot(flow);
             if matches!(key, PropertyKey::Direction | PropertyKey::UnicodeBidi) {
                 continue;
             }
             let selected = super::rollback::select_layered_winner(decls, |idx, candidate| {
-                if candidate.key() != key && !candidate.is_all_revert_layer() {
+                if candidate.slot(flow) != key && !candidate.is_all_revert_layer() {
                     return None;
                 }
                 Some(candidate.precedence().layered(idx, candidate.rollback()))
@@ -860,6 +862,50 @@ pub(crate) fn pick_winners(
             *winner = selected.map(|idx| decls[idx].precedence().ranked(idx));
         }
     }
+}
+
+/// The writing mode and direction that place the flow-relative candidates
+/// among `candidates`, or `None` when there are none.
+///
+/// The element's own `writing-mode` and `direction` winners decide them,
+/// falling back to `inherited` (CSS Logical Properties 1 §4: a flow-relative
+/// property maps "according to the element's own writing-mode and
+/// direction"). A winner that is not a plain keyword (a `var()` or CSS-wide
+/// keyword) also falls back to `inherited`.
+pub(crate) fn flow_mapping(
+    candidates: ElementCandidates<'_>,
+    inherited_writing_mode: WritingMode,
+    inherited_direction: Direction,
+) -> Option<FlowMapping> {
+    let decls = candidates.decls();
+    if decls.iter().all(|candidate| candidate.logical().is_none()) {
+        return None;
+    }
+    let mut writing_mode: Option<RankedDecl> = None;
+    let mut direction: Option<RankedDecl> = None;
+    for (idx, candidate) in decls.iter().enumerate() {
+        let slot = match candidate.key() {
+            PropertyKey::WritingMode => &mut writing_mode,
+            PropertyKey::Direction => &mut direction,
+            _ => continue,
+        };
+        let ranked = candidate.precedence().ranked(idx);
+        if slot.is_none_or(|existing| beats(ranked, existing)) {
+            *slot = Some(ranked);
+        }
+    }
+    let writing_mode = match writing_mode.map(|winner| candidates.value(winner.idx)) {
+        Some(PropertyValue::WritingMode(mode)) => *mode,
+        _ => inherited_writing_mode,
+    };
+    let direction = match direction.map(|winner| candidates.value(winner.idx)) {
+        Some(PropertyValue::Direction(direction)) => *direction,
+        _ => inherited_direction,
+    };
+    Some(FlowMapping {
+        writing_mode,
+        direction,
+    })
 }
 
 pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {

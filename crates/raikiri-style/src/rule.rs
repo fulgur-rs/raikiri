@@ -12,6 +12,7 @@ use selectors::parser::SelectorList;
 use crate::RaikiriSelectorImpl;
 use crate::cascade::rollback::{Rollback, rollback_kind};
 use crate::consumer::{ConsumerPropertyGrammar, ConsumerPropertyRegistration};
+use crate::logical::LogicalSide;
 use crate::property::{
     BackgroundShorthand, Border, BorderColor, BorderImageShorthand, BorderStyle, CustomProperty,
     DeferredValue, FlexFlow, FlexShorthand, FontFeatureSettings, FontKerning, FontLanguageOverride,
@@ -110,6 +111,11 @@ pub struct Declaration {
     /// How `value` rolls the cascade back (`revert`, `revert-layer`), computed
     /// once from it.
     pub(crate) rollback: Rollback,
+    /// The flow-relative side a margin or padding declaration was written
+    /// for. `value` and `key` hold the physical side it maps to in
+    /// `horizontal-tb` with `direction: ltr`; the cascade moves it to the side
+    /// it maps to under the element's own writing mode (see [`crate::logical`]).
+    pub(crate) logical: Option<LogicalSide>,
 }
 
 // A rule tree holds every declaration of its style rules, and an element
@@ -136,6 +142,20 @@ impl Declaration {
             key,
             value,
             important,
+            logical: None,
+        }
+    }
+
+    /// [`Self::new`] for a declaration written for the flow-relative `side`,
+    /// when it has one.
+    pub(crate) fn with_side(
+        value: PropertyValue,
+        important: bool,
+        logical: Option<LogicalSide>,
+    ) -> Self {
+        Self {
+            logical,
+            ..Self::new(value, important)
         }
     }
 
@@ -143,9 +163,10 @@ impl Declaration {
     /// it.
     pub(crate) fn update_value(&mut self, update: impl FnOnce(&mut PropertyValue)) {
         update(&mut self.value);
-        *self = Self::new(
+        *self = Self::with_side(
             std::mem::replace(&mut self.value, PropertyValue::AllRevertLayer),
             self.important,
+            self.logical,
         );
     }
 
@@ -156,13 +177,17 @@ impl Declaration {
 }
 
 // `key` and `rollback` are functions of `value`, so the declared fields say
-// everything.
+// everything. The flow-relative side is shown only when there is one.
 impl fmt::Debug for Declaration {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Declaration")
+        let mut debug = f.debug_struct("Declaration");
+        debug
             .field("value", &self.value)
-            .field("important", &self.important)
-            .finish()
+            .field("important", &self.important);
+        if let Some(side) = self.logical {
+            debug.field("logical", &side);
+        }
+        debug.finish()
     }
 }
 
@@ -171,6 +196,9 @@ impl fmt::Debug for Declaration {
 pub(crate) struct ParsedDeclaration {
     pub(crate) value: PropertyValue,
     pub(crate) important: bool,
+    /// The flow-relative side of a margin or padding longhand, whose `value`
+    /// the parser stored under its `horizontal-tb`, `ltr` physical side.
+    pub(crate) logical: Option<LogicalSide>,
 }
 
 /// How the cascade treats a property key.
@@ -652,7 +680,7 @@ fn parse_declarations_within(
 /// requires an explicit decision about its expansion here.
 #[inline]
 pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(Declaration)) {
-    let mut push_longhand = |value| push(Declaration::new(value, d.important));
+    let mut push_longhand = |value| push(Declaration::with_side(value, d.important, d.logical));
     match d.value {
         PropertyValue::ListStyle(ref value) => {
             push_longhand(PropertyValue::ListStyleType(value.kind.clone()));
@@ -682,10 +710,18 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::Margin(sides) => expand_margin(sides, push_longhand),
         PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
         PropertyValue::Padding(sides) => expand_padding(sides, push_longhand),
-        PropertyValue::MarginInline(pair) => expand_margin_inline(pair, push_longhand),
-        PropertyValue::MarginBlock(pair) => expand_margin_block(pair, push_longhand),
-        PropertyValue::PaddingInline(pair) => expand_padding_inline(pair, push_longhand),
-        PropertyValue::PaddingBlock(pair) => expand_padding_block(pair, push_longhand),
+        PropertyValue::MarginInline(pair) => {
+            expand_margin_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
+        }
+        PropertyValue::MarginBlock(pair) => {
+            expand_margin_block(pair, logical_longhand(d.important, &mut push, LogicalAxis::Block))
+        }
+        PropertyValue::PaddingInline(pair) => {
+            expand_padding_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
+        }
+        PropertyValue::PaddingBlock(pair) => {
+            expand_padding_block(pair, logical_longhand(d.important, &mut push, LogicalAxis::Block))
+        }
         PropertyValue::Border(sides) => expand_border(sides, push_longhand),
         PropertyValue::BorderCssWide(kw) => expand_border_css_wide(kw, push_longhand),
         PropertyValue::BorderImage(ref shorthand) => expand_border_image(shorthand, push_longhand),
@@ -1010,7 +1046,11 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
 /// code size on the hot path (versus the per-family helpers below).
 #[inline(always)]
 fn expand_none(d: &ParsedDeclaration, mut push: impl FnMut(Declaration)) {
-    push(Declaration::new(d.value.clone(), d.important));
+    push(Declaration::with_side(
+        d.value.clone(),
+        d.important,
+        d.logical,
+    ));
 }
 
 /// A deferred shorthand still expands before per-key cascade winner selection.
@@ -1028,10 +1068,24 @@ fn expand_deferred(
     let KeyClass::Shorthand { longhands } = classify(deferred.key) else {
         return expand_none(d, push);
     };
-    for key in longhands {
+    let sides = match deferred.key {
+        PropertyKey::MarginInline | PropertyKey::PaddingInline => {
+            [Some(LogicalSide::InlineStart), Some(LogicalSide::InlineEnd)]
+        }
+        PropertyKey::MarginBlock | PropertyKey::PaddingBlock => {
+            [Some(LogicalSide::BlockStart), Some(LogicalSide::BlockEnd)]
+        }
+        _ => [None, None],
+    };
+    for (index, key) in longhands.iter().enumerate() {
         let mut value = deferred.clone();
         value.key = *key;
-        push(Declaration::new(PropertyValue::Deferred(value), important));
+        let side = sides.get(index).copied().flatten();
+        push(Declaration::with_side(
+            PropertyValue::Deferred(value),
+            important,
+            side,
+        ));
     }
 }
 
@@ -1065,12 +1119,37 @@ pub(crate) fn expand_padding(
     push(PropertyValue::PaddingLeft(sides.left));
 }
 
+/// The axis of a flow-relative two-value shorthand.
+#[derive(Clone, Copy)]
+enum LogicalAxis {
+    Inline,
+    Block,
+}
+
+/// A longhand sink for the expansion of a flow-relative two-value shorthand:
+/// the first longhand pushed is the axis's start side and the second its end
+/// side, and each is tagged with that side.
+fn logical_longhand(
+    important: bool,
+    mut push: impl FnMut(Declaration),
+    axis: LogicalAxis,
+) -> impl FnMut(PropertyValue) {
+    let (start, end) = match axis {
+        LogicalAxis::Inline => (LogicalSide::InlineStart, LogicalSide::InlineEnd),
+        LogicalAxis::Block => (LogicalSide::BlockStart, LogicalSide::BlockEnd),
+    };
+    let mut sides = [start, end].into_iter();
+    move |value| push(Declaration::with_side(value, important, sides.next()))
+}
+
 /// Cold helper expanding `margin-inline` into two longhands, `margin-left`/
 /// `margin-right`. Follows the margin/padding/overflow shorthand pattern
 /// (two values require only two pushes).
 ///
-/// For the rationale behind the physical mapping (inline axis → left/right,
-/// approximating `direction: ltr`), see the [`crate::property::PropertyValue::MarginInline`] docs.
+/// The longhands are the `horizontal-tb`, `ltr` sides; the caller tags them
+/// with their flow-relative sides, which the cascade maps (see the
+/// "Physical mapping" section of the
+/// [`crate::property::PropertyValue::PaddingInline`] docs).
 #[inline(never)]
 pub(crate) fn expand_margin_inline(
     pair: StartEnd<LengthOrAuto>,
@@ -1081,9 +1160,7 @@ pub(crate) fn expand_margin_inline(
 }
 
 /// Cold helper expanding `margin-block` into two longhands, `margin-top`/
-/// `margin-bottom`: the block-axis sibling of [`expand_margin_inline`]
-/// (the block axis maps exactly regardless of `direction`; see the "asymmetry"
-/// section of the [`crate::property::PropertyValue::PaddingInline`] docs).
+/// `margin-bottom`: the block-axis sibling of [`expand_margin_inline`].
 #[inline(never)]
 pub(crate) fn expand_margin_block(
     pair: StartEnd<LengthOrAuto>,
@@ -1685,7 +1762,11 @@ pub(crate) fn parse_declaration_value<'i>(
     input
         .expect_exhausted()
         .map_err(|e: cssparser::BasicParseError<'i>| -> ParseError<'i, ()> { e.into() })?;
-    Ok(ParsedDeclaration { value, important })
+    Ok(ParsedDeclaration {
+        value,
+        important,
+        logical: crate::logical::longhand_side(name.as_ref()),
+    })
 }
 
 /// Per-declaration parser for cssparser::RuleBodyParser.

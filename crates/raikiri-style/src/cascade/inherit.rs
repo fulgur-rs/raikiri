@@ -37,7 +37,8 @@ use super::candidate::{
     SharedDeclarations,
 };
 use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, pick_winners,
+    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, flow_mapping,
+    pick_winners,
 };
 use super::custom_property::{DeferredResolver, resolve_custom_properties};
 use super::first_line::first_line_property_applies;
@@ -1271,7 +1272,12 @@ pub(crate) fn apply_winners(
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
-    pick_winners(candidates, winners);
+    let flow = flow_mapping(
+        candidates,
+        inherited.cssom_writing_mode,
+        inherited.direction,
+    );
+    pick_winners(candidates, winners, flow);
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
     // The drain below takes every slot, so the white-space winners are read
     // first; their applied values are collected during the drain.
@@ -1284,6 +1290,13 @@ pub(crate) fn apply_winners(
         if let Some(winner) = slot.take() {
             let value = candidates.value(winner.idx);
             let winner_key = candidates.decls()[winner.idx].key();
+            // A flow-relative declaration moves to the physical side its
+            // slot names once its value is known.
+            let to_slot =
+                |value: PropertyValue| match (candidates.decls()[winner.idx].logical(), flow) {
+                    (Some(side), Some(flow)) => flow.value(&value, side),
+                    _ => value,
+                };
             let mut literal_inherit = false;
             let mut default_value = |value: PropertyValue| {
                 if let PropertyValue::Deferred(marker) = &value {
@@ -1303,7 +1316,7 @@ pub(crate) fn apply_winners(
                     ))
                 }
                 PropertyValue::Deferred(deferred) => {
-                    let resolved = deferred_resolver.resolve(deferred);
+                    let resolved = deferred_resolver.resolve(deferred).map(to_slot);
                     let resolved = match resolved {
                         Some(PropertyValue::Deferred(marker)) => match marker.css_wide_keyword() {
                             Some(
@@ -1382,7 +1395,7 @@ pub(crate) fn apply_winners(
                     winner,
                     &mut deferred_resolver,
                 ),
-                _ => Some(value.clone()),
+                _ => Some(to_slot(value.clone())),
             };
             // Record the precedence even for a value invalid at computed-value
             // time: it still decides which of a physical and a logical size wins.
