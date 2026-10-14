@@ -5511,13 +5511,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                         && !candidate.is_flex_item
                         && !candidate.is_grid_item
                         && !candidate.is_table_row
-                        && stacks_in_block_flow(document, cascade, node_id, body_id)
                     {
                         // A forced break ends its ancestors' fragments on
                         // this page, which their continuations account for;
-                        // only the boxes after it in block flow follow it.
+                        // only the boxes after it in block flow follow it,
+                        // up to the first ancestor that does not stack its
+                        // children in block order.
                         // A `display: contents` ancestor has no box; its
                         // parent lays the moved box out among its siblings.
+                        let paragraph = ifc_paragraph_of_block(document, node_id);
                         let mut child = node_id;
                         let mut next = parent_of[node_id];
                         while let Some(parent) = next
@@ -5526,6 +5528,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                             next = parent_of[parent];
                             if cascade.computed[parent].display == DisplayValue::Contents {
                                 continue;
+                            }
+                            if Some(parent) != paragraph
+                                && !stacks_children_in_block_flow(document, cascade, parent)
+                            {
+                                break;
                             }
                             shift_later_block_siblings(
                                 document, cascade, parent, child, node_delta,
@@ -6076,17 +6083,6 @@ fn grown_auto_height(
     // A percentage height against an indefinite containing block behaves
     // as `auto` (CSS 2.1 §10.5).
     if !style.size.height.is_auto() && definite_content_height(document, parent).is_some() {
-        return None;
-    }
-    // A grid area of a sized row fixes the height of the item stretched
-    // into it.
-    if let Some(grid) = box_parent(document, parent)
-        && matches!(
-            cascade.computed[grid].display,
-            DisplayValue::Grid | DisplayValue::InlineGrid
-        )
-        && !grid_rows_size_to_content(document, grid)
-    {
         return None;
     }
     let layout = &node.unrounded_layout;
@@ -6718,11 +6714,13 @@ fn has_bounded_clipping_ancestor(
 }
 
 /// Whether the items of `grid` stack in block order like blocks, none
-/// beside or over another: the grid has one column track, and its items
-/// sit in rows that follow one another without overlapping.
+/// beside or over another: the grid has one column track, its rows all
+/// size to their content, and its items sit in rows that follow one
+/// another without overlapping. A sized row fixes the height of the item
+/// stretched into it, so that item cannot grow to hold a moved box.
 fn grid_stacks_items(document: &Document, grid: usize) -> bool {
     let node = &document.nodes[grid];
-    if node.grid_column_count != 1 {
+    if node.grid_column_count != 1 || !grid_rows_size_to_content(document, grid) {
         return false;
     }
     let mut items: Vec<(u16, f32, f32)> = node
@@ -6785,18 +6783,10 @@ fn has_side_by_side_ancestor(
     false
 }
 
-/// Whether the boxes from `node_id`'s parent up to `body_id` each stack
-/// their children in block order, so that the boxes after a moved one in
-/// each of them follow it: block containers, and grids of one column. The
-/// paragraph that lays `node_id` out as a block among its lines also
-/// counts; its content after the block follows it with its lines.
-fn stacks_in_block_flow(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    body_id: usize,
-) -> bool {
-    let paragraph = document.layout_parent_of(node_id).filter(|&root| {
+/// The paragraph that lays `block` out as a block among its lines, whose
+/// content after the block follows it with its lines.
+fn ifc_paragraph_of_block(document: &Document, block: usize) -> Option<usize> {
+    document.layout_parent_of(block).filter(|&root| {
         document
             .ifc_layout_node(root)
             .and_then(|node| node.ifc.as_ref())
@@ -6805,25 +6795,20 @@ fn stacks_in_block_flow(
                 lines
                     .block_line_starts
                     .iter()
-                    .any(|&(block, _)| block == node_id)
+                    .any(|&(child, _)| child == block)
             })
-    });
-    let mut current = document.parent_of(node_id);
-    while let Some(id) = current
-        && id != body_id
-    {
-        let display = cascade.computed[id].display;
-        if display != DisplayValue::Contents
-            && Some(id) != paragraph
-            && !moves_later_siblings(document, cascade, id)
-            && !(matches!(display, DisplayValue::Grid | DisplayValue::InlineGrid)
-                && grid_stacks_items(document, id))
-        {
-            return false;
-        }
-        current = document.parent_of(id);
-    }
-    true
+    })
+}
+
+/// Whether `id` stacks its children in block order, so that the boxes
+/// after a moved one follow it: a block container, or a grid whose items
+/// stack like blocks.
+fn stacks_children_in_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    moves_later_siblings(document, cascade, id)
+        || matches!(
+            cascade.computed[id].display,
+            DisplayValue::Grid | DisplayValue::InlineGrid
+        ) && grid_stacks_items(document, id)
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose

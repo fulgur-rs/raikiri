@@ -347,7 +347,7 @@ fn a_grid_item_in_a_fixed_row_keeps_its_track_size() {
     });
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
-    assert_eq!((ys, grid_height), (vec![60.0, 100.0, 210.0], 150.0));
+    assert_eq!((ys, grid_height), (vec![60.0, 80.0, 210.0], 150.0));
 }
 
 #[test]
@@ -394,4 +394,45 @@ fn a_grid_item_in_an_explicit_auto_row_grows_the_grid() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
     assert_eq!((ys, grid_height), (vec![60.0, 100.0, 160.0, 240.0], 180.0));
+}
+
+#[test]
+fn an_avoiding_box_in_a_grid_with_a_sized_row_stays() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(doc, body, "display:grid;grid-template-rows:auto 20px");
+        let item = block(doc, grid, "display:block");
+        block(doc, item, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            item,
+            "display:block;height:60px;break-inside:avoid",
+        ));
+        block(doc, item, "display:block;height:80px");
+        ids.push(block(doc, grid, "display:block"));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![80.0, 220.0, 240.0]);
+}
+
+#[test]
+fn boxes_after_a_forced_break_in_a_two_column_grid_item_follow_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:30px");
+        let grid = block(doc, body, "display:grid;grid-template-columns:50px 50px");
+        let item = block(doc, grid, "display:block");
+        let inner = block(doc, item, "display:block");
+        block(doc, inner, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            inner,
+            "display:block;height:20px;break-before:page",
+        ));
+        ids.push(block(doc, inner, "display:block;height:20px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 120.0]);
 }
