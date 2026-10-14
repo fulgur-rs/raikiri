@@ -1232,6 +1232,19 @@ fn pipeline_counts_whole_boxes_overflowing_their_column_as_pages() {
 }
 
 #[test]
+fn pipeline_moves_overflowing_column_boxes_by_their_relative_offset_when_counting_pages() {
+    // Painting moves the whole overflowing box up by its relative offset,
+    // so it ends within the first page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;height:50px'>\
+         <div style='break-inside:avoid;border:1px solid;height:250px;\
+         position:relative;top:-200px'></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
 fn pipeline_clamps_body_height_by_max_height_when_counting_pages() {
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} body{margin:0;height:500px;max-height:150px}</style>\
