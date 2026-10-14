@@ -62,8 +62,6 @@ css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html | Mismat
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_quirks_body.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/gap-003-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/gap-004-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12

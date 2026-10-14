@@ -1005,9 +1005,11 @@ css/css-flexbox/gap-002-rtl.html
 css/css-flexbox/gap-003-lr.html
 css/css-flexbox/gap-003-ltr.html
 css/css-flexbox/gap-003-rl.html
+css/css-flexbox/gap-003-rtl.html
 css/css-flexbox/gap-004-lr.html
 css/css-flexbox/gap-004-ltr.html
 css/css-flexbox/gap-004-rl.html
+css/css-flexbox/gap-004-rtl.html
 css/css-flexbox/gap-005-lr.html
 css/css-flexbox/gap-005-ltr.html
 css/css-flexbox/gap-005-rl.html
