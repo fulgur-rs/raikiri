@@ -13,9 +13,7 @@ use crate::computed::ComputedValues;
 use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
-use crate::property::{
-    Direction, DisplayValue, PropertyKey, PropertyValue, TextOrientation, WritingMode,
-};
+use crate::property::{Direction, PropertyKey, PropertyValue, TextOrientation, WritingMode};
 use crate::rule::{Declaration, parse_declaration_block_within};
 
 use super::candidate::{
@@ -879,9 +877,10 @@ pub(crate) fn pick_winners(
 ///
 /// The writing mode is the one block layout places the element's box in
 /// ([`layout_writing_mode`]): flex, grid and table boxes and multicol
-/// containers and their contents ([`ComputedValues::multicol_flow`]) place
-/// their children on horizontal axes in every writing mode, so those
-/// children map through `horizontal-tb`. `text-orientation: upright` makes
+/// containers and their contents place their children on horizontal axes in
+/// every writing mode ([`ComputedValues::horizontal_children`], which looks
+/// through `display: contents` parents), so those children map through
+/// `horizontal-tb`. `text-orientation: upright` makes
 /// the used direction `ltr` in vertical writing modes (CSS Writing Modes 4
 /// §5.1).
 pub(crate) fn flow_mapping(
@@ -921,24 +920,7 @@ pub(crate) fn flow_mapping(
         Some(PropertyValue::Direction(direction)) => direction,
         _ => inherited.direction,
     };
-    let horizontal_parent = inherited.multicol_flow
-        || matches!(
-            inherited.display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-                | DisplayValue::Table
-                | DisplayValue::InlineTable
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-                | DisplayValue::TableRow
-                | DisplayValue::TableColumnGroup
-                | DisplayValue::TableColumn
-                | DisplayValue::TableCell
-                | DisplayValue::TableCaption
-        );
+    let horizontal_parent = inherited.horizontal_children;
     let writing_mode = if horizontal_parent {
         WritingMode::HorizontalTb
     } else {

@@ -757,6 +757,9 @@ pub struct SpecifiedValues {
     /// Whether an ancestor is a multicol container or inside one, copied from
     /// the parent's [`ComputedValues::multicol_flow`]. Not a CSS property.
     pub(crate) inside_multicol: bool,
+    /// The parent's [`ComputedValues::horizontal_children`]. Not a CSS
+    /// property.
+    pub(crate) parent_horizontal_children: bool,
 }
 
 /// Cascade sort key of a winning declaration: origin and importance rank,
@@ -1113,6 +1116,7 @@ impl SpecifiedValues {
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: false,
+            parent_horizontal_children: false,
         }
     }
 
@@ -1284,6 +1288,7 @@ impl SpecifiedValues {
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
             inside_multicol: parent.multicol_flow,
+            parent_horizontal_children: parent.horizontal_children,
             // CSS Text 3 §5.3: hyphens is inherited.
             hyphens: parent.hyphens,
             // CSS Text 4: hyphenate-character is inherited.
@@ -2122,6 +2127,35 @@ impl SpecifiedValues {
         let display = resolve_display_for_float(self.display, self.float);
         // A `display: contents` element has no box to be a multicol container.
         let generates_box = !matches!(display, DisplayValue::Contents | DisplayValue::None);
+        let multicol_flow = self.inside_multicol
+            || (generates_box
+                && (matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
+                    || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0)));
+        // Flex, grid and table boxes and multicol flows place their children
+        // on horizontal axes. A boxless element's children are placed in its
+        // parent's box instead.
+        let horizontal_children = if generates_box {
+            multicol_flow
+                || matches!(
+                    display,
+                    DisplayValue::Flex
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::Grid
+                        | DisplayValue::InlineGrid
+                        | DisplayValue::Table
+                        | DisplayValue::InlineTable
+                        | DisplayValue::TableRowGroup
+                        | DisplayValue::TableHeaderGroup
+                        | DisplayValue::TableFooterGroup
+                        | DisplayValue::TableRow
+                        | DisplayValue::TableColumnGroup
+                        | DisplayValue::TableColumn
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                )
+        } else {
+            self.parent_horizontal_children
+        };
         let mut running_templates = std::mem::take(&mut self.running_templates);
         ComputedValues {
             color: self.color,
@@ -2708,10 +2742,8 @@ impl SpecifiedValues {
                 rule
             },
             column_width,
-            multicol_flow: self.inside_multicol
-                || (generates_box
-                    && (matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
-                        || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0))),
+            multicol_flow,
+            horizontal_children,
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
         }

@@ -380,3 +380,41 @@ fn contents_element_with_columns_keeps_its_children_vertical() {
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, child), (268.0, 8.0, 30.0, 200.0));
 }
+
+#[test]
+fn contents_child_of_a_vertical_flex_container_keeps_the_horizontal_mapping() {
+    // The flex container places the child of its `display: contents` child
+    // on horizontal axes, so `margin-block-start` maps to the top margin as
+    // it does for a direct flex item.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;writing-mode:vertical-rl;width:300px;height:200px"),
+    );
+    let contents = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let child = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;width:30px;height:20px;margin-block-start:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, child), (8.0, 18.0, 30.0, 20.0));
+}
