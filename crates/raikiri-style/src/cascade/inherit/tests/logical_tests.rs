@@ -216,3 +216,28 @@ fn page_writing_mode_overrides_the_root_one() {
         )))
     );
 }
+
+#[test]
+fn page_var_preferred_sizes_follow_the_page_writing_mode() {
+    let page_size = |writing_mode: &str| {
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(0, "html", Some(writing_mode));
+        let style = doc.push_element(html, "style", None);
+        doc.push_text(
+            style,
+            "@page { --i: 30px; --b: 40px; inline-size: var(--i); block-size: var(--b) }",
+        );
+        let tree = build_rule_tree(&doc);
+        let result = cascade_with_media_context_for_page(
+            &doc,
+            &tree,
+            &MediaContext::default(),
+            &crate::page::PageContextQuery::default(),
+        )
+        .expect("page cascade Ok");
+        let declarations = result.page.declarations();
+        format!("{:?}", declarations.get(&PropertyKey::Width))
+    };
+    assert!(page_size("writing-mode: horizontal-tb").contains("30.0"));
+    assert!(page_size("writing-mode: vertical-lr").contains("40.0"));
+}

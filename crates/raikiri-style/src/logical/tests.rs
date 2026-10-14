@@ -94,3 +94,73 @@ fn sides_follow_the_abstract_to_physical_table() {
         );
     }
 }
+
+#[test]
+fn inherit_markers_and_deferred_values_move_to_every_side() {
+    use crate::property::DeferredValue;
+    let flow = FlowMapping {
+        writing_mode: WritingMode::VerticalRl,
+        direction: Direction::Ltr,
+    };
+    // vertical-rl ltr: inline-start top, block-start right, inline-end
+    // bottom, block-end left.
+    let sides = [
+        LogicalSide::InlineStart,
+        LogicalSide::BlockStart,
+        LogicalSide::InlineEnd,
+        LogicalSide::BlockEnd,
+    ];
+    let markers = [
+        PropertyValue::MarginTopInherit,
+        PropertyValue::MarginRightInherit,
+        PropertyValue::MarginBottomInherit,
+        PropertyValue::MarginLeftInherit,
+    ];
+    for (side, marker) in sides.iter().zip(&markers) {
+        assert_eq!(flow.value(PropertyValue::MarginLeftInherit, *side), *marker);
+    }
+    let deferred = |property: &'static str, key| {
+        PropertyValue::Deferred(DeferredValue {
+            property: SmolStr::new_static(property),
+            value: "inherit".into(),
+            key,
+        })
+    };
+    for (from, names, keys) in [
+        (
+            deferred("margin-inline-start", PropertyKey::MarginLeft),
+            ["margin-top", "margin-right", "margin-bottom", "margin-left"],
+            [
+                PropertyKey::MarginTop,
+                PropertyKey::MarginRight,
+                PropertyKey::MarginBottom,
+                PropertyKey::MarginLeft,
+            ],
+        ),
+        (
+            deferred("padding-inline-start", PropertyKey::PaddingLeft),
+            [
+                "padding-top",
+                "padding-right",
+                "padding-bottom",
+                "padding-left",
+            ],
+            [
+                PropertyKey::PaddingTop,
+                PropertyKey::PaddingRight,
+                PropertyKey::PaddingBottom,
+                PropertyKey::PaddingLeft,
+            ],
+        ),
+    ] {
+        for ((side, name), key) in sides.iter().zip(names).zip(keys) {
+            assert_eq!(
+                flow.value(from.clone(), *side),
+                deferred(name, key),
+                "{side:?}"
+            );
+        }
+    }
+    let other = deferred("color", PropertyKey::Color);
+    assert_eq!(flow.value(other.clone(), LogicalSide::BlockStart), other);
+}
