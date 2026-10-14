@@ -2891,13 +2891,7 @@ pub(crate) fn paint_document_impl(
                 // 2.7), and `vertical-align` does not apply to it even though
                 // the cascade keeps its `inline` display.
                 let blockified_item = document.layout_parent_of(node_id).is_some_and(|parent| {
-                    matches!(
-                        cascade.computed[parent].display,
-                        DisplayValue::Flex
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::Grid
-                            | DisplayValue::InlineGrid
-                    )
+                    cascade.computed[parent].display.is_flex_or_grid_container()
                 });
                 let own_shift = if placed_by_inline_engine || blockified_item {
                     0.0
@@ -2911,13 +2905,7 @@ pub(crate) fn paint_document_impl(
                 // placed table parts. Those paths still use paint-side insets.
                 let is_float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
                     && document.layout_parent_of(node_id).is_none_or(|parent| {
-                        !matches!(
-                            cascade.computed[parent].display,
-                            DisplayValue::Flex
-                                | DisplayValue::InlineFlex
-                                | DisplayValue::Grid
-                                | DisplayValue::InlineGrid
-                        )
+                        !cascade.computed[parent].display.is_flex_or_grid_container()
                     });
                 let needs_paint_inset = node_id == body_id
                     || is_float
@@ -2931,15 +2919,7 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::TableHeaderGroup
                             | DisplayValue::TableFooterGroup
                     );
-                let (pos_dx, pos_dy) = if needs_paint_inset
-                    && !matches!(
-                        cv.display,
-                        DisplayValue::Inline
-                            | DisplayValue::InlineBlock
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::InlineGrid
-                            | DisplayValue::InlineTable
-                    ) {
+                let (pos_dx, pos_dy) = if needs_paint_inset && !cv.display.is_inline_level() {
                     raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
@@ -4095,13 +4075,11 @@ pub(crate) fn paint_document_impl(
                     let child_fragment_clip_height = match own_multicol_clip_height {
                         Some(clip_height)
                             if document.get_node(child).is_some_and(|child_node| {
-                                matches!(
-                                    cascade.computed[child].display,
-                                    DisplayValue::Grid
-                                        | DisplayValue::InlineGrid
-                                        | DisplayValue::Table
-                                        | DisplayValue::InlineTable
-                                ) && child_node.kind() == NodeKind::Element
+                                (cascade.computed[child].display.is_grid_container()
+                                    || matches!(
+                                        cascade.computed[child].display,
+                                        DisplayValue::Table | DisplayValue::InlineTable
+                                    )) && child_node.kind() == NodeKind::Element
                             }) =>
                         {
                             Some(clip_height)
@@ -7281,7 +7259,9 @@ fn vertical_align_shift_px(
     display: DisplayValue,
     parent_font_size_px: f32,
 ) -> f32 {
-    if !matches!(display, DisplayValue::Inline | DisplayValue::InlineBlock) {
+    // Preserve the legacy paint-side scope to inline flow boxes. The caller
+    // already excludes atomic boxes aligned by the inline engine.
+    if !display.is_inline_flow_box() {
         return 0.0;
     }
     match va {

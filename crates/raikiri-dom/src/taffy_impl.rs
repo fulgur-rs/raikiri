@@ -581,12 +581,8 @@ impl Document {
                     DisplayValue::Table | DisplayValue::InlineTable
                 ) && tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
                 let inline_shrink_wrap = ifc_table
-                    || matches!(
-                        tree.nodes[idx].display,
-                        DisplayValue::InlineBlock
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::InlineGrid
-                    );
+                    || (tree.nodes[idx].display.is_atomic_inline_level()
+                        && tree.nodes[idx].display != DisplayValue::InlineTable);
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap

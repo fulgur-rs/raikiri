@@ -122,22 +122,21 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             || avoided(node.break_after)
             || matches!(node.break_inside, BreakInside::AvoidColumn);
         if node.multicol.is_some()
-            || !matches!(
-                node.display,
-                DisplayValue::Block
-                    | DisplayValue::InlineBlock
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::Flex
-                    | DisplayValue::Grid
-            )
+            || !(node.display.is_block_flex_or_grid_container()
+                || matches!(
+                    node.display,
+                    DisplayValue::Block
+                        | DisplayValue::InlineBlock
+                        | DisplayValue::FlowRoot
+                        | DisplayValue::ListItem
+                ))
             || node.has_logical_min_block_size
         {
             return false;
         }
         let descendants_projected = projected && !atomic(tree, id);
-        let descendants_inside_context = inside_formatting_context
-            || matches!(node.display, DisplayValue::Flex | DisplayValue::Grid);
+        let descendants_inside_context =
+            inside_formatting_context || node.display.is_block_flex_or_grid_container();
         pending.extend(node.children.iter().copied().map(|child| {
             (
                 child,
@@ -176,13 +175,11 @@ fn avoided(value: BreakBetween) -> bool {
 fn atomic(tree: &Document, id: usize) -> bool {
     let node = &tree.nodes[id];
     node.style.float.is_floated()
-        || matches!(
-            node.display,
-            DisplayValue::InlineBlock
-                | DisplayValue::FlowRoot
-                | DisplayValue::Flex
-                | DisplayValue::Grid
-        )
+        || (node.display.is_block_flex_or_grid_container()
+            || matches!(
+                node.display,
+                DisplayValue::InlineBlock | DisplayValue::FlowRoot
+            ))
         || node.style.size.height != Dimension::auto()
         || matches!(
             node.break_inside,
@@ -215,12 +212,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
     } else {
         tree.nodes[id].break_after
     };
-    if depth >= 128
-        || matches!(
-            tree.nodes[id].display,
-            DisplayValue::Flex | DisplayValue::Grid
-        )
-    {
+    if depth >= 128 || tree.nodes[id].display.is_block_flex_or_grid_container() {
         return own;
     }
     let children = &tree.nodes[id].children;
@@ -264,14 +256,11 @@ fn collect(
         known_dimensions: Size {
             width: (tree.nodes[id].multicol_auto_width
                 && !floated
-                && matches!(
-                    tree.nodes[id].display,
-                    DisplayValue::Block
-                        | DisplayValue::FlowRoot
-                        | DisplayValue::ListItem
-                        | DisplayValue::Flex
-                        | DisplayValue::Grid
-                )
+                && (tree.nodes[id].display.is_block_flex_or_grid_container()
+                    || matches!(
+                        tree.nodes[id].display,
+                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                    ))
                 && tree.nodes[id].style.size.width == Dimension::auto()
                 && tree.nodes[id].image_intrinsic_box().is_none()
                 && tree.nodes[id].tag_name() != Some("img"))
@@ -296,6 +285,8 @@ fn collect(
     let before = descendant_edge(tree, id, true, 0);
     let after = descendant_edge(tree, id, false, 0);
     if atomic(tree, id) {
+        let monolithic_display = tree.nodes[id].display.is_block_flex_or_grid_container()
+            || tree.nodes[id].display == DisplayValue::InlineBlock;
         out.push(FlowBox {
             node: id,
             ancestors: ancestors.clone(),
@@ -321,10 +312,7 @@ fn collect(
             after,
             floated,
             splittable: !floated
-                && !matches!(
-                    tree.nodes[id].display,
-                    DisplayValue::InlineBlock | DisplayValue::Flex | DisplayValue::Grid
-                )
+                && !monolithic_display
                 // Replaced content has no internal break points. Painting a
                 // continuation would rescale and replay the entire source.
                 && !tree.nodes[id].tag_name().is_some_and(|tag| {

@@ -919,6 +919,10 @@ impl RelativeCalcUnit {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RelativeCalcTerm {
     unit: RelativeCalcUnit,
+    /// Whether an `em` term folds in an `ex` or `ic` approximation, so it is
+    /// not a pure multiple of the font size. It fits in the padding after
+    /// `unit`.
+    approximates_font_metrics: bool,
     coefficient: f32,
 }
 
@@ -929,7 +933,11 @@ impl RelativeCalcLengthPercentage {
     /// A value made of one relative term.
     pub(crate) fn relative(unit: RelativeCalcUnit, coefficient: f32) -> Option<Self> {
         let mut value = Self::default();
-        value.terms[0] = Some(RelativeCalcTerm { unit, coefficient });
+        value.terms[0] = Some(RelativeCalcTerm {
+            unit,
+            approximates_font_metrics: false,
+            coefficient,
+        });
         value.normalized()
     }
 
@@ -940,14 +948,16 @@ impl RelativeCalcLengthPercentage {
             Some(b's' | b'l' | b'd') if unit.len() > 2 && unit[1..].starts_with('v') => &unit[1..],
             _ => unit,
         };
-        let relative = |unit, factor: f32| {
+        let relative_term = |unit, factor: f32, approximates_font_metrics| {
             let mut term = Self::default();
             term.terms[0] = Some(RelativeCalcTerm {
                 unit,
+                approximates_font_metrics,
                 coefficient: value * factor,
             });
             term
         };
+        let relative = |unit, factor| relative_term(unit, factor, false);
         let absolute = |percent: f32, px: f32| Self {
             percent,
             px,
@@ -969,8 +979,9 @@ impl RelativeCalcLengthPercentage {
             "q" => absolute(0.0, value * 96.0 / 101.6),
             "pt" => absolute(0.0, value * 96.0 / 72.0),
             "pc" => absolute(0.0, value * 16.0),
-            "em" | "ic" => relative(RelativeCalcUnit::Em, 1.0),
-            "ex" => relative(RelativeCalcUnit::Em, 0.5),
+            "em" => relative(RelativeCalcUnit::Em, 1.0),
+            "ic" => relative_term(RelativeCalcUnit::Em, 1.0, true),
+            "ex" => relative_term(RelativeCalcUnit::Em, 0.5, true),
             "ch" => relative(RelativeCalcUnit::Ch, 1.0),
             "rem" | "ric" => relative(RelativeCalcUnit::Rem, 1.0),
             "rex" | "rch" => relative(RelativeCalcUnit::Rem, 0.5),
@@ -995,11 +1006,12 @@ impl RelativeCalcLengthPercentage {
                 .find(|existing| existing.unit == term.unit)
             {
                 existing.coefficient += coefficient;
+                existing.approximates_font_metrics |= term.approximates_font_metrics;
             } else {
                 let slot = self.terms.iter_mut().find(|slot| slot.is_none())?;
                 *slot = Some(RelativeCalcTerm {
-                    unit: term.unit,
                     coefficient,
+                    ..term
                 });
             }
         }
@@ -1040,6 +1052,37 @@ impl RelativeCalcLengthPercentage {
             .find(|slot| slot.is_some_and(|term| term.unit == RelativeCalcUnit::Ch))?;
         let factor = slot.take()?.coefficient;
         Some((factor, self.normalized()?))
+    }
+
+    /// The value with its `em` term, if any, marked as folding in an `ex` or
+    /// `ic` approximation.
+    pub(crate) fn approximating_font_metrics(mut self, approximates: bool) -> Self {
+        for term in self.terms.iter_mut().flatten() {
+            term.approximates_font_metrics = approximates && term.unit == RelativeCalcUnit::Em;
+        }
+        self
+    }
+
+    /// The factor that scales the parent's font size to this value when it
+    /// is used as `font-size`, for a non-negative sum of `%` and true `em`
+    /// terms only. `None` when any other term (including `ex` or `ic`) takes
+    /// part, since those do not scale a keyword-derived parent size. `None`
+    /// also when no `em` term is left, since `ex` or `ic` terms that folded
+    /// to a zero `em` coefficient leave no term to record them.
+    pub(crate) fn font_size_scale(&self) -> Option<f32> {
+        if self.px != 0.0 {
+            return None;
+        }
+        let mut scale = self.percent / 100.0;
+        let mut has_em = false;
+        for term in self.terms.iter().flatten() {
+            if term.unit != RelativeCalcUnit::Em || term.approximates_font_metrics {
+                return None;
+            }
+            scale += term.coefficient;
+            has_em = true;
+        }
+        (has_em && scale >= 0.0).then_some(scale)
     }
 
     /// The value without font-relative or viewport terms, when it has none.
@@ -3460,6 +3503,57 @@ pub enum DisplayValue {
     TableCell,
     /// `table-caption` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: caption (`<caption>`).
     TableCaption,
+}
+
+/// Predicates on the stored display value. Callers remain responsible for
+/// box suppression, replaced elements, and flex/grid item blockification.
+impl DisplayValue {
+    /// Whether the box establishes a flex formatting context, regardless of
+    /// whether its outer display is block or inline.
+    pub const fn is_flex_container(self) -> bool {
+        matches!(self, Self::Flex | Self::InlineFlex)
+    }
+
+    /// Whether the box establishes a grid formatting context, regardless of
+    /// whether its outer display is block or inline.
+    pub const fn is_grid_container(self) -> bool {
+        matches!(self, Self::Grid | Self::InlineGrid)
+    }
+
+    /// Whether the box establishes either a flex or a grid formatting context.
+    pub const fn is_flex_or_grid_container(self) -> bool {
+        self.is_flex_container() || self.is_grid_container()
+    }
+
+    /// Whether the flex or grid container has block outer display.
+    pub const fn is_block_flex_or_grid_container(self) -> bool {
+        self.is_flex_or_grid_container() && !self.is_inline_level()
+    }
+
+    /// Whether the box has inline outer display, including inline tables.
+    /// `contents` generates no box and is therefore excluded.
+    pub const fn is_inline_level(self) -> bool {
+        matches!(
+            self,
+            Self::Inline
+                | Self::InlineBlock
+                | Self::InlineFlex
+                | Self::InlineGrid
+                | Self::InlineTable
+        )
+    }
+
+    /// Whether the box participates in its parent's inline formatting context
+    /// as one atomic box, including inline tables.
+    pub const fn is_atomic_inline_level(self) -> bool {
+        self.is_inline_level() && !matches!(self, Self::Inline)
+    }
+
+    /// Whether the inline-level box uses flow or flow-root layout, rather
+    /// than flex, grid, or table layout.
+    pub const fn is_inline_flow_box(self) -> bool {
+        matches!(self, Self::Inline | Self::InlineBlock)
+    }
 }
 
 css_keywords!(DisplayValue {

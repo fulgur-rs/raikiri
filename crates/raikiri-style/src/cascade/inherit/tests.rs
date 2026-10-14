@@ -1421,6 +1421,59 @@ fn monospace_root_element_uses_13px_medium() {
 }
 
 #[test]
+fn monospace_keyword_scaling_survives_a_percent_and_em_calc() {
+    let size = |declarations: &str| {
+        cascade_doc(
+            "",
+            "html",
+            Some(&format!(
+                "font-family: monospace; font-size: {declarations}"
+            )),
+        )
+        .font_size
+    };
+    // `%` and `em` both scale the parent's size, like `150%`.
+    assert_eq!(size("calc(50% + 1em)"), ComputedLength(19.5));
+    assert_eq!(size("calc(2em - 50%)"), ComputedLength(19.5));
+    // `ex`, `ic` and absolute lengths do not scale the keyword size, so the
+    // calc resolves against the plain 16px parent size.
+    assert_eq!(size("calc(50% + 1ex)"), ComputedLength(16.0));
+    assert_eq!(size("calc(50% + 1ic - 1em + 1em)"), ComputedLength(24.0));
+    assert_eq!(size("calc(100% + 2px)"), ComputedLength(18.0));
+    // The same holds after substitution.
+    assert_eq!(size("calc(50% + var(--x)); --x: 1em"), ComputedLength(19.5));
+    assert_eq!(size("calc(50% + var(--x)); --x: 1ex"), ComputedLength(16.0));
+    // An `ex` that cancels out, or is multiplied by zero, takes no part.
+    assert_eq!(size("calc(50% + 1em + 1ex - 1ex)"), ComputedLength(19.5));
+    assert_eq!(size("calc(50% + 1em + 0 * 1ex)"), ComputedLength(19.5));
+    // A negative sum clamps to zero.
+    assert_eq!(size("calc(50% - 1em)"), ComputedLength(0.0));
+    // A sum that overflows the parent's size falls back to the initial size.
+    assert_eq!(size("calc(1e38em + 1%)"), ComputedLength(16.0));
+    // An `ex` that folds into an `em` term which then cancels still keeps
+    // the calc on the plain parent size.
+    assert_eq!(size("calc(50% + 1ex - .5em)"), ComputedLength(8.0));
+
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: calc(100% + 1em)",
+        "font-family: serif",
+    ]);
+    assert_eq!(c[1].font_size, ComputedLength(26.0));
+    // The keyword information follows the family change.
+    assert_eq!(c[2].font_size, ComputedLength(32.0));
+
+    // A multiple that fits the 13px monospace size but would overflow the
+    // 16px `medium` after a family change stays on the calc path.
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: calc(2.5e37em + 1%)",
+        "font-family: serif",
+    ]);
+    assert!(c[2].font_size.0.is_finite(), "{:?}", c[2].font_size);
+}
+
+#[test]
 fn pt_is_absolutized_at_cascade() {
     let cv = cascade_doc("", "div", Some("font-size: 15pt; padding-top: 9pt"));
     assert_eq!(cv.font_size, ComputedLength(20.0));
@@ -10751,4 +10804,31 @@ fn root_self_referential_lh_uses_the_initial_fonts_normal_line() {
         r.computed[html].line_height,
         ComputedLineHeight::Length(ComputedLength(40.0))
     );
+}
+
+#[test]
+fn svg_font_size_calc_of_percent_and_em_exports_its_em_multiple() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(
+        style,
+        "#a { font-size: calc(50% + 1em) } #b { font-size: calc(50% + 2px) }",
+    );
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let a =
+        doc.push_element_with_namespace(svg, "text", "http://www.w3.org/2000/svg", &[("id", "a")]);
+    let b =
+        doc.push_element_with_namespace(svg, "text", "http://www.w3.org/2000/svg", &[("id", "b")]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    let font_size = |node| {
+        result
+            .svg_style_properties(StyleNodeId(node as u64))
+            .iter()
+            .find(|value| value.property == PropertyKey::FontSize)
+            .map(|value| value.expression.clone())
+    };
+    assert_eq!(font_size(a), Some(Some("1.5em".to_owned())));
+    // A calc with an absolute length keeps its computed px size.
+    assert_eq!(font_size(b), Some(None));
 }

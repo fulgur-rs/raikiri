@@ -109,13 +109,7 @@ pub(crate) fn vertical_logical_size<'a>(
     idx: usize,
 ) -> Option<&'a raikiri_style::VerticalLogicalSize> {
     let size = cascade.computed[idx].vertical_logical_size.as_ref()?;
-    if matches!(
-        cascade.computed[idx].display,
-        DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-    ) {
+    if cascade.computed[idx].display.is_flex_or_grid_container() {
         return None;
     }
     let mut current = Some(idx);
@@ -370,19 +364,16 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
         width: false,
         height: false,
     };
-    let applies = matches!(
-        cv.display,
-        DisplayValue::Block
-            | DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::FlowRoot
-            | DisplayValue::ListItem
-            | DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-            | DisplayValue::TableCaption
-    ) && !super::fixed::generates_inline_box(doc, idx, cv);
+    let applies = (cv.display.is_flex_or_grid_container()
+        || (cv.display.is_inline_flow_box()
+            || matches!(
+                cv.display,
+                DisplayValue::Block
+                    | DisplayValue::FlowRoot
+                    | DisplayValue::ListItem
+                    | DisplayValue::TableCaption
+            )))
+        && !super::fixed::generates_inline_box(doc, idx, cv);
     if !applies {
         return none;
     }
@@ -472,8 +463,8 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
         DisplayValue::InlineBlock => Display::Block,
         DisplayValue::FlowRoot => Display::FlowRoot,
         DisplayValue::None => Display::None,
-        DisplayValue::Flex | DisplayValue::InlineFlex => Display::Flex,
-        DisplayValue::Grid | DisplayValue::InlineGrid => Display::Grid,
+        display if display.is_flex_container() => Display::Flex,
+        display if display.is_grid_container() => Display::Grid,
         // Table model — CSS Display 3 §2 / CSS 2.1 §17.2. Taffy 0.12 has no
         // table layout, so map to Block as temporary approximation.
         // Real table routing uses `Node::display` (preserved in
