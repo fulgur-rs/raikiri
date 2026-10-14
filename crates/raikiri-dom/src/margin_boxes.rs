@@ -18,9 +18,9 @@ use crate::{
 use raikiri_style::property::{
     BackgroundImage, BackgroundLayerSpec, BackgroundRepeat, Border, BorderColor, BorderStyle,
     ContentComponent, CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto,
-    LengthPercentageOrCalc, PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcLengthPercentage,
-    Sides, StringFetchMode, TextAlign, TextShadowColor, TextShadowLength, VerticalAlign, VisualBox,
-    WritingMode,
+    LengthPercentageOrCalc, LineHeight, PropertyKey, PropertyValue, QuoteKeyword,
+    RelativeCalcLengthPercentage, Sides, StringFetchMode, TextAlign, TextShadowColor,
+    TextShadowLength, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength,
@@ -778,14 +778,27 @@ fn inherited_margin_box_font(
     let font_size = match margin_box_property(rule, PropertyKey::FontSize) {
         Some(PropertyValue::FontSize(value)) => length_to_px(*value, page_size, page_size),
         Some(PropertyValue::FontSizeKeyword(keyword)) => keyword.px_for_medium(16.0),
-        // A mixed calc's percentage and `em` terms refer to the page's size.
-        Some(PropertyValue::FontSizeCalc(calc)) => resolve_font_size_calc(
-            *calc,
-            ComputedLength(page_size),
-            None,
-            &ResolveContext::new(ComputedLength(root_size)),
-        )
-        .px(),
+        // A mixed calc's percentage and `em` terms refer to the page's size,
+        // `lh` to the page's line height and `rlh` to the root's.
+        Some(PropertyValue::FontSizeCalc(calc)) => {
+            let root_line_height = root.and_then(ComputedValues::lh_basis);
+            let page_line_height = match page_property(page, PropertyKey::LineHeight) {
+                Some(PropertyValue::LineHeight(LineHeight::Length(Length::Px(px)))) => {
+                    Some(ComputedLength(*px))
+                }
+                Some(PropertyValue::LineHeight(LineHeight::Number(factor))) => {
+                    Some(ComputedLength(factor * page_size))
+                }
+                _ => root_line_height,
+            };
+            resolve_font_size_calc(
+                *calc,
+                ComputedLength(page_size),
+                page_line_height,
+                &ResolveContext::with_root_line_height(ComputedLength(root_size), root_line_height),
+            )
+            .px()
+        }
         _ => page_size,
     };
     let family = match margin_box_property(rule, PropertyKey::FontFamily)

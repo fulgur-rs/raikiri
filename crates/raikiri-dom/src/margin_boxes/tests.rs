@@ -116,14 +116,30 @@ fn inherited_margin_box_font_resolves_keywords_and_calc() {
             "@page { font-size: 20px; @top-left { content: 'x'; font-size: calc(50% + 2px); } }",
             12.0,
         ),
+        (
+            "html { line-height: 30px } @page { font-size: 20px; \
+             @top-left { content: 'x'; font-size: calc(1rlh + 2px); } }",
+            32.0,
+        ),
+        (
+            "@page { font-size: 20px; line-height: 2; \
+             @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
+            42.0,
+        ),
+        (
+            "@page { font-size: 20px; line-height: 25px; \
+             @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
+            27.0,
+        ),
     ] {
         let mut document = Document::new();
-        let style = document.append_element(
+        let html = document.append_element(
             Some(document.root_index()),
-            "style",
+            "html",
             Style::default(),
             None::<&str>,
         );
+        let style = document.append_element(Some(html), "style", Style::default(), None::<&str>);
         document.append_text(style, css);
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
