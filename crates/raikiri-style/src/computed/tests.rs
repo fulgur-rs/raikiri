@@ -317,6 +317,7 @@ fn non_initial_parent() -> ComputedValues {
         // fallback rather than copying `parent.writing_mode` verbatim.
         writing_mode: WritingMode::VerticalRl,
         cssom_writing_mode: WritingMode::VerticalRl,
+        multicol_flow: true,
         ruby_position: RubyPosition::Under,
         // CSS Text 3 §8.1: differs from the initial `0`
         // (as required for every field of non_initial_parent).

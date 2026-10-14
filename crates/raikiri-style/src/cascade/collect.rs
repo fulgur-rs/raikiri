@@ -9,10 +9,13 @@ use selectors::parser::Selector;
 
 use crate::PseudoElem;
 use crate::RaikiriSelectorImpl;
+use crate::computed::ComputedValues;
 use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
-use crate::property::{Direction, PropertyKey, PropertyValue, WritingMode, resolve_writing_mode};
+use crate::property::{
+    Direction, DisplayValue, PropertyKey, PropertyValue, TextOrientation, WritingMode,
+};
 use crate::rule::{Declaration, parse_declaration_block_within};
 
 use super::candidate::{
@@ -867,20 +870,23 @@ pub(crate) fn pick_winners(
 /// The writing mode and direction that place the flow-relative candidates
 /// among `candidates`, or `None` when there are none.
 ///
-/// The element's own `writing-mode` and `direction` winners decide them,
-/// falling back to the inherited values (CSS Logical Properties 1 §4: a
-/// flow-relative property maps "according to the element's own writing-mode
-/// and direction"). `resolve` substitutes a `var()` winner; a winner that
-/// still is not a keyword (a CSS-wide keyword, or an invalid substitution)
-/// takes the inherited value too.
+/// The element's own `writing-mode`, `text-orientation` and `direction`
+/// winners decide them, falling back to the inherited values (CSS Logical
+/// Properties 1 §4: a flow-relative property maps "according to the
+/// element's own writing-mode and direction"). `resolve` substitutes a
+/// `var()` winner; a winner that still is not a keyword (a CSS-wide keyword,
+/// or an invalid substitution) takes the inherited value too.
 ///
-/// The writing mode is the renderer-facing one ([`resolve_writing_mode`]):
-/// block layout runs in `horizontal-tb`, so mapping a block-axis margin to a
-/// vertical side would move it off the axis blocks are stacked on.
+/// The writing mode is the one block layout places the element's box in
+/// ([`layout_writing_mode`]): flex, grid and table boxes and multicol
+/// containers and their contents ([`ComputedValues::multicol_flow`]) place
+/// their children on horizontal axes in every writing mode, so those
+/// children map through `horizontal-tb`. `text-orientation: upright` makes
+/// the used direction `ltr` in vertical writing modes (CSS Writing Modes 4
+/// §5.1).
 pub(crate) fn flow_mapping(
     candidates: ElementCandidates<'_>,
-    inherited_writing_mode: WritingMode,
-    inherited_direction: Direction,
+    inherited: &ComputedValues,
     mut resolve: impl FnMut(&PropertyValue) -> Option<PropertyValue>,
 ) -> Option<FlowMapping> {
     let decls = candidates.decls();
@@ -888,10 +894,12 @@ pub(crate) fn flow_mapping(
         return None;
     }
     let mut writing_mode: Option<RankedDecl> = None;
+    let mut text_orientation: Option<RankedDecl> = None;
     let mut direction: Option<RankedDecl> = None;
     for (idx, candidate) in decls.iter().enumerate() {
         let slot = match candidate.key() {
             PropertyKey::WritingMode => &mut writing_mode,
+            PropertyKey::TextOrientation => &mut text_orientation,
             PropertyKey::Direction => &mut direction,
             _ => continue,
         };
@@ -902,17 +910,63 @@ pub(crate) fn flow_mapping(
     }
     let mut winner = |slot: Option<RankedDecl>| slot.and_then(|w| resolve(candidates.value(w.idx)));
     let writing_mode = match winner(writing_mode) {
-        Some(PropertyValue::WritingMode(mode)) => resolve_writing_mode(mode),
-        _ => inherited_writing_mode,
+        Some(PropertyValue::WritingMode(mode)) => mode,
+        _ => inherited.cssom_writing_mode,
+    };
+    let text_orientation = match winner(text_orientation) {
+        Some(PropertyValue::TextOrientation(orientation)) => orientation,
+        _ => inherited.text_orientation,
     };
     let direction = match winner(direction) {
         Some(PropertyValue::Direction(direction)) => direction,
-        _ => inherited_direction,
+        _ => inherited.direction,
+    };
+    let horizontal_parent = inherited.multicol_flow
+        || matches!(
+            inherited.display,
+            DisplayValue::Flex
+                | DisplayValue::InlineFlex
+                | DisplayValue::Grid
+                | DisplayValue::InlineGrid
+                | DisplayValue::Table
+                | DisplayValue::InlineTable
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableColumnGroup
+                | DisplayValue::TableColumn
+                | DisplayValue::TableCell
+                | DisplayValue::TableCaption
+        );
+    let writing_mode = if horizontal_parent {
+        WritingMode::HorizontalTb
+    } else {
+        layout_writing_mode(writing_mode)
+    };
+    let direction = if text_orientation == TextOrientation::Upright
+        && writing_mode != WritingMode::HorizontalTb
+    {
+        Direction::Ltr
+    } else {
+        direction
     };
     Some(FlowMapping {
         writing_mode,
         direction,
     })
+}
+
+/// The writing mode block layout lays an element's boxes out in:
+/// `vertical-rl` and `vertical-lr` stack blocks along the physical x axis,
+/// while the sideways modes still run on horizontal axes.
+fn layout_writing_mode(mode: WritingMode) -> WritingMode {
+    match mode {
+        WritingMode::VerticalRl | WritingMode::VerticalLr => mode,
+        WritingMode::HorizontalTb | WritingMode::SidewaysRl | WritingMode::SidewaysLr => {
+            WritingMode::HorizontalTb
+        }
+    }
 }
 
 pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {

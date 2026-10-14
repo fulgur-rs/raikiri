@@ -294,6 +294,7 @@ fn parent_fixture() -> ComputedValues {
         // later in `SpecifiedValues::absolutize_with`.
         writing_mode: WritingMode::VerticalRl,
         cssom_writing_mode: WritingMode::VerticalRl,
+        multicol_flow: true,
         ruby_position: RubyPosition::Under,
         text_indent: ComputedTextIndent::Px(9.0),
         text_indent_ch_factor: None,

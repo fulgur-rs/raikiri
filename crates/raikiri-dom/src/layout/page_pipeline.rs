@@ -877,7 +877,19 @@ fn layout_single_page_with_table_projection(
     // the bottom margin has no effect on a root sized to the page content
     // box. The horizontal margins, UA or authored, become inline padding of
     // the root after Step 4 (`move_body_inline_margins_into_padding`).
-    let body_margin_top = body_margin_top(document, cascade, body_id, content_width);
+    // A body laid out on vertical axes stacks its children along the
+    // physical x axis: its top and bottom margins are inline margins, which
+    // become padding after Step 4 instead, and its block-start margin
+    // cannot collapse with a child's (see `taffy_impl::vertical_block`).
+    let vertical_body = !document.nodes[body_id].is_ifc_root()
+        && crate::taffy_impl::block_right_to_left(document, body_id).is_some();
+    let body_margin_top = if vertical_body {
+        0.0
+    } else {
+        body_margin_top(document, cascade, body_id, content_width)
+    };
+    let body_vertical_margins =
+        vertical_body.then(|| body_vertical_margins(document, cascade, body_id, content_width));
     {
         let style_margin = &mut document.nodes[body_id].style.margin;
         style_margin.top = LengthPercentageAuto::length(0.0);
@@ -890,6 +902,9 @@ fn layout_single_page_with_table_projection(
     // Page margins are painted/represented outside this taffy root.
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
     move_body_inline_margins_into_padding(document, body_id, body_insets, content_width);
+    if let Some(margins) = body_vertical_margins {
+        move_body_vertical_margins_into_padding(document, body_id, margins, content_width);
+    }
     // A body whose content is one inline-engine paragraph has line boxes that
     // keep its top margin from collapsing; carry it as top padding so the
     // lines and the boxes among them start below it.

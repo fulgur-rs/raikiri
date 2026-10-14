@@ -184,8 +184,10 @@ fn right_float_stays_inside_a_vertical_block() {
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     let container = absolute_rect(&doc, container);
     let float = absolute_rect(&doc, float);
-    // The float meets the right edge of the 50px-wide container, not of the
-    // body it was stretched across before.
+    // The float meets the block-start edge of the 50px-wide container, its
+    // right edge, not that of the body it was stretched across before. A
+    // right float goes to the line-right side, the bottom in `vertical-rl`
+    // (CSS Writing Modes 4 §6.2).
     assert_eq!(container, (8.0, 8.0, 50.0, 50.0));
-    assert_eq!(float, (38.0, 8.0, 20.0, 20.0));
+    assert_eq!(float, (38.0, 38.0, 20.0, 20.0));
 }

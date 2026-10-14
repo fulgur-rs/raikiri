@@ -1,0 +1,222 @@
+use crate::Document;
+use crate::layout::layout_single_page;
+use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
+use taffy::Style;
+
+/// A document whose body (8px margin) holds a container styled
+/// `container_css` with one child per entry of `children`, each a
+/// `display:block` div styled with that entry. The part of an entry after
+/// a `|` is the Ahem text of the child. Returns the rects of the container
+/// and of its children.
+fn layout(container_css: &str, children: &[&str]) -> Vec<(f32, f32, f32, f32)> {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            format!(
+                "display:block;font-family:Ahem;font-size:10px;line-height:10px;{container_css}"
+            )
+            .as_str(),
+        ),
+    );
+    let mut ids = vec![container];
+    for css in children {
+        let (css, text) = css.split_once('|').unwrap_or((css, ""));
+        let child = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some(format!("display:block;{css}").as_str()),
+        );
+        if !text.is_empty() {
+            doc.append_text(child, text);
+        }
+        ids.push(child);
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    ids.into_iter().map(|id| absolute_rect(&doc, id)).collect()
+}
+
+#[test]
+fn vertical_rl_blocks_stack_from_right_to_left() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px",
+        &["width:50px", "width:30px"],
+    );
+    assert_eq!(rects[0], (8.0, 8.0, 300.0, 200.0));
+    // Each child fills the container's inline size, its physical height.
+    assert_eq!(rects[1], (258.0, 8.0, 50.0, 200.0));
+    assert_eq!(rects[2], (228.0, 8.0, 30.0, 200.0));
+}
+
+#[test]
+fn vertical_lr_blocks_stack_from_left_to_right() {
+    let rects = layout(
+        "writing-mode:vertical-lr;width:300px;height:200px",
+        &["width:50px", "width:30px"],
+    );
+    assert_eq!(rects[1], (8.0, 8.0, 50.0, 200.0));
+    assert_eq!(rects[2], (58.0, 8.0, 30.0, 200.0));
+}
+
+#[test]
+fn vertical_rl_block_margins_follow_the_physical_sides() {
+    // The block-start margin is the right one in `vertical-rl`; adjacent
+    // block margins collapse (10px and 20px give 20px); inline margins
+    // shorten the physical height.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px",
+        &[
+            "width:50px;margin:5px 10px 15px 0",
+            "width:30px;margin-right:20px",
+        ],
+    );
+    assert_eq!(rects[1], (248.0, 13.0, 50.0, 180.0));
+    assert_eq!(rects[2], (198.0, 8.0, 30.0, 200.0));
+}
+
+#[test]
+fn vertical_rl_container_padding_and_border_offset_its_children() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px;box-sizing:border-box;\
+         padding:1px 2px 3px 4px;border:solid;border-width:5px 6px 7px 8px",
+        &["width:50px"],
+    );
+    // Right edge: 8 + 300 - 6 - 2 = 300; top: 8 + 5 + 1 = 14; height:
+    // 200 - 5 - 1 - 3 - 7 = 184.
+    assert_eq!(rects[1], (250.0, 14.0, 50.0, 184.0));
+}
+
+#[test]
+fn vertical_rl_auto_width_is_the_extent_of_its_blocks() {
+    let rects = layout(
+        "writing-mode:vertical-rl;height:200px",
+        &["width:50px", "width:30px"],
+    );
+    assert_eq!(rects[0], (8.0, 8.0, 80.0, 200.0));
+    assert_eq!(rects[1], (38.0, 8.0, 50.0, 200.0));
+    assert_eq!(rects[2], (8.0, 8.0, 30.0, 200.0));
+}
+
+#[test]
+fn vertical_auto_height_under_a_horizontal_body_fits_its_content() {
+    // An orthogonal flow takes the fit-content inline size: the longest
+    // child here, 50px, not the body's 584px.
+    let rects = layout(
+        "writing-mode:vertical-rl",
+        &["width:20px;height:50px", "width:20px;height:30px"],
+    );
+    assert_eq!(rects[0], (8.0, 8.0, 40.0, 50.0));
+    assert_eq!(rects[1], (28.0, 8.0, 20.0, 50.0));
+    assert_eq!(rects[2], (8.0, 8.0, 20.0, 30.0));
+}
+
+#[test]
+fn horizontal_child_of_a_vertical_container_is_as_tall_as_its_content() {
+    // The horizontal child is an orthogonal flow: its physical height is
+    // its block size, from its 10px-tall child, not the container's inline
+    // size it would be stretched to.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:300px;height:200px"),
+    );
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb;width:40px"),
+    );
+    doc.append_element(
+        Some(child),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, child), (268.0, 8.0, 40.0, 10.0));
+}
+
+#[test]
+fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some(
+            "display:block;margin:8px;writing-mode:vertical-rl;font-family:Ahem;\
+             font-size:10px;line-height:10px",
+        ),
+    );
+    let paragraphs: Vec<usize> = ["aa bb", "cc"]
+        .into_iter()
+        .map(|text| {
+            let p = doc.append_element(
+                Some(body),
+                "p",
+                Style::default(),
+                Some("display:block;margin:0 0 0 10px"),
+            );
+            doc.append_text(p, text);
+            p
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let body = absolute_rect(&doc, body);
+    let first = absolute_rect(&doc, paragraphs[0]);
+    let second = absolute_rect(&doc, paragraphs[1]);
+    // One 10px column each, from the right edge of the body's content box
+    // (inside its 8px margin) leftwards, 10px apart from the left margin of
+    // the first.
+    assert_eq!(body, (0.0, 0.0, 800.0, 600.0));
+    assert_eq!((first.0, first.1, first.2), (782.0, 8.0, 10.0));
+    assert_eq!((second.0, second.1, second.2), (762.0, 8.0, 10.0));
+}
+
+#[test]
+fn vertical_auto_height_never_shrinks_below_its_content() {
+    // Content taller than the space under the body keeps its height.
+    let rects = layout("writing-mode:vertical-rl", &["width:20px;height:1000px"]);
+    assert_eq!(rects[0], (8.0, 8.0, 20.0, 1000.0));
+}
+
+#[test]
+fn horizontal_child_of_a_vertical_container_fills_its_width() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px;padding:0 5px",
+        &["writing-mode:horizontal-tb;height:10px;margin:0 7px"],
+    );
+    // The 300px content box less the child's 7px margins.
+    assert_eq!(rects[1], (20.0, 8.0, 286.0, 10.0));
+}

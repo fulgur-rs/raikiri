@@ -428,6 +428,7 @@ impl LayoutPartialTree for Document {
     /// Besides satisfying borrowck, it makes evaluation order and dependencies
     /// explicit to readers.
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
+        self.note_transposed_layout(usize::from(node_id));
         let sanitized = crate::layout::sanitize_taffy_layout(layout, &mut self.layout_warnings);
         self.nodes[usize::from(node_id)].unrounded_layout = sanitized;
     }
@@ -468,6 +469,9 @@ impl Document {
         inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
+        if let Some(output) = self.compute_transposed_child(node_id, inputs) {
+            return output;
+        }
         stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
             self.compute_child_layout_with_block_ctx_inner(node_id, inputs, block_ctx)
         })
@@ -791,7 +795,9 @@ impl Document {
 mod tests;
 
 mod orthogonal_flow;
+mod vertical_block;
 mod vertical_oof;
+pub(crate) use vertical_block::{TransposedBlock, block_right_to_left};
 pub(crate) use vertical_oof::used_writing_mode;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
@@ -1750,8 +1756,9 @@ fn compute_inline_block_shrink_wrap(
 /// Every block container goes through here so that
 /// [`Document::get_block_child_style`] knows the content-box width its
 /// children's percentage padding and borders resolve against. A container
-/// in a vertical writing mode is left to taffy: its inline size, which those
-/// percentages refer to, is its height.
+/// in a vertical writing mode is laid out on transposed axes instead (see
+/// `vertical_block`), where taffy resolves those percentages against its
+/// inline size, the physical height.
 ///
 /// A container whose width is not definite yet (an auto-width float, say)
 /// only learns it from its contents, after taffy has listed the children.
@@ -1765,8 +1772,8 @@ pub(crate) fn block_layout(
     mut block_ctx: Option<&mut BlockContext<'_>>,
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
-    if tree.has_vertical_writing_mode(idx) {
-        let output = compute_block_layout(tree, node_id, inputs, block_ctx);
+    if let Some(right_to_left) = vertical_block::block_right_to_left(tree, idx) {
+        let output = vertical_block::compute_vertical_block(tree, node_id, inputs, right_to_left);
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
         return output;
     }
@@ -2263,7 +2270,9 @@ impl LayoutBlockContainer for Document {
         Self: 'a;
 
     fn get_block_container_style(&self, node_id: NodeId) -> Self::BlockContainerStyle<'_> {
-        &self.nodes[usize::from(node_id)].style
+        let idx = usize::from(node_id);
+        self.transposed_container_style(idx)
+            .unwrap_or(&self.nodes[idx].style)
     }
 
     /// Taffy also reads a child's style when it places the child as an
@@ -2276,6 +2285,9 @@ impl LayoutBlockContainer for Document {
     /// afterwards, and a zero inset fixed now could not follow that width.
     fn get_block_child_style(&self, child_node_id: NodeId) -> Self::BlockItemStyle<'_> {
         let child = usize::from(child_node_id);
+        if let Some(style) = self.transposed_child_style(child) {
+            return BlockChildStyle::new(style, None);
+        }
         let style = &self.nodes[child].style;
         let basis = self
             .block_item_percent_bases

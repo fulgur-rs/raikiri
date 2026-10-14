@@ -754,6 +754,9 @@ pub struct SpecifiedValues {
     pub column_width: ColumnWidthValue,
     /// Non-inherited column rule; resolves without contributing to box geometry.
     pub column_rule: Border,
+    /// Whether an ancestor is a multicol container or inside one, copied from
+    /// the parent's [`ComputedValues::multicol_flow`]. Not a CSS property.
+    pub(crate) inside_multicol: bool,
 }
 
 /// Cascade sort key of a winning declaration: origin and importance rank,
@@ -1109,6 +1112,7 @@ impl SpecifiedValues {
             column_span: ColumnSpanValue::None,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
+            inside_multicol: false,
         }
     }
 
@@ -1279,6 +1283,7 @@ impl SpecifiedValues {
             column_span: ColumnSpanValue::None,
             column_rule: INITIAL_BORDER,
             column_width: ColumnWidthValue::Auto,
+            inside_multicol: parent.multicol_flow,
             // CSS Text 3 §5.3: hyphens is inherited.
             hyphens: parent.hyphens,
             // CSS Text 4: hyphenate-character is inherited.
@@ -1927,6 +1932,7 @@ impl SpecifiedValues {
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.
         let own_line_height =
             used_line_height_length_or(line_height, font_size, normal_line_height);
+        let column_width = resolve_column_width(self.column_width, font_size, own_line_height, ctx);
         let letter_spacing =
             resolve_letter_spacing_with_ch(self.letter_spacing, font_size, own_line_height, ctx);
         let letter_spacing_computed =
@@ -2699,7 +2705,10 @@ impl SpecifiedValues {
                 });
                 rule
             },
-            column_width: resolve_column_width(self.column_width, font_size, own_line_height, ctx),
+            column_width,
+            multicol_flow: self.inside_multicol
+                || matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
+                || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0),
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
         }

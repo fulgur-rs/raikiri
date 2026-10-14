@@ -97,26 +97,24 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph
 /// over a limit of the inline engine, or one it refuses when it is required
 /// for every paragraph.
-/// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
-/// lays out vertical lines on its own axes. A multicol container and its
-/// contents run vertical writing on horizontal axes, so they keep the
-/// horizontal mapping in [`ComputedValues::width`] / [`ComputedValues::height`].
-/// So do flex and grid containers: their algorithms place items on physical
-/// axes, together with the horizontally mapped logical margins.
-pub(crate) fn vertical_logical_size<'a>(
-    doc: &Document,
-    cascade: &'a CascadeResult,
-    idx: usize,
-) -> Option<&'a raikiri_style::VerticalLogicalSize> {
-    let size = cascade.computed[idx].vertical_logical_size.as_ref()?;
-    if matches!(
-        cascade.computed[idx].display,
+/// Whether `idx` lays out on vertical axes: a box in `vertical-rl` or
+/// `vertical-lr`. A multicol container and its contents run vertical writing
+/// on horizontal axes, and so do flex and grid containers: their algorithms
+/// place items on physical axes, together with the horizontally mapped
+/// logical margins.
+pub(crate) fn lays_out_vertically(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+    let values = &cascade.computed[idx];
+    if !matches!(
+        values.cssom_writing_mode,
+        WritingMode::VerticalRl | WritingMode::VerticalLr
+    ) || matches!(
+        values.display,
         DisplayValue::Flex
             | DisplayValue::InlineFlex
             | DisplayValue::Grid
             | DisplayValue::InlineGrid
     ) {
-        return None;
+        return false;
     }
     let mut current = Some(idx);
     while let Some(id) = current {
@@ -125,11 +123,26 @@ pub(crate) fn vertical_logical_size<'a>(
             .get(id)
             .is_some_and(|values| multicol_style_from_computed(values).is_some())
         {
-            return None;
+            return false;
         }
         current = doc.parent_of(id);
     }
-    Some(size)
+    true
+}
+
+/// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
+/// lays out vertical lines on its own axes ([`lays_out_vertically`]). Other
+/// boxes keep the horizontal mapping in [`ComputedValues::width`] /
+/// [`ComputedValues::height`].
+pub(crate) fn vertical_logical_size<'a>(
+    doc: &Document,
+    cascade: &'a CascadeResult,
+    idx: usize,
+) -> Option<&'a raikiri_style::VerticalLogicalSize> {
+    cascade.computed[idx]
+        .vertical_logical_size
+        .as_ref()
+        .filter(|_| lays_out_vertically(doc, cascade, idx))
 }
 
 /// The computed values of `idx` with [`vertical_logical_size`] applied.
@@ -266,6 +279,7 @@ pub(crate) fn apply_computed_to_style(
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         doc.nodes[idx].needs_relative_block_paint_offset = false;
         let is_multicol_container = doc.nodes[idx].multicol.is_some();
+        let vertical_axes = lays_out_vertically(doc, cascade, idx);
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv);
         bridge_display(style, cv);
@@ -280,7 +294,13 @@ pub(crate) fn apply_computed_to_style(
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_min_max_size(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
+        bridge_min_max_size(
+            style,
+            cv,
+            vertical_axes,
+            &mut doc.calc_values,
+            &mut doc.layout_warnings,
+        );
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
         bridge_flex(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
@@ -800,6 +820,7 @@ fn bridge_known_image_intrinsic_size(
 fn bridge_min_max_size(
     style: &mut taffy::Style,
     cv: &ComputedValues,
+    vertical_axes: bool,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
@@ -807,11 +828,13 @@ fn bridge_min_max_size(
     // (as in bridge_size; cv's Auto naturally preserves defaults).
     // Keep calc() handles alive in the document arena just like width/height;
     // collapsing a max-width calc() to zero would spuriously clamp a <col>.
-    // The layout writing mode is normalized to horizontal-tb, just like
-    // inline-size/block-size. Keep a logical block minimum on that same
-    // layout axis when no physical min-height is present. Preserve an
-    // explicit physical constraint; CSSOM keeps the original axis mapping.
-    let min_height = if cv.writing_mode == WritingMode::HorizontalTb
+    // A vertical box laid out on horizontal axes (`vertical_axes` unset)
+    // keeps a logical block minimum on the horizontal block axis when no
+    // physical min-height is present, like its inline-size/block-size.
+    // Preserve an explicit physical constraint; CSSOM keeps the original
+    // axis mapping. A box laid out on vertical axes has its logical block
+    // minimum as its minimum width already.
+    let min_height = if !vertical_axes
         && cv.cssom_writing_mode != WritingMode::HorizontalTb
         && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
     {

@@ -464,6 +464,9 @@ pub struct Document {
     /// The vertical box under a horizontal block container that is being
     /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
     pub(crate) orthogonal_block_in_layout: Option<usize>,
+    /// Vertical block containers being laid out on transposed axes, the
+    /// innermost last; see `taffy_impl::vertical_block`.
+    pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
     /// Block containers being laid out, each with the content-box width its
     /// children's percentage padding and borders resolve against; see
     /// [`crate::taffy_impl::BlockChildStyle`].
@@ -673,6 +676,7 @@ impl Document {
             fragmentation_stack: Vec::new(),
             vertical_oof_containing_blocks: Vec::new(),
             orthogonal_block_in_layout: None,
+            transposed_blocks: Vec::new(),
             block_item_percent_bases: Vec::new(),
             flex_item_percent_bases: Vec::new(),
             size_contained_measure: Vec::new(),
@@ -1984,6 +1988,7 @@ impl Document {
             fragmentation_stack: _,
             vertical_oof_containing_blocks: _,
             orthogonal_block_in_layout: _,
+            transposed_blocks: _,
             block_item_percent_bases: _,
             flex_item_percent_bases: _,
             size_contained_measure: _,
