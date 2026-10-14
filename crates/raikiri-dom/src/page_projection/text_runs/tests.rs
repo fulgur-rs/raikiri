@@ -793,7 +793,7 @@ fn inter_character_annotations_draw_no_decorations() {
         Some(body),
         "ruby",
         taffy::Style::default(),
-        Some("display:ruby;text-decoration:underline"),
+        Some("display:ruby;text-decoration:underline;ruby-position:inter-character"),
     );
     let base = document.append_element(
         Some(ruby),
@@ -806,10 +806,7 @@ fn inter_character_annotations_draw_no_decorations() {
         Some(ruby),
         "rt",
         taffy::Style::default(),
-        Some(
-            "display:ruby-text;font-size:5px;ruby-position:inter-character;\
-             text-decoration:underline",
-        ),
+        Some("display:ruby-text;font-size:5px;text-decoration:underline"),
     );
     document.append_text(annotation, "xx");
     let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(

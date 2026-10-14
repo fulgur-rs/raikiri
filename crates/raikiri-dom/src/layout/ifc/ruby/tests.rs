@@ -584,15 +584,14 @@ fn annotations_sit_over_their_bases() {
 fn inter_character_annotations_keep_their_glyphs_upright() {
     let mut text = 0;
     let fixture = block_fixture("line-height:20px", |doc, root| {
-        let container = ruby(doc, root);
-        rb(doc, container, "aa");
-        let annotation = text_element(
+        let container = element(
             doc,
-            container,
-            "rt",
-            "display:ruby-text;font-size:5px;ruby-position:inter-character",
-            "xx",
+            root,
+            "ruby",
+            "display:ruby;ruby-position:inter-character",
         );
+        rb(doc, container, "aa");
+        let annotation = rt(doc, container, "xx");
         text = doc.nodes[annotation].children[0];
     });
     let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
@@ -611,6 +610,47 @@ fn inter_character_annotations_keep_their_glyphs_upright() {
         (1.0, 0.0, 0.0, 1.0),
         "{axes:?}"
     );
+}
+
+#[test]
+fn annotations_take_their_position_from_the_annotation_container() {
+    let mut ids = (0, 0, 0, 0);
+    let fixture = block_fixture("line-height:40px", |doc, root| {
+        let over = element(doc, root, "ruby", "display:ruby;ruby-position:over");
+        let base = rb(doc, over, "a");
+        let annotation = text_element(
+            doc,
+            over,
+            "rt",
+            "display:ruby-text;font-size:5px;ruby-position:under",
+            "x",
+        );
+        ids.0 = doc.nodes[base].children[0];
+        ids.1 = doc.nodes[annotation].children[0];
+        let under = element(doc, root, "ruby", "display:ruby;ruby-position:over");
+        let base = rb(doc, under, "b");
+        let container = element(
+            doc,
+            under,
+            "rtc",
+            "display:ruby-text-container;ruby-position:under",
+        );
+        let annotation = text_element(
+            doc,
+            container,
+            "rt",
+            "display:ruby-text;font-size:5px;ruby-position:over",
+            "y",
+        );
+        ids.2 = doc.nodes[base].children[0];
+        ids.3 = doc.nodes[annotation].children[0];
+    });
+    let runs = runs(fixture);
+    let y = |id: usize| runs.iter().find(|run| run.0 == id).expect("run").2.1;
+    // A `ruby-text` box's own position is ignored; an explicit container's
+    // applies.
+    assert!(y(ids.1) < y(ids.0), "{runs:?}");
+    assert!(y(ids.3) > y(ids.2), "{runs:?}");
 }
 
 #[test]

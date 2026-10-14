@@ -946,10 +946,10 @@ impl Content<'_, '_> {
         if let Some(container) = level.container {
             self.record_element(container);
         }
-        let style_owner = level
-            .container
-            .or_else(|| level.annotations.first().map(|part| part.style_owner))
-            .unwrap_or(ruby);
+        // `ruby-position` applies to annotation containers; an anonymous one
+        // around `ruby-text` boxes inherits from the ruby container (CSS
+        // Ruby 1 §4.1).
+        let style_owner = level.container.unwrap_or(ruby);
         // The anonymous annotation of a container that holds no annotation
         // box of its own spans the whole segment (CSS Ruby 1 §2.2).
         let spans_all = matches!(level.annotations.as_slice(), [part] if part.element.is_none());
