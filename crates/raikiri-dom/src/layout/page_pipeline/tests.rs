@@ -13166,3 +13166,44 @@ fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
     });
     assert_eq!(page_flow_y(&doc, id), 140.0);
 }
+
+#[test]
+fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
+    let fragment = |parent, y, height, clip_height: Option<f32>| crate::fragment::LayoutFragment {
+        node_id: 0,
+        parent,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y,
+            width: 10.0,
+            height,
+        },
+        fragmentainer_clip: clip_height.map(|height| crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height,
+        }),
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // A column clipped at 50px holds an unclipped 250px fragment, which
+    // holds an unclipped 400px one 20px down.
+    let fragments = [
+        fragment(None, 0.0, 300.0, Some(50.0)),
+        fragment(Some(0), 0.0, 250.0, None),
+        fragment(Some(1), 20.0, 400.0, None),
+    ];
+    let children = HashMap::from([(0, vec![1]), (1, vec![2])]);
+    assert_eq!(fragment_tree_end(&fragments, &children, &[0], 100.0), 150.0);
+    // Without the outer clip, the deepest fragment paints to its own end.
+    let fragments = [fragment(None, 0.0, 300.0, None), fragments[1], fragments[2]];
+    assert_eq!(fragment_tree_end(&fragments, &children, &[0], 100.0), 520.0);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[], 100.0),
+        f32::NEG_INFINITY
+    );
+}

@@ -165,34 +165,9 @@ fn content_overflow_end(
         if clips {
             continue;
         }
-        // A fragment paints at its parent's origin plus its own offset, and
-        // a fragmentainer clip hides what extends past its column.
         if in_columns.is_none() {
-            let mut pending: Vec<(usize, f32)> = fragment_roots
-                .get(&node_id)
-                .into_iter()
-                .flatten()
-                .map(|&index| (index, y))
-                .collect();
-            while let Some((index, parent_origin)) = pending.pop() {
-                let rect = fragments[index].rect;
-                let origin = parent_origin + rect.y;
-                let bottom = fragments[index]
-                    .fragmentainer_clip
-                    .map_or(origin + rect.height, |clip| {
-                        (origin + rect.height).min(parent_origin + clip.y + clip.height)
-                    });
-                if rect.height > 0.0 && bottom.is_finite() {
-                    end = end.max(bottom);
-                }
-                pending.extend(
-                    fragment_children
-                        .get(&index)
-                        .into_iter()
-                        .flatten()
-                        .map(|&child| (child, origin)),
-                );
-            }
+            let roots = fragment_roots.get(&node_id).map_or(&[][..], Vec::as_slice);
+            end = end.max(fragment_tree_end(fragments, &fragment_children, roots, y));
         }
         let in_columns = if let Some(outside) = in_columns {
             Some(
@@ -207,6 +182,46 @@ fn content_overflow_end(
             None
         };
         stack.extend(node.children.iter().map(|&child| (child, y, in_columns)));
+    }
+    end
+}
+
+/// The lowest edge painted by the fragments under `roots`, placed at the
+/// block offset `y`.
+///
+/// A fragment paints at its parent's origin plus its own offset, and a
+/// fragmentainer clip, intersected with the clips of the enclosing
+/// fragments, hides what extends past its column.
+fn fragment_tree_end(
+    fragments: &[crate::fragment::LayoutFragment],
+    fragment_children: &HashMap<usize, Vec<usize>>,
+    roots: &[usize],
+    y: f32,
+) -> f32 {
+    let mut end = f32::NEG_INFINITY;
+    let mut pending: Vec<(usize, f32, f32)> = roots
+        .iter()
+        .map(|&index| (index, y, f32::INFINITY))
+        .collect();
+    while let Some((index, parent_origin, inherited_clip_end)) = pending.pop() {
+        let rect = fragments[index].rect;
+        let origin = parent_origin + rect.y;
+        let clip_end = fragments[index]
+            .fragmentainer_clip
+            .map_or(inherited_clip_end, |clip| {
+                inherited_clip_end.min(parent_origin + clip.y + clip.height)
+            });
+        let bottom = (origin + rect.height).min(clip_end);
+        if rect.height > 0.0 && bottom.is_finite() {
+            end = end.max(bottom);
+        }
+        pending.extend(
+            fragment_children
+                .get(&index)
+                .into_iter()
+                .flatten()
+                .map(|&child| (child, origin, clip_end)),
+        );
     }
     end
 }
