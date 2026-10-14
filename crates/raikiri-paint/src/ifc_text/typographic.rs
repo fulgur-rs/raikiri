@@ -491,7 +491,9 @@ fn inline_ancestors(
     start: usize,
 ) -> impl Iterator<Item = (usize, Option<f32>)> + '_ {
     let source_owner = paragraph.document.ifc_source_owner(paragraph.root_id);
-    std::iter::successors(Some(start), move |&id| paragraph.document.parent_of(id))
+    paragraph
+        .document
+        .inclusive_ancestors(start)
         .take_while(move |&id| id != paragraph.root_id && id != source_owner)
         .map_while(move |id| {
             let node = paragraph.document.get_node(id)?;

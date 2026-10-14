@@ -307,6 +307,31 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].has_logical_min_block_size = false;
         }
     }
+    // Whether a box is a non-atomic inline box depends on its parent's
+    // display, which the loop above has now bridged for every node.
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        // The sizes bridged above, which a vertical box takes from its
+        // logical sizing properties.
+        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
+        let containment = size_containment(doc, idx, cv);
+        doc.nodes[idx].size_containment = containment;
+        // Replaced content with size containment has no natural size or
+        // aspect ratio to stand in for an `auto` size.
+        if containment.width || containment.height {
+            let style = &mut doc.nodes[idx].style;
+            style.aspect_ratio = None;
+            if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
+                style.size.width = Dimension::auto();
+            }
+            if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
+                style.size.height = Dimension::auto();
+            }
+        }
+    }
     // Paragraph roots are assigned first: a `display: contents` paragraph
     // root stays one flex or grid item when `order` sorts the items.
     crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
@@ -327,6 +352,57 @@ pub(crate) fn apply_computed_to_style(
         }
     }
     Ok(())
+}
+
+/// The physical axes in which `contain` sizes the box as if it had no
+/// content (CSS Containment 2 §3.1 size containment, §3.2 inline-size
+/// containment).
+///
+/// Neither applies to a box that is not generated, to a non-atomic inline
+/// box, or to an internal table box (§3.1, §3.2), which a table caption is
+/// not. Tables are left out as well: their width algorithm sizes the grid
+/// from its cells. Inline-size containment acts on the inline axis of the
+/// box's own writing mode.
+fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::Size<bool> {
+    use raikiri_style::property::{Contain, WritingMode};
+
+    let none = taffy::Size {
+        width: false,
+        height: false,
+    };
+    let applies = matches!(
+        cv.display,
+        DisplayValue::Block
+            | DisplayValue::Inline
+            | DisplayValue::InlineBlock
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::Flex
+            | DisplayValue::InlineFlex
+            | DisplayValue::Grid
+            | DisplayValue::InlineGrid
+            | DisplayValue::TableCaption
+    ) && !super::fixed::generates_inline_box(doc, idx, cv);
+    if !applies {
+        return none;
+    }
+    if cv.contain.contains(Contain::SIZE) {
+        return taffy::Size {
+            width: true,
+            height: true,
+        };
+    }
+    if !cv.contain.contains(Contain::INLINE_SIZE) {
+        return none;
+    }
+    let vertical = !matches!(
+        crate::taffy_impl::used_writing_mode(doc, idx),
+        WritingMode::HorizontalTb
+    );
+    taffy::Size {
+        width: !vertical,
+        height: vertical,
+    }
 }
 
 /// Whether painting `cv` draws effects sized from the whole border box

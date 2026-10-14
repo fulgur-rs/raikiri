@@ -332,12 +332,7 @@ pub fn layout_running_element(
     // The element's ancestors from the root down, then its subtree in
     // preorder, copied out of the document with the cascade renumbered to
     // match.
-    let mut nodes = Vec::new();
-    let mut parent = source.parent_of(index);
-    while let Some(id) = parent {
-        nodes.push(id);
-        parent = source.parent_of(id);
-    }
+    let mut nodes: Vec<_> = source.ancestors(index).collect();
     nodes.reverse();
     let ancestor_count = nodes.len();
     let mut stack = vec![index];

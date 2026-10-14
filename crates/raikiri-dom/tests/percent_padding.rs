@@ -209,3 +209,34 @@ fn percent_margin_of_a_flex_item_stays_outside_its_automatic_minimum_size() {
     assert_close(width, 40.0, "border-box width", &html);
     assert_close(nx - x, 60.0, "next item offset", &html);
 }
+
+#[test]
+fn percent_padding_of_a_flex_item_container_counts_in_its_automatic_minimum_size() {
+    // The item lays out its own children, as a block, flex or grid
+    // container; its 10% padding still refers to the 200px flex container.
+    for display in ["block", "flex", "grid"] {
+        let html = format!(
+            "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }} p {{ margin: 0 }}\
+             .flex {{ display: flex; width: 200px }}</style>\
+             <div class=flex><div id=i style=\"display: {display}; flex-basis: 0; \
+             padding-right: 10%; padding-left: 5%\"><p>XX</p></div></div>"
+        );
+        let ((_, _, width, _), (_, _, cw, _)) = boxes(&html, "i");
+        assert_close(width, 70.0, &format!("{display} border-box width"), &html);
+        assert_close(cw, 40.0, &format!("{display} content width"), &html);
+    }
+}
+
+#[test]
+fn percent_padding_of_a_vertical_flex_item_refers_to_the_container_height() {
+    // A column flex container in a vertical writing mode measures its items
+    // without a physical height, the inline size their percentage edges
+    // refer to: 10% of the 150px container adds 15px to the 40px text.
+    let html = format!(
+        "<!DOCTYPE html><style>{PAGE} body {{ font: 20px/1 Ahem }}\
+         .flex {{ display: flex; flex-direction: column; writing-mode: vertical-rl; height: 150px }}</style>\
+         <div class=flex><div id=i style=\"flex-basis: 0; padding-bottom: 10%\">XX</div></div>"
+    );
+    let ((_, _, _, height), _) = boxes(&html, "i");
+    assert_close(height, 55.0, "border-box height", &html);
+}

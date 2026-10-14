@@ -404,12 +404,9 @@ pub fn context_for_root(
     cascade: &CascadeResult,
     root: usize,
 ) -> DecorationContext {
-    let mut ancestors = Vec::new();
-    let mut current = Some(document.ifc_source_owner(root));
-    while let Some(id) = current {
-        ancestors.push(id);
-        current = document.parent_of(id);
-    }
+    let ancestors: Vec<_> = document
+        .inclusive_ancestors(document.ifc_source_owner(root))
+        .collect();
     ancestors
         .into_iter()
         .rev()
@@ -454,20 +451,19 @@ fn context_for_text(
     let mut chain = Vec::new();
     // The text of a pseudo-element is owned by the pseudo-element's own box,
     // which is decorated like an inline element child of its element.
-    let mut current = match generated_origin(text_node) {
+    let start = match generated_origin(text_node) {
         Some((element, _)) => {
             chain.push(text_node);
-            (element != root_id).then_some(element)
+            Some(element)
         }
         None => document.parent_of(text_node),
     };
-    while let Some(id) = current {
-        if id == root_id {
-            break;
-        }
-        chain.push(id);
-        current = document.parent_of(id);
-    }
+    chain.extend(
+        start
+            .into_iter()
+            .flat_map(|id| document.inclusive_ancestors(id))
+            .take_while(|&id| id != root_id),
+    );
     chain.iter().rev().fold(base.clone(), |context, &id| {
         let Some(cv) = computed_for_id(cascade, id) else {
             return context;

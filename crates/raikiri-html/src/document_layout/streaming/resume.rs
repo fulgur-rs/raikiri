@@ -191,7 +191,7 @@ fn skipped_before(
 ) -> Option<Vec<usize>> {
     let mut skipped = Vec::new();
     let mut child = target;
-    while let Some(parent) = dom.parent_of(child) {
+    for parent in dom.ancestors(target) {
         let inline_content = layout
             .get_node(child)
             .is_some_and(|node| node.in_ifc_subtree());
@@ -257,7 +257,7 @@ fn has_content_height(computed: &ComputedValues) -> bool {
 /// The element the layout lays the document out from, the body, found
 /// among the ancestors of `node`: the element child of the root element.
 fn layout_root(dom: &Document, node: usize) -> Option<usize> {
-    std::iter::successors(Some(node), |&id| dom.parent_of(id)).find(|&id| is_body(dom, id))
+    dom.inclusive_ancestors(node).find(|&id| is_body(dom, id))
 }
 
 /// Whether element `id` is the body or the root element above it.

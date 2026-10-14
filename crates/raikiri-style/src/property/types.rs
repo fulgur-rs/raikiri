@@ -1345,10 +1345,9 @@ impl<T> Sides<T> {
 /// `LengthOrAuto`, while padding uses `Length`.
 ///
 /// Field names match the spec’s flow-relative `-start` / `-end` suffixes,
-/// rather than physical names such as `top`/`right`/`bottom`/`left`.
-/// The mapping to physical sides is fixed here: Raikiri assumes
-/// writing-mode: horizontal-tb and direction: ltr. For details, see the
-/// Non-goal section in the [`PropertyValue::MarginInline`] documentation.
+/// rather than physical names such as `top`/`right`/`bottom`/`left`. The
+/// cascade maps them to physical sides; see the "Physical mapping" section
+/// of the [`PropertyValue::PaddingInline`] documentation.
 ///
 /// The `Eq` derive conditionally propagates `T: Eq`, as in [`Sides<T>`].
 /// Both `StartEnd<Length>` and `StartEnd<LengthOrAuto>` contain f32 values,
@@ -2738,6 +2737,10 @@ pub enum LineHeight {
     /// `24px` → `Length(Length::Px(24.0))`; `150%` → `Length(Length::Percent(150.0))`.
     /// Per spec §5.1, `Length::Percent` is relative to the element's own font size.
     Length(Length),
+    /// A mixed-unit `calc()`, such as `calc(150% + 2px)`, whose percentage
+    /// and font-relative terms are absolutized against the element's own font
+    /// size at computed-value time and clamped to the `[0,∞]` range.
+    Calc(RelativeCalcLengthPercentage),
 }
 
 /// The parsed result of `<counter-style>`.
@@ -8100,7 +8103,9 @@ css_keywords!(RadialShape {
 /// The parser enforces the non-negative constraint (`[0,∞]`) on `Circle` and
 /// `Ellipse` variants. The type does not encode this constraint, following
 /// the convention for other non-negative contexts of [`Length`], such as
-/// `border-width`.
+/// `border-width`. A mixed-unit `calc()` radius is kept as
+/// [`LengthPercentageOrCalc::Calc`] or [`LengthPercentageOrCalc::RelativeCalc`]
+/// and clamped to zero once its percentage basis is known.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RadialSize {
@@ -8109,10 +8114,10 @@ pub enum RadialSize {
     Extent(RadialExtent),
     /// Explicit `<length [0,∞]>` — usable only with [`RadialShape::Circle`]
     /// (enforced by the parser).
-    Circle(Length),
+    Circle(LengthPercentageOrCalc),
     /// Explicit `<length-percentage [0,∞]>{2}` (horizontal and vertical radii) —
     /// usable only with [`RadialShape::Ellipse`] (enforced by the parser).
-    Ellipse(Length, Length),
+    Ellipse(LengthPercentageOrCalc, LengthPercentageOrCalc),
 }
 
 /// Keyword for [`RadialSize::Extent`].
@@ -8209,8 +8214,9 @@ pub struct GradientColorStop {
     /// Position of the stop (`<length-percentage>`). If omitted, fixup
     /// determines it automatically (CSS Images 3 §3.4.3 "Color Stop \"Fixup\"").
     /// That decision requires the length of the gradient line, so it belongs
-    /// to the used-value layer (paint); this crate retains `None`.
-    pub position: Option<Length>,
+    /// to the used-value layer (paint); this crate retains `None`. A
+    /// mixed-unit `calc()` keeps its percentage for the same reason.
+    pub position: Option<LengthPercentageOrCalc>,
 }
 
 /// `<angular-color-stop>` — the conic-gradient counterpart to
@@ -9614,6 +9620,13 @@ pub enum PropertyValue {
     /// once `font-family` is known. Page contexts resolve it with the default
     /// 16px `medium` in [`crate::cascade::resolve_against_inherited`].
     FontSizeKeyword(AbsoluteFontSize),
+    /// `font-size: calc()` with terms that cannot be combined before
+    /// computed-value time, such as `calc(50% + 2px)` — part of the same
+    /// `font-size` property as [`Self::FontSize`]. Its percentage and
+    /// font-relative terms resolve against the parent's font size (CSS Fonts 4
+    /// §2.5 "Percentages: refer to parent element's font size") when the
+    /// font size is computed, clamped to the `[0,∞]` range.
+    FontSizeCalc(RelativeCalcLengthPercentage),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited,
     /// initial: `Absolute(400.0)`. CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>.
@@ -9846,72 +9859,33 @@ pub enum PropertyValue {
     /// `padding-inline-end` (if the second is omitted, copy the first via
     /// [`StartEnd::both`]).
     ///
-    /// # Physical mapping (Non-goal: flow-relative mapping based on writing-mode / direction)
+    /// # Physical mapping
     ///
-    /// The spec determines which physical side (`padding-top`/`padding-right`/
-    /// `padding-bottom`/`padding-left`) corresponds to
-    /// `padding-inline-start`/`padding-inline-end` (and
-    /// `padding-block-start`/`padding-block-end`) from the element's **own computed
-    /// `writing-mode` / `direction` / `text-orientation`** (CSS Logical Properties
-    /// and Values 1 §4, opening section). Raikiri cuts off this dependency in two
-    /// ways and always maps to a fixed physical side. Note that these two cases
-    /// are **asymmetric**:
-    ///
-    /// - **Block axis** (via [`PaddingBlock`](Self::PaddingBlock),
-    ///   `padding-block-start`/`-end` → `padding-top`/`padding-bottom`):
-    ///   Raikiri does not implement a vertical writing rendering pipeline, so the
-    ///   renderer-facing writing-mode fallback is always [`WritingMode::HorizontalTb`]
-    ///   (see the Non-goal section in [`resolve_writing_mode`]). Under
-    ///   `horizontal-tb`, the block axis is always vertical (block-start = top),
-    ///   and `direction` never affects its mapping (the spec likewise always maps
-    ///   block-start to top under `horizontal-tb` for any `direction`). This case is
-    ///   therefore **exact, not an approximation**: within Raikiri's scope (the
-    ///   renderer-facing writing mode is always `horizontal-tb`), it fully matches
-    ///   the spec.
-    /// - **Inline axis** (this variant / `padding-inline-start`/`-end` →
-    ///   `padding-left`/`padding-right`): this also **assumes `direction: ltr`**.
-    ///   The `direction` property itself is implemented in this crate
-    ///   (see [`PropertyValue::Direction`]), but the mapping **does not consult it**.
-    ///   As the section below, "Why the eight longhands have no dedicated variant",
-    ///   explains, this PR chooses a fixed mapping at parse time, before the cascade
-    ///   winner is known. Once the winner is known, the computed `direction` is
-    ///   available in this crate: [`resolve_text_align_match_parent`] already
-    ///   performs similar post-cascade resolution from `SpecifiedValues::finalize`.
-    ///   Direction-aware resolution is intentionally deferred beyond this scope;
-    ///   it is not inherently impossible in this architecture. **This is an
-    ///   approximation that disagrees with the spec for elements with
-    ///   `direction: rtl`**: `padding-inline-start` should then map to
-    ///   `padding-right`, but Raikiri always maps it to `padding-left`.
-    ///
-    /// This asymmetry (exact block axis, approximate inline axis) is one level more
-    /// complex than the physical x/y mapping for `overflow-inline`/`overflow-block`
-    /// (the two components of the `overflow` shorthand) explained in the Non-goal
-    /// section of [`OverflowValue`]. Each overflow inline/block axis has a single
-    /// value (the `overflow-x`/`overflow-y` pair), with no `start`/`end` distinction,
-    /// so `direction` did not matter there. This property has two sides, `start` and
-    /// `end`, on each axis, making an additional direction-dependent approximation
-    /// necessary on the inline axis alone.
+    /// The spec maps `padding-inline-start`/`-end` and
+    /// `padding-block-start`/`-end` to physical sides through the element's own
+    /// computed `writing-mode` and `direction` (CSS Logical Properties and
+    /// Values 1 §4, opening section). The parser cannot know them, so it stores
+    /// each flow-relative longhand under the physical side it maps to in
+    /// `horizontal-tb` with `direction: ltr` (`padding-inline-start` →
+    /// [`Self::PaddingLeft`], `padding-block-start` → [`Self::PaddingTop`], and
+    /// so on) and tags the declaration with its flow-relative side. The
+    /// cascade then moves a tagged declaration to the side the element's own
+    /// writing mode and direction map it to, before picking winners, so it
+    /// competes with the physical longhand of that side by cascade order
+    /// ("corresponding flow-relative and physical properties" share one
+    /// computed value). For elements the writing mode is the renderer-facing
+    /// one, which stays `horizontal-tb` while block layout does not lay
+    /// blocks out along a horizontal block axis ([`resolve_writing_mode`]), so
+    /// only `direction` moves them for now. The `@page` cascade maps with the
+    /// page context's specified writing mode and direction. See
+    /// [`mod@crate::logical`] for the details.
     ///
     /// # Why the 8 longhands have no dedicated `PropertyValue` variants
     ///
     /// These are `padding-inline-start`/`-end`, `padding-block-start`/`-end`,
-    /// and the corresponding four margin longhands.
-    ///
-    /// The fixed mapping above does not depend on any cascade-time state (such as
-    /// an inherited computed `direction` or a `direction` winner on the same node):
-    /// it is already settled at parse time. Consequently,
-    /// `padding-inline-start: <value>` produces exactly the same `PropertyValue`
-    /// as [`Self::PaddingLeft`], and `padding-block-start: <value>` produces exactly
-    /// the same `PropertyValue` as [`Self::PaddingTop`] (see the relevant arms of
-    /// `parse_value` and `property_key_for_name`).
-    /// Following the existing `word-wrap`/`overflow-wrap` legacy alias
-    /// pattern (folding names with the same grammar into the same
-    /// `PropertyValue`/[`PropertyKey`]; see the `"overflow-wrap" | "word-wrap"`
-    /// arm of `parse_value`), no separate variant is needed. Cascade winner
-    /// selection likewise treats them as competing for the same physical
-    /// property, matching the spec's actual cascade behavior (CSS Logical
-    /// Properties and Values 1 §4: "corresponding flow-relative and physical
-    /// properties are paired").
+    /// and the corresponding four margin longhands. Their values have the
+    /// grammar of the physical longhands, so they reuse those variants, and the
+    /// flow-relative side travels next to the value on the declaration instead.
     ///
     /// # This variant is not observed during element cascade
     ///
@@ -9925,9 +9899,8 @@ pub enum PropertyValue {
     PaddingInline(StartEnd<LengthPercentageOrCalc>),
     /// `padding-block: <'padding-top'>{1,2}` shorthand — the same grammar,
     /// expansion, and physical-mapping rationale as [`Self::PaddingInline`]
-    /// (the [`Self::PaddingInline`] docs are canonical), but for the block axis
-    /// (`padding-block-start`/`-end` → `padding-top`/`padding-bottom`: exact
-    /// mapping, not an approximation). CSS Logical Properties and Values 1 §4.4
+    /// (the [`Self::PaddingInline`] docs are canonical), but for the block
+    /// axis. CSS Logical Properties and Values 1 §4.4
     /// <https://www.w3.org/TR/css-logical-1/#propdef-padding-block>.
     PaddingBlock(StartEnd<LengthPercentageOrCalc>),
     /// `margin-top: <length-percentage> | auto` — non-inherited, initial: 0
@@ -9983,17 +9956,11 @@ pub enum PropertyValue {
     /// The [`Self::PaddingInline`] docs provide the canonical grammar,
     /// expansion, and physical-mapping rationale. The only difference from
     /// padding is that the payload is `<length-percentage> | auto`, as with
-    /// [`Self::Margin`] (`auto` passes through [`parse_margin_side`]). The
-    /// inline-axis mapping (this variant and `margin-inline-start`/`-end` →
-    /// `margin-left`/`margin-right`) assumes `direction: ltr`, as explained
-    /// in the "asymmetry" section of [`Self::PaddingInline`]. This is an
-    /// approximation that disagrees with the spec under `direction: rtl`.
+    /// [`Self::Margin`] (`auto` passes through [`parse_margin_side`]).
     MarginInline(StartEnd<LengthOrAuto>),
     /// `margin-block: <'margin-top'>{1,2}` shorthand — the same grammar,
     /// expansion, and physical-mapping rationale as [`Self::MarginInline`],
-    /// but for the block axis (`margin-block-start`/`-end` →
-    /// `margin-top`/`margin-bottom`: exact mapping, not an approximation;
-    /// see the "asymmetry" section of [`Self::PaddingInline`]).
+    /// but for the block axis.
     /// CSS Logical Properties and Values 1 §4.2
     /// <https://www.w3.org/TR/css-logical-1/#propdef-margin-block>.
     MarginBlock(StartEnd<LengthOrAuto>),
@@ -11803,9 +11770,9 @@ impl PropertyValue {
             // Map them to the same `PropertyKey` so cascade winner selection
             // correctly makes `font-size: 12px` and `font-size: larger` compete.
             // Separate keys would let both win, which the spec does not allow.
-            PropertyValue::FontSizeRelative(_) | PropertyValue::FontSizeKeyword(_) => {
-                PropertyKey::FontSize
-            }
+            PropertyValue::FontSizeRelative(_)
+            | PropertyValue::FontSizeKeyword(_)
+            | PropertyValue::FontSizeCalc(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
@@ -12908,9 +12875,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "padding-left" => PropertyKey::PaddingLeft,
         "padding" => PropertyKey::Padding,
         // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
-        // padding-block-start/-end — physically fixed-mapped onto the
-        // matching padding-{left,right,top,bottom} key (`PropertyValue::PaddingInline`
-        // doc's "Why the 8 longhands have no dedicated `PropertyValue` variants" section).
+        // padding-block-start/-end — keyed by the padding-{left,right,top,bottom}
+        // side they map to in horizontal-tb ltr; the cascade moves them by the
+        // element's writing mode (`PropertyValue::PaddingInline` doc's
+        // "Physical mapping" section).
         "padding-inline-start" => PropertyKey::PaddingLeft,
         "padding-inline-end" => PropertyKey::PaddingRight,
         "padding-block-start" => PropertyKey::PaddingTop,
@@ -12923,8 +12891,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "margin-left" => PropertyKey::MarginLeft,
         "margin" => PropertyKey::Margin,
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
-        // margin-block-start/-end — same physically fixed-mapped pattern as
-        // padding-inline-*/padding-block-* above.
+        // margin-block-start/-end — same pattern as padding-inline-*/
+        // padding-block-* above.
         "margin-inline-start" => PropertyKey::MarginLeft,
         "margin-inline-end" => PropertyKey::MarginRight,
         "margin-block-start" => PropertyKey::MarginTop,

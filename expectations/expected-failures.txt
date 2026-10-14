@@ -62,8 +62,6 @@ css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html | Mismat
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_quirks_body.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/gap-003-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/gap-004-rtl.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
@@ -72,7 +70,6 @@ css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html | Mismatches 
 css/css-text/white-space/text-wrap-balance-004.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/white-space/white-space-applies-to-text-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/word-break/word-break-min-content-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/CSS2/positioning/absolute-non-replaced-height-013.html | Both insets are 50% and both vertical margins auto with negative free space; layout zeroes the auto margins instead of splitting the negative space between them, so the box sits 50px low. It passed only while percentage insets were dropped as invalid | RAIKIRI-230 | 2026-10-14 | 2026-12-14
 css/css-flexbox/overflow-auto-005.html | Scroll containers keep a top-left scroll origin for reversed flex directions and vertical writing modes; passed only while gradients painted their first color | RAIKIRI-143 | 2026-10-12 | 2026-12-12
 css/css-tables/paint/col-change-span-bg-invalidation-002.html | Script-driven col span changes are not applied; passed only by coincidence before the paint order fix | RAIKIRI-144 | 2026-10-12 | 2026-12-12
 css/css-images/gradient/gradient-increasing-hue-lch.html | Colors are stored as 8-bit sRGB, so out-of-gamut lch stops are clipped before interpolation; passed only while gradients painted their first color | RAIKIRI-145 | 2026-10-12 | 2026-12-12

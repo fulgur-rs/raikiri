@@ -840,6 +840,96 @@ fn rlh_and_parent_lh_use_the_measured_normal_line_height() {
 }
 
 #[test]
+fn line_height_resolves_a_mixed_calc_against_its_own_font_size() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size: 16px; --lh: calc(1em + 2px)"));
+    let mixed = doc.push_element(
+        html,
+        "p",
+        Some("font-size: 10px; line-height: calc(150% + 1lh)"),
+    );
+    let clamped = doc.push_element(html, "p", Some("line-height: calc(10% - 5px)"));
+    let substituted = doc.push_element(html, "p", Some("font-size: 10px; line-height: var(--lh)"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    // The percentage takes the element's own 10px font size, and `lh` the
+    // root's 20px `normal` line.
+    assert_eq!(
+        r.computed[mixed].line_height,
+        ComputedLineHeight::Length(ComputedLength(35.0))
+    );
+    assert_eq!(
+        r.computed[clamped].line_height,
+        ComputedLineHeight::Length(ComputedLength(0.0))
+    );
+    assert_eq!(
+        r.computed[substituted].line_height,
+        ComputedLineHeight::Length(ComputedLength(12.0))
+    );
+    // On the root, `lh` refers to the initial font's `normal` line.
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("line-height: calc(1lh + 2px)"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    assert_eq!(
+        r.computed[html].line_height,
+        ComputedLineHeight::Length(ComputedLength(22.0))
+    );
+    // On the root, `rem` in `line-height` refers to the root's own size.
+    for (line_height, expected) in [("calc(1rem + 2px)", 22.0), ("1rem", 20.0)] {
+        let mut doc = TestDoc::new();
+        let html = doc.push_element(
+            0,
+            "html",
+            Some(&format!("font-size: 20px; line-height: {line_height}")),
+        );
+        let (r, _) = cascade_measuring_normal(&doc);
+        assert_eq!(
+            r.computed[html].line_height,
+            ComputedLineHeight::Length(ComputedLength(expected)),
+            "{line_height}"
+        );
+    }
+}
+
+#[test]
+fn font_size_resolves_a_mixed_calc_against_the_parent_font_size() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(
+        0,
+        "html",
+        Some("font-size: calc(1lh + 4px); --size: calc(50% + 2px)"),
+    );
+    let mixed = doc.push_element(html, "p", Some("font-size: calc(50% + 2px)"));
+    let child = doc.push_element(mixed, "span", Some("font-size: 2em"));
+    let lh = doc.push_element(html, "p", Some("font-size: calc(1lh + 1px)"));
+    let clamped = doc.push_element(html, "p", Some("font-size: calc(10% - 20px)"));
+    let shorthand = doc.push_element(
+        html,
+        "p",
+        Some("font: calc(50% + 2px) / calc(150% + 1px) serif"),
+    );
+    let substituted = doc.push_element(html, "p", Some("font-size: var(--size)"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    // The root takes `lh` from the initial font's 20px `normal` line.
+    assert_eq!(r.computed[html].font_size, ComputedLength(24.0));
+    assert_eq!(r.computed[mixed].font_size, ComputedLength(14.0));
+    // A child inherits the computed size, not the calc.
+    assert_eq!(r.computed[child].font_size, ComputedLength(28.0));
+    assert!(r.computed[mixed].font_size_keyword.is_none());
+    let root_normal = r.computed[html]
+        .normal_line_height
+        .expect("the root's normal line height")
+        .px();
+    assert_eq!(r.computed[lh].font_size, ComputedLength(root_normal + 1.0));
+    assert_eq!(r.computed[clamped].font_size, ComputedLength(0.0));
+    assert_eq!(r.computed[shorthand].font_size, ComputedLength(14.0));
+    assert_eq!(
+        r.computed[shorthand].line_height,
+        ComputedLineHeight::Length(ComputedLength(22.0))
+    );
+    assert_eq!(r.computed[substituted].font_size, ComputedLength(14.0));
+}
+
+#[test]
 fn normal_line_height_is_measured_only_where_the_font_changes() {
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", None);
@@ -7510,6 +7600,7 @@ fn apply_winners_deferred_border_radius_resolving_to_inherit() {
             important: false,
             key: crate::property::PropertyKey::BorderRadius,
             rollback: crate::cascade::rollback::Rollback::None,
+            logical: None,
         },
         Precedence::new(
             Origin::Author,
@@ -7559,6 +7650,7 @@ fn apply_winners_direct_border_radius_inherit() {
             important: false,
             key: crate::property::PropertyKey::BorderRadius,
             rollback: crate::cascade::rollback::Rollback::None,
+            logical: None,
         },
         Precedence::new(
             Origin::Author,
@@ -10624,6 +10716,7 @@ mod border_image_tests;
 mod column_rule_tests;
 mod column_span_tests;
 mod limit_tests;
+mod logical_tests;
 
 /// With no parent, a self-referential `lh` / `rlh` on the root resolves
 /// against the initial font's `normal` line, not the root's own font.

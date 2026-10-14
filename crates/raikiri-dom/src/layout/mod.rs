@@ -81,9 +81,9 @@ pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };
-#[doc(hidden)]
-pub(crate) use page::find_body;
 pub(crate) use page::is_floating_box_for_pagination;
+#[doc(hidden)]
+pub(crate) use page::{find_body, is_body_element};
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};

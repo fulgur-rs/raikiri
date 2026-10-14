@@ -2593,9 +2593,12 @@ dependencies = [
 name = "raikiri-bench"
 version = "0.1.0"
 dependencies = [
+ "anyrender",
  "criterion",
  "raikiri",
+ "raikiri-dom",
  "raikiri-html",
+ "raikiri-paint",
  "raikiri-style",
  "triomphe",
 ]

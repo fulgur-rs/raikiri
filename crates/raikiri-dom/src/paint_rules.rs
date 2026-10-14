@@ -840,7 +840,7 @@ pub fn find_paint_root(doc: &Document) -> Option<usize> {
         if !node.is_in_document() {
             continue;
         }
-        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
+        if node.kind() == NodeKind::Element && crate::layout::is_body_element(doc, id) {
             return Some(id);
         }
         for &c in node.children.iter().rev() {

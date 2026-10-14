@@ -322,6 +322,7 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
             key,
         }),
         important,
+        logical: None,
     };
     for (shorthand, expected) in cases {
         assert_eq!(
@@ -403,6 +404,12 @@ fn declaration_debug_output_shows_only_the_declared_fields() {
         format!("{decl:?}"),
         "Declaration { value: Color(CssColor { r: 0, g: 0, b: 0, a: 255 }), important: false }"
     );
+    let logical = Declaration::with_side(
+        PropertyValue::Color(CssColor::BLACK),
+        false,
+        Some(crate::logical::LogicalSide::BlockEnd),
+    );
+    assert!(format!("{logical:?}").ends_with("important: false, logical: BlockEnd }"));
 }
 
 #[cfg(debug_assertions)]

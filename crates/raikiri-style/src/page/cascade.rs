@@ -9,10 +9,12 @@ use crate::cascade::{
     resolve_custom_property_environment, resolve_page_deferred_value, resolve_relative_weight,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
+use crate::logical::{FlowMapping, LogicalSide};
 use crate::media::MediaContext;
 use crate::property::{
-    BackgroundImage, BorderStyle, CssColor, CustomProperty, Length, LengthPercentageOrCalc,
-    OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
+    BackgroundImage, BorderStyle, CssColor, CustomProperty, Direction, Length,
+    LengthPercentageOrCalc, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
+    Sides, TextOrientation, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -92,6 +94,8 @@ struct MarginBoxInheritance {
     background_color: CssColor,
     background_color_expression: Option<SmolStr>,
     font_size: ComputedLength,
+    direction: Direction,
+    line_height: Option<ComputedLength>,
     custom_properties: Arc<CustomPropertyEnvironment>,
 }
 
@@ -102,6 +106,8 @@ impl Default for MarginBoxInheritance {
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,
             font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+            direction: Direction::Ltr,
+            line_height: None,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -146,7 +152,7 @@ impl PageMarginBoxCascadeResult {
         inherited: &MarginBoxInheritance,
     ) -> Option<Self> {
         let mut merged = rules.iter().rev().find(|rule| rule.slot == slot)?.clone();
-        let candidates: Vec<_> = rules
+        let declared: Vec<_> = rules
             .iter()
             .enumerate()
             .filter(|(_, rule)| rule.slot == slot)
@@ -158,7 +164,7 @@ impl PageMarginBoxCascadeResult {
             })
             .collect();
         let local_custom =
-            crate::cascade::select_custom_rollback_values(candidates.iter().filter_map(
+            crate::cascade::select_custom_rollback_values(declared.iter().filter_map(
                 |&(rule_index, decl_index, rule, decl)| {
                     let PropertyValue::CustomProperty(custom) = &decl.value else {
                         return None;
@@ -186,6 +192,45 @@ impl PageMarginBoxCascadeResult {
         let custom_properties =
             resolve_custom_property_environment(&inherited.custom_properties, &local_custom)
                 .effective;
+        // Margin boxes are laid out in `horizontal-tb`, so flow-relative
+        // margins and paddings follow the margin context's `direction` alone
+        // (CSS Logical Properties 1 §4). They move to their physical side
+        // before winners are picked so that they compete with the physical
+        // longhands for that side.
+        let flow = FlowMapping {
+            writing_mode: WritingMode::HorizontalTb,
+            direction: margin_box_direction(&declared, &custom_properties)
+                .unwrap_or(inherited.direction),
+        };
+        // A `var()` value is substituted first: a flow-relative shorthand's
+        // value is split by the shorthand's own name.
+        let mapped: Vec<Option<Declaration>> = declared
+            .iter()
+            .map(|&(_, _, _, decl)| {
+                decl.logical.map(|side| {
+                    let declared = match &decl.value {
+                        PropertyValue::Deferred(deferred) => {
+                            resolve_page_deferred_value(deferred, custom_properties.as_ref())
+                                .unwrap_or_else(|| decl.value.clone())
+                        }
+                        value => value.clone(),
+                    };
+                    Declaration::with_side(flow.value(declared, side), decl.important, None)
+                })
+            })
+            .collect();
+        let candidates: Vec<_> = declared
+            .iter()
+            .zip(&mapped)
+            .map(|(&(rule_index, decl_index, rule, decl), mapped)| {
+                (
+                    rule_index,
+                    decl_index,
+                    rule,
+                    mapped.as_ref().unwrap_or(decl),
+                )
+            })
+            .collect();
         let resolved_value = |value: &PropertyValue| {
             if let PropertyValue::Deferred(deferred) = value
                 && matches!(
@@ -710,6 +755,13 @@ impl PageCascadeResult {
         self.page_orientation
     }
 
+    /// The page context's used line height as an absolute length: the `lh`
+    /// basis its margin boxes inherit. `None` when it is `normal` and the
+    /// page's font could not be measured.
+    pub fn line_height_basis(&self) -> Option<ComputedLength> {
+        self.margin_box_inheritance.line_height
+    }
+
     /// Cascade a margin-box slot against this page's computed inheritance values.
     ///
     /// Color, background-color and font-size defaulting and variable substitution
@@ -872,18 +924,145 @@ fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::Laye
     layers.priority(rule.layer, rule.origin, important)
 }
 
-/// Page and margin boxes are laid out in horizontal-tb, so their logical
-/// preferred sizes are `width` / `height` (CSS Logical Properties 1 §4.1)
-/// and compete with them in one winner slot.
-fn horizontal_preferred_size(value: PropertyValue) -> PropertyValue {
+/// The margin context's own `direction`: the winning `direction`
+/// declaration among `declared` (exempt from `all`, like the page context's),
+/// with `var()` substituted from `custom_properties`. `None` when no
+/// declaration resolves to a keyword.
+fn margin_box_direction(
+    declared: &[(usize, usize, &PageMarginBoxCascadeResult, &Declaration)],
+    custom_properties: &CustomPropertyEnvironment,
+) -> Option<Direction> {
+    let (.., decl) = declared
+        .iter()
+        .filter(|(.., decl)| decl.value.key() == PropertyKey::Direction)
+        .max_by_key(|&&(rule_index, decl_index, rule, decl)| {
+            let layer = crate::layer::LayerPosition {
+                attached: false,
+                rank: rule.layer_order,
+            };
+            (
+                cascade_rank(rule.origin, decl.important),
+                layer.priority(decl.important),
+                rule.specificity,
+                rule.source_order,
+                rule_index,
+                decl_index,
+            )
+        })?;
+    let value = match &decl.value {
+        PropertyValue::Deferred(deferred) => {
+            resolve_page_deferred_value(deferred, custom_properties)
+        }
+        value => Some(value.clone()),
+    };
+    let Some(PropertyValue::Direction(direction)) = value else {
+        return None;
+    };
+    Some(direction)
+}
+
+/// The writing mode and used direction of the page context: its own winning
+/// `writing-mode`, `text-orientation` and `direction` declarations, or else
+/// the values it inherits from the root element. Winners are picked the way
+/// the page cascade below picks them: `writing-mode` and `text-orientation`
+/// honour `revert-layer` and `all: revert-layer` rollback, `direction` is
+/// exempt from `all` and keeps its plain winner, and `var()` values are
+/// substituted from `custom_properties`. A winner that does not resolve to a
+/// keyword falls back to the inherited value.
+fn page_flow_mapping(
+    candidates: &[(PropertyValue, bool, Origin, u32, PageSpecificity, u32)],
+    inherited: &ComputedValues,
+    custom_properties: &CustomPropertyEnvironment,
+    rollback: impl Fn(&PropertyValue) -> crate::cascade::rollback::Rollback,
+) -> FlowMapping {
+    let winner = |key: PropertyKey| {
+        let index = crate::cascade::rollback::select_layered_winner(
+            candidates,
+            |index, (value, important, origin, priority, spec, order)| {
+                let reset_all =
+                    key != PropertyKey::Direction && matches!(value, PropertyValue::AllRevertLayer);
+                if value.key() != key && !reset_all {
+                    return None;
+                }
+                let layer = crate::layer::LayerPosition {
+                    attached: false,
+                    rank: if *important {
+                        u32::MAX - *priority
+                    } else {
+                        *priority
+                    },
+                };
+                let rollback = if key != PropertyKey::Direction {
+                    rollback(value)
+                } else {
+                    crate::cascade::rollback::Rollback::None
+                };
+                Some((
+                    (
+                        cascade_rank(*origin, *important),
+                        *priority,
+                        *spec,
+                        *order,
+                        index,
+                    ),
+                    *origin,
+                    layer,
+                    *important,
+                    rollback,
+                ))
+            },
+        )?;
+        match &candidates[index].0 {
+            PropertyValue::Deferred(deferred) => {
+                resolve_page_deferred_value(deferred, custom_properties)
+            }
+            value => Some(value.clone()),
+        }
+    };
+    let writing_mode = match winner(PropertyKey::WritingMode) {
+        Some(PropertyValue::WritingMode(mode)) => mode,
+        _ => inherited.cssom_writing_mode,
+    };
+    let text_orientation = match winner(PropertyKey::TextOrientation) {
+        Some(PropertyValue::TextOrientation(orientation)) => orientation,
+        _ => inherited.text_orientation,
+    };
+    // `text-orientation: upright` makes the used direction `ltr` in the
+    // vertical typographic modes (CSS Writing Modes 4 §5.1).
+    let upright = text_orientation == TextOrientation::Upright
+        && matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        );
+    FlowMapping {
+        writing_mode,
+        direction: match winner(PropertyKey::Direction) {
+            _ if upright => Direction::Ltr,
+            Some(PropertyValue::Direction(direction)) => direction,
+            _ => inherited.direction,
+        },
+    }
+}
+
+/// The page box's logical preferred sizes are its `width` / `height` under
+/// the page context's writing mode (CSS Logical Properties 1 §4.1), and
+/// compete with them in one winner slot.
+fn preferred_size(value: PropertyValue, flow: FlowMapping) -> PropertyValue {
+    let vertical = flow.is_vertical();
     match value {
+        PropertyValue::InlineSize(size) if vertical => PropertyValue::Height(size),
+        PropertyValue::BlockSize(size) if vertical => PropertyValue::Width(size),
         PropertyValue::InlineSize(size) => PropertyValue::Width(size),
         PropertyValue::BlockSize(size) => PropertyValue::Height(size),
         // A `var()` value is re-parsed by its property name once resolved.
         PropertyValue::Deferred(mut deferred) => {
-            let physical = match deferred.key {
-                PropertyKey::InlineSize => Some((PropertyKey::Width, "width")),
-                PropertyKey::BlockSize => Some((PropertyKey::Height, "height")),
+            let physical = match (deferred.key, vertical) {
+                (PropertyKey::InlineSize, false) | (PropertyKey::BlockSize, true) => {
+                    Some((PropertyKey::Width, "width"))
+                }
+                (PropertyKey::BlockSize, false) | (PropertyKey::InlineSize, true) => {
+                    Some((PropertyKey::Height, "height"))
+                }
                 _ => None,
             };
             if let Some((key, property)) = physical {
@@ -936,6 +1115,8 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // `PageSpecificity` in place of `selectors`-crate `Specificity`.
     let mut candidates: Vec<(PropertyValue, bool, Origin, u32, PageSpecificity, u32)> = Vec::new();
     let mut custom_candidates: Vec<PageCustomCascadedDecl> = Vec::new();
+    // The flow-relative side of each entry of `candidates`.
+    let mut sides: Vec<Option<LogicalSide>> = Vec::new();
     // Descriptor candidates use the same origin/specificity/source-order tuple
     // as ordinary page declarations. The extra declaration index is needed
     // because descriptor declarations are stored in dedicated vectors and two
@@ -1047,9 +1228,11 @@ pub(crate) fn cascade_page_with_normal_line_height(
                         .declarations
                         .iter()
                         .map(|decl| {
-                            Declaration::new(
-                                horizontal_preferred_size(decl.value.clone()),
+                            Declaration::with_side(
+                                // Margin boxes are laid out in horizontal-tb.
+                                preferred_size(decl.value.clone(), FlowMapping::HORIZONTAL),
                                 decl.important,
+                                decl.logical,
                             )
                         })
                         .collect(),
@@ -1080,10 +1263,12 @@ pub(crate) fn cascade_page_with_normal_line_height(
                 let parsed = ParsedDeclaration {
                     value: decl.value.clone(),
                     important: decl.important,
+                    logical: decl.logical,
                 };
                 expand_shorthand_into(&parsed, |d| {
+                    sides.push(d.logical);
                     candidates.push((
-                        horizontal_preferred_size(d.value),
+                        d.value,
                         d.important,
                         rule.origin,
                         page_layer_rank(rule, d.important, &layers),
@@ -1179,6 +1364,33 @@ pub(crate) fn cascade_page_with_normal_line_height(
             crate::cascade::rollback::rollback_kind(value)
         }
     };
+
+    // Flow-relative declarations and the logical preferred sizes take the
+    // page context's own writing mode and direction (CSS Logical Properties 1
+    // §4, read through CSS Paged Media 3 §6: the page context inherits from
+    // the root element unless an `@page` rule sets them).
+    let flow = page_flow_mapping(
+        &candidates,
+        inherited,
+        custom_properties.as_ref(),
+        candidate_rollback,
+    );
+    for ((value, ..), side) in candidates.iter_mut().zip(&sides) {
+        if let Some(side) = *side {
+            let declared = match &*value {
+                PropertyValue::Deferred(deferred) => {
+                    resolve_page_deferred_value(deferred, custom_properties.as_ref())
+                        .unwrap_or_else(|| value.clone())
+                }
+                other => other.clone(),
+            };
+            *value = flow.value(declared, side);
+        }
+        *value = preferred_size(
+            std::mem::replace(value, PropertyValue::AllRevertLayer),
+            flow,
+        );
+    }
 
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =
@@ -1460,6 +1672,17 @@ pub(crate) fn cascade_page_with_normal_line_height(
             _ => CssColor::TRANSPARENT,
         },
         font_size,
+        // The computed direction, not the used one: `text-orientation:
+        // upright` forces `ltr` only for the page's own vertical flow, and the
+        // horizontal margin boxes inherit the computed value.
+        direction: match resolved
+            .get(&PropertyKey::Direction)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::Direction(direction)) => *direction,
+            _ => inherited.direction,
+        },
+        line_height: own_line_height,
         custom_properties,
     };
     PageCascadeResult {

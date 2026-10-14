@@ -96,11 +96,12 @@ fn inherited_margin_box_font_uses_root_computed_family() {
 }
 
 #[test]
-fn inherited_margin_box_font_resolves_absolute_size_keywords() {
+fn inherited_margin_box_font_resolves_keywords_and_calc() {
     // `@page` and margin-box `<absolute-size>` keywords resolve against the
     // default 16px `medium`; a margin-box keyword does not scale the page's.
     // The page cascade has already computed the page keyword to px, while
-    // the margin-box declaration still carries the keyword.
+    // the margin-box declaration still carries the keyword. A mixed calc
+    // resolves against the page's size.
     use raikiri_style::property::AbsoluteFontSize;
     for (css, expected) in [
         (
@@ -111,24 +112,48 @@ fn inherited_margin_box_font_resolves_absolute_size_keywords() {
             "@page { font-size: x-large; @top-left { content: 'x'; font-size: small; } }",
             AbsoluteFontSize::Small.px_for_medium(16.0),
         ),
+        (
+            "@page { font-size: 20px; @top-left { content: 'x'; font-size: calc(50% + 2px); } }",
+            12.0,
+        ),
+        (
+            "html { line-height: 30px } @page { font-size: 20px; \
+             @top-left { content: 'x'; font-size: calc(1rlh + 2px); } }",
+            32.0,
+        ),
+        (
+            "@page { font-size: 20px; line-height: 2; \
+             @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
+            42.0,
+        ),
+        (
+            "@page { font-size: 20px; line-height: 25px; \
+             @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
+            27.0,
+        ),
+        (
+            "html { font-size: 10px; line-height: 2 } @page { font-size: 20px; \
+             @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
+            42.0,
+        ),
     ] {
         let mut document = Document::new();
-        let style = document.append_element(
+        let html = document.append_element(
             Some(document.root_index()),
-            "style",
+            "html",
             Style::default(),
             None::<&str>,
         );
+        let style = document.append_element(Some(html), "style", Style::default(), None::<&str>);
         document.append_text(style, css);
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
         let rule = cascade
             .page
-            .margin_boxes()
-            .first()
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
             .expect("the @page fixture has a margin box");
         assert_eq!(
-            inherited_margin_box_font(&document, &cascade, &cascade.page, rule),
+            inherited_margin_box_font(&document, &cascade, &cascade.page, &rule),
             (expected, FontFamilyName::generic("serif")),
             "{css}"
         );

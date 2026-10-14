@@ -2084,6 +2084,25 @@ pub fn resolve_font_size(
     }
 }
 
+/// Absolutize a mixed-unit `font-size: calc()` against the parent's computed
+/// font size, as [`resolve_font_size`] does a plain length: `%`, `em` and
+/// the other font-relative terms take the parent's font, and `lh` the
+/// parent's line height. The sum is clamped to the `[0,∞]` range (CSS Values
+/// 4 "Range Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
+pub fn resolve_font_size_calc(
+    calc: RelativeCalcLengthPercentage,
+    parent_font_size: ComputedLength,
+    self_reference_basis: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    // An `lh` term without a basis, or a sum that overflows, falls back to
+    // the initial font size, as a plain unresolvable `lh` does.
+    ComputedLength(
+        resolve_relative_calc_against_basis(calc, parent_font_size, self_reference_basis, ctx)
+            .unwrap_or(INITIAL_FONT_SIZE_PX),
+    )
+}
+
 /// Absolutize a specified value for a property that accepts only `<length>`
 /// (no `<percentage>` in its grammar): **phase 3**, using this node's basis.
 ///
@@ -2798,6 +2817,27 @@ fn resolve_relative_calc(
     )
 }
 
+/// Resolve a relative `calc()` whose percentage refers to `basis` (also the
+/// `em` basis) down to one length clamped to `[0,∞]`, for properties that
+/// accept no negative values and compute to an absolute length.
+///
+/// `None` when an `lh` term has no basis, or when the sum is not finite
+/// (an overflowing percentage term included).
+fn resolve_relative_calc_against_basis(
+    calc: RelativeCalcLengthPercentage,
+    basis: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Option<f32> {
+    let px = match resolve_relative_calc(calc, basis, own_line_height, ctx)? {
+        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis.0 * (percent / 100.0),
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis.0 * (calc.percent / 100.0),
+        _ => return None, // cov:ignore: a relative calc resolves only to Px, Percent or Calc
+    };
+    px.is_finite().then_some(px.max(0.0))
+}
+
 /// [`resolve_relative_calc`] with `lh_term` resolving each `lh` / `rlh`
 /// coefficient against its basis; `None` from it makes the whole result
 /// `None`.
@@ -3027,18 +3067,6 @@ pub fn resolve_gradient(
     }
 }
 
-fn absolutized_length(
-    specified: Length,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Length {
-    match resolve_length_percentage(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentage::Px(v) => Length::Px(v),
-        ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-    }
-}
-
 fn absolutized_css_position(
     specified: CssPosition,
     font_size: ComputedLength,
@@ -3076,9 +3104,14 @@ fn resolve_gradient_color_stops(
             .iter()
             .map(|stop| GradientColorStop {
                 color: stop.color,
-                position: stop
-                    .position
-                    .map(|l| absolutized_length(l, font_size, own_line_height, ctx)),
+                position: stop.position.map(|l| {
+                    lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
+                        l,
+                        font_size,
+                        own_line_height,
+                        ctx,
+                    ))
+                }),
             })
             .collect(),
     )
@@ -3090,15 +3123,18 @@ fn resolve_radial_size(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> RadialSize {
+    let radius = |l| {
+        lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
+            l,
+            font_size,
+            own_line_height,
+            ctx,
+        ))
+    };
     match specified {
         RadialSize::Extent(e) => RadialSize::Extent(e),
-        RadialSize::Circle(l) => {
-            RadialSize::Circle(absolutized_length(l, font_size, own_line_height, ctx))
-        }
-        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(
-            absolutized_length(a, font_size, own_line_height, ctx),
-            absolutized_length(b, font_size, own_line_height, ctx),
-        ),
+        RadialSize::Circle(l) => RadialSize::Circle(radius(l)),
+        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(radius(a), radius(b)),
     }
 }
 
@@ -3573,6 +3609,16 @@ pub fn resolve_line_height(
         LineHeight::Length(Length::Rlh(v)) => {
             match resolve_lh_multiplier(v, ctx.root_line_height) {
                 Some(c) => ComputedLineHeight::Length(c),
+                None => ComputedLineHeight::Normal,
+            }
+        }
+        // A percentage and an `em` are both relative to the element's own
+        // font size (CSS Inline 3 §5.1), and an `lh` term to the parent's
+        // line height. An `lh` term without that basis leaves the value
+        // unresolvable, as a plain `lh` is; a sum is clamped to `[0,∞]`.
+        LineHeight::Calc(calc) => {
+            match resolve_relative_calc_against_basis(calc, font_size, self_reference_basis, ctx) {
+                Some(px) => ComputedLineHeight::Length(ComputedLength(px)),
                 None => ComputedLineHeight::Normal,
             }
         }

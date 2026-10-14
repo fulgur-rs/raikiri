@@ -1122,6 +1122,15 @@ fn root_with_font_size(px: f32) -> ComputedValues {
 }
 
 #[test]
+fn cascade_page_font_size_resolves_a_mixed_calc_against_the_root() {
+    let root = root_with_font_size(20.0);
+    assert_eq!(
+        page_font_size_px("calc(50% + 2px)", PageInheritance::FromRoot(&root)),
+        12.0
+    );
+}
+
+#[test]
 fn cascade_page_font_size_resolves_against_root_computed_font_size() {
     let root = root_with_font_size(20.0);
     // §6: em on font-size in the page context is relative to the root
@@ -2656,6 +2665,48 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::FontSize(Length::Px(24.0)),
+    );
+    // A mixed calc, as shorthand size and as longhand, resolves against the
+    // context font size.
+    let half_plus_2px = crate::property::RelativeCalcLengthPercentage::from_unit(50.0, "%")
+        .and_then(|half| {
+            half.add_scaled(
+                crate::property::RelativeCalcLengthPercentage::from_unit(2.0, "px")?,
+                1.0,
+            )
+        })
+        .unwrap();
+    let calc_font = FontShorthand {
+        size: FontShorthandSize::Calc(half_plus_2px),
+        ..font.clone()
+    };
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(calc_font)),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::Font(FontShorthand {
+            size: FontShorthandSize::Absolute(Length::Px(12.0)),
+            line_height: LineHeight::Length(Length::Px(32.0)),
+            ..font.clone()
+        }),
+    );
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::FontSizeCalc(half_plus_2px)),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::FontSize(Length::Px(12.0)),
     );
     // `Relative` size converges to the same `Absolute(Px(_))` shape the
     // `FontSizeRelative` longhand arm produces (same basis).
@@ -4313,6 +4364,9 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::Small),
+        PropertyValue::FontSizeCalc(
+            crate::property::RelativeCalcLengthPercentage::from_unit(50.0, "%").unwrap(),
+        ),
         PropertyValue::CounterResetInherit,
         PropertyValue::MarginTopInherit,
         PropertyValue::MarginRightInherit,
@@ -4454,6 +4508,7 @@ property_value_variant_registry! {
     FontSize,
     FontSizeRelative,
     FontSizeKeyword,
+    FontSizeCalc,
     FontWeight,
     LineHeight,
     Display,
@@ -4907,6 +4962,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // CSS Inline 3 §5.1: `normal` / `<number>` remain computed values.
             LineHeight::Normal | LineHeight::Number(_) => None,
             LineHeight::Length(l) => length_absolute_only(l, "line-height: <percentage>"),
+            LineHeight::Calc(_) => Some("LineHeight::Calc"),
         }
     }
     fn font_weight(fw: FontWeightValue) -> Option<&'static str> {
@@ -5067,6 +5123,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // also uses this as its worst-case payload.
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
             PropertyValue::FontSizeKeyword(_) => Some("font-size: <absolute-size>"),
+            PropertyValue::FontSizeCalc(_) => Some("font-size: calc()"),
             // `font` shorthand fall-through: `size` delegates as in the
             // `FontSize` / `FontSizeRelative` longhand arms
             // (`length_absolute_only` / always residue); `line-height`
@@ -5080,6 +5137,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     }
                     FontShorthandSize::Relative(_) => Some("font-size: larger/smaller"),
                     FontShorthandSize::Keyword(_) => Some("font-size: <absolute-size>"),
+                    FontShorthandSize::Calc(_) => Some("font-size: calc()"),
                 };
                 size_residue
                     .or_else(|| line_height(shorthand.line_height))
@@ -5517,8 +5575,15 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         g: &crate::property::Gradient,
                         length: fn(crate::property::Length) -> Option<&'static str>,
                     ) -> Option<&'static str> {
+                        let value_residue = |v: crate::property::LengthPercentageOrCalc| match v {
+                            crate::property::LengthPercentageOrCalc::Length(l) => length(l),
+                            crate::property::LengthPercentageOrCalc::Calc(_) => None,
+                            crate::property::LengthPercentageOrCalc::RelativeCalc(_) => {
+                                Some("LengthPercentageOrCalc::RelativeCalc")
+                            }
+                        };
                         let stop_residue = |s: &crate::property::GradientColorStop| {
-                            s.position.and_then(length)
+                            s.position.and_then(value_residue)
                         };
                         let offset_residue = |o: crate::property::CssPositionOffset| match o {
                             crate::property::CssPositionOffset::Start(l)
@@ -5533,9 +5598,9 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                             crate::property::Gradient::Radial(rg) => {
                                 let size_residue = match rg.size {
                                     crate::property::RadialSize::Extent(_) => None,
-                                    crate::property::RadialSize::Circle(l) => length(l),
+                                    crate::property::RadialSize::Circle(l) => value_residue(l),
                                     crate::property::RadialSize::Ellipse(a, b) => {
-                                        length(a).or_else(|| length(b))
+                                        value_residue(a).or_else(|| value_residue(b))
                                     }
                                 };
                                 size_residue
@@ -5585,7 +5650,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     g: &crate::property::Gradient,
                     length: fn(crate::property::Length) -> Option<&'static str>,
                 ) -> Option<&'static str> {
-                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(length);
+                    let value_residue = |v: crate::property::LengthPercentageOrCalc| match v {
+                        crate::property::LengthPercentageOrCalc::Length(l) => length(l),
+                        crate::property::LengthPercentageOrCalc::Calc(_) => None,
+                        crate::property::LengthPercentageOrCalc::RelativeCalc(_) => {
+                            Some("LengthPercentageOrCalc::RelativeCalc")
+                        }
+                    };
+                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(value_residue);
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
@@ -5597,8 +5669,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::Gradient::Radial(rg) => {
                             let size_residue = match rg.size {
                                 crate::property::RadialSize::Extent(_) => None,
-                                crate::property::RadialSize::Circle(l) => length(l),
-                                crate::property::RadialSize::Ellipse(a, b) => length(a).or_else(|| length(b)),
+                                crate::property::RadialSize::Circle(l) => value_residue(l),
+                                crate::property::RadialSize::Ellipse(a, b) => value_residue(a).or_else(|| value_residue(b)),
                             };
                             size_residue
                                 .or_else(|| offset_residue(rg.position.horizontal))
@@ -5619,7 +5691,14 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     g: &crate::property::Gradient,
                     length: fn(crate::property::Length) -> Option<&'static str>,
                 ) -> Option<&'static str> {
-                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(length);
+                    let value_residue = |v: crate::property::LengthPercentageOrCalc| match v {
+                        crate::property::LengthPercentageOrCalc::Length(l) => length(l),
+                        crate::property::LengthPercentageOrCalc::Calc(_) => None,
+                        crate::property::LengthPercentageOrCalc::RelativeCalc(_) => {
+                            Some("LengthPercentageOrCalc::RelativeCalc")
+                        }
+                    };
+                    let stop_residue = |s: &crate::property::GradientColorStop| s.position.and_then(value_residue);
                     let offset_residue = |o: crate::property::CssPositionOffset| match o {
                         crate::property::CssPositionOffset::Start(l)
                         | crate::property::CssPositionOffset::End(l) => length(l),
@@ -5631,8 +5710,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                         crate::property::Gradient::Radial(rg) => {
                             let size_residue = match rg.size {
                                 crate::property::RadialSize::Extent(_) => None,
-                                crate::property::RadialSize::Circle(l) => length(l),
-                                crate::property::RadialSize::Ellipse(a, b) => length(a).or_else(|| length(b)),
+                                crate::property::RadialSize::Circle(l) => value_residue(l),
+                                crate::property::RadialSize::Ellipse(a, b) => value_residue(a).or_else(|| value_residue(b)),
                             };
                             size_residue
                                 .or_else(|| offset_residue(rg.position.horizontal))
@@ -6166,8 +6245,9 @@ fn page_corpus_font_size_and_font_size_relative_share_one_key() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        font_size_key_count, 3,
-        "FontSize, FontSizeRelative and FontSizeKeyword should share PropertyKey::FontSize",
+        font_size_key_count, 4,
+        "FontSize, FontSizeRelative, FontSizeKeyword and FontSizeCalc should share \
+         PropertyKey::FontSize",
     );
 }
 
@@ -7499,5 +7579,184 @@ fn page_border_radius_from_a_variable_yields_to_a_later_corner() {
             percent: 10.0,
             px: 4.0,
         })
+    );
+}
+
+fn px_margin(value: f32) -> crate::property::LengthOrAuto {
+    crate::property::LengthOrAuto::Length(Length::Px(value))
+}
+
+/// A `var()` page `direction` is substituted before the flow-relative
+/// margins are mapped, so they follow the computed `rtl`.
+#[test]
+fn page_var_direction_maps_logical_margins() {
+    let result = page(
+        "@page { --d: rtl; direction: var(--d); margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginRight),
+        Some(&PropertyValue::MarginRight(px_margin(1.0)))
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginLeft),
+        Some(&PropertyValue::MarginLeft(px_margin(0.0)))
+    );
+}
+
+/// A `writing-mode` that `all: revert-layer` rolls back does not decide the
+/// mapping of the page's flow-relative margins.
+#[test]
+fn page_rolled_back_writing_mode_does_not_map_logical_margins() {
+    let result = page(
+        "@layer top { @page { writing-mode: vertical-rl; all: revert-layer } } \
+         @page { margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    assert!(!declarations.contains_key(&PropertyKey::WritingMode));
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginLeft),
+        Some(&PropertyValue::MarginLeft(px_margin(1.0)))
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginTop),
+        Some(&PropertyValue::MarginTop(px_margin(0.0)))
+    );
+}
+
+/// Margin boxes map flow-relative margins through their own `direction`,
+/// or else the page context's, and the result competes with the physical
+/// longhand for that side.
+#[test]
+fn margin_box_logical_margins_follow_the_margin_context_direction() {
+    let margins = |css: &str| {
+        let margin = page(css, &ComputedValues::initial())
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        margin
+            .declarations
+            .into_iter()
+            .filter(|declaration| {
+                matches!(
+                    declaration.value.key(),
+                    PropertyKey::MarginLeft | PropertyKey::MarginRight
+                )
+            })
+            .map(|declaration| declaration.value)
+            .collect::<Vec<_>>()
+    };
+    for css in [
+        "@page { @top-left { content: 'X'; --d: rtl; direction: var(--d); \
+         margin-right: 2px; margin-inline-start: 1px } }",
+        "@page { direction: rtl; @top-left { content: 'X'; \
+         margin-right: 2px; margin-inline-start: 1px } }",
+        // An invalid own `direction` leaves the page context's in place.
+        "@page { direction: rtl; @top-left { content: 'X'; direction: var(--missing); \
+         margin-right: 2px; margin-inline-start: 1px } }",
+    ] {
+        assert_eq!(
+            margins(css),
+            [PropertyValue::MarginRight(px_margin(1.0))],
+            "{css}"
+        );
+    }
+    assert_eq!(
+        margins("@page { @top-left { content: 'X'; margin-inline-start: 1px } }"),
+        [PropertyValue::MarginLeft(px_margin(1.0))]
+    );
+}
+
+/// A `var()` flow-relative shorthand in a margin box is split by its own
+/// name before its longhands move to their physical sides.
+#[test]
+fn margin_box_var_logical_shorthand_is_split_before_mapping() {
+    let margin = page(
+        "@page { @top-left { content: 'X'; direction: rtl; --m: 1px 2px; margin-inline: var(--m) } }",
+        &ComputedValues::initial(),
+    )
+    .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+    .unwrap();
+    let mut margins: Vec<_> = margin
+        .declarations
+        .into_iter()
+        .map(|declaration| declaration.value)
+        .filter(|value| {
+            matches!(
+                value.key(),
+                PropertyKey::MarginLeft | PropertyKey::MarginRight
+            )
+        })
+        .collect();
+    margins.sort_by_key(|value| value.key() == PropertyKey::MarginRight);
+    assert_eq!(
+        margins,
+        [
+            PropertyValue::MarginLeft(px_margin(2.0)),
+            PropertyValue::MarginRight(px_margin(1.0)),
+        ]
+    );
+}
+
+/// `text-orientation: upright` makes the page context's used direction `ltr`
+/// in a vertical writing mode, so its inline-start side is the top even
+/// under `direction: rtl`. Sideways modes ignore it.
+#[test]
+fn page_upright_text_orientation_maps_inline_sides_as_ltr() {
+    let margins = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let declarations = result.declarations();
+        (
+            declarations.get(&PropertyKey::MarginTop).cloned(),
+            declarations.get(&PropertyKey::MarginBottom).cloned(),
+        )
+    };
+    let top = (
+        Some(PropertyValue::MarginTop(px_margin(1.0))),
+        Some(PropertyValue::MarginBottom(px_margin(0.0))),
+    );
+    let bottom = (
+        Some(PropertyValue::MarginTop(px_margin(0.0))),
+        Some(PropertyValue::MarginBottom(px_margin(1.0))),
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
+             margin: 0; margin-inline-start: 1px }"
+        ),
+        top
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: vertical-rl; direction: rtl; margin: 0; margin-inline-start: 1px }"
+        ),
+        bottom
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: sideways-rl; text-orientation: upright; direction: rtl; \
+             margin: 0; margin-inline-start: 1px }"
+        ),
+        bottom
+    );
+}
+
+/// Margin boxes inherit the page context's computed `direction`, not the
+/// `ltr` that upright text forces on the page's own vertical flow.
+#[test]
+fn margin_box_inherits_the_page_computed_direction_under_upright_text() {
+    let margin = page(
+        "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
+         @top-left { content: 'X'; margin-inline-start: 1px } }",
+        &ComputedValues::initial(),
+    )
+    .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+    .unwrap();
+    assert!(
+        margin
+            .declarations
+            .iter()
+            .any(|declaration| declaration.value == PropertyValue::MarginRight(px_margin(1.0)))
     );
 }

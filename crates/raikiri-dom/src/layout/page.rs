@@ -111,7 +111,27 @@ impl BodyInlineInsets {
     }
 }
 
-/// Walk the Document arena with DFS and return the arena index of the first `<body>` element.
+/// Whether `id` can be the body element. HTML defines the body element as
+/// the first `body` or `frameset` child of the root `html` element; a
+/// frameset document has no `body`. A `frameset` elsewhere (one a script
+/// inserted into the head, say) or in another namespace is not the body.
+pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
+    const HTML: Option<&str> = Some("http://www.w3.org/1999/xhtml");
+    let node = &doc.nodes[id];
+    match node.tag_name() {
+        Some("body") => true,
+        Some("frameset") => node.parent.is_some_and(|parent| {
+            doc.nodes[parent].tag_name() == Some("html")
+                && doc.nodes[parent].parent == Some(doc.root)
+                && doc.element_namespace_uri(id) == HTML
+                && doc.element_namespace_uri(parent) == HTML
+        }),
+        _ => false,
+    }
+}
+
+/// Walk the Document arena with DFS and return the arena index of the first
+/// `<body>` (or `<frameset>`, see [`is_body_element`]) element.
 ///
 /// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack
 /// overflows in deeply nested DOMs. Return `None` for a fragment parse (no `<body>`);
@@ -132,7 +152,7 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
             // inert subtree — do not select a body inside it.
             continue;
         }
-        if node.kind() == NodeKind::Element && node.tag_name() == Some("body") {
+        if node.kind() == NodeKind::Element && is_body_element(doc, node_idx) {
             return Some(node_idx);
         }
         // Reverse-pushing children makes the stack pop them in document order.
@@ -674,8 +694,7 @@ fn document_has_resolved_pagination_order(document: &Document, cascade: &Cascade
 /// must not change the initial layout geometry. The scan therefore stops after
 /// the first rendered in-flow body child.
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
-    let body_id = (0..document.nodes.len())
-        .find(|&node_id| document.nodes[node_id].tag_name() == Some("body"))?;
+    let body_id = find_body(document)?;
     let resolved_layout = document_has_resolved_pagination_order(document, cascade);
     if let Some(raikiri_style::property::PageValue::Named(name)) = cascade.page_values.get(body_id)
     {

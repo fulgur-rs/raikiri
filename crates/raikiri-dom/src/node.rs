@@ -436,6 +436,13 @@ pub struct Node {
     pub(crate) has_logical_min_block_size: bool,
     /// Whether manual multicol placement replaced the relative block position.
     pub(crate) needs_relative_block_paint_offset: bool,
+    /// The physical axes in which size containment sizes this box as if it
+    /// had no content (CSS Containment 2 §3.1, §3.2).
+    pub(crate) size_containment: taffy::Size<bool>,
+    /// The flex container width this node's percentage padding and borders
+    /// were last resolved against while taffy measured it as a flex item;
+    /// its layout cache holds results for that width.
+    pub(crate) flex_edge_basis: Option<f32>,
     /// Computed CSS `order`; consumed only when this node is a flex/grid item.
     pub(crate) order: i32,
     /// Optional order-modified child view for the last style bridge. This is
@@ -448,6 +455,10 @@ pub struct Node {
     /// Taffy's resolved grid column start for each in-flow child, written
     /// with `grid_item_row_starts` and read only for the children it lists.
     pub(crate) grid_item_column_starts: Box<[(usize, u16)]>,
+    /// The in-flow grid items whose block size depends on the size of the
+    /// rows they span: a percentage height in an intrinsic or flexible row.
+    /// They do not take part in baseline alignment (CSS Grid 1 §6.4).
+    pub(crate) grid_items_without_baseline: Box<[usize]>,
     /// Child arena indices (`usize` indices into `Document::nodes`).
     pub children: Vec<usize>,
     /// Arena index of the parent holding this node in its `children`, or
@@ -558,11 +569,17 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -614,11 +631,17 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -674,11 +697,17 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -729,11 +758,17 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -781,11 +816,17 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
@@ -835,11 +876,17 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),

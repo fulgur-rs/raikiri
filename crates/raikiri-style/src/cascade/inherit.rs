@@ -37,7 +37,8 @@ use super::candidate::{
     SharedDeclarations,
 };
 use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, pick_winners,
+    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, flow_mapping,
+    pick_winners,
 };
 use super::custom_property::{DeferredResolver, resolve_custom_properties};
 use super::first_line::first_line_property_applies;
@@ -1271,8 +1272,17 @@ pub(crate) fn apply_winners(
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
-    pick_winners(candidates, winners);
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
+    let flow = flow_mapping(
+        candidates,
+        inherited.writing_mode,
+        inherited.direction,
+        |value| match value {
+            PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred),
+            value => Some(value.clone()),
+        },
+    );
+    pick_winners(candidates, winners, flow);
     // The drain below takes every slot, so the white-space winners are read
     // first; their applied values are collected during the drain.
     let white_space_winners = WhiteSpaceWinners::read(winners);
@@ -1284,6 +1294,13 @@ pub(crate) fn apply_winners(
         if let Some(winner) = slot.take() {
             let value = candidates.value(winner.idx);
             let winner_key = candidates.decls()[winner.idx].key();
+            // A flow-relative declaration moves to the physical side its
+            // slot names once its value is known.
+            let to_slot =
+                |value: PropertyValue| match (candidates.decls()[winner.idx].logical(), flow) {
+                    (Some(side), Some(flow)) => flow.value(value, side),
+                    _ => value,
+                };
             let mut literal_inherit = false;
             let mut default_value = |value: PropertyValue| {
                 if let PropertyValue::Deferred(marker) = &value {
@@ -1303,7 +1320,7 @@ pub(crate) fn apply_winners(
                     ))
                 }
                 PropertyValue::Deferred(deferred) => {
-                    let resolved = deferred_resolver.resolve(deferred);
+                    let resolved = deferred_resolver.resolve(deferred).map(to_slot);
                     let resolved = match resolved {
                         Some(PropertyValue::Deferred(marker)) => match marker.css_wide_keyword() {
                             Some(
@@ -1382,7 +1399,7 @@ pub(crate) fn apply_winners(
                     winner,
                     &mut deferred_resolver,
                 ),
-                _ => Some(value.clone()),
+                _ => Some(to_slot(value.clone())),
             };
             // Record the precedence even for a value invalid at computed-value
             // time: it still decides which of a physical and a logical size wins.
@@ -1490,8 +1507,9 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // exporting the keyword would follow the instance's size instead.
         // usvg has no font-family dependent `medium` either, so a definition
         // reused under a different generic family keeps the size of the
-        // family where it is defined.
-        PropertyValue::FontSizeKeyword(_) => None,
+        // family where it is defined. SVG 1.1 lengths have no `calc()`, so a
+        // mixed calc keeps its computed px size as well.
+        PropertyValue::FontSizeKeyword(_) | PropertyValue::FontSizeCalc(_) => None,
         _ => None,
     }
 }
@@ -2466,6 +2484,15 @@ pub(crate) fn resolve_against_inherited(
             crate::resolve::resolve_font_size(len, inherited.font_size, ctx.root_line_height, ctx)
                 .px(),
         )),
+        PropertyValue::FontSizeCalc(calc) => PropertyValue::FontSize(Length::Px(
+            crate::resolve::resolve_font_size_calc(
+                calc,
+                inherited.font_size,
+                ctx.root_line_height,
+                ctx,
+            )
+            .px(),
+        )),
         // CSS Text 3 §6.1 `#valdef-text-align-match-parent`.
         // `inherited` is the page context's inheritance parent (the root
         // element, or initial values under the L3 legacy exception). Resolve
@@ -3046,6 +3073,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 _ => None,
             };
             target.font_size = s;
+            target.font_size_calc = None;
+            target.font_size_keyword_declared = false;
+        }
+        // Phase 2 resolves the calc once the root font size and the parent's
+        // line height are known; the parent's keyword information does not
+        // carry over to a size that mixes in other terms.
+        PropertyValue::FontSizeCalc(calc) => {
+            target.font_size_calc = Some(calc);
+            target.font_size_keyword = None;
             target.font_size_keyword_declared = false;
         }
         PropertyValue::FontSizeRelative(rel) => {
@@ -3053,6 +3089,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             // key's single winner slot, so it has not overwritten the seed.
             let inherited_px = target.font_size.payload();
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
+            target.font_size_calc = None;
             target.font_size_keyword = target
                 .font_size_keyword
                 .map(|info| info.scaled(resolve_relative_font_size(rel, 1.0)));
@@ -3064,6 +3101,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.font_size =
                 Length::Px(keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX));
             target.font_size_keyword = Some(crate::computed::FontSizeKeywordInfo::new(keyword));
+            target.font_size_calc = None;
             target.font_size_keyword_declared = true;
         }
         PropertyValue::FontWeight(fw) => {

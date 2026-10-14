@@ -165,8 +165,7 @@ fn flex_float_chain_matches_an_ancestor_walk() {
     fn walk(tree: &Document, node_id: usize) -> bool {
         let mut has_row_flex = false;
         let mut has_float = false;
-        let mut ancestor = Some(node_id);
-        while let Some(current) = ancestor {
+        for current in tree.inclusive_ancestors(node_id) {
             let node = &tree.nodes[current];
             has_float |= node.style.float.is_floated();
             if node.authored_writing_mode == Some(raikiri_style::property::WritingMode::VerticalRl)
@@ -178,7 +177,6 @@ fn flex_float_chain_matches_an_ancestor_walk() {
             }
             has_row_flex |= node.style.display == Display::Flex
                 && node.style.flex_direction == taffy::FlexDirection::Row;
-            ancestor = tree.parent_of(current);
         }
         false
     }

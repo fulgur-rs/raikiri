@@ -2,6 +2,7 @@ use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
+mod avoid_followup_tests;
 mod candidate_text_tests;
 mod grid_parent_tests;
 pub(super) mod link_ancestor_tests;
@@ -5001,15 +5002,12 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
             .into_iter()
             .map(|block| {
                 let layout = doc.nodes[block].unrounded_layout;
-                let mut absolute_x = 0.0;
-                let mut absolute_y = 0.0;
-                let mut ancestor = Some(block);
-                while let Some(node) = ancestor {
-                    let layout = doc.nodes[node].unrounded_layout;
-                    absolute_x += layout.location.x;
-                    absolute_y += layout.location.y;
-                    ancestor = doc.parent_of(node);
-                }
+                let (absolute_x, absolute_y) =
+                    doc.inclusive_ancestors(block)
+                        .fold((0.0, 0.0), |(x, y), node| {
+                            let location = doc.nodes[node].unrounded_layout.location;
+                            (x + location.x, y + location.y)
+                        });
                 (
                     absolute_x,
                     absolute_y,

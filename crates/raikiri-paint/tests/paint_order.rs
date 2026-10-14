@@ -123,7 +123,8 @@ fn walker_steps(page: &Page<'_>) -> Vec<Step> {
 /// The paragraph a text node's lines belong to: the node itself when it is
 /// a paragraph root, else its nearest paragraph root ancestor.
 fn paragraph_root(document: &Document, node: usize) -> usize {
-    std::iter::successors(Some(node), |&id| document.parent_of(id))
+    document
+        .inclusive_ancestors(node)
         .find(|&id| document.get_node(id).is_some_and(|n| n.is_ifc_root()))
         .unwrap_or(node)
 }

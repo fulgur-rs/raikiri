@@ -19,14 +19,12 @@ impl Document {
     /// of its boxes), whose location is relative to the paragraph's root.
     #[doc(hidden)]
     pub fn layout_parent_of(&self, node: usize) -> Option<usize> {
-        let mut parent = self.parent_of(node)?;
+        let parent = self.parent_of(node)?;
         if self.nodes[node].flags.contains(NodeFlags::IN_IFC_SUBTREE) {
             return Some(parent);
         }
-        while !self.contributes_layout_offset(parent) {
-            parent = self.parent_of(parent)?;
-        }
-        Some(parent)
+        self.inclusive_ancestors(parent)
+            .find(|&id| self.contributes_layout_offset(id))
     }
 
     /// The nearest ancestor of `node` that is the root of an inline engine
@@ -42,14 +40,8 @@ impl Document {
         {
             return Some(key);
         }
-        let mut current = self.parent_of(node);
-        while let Some(id) = current {
-            if self.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
-                return Some(id);
-            }
-            current = self.parent_of(id);
-        }
-        None
+        self.ancestors(node)
+            .find(|&id| self.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT))
     }
 
     /// Whether the location of `node` is part of the position of its DOM

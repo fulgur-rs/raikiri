@@ -52,12 +52,10 @@ pub(crate) fn ahem_paragraph_with(
 /// locations of its ancestors.
 pub(crate) fn absolute_rect(doc: &Document, node: usize) -> (f32, f32, f32, f32) {
     let (mut x, mut y) = (0.0, 0.0);
-    let mut current = Some(node);
-    while let Some(id) = current {
+    for id in doc.inclusive_ancestors(node) {
         let layout = doc.nodes[id].unrounded_layout;
         x += layout.location.x;
         y += layout.location.y;
-        current = doc.parent_of(id);
     }
     let size = doc.nodes[node].unrounded_layout.size;
     (x, y, size.width, size.height)

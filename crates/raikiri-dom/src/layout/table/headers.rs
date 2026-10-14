@@ -344,14 +344,21 @@ pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
                     node.hides_empty_table_cell,
                 ));
             }
+            if cells.is_empty() {
+                continue;
+            }
+            // The traversal above reaches rows only through explicit
+            // table-part parents, so every ancestor before the table owns
+            // the row's cell-background intersections. Only their heights
+            // change below, so their positions are taken once.
+            let owners: Vec<(usize, (f32, f32))> = document
+                .inclusive_ancestors(part)
+                .take_while(|&id| id != table)
+                .map(|id| (id, absolute_position(document, id)))
+                .collect();
             for (x, y, size, hidden) in cells {
                 table_bottom = table_bottom.max(y + size.height);
-                let mut current = Some(part);
-                while let Some(id) = current.filter(|&id| id != table) {
-                    // The traversal above reaches rows only through explicit
-                    // table-part parents, so every ancestor before the table
-                    // owns the row's cell-background intersections.
-                    let origin = absolute_position(document, id);
+                for &(id, origin) in &owners {
                     let bottom = y + size.height - origin.1;
                     document.nodes[id].unrounded_layout.size.height =
                         document.nodes[id].unrounded_layout.size.height.max(bottom);
@@ -366,7 +373,6 @@ pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
                                 size.height,
                             ));
                     }
-                    current = document.parent_of(id);
                 }
             }
         }

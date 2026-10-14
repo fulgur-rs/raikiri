@@ -424,8 +424,7 @@ impl Document {
         start: usize,
     ) -> Option<usize> {
         let owner = self.ifc_source_owner(root);
-        let mut current = Some(start);
-        while let Some(id) = current {
+        for id in self.inclusive_ancestors(start) {
             if id == root || id == owner {
                 return None;
             }
@@ -442,7 +441,6 @@ impl Document {
             if !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents) {
                 return None;
             }
-            current = self.parent_of(id);
         }
         None
     }
@@ -1461,12 +1459,10 @@ impl Document {
             let owner = crate::generated_content::generated_origin(source)
                 .map_or_else(|| self.ifc_source_owner(source), |(owner, _)| owner);
             self.get_node(owner)?;
-            let mut current = Some(owner);
-            while let Some(id) = current {
+            for id in self.inclusive_ancestors(owner) {
                 if !entered.insert(id) {
                     break;
                 }
-                current = self.parent_of(id);
             }
         }
         Some(entered)
@@ -1500,20 +1496,13 @@ impl Document {
         // Whether the node and all its ancestors are in the document and
         // displayed.
         let is_rendered = |node_id: usize| {
-            let mut cursor = Some(node_id);
-            while let Some(id) = cursor {
-                let Some(node) = self.get_node(id) else {
-                    return false; // cov:ignore: ancestor ids come from the arena
-                };
-                if !node.is_in_document()
-                    || (node.kind() == NodeKind::Element
-                        && (node.is_display_none() || node.is_hidden_by_text_overflow()))
-                {
-                    return false;
-                }
-                cursor = self.parent_of(id);
-            }
-            true
+            self.inclusive_ancestors(node_id).all(|id| {
+                self.get_node(id).is_some_and(|node| {
+                    node.is_in_document()
+                        && !(node.kind() == NodeKind::Element
+                            && (node.is_display_none() || node.is_hidden_by_text_overflow()))
+                })
+            })
         };
         let mut found: Vec<usize> = (0..self.nodes.len())
             .filter(|&node_id| {
@@ -1521,8 +1510,7 @@ impl Document {
                     .is_some_and(|node| node.kind() == NodeKind::Element)
                     && is_multicol(node_id)
                     && is_rendered(node_id)
-                    && !std::iter::successors(self.parent_of(node_id), |&id| self.parent_of(id))
-                        .any(is_multicol)
+                    && !self.ancestors(node_id).any(is_multicol)
             })
             .collect();
         found.sort_unstable();

@@ -1105,7 +1105,9 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
 ///
 /// Among the items in the first row that holds any, in grid order (by
 /// column, then in order-modified document order), the first one that takes
-/// part in baseline alignment gives the line, or else the first one. An
+/// part in baseline alignment gives the line, or else the first one. An item
+/// whose percentage height depends on the rows it spans takes no part (CSS
+/// Grid 1 §6.4), as in layout. An
 /// item with no line of its own gives the bottom of its border box (CSS Box
 /// Alignment 3 §9.1). Text directly in the grid is an anonymous item of its
 /// own.
@@ -1144,7 +1146,10 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
     let item = first_row_items
         .iter()
         .copied()
-        .find(|&child| aligns_by_baseline(&node.style, &document.nodes[child].style))
+        .find(|&child| {
+            aligns_by_baseline(&node.style, &document.nodes[child].style)
+                && !node.grid_items_without_baseline.contains(&child)
+        })
         .or_else(|| first_row_items.first().copied())?;
     // A relative offset moves the item's box, not the line the grid
     // takes its baseline from.

@@ -253,18 +253,12 @@ pub fn content_images_are_placed(
     {
         return false;
     }
-    let mut current = Some(element);
-    while let Some(id) = current {
-        if cascade
+    !document.inclusive_ancestors(element).any(|id| {
+        cascade
             .computed
             .get(id)
             .is_some_and(|cv| cv.display == DisplayValue::None)
-        {
-            return false;
-        }
-        current = document.parent_of(id);
-    }
-    true
+    })
 }
 
 /// One piece of the content of a `::before` or `::after`, in order: a run

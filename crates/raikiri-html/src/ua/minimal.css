@@ -176,11 +176,8 @@ dialog[open] { display: block; }
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list-related elements
  * are block-level. The full spec selector also lists dir/dd/dl/dt/menu,
- * which have no rule yet (out of scope for this rule set). The physical
- * padding/margin forms below are equivalent to the horizontal-tb UA values
- * (`margin-block: 1em; padding-inline-start: 40px`) in this engine's current
- * writing-mode scope. */
-ol, ul { display: block; margin: 1em 0; padding-left: 40px; }
+ * which have no rule yet (out of scope for this rule set). */
+ol, ul { display: block; margin-block: 1em; padding-inline-start: 40px; }
 ol { list-style-type: decimal; }
 ul { list-style-type: disc; }
 
