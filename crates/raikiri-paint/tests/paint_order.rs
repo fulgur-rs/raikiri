@@ -1111,3 +1111,38 @@ fn atomic_inlines_beside_inline_opacity_groups() {
         "",
     );
 }
+
+/// A flex or grid item with an integer `z-index` forms a stacking context,
+/// so the positioned boxes inside it stay below a later item with a higher
+/// stack level.
+#[test]
+fn z_indexed_flex_and_grid_items_keep_their_positioned_boxes() {
+    for display in ["flex", "grid"] {
+        let result = same_order(&format!(
+            "<div style=\"display: {display}\">\
+             <div id=x style=\"z-index: 1; width: 20px; height: 20px\">\
+             <div id=p style=\"position: relative; height: 5px; background: red\"></div></div>\
+             <div id=y style=\"z-index: 2; margin-left: -20px; width: 20px; height: 20px; \
+             background: teal\"></div></div>"
+        ));
+        let [p, y] = ["p", "y"].map(|id| by_id(&result, id));
+        assert!(
+            step_at(&result, Step::Box(p)) < step_at(&result, Step::Box(y)),
+            "{display}"
+        );
+    }
+}
+
+/// Content positioned below the blocks inside an inline box that forms a
+/// stacking context stays in that box, so the paragraph's blocks still
+/// paint before its lines.
+#[test]
+fn negative_content_inside_inline_stacking_contexts_keeps_blocks_before_the_lines() {
+    let result = same_order(
+        "<div id=m>over<span style=\"position: relative; z-index: 0\">\
+         <span style=\"position: relative; z-index: -1\">x</span></span>\
+         <div id=k style=\"background: gray; height: 10px\"></div></div>",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(k)) < step_at(&result, Step::Text(m)));
+}

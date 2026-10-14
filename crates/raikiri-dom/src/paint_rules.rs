@@ -492,6 +492,7 @@ pub fn hoists_positioned_content(
     cascade.computed.get(node_id).is_some_and(|cv| {
         matches!(cv.position, PositionValue::Static)
             && !establishes_stacking_context(cv)
+            && !is_z_indexed_item(document, cascade, node_id, cv)
             && !clips_overflow(cv)
             && (!matches!(cv.float, FloatValue::None)
                 || box_parent(document, cascade, node_id).is_some_and(|parent| {
@@ -500,6 +501,29 @@ pub fn hoists_positioned_content(
                         .is_some_and(|node| !node.is_ifc_root())
                 }))
     })
+}
+
+/// Whether a flex or grid item with computed values `cv` has an integer
+/// `z-index`, which makes it a stacking context even when it is not
+/// positioned (CSS Flexbox 1 §4.3, CSS Grid 1 §9.5).
+fn is_z_indexed_item(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    matches!(cv.z_index, ZIndexValue::Integer(_))
+        && box_parent(document, cascade, node_id)
+            .and_then(|parent| cascade.computed.get(parent))
+            .is_some_and(|parent| {
+                matches!(
+                    parent.display,
+                    DisplayValue::Flex
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::Grid
+                        | DisplayValue::InlineGrid
+                )
+            })
 }
 
 /// Whether box `id`, laid out in paragraph `root`, is an in-flow block
@@ -544,7 +568,8 @@ pub fn paints_before_paragraph_lines(
 /// Appendix E step 3), and the painters list it with the paragraph, so the
 /// blocks inside the paragraph (see [`paints_before_paragraph_lines`]) stay
 /// there too. Only the paragraph's own inline content is searched, not the
-/// blocks inside it.
+/// blocks inside it or the content of inline boxes that form stacking
+/// contexts.
 pub fn holds_negative_stack_level(
     document: &Document,
     cascade: &CascadeResult,
@@ -574,14 +599,24 @@ pub fn holds_negative_stack_level(
         else {
             continue;
         };
-        if std::iter::once(id).chain(pseudos(id)).any(negative) {
+        if negative(id) {
             return true;
         }
-        if cascade
-            .computed
-            .get(id)
-            .is_some_and(|cv| matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents))
-        {
+        // Content inside an inline box that forms a stacking context paints
+        // within that box, not below the paragraph's blocks.
+        let Some(cv) = cascade.computed.get(id) else {
+            continue; // cov:ignore: elements in a laid-out paragraph have computed values
+        };
+        let stacking = establishes_stacking_context(cv)
+            || (!matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_)));
+        if stacking {
+            continue;
+        }
+        if pseudos(id).into_iter().any(negative) {
+            return true;
+        }
+        if matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
             stack.extend(node.children.iter().copied());
         }
     }
