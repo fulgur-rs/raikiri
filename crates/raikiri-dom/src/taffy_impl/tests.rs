@@ -47,3 +47,27 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     assert_eq!(tree.child_count(parent), 3);
     assert_eq!(usize::from(tree.get_child_id(parent, 1)), text);
 }
+
+#[test]
+fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
+    // CSS 2.1 10.7: a percentage `max-height` against an indefinite
+    // containing block height is treated as `none`.
+    let style = Style {
+        size: Size {
+            width: taffy::Dimension::auto(),
+            height: taffy::Dimension::length(100.0),
+        },
+        max_size: Size {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: taffy::LengthPercentageAuto::percent(0.5),
+        },
+        ..Style::default()
+    };
+    let bounds = ifc_content_height_bounds(&style, None, None);
+    assert_eq!(bounds, (0.0, f32::INFINITY));
+    assert_eq!(
+        ifc_definite_content_height(&style, None, taffy::Rect::zero(), bounds),
+        Some(100.0)
+    );
+    assert_eq!(ifc_content_height_bounds(&style, Some(80.0), None).1, 40.0);
+}

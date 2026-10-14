@@ -10571,3 +10571,52 @@ fn a_percentage_relative_offset_is_auto_without_a_definite_height() {
         vec![0.0, 10.0]
     );
 }
+
+/// The physical position of an `inline-block` with the style `atomic`
+/// inside a vertical-rl root 100px wide and 200px high.
+fn vertical_atomic_location(atomic: &str) -> (f32, f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:100px;height:200px"),
+    );
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some(&format!(
+            "display:inline-block;width:10px;height:10px;position:relative;{atomic}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 500.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    let location = doc.get_node(atomic).unwrap().unrounded_layout.location;
+    (location.x, location.y)
+}
+
+#[test]
+fn a_vertical_atomic_resolves_a_left_percentage_against_the_physical_width() {
+    // CSS 2.1 §9.4.3: `left` percentages refer to the containing block's
+    // width, which is the block extent of a vertical root.
+    let (x0, y0) = vertical_atomic_location("left:0");
+    let (x, y) = vertical_atomic_location("left:50%");
+    assert!((x - x0 - 50.0).abs() < 1e-3, "{x0} -> {x}");
+    assert_eq!(y, y0);
+}

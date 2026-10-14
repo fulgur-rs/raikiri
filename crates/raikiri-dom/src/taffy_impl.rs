@@ -759,10 +759,14 @@ fn compute_ifc_root(
     let mut content_baseline = None;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
     let mut measure = measure;
-    // A known height fixes the box in either sizing mode (taffy's leaf
+    // A definite known height fixes the box in either sizing mode (taffy's leaf
     // layout hides it from the measure callback while performing layout);
     // otherwise the box's own definite `height` does under inherent sizing.
-    measure.definite_height = match inputs.known_dimensions.height {
+    let known_height = inputs
+        .known_dimensions
+        .height
+        .filter(|_| inputs.known_dimensions_are_definite.height);
+    measure.definite_height = match known_height {
         Some(height) => Some((height - measure.insets.top - measure.insets.bottom).max(0.0)),
         None if inputs.sizing_mode == taffy::SizingMode::InherentSize => {
             ifc_definite_content_height(
@@ -890,7 +894,6 @@ fn ifc_content_axis_bounds(
     dimension_basis: Option<f32>,
     edge_basis: Option<f32>,
 ) -> (f32, f32) {
-    let basis = dimension_basis.unwrap_or(0.0);
     let edge_basis = edge_basis.unwrap_or(0.0);
     let resolve_lp = |value: taffy::LengthPercentage| {
         let raw = value.into_raw();
@@ -911,12 +914,17 @@ fn ifc_content_axis_bounds(
     let resolve_dim = |value: taffy::LengthPercentageAuto, auto: f32| {
         let raw = value.into_raw();
         // Calc pointers carry address bits in `tag()`, so test them first.
+        // A percentage of an indefinite basis behaves as the initial value,
+        // as taffy's leaf sizing resolves it.
         let resolved = if raw.is_calc() {
+            let Some(basis) = dimension_basis else {
+                return auto;
+            };
             resolve_calc(raw.calc_value(), basis)
         } else {
-            match raw.tag() {
-                taffy::CompactLength::LENGTH_TAG => raw.value(),
-                taffy::CompactLength::PERCENT_TAG => raw.value() * basis,
+            match (raw.tag(), dimension_basis) {
+                (taffy::CompactLength::LENGTH_TAG, _) => raw.value(),
+                (taffy::CompactLength::PERCENT_TAG, Some(basis)) => raw.value() * basis,
                 _ => return auto,
             }
         };

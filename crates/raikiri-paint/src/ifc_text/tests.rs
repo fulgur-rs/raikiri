@@ -2351,6 +2351,39 @@ fn a_relative_inline_resolves_a_vertical_percentage_in_a_fixed_root() {
 }
 
 #[test]
+fn a_relative_inline_ignores_a_vertical_percentage_in_a_flex_item_of_auto_height() {
+    // Hand-computed: a flex item that is not stretched keeps an auto height,
+    // so `top: 50%` computes to `auto` and `bottom: 4px` moves "bb" up by
+    // 4px from the 8px baseline.
+    let (mut doc, cascade, _root) = paragraph(
+        "display:flex;align-items:flex-start;width:200px;height:100px",
+        |doc, root| {
+            let item = doc.append_element(Some(root), "div", Style::default(), Some("width:200px"));
+            doc.append_text(item, "aa");
+            let inner = doc.append_element(
+                Some(item),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;top:50%;bottom:4px"),
+            );
+            doc.append_text(inner, "bb");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(20), px(4)),
+            (px(30), px(4))
+        ]
+    );
+}
+
+#[test]
 fn a_relative_inline_resolves_a_vertical_percentage_against_a_border_box_height() {
     // Hand-computed: a 120px border-box with 10px padding above and below
     // has a 100px content height, so `top: 50%` moves "bb" down by 50px from

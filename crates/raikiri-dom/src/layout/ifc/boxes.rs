@@ -1255,7 +1255,7 @@ fn layout_block_child(
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
-        let (dx, dy) = relative_inset(tree, node, geometry.width);
+        let (dx, dy) = relative_inset(tree, node, geometry.content_size.width);
         let location = taffy::Point {
             x: geometry.edges.0 + margin.left + dx,
             y: geometry.top_edge + top + dy,
@@ -1493,7 +1493,7 @@ fn layout_formatting_context_child(
     };
     let top = position.y - geometry.top_edge;
     if perform {
-        let (dx, dy) = relative_inset(tree, node, geometry.width);
+        let (dx, dy) = relative_inset(tree, node, geometry.content_size.width);
         let location = taffy::Point {
             x: position.x + extra_left + dx,
             y: position.y + dy,
@@ -1697,7 +1697,7 @@ fn place_atomics(
             // start; the layout is relative to the root's border box. A
             // relatively positioned atomic is drawn offset from that place,
             // which taffy's layout location carries for inline-level boxes.
-            let (dx, dy) = relative_inset(tree, node, geometry.width);
+            let (dx, dy) = relative_inset(tree, node, geometry.content_size.width);
             // A right-to-left line runs from the right edge: its inline axis
             // is mirrored inside the content box.
             let rect = atomic.border_rect;
