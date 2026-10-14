@@ -2874,7 +2874,8 @@ fn a_later_page_of_another_width_lays_its_blocks_out_at_that_width() {
     let html = "<!DOCTYPE html><style>@page{size:200px 100px;margin:0}\
                 @page wide{size:300px 100px}html,body{margin:0}\
                 div{height:100px;background:rgb(0,128,0)}</style>\
-                <div></div><div style=\"page:wide\"></div>";
+                <div></div><div style=\"page:wide\">\
+                <img src=\"https://example.invalid/a.png\" style=\"display:block\"></div>";
     let rendered = render_raikiri_pages(html, 800, 600).expect("pages should render");
     assert_eq!(rendered.pages.len(), 2);
     let wide = &rendered.pages[1];

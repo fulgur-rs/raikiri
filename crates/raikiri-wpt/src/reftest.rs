@@ -3339,7 +3339,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
                     base_url,
                     prepare_cascade_images,
                 },
-            )?
+            )? // cov:ignore: the relayout repeats a layout and projection that already succeeded on the same document
         } else {
             Vec::new()
         };
@@ -3588,7 +3588,7 @@ fn continue_at_page_widths(
         cascade,
         slices,
         &mut geometries,
-    )?;
+    )?; // cov:ignore: the relayout repeats a layout that already succeeded on the same document, with no page limit
     if let Some(first) = continuations.first() {
         // The first layout keeps only the pages before the first
         // continuation.
@@ -3598,7 +3598,7 @@ fn continue_at_page_widths(
             first_page_box,
             &slices[..own],
             &projection(&geometries[..own]),
-        )?;
+        )?; // cov:ignore: these pages were projected once already with the same geometry
     }
     Ok(continuations)
 }
