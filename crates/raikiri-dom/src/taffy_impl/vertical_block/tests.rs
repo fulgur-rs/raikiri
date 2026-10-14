@@ -446,3 +446,26 @@ fn vertical_body_percentages_follow_the_root_inline_size() {
         LengthPercentage::length(80.0)
     );
 }
+
+#[test]
+fn horizontal_child_padding_percentages_follow_the_container_inline_size() {
+    // The containing block of a horizontal child is the vertical container,
+    // whose inline size is its physical height: `padding-left: 10%` of a
+    // 400px tall container is 40px.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:400px",
+        &["writing-mode:horizontal-tb;width:20px;height:10px;padding-left:10%"],
+    );
+    assert_eq!(rects[1].2, 60.0);
+}
+
+#[test]
+fn vertical_child_padding_percentages_follow_the_container_inline_size() {
+    // The block-axis padding of a vertical child is a percentage of the
+    // container's inline size too, its physical height.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:400px",
+        &["width:20px;padding-left:10%"],
+    );
+    assert_eq!(rects[1].2, 60.0);
+}

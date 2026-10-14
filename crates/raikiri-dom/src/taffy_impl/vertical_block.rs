@@ -29,8 +29,8 @@ use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
     AbsoluteAxis, AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout,
-    LayoutInput, LayoutOutput, Line, NodeId, Point, Position as TaffyPosition, Rect, Size,
-    SizingMode, Style, TraversePartialTree, compute_block_layout,
+    LayoutInput, LayoutOutput, LengthPercentage, Line, NodeId, Point, Position as TaffyPosition,
+    Rect, Size, SizingMode, Style, TraversePartialTree, compute_block_layout,
 };
 
 use super::resolve_calc;
@@ -140,7 +140,26 @@ impl Document {
         let block = self.transposed_blocks.pop()?;
         let inputs =
             orthogonal_child_inputs(self, idx, transpose_inputs(inputs), block.block_space);
+        // Taffy resolves a box's percentage padding against the width of
+        // its parent, but the containing block of a horizontally flowing
+        // child is the vertical container, whose inline size is its
+        // physical height (CSS Writing Modes 4 §7.1). A vertical child
+        // transposes its own inputs and needs no help.
+        let physical_padding = flows_horizontally(self, idx)
+            .then_some(inputs.parent_size.height)
+            .flatten()
+            .map(|inline_size| {
+                let style = &mut self.nodes[idx].style;
+                let resolved = style
+                    .padding
+                    .resolve_or_zero(Some(inline_size), resolve_calc)
+                    .map(LengthPercentage::length);
+                std::mem::replace(&mut style.padding, resolved)
+            });
         let output = self.compute_child_layout_with_block_ctx(node_id, inputs, None);
+        if let Some(padding) = physical_padding {
+            self.nodes[idx].style.padding = padding;
+        }
         self.transposed_blocks.push(block);
         Some(transpose_output(output))
     }
@@ -209,8 +228,9 @@ fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
     let edges = match style.box_sizing {
         BoxSizing::BorderBox => 0.0,
         BoxSizing::ContentBox => {
-            // As the child's own layout resolves them.
-            let basis = inputs.parent_size.width;
+            // Against the container's inline size, as the child's own
+            // layout resolves them.
+            let basis = inputs.parent_size.height;
             let padding = style.padding.resolve_or_zero(basis, resolve_calc);
             let border = style.border.resolve_or_zero(basis, resolve_calc);
             padding.left + padding.right + border.left + border.right
@@ -225,6 +245,33 @@ fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
         width = width.max(min + edges);
     }
     width.max(0.0)
+}
+
+/// Resolve the percentage paddings of the children of the transposed
+/// container being laid out against the container's inline size, the inner
+/// transposed width of its border box `width`. Taffy resolves an item's top
+/// and bottom padding against the container's height, which is its
+/// physical width here, while percentages of padding refer to the inline
+/// size of the containing block on every side (CSS Writing Modes 4 §7.1).
+fn resolve_child_padding(tree: &mut Document, width: f32, basis: Option<f32>) {
+    let Some(block) = tree.transposed_blocks.last_mut() else {
+        return;
+    };
+    let padding = block
+        .container_style
+        .padding
+        .resolve_or_zero(basis, resolve_calc);
+    let border = block
+        .container_style
+        .border
+        .resolve_or_zero(basis, resolve_calc);
+    let inline_size = (width - padding.left - padding.right - border.left - border.right).max(0.0);
+    for style in block.child_styles.values_mut() {
+        style.padding = style
+            .padding
+            .resolve_or_zero(Some(inline_size), resolve_calc)
+            .map(LengthPercentage::length);
+    }
 }
 
 /// Lay out the vertical block container `node_id`, whose block axis runs
@@ -265,6 +312,9 @@ pub(super) fn compute_vertical_block(
     });
     if inputs.known_dimensions.width.is_none() && shrinks_to_fit(tree, idx, &inputs) {
         inputs.known_dimensions.width = Some(fit_content_inline_size(tree, node_id, inputs));
+    }
+    if let Some(width) = inputs.known_dimensions.width {
+        resolve_child_padding(tree, width, inputs.parent_size.width);
     }
     let output = compute_block_layout(tree, node_id, inputs, None);
     let mut block = tree.transposed_blocks.pop().expect("pushed above");
