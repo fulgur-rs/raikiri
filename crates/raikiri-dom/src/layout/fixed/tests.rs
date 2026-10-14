@@ -97,6 +97,43 @@ fn auto_margins_center_nested_fixed_boxes_in_the_page_area() {
 }
 
 #[test]
+fn auto_vertical_margins_split_negative_free_space() {
+    // CSS 2.1 §10.6.4: both auto vertical margins take equal shares of the
+    // free space even when it is negative, so the box stays centered on its
+    // insets. Horizontally (§10.3.7) they become zero instead.
+    let (doc, fixed) = laid_out(
+        "",
+        "",
+        "position:fixed;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (0.0, 250.0, 10.0, 100.0));
+    let (doc, fixed) = laid_out(
+        "",
+        "",
+        "position:fixed;left:50%;right:50%;width:100px;height:10px;top:0;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (400.0, 0.0, 100.0, 10.0));
+}
+
+#[test]
+fn auto_vertical_margins_of_absolute_boxes_split_negative_free_space() {
+    // The same rule for a box placed by its block container.
+    let (doc, abs) = laid_out(
+        "position:relative;height:200px;border-top:5px solid",
+        "",
+        "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs), (0.0, 55.0 + 50.0, 10.0, 100.0));
+    // A positive free space is split as before.
+    let (doc, abs) = laid_out(
+        "position:relative;height:200px",
+        "",
+        "position:absolute;top:0;bottom:0;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs), (0.0, 100.0, 10.0, 100.0));
+}
+
+#[test]
 fn an_axis_with_auto_insets_keeps_the_static_position() {
     let (doc, fixed) = laid_out(
         "margin-left:30px",

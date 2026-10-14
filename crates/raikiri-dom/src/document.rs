@@ -463,12 +463,16 @@ pub struct Document {
     /// children's percentage padding and borders resolve against; see
     /// [`crate::taffy_impl::BlockChildStyle`].
     pub(crate) block_item_percent_bases: Vec<(usize, Option<f32>)>,
-    /// Flex containers being laid out, each with its definite content-box
-    /// width. Taffy measures the automatic minimum size of an item without a
-    /// main-axis parent size, so an ifc root item finds the basis of its
+    /// Flex containers being laid out, each with its content-box size where
+    /// that is definite. Taffy measures the automatic minimum size of an item
+    /// without a main-axis parent size, so an item finds the basis of its
     /// percentage padding, borders and margins here instead; see
     /// [`crate::taffy_impl::flex_layout`].
-    pub(crate) flex_item_percent_bases: Vec<(usize, Option<f32>)>,
+    pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
+    /// Size-contained boxes being measured as if they had no content, the
+    /// innermost last; taffy sees no children under them; see
+    /// [`crate::taffy_impl::size_contained_inputs`].
+    pub(crate) size_contained_measure: Vec<usize>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
     /// `Document`s built by hand (raikiri-dom unit tests, raikiri-paint
@@ -660,6 +664,7 @@ impl Document {
             orthogonal_block_in_layout: None,
             block_item_percent_bases: Vec::new(),
             flex_item_percent_bases: Vec::new(),
+            size_contained_measure: Vec::new(),
             quirks_mode: QuirksMode::default(),
             base_url: None,
         }
@@ -1947,6 +1952,7 @@ impl Document {
             orthogonal_block_in_layout: _,
             block_item_percent_bases: _,
             flex_item_percent_bases: _,
+            size_contained_measure: _,
             quirks_mode,
             base_url,
         } = self;

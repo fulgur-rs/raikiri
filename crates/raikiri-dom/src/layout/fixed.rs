@@ -37,7 +37,7 @@ use taffy::{
 
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
-fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+pub(super) fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.
@@ -538,25 +538,37 @@ fn place_fixed_box(tree: &mut Document, id: usize, parent_origin: Point<f32>, ar
         }) - final_size.height
             - non_auto_margin.vertical_axis_sum(),
     };
-    let auto_margin = |insets_set: bool, start: Option<f32>, end: Option<f32>, free: f32| {
-        let count = start.is_none() as u8 + end.is_none() as u8;
-        if !insets_set || count == 0 || (count == 2 && free <= 0.0) {
-            0.0
-        } else {
-            free / f32::from(count)
-        }
-    };
+    // Two auto margins share the free space equally. Only the horizontal
+    // rule (§10.3.7) zeroes them when that would make them negative; the
+    // vertical rule (§10.6.4) has no such exception.
+    let auto_margin =
+        |insets_set: bool, start: Option<f32>, end: Option<f32>, free: f32, zero_negative: bool| {
+            let count = start.is_none() as u8 + end.is_none() as u8;
+            if !insets_set || count == 0 || (count == 2 && zero_negative && free <= 0.0) {
+                0.0
+            } else {
+                free / f32::from(count)
+            }
+        };
     let auto_width = auto_margin(
         left.is_some() && right.is_some(),
         margin.left,
         margin.right,
         free_space.width,
+        true,
+    );
+    // In a vertical writing mode the physical height is the inline axis,
+    // which takes the horizontal rule.
+    let vertical = matches!(
+        crate::taffy_impl::used_writing_mode(tree, id),
+        WritingMode::VerticalRl | WritingMode::VerticalLr
     );
     let auto_height = auto_margin(
         top.is_some() && bottom.is_some(),
         margin.top,
         margin.bottom,
         free_space.height,
+        vertical,
     );
     let resolved_margin = Rect {
         left: margin.left.unwrap_or(auto_width),

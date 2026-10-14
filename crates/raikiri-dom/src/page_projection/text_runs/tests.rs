@@ -460,6 +460,63 @@ fn a_grid_first_line_prefers_a_baseline_aligned_item() {
     assert_eq!(line.center, 7.0 + 10.0);
 }
 
+/// A percentage height in an intrinsically or flexibly sized row depends on
+/// the row, so that item takes no part in baseline alignment and the next
+/// baseline-aligned item gives the line, as in layout.
+#[test]
+fn a_grid_first_line_skips_an_item_with_a_cyclic_percentage_height() {
+    for rows in [
+        "",
+        "grid-template-rows:auto",
+        "grid-template-rows:1fr",
+        "grid-template-rows:minmax(10px,max-content)",
+        "grid-auto-rows:min-content",
+        "grid-template-rows:repeat(2,fit-content(40px))",
+    ] {
+        let (document, cascade, grid) = grid_items(
+            &format!("grid-template-columns:50px 50px;{rows}"),
+            &[
+                "align-self:baseline;height:50%;padding-top:20px",
+                "align-self:baseline",
+            ],
+        );
+        let line = first_line(&document, &cascade, grid).unwrap();
+        assert_eq!(line.baseline, 7.0 + 5.0 + 8.0, "{rows}");
+        assert_eq!(line.center, 7.0 + 10.0, "{rows}");
+    }
+}
+
+/// In a row of fixed size the same item keeps its part in baseline
+/// alignment; spanning into an intrinsic row takes it away again.
+#[test]
+fn a_grid_first_line_keeps_a_percentage_height_item_in_a_fixed_row() {
+    for rows in [
+        "grid-template-rows:100px",
+        "grid-auto-rows:100px",
+        "grid-template-rows:repeat(auto-fill,100px)",
+        "grid-template-rows:50%",
+    ] {
+        let (document, cascade, grid) = grid_items(
+            &format!("grid-template-columns:50px 50px;height:200px;{rows}"),
+            &[
+                "align-self:baseline;height:50%;padding-top:20px",
+                "align-self:baseline",
+            ],
+        );
+        let line = first_line(&document, &cascade, grid).unwrap();
+        assert_eq!(line.baseline, 7.0 + 20.0 + 5.0 + 8.0, "{rows}");
+    }
+    let (document, cascade, grid) = grid_items(
+        "grid-template-columns:50px 50px;grid-template-rows:100px",
+        &[
+            "align-self:baseline;height:50%;padding-top:20px;grid-row:1/span 2",
+            "align-self:baseline",
+        ],
+    );
+    let line = first_line(&document, &cascade, grid).unwrap();
+    assert_eq!(line.baseline, 7.0 + 5.0 + 8.0);
+}
+
 /// Items are searched in order-modified grid order.
 #[test]
 fn a_grid_first_line_follows_the_order_of_the_items() {
