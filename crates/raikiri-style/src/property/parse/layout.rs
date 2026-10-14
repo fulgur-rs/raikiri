@@ -705,10 +705,8 @@ fn grid_track_breadth_is_fixed(b: &GridTrackBreadth) -> bool {
 /// Checks whether [`GridInflexibleBreadth`] is a `<fixed-breadth>`;
 /// used by [`grid_track_size_is_fixed`].
 fn grid_inflexible_breadth_is_fixed(b: &GridInflexibleBreadth) -> bool {
-    matches!(
-        b,
-        GridInflexibleBreadth::Length(_) | GridInflexibleBreadth::Calc(_)
-    )
+    use GridInflexibleBreadth::{Calc, Length};
+    matches!(b, Length(_) | Calc(_))
 }
 
 /// Checks whether [`GridTrackSize`] satisfies the `<fixed-size>` constraint

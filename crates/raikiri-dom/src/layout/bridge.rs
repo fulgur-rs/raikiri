@@ -1333,6 +1333,7 @@ fn grid_track_breadth_to_taffy_min(
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> MinTrackSizingFunction {
+    use crate::taffy_impl::push_calc;
     use ComputedGridTrackBreadth as B;
     match b {
         B::Px(v) => MinTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
@@ -1340,9 +1341,7 @@ fn grid_track_breadth_to_taffy_min(
         B::MinContent => MinTrackSizingFunction::min_content(),
         B::MaxContent => MinTrackSizingFunction::max_content(),
         B::Auto => MinTrackSizingFunction::auto(),
-        B::Calc(calc) => {
-            MinTrackSizingFunction::calc(crate::taffy_impl::push_calc(calc_values, calc, true))
-        }
+        B::Calc(calc) => MinTrackSizingFunction::calc(push_calc(calc_values, calc, true)),
         // cov:ignore: see this fn's doc — structurally unreachable, kept
         // only for match exhaustiveness.
         B::Flex(_) => MinTrackSizingFunction::auto(),
@@ -1361,6 +1360,7 @@ fn grid_track_breadth_to_taffy_max(
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> MaxTrackSizingFunction {
+    use crate::taffy_impl::push_calc;
     use ComputedGridTrackBreadth as B;
     match b {
         B::Px(v) => MaxTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
@@ -1369,9 +1369,7 @@ fn grid_track_breadth_to_taffy_max(
         B::MinContent => MaxTrackSizingFunction::min_content(),
         B::MaxContent => MaxTrackSizingFunction::max_content(),
         B::Auto => MaxTrackSizingFunction::auto(),
-        B::Calc(calc) => {
-            MaxTrackSizingFunction::calc(crate::taffy_impl::push_calc(calc_values, calc, true))
-        }
+        B::Calc(calc) => MaxTrackSizingFunction::calc(push_calc(calc_values, calc, true)),
     }
 }
 
