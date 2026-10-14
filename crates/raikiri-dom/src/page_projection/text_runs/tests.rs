@@ -709,6 +709,75 @@ fn ruby_annotations_project_above_their_base_without_its_decorations() {
     assert!(annotation.text_offset >= base.text_offset + base.text.len());
 }
 
+/// An annotation's decoration stays at the annotation's baseline across a
+/// raised descendant.
+#[test]
+fn annotation_decorations_stay_on_the_annotation_baseline() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aaaa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:underline"),
+    );
+    document.append_text(annotation, "xx");
+    let raised = document.append_element(
+        Some(annotation),
+        "span",
+        taffy::Style::default(),
+        Some("vertical-align:super"),
+    );
+    document.append_text(raised, "yy");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let plain = runs.iter().find(|run| run.text == "xx").expect("plain");
+    let raised = runs.iter().find(|run| run.text == "yy").expect("raised");
+    assert!(raised.origin.1 < plain.origin.1);
+    assert_eq!(plain.decorations.len(), 1);
+    assert_eq!(raised.decorations.len(), 1);
+    assert_eq!(raised.decorations[0].y, plain.decorations[0].y);
+}
+
 /// A ruby nested in a decorated annotation passes the annotation's
 /// decorations to its base, not to its own annotation.
 #[test]

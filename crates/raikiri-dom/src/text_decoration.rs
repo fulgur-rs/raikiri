@@ -483,11 +483,13 @@ fn context_for_text(
 /// its annotations (CSS Text Decoration 3 §2, CSS Ruby 1 §4.4), so the
 /// context folds only the elements below the ruby container whose annotation
 /// holds the text. A ruby nested in that annotation passes its decorations
-/// to its own base like any other ruby container.
+/// to its own base like any other ruby container. Each element's decoration
+/// sits at that element's baseline, `shifts` below the annotation line's.
 fn annotation_context(
     document: &Document,
     cascade: &CascadeResult,
     text_node: usize,
+    shifts: &HashMap<usize, f32>,
 ) -> DecorationContext {
     let mut chain = Vec::new();
     let mut in_annotation = false;
@@ -513,7 +515,12 @@ fn annotation_context(
         .iter()
         .rev()
         .fold(DecorationContext::default(), |context, &(id, cv)| {
-            decorations_for_element(&context, NodeId::new(id as u64), cv, 0.0)
+            decorations_for_element(
+                &context,
+                NodeId::new(id as u64),
+                cv,
+                shifts.get(&id).copied().unwrap_or(0.0),
+            )
         })
 }
 
@@ -595,13 +602,22 @@ pub fn positioned_line_decorations(
     let baseline = f64::from(origin.1)
         + f64::from(line.line.block_offset())
         + f64::from(line.line.baseline(BaselineKind::Alphabetic));
+    let annotation_lines: HashMap<usize, &shodo::Line> = line
+        .runs
+        .iter()
+        .filter_map(|run| Some((run.owner, run.annotation?.line)))
+        .collect();
     let contexts = contexts_for_text_owners(
         line.runs
             .iter()
             .map(|run| (run.style_owner, run.owner, run.annotation.is_some())),
         |(style_owner, owner, annotation)| {
             if annotation {
-                return annotation_context(document, cascade, owner);
+                let shifts = annotation_lines
+                    .get(&owner)
+                    .map(|line| baseline_shifts(document, line))
+                    .unwrap_or_default();
+                return annotation_context(document, cascade, owner, &shifts);
             }
             let context = context_for_text(document, cascade, root, owner, base, &shifts);
             if style_owner == owner {
@@ -634,8 +650,11 @@ pub fn positioned_line_decorations(
         .iter()
         .zip(bounds)
         .map(|(run, (x0, x1))| {
+            // An annotation's decorations sit at its own line's baseline, not
+            // at the shifted baseline of the run.
             let baseline = run.annotation.map_or(baseline, |annotation| {
-                f64::from(origin.1) + f64::from(annotation.baseline)
+                let shift = run.run.baseline() - annotation.line.baseline(BaselineKind::Alphabetic);
+                f64::from(origin.1) + f64::from(annotation.baseline - shift)
             });
             DecorationGeometry {
                 x0: x0 + f64::from(run.offset.0),
