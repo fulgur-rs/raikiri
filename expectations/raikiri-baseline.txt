@@ -1719,6 +1719,9 @@ css/css-multicol/nested-at-outer-boundary-as-fieldset.html
 css/css-multicol/nested-past-fragmentation-line.html
 css/css-multicol/resize-multicol-with-fixed-size-children.html
 
+# --- multicol min-block-size children avoiding breaks sliced at column edges (exact 800x600, bundled WPT fonts, audit KEEP, 2026-10-14) ---
+css/css-break/break-inside-avoid-min-block-size-1.html
+
 # --- ::first-line opacity group (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-13) ---
 # KEEP in two audit-vacuous-passes runs.
 css/css-pseudo/first-line-opacity-001.html
