@@ -150,20 +150,20 @@ fn surrounding_run_start(
     id: usize,
 ) -> usize {
     let root = document.root_index();
-    let mut held = id;
-    let mut current = id;
-    while joins_inline_run(document, cascade, current) {
-        let Some(parent) = document.parent_of(current).filter(|&parent| parent != root) else {
-            break;
-        };
-        if let Some(start) = trailing_inline_run(document, cascade, parent)
-            && position[start] < position[held]
-        {
-            held = start;
-        }
-        current = parent;
-    }
-    held
+    document
+        .inclusive_ancestors(id)
+        .zip(document.ancestors(id))
+        .take_while(|&(current, parent)| {
+            parent != root && joins_inline_run(document, cascade, current)
+        })
+        .filter_map(|(_, parent)| trailing_inline_run(document, cascade, parent))
+        .fold(id, |held, start| {
+            if position[start] < position[held] {
+                start
+            } else {
+                held
+            }
+        })
 }
 
 /// The HTML elements of `document` that may still receive children, given
@@ -279,7 +279,7 @@ fn is_html_element_in_document(document: &Document, id: usize) -> bool {
 }
 
 fn depth(document: &Document, id: usize) -> usize {
-    std::iter::successors(document.parent_of(id), |&parent| document.parent_of(parent)).count()
+    document.ancestors(id).count()
 }
 
 /// Whether the box's layout, including the position of its first children,

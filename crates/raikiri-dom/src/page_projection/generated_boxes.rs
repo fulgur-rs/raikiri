@@ -105,10 +105,8 @@ pub(super) fn prepare(
                 .ifc_layout_node(root.node)
                 .expect("generated candidates retain their paragraph");
             work.charge(node.ifc_relative_offsets().len())?;
-            let mut ancestor = Some(document.ifc_source_owner(root.node));
-            while let Some(node) = ancestor {
+            for _ in document.inclusive_ancestors(document.ifc_source_owner(root.node)) {
                 work.charge(1)?;
-                ancestor = document.parent_of(node);
             }
             entry.insert(placement(document, cascade, &context, root.node).ok());
         }

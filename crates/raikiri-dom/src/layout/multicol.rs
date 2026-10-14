@@ -1757,12 +1757,7 @@ enum FlexFloatChain {
 
 impl FlexFloatChain {
     fn of_ancestors(tree: &Document, node_id: usize) -> Self {
-        let mut chain = Vec::new();
-        let mut current = Some(node_id);
-        while let Some(id) = current {
-            chain.push(id);
-            current = tree.parent_of(id);
-        }
+        let chain: Vec<_> = tree.inclusive_ancestors(node_id).collect();
         chain
             .into_iter()
             .rev()
@@ -2124,12 +2119,14 @@ fn refresh_nested_text_fragments_in(
             // A box may sit inside inline elements of the paragraph; only
             // those elements lie between it and this root.
             let mut between = Vec::new();
-            let mut current = tree.parent_of(child);
-            while let Some(id) = current.filter(|&id| id != node_id) {
-                between.push(id);
-                current = tree.parent_of(id);
-            }
-            let child_chain = if current.is_some() {
+            let inside_root = tree.ancestors(child).any(|id| {
+                let reached = id == node_id;
+                if !reached {
+                    between.push(id);
+                }
+                reached
+            });
+            let child_chain = if inside_root {
                 between
                     .into_iter()
                     .rev()

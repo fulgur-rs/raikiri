@@ -81,21 +81,16 @@ fn preorder(document: &Document) -> Vec<u32> {
 /// Whether `node` or one of its ancestors is laid out outside the normal
 /// flow, so its start does not mark where the flow of a page begins.
 fn outside_normal_flow(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if document.nodes[id].kind() == NodeKind::Element
-            && let Some(computed) = cascade.computed.get(id)
-            && (is_floating_box_for_pagination(document, cascade, id)
-                || matches!(
-                    computed.position,
-                    PositionValue::Absolute | PositionValue::Fixed | PositionValue::Running(_)
-                ))
-        {
-            return true;
-        }
-        current = document.parent_of(id);
-    }
-    false
+    document.inclusive_ancestors(node).any(|id| {
+        document.nodes[id].kind() == NodeKind::Element
+            && cascade.computed.get(id).is_some_and(|computed| {
+                is_floating_box_for_pagination(document, cascade, id)
+                    || matches!(
+                        computed.position,
+                        PositionValue::Absolute | PositionValue::Fixed | PositionValue::Running(_)
+                    )
+            })
+    })
 }
 
 /// The first DOM text of paragraph line `line` of the inline formatting
@@ -164,7 +159,8 @@ impl Document {
         let target = start.token.node();
         // Columns are balanced over their whole container, so content
         // inside one cannot resume from a single page start.
-        let in_columns = std::iter::successors(self.parent_of(target), |&id| self.parent_of(id))
+        let in_columns = self
+            .ancestors(target)
             .any(|id| self.nodes[id].multicol.is_some());
         if in_columns {
             return None;
@@ -223,7 +219,7 @@ impl Document {
 
     /// Whether `ancestor` is `node` or one of its ancestors.
     fn is_ancestor_or_self(&self, ancestor: usize, node: usize) -> bool {
-        std::iter::successors(Some(node), |&id| self.parent_of(id)).any(|id| id == ancestor)
+        self.inclusive_ancestors(node).any(|id| id == ancestor)
     }
 
     /// The nodes whose content starts on projected page `page_index`, or
@@ -423,7 +419,7 @@ impl Document {
         let order = preorder(self);
         let target_order = order[target];
         let mut ancestors = vec![false; self.nodes.len()];
-        for id in std::iter::successors(Some(target), |&id| self.parent_of(id)) {
+        for id in self.inclusive_ancestors(target) {
             ancestors[id] = true;
         }
         let page_values = &mut cascade.page_values;

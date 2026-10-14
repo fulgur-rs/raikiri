@@ -265,14 +265,9 @@ fn tree_walker_current_node(
 }
 
 fn node_is_within_root(document: &raikiri_dom::Document, node: usize, root: usize) -> bool {
-    let mut current = Some(node);
-    while let Some(index) = current {
-        if index == root {
-            return true;
-        }
-        current = document.parent_of(index);
-    }
-    false
+    document
+        .inclusive_ancestors(node)
+        .any(|index| index == root)
 }
 
 fn tree_walker_set_current_node(

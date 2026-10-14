@@ -143,3 +143,34 @@ fn append_child_loop_stays_linear() {
         "3000 detached appendChild took {elapsed:?}, expected well under 10s with O(1) parent pointers"
     );
 }
+
+#[test]
+fn ancestors_walk_parent_pointers_nearest_first() {
+    let mut doc = Document::new();
+    let outer = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let inner = doc.append_element(Some(outer), "span", Style::default(), None::<&str>);
+    let text = doc.append_text(inner, "hi");
+    assert_eq!(
+        doc.ancestors(text).collect::<Vec<_>>(),
+        vec![inner, outer, 0]
+    );
+    assert_eq!(
+        doc.inclusive_ancestors(text).collect::<Vec<_>>(),
+        vec![text, inner, outer, 0]
+    );
+    assert_eq!(doc.ancestors(0).next(), None);
+    assert_eq!(doc.inclusive_ancestors(0).collect::<Vec<_>>(), vec![0]);
+
+    // A detached subtree ends at its own top.
+    let detached = doc.append_element(None, "p", Style::default(), None::<&str>);
+    let leaf = doc.append_text(detached, "x");
+    assert_eq!(doc.ancestors(leaf).collect::<Vec<_>>(), vec![detached]);
+
+    // An out-of-range node has no ancestors but is still yielded itself.
+    let missing = doc.node_count() + 100;
+    assert_eq!(doc.ancestors(missing).next(), None);
+    assert_eq!(
+        doc.inclusive_ancestors(missing).collect::<Vec<_>>(),
+        vec![missing]
+    );
+}

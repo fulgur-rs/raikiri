@@ -59,13 +59,10 @@ pub(super) fn prepare(
     let mut roots = Vec::with_capacity(prepared.len());
     for (root, kind) in prepared {
         // The placement walks the marker owner's ancestors.
-        let mut ancestor = Some(
-            generated_origin(root.node)
-                .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner),
-        );
-        while let Some(node) = ancestor {
+        let owner = generated_origin(root.node)
+            .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner);
+        for _ in document.inclusive_ancestors(owner) {
             work.charge(1)?;
-            ancestor = document.parent_of(node);
         }
         let shift = super::text_runs::placement(document, cascade, &context, root.node)
             .unwrap_or((0.0, 0.0));
