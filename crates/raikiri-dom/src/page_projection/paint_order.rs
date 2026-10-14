@@ -925,7 +925,7 @@ impl Document {
                             || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
                         let close = if merges {
                             LayerClose::Merge(node_id)
-                        } else if paint_rules::hoists_positioned_content(cascade, node_id) {
+                        } else if paint_rules::hoists_positioned_content(self, cascade, node_id) {
                             LayerClose::Hoist
                         } else {
                             LayerClose::Paint

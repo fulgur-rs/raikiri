@@ -702,6 +702,25 @@ fn positioned_boxes_paint_after_later_block_backgrounds() {
     assert!(step_at(&result, Step::Text(a)) < step_at(&result, Step::Box(o)));
 }
 
+/// Positioned boxes inside a flex container or a flex item keep tree order
+/// with the positioned boxes before them.
+#[test]
+fn positioned_boxes_in_flex_containers_keep_tree_order() {
+    let green = "<div id=g style=\"position: absolute; width: 10px; height: 10px; \
+                 background: green\"></div>";
+    for inner in [green.to_string(), format!("<div>{green}</div>")] {
+        let result = same_order(&format!(
+            "<div style=\"position: relative; height: 20px\">\
+             <div id=r style=\"position: absolute; width: 20px; height: 20px; background: red\"></div>\
+             <div style=\"display: flex; height: 20px\">{inner}</div></div>\
+             <div id=d style=\"height: 20px; background: gray\"></div>"
+        ));
+        let [r, g, d] = ["r", "g", "d"].map(|id| by_id(&result, id));
+        assert!(step_at(&result, Step::Box(d)) < step_at(&result, Step::Box(g)));
+        assert!(step_at(&result, Step::Box(r)) < step_at(&result, Step::Box(g)));
+    }
+}
+
 /// The walker draws an inline element's background with the paragraph's
 /// lines and records only the paragraph's `Text`; `paint_order` lists the
 /// inline element's `Box` on its own, before the paragraph's text. The

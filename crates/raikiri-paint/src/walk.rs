@@ -4159,7 +4159,9 @@ pub(crate) fn paint_document_impl(
                         && matches!(cv.column_count, ColumnCountValue::Auto)
                         && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
                     let close = merge.unwrap_or(
-                        if raikiri_dom::paint_rules::hoists_positioned_content(cascade, node_id) {
+                        if raikiri_dom::paint_rules::hoists_positioned_content(
+                            document, cascade, node_id,
+                        ) {
                             LayerClose::Hoist
                         } else {
                             LayerClose::Paint

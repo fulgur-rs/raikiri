@@ -454,11 +454,17 @@ pub fn defers_to_positioned_layer(
                     .get_node(parent)
                     .is_some_and(|node| !node.is_ifc_root())
                     && cascade.computed.get(parent).is_some_and(|parent| {
-                        // A child of a table part sits in an anonymous cell.
+                        // A child of a table part sits in an anonymous cell;
+                        // the children of flex and grid containers join the
+                        // layer the same way.
                         is_block_container(parent.display)
                             || matches!(
                                 parent.display,
-                                DisplayValue::Table
+                                DisplayValue::Flex
+                                    | DisplayValue::InlineFlex
+                                    | DisplayValue::Grid
+                                    | DisplayValue::InlineGrid
+                                    | DisplayValue::Table
                                     | DisplayValue::InlineTable
                                     | DisplayValue::TableRowGroup
                                     | DisplayValue::TableHeaderGroup
@@ -470,19 +476,29 @@ pub fn defers_to_positioned_layer(
     })
 }
 
-/// Whether a float hands the positioned boxes it holds to the enclosing
-/// layer.
+/// Whether a box hands the positioned boxes it holds to the enclosing layer.
 ///
-/// A float paints as if it formed a stacking context (CSS 2.1 Appendix E
-/// step 5), but its positioned descendants belong to the enclosing stacking
-/// context, where they paint after its inline content. A float that clips
-/// or forms a stacking context of its own keeps them.
-pub fn hoists_positioned_content(cascade: &CascadeResult, node_id: usize) -> bool {
+/// Positioned descendants belong to the nearest stacking context, where they
+/// paint after its inline content (CSS 2.1 Appendix E step 8), whatever box
+/// between holds them. A float or a flex or grid item paints as if it formed
+/// a stacking context, but passes them on too. A box that clips or forms a
+/// stacking context of its own keeps them, as does a box laid out beside the
+/// lines of a paragraph, which paints among the paragraph's content.
+pub fn hoists_positioned_content(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
-        !matches!(cv.float, FloatValue::None)
-            && matches!(cv.position, PositionValue::Static)
+        matches!(cv.position, PositionValue::Static)
             && !establishes_stacking_context(cv)
             && !clips_overflow(cv)
+            && (!matches!(cv.float, FloatValue::None)
+                || box_parent(document, cascade, node_id).is_some_and(|parent| {
+                    document
+                        .get_node(parent)
+                        .is_some_and(|node| !node.is_ifc_root())
+                }))
     })
 }
 
