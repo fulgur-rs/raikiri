@@ -89,12 +89,11 @@ pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
 /// out by the inline engine. A `z-index` is drawn in the paragraph's order
 /// instead of as a stacking context of its own.
 ///
-/// A percentage in `left` or `right` refers to the width of the containing
-/// block (CSS 2.1 §9.3.2), the root's content box, which is not known when
-/// the paragraph is projected; [`Self::offset`] takes it once layout knows
-/// it. A percentage in `top` or `bottom` counts as `auto`: the root's height
-/// is not definite while its lines are laid out, as layout treats the
-/// vertical insets of atomic inlines.
+/// A percentage refers to the size of the containing block (CSS 2.1 §9.3.2),
+/// the root's content box, which is not known when the paragraph is
+/// projected; [`Self::offset`] takes it once layout knows it. A percentage in
+/// `top` or `bottom` against a height that is not definite counts as `auto`
+/// (CSS 2.1 §10.5).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct InlineRelativeInsets {
     left: Option<InsetTerms>,
@@ -109,6 +108,17 @@ pub(crate) struct InlineRelativeInsets {
 struct InsetTerms {
     px: f32,
     percent: f32,
+}
+
+impl InsetTerms {
+    /// The used value against `basis`, or `None` (`auto`) when the inset
+    /// has a percentage and the basis is not definite.
+    fn resolve(self, basis: Option<f32>) -> Option<f32> {
+        if self.percent == 0.0 {
+            return Some(self.px);
+        }
+        basis.map(|basis| self.px + basis * self.percent / 100.0)
+    }
 }
 
 impl InlineRelativeInsets {
@@ -135,31 +145,36 @@ impl InlineRelativeInsets {
         })
     }
 
-    /// Whether the horizontal offset depends on the containing block's
-    /// width.
-    pub(crate) fn needs_width(&self) -> bool {
-        [self.left, self.right]
+    /// Whether the offset depends on the containing block's size.
+    pub(crate) fn has_percentage(&self) -> bool {
+        [self.left, self.right, self.top, self.bottom]
             .into_iter()
             .flatten()
             .any(|terms| terms.percent != 0.0)
     }
 
-    /// The paint offset against a containing block `width` wide: `left` over
-    /// `-right`, `top` over `-bottom` (CSS 2.1 §9.4.3).
-    pub(crate) fn offset(&self, width: f32) -> (f32, f32) {
-        let horizontal =
-            |terms: Option<InsetTerms>| terms.map(|terms| terms.px + width * terms.percent / 100.0);
-        let vertical = |terms: Option<InsetTerms>| {
-            terms
-                .filter(|terms| terms.percent == 0.0)
-                .map(|terms| terms.px)
-        };
+    /// The paint offset against a containing block `width` wide and, when it
+    /// is definite, `height` high: `left` over `-right`, `top` over `-bottom`
+    /// (CSS 2.1 §9.4.3).
+    pub(crate) fn offset(&self, width: f32, height: Option<f32>) -> (f32, f32) {
         let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
-        let dx = horizontal(self.left)
-            .or(horizontal(self.right).map(|right| -right))
+        let dx = self
+            .left
+            .and_then(|terms| terms.resolve(Some(width)))
+            .or_else(|| {
+                self.right
+                    .and_then(|terms| terms.resolve(Some(width)))
+                    .map(|r| -r)
+            })
             .unwrap_or(0.0);
-        let dy = vertical(self.top)
-            .or(vertical(self.bottom).map(|bottom| -bottom))
+        let dy = self
+            .top
+            .and_then(|terms| terms.resolve(height))
+            .or_else(|| {
+                self.bottom
+                    .and_then(|terms| terms.resolve(height))
+                    .map(|b| -b)
+            })
             .unwrap_or(0.0);
         (finite(dx), finite(dy))
     }

@@ -96,7 +96,7 @@ pub(crate) fn layout_with_boxes_in(
     bottom_margin_escapes: bool,
 ) -> IfcLines {
     if let Some(root) = tree.nodes[idx].ifc.as_mut() {
-        root.resolve_width_offsets(geometry.content_size.width);
+        root.resolve_percent_offsets(geometry.content_size.width);
     }
     let Some(root) = tree.nodes[idx]
         .ifc
@@ -150,7 +150,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     perform: bool,
 ) -> IfcLines {
     if let Some(root) = tree.nodes[idx].ifc.as_mut() {
-        root.resolve_width_offsets(geometry.content_size.width);
+        root.resolve_percent_offsets(geometry.content_size.width);
     }
     let Some(root) = tree.nodes[idx]
         .ifc

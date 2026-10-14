@@ -41,8 +41,11 @@ pub(crate) struct IfcRoot {
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
     /// The insets of the elements in `offsets` whose offset depends on the
-    /// root's width, which [`Self::resolve_width_offsets`] applies.
-    pub(crate) width_insets: Vec<(usize, super::style::InlineRelativeInsets)>,
+    /// root's size, which [`Self::resolve_percent_offsets`] applies.
+    pub(crate) percent_insets: Vec<(usize, super::style::InlineRelativeInsets)>,
+    /// The root's content height when it is definite, which a percentage
+    /// `top` or `bottom` of its inline elements refers to.
+    pub(crate) definite_height: Option<f32>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
@@ -297,7 +300,8 @@ impl IfcRoot {
             generated_atomics: projected.generated_atomics,
             rtl: projected.rtl,
             offsets: projected.offsets,
-            width_insets: projected.width_insets,
+            percent_insets: projected.percent_insets,
+            definite_height: None,
             cleared_breaks: projected.cleared_breaks.into_iter().collect(),
             fixed: projected.fixed,
             multicol_fragments: None,
@@ -311,12 +315,13 @@ impl IfcRoot {
         }
     }
 
-    /// Resolve the offsets that depend on the root's width against a content
-    /// box `width` wide, the containing block of its inline elements.
-    pub(crate) fn resolve_width_offsets(&mut self, width: f32) {
-        for (id, insets) in &self.width_insets {
+    /// Resolve the offsets that depend on the root's size against a content
+    /// box `width` wide and [`Self::definite_height`] high, the containing
+    /// block of its inline elements.
+    pub(crate) fn resolve_percent_offsets(&mut self, width: f32) {
+        for (id, insets) in &self.percent_insets {
             if let Some((_, offset)) = self.offsets.iter_mut().find(|(owner, _)| owner == id) {
-                *offset = insets.offset(width);
+                *offset = insets.offset(width, self.definite_height);
             }
         }
     }
@@ -334,7 +339,8 @@ impl IfcRoot {
             generated_atomics: self.generated_atomics.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
-            width_insets: self.width_insets.clone(),
+            percent_insets: self.percent_insets.clone(),
+            definite_height: self.definite_height,
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,

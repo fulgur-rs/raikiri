@@ -754,10 +754,19 @@ fn compute_ifc_root(
                 + ifc_edge(style.border.bottom, parent_inline_size)
                 == 0.0,
         column_height: None,
+        definite_height: None,
     };
     let mut content_baseline = None;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
     let mut measure = measure;
+    if inputs.sizing_mode == taffy::SizingMode::InherentSize {
+        measure.definite_height = ifc_definite_content_height(
+            &style,
+            inputs.parent_size.height,
+            measure.insets,
+            measure.height_bounds,
+        );
+    }
     let auto_vertical_block_size = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -916,6 +925,28 @@ fn ifc_content_axis_bounds(
     )
 }
 
+/// The box's own content-box height when its `height` is definite, within
+/// the content-box `bounds` of its `min-height` and `max-height`. `insets`
+/// are its resolved border plus padding.
+fn ifc_definite_content_height(
+    style: &Style,
+    parent_height: Option<f32>,
+    insets: taffy::Rect<f32>,
+    bounds: (f32, f32),
+) -> Option<f32> {
+    if !ifc_has_definite_height(style, parent_height) {
+        return None;
+    }
+    let height =
+        taffy::util::MaybeResolve::maybe_resolve(style.size.height, parent_height, resolve_calc)?;
+    let height = if style.box_sizing == taffy::BoxSizing::BorderBox {
+        height - insets.top - insets.bottom
+    } else {
+        height
+    };
+    Some(height.max(0.0).min(bounds.1).max(bounds.0))
+}
+
 /// Whether the box's own `width` resolves to a length, as taffy's leaf layout
 /// resolves it before calling the measure callback.
 fn ifc_has_definite_width(style: &Style, parent_width: Option<f32>) -> bool {
@@ -965,6 +996,9 @@ struct IfcMeasure {
     /// The content-box height of a multicol root with a definite height:
     /// the height of its columns.
     column_height: Option<f32>,
+    /// The content-box height when the box's own `height` is definite,
+    /// within its `min-height` and `max-height`.
+    definite_height: Option<f32>,
 }
 
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
@@ -1143,6 +1177,16 @@ fn measure_ifc_root(
             height: known_height.unwrap_or(0.0),
         }
     };
+    // A percentage `top` or `bottom` of an inline element refers to the
+    // root's content height when it is definite: the known height or the
+    // root's own `height`, or in vertical flow the inline size.
+    if let Some(root) = tree.nodes[idx].ifc.as_mut() {
+        root.definite_height = if vertical {
+            Some(content_size.height)
+        } else {
+            known_height.or(measure.definite_height)
+        };
+    }
     let axes = IfcAxes::new(writing_mode, direction);
     let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
     // Lines, and the paragraph's own floats, are laid out by one loop; it

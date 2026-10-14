@@ -755,21 +755,34 @@ fn inline_relative_insets_resolve_percentages_against_the_width() {
         });
         InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative")
     };
-    assert_eq!(insets("left:2px;top:3px").offset(200.0), (2.0, 3.0));
-    assert_eq!(insets("right:2px;bottom:3px").offset(200.0), (-2.0, -3.0));
-    assert!(!insets("left:2px;top:3px").needs_width());
+    assert_eq!(insets("left:2px;top:3px").offset(200.0, None), (2.0, 3.0));
+    assert_eq!(
+        insets("right:2px;bottom:3px").offset(200.0, None),
+        (-2.0, -3.0)
+    );
+    assert!(!insets("left:2px;top:3px").has_percentage());
     // A z-index does not drop the offset; the stacking context is not drawn.
-    assert_eq!(insets("left:2px;z-index:1").offset(200.0), (2.0, 0.0));
+    assert_eq!(insets("left:2px;z-index:1").offset(200.0, None), (2.0, 0.0));
     // A horizontal percentage refers to the containing block's width, and
     // `left` wins over `right` before the width is known.
     let percent = insets("left:50%;right:10px");
-    assert!(percent.needs_width());
-    assert_eq!(percent.offset(0.0), (0.0, 0.0));
-    assert_eq!(percent.offset(200.0), (100.0, 0.0));
-    assert_eq!(insets("right:calc(10% + 1px)").offset(200.0), (-21.0, 0.0));
-    // A vertical percentage counts as `auto`; `bottom` then applies.
-    assert_eq!(insets("top:50%;bottom:4px").offset(200.0), (0.0, -4.0));
-    assert_eq!(insets("top:calc(1% + 1px)").offset(200.0), (0.0, 0.0));
+    assert!(percent.has_percentage());
+    assert_eq!(percent.offset(0.0, None), (0.0, 0.0));
+    assert_eq!(percent.offset(200.0, None), (100.0, 0.0));
+    assert_eq!(
+        insets("right:calc(10% + 1px)").offset(200.0, None),
+        (-21.0, 0.0)
+    );
+    // A vertical percentage refers to a definite height, and counts as
+    // `auto` without one; `bottom` then applies.
+    let vertical = insets("top:50%;bottom:4px");
+    assert!(vertical.has_percentage());
+    assert_eq!(vertical.offset(200.0, None), (0.0, -4.0));
+    assert_eq!(vertical.offset(200.0, Some(200.0)), (0.0, 100.0));
+    assert_eq!(
+        insets("top:calc(1% + 1px)").offset(200.0, Some(100.0)),
+        (0.0, 2.0)
+    );
 }
 
 #[test]

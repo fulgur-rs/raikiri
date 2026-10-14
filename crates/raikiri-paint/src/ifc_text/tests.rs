@@ -2289,6 +2289,36 @@ fn a_relative_inline_resolves_a_percentage_against_the_root_width() {
 }
 
 #[test]
+fn a_relative_inline_resolves_a_vertical_percentage_against_a_definite_height() {
+    // Hand-computed: "aabb" on one line, 10px per glyph, on the 8px
+    // baseline. `top: 50%` of the root's 100px content height moves "bb"
+    // down by 50px.
+    let (mut doc, cascade, root) = paragraph("width:200px;height:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;position:relative;top:50%;bottom:3px"),
+        );
+        doc.append_text(inner, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(20), px(58)),
+            (px(30), px(58))
+        ]
+    );
+}
+
+#[test]
 fn a_contents_element_is_transparent_in_the_paragraph() {
     // Hand-computed: "aabbcc" on one line, 10px per glyph, on
     // the 8px baseline; "bb" takes the contents element's colour.
