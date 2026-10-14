@@ -2232,6 +2232,47 @@ fn cascade_page_all_box_properties_are_absolutized() {
 /// (`cascade.rs`) only exercises a bare `<length>` track, which leaves
 /// every other shape in this round trip unreached.
 #[test]
+fn cascade_page_grid_template_columns_keeps_mixed_calc_tracks() {
+    // `1em` is the initial font size. A calc with no percentage left is
+    // clamped to the `[0,∞]` range at computed-value time, and one with no
+    // length left becomes a plain percentage.
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { grid-template-columns: calc(50% - 1em) \
+             minmax(calc(10% + 1em), 1fr) calc(1em - 100px) calc(20% + 1em - 1em); }",
+        &root,
+    );
+    let declarations = result.declarations();
+    let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
+        declarations.get(&PropertyKey::GridTemplateColumns)
+    else {
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        panic!("expected a track list");
+    };
+    let calc = |percent, px| LengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    assert_eq!(
+        list.components,
+        vec![
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Calc(calc(
+                50.0,
+                -INITIAL_FONT_SIZE_PX
+            )))),
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::Calc(calc(10.0, INITIAL_FONT_SIZE_PX)),
+                GridTrackBreadth::Flex(1.0),
+            )),
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
+                Length::Px(0.0)
+            ))),
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
+                Length::Percent(20.0)
+            ))),
+        ]
+    );
+}
+
+#[test]
 fn cascade_page_grid_template_columns_round_trips_every_track_shape_through_phase_3() {
     let root = ComputedValues::initial();
     let result = page(
@@ -5012,6 +5053,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     fn grid_track_breadth(b: &GridTrackBreadth) -> Option<&'static str> {
         match b {
             GridTrackBreadth::Length(l) => length(*l),
+            GridTrackBreadth::Calc(c) => length_percentage_or_calc(*c),
             GridTrackBreadth::Flex(_)
             | GridTrackBreadth::MinContent
             | GridTrackBreadth::MaxContent
@@ -5023,6 +5065,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     fn grid_inflexible_breadth(b: &GridInflexibleBreadth) -> Option<&'static str> {
         match b {
             GridInflexibleBreadth::Length(l) => length(*l),
+            GridInflexibleBreadth::Calc(c) => length_percentage_or_calc(*c),
             GridInflexibleBreadth::MinContent
             | GridInflexibleBreadth::MaxContent
             | GridInflexibleBreadth::Auto => None,

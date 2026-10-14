@@ -1837,7 +1837,7 @@ fn bridge_grid_maps_grid_auto_flow_keywords() {
         cv.grid_auto_flow = flow;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_grid(&mut style, &cv, &mut diag);
+        bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(style.grid_auto_flow, expected, "grid-auto-flow: {flow:?}");
@@ -1882,7 +1882,7 @@ fn bridge_grid_maps_grid_row_and_grid_column_from_the_4_longhands() {
     cv.grid_column_end = GridLineValue::Auto;
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_row,
         TaffyLine {
@@ -1924,7 +1924,7 @@ fn bridge_grid_maps_track_list_with_repeat_minmax_fr_and_named_lines() {
         }));
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
 
     assert_eq!(style.grid_template_columns.len(), 2);
     assert_eq!(
@@ -1969,7 +1969,7 @@ fn bridge_grid_maps_grid_template_areas() {
         }));
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_template_areas,
         Some(taffy::style::GridTemplateAreas {
@@ -1997,7 +1997,7 @@ fn bridge_grid_maps_grid_auto_columns_and_rows_track_sizes() {
     )]);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_auto_columns,
         vec![TrackSizingFunction {
@@ -2031,7 +2031,7 @@ fn bridge_grid_maps_grid_auto_columns_percent_and_max_content_breadth() {
     )]);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_auto_columns,
         vec![TrackSizingFunction {
@@ -2061,7 +2061,7 @@ fn bridge_grid_maps_grid_auto_columns_fit_content() {
     ]);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_auto_columns,
         vec![
