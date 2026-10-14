@@ -183,6 +183,9 @@ fn layout_relative_offset_y(
         computed.display,
         DisplayValue::Contents | DisplayValue::None
     ) || relative_offset_is_painted(document, cascade, body_id, node_id)
+        // Layout places a sticky float without its offset.
+        || (computed.position == PositionValue::Sticky
+            && is_floating_box_for_pagination(document, cascade, node_id))
     {
         return 0.0;
     }
@@ -6101,10 +6104,20 @@ fn takes_no_block_space(document: &Document, cascade: &CascadeResult, node_id: u
 /// `display: contents` element lifts into its parent.
 fn last_in_flow_box(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
     let node = &document.nodes[node_id];
+    // White space that `white-space` preserves still generates lines.
+    let collapse = cascade.computed[node_id].effective_white_space_collapse;
     let collapsed_text = node.kind() == NodeKind::Text
         && node.text_content().is_some_and(|text| {
             text.chars()
                 .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+                && match collapse {
+                    raikiri_style::property::WhiteSpaceCollapse::Collapse
+                    | raikiri_style::property::WhiteSpaceCollapse::Discard => true,
+                    raikiri_style::property::WhiteSpaceCollapse::PreserveBreaks => {
+                        !text.contains(['\n', '\r'])
+                    }
+                    _ => text.is_empty(),
+                }
         });
     // Comments and other non-element, non-text nodes generate no box.
     if !matches!(node.kind(), NodeKind::Element | NodeKind::Text)

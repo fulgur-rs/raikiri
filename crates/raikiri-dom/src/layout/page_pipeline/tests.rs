@@ -13079,3 +13079,50 @@ fn a_content_box_max_height_is_compared_with_the_content_height() {
     });
     assert_eq!(page_flow_y(&doc, id), 100.0);
 }
+
+#[test]
+fn preserved_white_space_keeps_a_nested_avoiding_box_in_place() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;white-space:pre;font-size:10px;line-height:10px"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px;break-inside:avoid"),
+        );
+        doc.append_text(wrapper, "\n\n\n");
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 140.0);
+}
+
+#[test]
+fn a_sticky_avoiding_float_moves_by_its_normal_flow_position() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        id = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;position:sticky;top:30px;width:40px;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 100.0);
+}
