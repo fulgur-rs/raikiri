@@ -188,20 +188,8 @@ fn layout_relative_offset_y(
     }
     // Percentages resolve against the containing block's height when it
     // is definite, and otherwise act as `auto` (CSS 2.1 §9.3.2).
-    let basis = document.layout_parent_of(node_id).and_then(|parent| {
-        matches!(
-            cascade.computed[parent].height,
-            ComputedLengthPercentageOrAuto::Px(_)
-        )
-        .then(|| {
-            let layout = &document.nodes[parent].unrounded_layout;
-            layout.size.height
-                - layout.padding.top
-                - layout.padding.bottom
-                - layout.border.top
-                - layout.border.bottom
-        })
-    });
+    let basis =
+        box_parent(document, node_id).and_then(|parent| definite_content_height(document, parent));
     let resolve = |value: ComputedLengthPercentageOrAuto| match (value, basis) {
         (ComputedLengthPercentageOrAuto::Px(px), _) => Some(px),
         (value, Some(basis)) => used_computed_length_percentage_or_auto(value, basis),
@@ -4393,6 +4381,9 @@ pub fn layout_pages_with_page_geometry_and_control(
     // ancestor did not absorb ends where its subtree does, and the page the
     // flow was on is restored with it.
     let mut pending_bounded_shifts: Vec<(usize, f32, u32)> = Vec::new();
+    // Formatting-context roots that grew around a moved float, with the
+    // growth the flow after them keeps.
+    let mut pending_context_growth: Vec<(usize, f32)> = Vec::new();
     // Unpaginated border-box bottom of the last in-flow block-level child
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
@@ -4544,6 +4535,13 @@ pub fn layout_pages_with_page_geometry_and_control(
         // Leaving several bounded subtrees at once returns to the page the
         // earliest of them started from.
         let mut restored_page: Option<u32> = None;
+        pending_context_growth.retain(|&(context, growth)| {
+            if is_descendant_or_self(document, node_id, context, &parent_of) {
+                return true;
+            }
+            flow_shift += growth;
+            false
+        });
         pending_bounded_shifts.retain(|&(ancestor_id, delta, flow_page)| {
             if is_descendant_or_self(document, node_id, ancestor_id, &parent_of) {
                 return true;
@@ -5415,6 +5413,40 @@ pub fn layout_pages_with_page_geometry_and_control(
                                     later_float_shift.max(inherited + node_delta + margin_top);
                             }
                         }
+                        // A formatting context of its own holds its floats
+                        // (CSS 2.1 §10.6.7), so an auto-height one grows to
+                        // the moved float's margin box, and the flow after
+                        // it moves down by the growth.
+                        let context = float_context_root(document, cascade, node_id, body_id);
+                        let context_style = &document.nodes[context].style;
+                        if context != body_id
+                            && (context_style.size.height.is_auto()
+                                || definite_content_height(document, context).is_none())
+                        {
+                            let context_top = current_abs_y(document, context, &parent_of);
+                            let float_bottom = current_abs_y(document, node_id, &parent_of)
+                                + height
+                                + document.nodes[node_id].unrounded_layout.margin.bottom;
+                            let layout = &document.nodes[context].unrounded_layout;
+                            let growth = float_bottom - context_top
+                                + layout.padding.bottom
+                                + layout.border.bottom
+                                - layout.size.height;
+                            if growth > 0.001 {
+                                document.nodes[context].unrounded_layout.size.height += growth;
+                                grow_ancestors_for_shift(
+                                    document,
+                                    cascade,
+                                    context,
+                                    growth,
+                                    body_id,
+                                    &parent_of,
+                                    &mut pending_bounded_shifts,
+                                    page_before_candidate,
+                                );
+                                pending_context_growth.push((context, growth));
+                            }
+                        }
                     } else if !candidate.is_float_descendant
                         && !is_floating_box_for_pagination(document, cascade, node_id)
                     {
@@ -5819,7 +5851,9 @@ fn grown_auto_height(
 ) -> Option<f32> {
     let node = &document.nodes[parent];
     let style = &node.style;
-    if !style.size.height.is_auto() {
+    // A percentage height against an indefinite containing block behaves
+    // as `auto` (CSS 2.1 §10.5).
+    if !style.size.height.is_auto() && definite_content_height(document, parent).is_some() {
         return None;
     }
     let layout = &node.unrounded_layout;
@@ -6109,6 +6143,7 @@ fn grow_ancestors_for_shift(
         if cascade.computed[parent].display == DisplayValue::Contents {
             continue;
         }
+        shift_later_block_siblings(document, cascade, parent, child, delta);
         let height = document.nodes[parent].unrounded_layout.size.height;
         let absorbed = grown_auto_height(
             document,
@@ -6132,6 +6167,69 @@ fn grow_ancestors_for_shift(
         child = parent;
     }
     bounded
+}
+
+/// Moves the boxes that follow `child` in the block container `parent`
+/// down by `delta`, the distance `child`'s block-end edge moved: in block
+/// flow they follow it. Flex, grid and table containers place their
+/// children themselves, and a paragraph's lines follow a moved block child
+/// through its line shifts.
+fn shift_later_block_siblings(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    parent: usize,
+    child: usize,
+    delta: f32,
+) {
+    let block_container = matches!(
+        cascade.computed[parent].display,
+        DisplayValue::Block
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::InlineBlock
+    ) && document.nodes[parent].multicol.is_none()
+        && document
+            .ifc_layout_node(parent)
+            .is_none_or(|node| node.ifc.is_none());
+    if !block_container || delta <= 0.0 {
+        return;
+    }
+    // `display: contents` children generate no box: their children are laid
+    // out as this box's children.
+    let mut boxes = Vec::new();
+    let mut stack: Vec<usize> = document.nodes[parent]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        if cascade.computed[id].display == DisplayValue::Contents {
+            stack.extend(document.nodes[id].children.iter().rev().copied());
+        } else {
+            boxes.push(id);
+        }
+    }
+    let Some(index) = boxes.iter().position(|&id| id == child) else {
+        return;
+    };
+    for &sibling in &boxes[index + 1..] {
+        let computed = &cascade.computed[sibling];
+        if document.nodes[sibling].kind() != NodeKind::Element
+            || computed.display == DisplayValue::None
+            || matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+        {
+            continue;
+        }
+        document
+            .table_layout_node_mut(sibling)
+            .unrounded_layout
+            .location
+            .y += delta;
+    }
 }
 
 /// The side and the normal-flow outer top, bottom and width of a moved
@@ -6231,9 +6329,27 @@ fn clears_float_side(clear: ClearValue, side: FloatValue) -> bool {
 /// Whether a grid, flex or multi-column container contains `node_id`, up to
 /// and including `body_id`: moving such a box would also displace the boxes
 /// beside it.
+/// Whether the `max-height` of `node_id` already limits its height.
+fn max_height_is_reached(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    let basis =
+        box_parent(document, node_id).and_then(|parent| definite_content_height(document, parent));
+    let max = match cascade.computed[node_id].max_height {
+        ComputedLengthPercentageOrAuto::Px(max) => Some(max),
+        value => basis.and_then(|basis| used_computed_length_percentage_or_auto(value, basis)),
+    };
+    let layout = &document.nodes[node_id].unrounded_layout;
+    let content = layout.size.height
+        - layout.padding.top
+        - layout.padding.bottom
+        - layout.border.top
+        - layout.border.bottom;
+    // Either box-sizing: the used height is at its maximum.
+    max.is_some_and(|max| content >= max - 0.01 || layout.size.height >= max - 0.01)
+}
+
 /// Whether an ancestor of `node_id` inside the body clips its overflow in
-/// the block axis and has a definite or maximum height, so it does not grow
-/// with a moved descendant.
+/// the block axis and has a definite height, or one its `max-height`
+/// already limits, so it does not grow with a moved descendant.
 fn has_bounded_clipping_ancestor(
     document: &Document,
     cascade: &CascadeResult,
@@ -6248,8 +6364,8 @@ fn has_bounded_clipping_ancestor(
         let computed = &cascade.computed[id];
         if !matches!(computed.overflow.y, OverflowValue::Visible)
             && crate::paint_rules::clips_element_overflow(document, cascade, id)
-            && (computed.height != ComputedLengthPercentageOrAuto::Auto
-                || computed.max_height != ComputedLengthPercentageOrAuto::Auto)
+            && (definite_content_height(document, id).is_some()
+                || max_height_is_reached(document, cascade, id))
         {
             return true;
         }

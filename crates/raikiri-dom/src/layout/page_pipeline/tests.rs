@@ -12817,3 +12817,165 @@ fn a_formatting_context_does_not_grow_past_a_float_that_still_holds_the_moved_bo
     // The moved box ends at 160px, inside the float's 210px end.
     assert_eq!(ys, vec![60.0, 210.0]);
 }
+
+#[test]
+fn blocks_after_a_moved_nested_box_follow_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 180.0]);
+}
+
+#[test]
+fn a_relative_offset_resolves_against_a_percentage_height_that_is_definite() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        let parent = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:block;height:100%"),
+        );
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:calc(10% + 20px);height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 50.0);
+}
+
+#[test]
+fn a_clipping_ancestor_below_its_max_height_grows_with_a_moved_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;overflow:hidden;max-height:500px"),
+        );
+        ids.push(wrapper);
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+    });
+    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((page_flow_y(&doc, ids[1]), wrapper_height), (100.0, 160.0));
+}
+
+#[test]
+fn an_ancestor_with_a_percentage_height_of_an_auto_block_grows() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let outer = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:block;height:50%"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_formatting_context_grows_around_a_moved_float() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root"),
+        );
+        ids.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
