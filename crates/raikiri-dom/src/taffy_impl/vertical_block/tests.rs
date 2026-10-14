@@ -521,3 +521,41 @@ fn vertical_container_padding_looks_through_a_contents_parent() {
     assert_eq!(absolute_rect(&doc, container).2, 160.0);
     assert_eq!(absolute_rect(&doc, child).0, 720.0);
 }
+
+#[test]
+fn vertical_flex_item_keeps_its_padding_percentages_while_measured() {
+    // A row flex container measures its items' flex base sizes without a
+    // main-axis parent size; `padding-right: 10%` of the 300px wide
+    // container is still 30px.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;width:300px;height:100px"),
+    );
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;padding-right:10%"),
+    );
+    doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, item).2, 50.0);
+}

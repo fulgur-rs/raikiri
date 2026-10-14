@@ -294,10 +294,13 @@ pub(super) fn compute_vertical_block(
     while let Some(id) = parent.filter(|&id| tree.nodes[id].display == DisplayValue::Contents) {
         parent = tree.parent_of(id);
     }
+    // A flex item is measured without a main-axis parent size; the flex
+    // container's definite size is recorded for its percentage edges.
+    let flex_basis = super::flex_item_percent_basis(tree, idx).unwrap_or(Size::NONE);
     let containing_inline_size = if parent.is_some_and(|parent| is_vertical(tree, parent)) {
-        inputs.parent_size.height
+        inputs.parent_size.height.or(flex_basis.height)
     } else {
-        inputs.parent_size.width
+        inputs.parent_size.width.or(flex_basis.width)
     };
     container_style.padding = container_style
         .padding
