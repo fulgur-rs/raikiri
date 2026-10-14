@@ -75,7 +75,7 @@ struct PreparedSvg {
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
     pub(super) slice: &'a raikiri_dom::PageSlice,
-    pub(super) geometry: &'a crate::render::ResolvedPageGeometry,
+    pub(super) geometry: &'a raikiri_dom::ResolvedPageGeometry,
     pub(super) style: &'a PageCascadeResult,
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,

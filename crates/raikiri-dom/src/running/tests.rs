@@ -325,3 +325,22 @@ fn a_running_element_lays_out_alone_at_the_given_width() {
     assert_eq!(laid_out.source_nodes, [0, body, head, head + 1]);
     assert_eq!(laid_out.document.node_count(), laid_out.source_nodes.len());
 }
+
+#[test]
+fn a_node_outside_the_document_has_an_empty_string_value() {
+    let doc = Document::new();
+    assert_eq!(element_string_value(&doc, 9999), "");
+}
+
+#[test]
+fn negative_and_non_finite_widths_lay_out_at_zero() {
+    for width in [-10.0, f32::NAN, f32::INFINITY] {
+        assert_eq!(used_running_element_width(width), 0.0);
+    }
+    assert_eq!(used_running_element_width(12.5), 12.5);
+    let (doc, cascade, [_, _, head, ..]) = running_document();
+    let laid_out = layout_running_element(&doc, &cascade, NodeId(head as u64), f32::NAN)
+        .expect("layout")
+        .expect("running element");
+    assert_eq!(laid_out.geometry.page_box.width, 0.0);
+}

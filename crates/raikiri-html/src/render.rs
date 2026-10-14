@@ -7,7 +7,7 @@ use raikiri_dom::{
     layout_pages_with_resolver_and_base_url_and_control, resolve_initial_page_context,
     validate_layout_depth,
 };
-pub(crate) use raikiri_dom::{ResolvedPageGeometry, resolve_page_geometry};
+use raikiri_dom::{ResolvedPageGeometry, resolve_page_geometry};
 use raikiri_style::FontFaceRegistry;
 use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,

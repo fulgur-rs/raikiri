@@ -2,11 +2,10 @@
 //!
 //! **Ownership** (design §7.0 line 1904 "shared types → raikiri-traits"): this
 //! is the single canonical [`TargetRegistry`] shared across raikiri-dom,
-//! raikiri-paint, and consumer crates. raikiri-traits owns the type; the
-//! producer side (register-site directive walker,
-//! feeding [`crate::GcpmDirective::RegisterTarget`]) lives in
-//! raikiri-dom and calls [`TargetRegistry::register`] against this
-//! canonical instance.
+//! raikiri-paint, and consumer crates. raikiri-traits owns the type. No
+//! register-site walker in this repository fills it yet; a producer calls
+//! [`TargetRegistry::register`], directly or through
+//! [`crate::GcpmDirective::RegisterTarget`].
 //!
 //! **History** — the impl and tests here were previously a `pub(crate)` shadow
 //! at `crates/raikiri-dom/src/target.rs` alongside an empty
@@ -55,15 +54,15 @@ use crate::error::TargetSlotId;
 /// referenced a fragment before it was walked and must be resolved on a
 /// second pass ([`TargetRegistry::flush_pending`]).
 ///
-/// Producer / register-site walker lives in
-/// raikiri-dom; the canonical type (shape + resolve strategy) lives here.
+/// The canonical type (shape + resolve strategy) lives here; no
+/// register-site walker in this repository fills it yet.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct TargetRegistry {
     /// Fragment identifier → resolved target metadata (counter snapshot,
     /// textual content parts). Populated as the runtime walk encounters
-    /// [`crate::GcpmDirective::RegisterTarget`] directives (populator: the
-    /// register-site walker in raikiri-dom).
+    /// [`crate::GcpmDirective::RegisterTarget`] directives or direct
+    /// [`TargetRegistry::register`] calls.
     resolved: HashMap<Symbol, TargetInfo>,
     /// Content-value sites (`target-counter(...)`, `target-counters(...)`,
     /// `target-text(...)`, and future `element(name)`) that referenced a
@@ -2013,7 +2012,7 @@ fn format_ethiopic_numeric(value: i32) -> Option<String> {
 /// items (design §7.2's `NamedStringState`, which — unlike this crate's
 /// earlier placeholder — needs real text, not a deferred snapshot).
 /// `pub(crate)` rather than full `pub`: no cross-crate caller needs either
-/// helper directly (raikiri-dom only calls through
+/// helper directly (callers go through
 /// [`crate::page::PageContext::apply_directive`]), so crate-internal
 /// visibility is the minimal fix (resolved here rather than duplicating the
 /// formatting logic elsewhere).

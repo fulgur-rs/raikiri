@@ -57,7 +57,7 @@ mod page_projection;
 mod running;
 pub use running::{
     ResolvedPageGeometry, RunningElementPage, RunningIndex, element_string_value,
-    layout_running_element, resolve_page_geometry,
+    layout_running_element, resolve_page_geometry, used_running_element_width,
 };
 mod target;
 

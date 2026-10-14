@@ -148,8 +148,8 @@ impl RunningIndex {
         index
     }
 
-    /// Every running element of the index, in no particular order and
-    /// listed once per name it is registered under.
+    /// Every running element of the index, once each, in no particular
+    /// order.
     pub fn nodes(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.pools
             .values()
@@ -295,7 +295,18 @@ pub struct RunningElementPage {
     pub height: f32,
 }
 
-/// Lay running element `node` of `source` out on its own at `width` CSS px.
+/// The width a running element is laid out at for a requested `width`:
+/// negative and non-finite widths lay out at 0.
+pub fn used_running_element_width(width: f32) -> f32 {
+    if width.is_finite() && width > 0.0 {
+        width
+    } else {
+        0.0
+    }
+}
+
+/// Lay running element `node` of `source` out on its own at `width` CSS px,
+/// clamped by [`used_running_element_width`].
 ///
 /// `source` is the laid-out document: its replaced elements already carry
 /// their resolved intrinsic sizes, so nothing is fetched again. Only the
@@ -311,6 +322,7 @@ pub fn layout_running_element(
     node: NodeId,
     width: f32,
 ) -> Result<Option<RunningElementPage>, LayoutError> {
+    let width = used_running_element_width(width);
     let index = node.0 as usize;
     let Some(template) = cascade
         .computed
@@ -499,7 +511,9 @@ fn is_css_document_white_space(c: char) -> bool {
 fn collect_descendant_text(doc: &Document, root_idx: usize, out: &mut String) {
     let mut stack: Vec<usize> = vec![root_idx];
     while let Some(idx) = stack.pop() {
-        let node = &doc.nodes[idx];
+        let Some(node) = doc.get_node(idx) else {
+            continue;
+        };
         if !node.is_in_document() {
             continue;
         }

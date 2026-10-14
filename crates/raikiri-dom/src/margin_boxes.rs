@@ -11,6 +11,7 @@
 use crate::generated_content::format_counter;
 use crate::layout::{PageMargins, page_margins_for_page};
 use crate::page_projection::text_runs::standalone_runs;
+use crate::running::element_string_value;
 use crate::{
     Document, PositionedGlyphRun, RunSource, StandaloneAlign, StandaloneStyle, StandaloneText,
     TextShadow,
@@ -995,8 +996,6 @@ impl NamedValues {
                 last_strings.insert(name, (idx, components.as_slice()));
             }
         }
-        use crate::running::element_string_value;
-
         let elements = last_elements
             .into_iter()
             .map(|(name, idx)| (name.clone(), element_string_value(document, idx)))

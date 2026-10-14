@@ -10,7 +10,7 @@
 use std::cell::OnceCell;
 
 use raikiri_dom::{Document, RunningElementPage, RunningIndex};
-use raikiri_style::{CascadeResult, PageCascadeResult};
+use raikiri_style::CascadeResult;
 use raikiri_traits::{NodeId, RenderError};
 
 use super::Page;
@@ -39,7 +39,6 @@ impl LayoutCache {
     pub(crate) fn new(index: &RunningIndex) -> Self {
         let mut nodes: Vec<NodeId> = index.nodes().collect();
         nodes.sort_unstable_by_key(|node| node.0);
-        nodes.dedup();
         Self {
             chains: nodes
                 .into_iter()
@@ -121,7 +120,6 @@ impl<'a> RunningSource<'a> {
 pub struct RunningElementLayout {
     node: NodeId,
     laid_out: RunningElementPage,
-    style: PageCascadeResult,
     pub(super) svg_sources: super::page::InlineSvgCache,
     margin_values: raikiri_dom::MarginBoxNamedValues,
 }
@@ -180,7 +178,7 @@ impl RunningElementLayout {
         Page {
             slice: &self.laid_out.slice,
             geometry: &self.laid_out.geometry,
-            style: &self.style,
+            style: &self.laid_out.cascade.page,
             document: &self.laid_out.document,
             cascade: &self.laid_out.cascade,
             page_count: 1,
@@ -193,15 +191,7 @@ impl RunningElementLayout {
     }
 }
 
-/// The width a running element is laid out at for a requested `width`:
-/// negative and non-finite widths lay out at 0.
-pub(crate) fn used_width(width: f32) -> f32 {
-    if width.is_finite() && width > 0.0 {
-        width
-    } else {
-        0.0
-    }
-}
+pub(crate) use raikiri_dom::used_running_element_width as used_width;
 
 /// Lay running element `node` out at `width` CSS px, a width
 /// [`used_width`] returned. See [`raikiri_dom::layout_running_element`].
@@ -214,7 +204,6 @@ pub(crate) fn layout_running_element(
     let laid_out = raikiri_dom::layout_running_element(source, cascade, node, width)?;
     Ok(laid_out.map(|laid_out| RunningElementLayout {
         node,
-        style: laid_out.cascade.page.clone(),
         laid_out,
         svg_sources: super::page::InlineSvgCache::default(),
         margin_values: raikiri_dom::MarginBoxNamedValues::new(),

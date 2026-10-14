@@ -753,9 +753,8 @@ pub struct ComputedValues {
     ///
     /// The `Vec` shape follows the SmolStr wire-through pattern used by
     /// `content` / `string_set` (reuse of an established precedent). Downstream
-    /// `raikiri-dom` concatenates these per-node seeds when building a
-    /// per-document `Vec<RunningTemplate>`. This is the static side of the
-    /// two-tier cache described in design doc §7.3.
+    /// `raikiri-dom` indexes the running elements by name from these per-node
+    /// seeds (`raikiri_dom::RunningIndex`).
     pub running_templates: Vec<RunningTemplate>,
     /// `position` — **non-inherited**, initial: `static` (CSS Positioned Layout Module Level 3 §3).
     pub position: PositionValue,

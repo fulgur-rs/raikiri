@@ -250,8 +250,8 @@ impl NamedStringState {
     /// page's entry/start value, and clear the per-page first/last-use
     /// trackers (a fresh page starts with no assignments of its own).
     ///
-    /// No production driver calls this yet; it is reached through
-    /// [`PageContext::begin_page`].
+    /// [`PageContext::begin_page`] calls this; no production driver in this
+    /// repository calls either yet.
     pub fn begin_page(&mut self) {
         self.on_page_start = self.running.clone();
         self.on_page_first_use = None;
@@ -690,9 +690,10 @@ impl PageContext {
     /// Replace `targets` wholesale with a pre-built [`TargetRegistry`] — the
     /// bulk-integration path for a register-site walker that produces a
     /// complete registry (counters *and* descendant text) from a dedicated
-    /// DOM walk rather than from a `GcpmDirective` stream. raikiri-dom
-    /// drives (runs the walk, calls this setter); raikiri-traits owns the resulting data (design §7.0's
-    /// "runtime side raikiri-dom / shared types raikiri-traits" split).
+    /// DOM walk rather than from a `GcpmDirective` stream. No such walker in
+    /// this repository calls it yet; raikiri-traits owns the resulting data
+    /// (design §7.0's "runtime side raikiri-dom / shared types
+    /// raikiri-traits" split).
     ///
     /// Not itself an [`Self::apply_directive`] arm — `GcpmDirective` has no
     /// variant carrying a whole registry, only single-fragment
