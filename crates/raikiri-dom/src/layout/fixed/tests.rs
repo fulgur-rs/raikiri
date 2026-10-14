@@ -218,35 +218,9 @@ fn auto_horizontal_margins_of_absolute_boxes_in_vertical_containers_split_negati
 fn auto_vertical_margins_of_absolute_boxes_in_paragraphs_split_negative_free_space() {
     // A container with inline content places its positioned children on
     // its own.
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:block;margin:0"),
-    );
-    let parent = doc.append_element(
-        Some(body),
-        "div",
-        Style::default(),
-        Some("display:block;position:relative;height:200px"),
-    );
-    doc.append_text(parent, "text");
-    let abs = doc.append_element(
-        Some(parent),
-        "div",
-        Style::default(),
-        Some("display:block;position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto"),
-    );
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade");
-    with_ahem(&mut doc);
-    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    assert!(
-        doc.nodes[parent]
-            .flags
-            .contains(crate::node::NodeFlags::IS_IFC_ROOT)
+    let (doc, abs) = paragraph_with_positioned_child(
+        "height:200px",
+        "top:50%;bottom:50%;height:100px;width:10px;margin:auto",
     );
     assert_eq!(absolute_rect(&doc, abs).1, 50.0);
 }
@@ -1219,4 +1193,68 @@ fn inline_form_controls_contain_fixed_descendants() {
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_ne!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
+}
+
+/// A paragraph root with `parent_css` holding text and one positioned
+/// child with `abs_css`. Returns the document and the child.
+fn paragraph_with_positioned_child(parent_css: &str, abs_css: &str) -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(format!("display:block;position:relative;{parent_css}").as_str()),
+    );
+    doc.append_text(parent, "text");
+    let abs = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some(format!("display:block;position:absolute;{abs_css}").as_str()),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert!(
+        doc.nodes[parent]
+            .flags
+            .contains(crate::node::NodeFlags::IS_IFC_ROOT)
+    );
+    (doc, abs)
+}
+
+#[test]
+fn auto_margins_of_absolute_boxes_in_paragraphs_follow_the_axes_of_the_root() {
+    // The block axis of a vertical root is its width: negative free space
+    // is split there, and zeroed in the height, its inline axis.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (doc, abs) = paragraph_with_positioned_child(
+            &format!("writing-mode:{mode};width:200px;height:200px"),
+            "left:50%;right:50%;width:100px;top:50%;bottom:50%;height:100px;margin:auto",
+        );
+        let (x, y, _, _) = absolute_rect(&doc, abs);
+        assert_eq!((x, y), (50.0, 100.0), "{mode}");
+    }
+    // Positive free space is split in either axis.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "width:200px;height:200px",
+        "left:0;right:0;width:100px;top:0;bottom:0;height:100px;margin:auto",
+    );
+    let (x, y, _, _) = absolute_rect(&doc, abs);
+    assert_eq!((x, y), (50.0, 50.0));
+    // Negative free space in the inline axis of a horizontal root goes to
+    // the end margin.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "width:200px;height:200px",
+        "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs).0, 100.0);
 }
