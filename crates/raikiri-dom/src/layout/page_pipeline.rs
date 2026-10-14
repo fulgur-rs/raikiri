@@ -6607,7 +6607,8 @@ fn grow_ancestors_for_shift(
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
 /// order, none is floated or absolutely positioned, and its own height and
-/// every ancestor's height follow their content, so moving `block` down moves the boxes after
+/// every ancestor's height follow their content (see
+/// [`height_follows_content`]), so moving `block` down moves the boxes after
 /// it and grows its ancestors to hold it.
 fn is_block_flow_paragraph(
     document: &Document,
@@ -6624,8 +6625,7 @@ fn is_block_flow_paragraph(
     // A box whose height does not follow its lines fragments at the break
     // itself, as the same box does as a flex or grid item, rather than moving
     // as a unit with its lines.
-    let style = &document.nodes[block].style;
-    if !style.size.height.is_auto() || !style.max_size.height.is_auto() {
+    if !height_follows_content(document, block) {
         return false;
     }
     let mut child = block;
@@ -6643,18 +6643,26 @@ fn is_block_flow_paragraph(
         }
         // A `display: contents` element has no box; its parent lays the
         // child out.
-        if cascade.computed[parent].display != DisplayValue::Contents {
-            let style = &document.nodes[parent].style;
-            if !moves_later_siblings(document, cascade, parent)
-                || !style.size.height.is_auto()
-                || !style.max_size.height.is_auto()
-            {
-                return false;
-            }
+        if cascade.computed[parent].display != DisplayValue::Contents
+            && (!moves_later_siblings(document, cascade, parent)
+                || !height_follows_content(document, parent))
+        {
+            return false;
         }
         child = parent;
     }
     false
+}
+
+/// Whether the height of `block` is that of its content: no `height`,
+/// `min-height` or `max-height` sets it and no size containment ignores the
+/// content.
+fn height_follows_content(document: &Document, block: usize) -> bool {
+    let node = &document.nodes[block];
+    node.style.size.height.is_auto()
+        && node.style.min_size.height.is_auto()
+        && node.style.max_size.height.is_auto()
+        && !node.size_containment.height
 }
 
 /// Whether `parent` is a block container whose later children follow a

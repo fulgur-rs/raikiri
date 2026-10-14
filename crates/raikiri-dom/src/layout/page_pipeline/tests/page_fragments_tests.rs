@@ -3209,3 +3209,15 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_an_earlier_float_behind() {
     );
     assert_eq!(absolute_rect(&doc, float).1, 15.0);
 }
+
+#[test]
+fn a_nested_paragraph_does_not_move_a_section_whose_height_ignores_its_content() {
+    // A section whose height `min-height` or `contain: size` sets keeps its
+    // place at y 15 and the block after it its place below the section:
+    // moving the section with the paragraph would move that block as well.
+    for (section, height) in [("min-height:100px", 100.0), ("contain:size", 0.0)] {
+        let laid_out = paragraph_after_a_spacer(Some(section), 15.0, "orphans:2;widows:2", 40.0);
+        assert_eq!(laid_out.section, (15.0, height), "{section}");
+        assert_eq!(laid_out.after_top, 15.0 + height, "{section}");
+    }
+}
