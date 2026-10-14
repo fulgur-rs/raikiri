@@ -304,3 +304,64 @@ fn a_stretched_flex_item_has_a_definite_height() {
         (0.0, 10.0)
     );
 }
+
+/// Lays out a body holding a chain of nested elements, the first styled
+/// `outer` and the second `inner`, with a child of style `child` in the
+/// innermost one; returns the painter's offset for the child.
+fn nested_offset(outer: &str, inner: &str, child: &str) -> (f32, f32) {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let outer = document.append_element(Some(body), "div", taffy::Style::default(), Some(outer));
+    let inner = document.append_element(Some(outer), "span", taffy::Style::default(), Some(inner));
+    let child = document.append_element(Some(inner), "div", taffy::Style::default(), Some(child));
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    used_relative_offset(&document, &cascade.computed[child], child)
+}
+
+#[test]
+fn an_unstretched_flex_item_keeps_an_indefinite_height() {
+    // CSS Flexbox 1 §9.8: only a stretched item's cross size is definite, so
+    // `top: 50%` counts as `auto`, as it does for an in-flow child.
+    assert_eq!(
+        nested_offset(
+            "display:flex;align-items:flex-start;height:100px",
+            "display:block;width:50px",
+            "float:left;position:relative;width:5px;height:5px;top:50%"
+        ),
+        (0.0, 0.0)
+    );
+}
+
+#[test]
+fn insets_give_an_absolutely_positioned_block_a_definite_height() {
+    // CSS Position 3 §4.1: `top: 0; bottom: 0` fixes the height at 300px.
+    assert_eq!(
+        nested_offset(
+            "display:block;position:relative;height:300px",
+            "display:block;position:absolute;top:0;bottom:0;width:50px",
+            "float:left;position:relative;width:5px;height:5px;top:10%"
+        ),
+        (0.0, 30.0)
+    );
+}
+
+#[test]
+fn a_blockified_inline_flex_item_is_a_containing_block() {
+    // CSS Display 3 §2.7: the `inline` item is blockified to 100px by 50px.
+    assert_eq!(
+        nested_offset(
+            "display:flex;width:200px;height:100px",
+            "display:inline;width:100px;height:50px",
+            "float:left;position:relative;width:5px;height:5px;left:50%;top:50%"
+        ),
+        (50.0, 25.0)
+    );
+}

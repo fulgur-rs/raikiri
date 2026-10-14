@@ -1,10 +1,11 @@
 //! Used offsets of relatively positioned boxes whose offset the painter
 //! applies instead of layout.
 
+use super::ifc::projection::REPLACED_BOX_TAGS;
 use super::ifc::style::inset_precedence;
 use super::multicol::spanning::is_spanner;
 use super::page::{find_body, used_computed_length_percentage_or_auto};
-use super::page_pipeline::{box_parent, definite_content_height};
+use super::page_pipeline::box_parent;
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use raikiri_style::property::{DisplayValue, PositionValue, WritingMode};
@@ -18,11 +19,11 @@ use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
 /// Percentages and `calc()` resolve against the content box of the
 /// containing block: the nearest ancestor box that is not a non-atomic
 /// inline, and inside a multi-column container the column box of a child
-/// that does not span the columns. The used size of a flex or grid item is
-/// definite. The body is laid out in the page area,
+/// that does not span the columns. The body is laid out in the page area,
 /// so that is its containing block. The width is always known; a
-/// percentage of the height counts as `auto` unless that height is definite
-/// (CSS 2.1 §9.3.2, §10.5), as in layout.
+/// percentage of the height counts as `auto` unless layout gave the
+/// containing block a definite height (CSS 2.1 §9.3.2, §10.5): a specified
+/// one, or one its flex, grid or absolute positioning fixed.
 pub(crate) fn used_relative_insets(
     document: &Document,
     cv: &ComputedValues,
@@ -73,11 +74,7 @@ pub(crate) fn used_relative_insets(
         if is_body() {
             return Some(document.fixed_page_area.1);
         }
-        let block = block?;
-        if is_flex_or_grid_item(document, block) {
-            return Some(content_height(document, block));
-        }
-        definite_content_height(document, block)
+        block.and_then(|block| document.nodes[block].percent_basis_height)
     };
     let pick = |start: Option<f32>, end: Option<f32>, end_wins: bool| {
         if end_wins {
@@ -100,33 +97,32 @@ pub(crate) fn used_relative_insets(
 /// `display: contents` elements and non-atomic inlines are skipped.
 fn containing_block(document: &Document, node_id: usize) -> Option<usize> {
     let mut block = box_parent(document, node_id)?;
-    while document.nodes[block].display == DisplayValue::Inline {
+    while is_non_atomic_inline(document, block) {
         block = box_parent(document, block)?;
     }
     Some(block)
 }
 
-/// Whether `block` is laid out as a flex or grid item. Its used size is
-/// definite once the container has sized it, auto height or not (CSS Flexbox
-/// 1 §9.8, CSS Grid 1 §6.1), so layout resolves percentages inside it
-/// against that size.
-fn is_flex_or_grid_item(document: &Document, block: usize) -> bool {
-    box_parent(document, block).is_some_and(|parent| {
-        matches!(
-            document.nodes[parent].style.display,
-            taffy::Display::Flex | taffy::Display::Grid
-        )
-    })
-}
-
-/// The content-box height of `block`.
-fn content_height(document: &Document, block: usize) -> f32 {
-    let layout = &document.nodes[block].unrounded_layout;
-    layout.size.height
-        - layout.padding.top
-        - layout.padding.bottom
-        - layout.border.top
-        - layout.border.bottom
+/// Whether `node_id` lays out as a non-atomic inline box. The cascade keeps
+/// `inline` on elements that layout blockifies (absolutely positioned boxes,
+/// CSS 2.1 §9.7, and flex and grid items, CSS Display 3 §2.7) and on
+/// replaced elements, which are atomic inlines.
+fn is_non_atomic_inline(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    node.display == DisplayValue::Inline
+        && node.style.position != taffy::Position::Absolute
+        && !node
+            .tag_name()
+            .is_some_and(|tag| REPLACED_BOX_TAGS.contains(&tag))
+        && !box_parent(document, node_id).is_some_and(|parent| {
+            matches!(
+                document.nodes[parent].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        })
 }
 
 /// The content-box width of `block`.
