@@ -75,7 +75,7 @@ pub(crate) fn used_relative_insets(
         }
         let block = document.ifc_layout_node(block?.key)?;
         Some(if is_spanner(document, node_id) {
-            content_width(block)
+            block.unrounded_layout.content_box_width()
         } else {
             column_content_width(block)
         })
@@ -184,20 +184,10 @@ fn is_non_atomic_inline(document: &Document, node_id: usize) -> bool {
         })
 }
 
-/// The content-box width of `block`.
-fn content_width(block: &Node) -> f32 {
-    let layout = &block.unrounded_layout;
-    layout.size.width
-        - layout.padding.left
-        - layout.padding.right
-        - layout.border.left
-        - layout.border.right
-}
-
 /// The content-box width of `block`, or of one of its columns when it is a
 /// multi-column container.
 fn column_content_width(block: &Node) -> f32 {
-    let width = content_width(block);
+    let width = block.unrounded_layout.content_box_width();
     block
         .multicol
         .and_then(|style| FragmentationContext::resolve(width, None, style))

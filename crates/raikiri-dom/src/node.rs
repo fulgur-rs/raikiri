@@ -816,18 +816,8 @@ impl Node {
         self.ifc.as_ref()?.lines.as_ref()?;
         let layout = self.unrounded_layout;
         Some(shodo::geometry::PhysicalSize {
-            width: (layout.size.width
-                - layout.border.left
-                - layout.border.right
-                - layout.padding.left
-                - layout.padding.right)
-                .max(0.0),
-            height: (layout.size.height
-                - layout.border.top
-                - layout.border.bottom
-                - layout.padding.top
-                - layout.padding.bottom)
-                .max(0.0),
+            width: layout.content_box_width().max(0.0),
+            height: layout.content_box_height().max(0.0),
         })
     }
 
