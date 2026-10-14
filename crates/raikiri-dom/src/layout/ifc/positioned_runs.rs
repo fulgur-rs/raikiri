@@ -78,6 +78,11 @@ pub struct AnnotationRun<'a> {
     /// run's own axes turned with its annotation's placement, as for an
     /// inter-character annotation laid out in a vertical line.
     pub glyph_transform: shodo::GlyphTransform,
+    /// Whether the annotation's line runs across the paragraph's inline
+    /// axis, as an inter-character annotation beside horizontal text does.
+    /// Decorations and emphasis marks, which are drawn along the paragraph's
+    /// inline axis, are not drawn for such a run.
+    pub turned: bool,
 }
 
 /// An affine map from the logical coordinates of a line holding ruby
@@ -93,6 +98,13 @@ impl Placement {
     pub(super) fn apply(self, inline: f32, block: f32) -> (f32, f32) {
         let [ii, ib, io, bi, bb, bo] = self.0;
         (ii * inline + ib * block + io, bi * inline + bb * block + bo)
+    }
+
+    /// Whether the placed line's inline axis runs along the paragraph's
+    /// block axis.
+    pub(super) fn turned(self) -> bool {
+        let [ii, ib, ..] = self.0;
+        ii.abs() < ib.abs()
     }
 
     /// The glyph axes `axes` of a run in the placed line, in the paragraph's
@@ -508,6 +520,7 @@ impl<'a> PositionedLines<'a> {
                             baseline,
                             text_offset,
                             glyph_transform: placement.glyph_transform(run.glyph_transform()),
+                            turned: placement.turned(),
                         }),
                     });
                 }

@@ -55,6 +55,9 @@ struct RunDraw<'a> {
     annotation_baseline: Option<f32>,
     /// The run's glyph axes in the paragraph's logical coordinates.
     glyph_transform: shodo::GlyphTransform,
+    /// A ruby annotation run across the paragraph's inline axis, which draws
+    /// no emphasis marks.
+    turned: bool,
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -464,6 +467,9 @@ pub(crate) fn hold_ifc_lines<'a>(
             runs.push(RunDraw {
                 run,
                 glyph_transform: positioned_run.glyph_transform(),
+                turned: positioned_run
+                    .annotation
+                    .is_some_and(|annotation| annotation.turned),
                 style: cv,
                 color: css_color_to_peniko(cv.color),
                 glyphs,
@@ -564,7 +570,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 );
                 // Emphasis marks sit over or under their characters; vertical
                 // runs need rotated placement, which is not drawn yet.
-                if !vertical {
+                if !vertical && !draw.turned {
                     crate::emphasis::draw_marks(
                         scene,
                         document,

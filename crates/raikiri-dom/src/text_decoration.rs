@@ -650,6 +650,13 @@ pub fn positioned_line_decorations(
         .iter()
         .zip(bounds)
         .map(|(run, (x0, x1))| {
+            // A turned annotation draws no decorations and so does not
+            // extend the lines of the boxes it belongs to.
+            let (x0, x1) = if run.annotation.is_some_and(|annotation| annotation.turned) {
+                (f64::NAN, f64::NAN)
+            } else {
+                (x0, x1)
+            };
             // An annotation's decorations sit at its own line's baseline, not
             // at the shifted baseline of the run.
             let baseline = run.annotation.map_or(baseline, |annotation| {
@@ -688,6 +695,9 @@ pub fn positioned_line_decorations(
         .zip(geometries)
         .map(|(context, geometry)| {
             let mut lines = Vec::new();
+            if !geometry.x0.is_finite() {
+                return lines;
+            }
             for spec in context.iter() {
                 let Some(&(left, right)) = extents.get(&spec.origin) else {
                     continue;
