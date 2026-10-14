@@ -139,12 +139,22 @@ enum ContainingBlock {
 }
 
 /// The area an out-of-flow box is placed in: its origin, measured from the
-/// root's border box origin, its size, and its direction.
+/// root's border box origin, its size, its direction, and whether its
+/// writing mode is vertical.
 #[derive(Clone, Copy)]
 struct Area {
     origin: Point<f32>,
     size: Size<f32>,
     direction: TaffyDirection,
+    vertical: bool,
+}
+
+/// Whether the writing mode `id` lays its lines out in is vertical.
+fn is_vertical(document: &Document, id: usize) -> bool {
+    !matches!(
+        crate::taffy_impl::used_writing_mode(document, id),
+        WritingMode::HorizontalTb
+    )
 }
 
 /// Lay out the fixed boxes below the taffy root `root`, and the nested
@@ -170,10 +180,12 @@ pub(crate) fn place_fixed_boxes_in_page_area(
         Some(_) => TaffyDirection::Ltr,
         None => document.nodes[root].style.direction,
     };
+    // So does its writing mode.
     let page = Area {
         origin: Point::ZERO,
         size: area_size,
         direction,
+        vertical: is_vertical(document, document.parent_of(root).unwrap_or(root)),
     };
     visit_out_of_flow_boxes(
         document,
@@ -183,14 +195,15 @@ pub(crate) fn place_fixed_boxes_in_page_area(
             let area = match cb {
                 ContainingBlock::Page => page,
                 ContainingBlock::Box {
+                    id: cb,
                     origin,
                     size,
                     direction,
-                    ..
                 } => Area {
                     origin,
                     size,
                     direction,
+                    vertical: is_vertical(document, cb),
                 },
                 ContainingBlock::Kept => return, // cov:ignore: kept boxes are not visited
             };
@@ -379,6 +392,7 @@ fn place_fixed_box(tree: &mut Document, id: usize, parent_origin: Point<f32>, ar
         origin: area_origin,
         size: area_size,
         direction,
+        vertical,
     } = area;
     let calc = crate::taffy_impl::resolve_calc;
     let style = &tree.nodes[id].style;
@@ -538,9 +552,10 @@ fn place_fixed_box(tree: &mut Document, id: usize, parent_origin: Point<f32>, ar
         }) - final_size.height
             - non_auto_margin.vertical_axis_sum(),
     };
-    // Two auto margins share the free space equally. Only the horizontal
-    // rule (§10.3.7) zeroes them when that would make them negative; the
-    // vertical rule (§10.6.4) has no such exception.
+    // Two auto margins share the free space equally. Only the rule for the
+    // inline axis of the containing block (§10.3.7) zeroes them when that
+    // would make them negative; the block axis rule (§10.6.4) has no such
+    // exception (CSS Positioned Layout 3 §4.1).
     let auto_margin =
         |insets_set: bool, start: Option<f32>, end: Option<f32>, free: f32, zero_negative: bool| {
             let count = start.is_none() as u8 + end.is_none() as u8;
@@ -555,13 +570,7 @@ fn place_fixed_box(tree: &mut Document, id: usize, parent_origin: Point<f32>, ar
         margin.left,
         margin.right,
         free_space.width,
-        true,
-    );
-    // In a vertical writing mode the physical height is the inline axis,
-    // which takes the horizontal rule.
-    let vertical = matches!(
-        crate::taffy_impl::used_writing_mode(tree, id),
-        WritingMode::VerticalRl | WritingMode::VerticalLr
+        !vertical,
     );
     let auto_height = auto_margin(
         top.is_some() && bottom.is_some(),

@@ -356,8 +356,10 @@ pub(crate) fn apply_computed_to_style(
 /// containment).
 ///
 /// Neither applies to a box that is not generated, to a non-atomic inline
-/// box, or to an internal table box (§3.1, §3.2). Tables are left out as
-/// well: their width algorithm sizes the grid from its cells.
+/// box, or to an internal table box (§3.1, §3.2), which a table caption is
+/// not. Tables are left out as well: their width algorithm sizes the grid
+/// from its cells. Inline-size containment acts on the inline axis of the
+/// box's own writing mode.
 fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::Size<bool> {
     use raikiri_style::property::{Contain, WritingMode};
 
@@ -376,6 +378,7 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
             | DisplayValue::InlineFlex
             | DisplayValue::Grid
             | DisplayValue::InlineGrid
+            | DisplayValue::TableCaption
     ) && !super::fixed::generates_inline_box(doc, idx, cv);
     if !applies {
         return none;
@@ -389,9 +392,9 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
     if !cv.contain.contains(Contain::INLINE_SIZE) {
         return none;
     }
-    let vertical = matches!(
-        cv.writing_mode,
-        WritingMode::VerticalRl | WritingMode::VerticalLr
+    let vertical = !matches!(
+        crate::taffy_impl::used_writing_mode(doc, idx),
+        WritingMode::HorizontalTb
     );
     taffy::Size {
         width: !vertical,

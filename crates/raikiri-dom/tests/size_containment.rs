@@ -229,3 +229,30 @@ fn a_paginated_size_contained_box_keeps_its_size() {
     assert_eq!(next, vec![(0, 20.0, 24.0, 260.0, 10.0)]);
     assert!(pages >= 3, "pages {pages}");
 }
+
+#[test]
+fn size_containment_applies_to_table_captions() {
+    // A caption is not an internal table box.
+    let body = "<table><caption id=c style=\"contain: size\">XX</caption>\
+                <tr><td style=\"width: 100px\">X</td></tr></table>";
+    assert_eq!(first(body, "c").3, 0.0);
+}
+
+#[test]
+fn inline_size_containment_follows_a_vertical_writing_mode() {
+    // The inline axis of a vertical box is its physical height: the two
+    // lines still give it its width.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let body = format!(
+            "<div><span id=c style=\"display: inline-block; writing-mode: {mode}; \
+             contain: inline-size\"><p>XX</p><p>XX</p></span></div>"
+        );
+        let (_, _, width, height) = first(&body, "c");
+        assert_eq!((width, height), (40.0, 0.0), "{mode}");
+    }
+    // An inherited writing mode counts as well.
+    let body = "<div style=\"writing-mode: vertical-rl\"><span id=c style=\"display: inline-block; \
+                contain: inline-size\"><p>XX</p><p>XX</p></span></div>";
+    let (_, _, width, height) = first(body, "c");
+    assert_eq!((width, height), (40.0, 0.0));
+}

@@ -735,7 +735,7 @@ impl Document {
                         output
                     }
                     Display::Flex => flex_layout(tree, node_id, inputs),
-                    Display::Grid => compute_grid_layout(tree, node_id, inputs),
+                    Display::Grid => grid_layout(tree, node_id, inputs),
                     Display::None => unreachable!("Display::None handled above"),
                 }
             }
@@ -1738,7 +1738,7 @@ fn compute_inline_block_shrink_wrap(
     } else {
         match display {
             DisplayValue::InlineFlex => flex_layout(tree, node_id, final_inputs),
-            DisplayValue::InlineGrid => compute_grid_layout(tree, node_id, final_inputs),
+            DisplayValue::InlineGrid => grid_layout(tree, node_id, final_inputs),
             _ if ifc_root => compute_ifc_root(tree, node_id, final_inputs, block_ctx),
             _ => block_layout(tree, node_id, final_inputs, block_ctx),
         }
@@ -1830,7 +1830,7 @@ pub(crate) fn size_contained_inputs(
 }
 
 /// Split negative free space between the two auto vertical margins of the
-/// absolutely positioned children of block container `idx`.
+/// absolutely positioned children of block, flex or grid container `idx`.
 ///
 /// When `top`, `height` and `bottom` are all non-auto and both vertical
 /// margins are auto, CSS 2.1 §10.6.4 solves for the margins under the
@@ -1838,9 +1838,10 @@ pub(crate) fn size_contained_inputs(
 /// unlike the horizontal rule of §10.3.7. Taffy 0.14 applies the horizontal
 /// rule to both axes and zeroes the margins instead, which leaves an
 /// overconstrained box at its `top` edge rather than centered on its
-/// insets. A container in a vertical writing mode is left alone: its
-/// physical height is the inline axis, where the horizontal rule is the
-/// right one.
+/// insets. A container in a vertical writing mode is left to its caller to
+/// skip: its physical height is the inline axis, where the horizontal rule
+/// is the right one. So is a grid item placed in grid rows, whose
+/// containing block is its grid area rather than the padding box.
 ///
 /// `size` is the container's border box from the layout taffy just
 /// performed; the children's positions are recomputed from their insets, so
@@ -1868,6 +1869,7 @@ fn center_absolute_children_vertically(
         0.0
     };
     let area_height = size.height - border.top - border.bottom - gutter;
+    let grid = style.display == Display::Grid;
     let children: Vec<usize> = TaffyChildIter::new(tree, NodeId::from(idx))
         .map(usize::from)
         .filter(|&child| {
@@ -1876,6 +1878,9 @@ fn center_absolute_children_vertically(
                 && style.display != Display::None
                 && style.margin.top.is_auto()
                 && style.margin.bottom.is_auto()
+                && (!grid
+                    || style.grid_row.start == taffy::GridPlacement::Auto
+                        && style.grid_row.end == taffy::GridPlacement::Auto)
         })
         .collect();
     for child in children {
@@ -1917,6 +1922,23 @@ pub(crate) fn flex_layout(
     tree.flex_item_percent_bases.push((idx, basis));
     let output = compute_flexbox_layout(tree, node_id, inputs);
     tree.flex_item_percent_bases.pop();
+    if !tree.has_vertical_writing_mode(idx) {
+        center_absolute_children_vertically(tree, idx, &inputs, output.size);
+    }
+    output
+}
+
+/// Lay out the grid container `node_id` with taffy's grid algorithm.
+pub(crate) fn grid_layout(
+    tree: &mut Document,
+    node_id: NodeId,
+    inputs: LayoutInput,
+) -> LayoutOutput {
+    let output = compute_grid_layout(tree, node_id, inputs);
+    let idx = usize::from(node_id);
+    if !tree.has_vertical_writing_mode(idx) {
+        center_absolute_children_vertically(tree, idx, &inputs, output.size);
+    }
     output
 }
 

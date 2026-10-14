@@ -150,6 +150,50 @@ fn auto_vertical_margins_of_absolute_boxes_split_negative_free_space() {
 }
 
 #[test]
+fn auto_vertical_margins_of_flex_and_grid_children_split_negative_free_space() {
+    // A flex or grid container places its absolutely positioned children
+    // against its padding box by the same rule.
+    for display in ["flex", "grid"] {
+        let (doc, abs) = laid_out(
+            &format!("position:relative;height:200px;display:{display}"),
+            "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+            "",
+        );
+        assert_eq!(absolute_rect(&doc, abs).1, 50.0 + 50.0, "{display}");
+    }
+}
+
+#[test]
+fn the_page_writing_mode_picks_the_axis_that_zeroes_negative_auto_margins() {
+    // The box's own writing mode does not change the rule.
+    let (doc, fixed) = laid_out(
+        "",
+        "",
+        "position:fixed;top:50%;bottom:50%;height:100px;width:10px;margin:auto;writing-mode:vertical-rl",
+    );
+    assert_eq!(absolute_rect(&doc, fixed).1, 250.0);
+    // In a vertical page the physical height is the inline axis, where
+    // negative free space zeroes the margins, and the width the block axis,
+    // where it is split.
+    let (doc, fixed) = laid_out_with(
+        "writing-mode:vertical-rl",
+        "",
+        "",
+        "",
+        "position:fixed;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed).1, 300.0);
+    let (doc, fixed) = laid_out_with(
+        "writing-mode:vertical-rl",
+        "",
+        "",
+        "",
+        "position:fixed;left:50%;right:50%;width:100px;height:10px;top:0;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed).0, 350.0);
+}
+
+#[test]
 fn an_axis_with_auto_insets_keeps_the_static_position() {
     let (doc, fixed) = laid_out(
         "margin-left:30px",
