@@ -3085,8 +3085,8 @@ fn transform_parse_translate_both_axes() {
     assert_eq!(
         expect_transform(parse("translate(10px, 20%)", "transform")),
         vec![TransformFunction::Translate(
-            Length::Px(10.0),
-            Length::Percent(20.0)
+            LengthPercentageOrCalc::Length(Length::Px(10.0)),
+            LengthPercentageOrCalc::Length(Length::Percent(20.0))
         )]
     );
 }
@@ -3098,9 +3098,36 @@ fn transform_translate_single_argument_defaults_ty_to_0() {
     assert_eq!(
         expect_transform(parse("translate(10px)", "transform")),
         vec![TransformFunction::Translate(
-            Length::Px(10.0),
-            Length::Px(0.0)
+            LengthPercentageOrCalc::Length(Length::Px(10.0)),
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
         )]
+    );
+}
+
+#[test]
+fn transform_translate_keeps_a_mixed_calc() {
+    let functions = expect_transform(super::box_model_tests::parse_grammar(
+        "translate(calc(10% + 5px), calc(1em - 50%)) translateX(calc(100% - 2px))",
+        "transform",
+    ));
+    assert_eq!(functions.len(), 2);
+    let TransformFunction::Translate(tx, ty) = functions[0] else {
+        panic!("translate, got {:?}", functions[0]);
+    };
+    assert_eq!(
+        tx,
+        LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 5.0
+        })
+    );
+    assert!(matches!(ty, LengthPercentageOrCalc::RelativeCalc(_)));
+    assert_eq!(
+        functions[1],
+        TransformFunction::TranslateX(LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 100.0,
+            px: -2.0
+        }))
     );
 }
 
@@ -3113,11 +3140,15 @@ fn transform_translate_requires_at_least_1_argument() {
 fn transform_parse_translate_x_and_y() {
     assert_eq!(
         expect_transform(parse("translateX(5px)", "transform")),
-        vec![TransformFunction::TranslateX(Length::Px(5.0))]
+        vec![TransformFunction::TranslateX(
+            LengthPercentageOrCalc::Length(Length::Px(5.0))
+        )]
     );
     assert_eq!(
         expect_transform(parse("translateY(50%)", "transform")),
-        vec![TransformFunction::TranslateY(Length::Percent(50.0))]
+        vec![TransformFunction::TranslateY(
+            LengthPercentageOrCalc::Length(Length::Percent(50.0))
+        )]
     );
 }
 
@@ -3306,8 +3337,8 @@ fn transform_translate_zero_mantissa_huge_exponent_length_resolves_to_zero() {
     assert_eq!(
         expect_transform(parse("translate(0e999px)", "transform")),
         vec![TransformFunction::Translate(
-            Length::Px(0.0),
-            Length::Px(0.0)
+            LengthPercentageOrCalc::Length(Length::Px(0.0)),
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
         )]
     );
 }

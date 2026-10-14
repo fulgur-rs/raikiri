@@ -4152,9 +4152,8 @@ property_key_samples! {
     // `Em` half if one existed — none does yet (`TransformFunction`
     // doc's "Absolutization gap" section).
     Transform => PropertyValue::Transform(Arc::new(vec![TransformFunction::Translate(
-        Length::Em(2.0),
-        Length::Percent(50.0),
-    )])),
+        LengthPercentageOrCalc::Length(Length::Em(2.0)),
+        LengthPercentageOrCalc::Length(Length::Percent(50.0)))])),
     // CSS Filter Effects Level 1 §5 — non-initial (a `blur()` with an
     // `Em` payload), same rationale as `Transform` above.
     Filter => PropertyValue::Filter(Arc::new(vec![FilterFunction::Blur(Length::Em(1.0))])),
@@ -5396,8 +5395,12 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // `None` here needs no `BackgroundImage`-style caveat.
             | PropertyValue::ClipPath(_) => None,
             PropertyValue::Transform(items) => items.iter().find_map(|f| match *f {
-                TransformFunction::Translate(tx, ty) => length(tx).or_else(|| length(ty)),
-                TransformFunction::TranslateX(v) | TransformFunction::TranslateY(v) => length(v),
+                TransformFunction::Translate(tx, ty) => {
+                    length_percentage_or_calc(tx).or_else(|| length_percentage_or_calc(ty))
+                }
+                TransformFunction::TranslateX(v) | TransformFunction::TranslateY(v) => {
+                    length_percentage_or_calc(v)
+                }
                 TransformFunction::Matrix(_)
                 | TransformFunction::Scale(_, _)
                 | TransformFunction::ScaleX(_)
@@ -6830,8 +6833,8 @@ fn cascade_page_deterministic_across_10_runs() {
 #[test]
 fn absolutize_in_page_context_resolves_single_axis_translate() {
     let transform = PropertyValue::Transform(Arc::new(vec![
-        TransformFunction::TranslateX(Length::Em(2.0)),
-        TransformFunction::TranslateY(Length::Percent(50.0)),
+        TransformFunction::TranslateX(LengthPercentageOrCalc::Length(Length::Em(2.0))),
+        TransformFunction::TranslateY(LengthPercentageOrCalc::Length(Length::Percent(50.0))),
     ]));
     assert_eq!(
         absolutize_in_page_context(
@@ -6844,8 +6847,8 @@ fn absolutize_in_page_context_resolves_single_axis_translate() {
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Transform(Arc::new(vec![
-            TransformFunction::TranslateX(Length::Px(20.0)),
-            TransformFunction::TranslateY(Length::Percent(50.0)),
+            TransformFunction::TranslateX(LengthPercentageOrCalc::Length(Length::Px(20.0))),
+            TransformFunction::TranslateY(LengthPercentageOrCalc::Length(Length::Percent(50.0))),
         ])),
     );
 }

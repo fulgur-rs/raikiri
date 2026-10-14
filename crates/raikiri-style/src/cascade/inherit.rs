@@ -2897,11 +2897,12 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::MaskImage(_)
         | PropertyValue::ClipPath(_)
         // transform (CSS Transforms Level 1 §4) / filter (CSS Filter
-        // Effects Level 1 §5) — non-inherited, embedded `Length`/`Angle`/
-        // `f32` payloads that don't depend on the inheritance parent —
-        // nothing for phase 2 to resolve here, same as `MaskImage`/
-        // `ClipPath` above (neither absolutizes at all, see
-        // `TransformFunction`/`FilterFunction` doc's scope notes).
+        // Effects Level 1 §5) — non-inherited, embedded length-percentage/
+        // `Angle`/`f32` payloads that don't depend on the inheritance
+        // parent — nothing for phase 2 to resolve here, same as
+        // `MaskImage`/`ClipPath` above. A translate length is absolutized
+        // against the element's own font when its computed value is built,
+        // not here (see the `TransformFunction` doc).
         | PropertyValue::Transform(_)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Filter(_)

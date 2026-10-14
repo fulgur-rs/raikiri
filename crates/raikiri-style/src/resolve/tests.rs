@@ -1874,6 +1874,98 @@ fn relative_calc_plus_1px(value: f32, unit: &str) -> RelativeCalcLengthPercentag
 }
 
 #[test]
+fn a_signed_length_percentage_or_calc_keeps_negative_values() {
+    let resolve =
+        |value| resolve_length_percentage_or_calc(value, ComputedLength(10.0), None, &CTX);
+    let calc = |percent, px| CalcLengthPercentage { percent, px };
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Length(Length::Em(-1.0))),
+        ComputedLengthPercentageOrCalc::Px(-10.0)
+    );
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Calc(calc(0.0, -3.0))),
+        ComputedLengthPercentageOrCalc::Px(-3.0)
+    );
+    let mixed = ComputedLengthPercentageOrCalc::Calc(calc(-50.0, 2.0));
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Calc(calc(-50.0, 2.0))),
+        mixed
+    );
+    let em_only = relative_calc_plus_1px(-2.0, "em");
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(em_only)),
+        ComputedLengthPercentageOrCalc::Px(-19.0)
+    );
+    let percent = RelativeCalcLengthPercentage::from_unit(-20.0, "%").unwrap();
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(percent)),
+        ComputedLengthPercentageOrCalc::Percent(-20.0)
+    );
+    // An `lh` term without a basis falls back to zero and the other terms
+    // keep their values; a sum that overflows falls back to zero.
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(
+            relative_calc_plus_1px(1.0, "lh")
+        )),
+        ComputedLengthPercentageOrCalc::Px(1.0)
+    );
+    assert_eq!(
+        resolve_length_percentage_or_calc(
+            LengthPercentageOrCalc::RelativeCalc(relative_calc_plus_1px(1e30, "em")),
+            ComputedLength(1e30),
+            None,
+            &CTX,
+        ),
+        ComputedLengthPercentageOrCalc::Px(0.0)
+    );
+    assert_eq!(mixed.resolve_signed(100.0), -48.0);
+    assert_eq!(mixed.resolve(100.0), 0.0);
+    assert_eq!(
+        ComputedLengthPercentageOrCalc::Percent(-10.0).resolve_signed(50.0),
+        -5.0
+    );
+    assert!(mixed.has_percent());
+    assert!(ComputedLengthPercentageOrCalc::Percent(1.0).has_percent());
+    assert!(!ComputedLengthPercentageOrCalc::Px(1.0).has_percent());
+    assert!(!ComputedLengthPercentageOrCalc::Calc(calc(0.0, 1.0)).has_percent());
+}
+
+#[test]
+fn a_translate_function_resolves_its_offset_against_the_box() {
+    let calc = ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+        percent: 50.0,
+        px: -1.0,
+    });
+    let px = ComputedLengthPercentageOrCalc::Px(2.0);
+    for (function, offset, by_percent) in [
+        (
+            ComputedTransformFunction::Translate(calc, px),
+            Some((49.0, 2.0)),
+            true,
+        ),
+        (
+            ComputedTransformFunction::Translate(px, calc),
+            Some((2.0, 9.0)),
+            true,
+        ),
+        (
+            ComputedTransformFunction::TranslateX(px),
+            Some((2.0, 0.0)),
+            false,
+        ),
+        (
+            ComputedTransformFunction::TranslateY(calc),
+            Some((0.0, 9.0)),
+            true,
+        ),
+        (ComputedTransformFunction::ScaleX(2.0), None, false),
+    ] {
+        assert_eq!(function.translation(100.0, 20.0), offset, "{function:?}");
+        assert_eq!(function.translates_by_percent(), by_percent, "{function:?}");
+    }
+}
+
+#[test]
 fn relative_calc_terms_resolve_against_their_bases() {
     let ctx = ResolveContext {
         root_line_height: Some(ComputedLength(30.0)),
@@ -2079,7 +2171,8 @@ fn non_negative_calc_resolution_clamps_and_keeps_percentages() {
         })
     );
     // An absolute calc without a percentage clamps; an `lh` term without a
-    // basis falls back to the initial zero.
+    // basis falls back to zero, as a plain `lh` does, and the other terms
+    // keep their values.
     assert_eq!(
         resolve(
             LengthPercentageOrCalc::Calc(CalcLengthPercentage {
@@ -2097,7 +2190,7 @@ fn non_negative_calc_resolution_clamps_and_keeps_percentages() {
             16.0,
             None,
         ),
-        ComputedLengthPercentageOrCalc::Px(0.0)
+        ComputedLengthPercentageOrCalc::Px(1.0)
     );
     // The computed value lifts back into the specified layer unchanged.
     let calc = CalcLengthPercentage {

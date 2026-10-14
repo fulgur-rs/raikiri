@@ -391,6 +391,27 @@ impl ComputedLengthPercentageOrCalc {
             Self::Calc(calc) => (calc.px + basis * calc.percent / 100.0).max(0.0),
         }
     }
+
+    /// The used value in px against the percentage `basis`, without the
+    /// clamp of [`Self::resolve`], for a value that may be negative such as
+    /// a `translate()` argument. It is computed in double precision, as the
+    /// painter composes transforms.
+    pub fn resolve_signed(self, basis: f64) -> f64 {
+        match self {
+            Self::Px(px) => f64::from(px),
+            Self::Percent(percent) => basis * f64::from(percent) / 100.0,
+            Self::Calc(calc) => f64::from(calc.px) + basis * f64::from(calc.percent) / 100.0,
+        }
+    }
+
+    /// Whether the value depends on its percentage basis.
+    pub fn has_percent(self) -> bool {
+        match self {
+            Self::Px(_) => false,
+            Self::Percent(_) => true,
+            Self::Calc(calc) => calc.percent != 0.0,
+        }
+    }
 }
 
 impl From<ComputedLengthPercentage> for ComputedLengthPercentageOrCalc {
@@ -1313,12 +1334,16 @@ impl ComputedOutline {
 pub enum ComputedTransformFunction {
     /// `matrix(<number>{6})` — all six coefficients remain `<number>`.
     Matrix([f32; 6]),
-    /// `translate(<length-percentage>, <length-percentage>)` — absolutize each axis.
-    Translate(ComputedLengthPercentage, ComputedLengthPercentage),
+    /// `translate(<length-percentage>, <length-percentage>)` — absolutize each
+    /// axis, keeping the percentage of a mixed `calc()`.
+    Translate(
+        ComputedLengthPercentageOrCalc,
+        ComputedLengthPercentageOrCalc,
+    ),
     /// `translateX(<length-percentage>)` — absolutized.
-    TranslateX(ComputedLengthPercentage),
+    TranslateX(ComputedLengthPercentageOrCalc),
     /// `translateY(<length-percentage>)` — absolutized.
-    TranslateY(ComputedLengthPercentage),
+    TranslateY(ComputedLengthPercentageOrCalc),
     /// `scale(<number>, <number>)` — retain `<number>`.
     Scale(f32, f32),
     /// `scaleX(<number>)`.
@@ -1333,6 +1358,29 @@ pub enum ComputedTransformFunction {
     SkewX(Angle),
     /// `skewY(<angle>)`.
     SkewY(Angle),
+}
+
+impl ComputedTransformFunction {
+    /// The offset a `translate()`, `translateX()` or `translateY()` moves a
+    /// `width` by `height` box by, with percentages resolved against that
+    /// box (CSS Transforms 1 §6), or `None` for any other function.
+    pub fn translation(self, width: f64, height: f64) -> Option<(f64, f64)> {
+        match self {
+            Self::Translate(x, y) => Some((x.resolve_signed(width), y.resolve_signed(height))),
+            Self::TranslateX(x) => Some((x.resolve_signed(width), 0.0)),
+            Self::TranslateY(y) => Some((0.0, y.resolve_signed(height))),
+            _ => None,
+        }
+    }
+
+    /// Whether the function translates by a percentage of the box.
+    pub fn translates_by_percent(self) -> bool {
+        match self {
+            Self::Translate(x, y) => x.has_percent() || y.has_percent(),
+            Self::TranslateX(v) | Self::TranslateY(v) => v.has_percent(),
+            _ => false,
+        }
+    }
 }
 
 /// Shared computed-layer Arc for an empty `transform` list (`none`). The empty list
@@ -1354,14 +1402,14 @@ pub fn resolve_transform_function(
     match specified {
         TransformFunction::Matrix(m) => ComputedTransformFunction::Matrix(m),
         TransformFunction::Translate(tx, ty) => ComputedTransformFunction::Translate(
-            resolve_length_percentage(tx, font_size, own_line_height, ctx),
-            resolve_length_percentage(ty, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(tx, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(ty, font_size, own_line_height, ctx),
         ),
         TransformFunction::TranslateX(v) => ComputedTransformFunction::TranslateX(
-            resolve_length_percentage(v, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(v, font_size, own_line_height, ctx),
         ),
         TransformFunction::TranslateY(v) => ComputedTransformFunction::TranslateY(
-            resolve_length_percentage(v, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(v, font_size, own_line_height, ctx),
         ),
         TransformFunction::Scale(x, y) => ComputedTransformFunction::Scale(x, y),
         TransformFunction::ScaleX(v) => ComputedTransformFunction::ScaleX(v),
@@ -3358,23 +3406,57 @@ pub fn resolve_non_negative_length_percentage_or_calc(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLengthPercentageOrCalc {
-    let calc = match specified {
+    match resolve_length_percentage_or_calc(specified, font_size, own_line_height, ctx) {
+        ComputedLengthPercentageOrCalc::Px(px) => ComputedLengthPercentageOrCalc::Px(px.max(0.0)),
+        ComputedLengthPercentageOrCalc::Percent(percent) => {
+            ComputedLengthPercentageOrCalc::Percent(percent.max(0.0))
+        }
+        calc @ ComputedLengthPercentageOrCalc::Calc(_) => calc,
+    }
+}
+
+/// Absolutize a `<length-percentage>` that may be a mixed `calc()` and has no
+/// range restriction, such as a `translate()` argument.
+///
+/// A plain length or percentage resolves as in [`resolve_length_percentage`].
+/// A `calc()` keeps its percentage for used-value time, and one whose
+/// percentage is zero folds to a length.
+pub fn resolve_length_percentage_or_calc(
+    specified: LengthPercentageOrCalc,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageOrCalc {
+    let resolved = match specified {
         LengthPercentageOrCalc::Length(length) => {
             return resolve_length_percentage(length, font_size, own_line_height, ctx).into();
         }
-        LengthPercentageOrCalc::Calc(calc) => LengthOrAuto::Calc(calc),
-        LengthPercentageOrCalc::RelativeCalc(calc) => LengthOrAuto::RelativeCalc(calc),
+        LengthPercentageOrCalc::Calc(calc) => ComputedLengthPercentageOrAuto::Calc(calc),
+        // An `lh` term without a basis falls back to zero, as a plain `lh`
+        // does; the other terms keep their values. A sum that overflows
+        // falls back to zero, the initial value of the properties that use
+        // this resolver.
+        LengthPercentageOrCalc::RelativeCalc(calc) => resolve_relative_calc_with(
+            calc,
+            font_size,
+            own_line_height,
+            ctx,
+            |coefficient, basis| {
+                Some(resolve_lh_multiplier(coefficient, basis).map_or(0.0, ComputedLength::px))
+            },
+        )
+        .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0)),
     };
-    // An `lh` term without a basis falls back to zero, the initial value.
-    match resolve_length_percentage_or_auto(calc, font_size, own_line_height, ctx) {
-        ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px.max(0.0)),
+    match resolved {
         ComputedLengthPercentageOrAuto::Percent(percent) => {
-            ComputedLengthPercentageOrCalc::Percent(percent.max(0.0))
+            ComputedLengthPercentageOrCalc::Percent(percent)
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => {
-            ComputedLengthPercentageOrCalc::Px(calc.px.max(0.0))
+        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent != 0.0 => {
+            ComputedLengthPercentageOrCalc::Calc(calc)
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Calc(calc),
+        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Px(calc.px),
+        ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px),
+        // cov:ignore: a calc resolves to a length, a percentage or a sum
         ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
             ComputedLengthPercentageOrCalc::Px(0.0)
         }

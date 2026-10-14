@@ -51,8 +51,7 @@ use raikiri_style::property::{
     BreakBetween, BreakInside, ColumnCountValue, DisplayValue, FloatValue, PositionValue,
 };
 use raikiri_style::{
-    CascadeResult, ComputedColumnWidth, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction,
+    CascadeResult, ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
 };
 use raikiri_traits::NodeKind;
 
@@ -308,7 +307,7 @@ fn needs_all_children(values: &ComputedValues) -> bool {
 fn paints_from_whole_height(values: &ComputedValues) -> bool {
     values.transform.iter().any(|function| match function {
         ComputedTransformFunction::Translate(_, y) | ComputedTransformFunction::TranslateY(y) => {
-            matches!(y, ComputedLengthPercentage::Percent(_))
+            y.has_percent()
         }
         ComputedTransformFunction::TranslateX(_) => false,
         _ => true,
