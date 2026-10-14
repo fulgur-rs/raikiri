@@ -38,9 +38,9 @@ use super::webidl::with_state;
 ///   must bound CPU for untrusted content needs an external watchdog.
 /// - Parser depth. Deeply nested source (hundreds of nested brackets) can
 ///   overflow the native stack inside Boa's parser before any limit here
-///   applies. The runtime's entry points run with a fixed native stack
-///   budget, so this takes far deeper nesting than ordinary scripts use,
-///   but no limit turns it into an abort.
+///   applies. On native targets the runtime's entry points run with a fixed
+///   native stack budget, so this takes far deeper nesting than ordinary
+///   scripts use, but no limit turns it into an abort.
 /// - Memory. There is no heap bound.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Limits {
@@ -421,6 +421,7 @@ impl JobExecutor for RaikiriJobExecutor {
 /// default spawned thread's stack, when Boa is built optimized. The budget
 /// is reserved as address space and only touched as deep as the run
 /// actually recurses.
+#[cfg(not(target_arch = "wasm32"))]
 const ENGINE_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 /// Run `f` with at least [`ENGINE_STACK_BYTES`] of native stack, switching
@@ -428,8 +429,19 @@ const ENGINE_STACK_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// Overrunning the segment itself still ends the process, with a plain
 /// segmentation fault rather than Rust's stack overflow message.
+///
+/// On wasm32 the stack lives in linear memory and its remaining size cannot
+/// be read, so a segment would be allocated from the embedder's memory
+/// budget on every call; there `f` runs on the module's own stack, which the
+/// embedder sizes when it builds the module.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn with_engine_stack<R>(f: impl FnOnce() -> R) -> R {
     stacker::maybe_grow(ENGINE_STACK_BYTES, ENGINE_STACK_BYTES, f)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn with_engine_stack<R>(f: impl FnOnce() -> R) -> R {
+    f()
 }
 
 /// The runtime's abort reason, if a limit was reached earlier.
