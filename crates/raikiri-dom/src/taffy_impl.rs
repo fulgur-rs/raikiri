@@ -1180,13 +1180,16 @@ fn measure_ifc_root(
     // A percentage `top` or `bottom` of an inline element refers to the
     // root's content height when it is definite: the known height or the
     // root's own `height`, or in vertical flow the inline size.
-    if let Some(root) = tree.nodes[idx].ifc.as_mut() {
-        root.definite_height = if vertical {
-            Some(content_size.height)
-        } else {
-            known_height.or(measure.definite_height)
-        };
-    }
+    let definite_height = if vertical {
+        Some(content_size.height)
+    } else {
+        known_height.or(measure.definite_height)
+    };
+    // The root's paragraph was taken above, so it is present.
+    tree.nodes[idx]
+        .ifc
+        .iter_mut()
+        .for_each(|root| root.definite_height = definite_height);
     let axes = IfcAxes::new(writing_mode, direction);
     let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);
     // Lines, and the paragraph's own floats, are laid out by one loop; it
