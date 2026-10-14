@@ -361,6 +361,26 @@ fn annotations_of_an_unplanned_ruby_complete_the_first_letter() {
 }
 
 #[test]
+fn annotations_outside_a_ruby_complete_the_first_letter() {
+    let mut text = 0;
+    let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
+        let wrapper = element(doc, root, "span", "");
+        doc.append_text(wrapper, "(");
+        rt(doc, wrapper, "x");
+        text = doc.append_text(root, "AB");
+    });
+    let runs = runs(fixture);
+    let xs: Vec<f32> = runs
+        .iter()
+        .filter(|run| run.0 == text)
+        .map(|run| run.2.0)
+        .collect();
+    // Without a ruby container the annotation stays in the text stream, so
+    // its `x` completes the first letter and `AB` stays one run.
+    assert_eq!(xs.len(), 1, "{runs:?}");
+}
+
+#[test]
 fn a_forced_break_in_a_base_ends_the_first_letter() {
     let mut text = 0;
     let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
