@@ -3141,12 +3141,18 @@ fn a_nested_paragraph_split_within_its_line_constraints_stays() {
 }
 
 #[test]
-fn a_nested_fixed_height_paragraph_whose_first_line_overflows_moves() {
-    // The 30px paragraph at y 10 ends at 40 on a 35px page: it moves to
-    // page 1 as a unit, nested or not.
-    for section in [None, Some("")] {
-        let laid_out =
-            paragraph_after_a_spacer(section, 10.0, "height:30px;orphans:1;widows:1", 35.0);
-        assert_eq!(laid_out.fragments, whole_on_page_1(), "{section:?}");
-    }
+fn a_fixed_height_paragraph_whose_first_line_overflows_moves_only_as_a_direct_child() {
+    // The 30px paragraph at y 10 ends at 40 on a 35px page. As a direct
+    // child of the body it moves to page 1 as a unit; nested in a section it
+    // fragments at the break, as the same box does as a flex item.
+    let direct = paragraph_after_a_spacer(None, 10.0, "height:30px;orphans:1;widows:1", 35.0);
+    assert_eq!(direct.fragments, whole_on_page_1());
+    let nested = paragraph_after_a_spacer(Some(""), 10.0, "height:30px;orphans:1;widows:1", 35.0);
+    assert_eq!(
+        nested.fragments,
+        vec![
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
 }

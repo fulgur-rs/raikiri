@@ -6583,8 +6583,8 @@ fn grow_ancestors_for_shift(
 
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
-/// order, none is floated or absolutely positioned, and every ancestor's
-/// height follows its content, so moving `block` down moves the boxes after
+/// order, none is floated or absolutely positioned, and its own height and
+/// every ancestor's height follow their content, so moving `block` down moves the boxes after
 /// it and grows its ancestors to hold it.
 fn is_block_flow_paragraph(
     document: &Document,
@@ -6596,6 +6596,13 @@ fn is_block_flow_paragraph(
         cascade.computed[block].display,
         DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
     ) {
+        return false;
+    }
+    // A box whose height does not follow its lines fragments at the break
+    // itself, as the same box does as a flex or grid item, rather than moving
+    // as a unit with its lines.
+    let style = &document.nodes[block].style;
+    if !style.size.height.is_auto() || !style.max_size.height.is_auto() {
         return false;
     }
     let mut child = block;
