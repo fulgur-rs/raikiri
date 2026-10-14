@@ -33,6 +33,16 @@ jobs:
         # needs the fontconfig development files and pkg-config.
         run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev pkg-config
 
+      - name: Cache cargo registry + target
+        # Without a cache, every run re-downloads the registry and
+        # cargo-semver-checks rebuilds rustdoc JSON for the baseline and
+        # current versions of every released package from scratch (it builds
+        # under target/semver-checks/). This job runs on stable, not the
+        # pinned CI toolchain, so it keeps a cache of its own.
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-plz
+
       - name: Create repository-scoped GitHub App token
         id: app-token
         uses: actions/create-github-app-token@v3
