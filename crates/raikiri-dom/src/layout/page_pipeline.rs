@@ -862,7 +862,21 @@ fn layout_single_page_with_table_projection(
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
-    let body_insets = BodyInlineInsets::resolve(document, cascade, body_id, content_width);
+    // Percentages of the body's margins and padding resolve against the
+    // inline size of its containing block, the root element's content box
+    // (CSS Writing Modes 4 §7.1): the page area height when the root is in a
+    // vertical writing mode.
+    let body_percent_basis = if document.nodes[body_id].parent.is_some_and(|root| {
+        matches!(
+            cascade.computed[root].cssom_writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        )
+    }) {
+        content_height
+    } else {
+        content_width
+    };
+    let body_insets = BodyInlineInsets::resolve(document, cascade, body_id, body_percent_basis);
 
     // Establish the foundational multicolumn fragmentainer projection after
     // text shaping, so direct text can be split by its actual line count.
@@ -888,10 +902,10 @@ fn layout_single_page_with_table_projection(
     let body_margin_top = if vertical_body {
         0.0
     } else {
-        body_margin_top(document, cascade, body_id, content_width)
+        body_margin_top(document, cascade, body_id, body_percent_basis)
     };
-    let body_vertical_margins =
-        vertical_body.then(|| body_vertical_margins(document, cascade, body_id, content_width));
+    let body_vertical_margins = vertical_body
+        .then(|| body_vertical_margins(document, cascade, body_id, body_percent_basis));
     {
         let style_margin = &mut document.nodes[body_id].style.margin;
         style_margin.top = LengthPercentageAuto::length(0.0);
@@ -905,13 +919,13 @@ fn layout_single_page_with_table_projection(
     apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
     move_body_inline_margins_into_padding(document, body_id, body_insets, content_width);
     if let Some(margins) = body_vertical_margins {
-        move_body_vertical_margins_into_padding(document, body_id, margins, content_width);
+        move_body_vertical_margins_into_padding(document, body_id, margins, body_percent_basis);
     }
     // A body whose content is one inline-engine paragraph has line boxes that
     // keep its top margin from collapsing; carry it as top padding so the
     // lines and the boxes among them start below it.
     let body_is_paragraph = document.nodes[body_id].is_ifc_root();
-    let body_top_padding = BodyTopPadding::capture(document, body_id, content_width);
+    let body_top_padding = BodyTopPadding::capture(document, body_id, body_percent_basis);
     let mut body_padded_top = if body_is_paragraph {
         body_top_padding.apply(document, body_id, body_margin_top)
     } else {

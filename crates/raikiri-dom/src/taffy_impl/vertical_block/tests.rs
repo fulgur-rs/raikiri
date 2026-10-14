@@ -289,8 +289,17 @@ fn vertical_flex_item_stretches_to_its_flex_line() {
 /// `children` (`tag`, `css`, `text`) and returns the document and the ids
 /// of the body and its children.
 fn layout_body(body_css: &str, children: &[(&str, &str, &str)]) -> (Document, Vec<usize>) {
+    layout_body_in("display:block", body_css, children)
+}
+
+/// [`layout_body`] with the root element styled `html_css`.
+fn layout_body_in(
+    html_css: &str,
+    body_css: &str,
+    children: &[(&str, &str, &str)],
+) -> (Document, Vec<usize>) {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let html = doc.append_element(Some(0), "html", Style::default(), Some(html_css));
     let body = doc.append_element(
         Some(html),
         "body",
@@ -417,4 +426,23 @@ fn contents_child_of_a_vertical_flex_container_keeps_the_horizontal_mapping() {
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, child), (8.0, 18.0, 30.0, 20.0));
+}
+
+#[test]
+fn vertical_body_percentages_follow_the_root_inline_size() {
+    // Percentages of the body's padding resolve against the inline size of
+    // its containing block, the root: the page height for a vertical root,
+    // the page width for a horizontal one.
+    let body = "display:block;margin:0;padding-top:10%;writing-mode:vertical-rl";
+    let children = [("text", "", "aa bb")];
+    let (doc, ids) = layout_body_in("display:block;writing-mode:vertical-rl", body, &children);
+    assert_eq!(
+        doc.nodes[ids[0]].style.padding.top,
+        LengthPercentage::length(60.0)
+    );
+    let (doc, ids) = layout_body_in("display:block", body, &children);
+    assert_eq!(
+        doc.nodes[ids[0]].style.padding.top,
+        LengthPercentage::length(80.0)
+    );
 }

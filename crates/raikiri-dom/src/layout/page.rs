@@ -52,20 +52,21 @@ pub(crate) fn move_body_inline_margins_into_padding(
     doc.body_inline_margins = (insets.margin_left, insets.margin_right);
 }
 
-/// The used top and bottom margins of `<body>`, resolved against the page
-/// content width like its other margins; `auto` and negative margins are 0.
+/// The used top and bottom margins of `<body>`, with percentages resolved
+/// against `percent_basis`, the inline size of the body's containing block,
+/// like its other margins; `auto` and negative margins are 0.
 /// Read them before the pipeline zeroes the body root's vertical margins.
 pub(crate) fn body_vertical_margins(
     doc: &Document,
     cascade: &CascadeResult,
     body_id: usize,
-    content_width: f32,
+    percent_basis: f32,
 ) -> (f32, f32) {
     let style = &doc.nodes[body_id].style.margin;
     let computed = &cascade.computed[body_id].margin;
     let used = |margin: LengthPercentageAuto, computed: ComputedLengthPercentageOrAuto| {
-        used_style_length_percentage_auto(margin, content_width)
-            .or_else(|| used_computed_length_percentage_or_auto(computed, content_width))
+        used_style_length_percentage_auto(margin, percent_basis)
+            .or_else(|| used_computed_length_percentage_or_auto(computed, percent_basis))
             .unwrap_or(0.0)
             .max(0.0)
     };
@@ -88,11 +89,11 @@ pub(crate) fn move_body_vertical_margins_into_padding(
     doc: &mut Document,
     body_id: usize,
     (top, bottom): (f32, f32),
-    content_width: f32,
+    percent_basis: f32,
 ) {
     let style = &mut doc.nodes[body_id].style;
     let used = |edge: LengthPercentage| {
-        used_style_length_percentage(edge, content_width)
+        used_style_length_percentage(edge, percent_basis)
             .unwrap_or(0.0)
             .max(0.0)
     };
