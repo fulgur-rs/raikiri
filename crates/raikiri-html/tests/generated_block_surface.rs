@@ -333,3 +333,12 @@ fn a_right_to_left_block_before_wider_than_its_element_runs_out_at_the_left() {
     );
     assert_eq!(runs(&document)[0], (0, "XXX XX".to_owned(), (-20.0, 16.0)));
 }
+
+#[test]
+fn a_vertical_shrink_to_fit_box_takes_no_inline_extent_from_its_block_before() {
+    let document = lay_out(
+        "<span style='float:left;writing-mode:vertical-rl'>A</span>",
+        "span::before{content:'';display:block;width:80px;height:20px}",
+    );
+    assert_eq!(boxes(&document, "span")[0].3, 20.0);
+}

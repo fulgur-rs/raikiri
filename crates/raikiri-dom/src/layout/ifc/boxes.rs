@@ -2144,8 +2144,14 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
         blocks: (0.0, 0.0),
     };
     if let Some(root) = tree.nodes[idx].ifc.as_ref() {
-        for width in root
-            .generated_blocks
+        // Generated blocks set in only horizontal lines, so a vertical
+        // paragraph's inline extent takes nothing from them.
+        let blocks = if vertical {
+            &[][..]
+        } else {
+            &root.generated_blocks[..]
+        };
+        for width in blocks
             .iter()
             .map(generated_blocks::GeneratedBlock::intrinsic_width)
         {
