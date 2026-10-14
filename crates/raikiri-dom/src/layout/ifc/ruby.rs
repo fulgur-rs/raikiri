@@ -431,6 +431,27 @@ impl Planner<'_> {
         }
         let internal =
             box_kind(cascade, doc, child).is_none() && !has_generated_content(cascade, child);
+        // The children of an element with `display: contents` take its
+        // place in the ruby container (CSS Display 3 §2.5), so ruby parts
+        // among them are parts of this container.
+        if cascade.computed[child].display == DisplayValue::Contents
+            && internal
+            && doc.nodes[child].children.iter().any(|&id| {
+                doc.nodes[id].kind() == NodeKind::Element
+                    && matches!(
+                        cascade.computed[id].display,
+                        DisplayValue::RubyBase
+                            | DisplayValue::RubyText
+                            | DisplayValue::RubyBaseContainer
+                            | DisplayValue::RubyTextContainer
+                    )
+            })
+        {
+            for &id in &doc.nodes[child].children {
+                self.push_child_content(ruby, id)?;
+            }
+            return Some(());
+        }
         match cascade.computed[child].display {
             DisplayValue::RubyBase if self.is_plain_part(child) => self.push_base(child),
             DisplayValue::RubyText if self.is_plain_part(child) => self.push_annotation(child),
@@ -760,16 +781,30 @@ impl Content<'_, '_> {
                 self.anchor(builder, id);
             }
             self.push_nodes(builder, &segment.gap, (None, None), Letter::Base)?;
-            // A segment without text draws nothing; one with text names its
-            // boxes without an element of their own after its first text.
-            let Some(id) = segment
-                .bases
-                .iter()
-                .chain(segment.levels.iter().flat_map(|level| &level.annotations))
+            // A segment names its boxes without an element of their own
+            // after its first text, or else after its first node; one without
+            // any content draws nothing.
+            let parts = || {
+                segment
+                    .bases
+                    .iter()
+                    .chain(segment.levels.iter().flat_map(|level| &level.annotations))
+            };
+            let Some(id) = parts()
                 .find_map(|part| {
                     texts(self.doc, self.cascade, &part.children)
                         .first()
                         .copied()
+                })
+                .or_else(|| {
+                    parts().find_map(|part| {
+                        part.element.or_else(|| {
+                            part.children
+                                .iter()
+                                .copied()
+                                .find(|&id| !is_skipped(self.doc, self.cascade, id))
+                        })
+                    })
                 })
             else {
                 continue;

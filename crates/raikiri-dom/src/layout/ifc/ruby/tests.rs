@@ -378,6 +378,41 @@ fn annotation_text_owns_the_line_it_is_placed_over() {
 }
 
 #[test]
+fn display_contents_wrappers_pass_ruby_parts_to_the_container() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let contents = element(doc, container, "span", "display:contents");
+        ids.0 = doc.append_text(contents, "a");
+        let annotation = rt(doc, contents, "x");
+        ids.1 = doc.nodes[annotation].children[0];
+    });
+    let container = fixture.doc.nodes[fixture.root].children[0];
+    assert!(plan(&fixture.doc, &fixture.cascade, container).is_some());
+    let runs = runs(fixture);
+    let base = runs.iter().find(|run| run.0 == ids.0).expect("base");
+    let annotation = runs.iter().find(|run| run.0 == ids.1).expect("annotation");
+    assert!(annotation.1 && !base.1);
+    assert!(annotation.2.1 < base.2.1, "{runs:?}");
+}
+
+#[test]
+fn a_segment_without_text_keeps_its_forced_break() {
+    let mut text = 0;
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        element(doc, container, "br", "");
+        text = doc.append_text(root, "c");
+    });
+    let container = fixture.doc.nodes[fixture.root].children[0];
+    assert!(plan(&fixture.doc, &fixture.cascade, container).is_some());
+    let runs = runs(fixture);
+    let after = runs.iter().find(|run| run.0 == text).expect("text");
+    // The break inside the ruby moves `c` to the second line.
+    assert!(after.2.1 > 20.0, "{runs:?}");
+}
+
+#[test]
 fn skipped_children_are_left_out() {
     let plan = plan_of(|doc, ruby| {
         rb(doc, ruby, "a");
