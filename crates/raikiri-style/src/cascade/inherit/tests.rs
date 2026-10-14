@@ -959,6 +959,19 @@ fn normal_line_height_is_measured_only_where_the_font_changes() {
 }
 
 #[test]
+fn normal_line_height_is_measured_again_for_another_optical_sizing() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let body = doc.push_element(html, "body", None);
+    let p = doc.push_element(body, "p", Some("font-optical-sizing: none"));
+    doc.push_element(p, "span", None);
+    let (_, measurer) = cascade_measuring_normal(&doc);
+    // The document node, the root element and the paragraph, whose `opsz`
+    // instance can differ; the span shares the paragraph's font.
+    assert_eq!(measurer.0.load(std::sync::atomic::Ordering::Relaxed), 3);
+}
+
+#[test]
 fn normal_line_height_stays_unmeasured_for_other_line_heights() {
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", Some("line-height: 1.5"));

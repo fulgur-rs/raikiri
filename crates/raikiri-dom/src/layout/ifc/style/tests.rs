@@ -968,3 +968,12 @@ fn inline_relative_insets_prefer_the_start_side_of_a_vertical_containing_block()
         (5.0, -4.0)
     );
 }
+
+#[test]
+fn own_ch_font_carries_the_elements_optical_sizing() {
+    let mut cv = ComputedValues::initial();
+    cv.font_optical_sizing = raikiri_style::property::FontOpticalSizing::None;
+    let key = own_ch_font(&cv);
+    assert_eq!(key.optical_sizing, cv.font_optical_sizing);
+    assert_eq!(key.size, cv.font_size);
+}

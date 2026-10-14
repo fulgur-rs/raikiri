@@ -1575,6 +1575,7 @@ impl SpecifiedValues {
                 && parent.font_size == font_size
                 && parent.font_weight == self.font_weight
                 && parent.font_style == self.font_style
+                && parent.font_optical_sizing == self.font_optical_sizing
                 && (Arc::ptr_eq(&parent.font_family, &self.font_family)
                     || parent.font_family == self.font_family)
         }) {
@@ -1585,6 +1586,7 @@ impl SpecifiedValues {
             size: font_size,
             weight: self.font_weight,
             style: self.font_style,
+            optical_sizing: self.font_optical_sizing,
         })
     }
 
@@ -1768,6 +1770,7 @@ impl SpecifiedValues {
                     size: initial_font_size,
                     weight: 400.0,
                     style: FontStyle::Normal,
+                    optical_sizing: FontOpticalSizing::Auto,
                 })
             });
         let initial = ResolveContext {
@@ -1971,6 +1974,7 @@ impl SpecifiedValues {
             size: font_size,
             weight: self.font_weight,
             style: self.font_style,
+            optical_sizing: self.font_optical_sizing,
         };
         // A `ch` value declared on this node measures with its own font; one
         // inherited from an ancestor keeps measuring with the ancestor's font.

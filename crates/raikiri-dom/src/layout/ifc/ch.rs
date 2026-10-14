@@ -2,7 +2,7 @@
 
 use super::style::map_font_families;
 use raikiri_style::ChFontKey;
-use raikiri_style::property::FontStyle as CssFontStyle;
+use raikiri_style::property::{FontOpticalSizing, FontStyle as CssFontStyle};
 use shodo::font::{FontCollection, FontQuery};
 use shodo::style::{FontStyle, InlineStyle};
 
@@ -49,9 +49,9 @@ pub fn measure_ch_advance(fonts: &FontCollection, key: &ChFontKey) -> f32 {
 ///
 /// The inline engine measures it the way it sizes a `normal` line, so the
 /// face is the [first available font](https://www.w3.org/TR/css-fonts-4/#first-available-font)
-/// at the variation instance the key's weight and size select. The key
-/// carries no `font-variation-settings`, so explicit axis settings are not
-/// applied. `None` when the family list does not map.
+/// at the variation instance the key's weight, size and optical sizing
+/// select. The key carries no `font-variation-settings`, so explicit axis
+/// settings are not applied. `None` when the family list does not map.
 pub fn measure_normal_line_height(fonts: &FontCollection, key: &ChFontKey) -> Option<f32> {
     let query = font_query(key)?;
     Some(fonts.normal_line_height(&InlineStyle {
@@ -59,6 +59,7 @@ pub fn measure_normal_line_height(fonts: &FontCollection, key: &ChFontKey) -> Op
         font_size: key.size.0,
         font_weight: query.weight,
         font_style: query.style,
+        font_optical_sizing: key.optical_sizing != FontOpticalSizing::None,
         ..InlineStyle::default()
     }))
 }

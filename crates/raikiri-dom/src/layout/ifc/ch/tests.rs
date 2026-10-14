@@ -1,6 +1,6 @@
 use super::*;
 use crate::layout::ifc::test_support::ahem_fonts;
-use raikiri_style::property::FontStyle as CssFontStyle;
+use raikiri_style::property::{FontOpticalSizing, FontStyle as CssFontStyle};
 use raikiri_style::{ComputedLength, FontFamilyName};
 use shodo::font::{FontCollection, FontOptions};
 use shodo::limits::Limits;
@@ -22,6 +22,7 @@ fn key(family: &[&str], size: f32) -> ChFontKey {
         size: ComputedLength(size),
         weight: 400.0,
         style: CssFontStyle::Normal,
+        optical_sizing: FontOpticalSizing::Auto,
     }
 }
 

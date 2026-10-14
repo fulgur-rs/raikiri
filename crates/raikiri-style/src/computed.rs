@@ -380,9 +380,9 @@ impl RunningTemplate {
 /// Inherited values retain the ancestor's key, so a descendant with a different
 /// font does not re-measure the inherited value against the wrong glyph
 /// advance. Non-inherited box values use the declaring node's own key. The
-/// key currently covers family, size, weight, and style; variation axes and
-/// vertical text orientation remain outside this layout's horizontal metric
-/// scope.
+/// key currently covers family, size, weight, style, and optical sizing;
+/// explicit variation axes and vertical text orientation remain outside this
+/// layout's horizontal metric scope.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChFontKey {
     /// Font family list used by the shaping resolver.
@@ -393,6 +393,9 @@ pub struct ChFontKey {
     pub weight: f32,
     /// Computed font style.
     pub style: FontStyle,
+    /// Computed `font-optical-sizing`, which selects the `opsz` instance a
+    /// variable font's metrics are read at.
+    pub optical_sizing: FontOpticalSizing,
 }
 
 /// Physical preferred sizes of a `vertical-rl` / `vertical-lr` box whose

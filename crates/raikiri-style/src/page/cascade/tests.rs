@@ -1651,8 +1651,13 @@ fn cascade_page_lh_scales_the_roots_measured_normal_line_height() {
 #[test]
 fn cascade_page_lh_leaves_normal_unmeasured_for_another_font() {
     let root = root_with_measured_normal();
-    let result = page("@page { font-family: monospace; padding: 1lh }", &root);
-    assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
+    for css in [
+        "@page { font-family: monospace; padding: 1lh }",
+        "@page { font-optical-sizing: none; padding: 1lh }",
+    ] {
+        let result = page(css, &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)), "{css}");
+    }
 }
 
 /// A page font declared with the root's resolved values is the root's font,

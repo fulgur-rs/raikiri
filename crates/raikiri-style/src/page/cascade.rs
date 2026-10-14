@@ -1827,8 +1827,8 @@ pub(super) fn page_context_line_height_basis(
 /// The used length of `line-height: normal` for the page context's first
 /// available font, or `None` when it cannot be measured.
 ///
-/// The page context's font is its resolved `font-family`, `font-weight` and
-/// `font-style`, each the root's value unless the page declares its own. When
+/// The page context's font is its resolved `font-family`, `font-weight`,
+/// `font-style` and `font-optical-sizing`, each the root's value unless the page declares its own. When
 /// that font is the root's and the root measured its `normal` line, the
 /// measure scales with the font size like the font's metrics. Otherwise
 /// `measurer` measures the page context's font.
@@ -1861,8 +1861,16 @@ fn page_context_normal_line_height(
         Some(PropertyValue::FontStyle(style)) => *style,
         _ => inherited.font_style,
     };
+    let optical_sizing = match declarations
+        .get(&PropertyKey::FontOpticalSizing)
+        .map(ResolvedAgainstInherited::as_property_value)
+    {
+        Some(PropertyValue::FontOpticalSizing(optical_sizing)) => *optical_sizing,
+        _ => inherited.font_optical_sizing,
+    };
     let same_font = weight == inherited.font_weight
         && style == inherited.font_style
+        && optical_sizing == inherited.font_optical_sizing
         && (Arc::ptr_eq(&family, &inherited.font_family) || family == inherited.font_family);
     if same_font
         && let Some(normal) = inherited.normal_line_height
@@ -1877,6 +1885,7 @@ fn page_context_normal_line_height(
         size: font_size,
         weight,
         style,
+        optical_sizing,
     })
 }
 
