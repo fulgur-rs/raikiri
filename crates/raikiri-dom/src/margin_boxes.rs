@@ -949,23 +949,6 @@ fn inherited_margin_box_quotes(
         .collect()
 }
 
-fn element_string_value(document: &Document, root: usize) -> String {
-    let mut stack = vec![root];
-    let mut raw = String::new();
-    while let Some(idx) = stack.pop() {
-        let Some(node) = document.get_node(idx) else {
-            continue;
-        };
-        if let Some(text) = node.text_content() {
-            raw.push_str(text);
-        }
-        for &child in node.children.iter().rev() {
-            stack.push(child);
-        }
-    }
-    raw.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 /// The document-wide values that page-margin `element()` and `string()`
 /// references show, keyed by name.
 ///
@@ -1012,6 +995,8 @@ impl NamedValues {
                 last_strings.insert(name, (idx, components.as_slice()));
             }
         }
+        use crate::running::element_string_value;
+
         let elements = last_elements
             .into_iter()
             .map(|(name, idx)| (name.clone(), element_string_value(document, idx)))

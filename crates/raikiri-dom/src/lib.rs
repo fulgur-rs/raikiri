@@ -55,7 +55,10 @@ mod node;
 mod normal_line_height;
 mod page_projection;
 mod running;
-pub use running::element_string_value;
+pub use running::{
+    ResolvedPageGeometry, RunningElementPage, RunningIndex, element_string_value,
+    layout_running_element, resolve_page_geometry,
+};
 mod target;
 
 mod column_rules;

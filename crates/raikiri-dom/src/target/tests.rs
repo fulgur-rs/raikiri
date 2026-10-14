@@ -336,8 +336,7 @@ fn counter_snapshots_skip_display_none_and_apply_display_contents_descendants() 
 fn stack_at(doc: &Document, node: usize, name: &str) -> Vec<i32> {
     let rules = build_rule_tree(doc);
     let cr = cascade(doc, &rules).expect("cascade Ok");
-    let snapshots =
-        counter_snapshots(doc, &cr).expect("test counter snapshots stay within budget");
+    let snapshots = counter_snapshots(doc, &cr).expect("test counter snapshots stay within budget");
     snapshots[node]
         .get(&Symbol::new(name))
         .cloned()

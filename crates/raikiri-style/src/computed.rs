@@ -344,10 +344,10 @@ pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
 /// `position: running(name)` is removed from the body flow and can be referenced
 /// by `content: element(name)` in an `@page` margin box.
 ///
-/// This struct is the static-side seed for the **two-tier cache** in design doc
-/// §7.3. The cascade captures `name` per node; downstream `raikiri-dom` then
-/// associates the subtree root, pre-cascaded style, and dynamic flags
-/// (`ParsedRunningTemplate`). This crate is a leaf and has no DOM node identity.
+/// The cascade captures `name` per node; downstream `raikiri-dom` indexes the
+/// running elements by name and lays each one out on its own
+/// (`raikiri_dom::RunningIndex`). This crate is a leaf and has no DOM node
+/// identity.
 ///
 /// `#[non_exhaustive]` allows future fields, such as a per-name override of
 /// `alternative_hint`, to be added without breaking callers.

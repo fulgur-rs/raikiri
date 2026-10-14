@@ -246,7 +246,7 @@ pub struct DocumentLayout {
     out: Box<PipelineOutput>,
     anchors: AnchorIndex,
     rendered: std::collections::HashSet<raikiri_traits::NodeId>,
-    running: running::RunningIndex,
+    running: raikiri_dom::RunningIndex,
     running_layouts: running::LayoutCache,
     /// Caches shared by the pages of each laid-out document, in
     /// [`crate::render::PipelineOutput::layout_slot_for_page`] order.
@@ -264,30 +264,15 @@ struct DocumentCaches {
 
 /// Index the running elements by the pages the rendered content around them
 /// is on.
-fn build_running_index(out: &PipelineOutput) -> running::RunningIndex {
-    let has_running = out
-        .cascade
-        .computed
-        .iter()
-        .any(|computed| !computed.running_templates.is_empty());
-    if !has_running {
-        return running::RunningIndex::default();
-    }
-    let mut rendered_pages = std::collections::HashMap::<usize, (u32, u32)>::new();
-    for slice in &out.slices {
-        let (document, _) = out.layout_for_page(slice.page_index);
-        for fragment in document.page_fragments(slice.page_index) {
-            let page = slice.page_index;
-            rendered_pages
-                .entry(fragment.node().0 as usize)
-                .and_modify(|(first, last)| {
-                    *first = (*first).min(page);
-                    *last = (*last).max(page);
-                })
-                .or_insert((page, page));
-        }
-    }
-    running::RunningIndex::build(&out.document, &out.cascade, &rendered_pages)
+fn build_running_index(out: &PipelineOutput) -> raikiri_dom::RunningIndex {
+    raikiri_dom::RunningIndex::build(
+        &out.document,
+        &out.cascade,
+        out.slices.iter().map(|slice| {
+            let (document, _) = out.layout_for_page(slice.page_index);
+            (document, slice.page_index)
+        }),
+    )
 }
 
 impl DocumentLayout {
