@@ -71,12 +71,12 @@ pub struct AnnotationRun<'a> {
 /// are `[inline_inline, inline_block, inline_offset]` and `[block_inline,
 /// block_block, block_offset]` applied to `(inline, block, 1)`.
 #[derive(Clone, Copy, Debug)]
-struct Placement([f32; 6]);
+pub(super) struct Placement([f32; 6]);
 
 impl Placement {
-    const IDENTITY: Self = Self([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
+    pub(super) const IDENTITY: Self = Self([1.0, 0.0, 0.0, 0.0, 1.0, 0.0]);
 
-    fn apply(self, inline: f32, block: f32) -> (f32, f32) {
+    pub(super) fn apply(self, inline: f32, block: f32) -> (f32, f32) {
         let [ii, ib, io, bi, bb, bo] = self.0;
         (ii * inline + ib * block + io, bi * inline + bb * block + bo)
     }
@@ -84,7 +84,7 @@ impl Placement {
     /// The placement of an annotation of a line placed by `self`: shodo's
     /// `transform` maps the annotation's line to the line's own coordinates,
     /// which start `block_offset` below the line's block origin.
-    fn annotation(self, transform: shodo::RubyTransform, block_offset: f32) -> Self {
+    pub(super) fn annotation(self, transform: shodo::RubyTransform, block_offset: f32) -> Self {
         let [ii, ib, _, bi, bb, _] = self.0;
         let t = transform;
         let (x, y) = self.apply(t.inline_offset, t.block_offset + block_offset);

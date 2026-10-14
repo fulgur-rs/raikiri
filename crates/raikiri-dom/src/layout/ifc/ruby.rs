@@ -196,7 +196,9 @@ impl Planner<'_> {
             return false;
         }
         match cascade.computed[id].display {
-            DisplayValue::Inline => doc.nodes[id]
+            // An element with `display: contents` generates no box: its
+            // children take its place (CSS Display 3 §2.5).
+            DisplayValue::Inline | DisplayValue::Contents => doc.nodes[id]
                 .children
                 .iter()
                 .all(|&child| self.is_plain_inline_at(child, depth + 1)),
@@ -630,6 +632,10 @@ impl Content<'_, '_> {
             {
                 // The outer ruby container anchors what this one sets aside.
                 self.ruby(builder, id, &plan.segments, &[], false)?;
+                continue;
+            }
+            if cv.display == DisplayValue::Contents {
+                self.push_nodes(builder, &node.children, ends, letter)?;
                 continue;
             }
             let edges = style::inline_edges(cv, id, self.fonts)?;

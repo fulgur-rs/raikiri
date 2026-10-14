@@ -189,6 +189,68 @@ fn inline_content_nested_rubies_and_floats_stay_plain() {
 }
 
 #[test]
+fn display_contents_content_stays_plain() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let contents = element(doc, container, "span", "display:contents");
+        ids.0 = doc.append_text(contents, "a");
+        let annotation = rt(doc, container, "x");
+        ids.1 = doc.nodes[annotation].children[0];
+    });
+    let container = fixture.doc.nodes[fixture.root].children[0];
+    let plan = plan(&fixture.doc, &fixture.cascade, container).expect("plain ruby");
+    assert_eq!(
+        describe(&fixture.doc, &fixture.cascade, &plan),
+        ["|(a)|[rt(x)]"]
+    );
+    let runs = runs(fixture);
+    let base = runs.iter().find(|run| run.0 == ids.0).expect("base");
+    let annotation = runs.iter().find(|run| run.0 == ids.1).expect("annotation");
+    assert!(annotation.1 && !base.1);
+    assert!(annotation.2.1 < base.2.1, "{runs:?}");
+}
+
+#[test]
+fn inline_boxes_in_annotations_have_pieces_over_their_bases() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let outer = ruby(doc, root);
+        let inner = ruby(doc, outer);
+        ids.0 = text_element(doc, inner, "rb", "display:ruby-base", "a");
+        let nested = element(doc, inner, "rt", "display:ruby-text;font-size:5px");
+        text_element(doc, nested, "b", "background:red", "y");
+        let annotation = element(doc, outer, "rt", "display:ruby-text;font-size:5px");
+        ids.1 = text_element(doc, annotation, "span", "background:red", "x");
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    let span = pieces
+        .iter()
+        .find(|piece| piece.node == ids.1)
+        .expect("annotation piece");
+    assert_eq!(span.line, 0);
+    assert!(span.border_box.width > 0.0, "{span:?}");
+    let base = pieces
+        .iter()
+        .find(|piece| piece.node == ids.0)
+        .expect("base piece");
+    assert!(
+        span.border_box.y + span.border_box.height <= base.border_box.y,
+        "{pieces:?}"
+    );
+    assert_eq!(
+        pieces
+            .iter()
+            .filter(|piece| doc.nodes[piece.node].tag_name() == Some("b"))
+            .count(),
+        1,
+        "{pieces:?}"
+    );
+}
+
+#[test]
 fn content_without_a_ruby_mapping_falls_back() {
     let unplain: [fn(&mut Document, usize); 7] = [
         // An atomic inline.

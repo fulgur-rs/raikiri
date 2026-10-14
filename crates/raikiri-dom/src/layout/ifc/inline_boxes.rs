@@ -2,6 +2,7 @@
 //! reports for each line.
 
 use super::geometry::IfcAxes;
+use super::positioned_runs::Placement;
 use shodo::geometry::{LogicalRect, PhysicalSize, WritingMode};
 use shodo::{Fragment, Line};
 
@@ -147,8 +148,89 @@ pub(crate) fn inline_box_pieces(
                 source_owner,
             });
         }
+        for fragment in &fragments {
+            if let Fragment::RubyAnnotation(annotation) = fragment {
+                annotation_pieces(
+                    *annotation,
+                    Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
+                    line_index,
+                    axes,
+                    content_size,
+                    &mut pieces,
+                );
+            }
+        }
     }
     pieces
+}
+
+/// The logical rectangle `rect` of a line that starts `line_top` below its
+/// origin, placed in the paragraph by `placement`.
+fn placed(rect: LogicalRect, line_top: f32, placement: Placement) -> LogicalRect {
+    let start = placement.apply(rect.inline_start, rect.block_start + line_top);
+    let end = placement.apply(
+        rect.inline_start + rect.inline_size,
+        rect.block_start + line_top + rect.block_size,
+    );
+    LogicalRect {
+        inline_start: start.0.min(end.0),
+        block_start: start.1.min(end.1),
+        inline_size: (end.0 - start.0).abs(),
+        block_size: (end.1 - start.1).abs(),
+    }
+}
+
+/// Add the pieces of the inline elements in the ruby `annotation`, whose
+/// line `placement` maps to the paragraph, and in the annotations nested in
+/// it. They belong to the paragraph's line `line_index`.
+fn annotation_pieces(
+    annotation: shodo::RubyAnnotationView<'_>,
+    placement: Placement,
+    line_index: usize,
+    axes: IfcAxes,
+    content_size: PhysicalSize,
+    pieces: &mut Vec<InlineBoxPiece>,
+) {
+    let line = annotation.line();
+    let fragments: Vec<Fragment> = line.fragments().collect();
+    for fragment in &fragments {
+        match fragment {
+            Fragment::InlineBox(piece) => {
+                let parent = piece.parent.and_then(|index| match fragments.get(index) {
+                    Some(Fragment::InlineBox(parent)) => Some(parent.node.0 as usize),
+                    _ => None, // cov:ignore: shodo's parent indices refer to an earlier InlineBox fragment of the same line.
+                });
+                let rect = |rect| {
+                    physical(
+                        placed(rect, line.block_offset(), placement),
+                        0.0,
+                        axes,
+                        content_size,
+                    )
+                };
+                pieces.push(InlineBoxPiece {
+                    node: piece.node.0 as usize,
+                    line: line_index,
+                    border_box: rect(piece.rect),
+                    content_box: rect(piece.content_rect),
+                    has_start_edge: piece.has_start_edge,
+                    has_end_edge: piece.has_end_edge,
+                    parent,
+                    source_container: parent,
+                    source_owner: None,
+                });
+            }
+            Fragment::RubyAnnotation(nested) => annotation_pieces(
+                *nested,
+                placement.annotation(nested.transform(), line.block_offset()),
+                line_index,
+                axes,
+                content_size,
+                pieces,
+            ),
+            _ => {}
+        }
+    }
 }
 
 /// The node of each line's ending forced break, with a box that spans the
