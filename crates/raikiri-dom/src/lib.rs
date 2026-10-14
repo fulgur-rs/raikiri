@@ -106,6 +106,8 @@ pub use layout::{
     page_content_insets_for_page, page_margins, page_margins_for_page, relayout_text_for_width,
     resolve_initial_page_context, validate_layout_depth,
 };
+// cov:ignore: public re-exports have no runtime behavior to measure.
+pub use layout::{RootBox, root_box};
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use margin_boxes::{

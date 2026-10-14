@@ -785,6 +785,38 @@ impl<'a> Page<'a> {
         )
     }
 
+    /// The root element's box on this page, which the canvas background's
+    /// images are sized and positioned against (CSS Backgrounds 3 §2.11.2).
+    ///
+    /// The canvas runs through every page as one surface, so on a later page
+    /// the box sits above the page by the flow the earlier pages hold: an
+    /// image that does not repeat shows only where the box reaches, and
+    /// tiles continue from the page before. Paint the canvas background
+    /// over the page area whatever the box covers.
+    ///
+    /// The box carries the root's `transform`, which [`Self::paint_order`]
+    /// leaves out: it moves the whole canvas, its background images and
+    /// every paint event included (CSS Transforms 1 §6). `None` when the
+    /// document has no root element.
+    ///
+    /// An auto-height root spans the pages of the document. On a page
+    /// streamed before the number of pages is known, it spans the pages
+    /// streamed so far.
+    pub fn root_box(&self) -> Option<super::RootBox> {
+        let page_count = if self.page_count_deferred {
+            self.slice.page_index + 1
+        } else {
+            self.page_count
+        };
+        raikiri_dom::root_box(
+            self.document,
+            self.cascade,
+            self.geometry.page_box,
+            self.slice.content_origin_y,
+            page_count,
+        )
+    }
+
     /// The running element (`position: running(<name>)`) that a page margin
     /// box with `content: element(<name>, <fetch>)` shows on this page, per
     /// CSS GCPM 3 §1.2.2 <https://www.w3.org/TR/css-gcpm-3/#element-syntax>.
@@ -906,6 +938,10 @@ impl<'a> Page<'a> {
     /// space positions of the node to the page. Text takes the transform of
     /// the element it is in and, inside columns, the offsets that move its
     /// lines.
+    ///
+    /// Like the paint events, the transform is inside the root element's
+    /// own transform, which [`Self::root_box`] reports and the painter
+    /// applies around the whole page.
     ///
     /// `None` when the painter draws nothing of `node` because a transform
     /// on it or an ancestor is singular, and for an out-of-range node.

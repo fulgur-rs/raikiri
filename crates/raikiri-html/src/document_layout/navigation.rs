@@ -67,7 +67,8 @@ pub struct Link<'a> {
     /// rectangle) mapped through the transform of its placement, as
     /// [`super::Page::paint_transform`] reports it. A rotated or skewed
     /// placement gives a quadrilateral that is not a rectangle. Quads of
-    /// placements a singular transform hides are left out.
+    /// placements a singular transform hides are left out. The root
+    /// element's own transform ([`super::Page::root_box`]) is not applied.
     pub paint_quads: Vec<[(f32, f32); 4]>,
 }
 
