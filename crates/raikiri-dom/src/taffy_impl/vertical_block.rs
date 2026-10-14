@@ -28,9 +28,9 @@ use std::collections::HashMap;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
-    AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout, LayoutInput,
-    LayoutOutput, Line, NodeId, Point, Position as TaffyPosition, Rect, Size, SizingMode, Style,
-    TraversePartialTree, compute_block_layout,
+    AbsoluteAxis, AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout,
+    LayoutInput, LayoutOutput, Line, NodeId, Point, Position as TaffyPosition, Rect, Size,
+    SizingMode, Style, TraversePartialTree, compute_block_layout,
 };
 
 use super::resolve_calc;
@@ -134,10 +134,9 @@ impl Document {
         inputs: LayoutInput,
     ) -> Option<LayoutOutput> {
         let idx = usize::from(node_id);
-        let block = self.transposed_blocks.last()?;
-        if !block.child_styles.contains_key(&idx) {
-            return None;
-        }
+        self.transposed_blocks
+            .last()
+            .filter(|block| block.child_styles.contains_key(&idx))?;
         let block = self.transposed_blocks.pop()?;
         let inputs =
             orthogonal_child_inputs(self, idx, transpose_inputs(inputs), block.block_space);
@@ -395,11 +394,8 @@ fn transpose_style(style: &Style, right_to_left: bool) -> Style {
 /// collapsing works along on the other side.
 fn transpose_inputs(inputs: LayoutInput) -> LayoutInput {
     LayoutInput {
-        axis: match inputs.axis {
-            RequestedAxis::Horizontal => RequestedAxis::Vertical,
-            RequestedAxis::Vertical => RequestedAxis::Horizontal,
-            RequestedAxis::Both => RequestedAxis::Both,
-        },
+        axis: AbsoluteAxis::try_from(inputs.axis)
+            .map_or(RequestedAxis::Both, |axis| axis.other_axis().into()),
         known_dimensions: swap(inputs.known_dimensions),
         known_dimensions_are_definite: swap(inputs.known_dimensions_are_definite),
         parent_size: swap(inputs.parent_size),

@@ -240,3 +240,47 @@ fn horizontal_child_margins_resolve_against_the_inline_size() {
     );
     assert_eq!(rects[1], (48.0, 8.0, 120.0, 10.0));
 }
+
+#[test]
+fn horizontal_child_of_a_vertical_container_keeps_its_min_width() {
+    // `min-width` and `max-width` are content-box sizes here: the 10px
+    // padding adds to them.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px",
+        &["writing-mode:horizontal-tb;height:10px;padding:0 5px;max-width:20px;min-width:100px"],
+    );
+    assert_eq!(rects[1], (198.0, 8.0, 110.0, 10.0));
+}
+
+#[test]
+fn border_box_child_max_width_includes_its_padding() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px",
+        &[
+            "writing-mode:horizontal-tb;height:10px;padding:0 5px;box-sizing:border-box;max-width:100px",
+        ],
+    );
+    assert_eq!(rects[1], (208.0, 8.0, 100.0, 10.0));
+}
+
+#[test]
+fn horizontal_child_of_an_auto_width_vertical_container_keeps_its_width() {
+    // Without a definite physical width there is no space to fill.
+    let rects = layout(
+        "writing-mode:vertical-rl;height:200px",
+        &["writing-mode:horizontal-tb;width:40px;height:10px"],
+    );
+    assert_eq!(rects[0], (8.0, 8.0, 40.0, 200.0));
+    assert_eq!(rects[1], (8.0, 8.0, 40.0, 10.0));
+}
+
+#[test]
+fn vertical_flex_item_stretches_to_its_flex_line() {
+    // The flex container measures the vertical item's physical height, its
+    // transposed width, before stretching it.
+    let rects = layout(
+        "display:flex;height:100px",
+        &["writing-mode:vertical-rl;width:30px"],
+    );
+    assert_eq!(rects[1], (8.0, 8.0, 30.0, 100.0));
+}
