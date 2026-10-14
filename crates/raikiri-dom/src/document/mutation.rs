@@ -198,6 +198,134 @@ impl Document {
         names
     }
 
+    /// DOM §4.4 "clone a node": a detached copy of `id`, and of its whole
+    /// subtree when `deep` is set. `None` for the Document root (cloning a
+    /// Document is not supported) or an out-of-range `id`.
+    ///
+    /// An element copy keeps its tag, namespace, prefix, attributes, and
+    /// `style` attribute. A `<template>` copy gets its own contents fragment,
+    /// filled with copies of the original contents when `deep` is set (HTML
+    /// "cloning steps" for `template`). Script-sampled animation declarations,
+    /// a resolved image size, and a canvas bitmap are not copied: the copy is
+    /// a new element whose derived state is computed again before layout.
+    ///
+    /// The subtree is walked with an explicit stack, so arbitrarily deep
+    /// trees cannot overflow the native stack. [`Document::clone_node_count`]
+    /// gives the number of nodes this call allocates.
+    ///
+    /// Spec: <https://dom.spec.whatwg.org/#concept-node-clone>
+    pub fn clone_node(&mut self, id: usize, deep: bool) -> Option<usize> {
+        let copy = self.clone_single_node(id)?;
+        let mut pending = Vec::new();
+        if deep {
+            self.queue_clone_children(id, copy, &mut pending);
+        }
+        while let Some((source, target)) = pending.pop() {
+            let children = self.nodes[source].children.clone();
+            for child in children {
+                let Some(child_copy) = self.clone_single_node(child) else {
+                    // cov:ignore: only the Document is not cloneable, and it is
+                    // never a child.
+                    continue;
+                };
+                self.nodes[target].children.push(child_copy);
+                self.nodes[child_copy].parent = Some(target);
+                self.queue_clone_children(child, child_copy, &mut pending);
+            }
+        }
+        self.invalidate_layout_cache();
+        self.flags_dirty = true;
+        Some(copy)
+    }
+
+    /// The number of nodes [`Document::clone_node`] allocates for the same
+    /// arguments, including template contents fragments; 0 when it would
+    /// return `None`.
+    pub fn clone_node_count(&self, id: usize, deep: bool) -> usize {
+        if !self.is_cloneable(id) {
+            return 0;
+        }
+        if !deep {
+            // The node, plus an empty contents fragment for a template.
+            return 1 + usize::from(self.template_contents_of(id).is_some());
+        }
+        let mut count = 0;
+        let mut stack = vec![id];
+        while let Some(node) = stack.pop() {
+            count += 1;
+            if let Some(contents) = self.template_contents_of(node) {
+                stack.push(contents);
+            }
+            if let Some(n) = self.nodes.get(node) {
+                stack.extend(n.children.iter().copied());
+            }
+        }
+        count
+    }
+
+    fn is_cloneable(&self, id: usize) -> bool {
+        self.nodes
+            .get(id)
+            .is_some_and(|n| !matches!(n.data, NodeData::Document))
+    }
+
+    /// Copy one node without its children; a template copy gets an empty
+    /// contents fragment. The caller invalidates the layout cache once the
+    /// whole copy is built: a detached copy is not laid out until inserted.
+    fn clone_single_node(&mut self, id: usize) -> Option<usize> {
+        if !self.is_cloneable(id) {
+            return None;
+        }
+        let node = match &self.nodes[id].data {
+            NodeData::Element(element) => {
+                let mut copy =
+                    Node::new_element(element.tag_name.clone(), Default::default(), None);
+                if let NodeData::Element(copy_element) = &mut copy.data {
+                    copy_element.inline_style = element.inline_style.clone();
+                    copy_element.namespace = element.namespace.clone();
+                    copy_element.prefix = element.prefix.clone();
+                    copy_element.attributes = element.attributes.clone();
+                }
+                copy
+            }
+            NodeData::Text(text) => Node::new_text(text.text_content.clone()),
+            NodeData::Comment(value) => Node::new_comment(value.clone()),
+            NodeData::ProcessingInstruction { target, data } => {
+                Node::new_processing_instruction(target.clone(), data.clone())
+            }
+            NodeData::DocumentFragment => Node::new_document_fragment(),
+            // cov:ignore: `is_cloneable` above already rejected the Document.
+            NodeData::Document => return None,
+        };
+        let has_template_contents = self.template_contents_of(id).is_some();
+        let copy = self.nodes.len();
+        self.nodes.push(node);
+        if has_template_contents {
+            self.allocate_template_fragment_root(copy);
+        }
+        Some(copy)
+    }
+
+    fn template_contents_of(&self, id: usize) -> Option<usize> {
+        match &self.nodes.get(id)?.data {
+            NodeData::Element(element) => element.template_contents,
+            _ => None,
+        }
+    }
+
+    /// Queue the (source, copy) pairs whose children still need copying for
+    /// a deep clone: `source` itself and, for a template, its contents
+    /// fragment.
+    fn queue_clone_children(&self, source: usize, copy: usize, pending: &mut Vec<(usize, usize)>) {
+        pending.push((source, copy));
+        if let (Some(source_contents), Some(copy_contents)) = (
+            self.template_contents_of(source),
+            self.template_contents_of(copy),
+        ) {
+            pending.push((source_contents, copy_contents));
+        }
+    }
+
     // ─── DOM §4.2.3 validity + move helpers ───────────────
 
     /// Shared validity core of "ensure pre-insert validity"

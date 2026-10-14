@@ -397,7 +397,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         0,
     );
     let canvas_2d = canvas_2d_result?;
-    let text = derived(context, "Text", &character_data, &[&NO_MEMBERS])?;
+    let text = derived(context, "Text", &character_data, &[&tree::TEXT_MEMBERS])?;
     let comment = derived(context, "Comment", &character_data, &[&NO_MEMBERS])?;
     let pi_members = [&tree::PROCESSING_INSTRUCTION_MEMBERS];
     // A `?` on a call rustfmt wraps across lines leaves the never-taken
