@@ -17,24 +17,24 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
     BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxDecorationBreak,
     BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent, CssColor,
-    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue,
-    FloatValue, FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
-    TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
-    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify,
-    TextOrientation, TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition,
-    TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WhiteSpaceCollapse, WillChange, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent,
+    ContentList, CssColor, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind, FontFamilyName,
+    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
+    TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue, TextSpacingTrim,
+    TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
+    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -717,16 +717,16 @@ pub struct ComputedValues {
     /// wire-through pattern.
     /// See <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// The [`Arc<Vec<..>>`] wrapper makes cascade winner cloning (`value.clone()`
+    /// The [`Arc`] wrapper makes cascade winner cloning (`value.clone()`
     /// during `apply_winners` drain; move in `apply_value`) and inheritance-walk
     /// cloning (stack push in `crate::cascade::walk_from`, then
     /// `out[idx] = computed.clone()`) **shallow (Arc reference-count increments)**.
     /// Sharing one heap allocation prevents O(N × M) memory growth for
     /// `* { content: "<large>" }` across N elements, a security-relevant DoS
-    /// defense. Because `Arc<Vec<T>>: Deref<Target = Vec<T>>`, downstream
-    /// `.iter()`, `.len()`, and `.is_empty()` calls remain unchanged (no
-    /// dom/paint consumer changes).
-    pub content: Arc<Vec<ContentComponent>>,
+    /// defense. [`ContentList`] dereferences to its items, so downstream
+    /// `.iter()`, `.len()`, and `.is_empty()` calls read them as a `Vec`; its
+    /// [`ContentList::alt`] gives the alternative text.
+    pub content: Arc<ContentList>,
     /// Parsed `string-set` entries as `(name, content-list)` pairs.
     /// **Not inherited**. The spec's initial value is `none` (CSS GCPM 3 §1.1.1,
     /// propdef-string-set, "Initial: none"), represented here by an empty list.

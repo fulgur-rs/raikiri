@@ -2355,7 +2355,7 @@ fn parse_text_shadow_item_with_mode(
 /// CSS Text Decoration Module Level 3 §4
 /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>.
 ///
-/// `none` means an empty list (a top-level alternative), as in [`parse_content`](super::content::parse_content) and
+/// `none` means an empty list (a top-level alternative), as in [`parse_content_with_alt`](super::content::parse_content_with_alt) and
 /// [`parse_counter_property`](super::content::parse_counter_property). Delegate the comma-separated list to
 /// `cssparser::Parser::parse_comma_separated`; unconsumed tokens in any item
 /// are detected by that method's `parse_until_before` → `parse_entirely`

@@ -165,8 +165,11 @@ pub fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentComponent>> 
         .ok()
 }
 
-/// Parse `content: normal | none | <content-list>`
-/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>).
+/// Parse `content: normal | none | [ <content-replacement> | <content-list> ]
+/// [ / [ <string> | <counter> | <attr()> ]+ ]?`
+/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>),
+/// returning the items and the alternative text after `/`. `normal` and
+/// `none` take no alternative text.
 ///
 /// The spec distinguishes `normal` from `none` (generate vs. suppress a
 /// pseudo-element). Keep `normal` as an empty `Vec` for the initial value,
@@ -177,18 +180,6 @@ pub fn parse_consumer_text_value(source: &str) -> Option<Vec<ContentComponent>> 
 /// `counter(...)`) in sequence. On an unrecognized token it breaks; the
 /// caller's `expect_exhausted` (rule.rs) sees the leftover token and drops the
 /// entire declaration.
-///
-/// The alternative text after a `/` is accepted and dropped here: nothing
-/// downstream reads it yet. [`parse_content_with_alt`] returns it.
-pub(crate) fn parse_content(input: &mut Parser<'_, '_>) -> Option<Vec<ContentComponent>> {
-    parse_content_with_alt(input).map(|(items, _alt)| items)
-}
-
-/// Parse `content` like [`parse_content`], also returning the alternative
-/// text: `[ <content-replacement> | <content-list> ] [ / [ <string> |
-/// <counter> | <attr()> ]+ ]?` (CSS Content 3 §1
-/// <https://www.w3.org/TR/css-content-3/#content-property>). `normal` and
-/// `none` take no alternative text.
 pub(crate) fn parse_content_with_alt(
     input: &mut Parser<'_, '_>,
 ) -> Option<(Vec<ContentComponent>, Option<Vec<ContentComponent>>)> {
@@ -255,7 +246,7 @@ fn parse_content_alt_items(input: &mut Parser<'_, '_>) -> Vec<ContentComponent> 
 /// Break on an unrecognized token; the caller detects the leftover token and
 /// drops the declaration.
 ///
-/// Both the `content` property (`parse_content`) and the `string-set` property
+/// Both the `content` property (`parse_content_with_alt`) and the `string-set` property
 /// (`parse_string_set`) call this function. GCPM 3 §1.1.1 narrows the broad
 /// CSS Content 3 §2 list for string-set, so `mode` selects accepted alternatives:
 /// - [`ContentListMode::CssContent3`] — content property (CSS Content 3 §2
@@ -440,7 +431,7 @@ pub(super) fn parse_string_set(
 /// identifiers, so `expect_function` does not see them.
 ///
 /// Individual `parse_*_fn` functions do not call `expect_exhausted`:
-/// [`parse_content`]'s `parse_nested_block` internally calls
+/// [`parse_content_with_alt`]'s `parse_nested_block` internally calls
 /// [`Parser::parse_entirely`], which rejects remaining tokens after its
 /// closure succeeds (the same convention as
 /// [`parse_rgb_function`](super::color::parse_rgb_function)).

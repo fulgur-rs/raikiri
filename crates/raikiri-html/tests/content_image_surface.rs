@@ -581,3 +581,75 @@ fn a_covering_image_is_rastered_at_its_prepared_size() {
     assert_eq!((image.rect.width, image.rect.height), (200.0, 200.0));
     assert_eq!((image.pixels.width, image.pixels.height), (20, 20));
 }
+
+/// The alternative text after `/` in `content` reaches the consumer with
+/// `attr()` and counters resolved, for each pseudo-element.
+#[test]
+fn generated_alt_text_resolves_attributes_and_counters() {
+    let pixels = Pixels::new();
+    let document = lay_out(
+        "<ol><li data-kind=Tip>X</li></ol>",
+        "li{counter-increment:n 2}\
+         li::before{content:url(a.png) ' Note' / attr(data-kind) ' ' counter(n)}\
+         li::after{content:url(b.png) / ''}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let owner = page
+        .text_runs()
+        .iter()
+        .find_map(|run| match run.source {
+            RunSource::Generated(owner, GeneratedKind::Before) => Some(owner),
+            _ => None,
+        })
+        .expect("the ::before text has a run");
+    assert_eq!(
+        page.generated_alt_text(owner, GeneratedKind::Before)
+            .as_deref(),
+        Some("Tip 2")
+    );
+    // An empty alternative text marks decorative content.
+    assert_eq!(
+        page.generated_alt_text(owner, GeneratedKind::After)
+            .as_deref(),
+        Some("")
+    );
+    assert_eq!(page.generated_alt_text(owner, GeneratedKind::Marker), None);
+    assert_eq!(
+        page.generated_alt_text(owner, GeneratedKind::FirstLetter),
+        None
+    );
+
+    // A marker's own `content` can carry alternative text too.
+    let document = lay_out(
+        "<ul><li>X</li></ul>",
+        "li::marker{content:'* ' / 'Important'}",
+        &pixels,
+    );
+    let page = document.page(0).unwrap();
+    let owner = page
+        .text_runs()
+        .iter()
+        .find_map(|run| match run.source {
+            RunSource::Generated(owner, GeneratedKind::Marker) => Some(owner),
+            _ => None,
+        })
+        .expect("the marker has a run");
+    assert_eq!(
+        page.generated_alt_text(owner, GeneratedKind::Marker)
+            .as_deref(),
+        Some("Important")
+    );
+
+    let document = lay_out("<p>X</p>", "p::before{content:url(a.png) ' Note'}", &pixels);
+    let page = document.page(0).unwrap();
+    let owner = page
+        .text_runs()
+        .iter()
+        .find_map(|run| match run.source {
+            RunSource::Generated(owner, GeneratedKind::Before) => Some(owner),
+            _ => None,
+        })
+        .expect("the ::before text has a run");
+    assert_eq!(page.generated_alt_text(owner, GeneratedKind::Before), None);
+}

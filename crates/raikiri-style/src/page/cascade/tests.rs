@@ -3590,7 +3590,7 @@ property_key_samples! {
     CounterIncrement => PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
     CounterSet => PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
     Content =>
-        PropertyValue::Content(Arc::new(vec![ContentComponent::Literal("x".into())])),
+        PropertyValue::Content(Arc::new(vec![ContentComponent::Literal("x".into())].into())),
     StringSet => PropertyValue::StringSet(Arc::new(vec![(
         "s".into(),
         vec![ContentComponent::Literal("x".into())],

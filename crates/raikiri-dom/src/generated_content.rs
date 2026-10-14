@@ -350,6 +350,35 @@ pub fn generated_text<'a>(
     Some((computed, content))
 }
 
+/// The alternative text of the `content` of the `::before`, `::after` or
+/// `::marker` of `element`, the components after `/` (CSS Content 3
+/// <https://www.w3.org/TR/css-content-3/#alt>), with `attr()` and the
+/// counters resolved as in [`generated_text`]. `None` when the value gives
+/// no alternative text; an empty string marks decorative content.
+pub fn generated_alt_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &[CounterSnapshot],
+) -> Option<String> {
+    let computed = cascade
+        .pseudo
+        .get(&(StyleNodeId::new(element as u64), pseudo))?;
+    let alt = computed.content.alt()?;
+    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
+    let counters = CounterSnapshotView::new(base, Some(computed));
+    content_components_to_text_with_quotes(
+        document,
+        element,
+        alt,
+        &computed.quotes,
+        computed.quotes_auto,
+        &counters,
+        &cascade.counter_styles,
+    )
+}
+
 static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =
     std::sync::LazyLock::new(std::collections::HashMap::new);
 
