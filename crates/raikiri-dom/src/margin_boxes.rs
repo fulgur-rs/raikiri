@@ -519,10 +519,8 @@ struct MarginBoxSpec {
     background_layer_count: usize,
     background_image_lime: bool,
     content_image_lime: bool,
-    border_top: Option<(f32, CssColor)>,
-    border_right: Option<(f32, CssColor)>,
-    border_bottom: Option<(f32, CssColor)>,
-    border_left: Option<(f32, CssColor)>,
+    /// Used borders in top/right/bottom/left order.
+    border: [Option<(f32, CssColor)>; 4],
     margin_auto: [bool; 4],
     /// Used numeric margins in top/right/bottom/left order. Auto margins are
     /// represented by zero here and are distributed by the edge layout.
@@ -538,6 +536,78 @@ struct MarginBoxSpec {
     vertical_align: MarginTextVerticalAlign,
     /// The first `element()` of `content`.
     running: Option<(SmolStr, StringFetchMode)>,
+}
+
+/// The axis a margin-box size runs along.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+impl Axis {
+    /// The two edges this axis runs between, as indices into
+    /// top/right/bottom/left arrays.
+    fn edges(self) -> [usize; 2] {
+        match self {
+            Self::Horizontal => [3, 1],
+            Self::Vertical => [0, 2],
+        }
+    }
+}
+
+/// Border, padding and margin of a margin box summed across one axis.
+#[derive(Clone, Copy, Debug)]
+struct Frame {
+    border: f32,
+    padding: f32,
+    margin: f32,
+}
+
+impl Frame {
+    /// The outer size of a box whose content size is `content`.
+    fn outer(self, content: f32) -> f32 {
+        content + self.border + self.padding + self.margin
+    }
+
+    /// The content size of a box whose outer size is `outer`.
+    fn content(self, outer: f32) -> f32 {
+        outer - self.margin - self.border - self.padding
+    }
+}
+
+impl MarginBoxSpec {
+    /// Used border widths in top/right/bottom/left order.
+    fn border_widths(&self) -> [f32; 4] {
+        self.border.map(|side| side.map_or(0.0, |(width, _)| width))
+    }
+
+    /// The specified content size along `axis`, if not `auto`.
+    fn size(&self, axis: Axis) -> Option<f32> {
+        match axis {
+            Axis::Horizontal => self.width,
+            Axis::Vertical => self.height,
+        }
+    }
+
+    fn frame(&self, axis: Axis) -> Frame {
+        let [start, end] = axis.edges();
+        let border = self.border_widths();
+        Frame {
+            border: border[start] + border[end],
+            padding: self.padding[start] + self.padding[end],
+            margin: self.margin[start] + self.margin[end],
+        }
+    }
+
+    /// The outer size along `axis`: the specified size plus the frame, or
+    /// all of `available` when the size is `auto`.
+    fn outer_size(&self, axis: Axis, available: f32) -> f32 {
+        match self.size(axis) {
+            Some(size) => self.frame(axis).outer(size).max(0.0),
+            None => available.max(0.0),
+        }
+    }
 }
 
 /// Horizontal standalone style for a parsed `font-family` list.
@@ -1513,8 +1583,7 @@ fn margin_box_spec(
     let background_image_lime = background_layers
         .iter()
         .any(|layer| layer.url.ends_with("/green.png") || layer.url == "green.png");
-    let [border_top, border_right, border_bottom, border_left] =
-        margin_box_borders(document, cascade, page, rule, font_size);
+    let border = margin_box_borders(document, cascade, page, rule, font_size);
     let margin_auto = margin_box_auto_margins(rule);
     let width = match margin_box_property(rule, PropertyKey::Width) {
         Some(PropertyValue::Width(value)) => length_or_auto_to_px(*value, width_basis, font_size),
@@ -1600,10 +1669,7 @@ fn margin_box_spec(
         background_layer_count: margin_box_background_layer_count(rule),
         background_image_lime,
         content_image_lime,
-        border_top,
-        border_right,
-        border_bottom,
-        border_left,
+        border,
         margin_auto,
         margin,
         padding,
@@ -1636,10 +1702,7 @@ fn place_margin_box(
     if rect.width <= 0.0 || rect.height <= 0.0 {
         return None;
     }
-    let border_left = spec.border_left.map_or(0.0, |(width, _)| width);
-    let border_right = spec.border_right.map_or(0.0, |(width, _)| width);
-    let border_top = spec.border_top.map_or(0.0, |(width, _)| width);
-    let border_bottom = spec.border_bottom.map_or(0.0, |(width, _)| width);
+    let [border_top, border_right, border_bottom, border_left] = spec.border_widths();
     let content_x = rect.x + border_left + spec.padding[3];
     let content_y = rect.y + border_top + spec.padding[0];
     let content_width =
@@ -1697,12 +1760,7 @@ fn place_margin_box(
         background_clip: spec.background_clip,
         background_layers: spec.background_layers.clone(),
         background_layer_count: spec.background_layer_count,
-        borders: [
-            border(spec.border_top),
-            border(spec.border_right),
-            border(spec.border_bottom),
-            border(spec.border_left),
-        ],
+        borders: spec.border.map(border),
         padding: PaintInsets::new(
             spec.padding[0],
             spec.padding[1],
@@ -1768,32 +1826,6 @@ fn margin_box_rule(
     page.cascade_margin_box(slot)
 }
 
-fn margin_box_border_width(spec: &MarginBoxSpec) -> f32 {
-    spec.border_left.map(|(width, _)| width).unwrap_or(0.0)
-        + spec.border_right.map(|(width, _)| width).unwrap_or(0.0)
-}
-
-fn margin_box_border_height(spec: &MarginBoxSpec) -> f32 {
-    spec.border_top.map(|(height, _)| height).unwrap_or(0.0)
-        + spec.border_bottom.map(|(height, _)| height).unwrap_or(0.0)
-}
-
-fn margin_box_padding_width(spec: &MarginBoxSpec) -> f32 {
-    spec.padding[1] + spec.padding[3]
-}
-
-fn margin_box_padding_height(spec: &MarginBoxSpec) -> f32 {
-    spec.padding[0] + spec.padding[2]
-}
-
-fn margin_box_margin_width(spec: &MarginBoxSpec) -> f32 {
-    spec.margin[1] + spec.margin[3]
-}
-
-fn margin_box_margin_height(spec: &MarginBoxSpec) -> f32 {
-    spec.margin[0] + spec.margin[2]
-}
-
 fn margin_box_text_width(
     document: &Document,
     spec: &MarginBoxSpec,
@@ -1832,16 +1864,16 @@ fn margin_box_intrinsic_width(
 ) -> f32 {
     // Match the actual content height used by the horizontal margin strip.
     // Vertical text may need multiple columns within that inline constraint.
-    let content_height = (margin_box_outer_height(spec, available_height).min(available_height)
-        - margin_box_margin_height(spec)
-        - margin_box_border_height(spec)
-        - margin_box_padding_height(spec))
-    .max(0.0);
-    (margin_box_text_width(document, spec, Some(content_height))
-        + margin_box_border_width(spec)
-        + margin_box_padding_width(spec)
-        + margin_box_margin_width(spec))
-    .max(0.0)
+    let content_height = spec
+        .frame(Axis::Vertical)
+        .content(
+            spec.outer_size(Axis::Vertical, available_height)
+                .min(available_height),
+        )
+        .max(0.0);
+    spec.frame(Axis::Horizontal)
+        .outer(margin_box_text_width(document, spec, Some(content_height)))
+        .max(0.0)
 }
 
 fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32 {
@@ -1866,114 +1898,107 @@ fn margin_box_intrinsic_height(document: &Document, spec: &MarginBoxSpec) -> f32
     } else {
         line_count * spec.text_style.font_size.max(0.0)
     };
-    (text_height
-        + margin_box_border_height(spec)
-        + margin_box_padding_height(spec)
-        + margin_box_margin_height(spec))
-    .max(0.0)
+    spec.frame(Axis::Vertical).outer(text_height).max(0.0)
 }
 
-fn margin_box_outer_width(spec: &MarginBoxSpec, available: f32) -> f32 {
-    if let Some(width) = spec.width {
-        (width
-            + margin_box_border_width(spec)
-            + margin_box_padding_width(spec)
-            + margin_box_margin_width(spec))
-        .max(0.0)
-    } else {
-        available.max(0.0)
-    }
+/// One side of the page-margin area: the three slots along it, in
+/// layout order, and the axis they are laid out along.
+#[derive(Clone, Copy, Debug)]
+struct Edge {
+    slots: [PageMarginBoxSlot; 3],
+    axis: Axis,
 }
 
-fn margin_box_outer_height(spec: &MarginBoxSpec, available: f32) -> f32 {
-    if let Some(height) = spec.height {
-        (height
-            + margin_box_border_height(spec)
-            + margin_box_padding_height(spec)
-            + margin_box_margin_height(spec))
-        .max(0.0)
-    } else {
-        available.max(0.0)
-    }
-}
+const TOP_EDGE: Edge = Edge {
+    slots: [
+        PageMarginBoxSlot::TopLeft,
+        PageMarginBoxSlot::TopCenter,
+        PageMarginBoxSlot::TopRight,
+    ],
+    axis: Axis::Horizontal,
+};
 
-fn layout_horizontal_margin_boxes(
+const BOTTOM_EDGE: Edge = Edge {
+    slots: [
+        PageMarginBoxSlot::BottomLeft,
+        PageMarginBoxSlot::BottomCenter,
+        PageMarginBoxSlot::BottomRight,
+    ],
+    axis: Axis::Horizontal,
+};
+
+const LEFT_EDGE: Edge = Edge {
+    slots: [
+        PageMarginBoxSlot::LeftTop,
+        PageMarginBoxSlot::LeftMiddle,
+        PageMarginBoxSlot::LeftBottom,
+    ],
+    axis: Axis::Vertical,
+};
+
+const RIGHT_EDGE: Edge = Edge {
+    slots: [
+        PageMarginBoxSlot::RightTop,
+        PageMarginBoxSlot::RightMiddle,
+        PageMarginBoxSlot::RightBottom,
+    ],
+    axis: Axis::Vertical,
+};
+
+/// The boxes present on `edge`, in layout order, each with its outer size
+/// along the edge. `available` is the length of the edge between the
+/// corners and `cross_size` the thickness of the page margin.
+fn edge_track_sizes<'s>(
     document: &Document,
-    specs: &[MarginBoxSpec],
-    top: bool,
-    page_width: f32,
-    page_height: f32,
-    margins: PageMargins,
-    out: &mut Vec<MarginBox>,
-) {
-    let (row_y, row_height) = if top {
-        (0.0, margins.top)
-    } else {
-        (page_height - margins.bottom, margins.bottom)
-    };
-    if row_height <= 0.0 {
-        return;
-    }
-    let slots = if top {
-        [
-            PageMarginBoxSlot::TopLeft,
-            PageMarginBoxSlot::TopCenter,
-            PageMarginBoxSlot::TopRight,
-        ]
-    } else {
-        [
-            PageMarginBoxSlot::BottomLeft,
-            PageMarginBoxSlot::BottomCenter,
-            PageMarginBoxSlot::BottomRight,
-        ]
-    };
-    let active: Vec<&MarginBoxSpec> = slots
+    specs: &'s [MarginBoxSpec],
+    edge: Edge,
+    available: f32,
+    cross_size: f32,
+) -> Vec<(&'s MarginBoxSpec, f32)> {
+    let axis = edge.axis;
+    let active: Vec<&MarginBoxSpec> = edge
+        .slots
         .iter()
         .filter_map(|slot| specs.iter().find(|spec| spec.slot == *slot))
         .collect();
     if active.is_empty() {
-        return;
+        return Vec::new();
     }
-    let available = (page_width - margins.left - margins.right).max(0.0);
     let fixed = active
         .iter()
-        .filter(|spec| spec.width.is_some())
-        .map(|spec| margin_box_outer_width(spec, 0.0))
+        .filter(|spec| spec.size(axis).is_some())
+        .map(|spec| spec.outer_size(axis, 0.0))
         .sum::<f32>();
     let auto_bases: Vec<f32> = active
         .iter()
         .map(|spec| {
-            if spec.width.is_some() {
+            if spec.size(axis).is_some() {
                 0.0
             } else {
-                margin_box_intrinsic_width(document, spec, row_height)
+                match axis {
+                    Axis::Horizontal => margin_box_intrinsic_width(document, spec, cross_size),
+                    Axis::Vertical => margin_box_intrinsic_height(document, spec),
+                }
             }
         })
         .collect();
     let auto_base_total = auto_bases.iter().sum::<f32>();
     let auto_remaining = available - fixed - auto_base_total;
-    let center_index = active.iter().position(|spec| {
-        matches!(
-            spec.slot,
-            PageMarginBoxSlot::TopCenter | PageMarginBoxSlot::BottomCenter
-        )
-    });
-    let center_is_anchored = center_index.is_some_and(|index| {
-        active[index].width.is_none()
-            && auto_bases[index] <= 0.0
-            && active.iter().enumerate().any(|(other, spec)| {
-                other != index
-                    && matches!(
-                        spec.slot,
-                        PageMarginBoxSlot::TopLeft
-                            | PageMarginBoxSlot::TopRight
-                            | PageMarginBoxSlot::BottomLeft
-                            | PageMarginBoxSlot::BottomRight
-                    )
-                    && auto_bases[other] > 0.0
-            })
-    });
-    let anchored_side_width = if center_is_anchored {
+    let center_slot = edge.slots[1];
+    let center_index = active.iter().position(|spec| spec.slot == center_slot);
+    // On the top and bottom edges, an empty auto-sized center box between
+    // sides with content takes no space, and the sides split the edge
+    // evenly. The left and right edges don't anchor their middle box.
+    let center_is_anchored = axis == Axis::Horizontal
+        && center_index.is_some_and(|index| {
+            active[index].size(axis).is_none()
+                && auto_bases[index] <= 0.0
+                && active
+                    .iter()
+                    .enumerate()
+                    .any(|(other, _)| other != index && auto_bases[other] > 0.0)
+        });
+    let anchored_side_size = if center_is_anchored {
         ((available - fixed) / 2.0).max(0.0)
     } else {
         0.0
@@ -1983,10 +2008,7 @@ fn layout_horizontal_margin_boxes(
     // distribution across all three intrinsic bases makes an asymmetric
     // side (dimensions-005) steal space from the opposite side instead of
     // keeping the center aligned.
-    let ac_widths = if active.len() == 3
-        && center_index == Some(1)
-        && active.iter().all(|spec| spec.width.is_none())
-    {
+    let ac_sizes = if active.len() == 3 && active.iter().all(|spec| spec.size(axis).is_none()) {
         let side_base = auto_bases[0].max(auto_bases[2]);
         let center_base = auto_bases[1];
         let ac_base = side_base * 2.0;
@@ -2000,33 +2022,56 @@ fn layout_horizontal_margin_boxes(
     } else {
         None
     };
-    let widths: Vec<f32> = active
+    active
         .iter()
         .enumerate()
         .map(|(index, spec)| {
-            if let Some(ac_widths) = ac_widths {
-                ac_widths[index]
+            let size = if let Some(ac_sizes) = ac_sizes {
+                ac_sizes[index]
             } else if center_is_anchored && Some(index) == center_index {
                 0.0
             } else if center_is_anchored {
-                anchored_side_width
-            } else if spec.width.is_some() {
-                margin_box_outer_width(spec, 0.0).max(0.0)
+                anchored_side_size
+            } else if spec.size(axis).is_some() {
+                spec.outer_size(axis, 0.0)
             } else if auto_base_total > 0.0 {
                 (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
             } else {
                 (auto_remaining / auto_bases.len() as f32).max(0.0)
-            }
+            };
+            (*spec, size)
         })
-        .collect();
+        .collect()
+}
+
+fn layout_horizontal_margin_boxes(
+    document: &Document,
+    specs: &[MarginBoxSpec],
+    top: bool,
+    page_width: f32,
+    page_height: f32,
+    margins: PageMargins,
+    out: &mut Vec<MarginBox>,
+) {
+    let (edge, row_y, row_height) = if top {
+        (TOP_EDGE, 0.0, margins.top)
+    } else {
+        (BOTTOM_EDGE, page_height - margins.bottom, margins.bottom)
+    };
+    if row_height <= 0.0 {
+        return;
+    }
+    let available = (page_width - margins.left - margins.right).max(0.0);
     let mut x = margins.left;
-    for (spec, outer_width) in active.into_iter().zip(widths) {
+    for (spec, outer_width) in edge_track_sizes(document, specs, edge, available, row_height) {
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
         let width = (outer_width - margin_left - margin_right).max(0.0);
         let paint_x = x + margin_left;
         let outer_height = if spec.height.is_some() {
-            margin_box_outer_height(spec, 0.0).min(row_height).max(0.0)
+            spec.outer_size(Axis::Vertical, 0.0)
+                .min(row_height)
+                .max(0.0)
         } else {
             row_height
         };
@@ -2058,97 +2103,24 @@ fn layout_vertical_margin_boxes(
     margins: PageMargins,
     out: &mut Vec<MarginBox>,
 ) {
-    let (column_x, column_width) = if left {
-        (0.0, margins.left)
+    let (edge, column_x, column_width) = if left {
+        (LEFT_EDGE, 0.0, margins.left)
     } else {
-        (page_width - margins.right, margins.right)
+        (RIGHT_EDGE, page_width - margins.right, margins.right)
     };
     if column_width <= 0.0 {
         return;
     }
-    let slots = if left {
-        [
-            PageMarginBoxSlot::LeftTop,
-            PageMarginBoxSlot::LeftMiddle,
-            PageMarginBoxSlot::LeftBottom,
-        ]
-    } else {
-        [
-            PageMarginBoxSlot::RightTop,
-            PageMarginBoxSlot::RightMiddle,
-            PageMarginBoxSlot::RightBottom,
-        ]
-    };
-    let active: Vec<&MarginBoxSpec> = slots
-        .iter()
-        .filter_map(|slot| specs.iter().find(|spec| spec.slot == *slot))
-        .collect();
-    if active.is_empty() {
-        return;
-    }
     let available = (page_height - margins.top - margins.bottom).max(0.0);
-    let fixed = active
-        .iter()
-        .filter(|spec| spec.height.is_some())
-        .map(|spec| margin_box_outer_height(spec, 0.0))
-        .sum::<f32>();
-    let auto_bases: Vec<f32> = active
-        .iter()
-        .map(|spec| {
-            if spec.height.is_some() {
-                0.0
-            } else {
-                margin_box_intrinsic_height(document, spec)
-            }
-        })
-        .collect();
-    let auto_base_total = auto_bases.iter().sum::<f32>();
-    let auto_remaining = available - fixed - auto_base_total;
-    let ac_heights = if active.len() == 3 && active.iter().all(|spec| spec.height.is_none()) {
-        let side_base = auto_bases[0].max(auto_bases[2]);
-        let center_base = auto_bases[1];
-        let ac_base = side_base * 2.0;
-        let total_base = ac_base + center_base;
-        (side_base > 0.0 && center_base > 0.0 && total_base > 0.0).then(|| {
-            let free = available - total_base;
-            let ac = (ac_base + free * ac_base / total_base).max(0.0);
-            let center = (center_base + free * center_base / total_base).max(0.0);
-            [ac * 0.5, center, ac * 0.5]
-        })
-    } else {
-        None
-    };
-    let heights: Vec<f32> = active
-        .iter()
-        .enumerate()
-        .map(|(index, spec)| {
-            if let Some(ac_heights) = ac_heights {
-                ac_heights[index]
-            } else if spec.height.is_some() {
-                margin_box_outer_height(spec, 0.0).max(0.0)
-            } else if auto_base_total > 0.0 {
-                (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
-            } else {
-                (auto_remaining / auto_bases.len() as f32).max(0.0)
-            }
-        })
-        .collect();
-    let has_top = active.iter().any(|spec| {
-        matches!(
-            spec.slot,
-            PageMarginBoxSlot::LeftTop | PageMarginBoxSlot::RightTop
-        )
-    });
-    let has_bottom = active.iter().any(|spec| {
-        matches!(
-            spec.slot,
-            PageMarginBoxSlot::LeftBottom | PageMarginBoxSlot::RightBottom
-        )
-    });
-    let all_fixed_heights = active.len() == 3 && active.iter().all(|spec| spec.height.is_some());
+    let tracks = edge_track_sizes(document, specs, edge, available, column_width);
+    let has_slot = |slot: PageMarginBoxSlot| tracks.iter().any(|(spec, _)| spec.slot == slot);
+    let has_top = has_slot(edge.slots[0]);
+    let has_bottom = has_slot(edge.slots[2]);
+    let all_fixed_heights =
+        tracks.len() == 3 && tracks.iter().all(|(spec, _)| spec.height.is_some());
     let segment_height = available / 3.0;
     let mut y = margins.top;
-    for (spec, outer_height) in active.into_iter().zip(heights) {
+    for &(spec, outer_height) in &tracks {
         let margin_top = spec.margin[0];
         let margin_bottom = spec.margin[2];
         let height = (outer_height - margin_top - margin_bottom).max(0.0);
@@ -2162,14 +2134,7 @@ fn layout_vertical_margin_boxes(
                 + slot_index * segment_height
                 + (segment_height - outer_height).max(0.0) / 2.0
                 + margin_top
-        } else if spec.height.is_some()
-            && matches!(
-                spec.slot,
-                PageMarginBoxSlot::LeftMiddle | PageMarginBoxSlot::RightMiddle
-            )
-            && !has_top
-            && !has_bottom
-        {
+        } else if spec.height.is_some() && spec.slot == edge.slots[1] && !has_top && !has_bottom {
             margins.top + (available - outer_height).max(0.0) / 2.0 + margin_top
         } else {
             y + margin_top
@@ -2177,7 +2142,7 @@ fn layout_vertical_margin_boxes(
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
         let outer_width = if spec.width.is_some() {
-            margin_box_outer_width(spec, 0.0).max(0.0)
+            spec.outer_size(Axis::Horizontal, 0.0)
         } else {
             column_width
         };
@@ -2349,8 +2314,8 @@ pub fn page_margin_boxes_with_values(
             ),
             _ => continue,
         };
-        let width = margin_box_outer_width(spec, cell_w).min(cell_w);
-        let height = margin_box_outer_height(spec, cell_h).min(cell_h);
+        let width = spec.outer_size(Axis::Horizontal, cell_w).min(cell_w);
+        let height = spec.outer_size(Axis::Vertical, cell_h).min(cell_h);
         let x = if spec.margin_auto[1] && spec.margin_auto[3] {
             x + (cell_w - width).max(0.0) / 2.0
         } else {
