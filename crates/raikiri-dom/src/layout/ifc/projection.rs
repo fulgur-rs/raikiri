@@ -254,7 +254,7 @@ pub(crate) fn has_in_flow_generated_text(
 
 /// Record the paint offset of `id` when it is relatively positioned, with
 /// its insets, by index in `offsets`, when the offset depends on the root's
-/// size. `rtl` is the root's direction.
+/// size or writing mode. `rtl` is the root's direction.
 fn push_relative_offset(
     offsets: &mut Vec<(usize, (f32, f32))>,
     percent_insets: &mut Vec<(usize, style::InlineRelativeInsets)>,
@@ -265,7 +265,7 @@ fn push_relative_offset(
     let Some(insets) = style::InlineRelativeInsets::of(cv) else {
         return;
     };
-    if insets.has_percentage() {
+    if insets.depends_on_containing_block() {
         percent_insets.push((offsets.len(), insets));
     }
     offsets.push((id, insets.offset(0.0, None, rtl)));

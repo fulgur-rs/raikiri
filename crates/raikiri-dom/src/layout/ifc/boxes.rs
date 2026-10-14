@@ -1275,7 +1275,7 @@ fn layout_block_child(
             node,
             geometry.content_size.width,
             relative_height(&geometry),
-            rtl_flow(&geometry),
+            geometry.axes,
         );
         let location = taffy::Point {
             x: geometry.edges.0 + margin.left + dx,
@@ -1379,13 +1379,7 @@ fn layout_vertical_block_child(
         },
     );
     if perform {
-        let (dx, dy) = relative_inset(
-            tree,
-            node,
-            basis,
-            relative_height(&geometry),
-            rtl_flow(&geometry),
-        );
+        let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry), geometry.axes);
         let location = taffy::Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
@@ -1525,7 +1519,7 @@ fn layout_formatting_context_child(
             node,
             geometry.content_size.width,
             relative_height(&geometry),
-            rtl_flow(&geometry),
+            geometry.axes,
         );
         let location = taffy::Point {
             x: position.x + extra_left + dx,
@@ -1735,7 +1729,7 @@ fn place_atomics(
                 node,
                 geometry.content_size.width,
                 relative_height(&geometry),
-                rtl_flow(&geometry),
+                geometry.axes,
             );
             // A right-to-left line runs from the right edge: its inline axis
             // is mirrored inside the content box.
@@ -1760,22 +1754,17 @@ fn relative_height(geometry: &FlowGeometry) -> Option<f32> {
     geometry.definite_height
 }
 
-/// Whether the root's `direction` is `rtl`.
-fn rtl_flow(geometry: &FlowGeometry) -> bool {
-    geometry.axes.direction() == Direction::Rtl
-}
-
-/// The offset of a relatively positioned box (CSS 2.1 9.4.3): `left` over
-/// `-right` (`-right` over `left` in an `rtl` root), `top` over `-bottom`,
-/// percentages of the root's content width and of its `height` when that is
-/// definite (otherwise a vertical percentage computes to `auto`). `(0, 0)`
-/// for a box in normal position.
+/// The offset of a relatively positioned box (CSS 2.1 9.4.3): of opposing
+/// insets the one on the start side of the root's `axes` wins, percentages
+/// are of the root's content width and of its `height` when that is definite
+/// (otherwise a vertical percentage computes to `auto`). `(0, 0)` for a box
+/// in normal position.
 fn relative_inset(
     tree: &Document,
     node: usize,
     basis: f32,
     height: Option<f32>,
-    rtl: bool,
+    axes: super::geometry::IfcAxes,
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
@@ -1790,12 +1779,24 @@ fn relative_inset(
     let horizontal =
         |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(basis), resolve_calc);
     let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(height, resolve_calc);
+    let (right_wins, bottom_wins) =
+        super::style::inset_precedence(axes.writing_mode(), axes.direction() == Direction::Rtl);
     let left = horizontal(style.inset.left);
     let right = horizontal(style.inset.right).map(|right| -right);
-    let dx = if rtl { right.or(left) } else { left.or(right) }.unwrap_or(0.0);
-    let dy = vertical(style.inset.top)
-        .or(vertical(style.inset.bottom).map(|bottom| -bottom))
-        .unwrap_or(0.0);
+    let dx = if right_wins {
+        right.or(left)
+    } else {
+        left.or(right)
+    }
+    .unwrap_or(0.0);
+    let top = vertical(style.inset.top);
+    let bottom = vertical(style.inset.bottom).map(|bottom| -bottom);
+    let dy = if bottom_wins {
+        bottom.or(top)
+    } else {
+        top.or(bottom)
+    }
+    .unwrap_or(0.0);
     (dx, dy)
 }
 

@@ -41,7 +41,7 @@ pub(crate) struct IfcRoot {
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
     /// The insets of the elements in `offsets` whose offset depends on the
-    /// root's size, by index in `offsets`, which
+    /// root's size or writing mode, by index in `offsets`, which
     /// [`Self::resolve_percent_offsets`] applies.
     pub(crate) percent_insets: Vec<(usize, super::style::InlineRelativeInsets)>,
     /// The root's content height when it is definite, which a percentage
@@ -328,7 +328,8 @@ impl IfcRoot {
     pub(crate) fn resolve_percent_offsets(&mut self, width: f32) {
         let width = self.containing_width.unwrap_or(width);
         for (index, insets) in &self.percent_insets {
-            self.offsets[*index].1 = insets.offset(width, self.definite_height, self.rtl);
+            self.offsets[*index].1 =
+                insets.offset_in(width, self.definite_height, self.writing_mode, self.rtl);
         }
     }
 

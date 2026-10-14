@@ -937,3 +937,34 @@ fn ellipsis_needs_a_non_visible_inline_overflow() {
     assert!(!ends("text-overflow:clip;overflow:hidden"));
     assert!(!ends("overflow:hidden"));
 }
+
+#[test]
+fn inline_relative_insets_prefer_the_start_side_of_a_vertical_containing_block() {
+    let fixture = block_fixture(
+        "position:relative;left:5px;right:10%;top:3px;bottom:4px",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let insets =
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative");
+    assert!(insets.depends_on_containing_block());
+    // vertical-rl: right is the block start; top is the inline start in ltr.
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::VerticalRl, false),
+        (-20.0, 3.0)
+    );
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::VerticalRl, true),
+        (-20.0, -4.0)
+    );
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::VerticalLr, false),
+        (5.0, 3.0)
+    );
+    // sideways-lr: the inline axis runs bottom to top.
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::SidewaysLr, false),
+        (5.0, -4.0)
+    );
+}

@@ -158,28 +158,69 @@ impl InlineRelativeInsets {
             .any(|terms| terms.percent.is_some())
     }
 
-    /// The paint offset against a containing block `width` wide and, when it
-    /// is definite, `height` high: `left` over `-right` (`-right` over `left`
-    /// when the containing block is `rtl`), `top` over `-bottom` (CSS 2.1
-    /// §9.4.3).
+    /// Whether the offset depends on the containing block: its size, for a
+    /// percentage, or its writing mode, when opposing insets both apply.
+    pub(crate) fn depends_on_containing_block(&self) -> bool {
+        self.has_percentage()
+            || (self.left.is_some() && self.right.is_some())
+            || (self.top.is_some() && self.bottom.is_some())
+    }
+
+    /// The paint offset against a horizontal containing block `width` wide
+    /// and, when it is definite, `height` high; see [`Self::offset_in`].
     pub(crate) fn offset(&self, width: f32, height: Option<f32>, rtl: bool) -> (f32, f32) {
+        self.offset_in(width, height, WritingMode::HorizontalTb, rtl)
+    }
+
+    /// The paint offset against a containing block `width` wide and, when it
+    /// is definite, `height` high, with the writing `mode` and direction
+    /// `rtl`: when opposing insets both apply, the one on the containing
+    /// block's end side is ignored (CSS Position 3 §3.3).
+    pub(crate) fn offset_in(
+        &self,
+        width: f32,
+        height: Option<f32>,
+        mode: WritingMode,
+        rtl: bool,
+    ) -> (f32, f32) {
+        let (right_wins, bottom_wins) = inset_precedence(mode, rtl);
         let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
         let left = self.left.and_then(|terms| terms.resolve(Some(width)));
         let right = self
             .right
             .and_then(|terms| terms.resolve(Some(width)))
             .map(|right| -right);
-        let dx = if rtl { right.or(left) } else { left.or(right) }.unwrap_or(0.0);
-        let dy = self
-            .top
+        let dx = if right_wins {
+            right.or(left)
+        } else {
+            left.or(right)
+        }
+        .unwrap_or(0.0);
+        let top = self.top.and_then(|terms| terms.resolve(height));
+        let bottom = self
+            .bottom
             .and_then(|terms| terms.resolve(height))
-            .or_else(|| {
-                self.bottom
-                    .and_then(|terms| terms.resolve(height))
-                    .map(|b| -b)
-            })
-            .unwrap_or(0.0);
+            .map(|bottom| -bottom);
+        let dy = if bottom_wins {
+            bottom.or(top)
+        } else {
+            top.or(bottom)
+        }
+        .unwrap_or(0.0);
         (finite(dx), finite(dy))
+    }
+}
+
+/// Whether `right` wins over `left`, and `bottom` over `top`, when both of a
+/// pair apply in a containing block with the writing `mode` and direction
+/// `rtl`: the inset on the start side of each axis wins (CSS Position 3
+/// §3.3).
+pub(crate) fn inset_precedence(mode: WritingMode, rtl: bool) -> (bool, bool) {
+    match mode {
+        WritingMode::HorizontalTb => (rtl, false),
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => (true, rtl),
+        WritingMode::VerticalLr => (false, rtl),
+        WritingMode::SidewaysLr => (false, !rtl),
     }
 }
 

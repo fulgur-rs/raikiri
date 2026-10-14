@@ -13348,3 +13348,37 @@ fn a_relative_block_in_an_rtl_mixed_root_prefers_right() {
     let moved_x = doc.nodes[moved].unrounded_layout.location.x;
     assert_eq!(moved_x - still_x, -20.0);
 }
+
+#[test]
+fn a_relative_block_in_a_vertical_rl_mixed_root_prefers_right() {
+    // CSS Position 3 §3.3: in a vertical-rl containing block the right side
+    // is the block start, so `right` wins over `left` even with `direction:
+    // ltr`.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;writing-mode:vertical-rl;width:200px;height:100px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px;position:relative;left:5px;right:10%"),
+        );
+    });
+    let still_x = doc.nodes[still].unrounded_layout.location.x;
+    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    // The moved block sits 10px left of the other before its offset.
+    assert_eq!(moved_x - still_x, -10.0 - 20.0);
+}
