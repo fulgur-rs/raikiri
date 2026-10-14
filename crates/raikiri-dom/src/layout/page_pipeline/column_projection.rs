@@ -501,16 +501,14 @@ impl ParagraphProjection {
             let mut membership = HashMap::<usize, BTreeSet<usize>>::new();
             for (&column, data) in &result.columns {
                 for &source in data.owners.keys().chain(data.bounds.keys()) {
-                    let mut current = source;
-                    while current != root {
+                    for current in document
+                        .inclusive_ancestors(source)
+                        .take_while(|&current| current != root)
+                    {
                         work.charge(1)?;
                         if !membership.entry(current).or_default().insert(column) {
                             break;
                         }
-                        let Some(parent) = document.parent_of(current) else {
-                            break;
-                        };
-                        current = parent;
                     }
                 }
             }

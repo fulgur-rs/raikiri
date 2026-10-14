@@ -152,10 +152,10 @@ fn surrounding_run_start(
     let root = document.root_index();
     let mut held = id;
     let mut current = id;
-    while joins_inline_run(document, cascade, current) {
-        let Some(parent) = document.parent_of(current).filter(|&parent| parent != root) else {
+    for parent in document.ancestors(id) {
+        if parent == root || !joins_inline_run(document, cascade, current) {
             break;
-        };
+        }
         if let Some(start) = trailing_inline_run(document, cascade, parent)
             && position[start] < position[held]
         {
@@ -279,7 +279,7 @@ fn is_html_element_in_document(document: &Document, id: usize) -> bool {
 }
 
 fn depth(document: &Document, id: usize) -> usize {
-    std::iter::successors(document.parent_of(id), |&parent| document.parent_of(parent)).count()
+    document.ancestors(id).count()
 }
 
 /// Whether the box's layout, including the position of its first children,

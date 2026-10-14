@@ -1017,6 +1017,27 @@ impl Document {
         self.nodes.get(child)?.parent
     }
 
+    /// Iterate over the ancestors of `node`, nearest first, not including
+    /// `node` itself. Follows [`Self::parent_of`], so the walk stops at the
+    /// root, at an unattached subtree's top, and at a `<template>` contents
+    /// fragment root.
+    pub fn ancestors(&self, node: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(self.parent_of(node), move |&id| self.parent_of(id))
+    }
+
+    /// Iterate over `node` and then its ancestors, nearest first. `node` is
+    /// always yielded first, even when it is out of range; the walk then
+    /// follows [`Self::ancestors`].
+    pub fn inclusive_ancestors(&self, node: usize) -> impl Iterator<Item = usize> + '_ {
+        std::iter::successors(Some(node), move |&id| self.parent_of(id))
+    }
+
+    /// Whether `ancestor` is `node` or one of its ancestors, following
+    /// [`Self::inclusive_ancestors`] (so not through a `<template>` host).
+    pub fn is_ancestor_or_self(&self, ancestor: usize, node: usize) -> bool {
+        self.inclusive_ancestors(node).any(|id| id == ancestor)
+    }
+
     /// Used left and right margins of `<body>`, in CSS pixels, as of the most
     /// recent layout.
     ///

@@ -673,14 +673,8 @@ pub fn build_page_scene_for_page_named(
 
 /// The paragraph root above a node inside an ifc paragraph.
 fn ifc_root_of(dom: &Document, idx: usize) -> Option<usize> {
-    let mut current = dom.parent_of(idx);
-    while let Some(id) = current {
-        if dom.get_node(id)?.is_ifc_root() {
-            return Some(id);
-        }
-        current = dom.parent_of(id);
-    }
-    None
+    dom.ancestors(idx)
+        .find(|&id| dom.get_node(id).is_some_and(|node| node.is_ifc_root()))
 }
 
 /// Get an Element node's `id` attribute through the

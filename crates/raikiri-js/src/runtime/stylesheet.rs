@@ -435,7 +435,7 @@ pub(crate) fn note_child_list_change(state: &mut State, parent: usize, moved: &[
             style_element == parent
                 || moved
                     .iter()
-                    .any(|&root| is_inclusive_ancestor(document, root, style_element))
+                    .any(|&root| document.is_ancestor_or_self(root, style_element))
         })
         .collect();
     for style_element in replaced {
@@ -443,17 +443,6 @@ pub(crate) fn note_child_list_change(state: &mut State, parent: usize, moved: &[
             version.stale = true;
         }
     }
-}
-
-fn is_inclusive_ancestor(document: &Document, ancestor: usize, node: usize) -> bool {
-    let mut current = Some(node);
-    while let Some(index) = current {
-        if index == ancestor {
-            return true;
-        }
-        current = document.parent_of(index);
-    }
-    false
 }
 
 /// The nodes inserting `node` adds as children: a `DocumentFragment`'s

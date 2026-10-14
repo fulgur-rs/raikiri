@@ -315,15 +315,13 @@ impl MotionCache {
     fn fixed_container(&mut self, document: &Document, cascade: &CascadeResult, id: usize) -> bool {
         // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
         let mut path = Vec::new();
-        let mut current = Some(id);
         let mut contains = false;
-        while let Some(node) = current {
+        for node in document.inclusive_ancestors(id) {
             if let Some(&known) = self.fixed_container.get(&node) {
                 contains = known;
                 break;
             }
             path.push(node);
-            current = document.parent_of(node);
         }
         for &node in path.iter().rev() {
             contains |= cascade.computed.get(node).is_some_and(|cv| {
@@ -530,27 +528,24 @@ impl<'a> PageMotion<'a> {
     fn space(&mut self, id: usize) -> Space {
         let body = self.document.page_projection.run_context.body;
         let mut path = Vec::new();
-        let mut current = Some(id);
+        let identity = Space {
+            transform: Some(PaintTransform::IDENTITY),
+            columns: (0.0, 0.0),
+        };
+        let mut ancestors = self.document.inclusive_ancestors(id);
         let mut space = loop {
-            let Some(node) = current else {
+            let Some(node) = ancestors.next() else {
                 // Above the body, where the paint order starts, nothing moves.
                 path.clear();
-                break Space {
-                    transform: Some(PaintTransform::IDENTITY),
-                    columns: (0.0, 0.0),
-                };
+                break identity;
             };
             if let Some(&known) = self.spaces.get(&node) {
                 break known;
             }
             path.push(node);
             if Some(node) == body {
-                break Space {
-                    transform: Some(PaintTransform::IDENTITY),
-                    columns: (0.0, 0.0),
-                };
+                break identity;
             }
-            current = self.document.parent_of(node);
         };
         for &node in path.iter().rev() {
             space = self.child_space(space, node);
