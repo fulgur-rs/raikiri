@@ -12,6 +12,7 @@
 use super::boxes::{IfcBox, IfcBoxKind};
 use super::error::IfcError;
 use super::first_letter::{FirstLetter, LetterStyle};
+use super::generated_blocks::GeneratedBlock;
 use super::style;
 use crate::Document;
 use crate::generated_content::{
@@ -63,6 +64,8 @@ pub(crate) struct ProjectedIfc {
     pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
     /// Fixed-size images of `::before` and `::after` content.
     pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
+    /// Block-level `::before` and `::after` boxes, in document order.
+    pub(crate) generated_blocks: Vec<GeneratedBlock>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -256,6 +259,8 @@ struct GeneratedImages {
     /// Paint offsets of the relatively positioned `::before` and `::after`
     /// boxes, by the inline engine's node id of the pseudo-element.
     offsets: Vec<(usize, (f32, f32))>,
+    /// The block-level `::before` and `::after` boxes, in document order.
+    blocks: Vec<GeneratedBlock>,
 }
 
 /// The atomic size of an image of `width` by `height` CSS pixels, its
@@ -277,9 +282,10 @@ fn image_atomic_size(
 /// generated box is a child of its element, before or after its content).
 /// Text is laid out as text; each prepared image of `::before` and `::after`
 /// is an atomic inline in its place (CSS Content 3 §2.2), and an image that
-/// was not prepared represents nothing. A block-level pseudo-element is
-/// approximated by a line of its own: a forced break after `::before`,
-/// before `::after`. Floated and out-of-flow pseudo-elements are not part of
+/// was not prepared represents nothing. A block-level pseudo-element is a
+/// block box between the lines, marked by a start and an end token around its
+/// content (see [`super::generated_blocks`]); even an empty one keeps its
+/// height and edges. Floated and out-of-flow pseudo-elements are not part of
 /// the paragraph; the painter draws them as overlays.
 #[allow(clippy::too_many_arguments)]
 fn push_generated(
@@ -352,13 +358,27 @@ fn push_generated(
                 | DisplayValue::InlineGrid
                 | DisplayValue::InlineTable
         );
-    if text.is_empty() && !has_images {
+    let id = NodeId(generated_node_id(element, pseudo) as u64);
+    let inline_level = pseudo == PseudoElem::Marker
+        || matches!(
+            cv.display,
+            DisplayValue::Inline
+                | DisplayValue::Contents
+                | DisplayValue::InlineBlock
+                | DisplayValue::InlineFlex
+                | DisplayValue::InlineGrid
+                | DisplayValue::InlineTable
+        );
+    let block = (!inline_level)
+        .then(|| super::generated_blocks::end_token_id(id.0))
+        .flatten()
+        .map(|end| GeneratedBlock::new(id.0, end, cv));
+    if text.is_empty() && !has_images && block.is_none() {
         if atomic {
             first_letter.stop();
         }
         return Ok(());
     }
-    let id = NodeId(generated_node_id(element, pseudo) as u64);
     // The pseudo-element's own relative offset moves its text and images
     // like those of a relatively positioned inline element (CSS 2.1 §9.4.3).
     // With `display: contents` it generates no box for the offset to move.
@@ -370,16 +390,6 @@ fn push_generated(
             .offsets
             .push((id.0 as usize, style::relative_offset_in_lines(cv)));
     }
-    let inline_level = pseudo == PseudoElem::Marker
-        || matches!(
-            cv.display,
-            DisplayValue::Inline
-                | DisplayValue::Contents
-                | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        );
     // Atomic text is outside this IFC; a block after-pseudo starts a later line.
     if atomic || (!inline_level && pseudo == PseudoElem::After) {
         first_letter.stop();
@@ -415,8 +425,15 @@ fn push_generated(
     } else {
         InlineEdges::default()
     };
-    builder.open_inline(id, &inline_style, edges);
-    if !inline_level && pseudo == PseudoElem::After {
+    if let Some(block) = &block {
+        builder.push_block_in_inline(NodeId(block.start));
+        images.blocks.push(*block);
+    }
+    let empty = text.is_empty() && !has_images;
+    if !empty {
+        builder.open_inline(id, &inline_style, edges);
+    }
+    if !inline_level && block.is_none() && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
     }
     if pseudo == PseudoElem::Marker {
@@ -460,10 +477,15 @@ fn push_generated(
             }
         }
     }
-    if !inline_level && pseudo == PseudoElem::Before {
+    if !inline_level && block.is_none() && pseudo == PseudoElem::Before {
         builder.push_forced_break(id);
     }
-    builder.close_inline();
+    if !empty {
+        builder.close_inline();
+    }
+    if let Some(block) = &block {
+        builder.push_block_in_inline(NodeId(block.end));
+    }
     match builder.error() {
         Some(error) => Err(IfcError::Limit(error)),
         None => Ok(()),
@@ -569,6 +591,8 @@ pub(crate) struct ProjectedBuilder {
     pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
     /// Fixed-size images of `::before` and `::after` content.
     pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
+    /// Block-level `::before` and `::after` boxes, in document order.
+    pub(crate) generated_blocks: Vec<GeneratedBlock>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements, by DOM
@@ -616,6 +640,7 @@ impl ProjectedBuilder {
             boxes: self.boxes,
             marker_atomic: self.marker_atomic,
             generated_atomics: self.generated_atomics,
+            generated_blocks: self.generated_blocks,
             rtl: self.rtl,
             offsets: self.offsets,
             cleared_breaks: self.cleared_breaks,
@@ -717,6 +742,7 @@ pub(crate) fn project_ifc_text_builder(
         boxes: Vec::new(),
         marker_atomic: None,
         generated_atomics: Vec::new(),
+        generated_blocks: Vec::new(),
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
         cleared_breaks,
@@ -834,6 +860,7 @@ fn project_children_builder(
         atomics: Vec::new(),
         writing_mode,
         offsets: Vec::new(),
+        blocks: Vec::new(),
     };
     let marker_atomic = if anonymous_children.is_some() {
         None
@@ -1228,6 +1255,7 @@ fn project_children_builder(
         boxes,
         marker_atomic,
         generated_atomics: generated_images.atomics,
+        generated_blocks: generated_images.blocks,
         rtl: root_cv.direction == Direction::Rtl,
         offsets: {
             offsets.extend(generated_images.offsets);

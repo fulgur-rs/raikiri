@@ -2,6 +2,7 @@
 
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
+use super::generated_blocks;
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
@@ -515,6 +516,10 @@ fn run_boxes_segment(
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut continuation = None;
+    // The block-level `::before` or `::after` whose lines are being laid
+    // out: its start token was met and its end token was not.
+    let mut open_block: Option<generated_blocks::OpenBlock> = None;
+    let horizontal = root.writing_mode == WritingMode::HorizontalTb;
 
     loop {
         calls += 1;
@@ -533,7 +538,7 @@ fn run_boxes_segment(
                 inline_size: width,
             }
         };
-        let space = shorten(base, &tentative);
+        let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
         let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
         let mut constraint = LineConstraint::from_physical_insets(
             width,
@@ -645,7 +650,8 @@ fn run_boxes_segment(
                         inline_size: width,
                     }
                 };
-                let real = shorten(real_base, &tentative);
+                let real =
+                    narrow_to_block(shorten(real_base, &tentative), open_block.as_ref(), width);
                 if retries < MAX_SPACE_RETRIES && real != space {
                     assumed_height = height;
                     retries += 1;
@@ -767,6 +773,44 @@ fn run_boxes_segment(
                             placements: &mut fragment_box_placements,
                         },
                     ));
+                }
+                if let Some(edge) = generated_blocks::token(&root.generated_blocks, node.0) {
+                    // A generated block is laid out along a horizontal
+                    // root's block axis only; a vertical root breaks its
+                    // lines at the tokens.
+                    if horizontal {
+                        let at_start = lines.is_empty()
+                            && block_line_starts.is_empty()
+                            && y == 0.0
+                            && pending == CollapsibleMarginSet::ZERO
+                            && ceiling == f32::NEG_INFINITY;
+                        let flow = generated_blocks::Flow {
+                            y: &mut y,
+                            pending: &mut pending,
+                            leading_block_margin: &mut leading_block_margin,
+                            lines: &lines,
+                            ctx,
+                            width,
+                            top_edge,
+                            definite_height: geometry.definite_height,
+                            at_start,
+                        };
+                        match edge {
+                            generated_blocks::Token::Start(block) => {
+                                open_block = Some(generated_blocks::open(block, flow));
+                            }
+                            generated_blocks::Token::End(block) => {
+                                generated_blocks::close(block, open_block.take(), flow);
+                            }
+                        }
+                    }
+                    token = token_after;
+                    withdrawn.clear();
+                    assumed_height = 0.0;
+                    retries = 0;
+                    moves = 0;
+                    calls = 0;
+                    continue;
                 }
                 let starts_paragraph = lines.is_empty()
                     && block_line_starts.is_empty()
@@ -972,6 +1016,16 @@ fn next_float_edge(ctx: &BlockContext<'_>, top_edge: f32, y: f32) -> Option<f32>
         ctx.cleared_threshold(Clear::Both)?
     };
     (edge > at).then_some(edge - top_edge)
+}
+
+/// The space of a line of the generated block `open`, if one is open, set
+/// in by its inline-side edges.
+fn narrow_to_block(
+    space: LineSpace,
+    open: Option<&generated_blocks::OpenBlock>,
+    width: f32,
+) -> LineSpace {
+    open.map_or(space, |open| open.narrow(space, width))
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left

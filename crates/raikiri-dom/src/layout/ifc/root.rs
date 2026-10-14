@@ -35,6 +35,9 @@ pub(crate) struct IfcRoot {
     /// Fixed-size images of `::before` and `::after` content, independent of
     /// the DOM box arena.
     pub(crate) generated_atomics: Vec<(shodo::node::NodeId, shodo::AtomicSize)>,
+    /// Block-level `::before` and `::after` boxes of the paragraph, which the
+    /// line loop places between the lines at their tokens.
+    pub(crate) generated_blocks: Arc<[super::generated_blocks::GeneratedBlock]>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements of the
@@ -226,6 +229,17 @@ impl IfcLines {
 
     /// The block offset of line `index` from the content-box top, with the
     /// pagination shift.
+    /// The block offset of the end of the paragraph's content from its
+    /// content-box top: its laid-out height, moved as its last line was.
+    pub(crate) fn shifted_height(&self) -> f32 {
+        self.height
+            + self
+                .lines
+                .len()
+                .checked_sub(1)
+                .map_or(0.0, |last| self.shift_of(last))
+    }
+
     pub(crate) fn line_top(&self, index: usize) -> f32 {
         self.lines
             .get(index)
@@ -292,6 +306,7 @@ impl IfcRoot {
             boxes: projected.boxes,
             marker_atomic: projected.marker_atomic,
             generated_atomics: projected.generated_atomics,
+            generated_blocks: projected.generated_blocks.into(),
             rtl: projected.rtl,
             offsets: projected.offsets,
             cleared_breaks: projected.cleared_breaks.into_iter().collect(),
@@ -318,6 +333,7 @@ impl IfcRoot {
             boxes: self.boxes.clone(),
             marker_atomic: self.marker_atomic,
             generated_atomics: self.generated_atomics.clone(),
+            generated_blocks: self.generated_blocks.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             cleared_breaks: self.cleared_breaks.clone(),

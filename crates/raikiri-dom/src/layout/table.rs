@@ -2322,7 +2322,9 @@ fn is_plain_paragraph_cell(doc: &Document, cell_id: usize) -> bool {
     node.is_ifc_root()
         && node.multicol.is_none()
         && node.ifc.as_ref().is_some_and(|root| {
-            root.writing_mode == shodo::geometry::WritingMode::HorizontalTb && root.boxes.is_empty()
+            root.writing_mode == shodo::geometry::WritingMode::HorizontalTb
+                && root.boxes.is_empty()
+                && root.generated_blocks.is_empty()
         })
 }
 
