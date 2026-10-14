@@ -91,8 +91,8 @@ pub use layout::{
 pub use column_rules::ColumnRule;
 pub use layout::{
     InitialPageContext, InitialPageContextError, InitialPageProbeResources, MAX_LAYOUT_DEPTH,
-    PageContentInsets, PageLayoutControl, PageMargins, PageSlice, RootBox, first_page_name,
-    layout_pages, layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_control,
+    PageContentInsets, PageLayoutControl, PageMargins, PageSlice, first_page_name, layout_pages,
+    layout_pages_with_page_geometry, layout_pages_with_page_geometry_and_control,
     layout_pages_with_page_geometry_and_resolver,
     layout_pages_with_page_geometry_and_resolver_and_base_url,
     layout_pages_with_page_geometry_and_resolver_and_base_url_and_control,
@@ -101,8 +101,10 @@ pub use layout::{
     layout_single_page, layout_single_page_with_resolver,
     layout_single_page_with_resolver_and_base_url, page_content_insets,
     page_content_insets_for_page, page_margins, page_margins_for_page, relayout_text_for_width,
-    resolve_initial_page_context, root_box, validate_layout_depth,
+    resolve_initial_page_context, validate_layout_depth,
 };
+// cov:ignore: public re-exports have no runtime behavior to measure.
+pub use layout::{RootBox, root_box};
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 pub use margin_boxes::{
