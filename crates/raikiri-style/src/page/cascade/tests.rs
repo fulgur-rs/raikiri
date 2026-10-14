@@ -1122,6 +1122,15 @@ fn root_with_font_size(px: f32) -> ComputedValues {
 }
 
 #[test]
+fn cascade_page_font_size_resolves_a_mixed_calc_against_the_root() {
+    let root = root_with_font_size(20.0);
+    assert_eq!(
+        page_font_size_px("calc(50% + 2px)", PageInheritance::FromRoot(&root)),
+        12.0
+    );
+}
+
+#[test]
 fn cascade_page_font_size_resolves_against_root_computed_font_size() {
     let root = root_with_font_size(20.0);
     // §6: em on font-size in the page context is relative to the root
@@ -2656,6 +2665,48 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::FontSize(Length::Px(24.0)),
+    );
+    // A mixed calc, as shorthand size and as longhand, resolves against the
+    // context font size.
+    let half_plus_2px = crate::property::RelativeCalcLengthPercentage::from_unit(50.0, "%")
+        .and_then(|half| {
+            half.add_scaled(
+                crate::property::RelativeCalcLengthPercentage::from_unit(2.0, "px")?,
+                1.0,
+            )
+        })
+        .unwrap();
+    let calc_font = FontShorthand {
+        size: FontShorthandSize::Calc(half_plus_2px),
+        ..font.clone()
+    };
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(calc_font)),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::Font(FontShorthand {
+            size: FontShorthandSize::Absolute(Length::Px(12.0)),
+            line_height: LineHeight::Length(Length::Px(32.0)),
+            ..font.clone()
+        }),
+    );
+    assert_eq!(
+        absolutize_in_page_context(
+            ResolvedAgainstInherited::for_test(PropertyValue::FontSizeCalc(half_plus_2px)),
+            fs,
+            None,
+            &ctx,
+            styles,
+            OutlineStyle::None,
+            OverflowXY::both(OverflowValue::Visible),
+        ),
+        PropertyValue::FontSize(Length::Px(12.0)),
     );
     // `Relative` size converges to the same `Absolute(Px(_))` shape the
     // `FontSizeRelative` longhand arm produces (same basis).
@@ -4313,6 +4364,9 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
     vec![
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger),
         PropertyValue::FontSizeKeyword(crate::property::AbsoluteFontSize::Small),
+        PropertyValue::FontSizeCalc(
+            crate::property::RelativeCalcLengthPercentage::from_unit(50.0, "%").unwrap(),
+        ),
         PropertyValue::CounterResetInherit,
         PropertyValue::MarginTopInherit,
         PropertyValue::MarginRightInherit,
@@ -4454,6 +4508,7 @@ property_value_variant_registry! {
     FontSize,
     FontSizeRelative,
     FontSizeKeyword,
+    FontSizeCalc,
     FontWeight,
     LineHeight,
     Display,
@@ -5068,6 +5123,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // also uses this as its worst-case payload.
             PropertyValue::FontSizeRelative(_) => Some("font-size: larger/smaller"),
             PropertyValue::FontSizeKeyword(_) => Some("font-size: <absolute-size>"),
+            PropertyValue::FontSizeCalc(_) => Some("font-size: calc()"),
             // `font` shorthand fall-through: `size` delegates as in the
             // `FontSize` / `FontSizeRelative` longhand arms
             // (`length_absolute_only` / always residue); `line-height`
@@ -5081,6 +5137,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
                     }
                     FontShorthandSize::Relative(_) => Some("font-size: larger/smaller"),
                     FontShorthandSize::Keyword(_) => Some("font-size: <absolute-size>"),
+                    FontShorthandSize::Calc(_) => Some("font-size: calc()"),
                 };
                 size_residue
                     .or_else(|| line_height(shorthand.line_height))
@@ -6167,8 +6224,9 @@ fn page_corpus_font_size_and_font_size_relative_share_one_key() {
     // cov:ignore: panic-message literal only executed on assertion
     // failure, which doesn't happen while this test passes.
     assert_eq!(
-        font_size_key_count, 3,
-        "FontSize, FontSizeRelative and FontSizeKeyword should share PropertyKey::FontSize",
+        font_size_key_count, 4,
+        "FontSize, FontSizeRelative, FontSizeKeyword and FontSizeCalc should share \
+         PropertyKey::FontSize",
     );
 }
 

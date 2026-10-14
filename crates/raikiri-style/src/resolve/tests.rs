@@ -1966,6 +1966,30 @@ fn a_translate_function_resolves_its_offset_against_the_box() {
 }
 
 #[test]
+fn a_font_size_calc_resolves_against_the_parent_and_clamps() {
+    let resolve = |calc, basis| resolve_font_size_calc(calc, ComputedLength(10.0), basis, &CTX);
+    let unit = |value, unit| RelativeCalcLengthPercentage::from_unit(value, unit).unwrap();
+    assert_eq!(resolve(unit(150.0, "%"), None), ComputedLength(15.0));
+    assert_eq!(
+        resolve(relative_calc_plus_1px(2.0, "em"), None),
+        ComputedLength(21.0)
+    );
+    let percent_minus_px = unit(10.0, "%").add_scaled(unit(5.0, "px"), -1.0).unwrap();
+    assert_eq!(resolve(percent_minus_px, None), ComputedLength(0.0));
+    let lh = relative_calc_plus_1px(1.0, "lh");
+    assert_eq!(
+        resolve(lh, Some(ComputedLength(20.0))),
+        ComputedLength(21.0)
+    );
+    // Without the parent's line height the size falls back to the initial
+    // one, as a plain `lh` does.
+    assert_eq!(
+        resolve(lh, None),
+        ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)
+    );
+}
+
+#[test]
 fn a_line_height_calc_resolves_against_the_own_font_size_and_clamps() {
     let resolve = |calc, basis| {
         resolve_line_height(LineHeight::Calc(calc), ComputedLength(10.0), basis, &CTX)

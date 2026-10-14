@@ -48,19 +48,20 @@ use crate::property::{
     LengthOrAuto, LengthOrNormal, LengthPercentageOrCalc, LetterSpacingValue, LineBreak,
     LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
-    RubyPosition, SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
-    TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
-    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextDecorationThickness, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisShape,
-    TextEmphasisStyle, TextEmphasisVEdge, TextIndentLength, TextJustify, TextOrientation,
-    TextOverflowValue, TextShadowItem, TextSpacingTrim, TextTransform, TextUnderlineOffset,
-    TextUnderlinePosition, TextWrapMode, TextWrapStyle, TransformFunction, UnicodeBidi,
-    VerticalAlign, Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
-    WordSpaceTransform, WordSpacingValue, WritingMode, ZIndexValue, empty_box_shadow_list,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, empty_text_shadow_list, empty_transform_list, initial_font_family,
-    initial_grid_auto_track_list, resolve_display_for_float, resolve_overflow,
-    resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
+    RelativeCalcLengthPercentage, RubyPosition, SelfAlignmentValue, Sides, TabSize,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
+    TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
+    TextIndentLength, TextJustify, TextOrientation, TextOverflowValue, TextShadowItem,
+    TextSpacingTrim, TextTransform, TextUnderlineOffset, TextUnderlinePosition, TextWrapMode,
+    TextWrapStyle, TransformFunction, UnicodeBidi, VerticalAlign, Visibility, VisualBox,
+    WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak, WordSpaceTransform, WordSpacingValue,
+    WritingMode, ZIndexValue, empty_box_shadow_list, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, empty_text_shadow_list,
+    empty_transform_list, initial_font_family, initial_grid_auto_track_list,
+    resolve_display_for_float, resolve_overflow, resolve_text_align_internal_center,
+    resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
     ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent,
@@ -69,10 +70,11 @@ use crate::resolve::{
     lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
     lift_word_spacing, resolve_background_image, resolve_background_size, resolve_border,
     resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_column_width,
-    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_template_tracks, resolve_length, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
-    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
+    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_font_size_calc,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
+    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
+    resolve_line_height, resolve_margin_length_or_auto,
     resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
     resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
@@ -183,6 +185,9 @@ pub struct SpecifiedValues {
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
     /// against the **parent's** computed font size.
     pub font_size: Length,
+    /// A declared mixed-unit `font-size: calc()`, which phase 2 resolves in
+    /// place of [`Self::font_size`].
+    pub(crate) font_size_calc: Option<RelativeCalcLengthPercentage>,
     /// Staging value for [`ComputedValues::font_size_keyword`]. Seeded from
     /// the parent's computed value and updated by
     /// [`crate::cascade::apply_value`]; see
@@ -798,6 +803,7 @@ impl SpecifiedValues {
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: the initial value is `medium` (16px here).
             font_size: Length::Px(crate::computed::INITIAL_FONT_SIZE_PX),
+            font_size_calc: None,
             font_size_keyword: Some(FontSizeKeywordInfo::MEDIUM),
             font_size_keyword_declared: false,
             font_weight: 400.0,
@@ -1148,6 +1154,7 @@ impl SpecifiedValues {
             font_family: parent.font_family.clone(),
             // Losslessly lift a computed `<length>` to specified `Px`, a fixed point.
             font_size: lift_font_size(parent.font_size),
+            font_size_calc: None,
             font_size_keyword: parent.inherited_font_size_keyword(),
             font_size_keyword_declared: false,
             // D5: `bolder` and `lighter` resolve against this value.
@@ -1517,12 +1524,9 @@ impl SpecifiedValues {
         // `resolve_font_size` docs.
         let font_size = match self.keyword_font_size(&parent.font_family) {
             Some(size) => size,
-            None => resolve_font_size(
-                self.font_size,
-                parent.font_size,
-                parent_line_height_basis,
-                ctx,
-            ),
+            None => {
+                self.resolve_declared_font_size(parent.font_size, parent_line_height_basis, ctx)
+            }
         };
         // Resolve text-align: match-parent (CSS Text 3 §6.1) for a node with a parent. The root's
         // "computes to start" branch is in `finalize_as_root`.
@@ -1579,6 +1583,21 @@ impl SpecifiedValues {
             weight: self.font_weight,
             style: self.font_style,
         })
+    }
+
+    /// Phase 2's font size for a declaration other than an
+    /// `<absolute-size>` keyword: a mixed `calc()` when one is declared, or
+    /// else [`Self::font_size`], resolved against the parent's font size.
+    fn resolve_declared_font_size(
+        &self,
+        parent_font_size: ComputedLength,
+        self_reference_basis: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> ComputedLength {
+        match self.font_size_calc {
+            Some(calc) => resolve_font_size_calc(calc, parent_font_size, self_reference_basis, ctx),
+            None => resolve_font_size(self.font_size, parent_font_size, self_reference_basis, ctx),
+        }
     }
 
     /// The phase 2 font size of a keyword-derived `font-size`, or `None` when
@@ -1724,18 +1743,23 @@ impl SpecifiedValues {
         let initial_font_size = ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX);
         // Measured only when a self-referential `lh` / `rlh` needs it.
         let self_referential = |length: &Length| matches!(length, Length::Lh(_) | Length::Rlh(_));
+        let calc_self_referential = |calc: &RelativeCalcLengthPercentage| {
+            calc.relative_terms().any(|(unit, _)| {
+                matches!(
+                    unit,
+                    crate::property::RelativeCalcUnit::Lh | crate::property::RelativeCalcUnit::Rlh
+                )
+            })
+        };
         let initial_line_height = normal_line_height
             .filter(|_| {
                 self_referential(&self.font_size)
+                    || self
+                        .font_size_calc
+                        .is_some_and(|calc| calc_self_referential(&calc))
                     || match &self.line_height {
                         LineHeight::Length(l) => self_referential(l),
-                        LineHeight::Calc(calc) => calc.relative_terms().any(|(unit, _)| {
-                            matches!(
-                                unit,
-                                crate::property::RelativeCalcUnit::Lh
-                                    | crate::property::RelativeCalcUnit::Rlh
-                            )
-                        }),
+                        LineHeight::Calc(calc) => calc_self_referential(calc),
                         _ => false,
                     }
             })
@@ -1757,12 +1781,9 @@ impl SpecifiedValues {
         // `initial_font_family()`.
         let font_size = match self.keyword_font_size(&initial_font_family()) {
             Some(size) => size,
-            None => resolve_font_size(
-                self.font_size,
-                initial_font_size,
-                initial_line_height,
-                &initial,
-            ),
+            None => {
+                self.resolve_declared_font_size(initial_font_size, initial_line_height, &initial)
+            }
         };
         // CSS Text 3 §6.1: "Computes to start when specified on the root element." This special
         // case does not consult any parent text_align or direction and stays local to this

@@ -369,6 +369,12 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
     }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. A math function is
+    // clamped to the range rather than rejected, once it is resolved.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(PropertyValue::FontSizeCalc(calc));
+    }
     let length = parse_length_value(input, true)?;
     (length.payload() >= 0.0).then_some(PropertyValue::FontSize(length))
 }
@@ -2396,6 +2402,10 @@ pub enum FontShorthandSize {
     /// [`PropertyValue::FontSizeKeyword`] variant, into which this component
     /// expands.
     Keyword(AbsoluteFontSize),
+    /// A mixed-unit `calc()`: [`parse_font_size`] returns the
+    /// [`PropertyValue::FontSizeCalc`] variant, into which this component
+    /// expands.
+    Calc(RelativeCalcLengthPercentage),
 }
 
 /// Specified-value carrier for the `font` shorthand: CSS Fonts 4 §2.1, "Font
@@ -2582,7 +2592,8 @@ pub(super) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontSho
         PropertyValue::FontSize(length) => FontShorthandSize::Absolute(length),
         PropertyValue::FontSizeRelative(relative) => FontShorthandSize::Relative(relative),
         PropertyValue::FontSizeKeyword(keyword) => FontShorthandSize::Keyword(keyword),
-        // cov:ignore: `parse_font_size` returns only the three variants above;
+        PropertyValue::FontSizeCalc(calc) => FontShorthandSize::Calc(calc),
+        // cov:ignore: `parse_font_size` returns only the four variants above;
         // its two return paths are canonical. This branch is unreachable.
         _ => return None,
     };

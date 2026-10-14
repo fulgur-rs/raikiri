@@ -868,6 +868,45 @@ fn line_height_resolves_a_mixed_calc_against_its_own_font_size() {
 }
 
 #[test]
+fn font_size_resolves_a_mixed_calc_against_the_parent_font_size() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(
+        0,
+        "html",
+        Some("font-size: calc(1lh + 4px); --size: calc(50% + 2px)"),
+    );
+    let mixed = doc.push_element(html, "p", Some("font-size: calc(50% + 2px)"));
+    let child = doc.push_element(mixed, "span", Some("font-size: 2em"));
+    let lh = doc.push_element(html, "p", Some("font-size: calc(1lh + 1px)"));
+    let clamped = doc.push_element(html, "p", Some("font-size: calc(10% - 20px)"));
+    let shorthand = doc.push_element(
+        html,
+        "p",
+        Some("font: calc(50% + 2px) / calc(150% + 1px) serif"),
+    );
+    let substituted = doc.push_element(html, "p", Some("font-size: var(--size)"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    // The root takes `lh` from the initial font's 20px `normal` line.
+    assert_eq!(r.computed[html].font_size, ComputedLength(24.0));
+    assert_eq!(r.computed[mixed].font_size, ComputedLength(14.0));
+    // A child inherits the computed size, not the calc.
+    assert_eq!(r.computed[child].font_size, ComputedLength(28.0));
+    assert!(r.computed[mixed].font_size_keyword.is_none());
+    let root_normal = r.computed[html]
+        .normal_line_height
+        .expect("the root's normal line height")
+        .px();
+    assert_eq!(r.computed[lh].font_size, ComputedLength(root_normal + 1.0));
+    assert_eq!(r.computed[clamped].font_size, ComputedLength(0.0));
+    assert_eq!(r.computed[shorthand].font_size, ComputedLength(14.0));
+    assert_eq!(
+        r.computed[shorthand].line_height,
+        ComputedLineHeight::Length(ComputedLength(22.0))
+    );
+    assert_eq!(r.computed[substituted].font_size, ComputedLength(14.0));
+}
+
+#[test]
 fn normal_line_height_is_measured_only_where_the_font_changes() {
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", None);

@@ -2466,6 +2466,15 @@ pub(crate) fn resolve_against_inherited(
             crate::resolve::resolve_font_size(len, inherited.font_size, ctx.root_line_height, ctx)
                 .px(),
         )),
+        PropertyValue::FontSizeCalc(calc) => PropertyValue::FontSize(Length::Px(
+            crate::resolve::resolve_font_size_calc(
+                calc,
+                inherited.font_size,
+                ctx.root_line_height,
+                ctx,
+            )
+            .px(),
+        )),
         // CSS Text 3 §6.1 `#valdef-text-align-match-parent`.
         // `inherited` is the page context's inheritance parent (the root
         // element, or initial values under the L3 legacy exception). Resolve
@@ -3046,6 +3055,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 _ => None,
             };
             target.font_size = s;
+            target.font_size_calc = None;
+            target.font_size_keyword_declared = false;
+        }
+        // Phase 2 resolves the calc once the root font size and the parent's
+        // line height are known; the parent's keyword information does not
+        // carry over to a size that mixes in other terms.
+        PropertyValue::FontSizeCalc(calc) => {
+            target.font_size_calc = Some(calc);
+            target.font_size_keyword = None;
             target.font_size_keyword_declared = false;
         }
         PropertyValue::FontSizeRelative(rel) => {
@@ -3053,6 +3071,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             // key's single winner slot, so it has not overwritten the seed.
             let inherited_px = target.font_size.payload();
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
+            target.font_size_calc = None;
             target.font_size_keyword = target
                 .font_size_keyword
                 .map(|info| info.scaled(resolve_relative_font_size(rel, 1.0)));
@@ -3064,6 +3083,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.font_size =
                 Length::Px(keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX));
             target.font_size_keyword = Some(crate::computed::FontSizeKeywordInfo::new(keyword));
+            target.font_size_calc = None;
             target.font_size_keyword_declared = true;
         }
         PropertyValue::FontWeight(fw) => {

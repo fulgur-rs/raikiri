@@ -9483,6 +9483,13 @@ pub enum PropertyValue {
     /// once `font-family` is known. Page contexts resolve it with the default
     /// 16px `medium` in [`crate::cascade::resolve_against_inherited`].
     FontSizeKeyword(AbsoluteFontSize),
+    /// `font-size: calc()` with terms that cannot be combined before
+    /// computed-value time, such as `calc(50% + 2px)` — part of the same
+    /// `font-size` property as [`Self::FontSize`]. Its percentage and
+    /// font-relative terms resolve against the parent's font size (CSS Fonts 4
+    /// §2.5 "Percentages: refer to parent element's font size") when the
+    /// font size is computed, clamped to the `[0,∞]` range.
+    FontSizeCalc(RelativeCalcLengthPercentage),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited,
     /// initial: `Absolute(400.0)`. CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>.
@@ -11671,9 +11678,9 @@ impl PropertyValue {
             // Map them to the same `PropertyKey` so cascade winner selection
             // correctly makes `font-size: 12px` and `font-size: larger` compete.
             // Separate keys would let both win, which the spec does not allow.
-            PropertyValue::FontSizeRelative(_) | PropertyValue::FontSizeKeyword(_) => {
-                PropertyKey::FontSize
-            }
+            PropertyValue::FontSizeRelative(_)
+            | PropertyValue::FontSizeKeyword(_)
+            | PropertyValue::FontSizeCalc(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,

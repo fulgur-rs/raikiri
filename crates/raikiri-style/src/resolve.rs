@@ -2084,6 +2084,39 @@ pub fn resolve_font_size(
     }
 }
 
+/// Absolutize a mixed-unit `font-size: calc()` against the parent's computed
+/// font size, as [`resolve_font_size`] does a plain length: `%`, `em` and
+/// the other font-relative terms take the parent's font, and `lh` the
+/// parent's line height. The sum is clamped to the `[0,∞]` range (CSS Values
+/// 4 "Range Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
+pub fn resolve_font_size_calc(
+    calc: RelativeCalcLengthPercentage,
+    parent_font_size: ComputedLength,
+    self_reference_basis: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    let resolved = resolve_relative_calc_with(
+        calc,
+        parent_font_size,
+        self_reference_basis,
+        ctx,
+        |coefficient, basis| resolve_lh_multiplier(coefficient, basis).map(ComputedLength::px),
+    );
+    let px = match resolved {
+        Some(ComputedLengthPercentageOrAuto::Px(px)) => px,
+        Some(ComputedLengthPercentageOrAuto::Percent(percent)) => {
+            parent_font_size.0 * percent / 100.0
+        }
+        Some(ComputedLengthPercentageOrAuto::Calc(calc)) => {
+            calc.px + parent_font_size.0 * calc.percent / 100.0
+        }
+        // An `lh` term without a basis, or a sum that overflows, falls back
+        // to the initial font size, as a plain unresolvable `lh` does.
+        _ => INITIAL_FONT_SIZE_PX,
+    };
+    ComputedLength(px.max(0.0))
+}
+
 /// Absolutize a specified value for a property that accepts only `<length>`
 /// (no `<percentage>` in its grammar): **phase 3**, using this node's basis.
 ///
