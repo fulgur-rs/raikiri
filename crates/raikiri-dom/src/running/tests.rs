@@ -344,3 +344,20 @@ fn negative_and_non_finite_widths_lay_out_at_zero() {
         .expect("running element");
     assert_eq!(laid_out.geometry.page_box.width, 0.0);
 }
+
+#[test]
+fn a_running_element_too_deep_to_lay_out_is_an_error() {
+    let (mut doc, _, [_, _, head, ..]) = running_document();
+    let mut parent = head;
+    for _ in 0..=crate::layout::MAX_LAYOUT_DEPTH {
+        parent = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    let result = layout_running_element(&doc, &cascade, NodeId(head as u64), 100.0);
+    assert!(matches!(
+        result,
+        Err(LayoutError::TreeDepthLimitExceeded { .. })
+    ));
+}

@@ -223,9 +223,7 @@ fn preorder(document: &Document) -> Vec<(usize, usize)> {
             }
             continue;
         }
-        let Some(node) = document.get_node(id) else {
-            continue;
-        };
+        let node = &document.nodes[id];
         if id != document.root_index() && !node.is_in_document() {
             continue;
         }
@@ -390,17 +388,13 @@ pub fn layout_running_element(
         return Ok(None); // cov:ignore: a document with a body always emits a page slice.
     };
     let measuring = resolve_page_geometry(&cascade.page, page_box);
-    document.project_pages_with_control(
-        &cascade,
-        page_box,
-        std::slice::from_ref(&slice),
-        &[(
-            measuring.page_box,
-            measuring.margins,
-            measuring.content_insets,
-        )],
-        &control,
-    )?;
+    let pages = std::slice::from_ref(&slice);
+    let geometries = [(
+        measuring.page_box,
+        measuring.margins,
+        measuring.content_insets,
+    )];
+    document.project_pages_with_control(&cascade, page_box, pages, &geometries, &control)?;
 
     // Margin percentages refer to the containing block's width.
     let margin_bottom = match cascade.computed[index].margin.bottom {
