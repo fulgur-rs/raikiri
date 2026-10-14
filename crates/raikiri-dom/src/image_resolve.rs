@@ -85,13 +85,7 @@ pub(crate) fn resolve_images_with_base(
                 continue;
             }
             let previous_size = element.image_intrinsic_size;
-            let src = element
-                .attributes
-                .iter()
-                .find(|attribute| {
-                    attribute.namespace.is_none() && attribute.local.as_str() == "src"
-                })
-                .map(|attribute| attribute.value.as_str());
+            let src = element.attribute("src");
             let next_size = if let Some(src) = src {
                 let url = Url::parse(src)
                     .ok()
@@ -143,15 +137,7 @@ pub(crate) fn resolve_inline_svg_intrinsic_sizes(document: &mut Document) {
             continue;
         };
         let next_size = if is_inline_svg_root {
-            let attr = |name: &str| {
-                element
-                    .attributes
-                    .iter()
-                    .find(|attribute| {
-                        attribute.namespace.is_none() && attribute.local.as_str() == name
-                    })
-                    .map(|attribute| attribute.value.as_str())
-            };
+            let attr = |name: &str| element.attribute(name);
             let width = attr("width").and_then(parse_absolute_svg_length);
             let height = attr("height").and_then(parse_absolute_svg_length);
             let ratio = match (width, height) {
@@ -280,13 +266,7 @@ pub(crate) fn resolve_canvas_intrinsic_sizes(document: &mut Document) {
         if !is_html {
             continue;
         }
-        let attr = |name: &str| {
-            element
-                .attributes
-                .iter()
-                .find(|attribute| attribute.namespace.is_none() && attribute.local.as_str() == name)
-                .map(|attribute| attribute.value.as_str())
-        };
+        let attr = |name: &str| element.attribute(name);
         // Reuse the Document parser so content-attribute handling stays in
         // one place; inline the non-negative-integer fallback here to avoid
         // borrowing the document while iterating its nodes mutably.

@@ -4,7 +4,7 @@
 use super::boxes::IfcBox;
 use super::clear_breaks::ClearBreakIndex;
 use super::first_letter::LetterStyle;
-use super::projection::ProjectedIfc;
+use super::projection::{Projected, ProjectedIfc};
 use raikiri_style::ComputedTextIndent;
 use shodo::font::FontCollection;
 use shodo::geometry::WritingMode;
@@ -293,30 +293,31 @@ impl IfcRoot {
     }
 
     pub(crate) fn new(projected: ProjectedIfc) -> Self {
-        let letter_style_index = Arc::new(LetterStyleIndex::new(&projected.letter_styles));
+        let Projected { paragraph, meta } = projected;
+        let letter_style_index = Arc::new(LetterStyleIndex::new(&meta.letter_styles));
         Self {
-            paragraph: projected.paragraph,
-            writing_mode: projected.writing_mode,
-            options: projected.options,
-            indent: projected.indent,
+            paragraph,
+            writing_mode: meta.writing_mode,
+            options: meta.options,
+            indent: meta.indent,
             lines: None,
-            boxes: projected.boxes,
-            marker_atomic: projected.marker_atomic,
-            generated_atomics: projected.generated_atomics,
-            rtl: projected.rtl,
-            offsets: projected.offsets,
-            percent_insets: projected.percent_insets,
+            boxes: meta.boxes,
+            marker_atomic: meta.marker_atomic,
+            generated_atomics: meta.generated_atomics,
+            rtl: meta.rtl,
+            offsets: meta.offsets,
+            percent_insets: meta.percent_insets,
             definite_height: None,
             containing_width: None,
-            cleared_breaks: projected.cleared_breaks.into_iter().collect(),
-            fixed: projected.fixed,
+            cleared_breaks: meta.cleared_breaks.into_iter().collect(),
+            fixed: meta.fixed,
             multicol_fragments: None,
             multicol_fragment_origins_recorded: false,
-            ellipsis: projected.ellipsis,
-            nowrap: projected.nowrap,
-            text_nowrap: projected.text_nowrap,
-            letter_styles: projected.letter_styles,
-            first_line_opacity: projected.first_line_opacity,
+            ellipsis: meta.ellipsis,
+            nowrap: meta.nowrap,
+            text_nowrap: meta.text_nowrap,
+            letter_styles: meta.letter_styles,
+            first_line_opacity: meta.first_line_opacity,
             letter_style_index,
         }
     }
