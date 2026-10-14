@@ -2545,7 +2545,13 @@ fn self_consistent_page_box(
     let mut page_box = raikiri_traits::PageBox::new();
     page_box.width = solve(width, small_x, large_x)?;
     page_box.height = solve(height, small_y, large_y)?;
-    Some(page_box)
+    // A clamped `calc()` edge is linear only piecewise: keep the solution
+    // only when the solved box really leaves the requested page area.
+    let margins = raikiri_dom::page_margins_for_page(page, page_box);
+    let insets = raikiri_dom::page_content_insets_for_page(page, page_box);
+    let area_width = insets.page_area_width(margins, page_box);
+    let area_height = insets.page_area_height(margins, page_box);
+    ((area_width - width).abs() < 0.01 && (area_height - height).abs() < 0.01).then_some(page_box)
 }
 
 /// Prepared WPT document state for JavaScript DOM bindings. The live runner owns this document and rebuilds style/layout after DOM mutations.
@@ -4138,6 +4144,8 @@ pub fn run_pair_with_oracle(
         path: pair.reference.clone(),
         source,
     })?;
+    // The oracle renders on the same paper as Raikiri does.
+    let config = config.for_test(&pair.test);
     let test_img = render_blitz(&test_html, config.width, config.height)?;
     let ref_img = render_blitz(&ref_html, config.width, config.height)?;
     let diff = compare_images(&test_img, &ref_img, config.tolerance);

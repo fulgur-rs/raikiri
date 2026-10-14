@@ -1928,6 +1928,20 @@ fn legacy_page_area_survives_percentage_padding_and_margins() {
 }
 
 #[test]
+fn legacy_page_area_with_a_clamped_calc_edge_keeps_the_base_resolution() {
+    // The padding is zero for any box of 1000px or more but not below, so
+    // no single line fits it; keep the padding resolved against the default
+    // paper.
+    let page = page_context(
+        "@page { width: 100px; height: 100px; margin: 0; padding-left: calc(100px - 10%) }",
+    );
+    let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
+    let a4 = raikiri_traits::PageBox::from_page_size(None);
+    let expected = 100.0 + (100.0 - 0.1 * a4.width).max(0.0);
+    assert!((page_box.width - expected).abs() < 0.01, "{page_box:?}");
+}
+
+#[test]
 fn legacy_page_area_with_auto_margins_keeps_the_base_resolution() {
     // An auto margin takes whatever the page box leaves, so any box fits;
     // keep the one sized against the default paper, which the auto margin

@@ -313,6 +313,8 @@ fn render_pair_with_engine(
 ) -> Result<TestOutcome, String> {
     let test_html = std::fs::read_to_string(&pair.test).map_err(|e| e.to_string())?;
     let ref_html = std::fs::read_to_string(&pair.reference).map_err(|e| e.to_string())?;
+    // The oracle renders on the same paper as Raikiri does.
+    let config = config.for_test(&pair.test);
     let (test_img, ref_img) = match engine {
         Engine::Blitz => (
             render_blitz(&test_html, config.width, config.height).map_err(|e| e.to_string())?,
