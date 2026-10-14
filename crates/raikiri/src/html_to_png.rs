@@ -28,14 +28,6 @@ use raikiri_traits::{PageBox, RenderError};
 use crate::page_scene::build_page_scene;
 use crate::parse_html;
 
-/// Give `dom` the font set `fonts`; without one, its first layout takes the
-/// installed fonts.
-fn use_fonts(dom: &mut raikiri_dom::Document, fonts: Option<raikiri_html::RenderFonts>) {
-    if let Some(fonts) = fonts {
-        dom.set_font_collection(fonts.into_collection());
-    }
-}
-
 /// Shared implementation for `html_to_png` and its font variant. Without
 /// `fonts`, text is laid out with the installed fonts.
 ///
@@ -51,14 +43,16 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     input: R,
     fonts: Option<raikiri_html::RenderFonts>,
 ) -> Result<Vec<u8>, RenderError> {
-    // Default-equivalent ParseOptions: no extra stylesheets, network, or base URL.
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
-    use_fonts(&mut uncascaded.dom, fonts);
+    // Default resources: no extra stylesheets, network, or base URL. With
+    // `fonts`, the DOM takes them before its cascade, which measures
+    // `line-height: normal` in them; without, its first layout takes the
+    // installed fonts.
+    let mut resources = raikiri_html::RenderResources::new();
+    if let Some(fonts) = fonts {
+        resources = resources.fonts(fonts);
+    }
+    let (mut uncascaded, cascade) =
+        raikiri_html::parse_html_with_resources(input, &resources)?.into_parts();
 
     let page_box = PageBox::from_page_size(cascade.page.size());
     // `into_parts` takes ownership of the pieces, allowing `&mut` on the DOM

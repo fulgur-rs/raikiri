@@ -489,6 +489,8 @@ pub fn cascade_with_options<D: StyleDom>(
     page_query: &PageContextQuery,
     options: &CascadeOptions,
 ) -> Result<CascadeResult, CascadeError> {
+    let normal_line_height = options.normal_line_height_for(dom);
+    let measurer = normal_line_height.as_ref().map(|source| &*source.0);
     let outputs = walk(
         dom,
         rule_tree,
@@ -496,19 +498,12 @@ pub fn cascade_with_options<D: StyleDom>(
         WalkOptions {
             limits: options.limits,
             viewport: options.viewport,
-            normal_line_height: options.normal_line_height.as_ref().map(|source| &*source.0),
+            normal_line_height: measurer,
             ..WalkOptions::default()
         },
     )?;
-    let mut result = finish(
-        dom,
-        rule_tree,
-        page_query,
-        media_context,
-        outputs,
-        options.normal_line_height.as_ref().map(|source| &*source.0),
-    );
-    result.normal_line_height = options.normal_line_height.clone();
+    let mut result = finish(dom, rule_tree, page_query, media_context, outputs, measurer);
+    result.normal_line_height = normal_line_height;
     Ok(result)
 }
 

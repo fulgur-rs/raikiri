@@ -657,7 +657,8 @@ pub struct ComputedValues {
     /// The used length of `line-height: normal` for this element's first
     /// available font, the `lh` basis when [`Self::line_height`] is
     /// [`ComputedLineHeight::Normal`]. Not a CSS property: the cascade measures
-    /// it with [`crate::CascadeOptions::normal_line_height`], and it is `None`
+    /// it with [`crate::CascadeOptions::normal_line_height`] or else the
+    /// document's [`crate::StyleDom::normal_line_height`], and it is `None`
     /// without a measurer or when the line height is not `normal`.
     pub normal_line_height: Option<ComputedLength>,
     /// `display`. **Not inherited**; initial: `DisplayValue::Inline`

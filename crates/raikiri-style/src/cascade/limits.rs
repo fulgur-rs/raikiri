@@ -105,9 +105,24 @@ pub struct CascadeOptions {
     pub viewport: Option<(f32, f32)>,
     /// Measures the used length of `line-height: normal`, the basis of the
     /// `lh` and `rlh` units on elements whose line height is `normal`.
-    /// `None` leaves that basis unresolved, and each property falls back as
-    /// its resolver documents.
+    /// `None` takes the document's measurer
+    /// ([`crate::StyleDom::normal_line_height`]); without one either, that
+    /// basis is left unresolved, and each property falls back as its
+    /// resolver documents.
     pub normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
+}
+
+impl CascadeOptions {
+    /// The measurer of `line-height: normal` a cascade of `dom` runs with:
+    /// this one's, else the document's.
+    pub(crate) fn normal_line_height_for<D: crate::StyleDom>(
+        &self,
+        dom: &D,
+    ) -> Option<crate::resolve::NormalLineHeightSource> {
+        self.normal_line_height
+            .clone()
+            .or_else(|| dom.normal_line_height())
+    }
 }
 
 /// A count against one of the limits. It keeps what is left before the

@@ -1804,8 +1804,9 @@ pub fn used_line_height_length_or(
 /// converts `normal` "to an absolute length by using only the metrics of the
 /// first available font". The style layer has no fonts, so a consumer that
 /// has them passes an implementation through
-/// [`crate::CascadeOptions::normal_line_height`]. Without one, `normal`
-/// stays unresolved and each property applies the fallback its resolver
+/// [`crate::CascadeOptions::normal_line_height`], or the document provides
+/// one through [`crate::StyleDom::normal_line_height`]. Without either,
+/// `normal` stays unresolved and each property applies the fallback its resolver
 /// documents.
 pub trait NormalLineHeight: Send + Sync {
     /// The used `normal` line height in CSS px of the first available font
