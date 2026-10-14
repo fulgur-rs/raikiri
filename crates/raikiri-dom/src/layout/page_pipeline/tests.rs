@@ -13879,3 +13879,64 @@ fn a_mixed_calc_grid_track_resolves_against_the_container() {
     assert_eq!(doc.nodes[second].unrounded_layout.location.x, 90.0);
     assert_eq!(doc.nodes[second].unrounded_layout.size.width, 110.0);
 }
+
+#[test]
+fn a_forced_break_on_a_wrapped_row_flex_item_moves_same_line_siblings() {
+    use crate::layout::test_support::absolute_rect;
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-wrap:wrap;width:100px;align-items:flex-start"),
+    );
+    let first = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:none;width:50px;height:20px"),
+    );
+    let breaking = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:none;width:50px;height:20px;break-before:page"),
+    );
+    let next_line = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:none;width:50px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &computed, page).expect("pagination");
+    assert_eq!(slices.len(), 2);
+    let positions = [first, breaking, next_line].map(|id| absolute_rect(&doc, id));
+    assert_eq!(
+        positions,
+        [
+            (0.0, 100.0, 50.0, 20.0),
+            (50.0, 100.0, 50.0, 20.0),
+            (0.0, 30.0, 50.0, 20.0)
+        ]
+    );
+}
