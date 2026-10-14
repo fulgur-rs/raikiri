@@ -1270,7 +1270,12 @@ fn layout_block_child(
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
-        let (dx, dy) = relative_inset(tree, node, geometry.content_size.width);
+        let (dx, dy) = relative_inset(
+            tree,
+            node,
+            geometry.content_size.width,
+            relative_height(&geometry),
+        );
         let location = taffy::Point {
             x: geometry.edges.0 + margin.left + dx,
             y: geometry.top_edge + top + dy,
@@ -1373,7 +1378,7 @@ fn layout_vertical_block_child(
         },
     );
     if perform {
-        let (dx, dy) = relative_inset(tree, node, basis);
+        let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry));
         let location = taffy::Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
@@ -1508,7 +1513,12 @@ fn layout_formatting_context_child(
     };
     let top = position.y - geometry.top_edge;
     if perform {
-        let (dx, dy) = relative_inset(tree, node, geometry.content_size.width);
+        let (dx, dy) = relative_inset(
+            tree,
+            node,
+            geometry.content_size.width,
+            relative_height(&geometry),
+        );
         let location = taffy::Point {
             x: position.x + extra_left + dx,
             y: position.y + dy,
@@ -1712,7 +1722,12 @@ fn place_atomics(
             // start; the layout is relative to the root's border box. A
             // relatively positioned atomic is drawn offset from that place,
             // which taffy's layout location carries for inline-level boxes.
-            let (dx, dy) = relative_inset(tree, node, geometry.content_size.width);
+            let (dx, dy) = relative_inset(
+                tree,
+                node,
+                geometry.content_size.width,
+                relative_height(&geometry),
+            );
             // A right-to-left line runs from the right edge: its inline axis
             // is mirrored inside the content box.
             let rect = atomic.border_rect;
@@ -1730,11 +1745,21 @@ fn place_atomics(
     }
 }
 
+/// The root's content height as the basis of a percentage `top` or
+/// `bottom`: its definite height, or in vertical flow its inline size.
+fn relative_height(geometry: &FlowGeometry) -> Option<f32> {
+    if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
+        geometry.definite_height
+    } else {
+        Some(geometry.content_size.height)
+    }
+}
+
 /// The offset of a relatively positioned box (CSS 2.1 9.4.3): `left` over
 /// `-right`, `top` over `-bottom`, percentages of the root's content width
-/// (a vertical percentage has no definite basis here and is taken as zero).
-/// `(0, 0)` for a box in normal position.
-fn relative_inset(tree: &Document, node: usize, basis: f32) -> (f32, f32) {
+/// and of its `height` when that is definite (otherwise a vertical
+/// percentage computes to `auto`). `(0, 0)` for a box in normal position.
+fn relative_inset(tree: &Document, node: usize, basis: f32, height: Option<f32>) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
     if style.position != taffy::Position::Relative
@@ -1747,7 +1772,7 @@ fn relative_inset(tree: &Document, node: usize, basis: f32) -> (f32, f32) {
     }
     let horizontal =
         |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(basis), resolve_calc);
-    let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(None, resolve_calc);
+    let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(height, resolve_calc);
     let dx = horizontal(style.inset.left)
         .or(horizontal(style.inset.right).map(|right| -right))
         .unwrap_or(0.0);

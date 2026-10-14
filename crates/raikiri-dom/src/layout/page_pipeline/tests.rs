@@ -13284,3 +13284,35 @@ fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
     });
     assert_eq!(page_flow_y(&doc, id), 140.0);
 }
+
+#[test]
+fn a_relative_block_in_a_mixed_root_resolves_a_top_percentage_against_its_height() {
+    // CSS 2.1 §9.4.3: `top` percentages refer to the height of the
+    // containing block, here the 200px root that also holds a line of text.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;position:relative;top:50%"),
+        );
+    });
+    let still_y = doc.nodes[still].unrounded_layout.location.y;
+    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    assert_eq!(moved_y - still_y, 10.0 + 100.0);
+}

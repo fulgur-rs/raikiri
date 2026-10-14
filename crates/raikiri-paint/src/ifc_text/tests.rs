@@ -2384,6 +2384,36 @@ fn a_relative_inline_ignores_a_vertical_percentage_in_a_flex_item_of_auto_height
 }
 
 #[test]
+fn a_relative_inline_resolves_a_left_percentage_against_a_multicol_root() {
+    // Hand-computed: the containing block of the span is the whole 300px
+    // content box, not one 100px column, so `left: 50%` moves "bb" right by
+    // 150px.
+    let (mut doc, cascade, _root) =
+        paragraph("width:300px;column-count:3;column-gap:0", |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;left:50%"),
+            );
+            doc.append_text(inner, "bb");
+        });
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(170), px(8)),
+            (px(180), px(8))
+        ]
+    );
+}
+
+#[test]
 fn a_relative_inline_resolves_a_vertical_percentage_against_a_border_box_height() {
     // Hand-computed: a 120px border-box with 10px padding above and below
     // has a 100px content height, so `top: 50%` moves "bb" down by 50px from

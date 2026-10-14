@@ -66,4 +66,27 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     let bounds = ifc_content_height_bounds(&style, None, None);
     assert_eq!(bounds, (0.0, f32::INFINITY));
     assert_eq!(ifc_content_height_bounds(&style, Some(80.0), None).1, 40.0);
+
+    // A calc() bound with a percentage needs the basis as well.
+    let mut arena = Vec::new();
+    let calc_ptr = push_calc(
+        &mut arena,
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 50.0,
+            px: 2.0,
+        },
+        false,
+    );
+    let style = Style {
+        max_size: Size {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: taffy::LengthPercentageAuto::calc(calc_ptr),
+        },
+        ..style
+    };
+    assert_eq!(
+        ifc_content_height_bounds(&style, None, None),
+        (0.0, f32::INFINITY)
+    );
+    assert_eq!(ifc_content_height_bounds(&style, Some(80.0), None).1, 42.0);
 }

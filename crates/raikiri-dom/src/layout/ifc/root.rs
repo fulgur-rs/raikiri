@@ -47,6 +47,10 @@ pub(crate) struct IfcRoot {
     /// The root's content height when it is definite, which a percentage
     /// `top` or `bottom` of its inline elements refers to.
     pub(crate) definite_height: Option<f32>,
+    /// The root's physical content width, which a percentage `left` or
+    /// `right` of its inline elements refers to. Lines may be narrower when
+    /// the root lays them out in columns.
+    pub(crate) containing_width: Option<f32>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
@@ -303,6 +307,7 @@ impl IfcRoot {
             offsets: projected.offsets,
             percent_insets: projected.percent_insets,
             definite_height: None,
+            containing_width: None,
             cleared_breaks: projected.cleared_breaks.into_iter().collect(),
             fixed: projected.fixed,
             multicol_fragments: None,
@@ -317,9 +322,11 @@ impl IfcRoot {
     }
 
     /// Resolve the offsets that depend on the root's size against a content
-    /// box `width` wide and [`Self::definite_height`] high, the containing
-    /// block of its inline elements.
+    /// box [`Self::containing_width`] (else `width`) wide and
+    /// [`Self::definite_height`] high, the containing block of its inline
+    /// elements.
     pub(crate) fn resolve_percent_offsets(&mut self, width: f32) {
+        let width = self.containing_width.unwrap_or(width);
         for (index, insets) in &self.percent_insets {
             self.offsets[*index].1 = insets.offset(width, self.definite_height, self.rtl);
         }
@@ -340,6 +347,7 @@ impl IfcRoot {
             offsets: self.offsets.clone(),
             percent_insets: self.percent_insets.clone(),
             definite_height: self.definite_height,
+            containing_width: self.containing_width,
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,
