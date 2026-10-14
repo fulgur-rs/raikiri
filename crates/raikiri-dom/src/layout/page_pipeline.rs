@@ -5519,6 +5519,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // children in block order.
                         // A `display: contents` ancestor has no box; its
                         // parent lays the moved box out among its siblings.
+                        // A box pulled back over the break by a negative
+                        // margin still leaves the flow after it at the break.
+                        let flow_delta = node_delta.max(shift_delta);
                         let paragraph = ifc_paragraph_of_block(document, node_id);
                         let mut child = node_id;
                         let mut next = parent_of[node_id];
@@ -5535,7 +5538,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 break;
                             }
                             shift_later_block_siblings(
-                                document, cascade, parent, child, node_delta,
+                                document, cascade, parent, child, flow_delta,
                             );
                             child = parent;
                         }
@@ -6714,13 +6717,16 @@ fn has_bounded_clipping_ancestor(
 }
 
 /// Whether the items of `grid` stack in block order like blocks, none
-/// beside or over another: the grid has one column track, its rows all
-/// size to their content, and its items sit in rows that follow one
-/// another without overlapping. A sized row fixes the height of the item
+/// beside or over another: the grid has one column track and no definite
+/// height, its rows all size to their content, and its items sit in rows
+/// that follow one another without overlapping. A sized row fixes the height of the item
 /// stretched into it, so that item cannot grow to hold a moved box.
 fn grid_stacks_items(document: &Document, grid: usize) -> bool {
     let node = &document.nodes[grid];
-    if node.grid_column_count != 1 || !grid_rows_size_to_content(document, grid) {
+    if node.grid_column_count != 1
+        || !grid_rows_size_to_content(document, grid)
+        || !node.style.size.height.is_auto() && definite_content_height(document, grid).is_some()
+    {
         return false;
     }
     let mut items: Vec<(u16, f32, f32)> = node

@@ -460,3 +460,50 @@ fn an_avoiding_box_in_a_grid_with_intrinsic_rows_moves() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![100.0, 240.0]);
 }
+
+#[test]
+fn an_avoiding_box_in_a_grid_of_definite_height_stays() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(
+            doc,
+            body,
+            "display:grid;height:150px;grid-template-rows:auto",
+        );
+        ids.push(grid);
+        let item = block(doc, grid, "display:block");
+        block(doc, item, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            item,
+            "display:block;height:60px;break-inside:avoid",
+        ));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((ys, grid_height), (vec![60.0, 80.0, 210.0], 150.0));
+}
+
+#[test]
+fn boxes_after_an_underflowing_forced_break_follow_the_break() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:80px");
+        let wrapper = block(doc, body, "display:block");
+        ids.push(block(
+            doc,
+            wrapper,
+            "display:block;height:20px;margin-top:-10px;break-before:page",
+        ));
+        ids.push(block(doc, wrapper, "display:block;height:10px"));
+        ids.push(block(
+            doc,
+            wrapper,
+            "display:block;height:10px;break-inside:avoid",
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![90.0, 120.0, 130.0]);
+}
