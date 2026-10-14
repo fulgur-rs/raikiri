@@ -2465,3 +2465,49 @@ fn a_zero_height_multicol_keeps_its_blocks_without_lines_unsliced() {
     assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 0.0);
     assert!(fragment_rects(&doc, child).len() <= 1);
 }
+
+#[test]
+fn compute_multicol_layout_keeps_foundational_child_layouts_when_slicing_fails() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;column-gap:20px;width:200px;height:60px"),
+    );
+    doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;min-block-size:40px;break-inside:avoid"),
+    );
+    // A bordered box taller than a column would be cut, so the children
+    // are not sliced, and keep the layout of the unfragmented flow.
+    doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;height:70px;border:2px solid"),
+    );
+    let half = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;width:50%;height:10px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 200.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    assert!(doc.layout_fragments().is_empty());
+    assert_eq!(doc.nodes[half].unrounded_layout.size.width, 100.0);
+}
