@@ -19,8 +19,9 @@
 //! not depend on block layout.
 //!
 //! `text-orientation: upright` makes the used direction `ltr` in vertical
-//! writing modes (CSS Writing Modes 4 §5.1); the mapping does not take that
-//! into account yet and uses the computed `direction`.
+//! writing modes (CSS Writing Modes 4 §5.1). The page context's mapping uses
+//! that used direction; elements map through `horizontal-tb`, where it does
+//! not apply.
 
 use smol_str::SmolStr;
 

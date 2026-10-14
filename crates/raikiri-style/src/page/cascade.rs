@@ -14,7 +14,7 @@ use crate::media::MediaContext;
 use crate::property::{
     BackgroundImage, BorderStyle, CssColor, CustomProperty, Direction, Length,
     LengthPercentageOrCalc, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
-    Sides, WritingMode,
+    Sides, TextOrientation, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -961,14 +961,14 @@ fn margin_box_direction(
     Some(direction)
 }
 
-/// The writing mode and direction of the page context: its own winning
-/// `writing-mode` and `direction` declarations, or else the values it
-/// inherits from the root element. Winners are picked the way the page
-/// cascade below picks them: `writing-mode` honours `revert-layer` and
-/// `all: revert-layer` rollback, `direction` is exempt from `all` and keeps
-/// its plain winner, and `var()` values are substituted from
-/// `custom_properties`. A winner that does not resolve to a keyword falls
-/// back to the inherited value.
+/// The writing mode and used direction of the page context: its own winning
+/// `writing-mode`, `text-orientation` and `direction` declarations, or else
+/// the values it inherits from the root element. Winners are picked the way
+/// the page cascade below picks them: `writing-mode` and `text-orientation`
+/// honour `revert-layer` and `all: revert-layer` rollback, `direction` is
+/// exempt from `all` and keeps its plain winner, and `var()` values are
+/// substituted from `custom_properties`. A winner that does not resolve to a
+/// keyword falls back to the inherited value.
 fn page_flow_mapping(
     candidates: &[(PropertyValue, bool, Origin, u32, PageSpecificity, u32)],
     inherited: &ComputedValues,
@@ -979,8 +979,8 @@ fn page_flow_mapping(
         let index = crate::cascade::rollback::select_layered_winner(
             candidates,
             |index, (value, important, origin, priority, spec, order)| {
-                let reset_all = key == PropertyKey::WritingMode
-                    && matches!(value, PropertyValue::AllRevertLayer);
+                let reset_all =
+                    key != PropertyKey::Direction && matches!(value, PropertyValue::AllRevertLayer);
                 if value.key() != key && !reset_all {
                     return None;
                 }
@@ -992,7 +992,7 @@ fn page_flow_mapping(
                         *priority
                     },
                 };
-                let rollback = if key == PropertyKey::WritingMode {
+                let rollback = if key != PropertyKey::Direction {
                     rollback(value)
                 } else {
                     crate::cascade::rollback::Rollback::None
@@ -1019,12 +1019,25 @@ fn page_flow_mapping(
             value => Some(value.clone()),
         }
     };
+    let writing_mode = match winner(PropertyKey::WritingMode) {
+        Some(PropertyValue::WritingMode(mode)) => mode,
+        _ => inherited.cssom_writing_mode,
+    };
+    let text_orientation = match winner(PropertyKey::TextOrientation) {
+        Some(PropertyValue::TextOrientation(orientation)) => orientation,
+        _ => inherited.text_orientation,
+    };
+    // `text-orientation: upright` makes the used direction `ltr` in the
+    // vertical typographic modes (CSS Writing Modes 4 §5.1).
+    let upright = text_orientation == TextOrientation::Upright
+        && matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        );
     FlowMapping {
-        writing_mode: match winner(PropertyKey::WritingMode) {
-            Some(PropertyValue::WritingMode(mode)) => mode,
-            _ => inherited.cssom_writing_mode,
-        },
+        writing_mode,
         direction: match winner(PropertyKey::Direction) {
+            _ if upright => Direction::Ltr,
             Some(PropertyValue::Direction(direction)) => direction,
             _ => inherited.direction,
         },

@@ -7677,3 +7677,46 @@ fn margin_box_var_logical_shorthand_is_split_before_mapping() {
         ]
     );
 }
+
+/// `text-orientation: upright` makes the page context's used direction `ltr`
+/// in a vertical writing mode, so its inline-start side is the top even
+/// under `direction: rtl`. Sideways modes ignore it.
+#[test]
+fn page_upright_text_orientation_maps_inline_sides_as_ltr() {
+    let margins = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let declarations = result.declarations();
+        (
+            declarations.get(&PropertyKey::MarginTop).cloned(),
+            declarations.get(&PropertyKey::MarginBottom).cloned(),
+        )
+    };
+    let top = (
+        Some(PropertyValue::MarginTop(px_margin(1.0))),
+        Some(PropertyValue::MarginBottom(px_margin(0.0))),
+    );
+    let bottom = (
+        Some(PropertyValue::MarginTop(px_margin(0.0))),
+        Some(PropertyValue::MarginBottom(px_margin(1.0))),
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
+             margin: 0; margin-inline-start: 1px }"
+        ),
+        top
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: vertical-rl; direction: rtl; margin: 0; margin-inline-start: 1px }"
+        ),
+        bottom
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: sideways-rl; text-orientation: upright; direction: rtl; \
+             margin: 0; margin-inline-start: 1px }"
+        ),
+        bottom
+    );
+}
