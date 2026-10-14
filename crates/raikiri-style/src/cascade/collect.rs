@@ -257,7 +257,7 @@ impl DeclarationBlockCache {
 /// Scratch slot for [`pick_winners`]: the provisional winner for one key.
 ///
 /// Crucially, [`idx`](Self::idx) is an **index**, not a
-/// [`PropertyValue`](crate::property::PropertyValue):
+/// [`PropertyValue`]:
 /// - The slot is `Copy` with no `Drop`, so [`Option::take`] resets it without
 ///   dropping or reallocating the entire buffer.
 /// - Losing candidates are never cloned. Previously each candidate's
