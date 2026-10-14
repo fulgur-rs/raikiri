@@ -403,11 +403,11 @@ pub(crate) fn parse_property_grammar(
         // Arc wrapping reduces cascade memory for DoS resistance (shallow
         // per-element clones). Empty lists use a shared Arc slot to avoid
         // per-node allocation regressions.
-        "content" => parse_content(input).map(|v| {
-            if v.is_empty() {
+        "content" => parse_content_with_alt(input).map(|(items, alt)| {
+            if items.is_empty() {
                 PropertyValue::Content(empty_content_list())
             } else {
-                PropertyValue::Content(Arc::new(v))
+                PropertyValue::Content(Arc::new(ContentList::new(items, alt)))
             }
         }),
         // CSS GCPM 3 §1.1.1 string-set.

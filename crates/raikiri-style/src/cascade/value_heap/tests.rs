@@ -167,17 +167,20 @@ fn strings_inside_every_kind_of_value_count() {
     values.grid_row_start = GridLineValue::NamedLine(name.clone(), 2);
     assert_eq!(own_heap_bytes(&values, &parent), 2 * LONG.len() as u64);
     let mut values = parent.clone();
-    values.content = Arc::new(vec![
-        ContentComponent::Element {
-            name: name.clone(),
-            fetch: StringFetchMode::First,
-        },
-        ContentComponent::AttrFallback {
-            name: name.clone(),
-            fallback: Some(name.clone()),
-        },
-        ContentComponent::Contents,
-    ]);
+    values.content = Arc::new(
+        vec![
+            ContentComponent::Element {
+                name: name.clone(),
+                fetch: StringFetchMode::First,
+            },
+            ContentComponent::AttrFallback {
+                name: name.clone(),
+                fallback: Some(name.clone()),
+            },
+            ContentComponent::Contents,
+        ]
+        .into(),
+    );
     assert_eq!(
         own_heap_bytes(&values, &parent),
         3 * size_of::<ContentComponent>() as u64 + 3 * LONG.len() as u64
@@ -202,10 +205,23 @@ fn family_names_counter_styles_and_spare_capacity_count() {
             + LONG.len() as u64
     );
     let mut values = parent.clone();
-    values.content = Arc::new(vec![ContentComponent::Counter {
-        name: SmolStr::new("c"),
-        style: CounterStyle::Named(name.clone()),
-    }]);
+    values.content = Arc::new(
+        vec![ContentComponent::Counter {
+            name: SmolStr::new("c"),
+            style: CounterStyle::Named(name.clone()),
+        }]
+        .into(),
+    );
+    assert_eq!(
+        own_heap_bytes(&values, &parent),
+        size_of::<ContentComponent>() as u64 + LONG.len() as u64
+    );
+    // The alternative text counts with the items.
+    let mut values = parent.clone();
+    values.content = Arc::new(ContentList::new(
+        Vec::new(),
+        Some(vec![ContentComponent::Literal(name.clone())]),
+    ));
     assert_eq!(
         own_heap_bytes(&values, &parent),
         size_of::<ContentComponent>() as u64 + LONG.len() as u64

@@ -1053,7 +1053,7 @@ fn page_margin_box_content_counter_page_and_pages() {
     // canonical use case a margin-box `content:` declaration exists for
     // (page-number headers/footers) — parses inside a margin-box body
     // via the same `ContentComponent` grammar
-    // `crate::property::parse_content` already implements for ordinary
+    // `crate::property::parse_content_with_alt` already implements for ordinary
     // style rules.
     use crate::property::{ContentComponent, CounterStyle, PropertyValue};
     use smol_str::SmolStr;

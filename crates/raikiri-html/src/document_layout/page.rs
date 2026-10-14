@@ -314,6 +314,33 @@ impl<'a> Page<'a> {
             .page_generated_image_text_position(self.index(), image)
     }
 
+    /// The alternative text of the `content` of the `kind` pseudo-element of
+    /// `owner`: the components after `/`, such as `"Note"` in
+    /// `content: url(icon.png) / "Note"`, with `attr()` and counters
+    /// resolved (CSS Content 3 <https://www.w3.org/TR/css-content-3/#alt>).
+    ///
+    /// Assistive technology reads it in place of the pseudo-element's text
+    /// and images; an empty string marks them as decorative. `None` when
+    /// the value gives no alternative text, and for `::first-letter`, which
+    /// has no `content`.
+    pub fn generated_alt_text(&self, owner: NodeId, kind: crate::GeneratedKind) -> Option<String> {
+        let pseudo = match kind {
+            crate::GeneratedKind::Before => raikiri_style::PseudoElem::Before,
+            crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
+            crate::GeneratedKind::Marker => raikiri_style::PseudoElem::Marker,
+            _ => return None,
+        };
+        let element = usize::try_from(owner.0).ok()?;
+        let snapshots = self.document.shared_counter_snapshots(self.cascade).ok()?;
+        raikiri_dom::generated_content::generated_alt_text(
+            self.document,
+            self.cascade,
+            element,
+            pseudo,
+            &snapshots,
+        )
+    }
+
     /// Cached raster pixels of an image of `::before` or `::after` content
     /// from [`PaintEvent::GeneratedImage`].
     ///

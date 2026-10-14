@@ -565,9 +565,9 @@ fn content_normal_returns_empty_list() {
 fn content_none_keeps_a_suppression_sentinel() {
     assert_eq!(
         parse("none", "content"),
-        Some(PropertyValue::Content(Arc::new(vec![
-            ContentComponent::None
-        ])))
+        Some(PropertyValue::Content(Arc::new(
+            vec![ContentComponent::None].into()
+        )))
     );
 }
 
@@ -1302,4 +1302,36 @@ fn quotes_key_maps_to_quotes_property_key() {
         PropertyValue::Quotes(empty_quotes_entries()).key(),
         PropertyKey::Quotes
     );
+}
+
+#[test]
+fn content_keeps_its_alternative_text() {
+    let Some(PropertyValue::Content(list)) =
+        parse(r#"url(a.png) "x" / "Alt " attr(title)"#, "content")
+    else {
+        panic!("expected PropertyValue::Content");
+    };
+    assert_eq!(list.len(), 2);
+    assert_eq!(
+        list.alt(),
+        Some(
+            &[
+                ContentComponent::Literal(SmolStr::new("Alt ")),
+                ContentComponent::Attr {
+                    name: SmolStr::new("title")
+                },
+            ][..]
+        )
+    );
+    // A list with alternative text is not equal to its items alone.
+    assert_ne!(*list, list.to_vec());
+    assert_eq!(
+        ContentList::from(list.to_vec()),
+        list.to_vec(),
+        "a list without alternative text equals its items"
+    );
+    let Some(PropertyValue::Content(list)) = parse(r#""x""#, "content") else {
+        panic!("expected PropertyValue::Content");
+    };
+    assert_eq!(list.alt(), None);
 }
