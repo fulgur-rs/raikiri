@@ -54,6 +54,14 @@ pub(crate) struct TableObjects {
     pub(crate) materialized_parts: HashSet<usize>,
 }
 
+impl TableObjects {
+    /// Whether a table lays out the children of `owner` as its rows or
+    /// cells: `owner` is a table or one of its row groups or rows.
+    pub(crate) fn lays_out_children(&self, owner: usize) -> bool {
+        self.content_by_owner.contains_key(&owner)
+    }
+}
+
 fn whitespace(doc: &Document, content: Content) -> bool {
     let Content::Node(id) = content else {
         return false;

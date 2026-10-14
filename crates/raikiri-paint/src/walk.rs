@@ -440,7 +440,10 @@ fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Opti
         return Some(html_id);
     }
 
-    let body_id = raikiri_dom::paint_rules::find_paint_root(document)?;
+    // Only a `body` propagates its background, not a `frameset` (CSS
+    // Backgrounds 3, 2.11.2).
+    let body_id = raikiri_dom::paint_rules::find_paint_root(document)
+        .filter(|&id| document.get_node(id).and_then(|node| node.tag_name()) == Some("body"))?;
     let body = cascade.computed.get(body_id)?;
     let body_has_background = body.has_background_image() || body.background_color.a != 0;
     body_has_background.then_some(body_id)

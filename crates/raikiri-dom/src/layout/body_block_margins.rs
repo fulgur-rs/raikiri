@@ -48,7 +48,11 @@ pub(crate) fn propagate_body_overflow_to_viewport(
     let Some(html_id) = doc.parent_of(body_id) else {
         return; // cov:ignore: layout finds the body below the document root, so it has a parent.
     };
-    if doc.nodes[html_id].tag_name() != Some("html") {
+    // Only a `body` propagates its overflow, not a `frameset` (CSS Overflow
+    // 3, 3.3).
+    if doc.nodes[html_id].tag_name() != Some("html")
+        || doc.nodes[body_id].tag_name() != Some("body")
+    {
         return;
     }
     let html = cascade.computed[html_id].overflow;
