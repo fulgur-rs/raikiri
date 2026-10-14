@@ -365,8 +365,9 @@ pub struct Document {
     /// Used block-start margin of `<body>` that the most recent layout placed
     /// inside the synthetic body root.
     pub(crate) body_block_start_margin: f32,
-    /// Width and height of the page area the most recent layout placed fixed
-    /// boxes against.
+    /// Width and height of the page area of the most recent layout: the
+    /// containing block of fixed boxes, and the initial containing block
+    /// orthogonal flows size against.
     pub(crate) fixed_page_area: (f32, f32),
     /// The laid-out border-box height of each auto-height box that the most
     /// recent layout then grew to hold a float descendant it does not

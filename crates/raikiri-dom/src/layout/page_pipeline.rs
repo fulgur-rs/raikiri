@@ -923,6 +923,9 @@ fn layout_single_page_with_table_projection(
     if let Some(state) = document.ifc.as_mut() {
         state.page_width = Some(content_width);
     }
+    // Orthogonal flows size against the page area when their containing
+    // block leaves the space indefinite.
+    document.fixed_page_area = (content_width, content_height);
     // Step 5: taffy compute
     let available_space = taffy::Size {
         width: AvailableSpace::Definite(content_width),

@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_style::property::ContentComponent;
+use raikiri_style::property::{ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 
 // cov:ignore: computed multicol bridge is exercised by ignored WPT reftests.
@@ -279,9 +279,11 @@ pub(crate) fn apply_computed_to_style(
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         doc.nodes[idx].needs_relative_block_paint_offset = false;
         let is_multicol_container = doc.nodes[idx].multicol.is_some();
-        let vertical_axes = lays_out_vertically(doc, cascade, idx);
+        // Table boxes keep horizontal axes even in vertical writing.
+        let vertical_axes = lays_out_vertically(doc, cascade, idx)
+            && !crate::taffy_impl::is_table_box(cascade.computed[idx].display);
         let style = &mut doc.nodes[idx].style;
-        bridge_direction(style, cv);
+        bridge_direction(style, cv, vertical_axes);
         bridge_display(style, cv);
         // CSS Multi-column Layout 1, 2: a multi-column container establishes
         // a new block formatting context, so the margins of its children do
@@ -449,10 +451,14 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// Taffy uses this field for horizontal block alignment, table/grid ordering,
 /// and overflow direction.  Text direction is mapped separately, into the
 /// paragraph style of the inline engine.
-fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
+///
+/// A box laid out on vertical axes with `text-orientation: upright` uses
+/// `ltr` whatever its `direction` (CSS Writing Modes 4 §5.1), as its
+/// logical margins and padding were mapped.
+fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes: bool) {
+    let upright = vertical_axes && cv.text_orientation == TextOrientation::Upright;
     style.direction = match cv.direction {
-        Direction::Ltr => TaffyDirection::Ltr,
-        Direction::Rtl => TaffyDirection::Rtl,
+        Direction::Rtl if !upright => TaffyDirection::Rtl,
         _ => TaffyDirection::Ltr,
     };
 }

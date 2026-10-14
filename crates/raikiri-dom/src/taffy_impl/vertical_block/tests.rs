@@ -220,3 +220,23 @@ fn horizontal_child_of_a_vertical_container_fills_its_width() {
     // The 300px content box less the child's 7px margins.
     assert_eq!(rects[1], (20.0, 8.0, 286.0, 10.0));
 }
+
+#[test]
+fn horizontal_child_of_a_vertical_container_keeps_its_max_width() {
+    let rects = layout(
+        "writing-mode:vertical-rl;width:300px;height:200px",
+        &["writing-mode:horizontal-tb;height:10px;max-width:100px"],
+    );
+    // Placed on the block-start (right) edge.
+    assert_eq!(rects[1], (208.0, 8.0, 100.0, 10.0));
+}
+
+#[test]
+fn horizontal_child_margins_resolve_against_the_inline_size() {
+    // 10% of the container's 400px inline size, its physical height.
+    let rects = layout(
+        "writing-mode:vertical-rl;width:200px;height:400px",
+        &["writing-mode:horizontal-tb;height:10px;margin:0 10%"],
+    );
+    assert_eq!(rects[1], (48.0, 8.0, 120.0, 10.0));
+}

@@ -26,9 +26,9 @@
 use std::collections::HashMap;
 
 use taffy::tree::{RequestedAxis, RunMode};
-use taffy::util::ResolveOrZero;
+use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
-    AvailableSpace, Baselines, CollapsibleMarginSet, Display, Layout, LayoutInput, LayoutOutput,
+    AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout, LayoutInput, LayoutOutput,
     Line, NodeId, Point, Position as TaffyPosition, Rect, Size, SizingMode, Style,
     TraversePartialTree, compute_block_layout,
 };
@@ -76,7 +76,7 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     Some(right_to_left)
 }
 
-fn is_table_box(display: DisplayValue) -> bool {
+pub(crate) fn is_table_box(display: DisplayValue) -> bool {
     matches!(
         display,
         DisplayValue::Table
@@ -181,19 +181,51 @@ fn orthogonal_child_inputs(
     }
     if let Some(space) = block_space {
         inputs.available_space.width = AvailableSpace::Definite(space);
-        // An in-flow box with an auto width fills that space, as it would
-        // under a horizontal block container.
+        // An in-flow block box with an auto width fills that space, as it
+        // would under a horizontal block container; a table still shrinks
+        // to fit.
         if inputs.known_dimensions.width.is_none()
             && style.size.width.is_auto()
             && style.float == taffy::Float::None
+            && !is_table_box(tree.nodes[idx].display)
         {
-            let margin = style
-                .margin
-                .map(|margin| margin.resolve_or_zero(Some(space), resolve_calc));
-            inputs.known_dimensions.width = Some((space - margin.left - margin.right).max(0.0));
+            inputs.known_dimensions.width = Some(stretched_width(style, space, inputs));
         }
     }
     inputs
+}
+
+/// The border-box width of a horizontal block box with an auto width that
+/// fills `space`, the physical width of its vertical container, within its
+/// min and max widths. Its margins, which the container places like its
+/// other children's, resolve against the container's inline size, its
+/// physical height.
+fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
+    let inline_size = inputs.parent_size.height;
+    let margin = style
+        .margin
+        .map(|margin| margin.resolve_or_zero(inline_size, resolve_calc));
+    // Min and max widths are content-box sizes under `box-sizing:
+    // content-box`.
+    let edges = match style.box_sizing {
+        BoxSizing::BorderBox => 0.0,
+        BoxSizing::ContentBox => {
+            // As the child's own layout resolves them.
+            let basis = inputs.parent_size.width;
+            let padding = style.padding.resolve_or_zero(basis, resolve_calc);
+            let border = style.border.resolve_or_zero(basis, resolve_calc);
+            padding.left + padding.right + border.left + border.right
+        }
+    };
+    let basis = Some(space);
+    let mut width = space - margin.left - margin.right;
+    if let Some(max) = style.max_size.width.maybe_resolve(basis, resolve_calc) {
+        width = width.min(max + edges);
+    }
+    if let Some(min) = style.min_size.width.maybe_resolve(basis, resolve_calc) {
+        width = width.max(min + edges);
+    }
+    width.max(0.0)
 }
 
 /// Lay out the vertical block container `node_id`, whose block axis runs
@@ -265,6 +297,7 @@ fn shrinks_to_fit(tree: &Document, idx: usize, inputs: &LayoutInput) -> bool {
 /// its max-content size, unless the available space is smaller, then that
 /// space, but never below its min-content size (CSS Sizing 3 §5.1).
 fn fit_content_inline_size(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> f32 {
+    let page_height = tree.fixed_page_area.1;
     let style = &tree.nodes[usize::from(node_id)].style;
     // The transposed horizontal margins are the physical top and bottom.
     let margin = style
@@ -285,8 +318,14 @@ fn fit_content_inline_size(tree: &mut Document, node_id: NodeId, inputs: LayoutI
             .width
     };
     let max_content = measure(AvailableSpace::MaxContent);
-    // Indefinite available space leaves the max-content size.
-    let available = inputs.available_space.width.into_option();
+    // Indefinite available space falls back to the inline size of the
+    // initial containing block, the page area height (CSS Writing Modes 4
+    // §7.3.1).
+    let available = inputs
+        .available_space
+        .width
+        .into_option()
+        .or((page_height > 0.0).then_some(page_height));
     let stretch = available.map_or(f32::INFINITY, |space| space - margin.top - margin.bottom);
     if max_content <= stretch.max(0.0) {
         return max_content;
