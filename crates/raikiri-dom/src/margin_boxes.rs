@@ -789,7 +789,14 @@ fn inherited_margin_box_font(
                 Some(PropertyValue::LineHeight(LineHeight::Number(factor))) => {
                     Some(ComputedLength(factor * page_size))
                 }
-                _ => root_line_height,
+                // The page inherits the root's line height; a number scales
+                // with the page's own size.
+                _ => match root.map(|computed| computed.line_height) {
+                    Some(raikiri_style::ComputedLineHeight::Number(factor)) => {
+                        Some(ComputedLength(factor * page_size))
+                    }
+                    _ => root_line_height,
+                },
             };
             resolve_font_size_calc(
                 *calc,

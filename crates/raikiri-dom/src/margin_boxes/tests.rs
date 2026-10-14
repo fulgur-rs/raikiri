@@ -131,6 +131,11 @@ fn inherited_margin_box_font_resolves_keywords_and_calc() {
              @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
             27.0,
         ),
+        (
+            "html { font-size: 10px; line-height: 2 } @page { font-size: 20px; \
+             @top-left { content: 'x'; font-size: calc(1lh + 2px); } }",
+            42.0,
+        ),
     ] {
         let mut document = Document::new();
         let html = document.append_element(

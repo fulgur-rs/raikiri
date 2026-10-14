@@ -373,6 +373,17 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
     // simplification failed to fold it to one dimension. A math function is
     // clamped to the range rather than rejected, once it is resolved.
     if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        // A sum of only percentage and `em` terms scales the parent's size,
+        // so it computes as the `em` multiple it equals and keeps the
+        // keyword provenance a plain `em` keeps.
+        let em_only = calc.px == 0.0
+            && calc
+                .relative_terms()
+                .all(|(unit, _)| unit == crate::property::RelativeCalcUnit::Em);
+        let em = calc.percent / 100.0 + calc.relative_terms().map(|(_, c)| c).sum::<f32>();
+        if em_only && em.is_finite() {
+            return Some(PropertyValue::FontSize(Length::Em(em.max(0.0))));
+        }
         return Some(PropertyValue::FontSizeCalc(calc));
     }
     let length = parse_length_value(input, true)?;

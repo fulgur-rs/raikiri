@@ -915,6 +915,27 @@ fn font_size_resolves_a_mixed_calc_against_the_parent_font_size() {
 }
 
 #[test]
+fn a_font_size_calc_of_percent_and_em_keeps_the_keyword_scaling() {
+    // `calc(50% + 1em)` is `1.5em`, so a monospace root sizes it from the
+    // monospace `medium`, as `150%` does.
+    let sizes: Vec<_> = ["calc(50% + 1em)", "150%"]
+        .into_iter()
+        .map(|size| {
+            let mut doc = TestDoc::new();
+            let html = doc.push_element(
+                0,
+                "html",
+                Some(&format!("font-family: monospace; font-size: {size}")),
+            );
+            let (r, _) = cascade_measuring_normal(&doc);
+            r.computed[html].font_size
+        })
+        .collect();
+    assert_eq!(sizes[0], sizes[1]);
+    assert_ne!(sizes[0], ComputedLength(24.0));
+}
+
+#[test]
 fn normal_line_height_is_measured_only_where_the_font_changes() {
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", None);
