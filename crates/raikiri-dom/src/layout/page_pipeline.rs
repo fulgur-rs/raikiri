@@ -6655,12 +6655,13 @@ fn is_block_flow_paragraph(
 }
 
 /// Whether the height of `block` is that of its content: no `height`,
-/// `min-height` or `max-height` sets it and no size containment ignores the
-/// content.
+/// `max-height` or non-zero `min-height` sets it and no size containment
+/// ignores the content.
 fn height_follows_content(document: &Document, block: usize) -> bool {
     let node = &document.nodes[block];
+    let min_height = node.style.min_size.height;
     node.style.size.height.is_auto()
-        && node.style.min_size.height.is_auto()
+        && (min_height.is_auto() || style_dimension_length(min_height.into()) == Some(0.0))
         && node.style.max_size.height.is_auto()
         && !node.size_containment.height
 }

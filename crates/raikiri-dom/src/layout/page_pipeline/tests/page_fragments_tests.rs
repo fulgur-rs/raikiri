@@ -3221,3 +3221,16 @@ fn a_nested_paragraph_does_not_move_a_section_whose_height_ignores_its_content()
         assert_eq!(laid_out.after_top, 15.0 + height, "{section}");
     }
 }
+
+#[test]
+fn a_zero_min_height_does_not_keep_a_nested_paragraph_from_moving() {
+    // A `min-height: 0` reset on the section and the paragraph leaves both
+    // heights to their content, so the widow move still applies.
+    let laid_out = paragraph_after_a_spacer(
+        Some("min-height:0"),
+        15.0,
+        "orphans:2;widows:2;min-height:0",
+        40.0,
+    );
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+}
