@@ -7581,3 +7581,182 @@ fn page_border_radius_from_a_variable_yields_to_a_later_corner() {
         })
     );
 }
+
+fn px_margin(value: f32) -> crate::property::LengthOrAuto {
+    crate::property::LengthOrAuto::Length(Length::Px(value))
+}
+
+/// A `var()` page `direction` is substituted before the flow-relative
+/// margins are mapped, so they follow the computed `rtl`.
+#[test]
+fn page_var_direction_maps_logical_margins() {
+    let result = page(
+        "@page { --d: rtl; direction: var(--d); margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginRight),
+        Some(&PropertyValue::MarginRight(px_margin(1.0)))
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginLeft),
+        Some(&PropertyValue::MarginLeft(px_margin(0.0)))
+    );
+}
+
+/// A `writing-mode` that `all: revert-layer` rolls back does not decide the
+/// mapping of the page's flow-relative margins.
+#[test]
+fn page_rolled_back_writing_mode_does_not_map_logical_margins() {
+    let result = page(
+        "@layer top { @page { writing-mode: vertical-rl; all: revert-layer } } \
+         @page { margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    assert!(!declarations.contains_key(&PropertyKey::WritingMode));
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginLeft),
+        Some(&PropertyValue::MarginLeft(px_margin(1.0)))
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginTop),
+        Some(&PropertyValue::MarginTop(px_margin(0.0)))
+    );
+}
+
+/// Margin boxes map flow-relative margins through their own `direction`,
+/// or else the page context's, and the result competes with the physical
+/// longhand for that side.
+#[test]
+fn margin_box_logical_margins_follow_the_margin_context_direction() {
+    let margins = |css: &str| {
+        let margin = page(css, &ComputedValues::initial())
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        margin
+            .declarations
+            .into_iter()
+            .filter(|declaration| {
+                matches!(
+                    declaration.value.key(),
+                    PropertyKey::MarginLeft | PropertyKey::MarginRight
+                )
+            })
+            .map(|declaration| declaration.value)
+            .collect::<Vec<_>>()
+    };
+    for css in [
+        "@page { @top-left { content: 'X'; --d: rtl; direction: var(--d); \
+         margin-right: 2px; margin-inline-start: 1px } }",
+        "@page { direction: rtl; @top-left { content: 'X'; \
+         margin-right: 2px; margin-inline-start: 1px } }",
+        // An invalid own `direction` leaves the page context's in place.
+        "@page { direction: rtl; @top-left { content: 'X'; direction: var(--missing); \
+         margin-right: 2px; margin-inline-start: 1px } }",
+    ] {
+        assert_eq!(
+            margins(css),
+            [PropertyValue::MarginRight(px_margin(1.0))],
+            "{css}"
+        );
+    }
+    assert_eq!(
+        margins("@page { @top-left { content: 'X'; margin-inline-start: 1px } }"),
+        [PropertyValue::MarginLeft(px_margin(1.0))]
+    );
+}
+
+/// A `var()` flow-relative shorthand in a margin box is split by its own
+/// name before its longhands move to their physical sides.
+#[test]
+fn margin_box_var_logical_shorthand_is_split_before_mapping() {
+    let margin = page(
+        "@page { @top-left { content: 'X'; direction: rtl; --m: 1px 2px; margin-inline: var(--m) } }",
+        &ComputedValues::initial(),
+    )
+    .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+    .unwrap();
+    let mut margins: Vec<_> = margin
+        .declarations
+        .into_iter()
+        .map(|declaration| declaration.value)
+        .filter(|value| {
+            matches!(
+                value.key(),
+                PropertyKey::MarginLeft | PropertyKey::MarginRight
+            )
+        })
+        .collect();
+    margins.sort_by_key(|value| value.key() == PropertyKey::MarginRight);
+    assert_eq!(
+        margins,
+        [
+            PropertyValue::MarginLeft(px_margin(2.0)),
+            PropertyValue::MarginRight(px_margin(1.0)),
+        ]
+    );
+}
+
+/// `text-orientation: upright` makes the page context's used direction `ltr`
+/// in a vertical writing mode, so its inline-start side is the top even
+/// under `direction: rtl`. Sideways modes ignore it.
+#[test]
+fn page_upright_text_orientation_maps_inline_sides_as_ltr() {
+    let margins = |css: &str| {
+        let result = page(css, &ComputedValues::initial());
+        let declarations = result.declarations();
+        (
+            declarations.get(&PropertyKey::MarginTop).cloned(),
+            declarations.get(&PropertyKey::MarginBottom).cloned(),
+        )
+    };
+    let top = (
+        Some(PropertyValue::MarginTop(px_margin(1.0))),
+        Some(PropertyValue::MarginBottom(px_margin(0.0))),
+    );
+    let bottom = (
+        Some(PropertyValue::MarginTop(px_margin(0.0))),
+        Some(PropertyValue::MarginBottom(px_margin(1.0))),
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
+             margin: 0; margin-inline-start: 1px }"
+        ),
+        top
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: vertical-rl; direction: rtl; margin: 0; margin-inline-start: 1px }"
+        ),
+        bottom
+    );
+    assert_eq!(
+        margins(
+            "@page { writing-mode: sideways-rl; text-orientation: upright; direction: rtl; \
+             margin: 0; margin-inline-start: 1px }"
+        ),
+        bottom
+    );
+}
+
+/// Margin boxes inherit the page context's computed `direction`, not the
+/// `ltr` that upright text forces on the page's own vertical flow.
+#[test]
+fn margin_box_inherits_the_page_computed_direction_under_upright_text() {
+    let margin = page(
+        "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
+         @top-left { content: 'X'; margin-inline-start: 1px } }",
+        &ComputedValues::initial(),
+    )
+    .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+    .unwrap();
+    assert!(
+        margin
+            .declarations
+            .iter()
+            .any(|declaration| declaration.value == PropertyValue::MarginRight(px_margin(1.0)))
+    );
+}

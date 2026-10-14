@@ -58,6 +58,7 @@ pub use property::{
 };
 
 mod layer;
+mod logical;
 
 pub mod rule;
 pub use rule::{Declaration, StyleRule};

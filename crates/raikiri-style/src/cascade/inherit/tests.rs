@@ -7600,6 +7600,7 @@ fn apply_winners_deferred_border_radius_resolving_to_inherit() {
             important: false,
             key: crate::property::PropertyKey::BorderRadius,
             rollback: crate::cascade::rollback::Rollback::None,
+            logical: None,
         },
         Precedence::new(
             Origin::Author,
@@ -7649,6 +7650,7 @@ fn apply_winners_direct_border_radius_inherit() {
             important: false,
             key: crate::property::PropertyKey::BorderRadius,
             rollback: crate::cascade::rollback::Rollback::None,
+            logical: None,
         },
         Precedence::new(
             Origin::Author,
@@ -10714,6 +10716,7 @@ mod border_image_tests;
 mod column_rule_tests;
 mod column_span_tests;
 mod limit_tests;
+mod logical_tests;
 
 /// With no parent, a self-referential `lh` / `rlh` on the root resolves
 /// against the initial font's `normal` line, not the root's own font.

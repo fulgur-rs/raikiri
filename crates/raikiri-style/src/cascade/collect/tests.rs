@@ -701,7 +701,7 @@ fn pick_winners_panics_on_non_empty_scratch_buffer() {
         source_order: 0,
         idx: 0,
     })];
-    pick_winners(ElementCandidates::EMPTY, &mut winners);
+    pick_winners(ElementCandidates::EMPTY, &mut winners, None);
 }
 
 fn source_hash(source: &str) -> u64 {
