@@ -460,6 +460,7 @@ fn collect_candidates(
             Err(error) => return Err(projection_error(idx, error)),
         };
         let projected_box_nodes = projected
+            .meta
             .boxes
             .iter()
             .map(|box_| {
