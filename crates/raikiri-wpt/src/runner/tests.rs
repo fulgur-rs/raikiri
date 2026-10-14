@@ -288,3 +288,22 @@ fn discovery_uses_root_relative_ids_for_expected_failure_matching() {
         results[0].0.outcome
     );
 }
+
+#[test]
+fn filtered_print_reftest_reports_the_print_paper_pixels() {
+    let dir = tempfile::tempdir().unwrap();
+    let test = dir.path().join("a-print.html");
+    std::fs::write(&test, "<link rel=match href=a-ref.html>").unwrap();
+    std::fs::write(dir.path().join("a-ref.html"), "").unwrap();
+    let pairs = crate::reftest::discover_pairs_for_file(&test).unwrap();
+    let mut set = empty_set();
+    set.deprecated.entries.insert("a-print.html".to_owned());
+    let runner = WptRunner::new(set);
+    let config = ReftestConfig::default();
+    let result = runner.run_reftest_pair_for_test_id("a-print.html", &pairs[0], config, "");
+    assert!(matches!(result.outcome, TestOutcome::Skip(_)));
+    assert_eq!(
+        result.total_pixels,
+        u64::from(config.print_page_width) * u64::from(config.print_page_height)
+    );
+}

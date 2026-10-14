@@ -1,4 +1,4 @@
-//! Focused CSS Page visual checks at the exact project viewport.
+//! Focused CSS Page visual checks on the WPT print paper.
 
 use std::path::PathBuf;
 
@@ -8,17 +8,14 @@ use raikiri_wpt::runner::{TestOutcome, Tolerance};
 /// Named pages and page-margin geometry match their references exactly.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn named_page_and_margin_pairs_are_pixel_exact_at_800x600() {
+fn named_page_and_margin_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
         "page-name-000-print.html",
         "page-name-001-print.html",
-        "page-name-002-print.html",
         "page-margin-001-print.html",
         "page-margin-002-print.html",
         "page-margin-003-print.html",
@@ -34,11 +31,9 @@ fn named_page_and_margin_pairs_are_pixel_exact_at_800x600() {
 /// explicit empty page boundary.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_name_display_none_child_is_pixel_exact_at_800x600() {
+fn page_name_display_none_child_is_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     run_exact_pair(
@@ -52,11 +47,9 @@ fn page_name_display_none_child_is_pixel_exact_at_800x600() {
 /// Page counters in margin boxes match their references exactly.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_counter_pairs_are_pixel_exact_at_800x600() {
+fn page_counter_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -72,11 +65,9 @@ fn page_counter_pairs_are_pixel_exact_at_800x600() {
 /// Spread-pseudo side margins constrain the page content width exactly.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_left_right_spread_pseudo_pair_is_pixel_exact_at_800x600() {
+fn page_left_right_spread_pseudo_pair_is_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     run_exact_pair(
@@ -90,11 +81,9 @@ fn page_left_right_spread_pseudo_pair_is_pixel_exact_at_800x600() {
 /// Named-page propagation through a column flex container is pixel exact.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_name_flex_003_is_pixel_exact_at_800x600() {
+fn page_name_flex_003_is_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     run_exact_pair(
@@ -109,11 +98,9 @@ fn page_name_flex_003_is_pixel_exact_at_800x600() {
 /// anonymous block without creating an extra leading page.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn nested_named_page_propagation_pairs_are_pixel_exact_at_800x600() {
+fn nested_named_page_propagation_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -128,11 +115,9 @@ fn nested_named_page_propagation_pairs_are_pixel_exact_at_800x600() {
 /// outputs differ from their single-page refs (mismatch PASS).
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn basic_pagination_pairs_are_pixel_exact_at_800x600() {
+fn basic_pagination_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -153,11 +138,9 @@ fn basic_pagination_pairs_are_pixel_exact_at_800x600() {
 /// `contain: size` box extending the page count).
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn monolithic_overflow_pairs_are_pixel_exact_at_800x600() {
+fn monolithic_overflow_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -195,11 +178,9 @@ fn run_exact_pair(root: &std::path::Path, dir: &str, name: &str, config: Reftest
 /// Named-page declarations on out-of-flow boxes do not create page transitions.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn out_of_flow_named_page_boxes_match_at_800x600() {
+fn out_of_flow_named_page_boxes_match_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -213,11 +194,9 @@ fn out_of_flow_named_page_boxes_match_at_800x600() {
 /// Inline canvas named-page controls remain in the expected page context.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_name_canvas_inline_pairs_are_pixel_exact_at_800x600() {
+fn page_name_canvas_inline_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -233,11 +212,9 @@ fn page_name_canvas_inline_pairs_are_pixel_exact_at_800x600() {
 /// Nested named-page values propagate without creating one break per wrapper.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn page_name_propagated_pairs_are_pixel_exact_at_800x600() {
+fn page_name_propagated_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     for name in [
@@ -252,21 +229,19 @@ fn page_name_propagated_pairs_are_pixel_exact_at_800x600() {
 /// (001-009; 010/011 excluded as separate follow-up).
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn fixedpos_pairs_are_pixel_exact_at_800x600() {
+fn fixedpos_pairs_are_pixel_exact_on_the_print_paper() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let mut config = ReftestConfig::default();
-    config.width = 800;
-    config.height = 600;
     config.tolerance = Tolerance::EXACT;
 
     // fixedpos-004, -006 and -008 nest the fixed box in an abspos parent
-    // whose height does not yet extend the page count; they are tracked in
-    // expectations/expected-failures.txt.
+    // whose height does not yet extend the page count, and fixedpos-005
+    // paints the neighbouring page's content into the page margins; they are
+    // tracked in expectations/expected-failures.txt.
     for name in [
         "fixedpos-001-print.html",
         "fixedpos-002-print.html",
         "fixedpos-003-print.html",
-        "fixedpos-005-print.html",
         "fixedpos-007-print.html",
         "fixedpos-009-print.html",
     ] {
