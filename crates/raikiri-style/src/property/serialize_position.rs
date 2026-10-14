@@ -217,6 +217,11 @@ fn group_components(values: Vec<(Option<String>, &str)>) -> Option<Vec<Component
 /// canonicalized and each top-level `url()` written as a quoted string, or
 /// `None` when nothing changed.
 fn canonical_image_list(source: &str) -> Option<String> {
+    // A value with a substitution function keeps the text it was written
+    // with.
+    if contains_substitution(&mut Parser::new(&mut ParserInput::new(source))) {
+        return None;
+    }
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let mut replacements = Vec::new();
@@ -266,15 +271,13 @@ fn canonical_image_list(source: &str) -> Option<String> {
         copied = range.end;
     }
     out.push_str(&source[copied..]);
-    changed.then_some(out)
+    changed.then(|| out.trim().to_owned())
 }
 
-/// `url` as CSSOM serializes a URL: `url(` and the URL as a CSS string.
+/// `url` as CSSOM serializes a URL.
 fn serialized_url(url: &str) -> String {
-    let mut out = String::from("url(");
-    // Writing to a String cannot fail.
-    let _ = cssparser::serialize_string(url, &mut out);
-    out.push(')');
+    let mut out = String::new();
+    super::serialize_content::push_url(&mut out, url);
     out
 }
 

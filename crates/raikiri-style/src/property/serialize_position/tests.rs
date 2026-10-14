@@ -154,4 +154,8 @@ fn background_image_urls_serialize_as_quoted_strings() {
     assert_eq!(image(r#"url("a.png")"#), None);
     assert_eq!(image(r#"url("a.png" foo)"#), None);
     assert_eq!(image(r#"light-dark(url(a.png), none)"#), None);
+    // A substitution function keeps the whole value as written.
+    assert_eq!(image("url(a.png), var(--x)"), None);
+    // Surrounding whitespace is not kept.
+    assert_eq!(image("  url(a.png) ").as_deref(), Some(r#"url("a.png")"#));
 }
