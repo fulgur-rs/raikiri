@@ -13805,3 +13805,30 @@ fn a_box_within_both_rounding_bands_stays_on_the_page_it_starts_on() {
         None
     );
 }
+
+#[test]
+fn a_mixed_calc_grid_track_resolves_against_the_container() {
+    // The container is 200px wide with a 10px font: `calc(50% - 1em)` is
+    // 100 - 10 = 90px, and `minmax(calc(10% + 1em), 1fr)` takes the rest.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;width:200px;font-size:10px;\
+             grid-template-columns:calc(50% - 1em) minmax(calc(10% + 1em),1fr)",
+        ),
+    );
+    let first = doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    let second = doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert_eq!(doc.nodes[first].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.x, 90.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.size.width, 110.0);
+}

@@ -385,6 +385,9 @@ fn grid_track_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridTrackBre
     match b {
         ComputedGridTrackBreadth::Px(v) => GridTrackBreadth::Length(Length::Px(v)),
         ComputedGridTrackBreadth::Percent(p) => GridTrackBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridTrackBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
         ComputedGridTrackBreadth::Flex(f) => GridTrackBreadth::Flex(f),
         ComputedGridTrackBreadth::MinContent => GridTrackBreadth::MinContent,
         ComputedGridTrackBreadth::MaxContent => GridTrackBreadth::MaxContent,
@@ -402,6 +405,9 @@ fn grid_inflexible_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridInf
     match b {
         ComputedGridTrackBreadth::Px(v) => GridInflexibleBreadth::Length(Length::Px(v)),
         ComputedGridTrackBreadth::Percent(p) => GridInflexibleBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridInflexibleBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
         ComputedGridTrackBreadth::MinContent => GridInflexibleBreadth::MinContent,
         ComputedGridTrackBreadth::MaxContent => GridInflexibleBreadth::MaxContent,
         // cov:ignore: unreachable per this fn's doc; kept for match

@@ -286,7 +286,7 @@ pub(crate) fn apply_computed_to_style(
         bridge_flex(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_alignment(style, cv);
         bridge_gap(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_grid(style, cv, &mut doc.layout_warnings);
+        bridge_grid(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         if cv.display == DisplayValue::Contents {
             // A `display: contents` element generates no box (CSS Display 3
             // §2.5). Where layout still keeps a node for it, the node stands
@@ -1190,13 +1190,26 @@ fn computed_gap_component_to_taffy(
 /// - `grid-auto-flow` → `style.grid_auto_flow` (§7.7)
 /// - `grid-row-start`/`grid-row-end` / `grid-column-start`/`grid-column-end`
 ///   → `style.grid_row` / `style.grid_column` (`Line<GridPlacement>`, §8.3)
-fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
-    let (columns, column_names) =
-        grid_template_tracks_to_taffy(&cv.grid_template_columns, "grid-template-columns", diag);
+fn bridge_grid(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
+    let (columns, column_names) = grid_template_tracks_to_taffy(
+        calc_values,
+        &cv.grid_template_columns,
+        "grid-template-columns",
+        diag,
+    );
     style.grid_template_columns = columns;
     style.grid_template_column_names = column_names;
-    let (rows, row_names) =
-        grid_template_tracks_to_taffy(&cv.grid_template_rows, "grid-template-rows", diag);
+    let (rows, row_names) = grid_template_tracks_to_taffy(
+        calc_values,
+        &cv.grid_template_rows,
+        "grid-template-rows",
+        diag,
+    );
     style.grid_template_rows = rows;
     style.grid_template_row_names = row_names;
 
@@ -1229,13 +1242,13 @@ fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
         .grid_auto_columns
         .iter()
         .copied()
-        .map(|t| grid_track_size_to_taffy(t, "grid-auto-columns", diag))
+        .map(|t| grid_track_size_to_taffy(calc_values, t, "grid-auto-columns", diag))
         .collect();
     style.grid_auto_rows = cv
         .grid_auto_rows
         .iter()
         .copied()
-        .map(|t| grid_track_size_to_taffy(t, "grid-auto-rows", diag))
+        .map(|t| grid_track_size_to_taffy(calc_values, t, "grid-auto-rows", diag))
         .collect();
 
     style.grid_auto_flow = match cv.grid_auto_flow {
@@ -1275,6 +1288,7 @@ fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 /// `none` maps to a pair of empty `Vec`s — taffy's own default for a
 /// container with no explicit track list.
 fn grid_template_tracks_to_taffy(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     tracks: &ComputedGridTemplateTracks,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -1287,16 +1301,16 @@ fn grid_template_tracks_to_taffy(
                 .iter()
                 .cloned()
                 .map(|component| match component {
-                    ComputedGridTrackListComponent::Size(size) => {
-                        GridTemplateComponent::Single(grid_track_size_to_taffy(size, site, diag))
-                    }
+                    ComputedGridTrackListComponent::Size(size) => GridTemplateComponent::Single(
+                        grid_track_size_to_taffy(calc_values, size, site, diag),
+                    ),
                     ComputedGridTrackListComponent::Repeat(repeat) => {
                         GridTemplateComponent::Repeat(GridTemplateRepetition {
                             count: grid_repeat_count_to_taffy(repeat.count),
                             tracks: repeat
                                 .tracks
                                 .into_iter()
-                                .map(|t| grid_track_size_to_taffy(t, site, diag))
+                                .map(|t| grid_track_size_to_taffy(calc_values, t, site, diag))
                                 .collect(),
                             line_names: repeat
                                 .line_names
@@ -1346,18 +1360,19 @@ fn grid_repeat_count_to_taffy(count: GridRepeatCount) -> TaffyRepetitionCount {
 /// min side as `auto`, which is what `MinTrackSizingFunction::auto()`
 /// supplies here.
 fn grid_track_size_to_taffy(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     size: ComputedGridTrackSize,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> TrackSizingFunction {
     match size {
         ComputedGridTrackSize::Breadth(b) => TrackSizingFunction {
-            min: grid_track_breadth_to_taffy_min(b, site, diag),
-            max: grid_track_breadth_to_taffy_max(b, site, diag),
+            min: grid_track_breadth_to_taffy_min(calc_values, b, site, diag),
+            max: grid_track_breadth_to_taffy_max(calc_values, b, site, diag),
         },
         ComputedGridTrackSize::MinMax(min, max) => TrackSizingFunction {
-            min: grid_track_breadth_to_taffy_min(min, site, diag),
-            max: grid_track_breadth_to_taffy_max(max, site, diag),
+            min: grid_track_breadth_to_taffy_min(calc_values, min, site, diag),
+            max: grid_track_breadth_to_taffy_max(calc_values, max, site, diag),
         },
         ComputedGridTrackSize::FitContent(lp) => {
             let max = match lp {
@@ -1389,10 +1404,12 @@ fn grid_track_size_to_taffy(
 /// `Flex` variant to produce it from); the arm below is a defensive
 /// fallback to keep the match exhaustive, not a reachable case.
 fn grid_track_breadth_to_taffy_min(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     b: ComputedGridTrackBreadth,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> MinTrackSizingFunction {
+    use crate::taffy_impl::push_calc;
     use ComputedGridTrackBreadth as B;
     match b {
         B::Px(v) => MinTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
@@ -1400,6 +1417,7 @@ fn grid_track_breadth_to_taffy_min(
         B::MinContent => MinTrackSizingFunction::min_content(),
         B::MaxContent => MinTrackSizingFunction::max_content(),
         B::Auto => MinTrackSizingFunction::auto(),
+        B::Calc(calc) => MinTrackSizingFunction::calc(push_calc(calc_values, calc, true)),
         // cov:ignore: see this fn's doc — structurally unreachable, kept
         // only for match exhaustiveness.
         B::Flex(_) => MinTrackSizingFunction::auto(),
@@ -1413,10 +1431,12 @@ fn grid_track_breadth_to_taffy_min(
 /// case here — the `fr` unit is only valid on the max side of `minmax()`
 /// or as a bare `<track-breadth>` (CSS Grid Layout Module Level 1 §7.2.4).
 fn grid_track_breadth_to_taffy_max(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     b: ComputedGridTrackBreadth,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> MaxTrackSizingFunction {
+    use crate::taffy_impl::push_calc;
     use ComputedGridTrackBreadth as B;
     match b {
         B::Px(v) => MaxTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
@@ -1425,6 +1445,7 @@ fn grid_track_breadth_to_taffy_max(
         B::MinContent => MaxTrackSizingFunction::min_content(),
         B::MaxContent => MaxTrackSizingFunction::max_content(),
         B::Auto => MaxTrackSizingFunction::auto(),
+        B::Calc(calc) => MaxTrackSizingFunction::calc(push_calc(calc_values, calc, true)),
     }
 }
 

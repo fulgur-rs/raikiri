@@ -3880,6 +3880,9 @@ pub struct PlaceContentShorthand {
 pub enum GridTrackBreadth {
     /// `<length-percentage [0,∞]>`.
     Length(Length),
+    /// A mixed-unit `calc()` `<length-percentage [0,∞]>` that keeps its
+    /// percentage until used-value time.
+    Calc(LengthPercentageOrCalc),
     /// `<flex [0,∞]>` — the `fr` unit (§7.2.4). Authored non-negative number
     /// (`1fr` → `Flex(1.0)`).
     Flex(f32),
@@ -3911,6 +3914,9 @@ pub enum GridInflexibleBreadth {
     /// `<fixed-breadth>` (see the "fixed-size constraint" section of the
     /// [`GridTrackSize`] doc).
     Length(Length),
+    /// A mixed-unit `calc()` `<length-percentage [0,∞]>` that keeps its
+    /// percentage until used-value time. It is also a `<fixed-breadth>`.
+    Calc(LengthPercentageOrCalc),
     /// `min-content`.
     MinContent,
     /// `max-content`.

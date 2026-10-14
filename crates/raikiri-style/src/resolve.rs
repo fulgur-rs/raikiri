@@ -664,6 +664,9 @@ pub enum ComputedGridTrackBreadth {
     MaxContent,
     /// `auto`.
     Auto,
+    /// A percentage with an absolute-length offset, resolved against the
+    /// grid container's content box at used-value time.
+    Calc(CalcLengthPercentage),
 }
 
 /// Computed `<track-size>` (CSS Grid Layout Module Level 1 §7.2.1).
@@ -3256,12 +3259,31 @@ pub fn resolve_grid_track_breadth(
         GridTrackBreadth::MinContent => ComputedGridTrackBreadth::MinContent,
         GridTrackBreadth::MaxContent => ComputedGridTrackBreadth::MaxContent,
         GridTrackBreadth::Flex(f) => ComputedGridTrackBreadth::Flex(f),
+        GridTrackBreadth::Calc(calc) => {
+            resolve_grid_breadth_calc(calc, font_size, own_line_height, ctx)
+        }
         GridTrackBreadth::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedGridTrackBreadth::Px(v),
                 ComputedLengthPercentage::Percent(p) => ComputedGridTrackBreadth::Percent(p),
             }
         }
+    }
+}
+
+/// Absolutize the mixed `calc()` arm of a `<track-breadth>` or
+/// `<inflexible-breadth>`; a negative result is clamped as for the other
+/// `<length-percentage [0,∞]>` values.
+fn resolve_grid_breadth_calc(
+    calc: LengthPercentageOrCalc,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTrackBreadth {
+    match resolve_non_negative_length_percentage_or_calc(calc, font_size, own_line_height, ctx) {
+        ComputedLengthPercentageOrCalc::Px(v) => ComputedGridTrackBreadth::Px(v),
+        ComputedLengthPercentageOrCalc::Percent(p) => ComputedGridTrackBreadth::Percent(p),
+        ComputedLengthPercentageOrCalc::Calc(c) => ComputedGridTrackBreadth::Calc(c),
     }
 }
 
@@ -3280,6 +3302,9 @@ pub fn resolve_grid_inflexible_breadth(
         GridInflexibleBreadth::Auto => ComputedGridTrackBreadth::Auto,
         GridInflexibleBreadth::MinContent => ComputedGridTrackBreadth::MinContent,
         GridInflexibleBreadth::MaxContent => ComputedGridTrackBreadth::MaxContent,
+        GridInflexibleBreadth::Calc(calc) => {
+            resolve_grid_breadth_calc(calc, font_size, own_line_height, ctx)
+        }
         GridInflexibleBreadth::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedGridTrackBreadth::Px(v),
