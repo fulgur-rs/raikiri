@@ -485,15 +485,22 @@ impl Document {
             let owner = self.table_objects.cells[index].owner;
             // The wrapper exists only in the layout view. Its source children
             // retain their DOM parents and their own styles throughout.
-            let view = self.table_objects.cells[index].node.clone();
-            let source = std::mem::replace(&mut self.nodes[owner], view);
+            // The view takes the owner's slot while it is laid out, and the
+            // source node waits in the cell; nothing reads the cell's view
+            // meanwhile, so swapping avoids cloning the whole node.
+            std::mem::swap(
+                &mut self.nodes[owner],
+                &mut self.table_objects.cells[index].node,
+            );
             let output = self.compute_child_layout_with_block_ctx_inner(
                 NodeId::from(owner),
                 inputs,
                 block_ctx,
             );
-            self.table_objects.cells[index].node =
-                std::mem::replace(&mut self.nodes[owner], source);
+            std::mem::swap(
+                &mut self.nodes[owner],
+                &mut self.table_objects.cells[index].node,
+            );
             return output;
         }
         // Lazy layout cache invalidation — mutations only set a flag; we
