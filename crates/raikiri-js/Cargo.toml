@@ -19,6 +19,7 @@ cssparser      = { workspace = true }
 # browsers, and web content such as WPT pages relies on it.
 boa_engine = { version = "0.22", default-features = false, features = ["annex-b"] }
 boa_gc = "0.22"
+stacker = { workspace = true }
 url = { workspace = true }
 
 [dev-dependencies]

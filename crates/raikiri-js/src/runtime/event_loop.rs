@@ -38,7 +38,9 @@ use super::webidl::with_state;
 ///   must bound CPU for untrusted content needs an external watchdog.
 /// - Parser depth. Deeply nested source (hundreds of nested brackets) can
 ///   overflow the native stack inside Boa's parser before any limit here
-///   applies.
+///   applies. The runtime's entry points run with a fixed native stack
+///   budget, so this takes far deeper nesting than ordinary scripts use,
+///   but no limit turns it into an abort.
 /// - Memory. There is no heap bound.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Limits {
@@ -408,6 +410,26 @@ impl JobExecutor for RaikiriJobExecutor {
                 .into()
         })
     }
+}
+
+/// Native stack guaranteed to everything a [`super::DomRuntime`] entry point
+/// runs: parsing, script, callbacks, and the microtasks and tasks that
+/// follow.
+///
+/// Boa's parser is recursive descent with no depth limit, and its frames are
+/// large: parsing testharness.js alone takes about 2 MiB, the whole of a
+/// default spawned thread's stack, when Boa is built optimized. The budget
+/// is reserved as address space and only touched as deep as the run
+/// actually recurses.
+const ENGINE_STACK_BYTES: usize = 16 * 1024 * 1024;
+
+/// Run `f` with at least [`ENGINE_STACK_BYTES`] of native stack, switching
+/// to a fresh stack segment when the calling thread has less left.
+///
+/// Overrunning the segment itself still ends the process, with a plain
+/// segmentation fault rather than Rust's stack overflow message.
+pub(crate) fn with_engine_stack<R>(f: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(ENGINE_STACK_BYTES, ENGINE_STACK_BYTES, f)
 }
 
 /// The runtime's abort reason, if a limit was reached earlier.
