@@ -574,6 +574,7 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
             | DisplayValue::TableRow
             | DisplayValue::TableCell
             | DisplayValue::TableCaption
+            | DisplayValue::BlockRuby
     ) {
         return Some(IfcBoxKind::Block);
     }

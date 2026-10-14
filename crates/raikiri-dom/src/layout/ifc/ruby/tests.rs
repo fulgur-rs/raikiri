@@ -816,13 +816,19 @@ fn spaced_bases_text_containers_and_nested_annotations_lay_out() {
 
 #[test]
 fn rubies_that_lay_out_their_own_content_keep_their_annotations_over_the_bases() {
-    for extra in ["display:flex", "position:relative", "float"] {
+    for extra in [
+        "display:flex",
+        "position:relative",
+        "float",
+        "logical float",
+    ] {
         let mut ids = (0, 0, 0);
-        let root_style = if extra == "float" { "" } else { extra };
+        let root_style = if extra.contains("float") { "" } else { extra };
         let fixture = block_fixture(&format!("line-height:20px;{root_style}"), |doc, root| {
             let style = match extra {
                 "display:flex" => "display:ruby;line-height:20px",
                 "float" => "display:ruby;line-height:20px;float:left",
+                "logical float" => "display:ruby;line-height:20px;float:inline-start",
                 _ => "display:ruby;line-height:20px;position:absolute",
             };
             let container = element(doc, root, "ruby", style);
