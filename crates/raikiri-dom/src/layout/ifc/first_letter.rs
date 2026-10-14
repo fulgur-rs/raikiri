@@ -104,6 +104,8 @@ impl FirstLetter {
             Pseudo(usize, PseudoElem),
         }
         let mut stack = vec![Visit::Pseudo(self.origin, PseudoElem::After)];
+        // Whether each ruby container met is planned as ruby, planned once.
+        let mut planned = std::collections::HashMap::new();
         stack.extend(
             doc.get_node(self.origin)
                 .into_iter()
@@ -169,7 +171,7 @@ impl FirstLetter {
                             if matches!(
                                 cv.display,
                                 DisplayValue::RubyText | DisplayValue::RubyTextContainer
-                            ) && is_planned_annotation(doc, cascade, id)
+                            ) && is_planned_annotation(doc, cascade, id, &mut planned)
                             {
                                 continue;
                             }
@@ -719,11 +721,18 @@ impl PredecessorCache {
 
 /// Whether the ruby annotation `id` is laid out beside its base, i.e. its
 /// nearest ruby container is planned as ruby rather than projected inline.
-fn is_planned_annotation(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+fn is_planned_annotation(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    planned: &mut std::collections::HashMap<usize, bool>,
+) -> bool {
     let mut current = doc.parent_of(id);
     while let Some(ancestor) = current {
         if cascade.computed[ancestor].display.is_ruby_container() {
-            return super::ruby::plan(doc, cascade, ancestor).is_some();
+            return *planned
+                .entry(ancestor)
+                .or_insert_with(|| super::ruby::plan(doc, cascade, ancestor).is_some());
         }
         current = doc.parent_of(ancestor);
     }

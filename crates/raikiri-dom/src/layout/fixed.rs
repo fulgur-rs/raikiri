@@ -37,7 +37,7 @@ use taffy::{
 
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
-pub(super) fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+pub fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.

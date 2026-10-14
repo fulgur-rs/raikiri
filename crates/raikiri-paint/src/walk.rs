@@ -2945,15 +2945,13 @@ pub(crate) fn paint_document_impl(
                 };
                 // spec: https://www.w3.org/TR/css-transforms-1/#terminology
                 // Non-replaced inline and table-column boxes are not transformable.
+                // An inline box blockified by layout (an out-of-flow box, a
+                // flex or grid item) is transformable whatever its computed
+                // display.
                 let transformable = !matches!(
                     cv.display,
                     DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) && (!cv.display.is_inline_flow()
-                    || node.is_inline_svg_root()
-                    || matches!(
-                        node.tag_name(),
-                        Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-                    ));
+                ) && !raikiri_dom::generates_inline_box(document, node_id, cv);
                 let (own_transform_x, own_transform_y) = if transformable {
                     transform_translation(cv, layout.size.width, layout.size.height)
                 } else {

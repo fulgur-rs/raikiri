@@ -679,18 +679,15 @@ pub(super) fn box_paint_shift(
 pub(super) fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
-    let Some(node) = document.get_node(id) else {
+    // An inline box blockified by layout (an out-of-flow box, a flex or
+    // grid item) is transformable whatever its computed display.
+    if document.get_node(id).is_none() {
         return false; // cov:ignore: ancestors of a laid-out paragraph are arena nodes
-    };
+    }
     !matches!(
         cv.display,
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && (!cv.display.is_inline_flow()
-        || node.is_inline_svg_root()
-        || matches!(
-            node.tag_name(),
-            Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-        ))
+    ) && !crate::layout::generates_inline_box(document, id, cv)
 }
 
 /// How many columns a multicol container lays its content out in; 1 for
