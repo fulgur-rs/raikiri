@@ -254,9 +254,10 @@ fn stretched_width(style: &Style, space: f32, inputs: LayoutInput) -> f32 {
 /// physical width here, while percentages of padding refer to the inline
 /// size of the containing block on every side (CSS Writing Modes 4 §7.1).
 fn resolve_child_padding(tree: &mut Document, width: f32, basis: Option<f32>) {
-    let Some(block) = tree.transposed_blocks.last_mut() else {
-        return;
-    };
+    let block = tree
+        .transposed_blocks
+        .last_mut()
+        .expect("the container's block is pushed");
     let padding = block
         .container_style
         .padding
