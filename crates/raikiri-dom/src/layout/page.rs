@@ -1339,8 +1339,11 @@ pub(crate) fn is_monolithic_for_pagination(
         .flags
         .contains(crate::node::NodeFlags::IS_INLINE_SVG_ROOT)
         || node.tag_name().is_some_and(|tag| {
-            let tag = tag.to_ascii_lowercase();
-            ATOMIC_TAGS.contains(&tag.as_str()) || REPLACED_BOX_TAGS.contains(&tag.as_str())
+            // Programmatically created DOM nodes can retain mixed-case tags.
+            ATOMIC_TAGS
+                .iter()
+                .chain(REPLACED_BOX_TAGS)
+                .any(|replaced_tag| tag.eq_ignore_ascii_case(replaced_tag))
         });
     replaced
         || (!page_applies_to_box(document, cascade, node_id)
