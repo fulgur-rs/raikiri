@@ -1047,19 +1047,23 @@ impl RelativeCalcLengthPercentage {
     /// The factor that scales the parent's font size to this value when it
     /// is used as `font-size`, for a non-negative sum of `%` and true `em`
     /// terms only. `None` when any other term (including `ex` or `ic`) takes
-    /// part, since those do not scale a keyword-derived parent size.
+    /// part, since those do not scale a keyword-derived parent size. `None`
+    /// also when no `em` term is left, since `ex` or `ic` terms that folded
+    /// to a zero `em` coefficient leave no term to record them.
     pub(crate) fn font_size_scale(&self) -> Option<f32> {
         if self.px != 0.0 {
             return None;
         }
         let mut scale = self.percent / 100.0;
+        let mut has_em = false;
         for term in self.terms.iter().flatten() {
             if term.unit != RelativeCalcUnit::Em || term.approximates_font_metrics {
                 return None;
             }
             scale += term.coefficient;
+            has_em = true;
         }
-        (scale >= 0.0).then_some(scale)
+        (has_em && scale >= 0.0).then_some(scale)
     }
 
     /// The value without font-relative or viewport terms, when it has none.

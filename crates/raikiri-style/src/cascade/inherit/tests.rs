@@ -1437,6 +1437,9 @@ fn monospace_keyword_scaling_survives_a_percent_and_em_calc() {
     assert_eq!(size("calc(50% - 1em)"), ComputedLength(0.0));
     // A sum that overflows the parent's size falls back to the initial size.
     assert_eq!(size("calc(1e38em + 1%)"), ComputedLength(16.0));
+    // An `ex` that folds into an `em` term which then cancels still keeps
+    // the calc on the plain parent size.
+    assert_eq!(size("calc(50% + 1ex - .5em)"), ComputedLength(8.0));
 
     let c = cascade_chain(&[
         "font-family: monospace",
@@ -1446,6 +1449,15 @@ fn monospace_keyword_scaling_survives_a_percent_and_em_calc() {
     assert_eq!(c[1].font_size, ComputedLength(26.0));
     // The keyword information follows the family change.
     assert_eq!(c[2].font_size, ComputedLength(32.0));
+
+    // A multiple that fits the 13px monospace size but would overflow the
+    // 16px `medium` after a family change stays on the calc path.
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: calc(2.5e37em + 1%)",
+        "font-family: serif",
+    ]);
+    assert!(c[2].font_size.0.is_finite(), "{:?}", c[2].font_size);
 }
 
 #[test]

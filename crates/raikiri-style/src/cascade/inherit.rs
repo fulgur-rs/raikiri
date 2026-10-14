@@ -3087,13 +3087,16 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         // resolves the calc once the root font size and the parent's line
         // height are known; the parent's keyword information does not carry
         // over to a size that mixes in other terms. A multiple that would
-        // overflow the parent's size also stays a calc, whose resolution
-        // falls back to the initial size.
-        PropertyValue::FontSizeCalc(calc) => match calc
-            .font_size_scale()
+        // overflow the parent's size, or the keyword size it carries under
+        // the larger 16px `medium` of a later family change, also stays a
+        // calc, whose resolution falls back to the initial size.
+        PropertyValue::FontSizeCalc(calc) => match calc.font_size_scale().filter(|&scale| {
             // Still the `Length::Px` parent seed, as for `FontSizeRelative`.
-            .filter(|scale| (target.font_size.payload() * scale).is_finite())
-        {
+            (target.font_size.payload() * scale).is_finite()
+                && target
+                    .font_size_keyword
+                    .is_none_or(|info| info.scaled(scale).resolve(&[]).0.is_finite())
+        }) {
             Some(scale) => apply_value(PropertyValue::FontSize(Length::Em(scale)), target),
             None => {
                 target.font_size_calc = Some(calc);
