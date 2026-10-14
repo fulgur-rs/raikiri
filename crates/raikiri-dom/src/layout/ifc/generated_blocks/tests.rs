@@ -142,3 +142,57 @@ fn a_vertical_paragraph_breaks_its_lines_at_a_block_before_without_its_edges() {
     assert_eq!(root.ifc_lines().expect("lines").len(), 2);
     assert_eq!(root.unrounded_layout.size.width, 20.0);
 }
+
+#[test]
+fn a_token_is_found_past_a_stale_hint() {
+    let base = block("");
+    let blocks = [
+        GeneratedBlock {
+            start: 3,
+            end: 4,
+            ..base
+        },
+        GeneratedBlock {
+            start: 5,
+            end: 6,
+            ..base
+        },
+    ];
+    assert!(matches!(token(&blocks, 6, 0), Some((1, Token::End(_)))));
+    assert!(matches!(token(&blocks, 3, 0), Some((0, Token::Start(_)))));
+    assert!(token(&blocks, 7, 1).is_none());
+}
+
+fn flow<'a, 'b>(
+    y: &'a mut f32,
+    pending: &'a mut CollapsibleMarginSet,
+    leading: &'a mut Option<CollapsibleMarginSet>,
+    ctx: &'a BlockContext<'b>,
+) -> Flow<'a, 'b> {
+    Flow {
+        y,
+        pending,
+        leading_block_margin: leading,
+        lines: &[],
+        ctx,
+        width: 100.0,
+        top_edge: 0.0,
+        definite_height: None,
+        at_start: false,
+        rtl: false,
+    }
+}
+
+#[test]
+fn a_continued_box_is_as_tall_as_its_content_in_the_next_fragmentainer() {
+    let block = block("height: 100px; padding-bottom: 5px; margin-bottom: 3px");
+    let mut bfc = taffy::BlockFormattingContext::new();
+    let ctx = bfc.root_block_context();
+    let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+    let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx)).continued();
+    // The lines of the box in this fragmentainer took 30px.
+    y = 30.0;
+    close(&block, open, flow(&mut y, &mut pending, &mut leading, &ctx));
+    assert_eq!(y, 35.0);
+    assert_eq!(pending.resolve(), 3.0);
+}

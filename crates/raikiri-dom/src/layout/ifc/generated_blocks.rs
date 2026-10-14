@@ -361,10 +361,7 @@ pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>)
     let content_top = open
         .content_top
         .or_else(|| first_line.map(|line| line.block_offset()));
-    let content = match content_top {
-        Some(top) if first_line.is_some() => (*flow.y - top).max(0.0),
-        _ => 0.0,
-    };
+    let content = content_top.map_or(0.0, |top| (*flow.y - top).max(0.0));
     let height = if open.continued {
         content
     } else {
