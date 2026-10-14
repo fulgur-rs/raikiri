@@ -174,3 +174,99 @@ fn a_hanging_float_two_blocks_down_still_takes_up_the_move() {
     // flow-root still ends with the float at 210.
     assert_eq!((ys, root_height), (vec![60.0, 100.0, 160.0, 210.0], 150.0));
 }
+
+#[test]
+fn a_formatting_context_grows_with_a_float_that_moved_inside_a_min_height_block() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let root = block(doc, body, "display:flow-root");
+        ids.push(root);
+        let wrapper = block(doc, root, "display:block;min-height:100px");
+        let moved = block(doc, wrapper, "display:block;break-inside:avoid");
+        ids.push(moved);
+        block(doc, moved, "float:left;width:20px;height:150px");
+        block(doc, moved, "display:block;height:60px");
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    // The float moves with its block to 100..250, and the flow-root holds it.
+    assert_eq!((ys, root_height), (vec![60.0, 100.0, 250.0], 190.0));
+}
+
+#[test]
+fn the_flow_after_a_fixed_height_block_stays_past_a_forced_break_in_it() {
+    let mut ids = Vec::new();
+    let (doc, pages) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:30px");
+        let wrapper = block(doc, body, "display:block;height:50px");
+        block(doc, wrapper, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            wrapper,
+            "display:block;height:20px;break-before:page",
+        ));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!((ys, pages), (vec![100.0, 130.0], 2));
+}
+
+#[test]
+fn a_forced_break_in_a_two_column_grid_does_not_grow_the_grid() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:30px");
+        let grid = block(doc, body, "display:grid;grid-template-columns:50px 50px");
+        ids.push(grid);
+        let item = block(doc, grid, "display:block");
+        block(doc, item, "display:block;height:20px");
+        block(doc, item, "display:block;height:20px;break-before:page");
+        block(doc, grid, "display:block;height:40px");
+    });
+    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!(grid_height, 40.0);
+}
+
+#[test]
+fn a_grid_item_holding_a_float_does_not_grow_past_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(doc, body, "display:grid");
+        let item = block(doc, grid, "display:block");
+        ids.push(item);
+        block(doc, item, "float:left;width:20px;height:150px");
+        block(doc, item, "display:block;height:20px");
+        ids.push(block(
+            doc,
+            item,
+            "display:block;height:60px;break-inside:avoid",
+        ));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    let item_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((ys, item_height), (vec![60.0, 100.0, 210.0], 150.0));
+}
+
+#[test]
+fn a_one_column_grid_grows_from_its_items_in_row_order() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let grid = block(doc, body, "display:grid");
+        ids.push(grid);
+        let item = block(doc, grid, "display:block;grid-row:2");
+        block(doc, item, "display:block;height:10px");
+        block(doc, item, "display:block;height:60px;break-inside:avoid");
+        block(doc, item, "display:block;height:80px");
+        block(doc, grid, "display:block;grid-row:1;height:10px");
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    let grid_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    // The avoiding box in the second row moves from 80 to 100.
+    assert_eq!((ys, grid_height), (vec![60.0, 240.0], 180.0));
+}
