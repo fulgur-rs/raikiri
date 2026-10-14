@@ -1525,3 +1525,23 @@ fn layout_with_a_base_url_records_it_as_the_document_base_url() {
         .expect("layout Ok");
     assert_eq!(doc.base_url(), Some(&base));
 }
+
+#[test]
+fn find_body_takes_a_frameset_only_as_a_child_of_the_root_element() {
+    // A frameset document: the frameset child of `html` is the body element.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let _head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let frameset = doc.append_element(Some(html), "frameset", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    assert_eq!(find_body(&doc), Some(frameset));
+
+    // A frameset elsewhere, ahead of the real body, is not the body element.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+    let _stray = doc.append_element(Some(head), "frameset", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    assert_eq!(find_body(&doc), Some(body));
+}

@@ -66,8 +66,7 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
 /// Whether `idx` is the body layout starts at.
 pub(crate) fn is_layout_root(doc: &Document, idx: usize) -> bool {
     // The tag check spares the document walk for every other element.
-    crate::layout::is_body_tag(doc.nodes[idx].tag_name())
-        && crate::layout::find_body(doc) == Some(idx)
+    crate::layout::is_body_element(doc, idx) && crate::layout::find_body(doc) == Some(idx)
 }
 
 /// Whether `idx` is an ancestor of the body layout starts at: it is not laid

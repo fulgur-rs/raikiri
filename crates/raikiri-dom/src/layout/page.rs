@@ -111,15 +111,24 @@ impl BodyInlineInsets {
     }
 }
 
-/// Whether `tag` names an element that can be the body element. HTML
-/// defines the body element as the first `body` or `frameset` child of the
-/// root `html` element; a frameset document has no `body`.
-pub(crate) fn is_body_tag(tag: Option<&str>) -> bool {
-    matches!(tag, Some("body" | "frameset"))
+/// Whether `id` can be the body element. HTML defines the body element as
+/// the first `body` or `frameset` child of the root `html` element; a
+/// frameset document has no `body`. A `frameset` elsewhere (one a script
+/// inserted into the head, say) is not the body.
+pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
+    let node = &doc.nodes[id];
+    match node.tag_name() {
+        Some("body") => true,
+        Some("frameset") => node.parent.is_some_and(|parent| {
+            doc.nodes[parent].tag_name() == Some("html")
+                && doc.nodes[parent].parent == Some(doc.root)
+        }),
+        _ => false,
+    }
 }
 
 /// Walk the Document arena with DFS and return the arena index of the first
-/// `<body>` (or `<frameset>`, see [`is_body_tag`]) element.
+/// `<body>` (or `<frameset>`, see [`is_body_element`]) element.
 ///
 /// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack
 /// overflows in deeply nested DOMs. Return `None` for a fragment parse (no `<body>`);
@@ -140,7 +149,7 @@ pub(crate) fn find_body(doc: &Document) -> Option<usize> {
             // inert subtree — do not select a body inside it.
             continue;
         }
-        if node.kind() == NodeKind::Element && is_body_tag(node.tag_name()) {
+        if node.kind() == NodeKind::Element && is_body_element(doc, node_idx) {
             return Some(node_idx);
         }
         // Reverse-pushing children makes the stack pop them in document order.
