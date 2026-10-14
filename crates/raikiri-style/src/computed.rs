@@ -345,9 +345,8 @@ pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
 /// by `content: element(name)` in an `@page` margin box.
 ///
 /// The cascade captures `name` per node; downstream `raikiri-dom` indexes the
-/// running elements by name and lays each one out on its own
-/// (`raikiri_dom::RunningIndex`). This crate is a leaf and has no DOM node
-/// identity.
+/// running elements by name and lays each one out on its own. This crate is
+/// a leaf and has no DOM node identity.
 ///
 /// `#[non_exhaustive]` allows future fields, such as a per-name override of
 /// `alternative_hint`, to be added without breaking callers.
@@ -754,7 +753,7 @@ pub struct ComputedValues {
     /// The `Vec` shape follows the SmolStr wire-through pattern used by
     /// `content` / `string_set` (reuse of an established precedent). Downstream
     /// `raikiri-dom` indexes the running elements by name from these per-node
-    /// seeds (`raikiri_dom::RunningIndex`).
+    /// seeds.
     pub running_templates: Vec<RunningTemplate>,
     /// `position` — **non-inherited**, initial: `static` (CSS Positioned Layout Module Level 3 §3).
     pub position: PositionValue,
