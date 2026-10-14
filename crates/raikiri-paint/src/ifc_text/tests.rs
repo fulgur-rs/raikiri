@@ -2414,6 +2414,34 @@ fn a_relative_inline_resolves_a_left_percentage_against_a_multicol_root() {
 }
 
 #[test]
+fn a_relative_inline_ignores_a_vertical_percentage_in_a_vertical_root_of_auto_height() {
+    // The vertical root's height comes from its content, so `top: 50%`
+    // computes to `auto` and "bb" is placed by `bottom: 4px` alone.
+    let placed = |insets: &str| {
+        let (mut doc, cascade, _root) = paragraph(
+            "display:inline-block;writing-mode:vertical-rl;width:20px",
+            |doc, root| {
+                doc.append_text(root, "aa");
+                let inner = doc.append_element(
+                    Some(root),
+                    "span",
+                    Style::default(),
+                    Some(&format!("display:inline;position:relative;{insets}")),
+                );
+                doc.append_text(inner, "bb");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let scene = painted(&doc, &cascade);
+        ink(&scene)
+            .iter()
+            .map(|g| (g.1, g.2))
+            .collect::<Vec<(i64, i64)>>()
+    };
+    assert_eq!(placed("top:50%;bottom:4px"), placed("bottom:4px"));
+}
+
+#[test]
 fn a_relative_inline_resolves_a_vertical_percentage_against_a_border_box_height() {
     // Hand-computed: a 120px border-box with 10px padding above and below
     // has a 100px content height, so `top: 50%` moves "bb" down by 50px from

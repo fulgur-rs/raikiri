@@ -89,4 +89,30 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
         (0.0, f32::INFINITY)
     );
     assert_eq!(ifc_content_height_bounds(&style, Some(80.0), None).1, 42.0);
+
+    // A calc() bound without a percentage needs no basis.
+    let length_ptr = push_calc(
+        &mut arena,
+        raikiri_style::property::CalcLengthPercentage {
+            percent: 0.0,
+            px: 30.0,
+        },
+        false,
+    );
+    let length = taffy::LengthPercentageAuto::calc(length_ptr);
+    let style = Style {
+        max_size: Size {
+            width: taffy::LengthPercentageAuto::auto(),
+            height: length,
+        },
+        ..style
+    };
+    assert_eq!(ifc_content_height_bounds(&style, None, None), (0.0, 30.0));
+    assert!(ifc_length_only(length).into_raw().is_calc());
+    assert!(
+        ifc_length_only(taffy::LengthPercentageAuto::calc(calc_ptr))
+            .into_raw()
+            .tag()
+            == taffy::CompactLength::AUTO_TAG
+    );
 }

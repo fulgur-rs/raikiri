@@ -1755,13 +1755,9 @@ fn place_atomics(
 }
 
 /// The root's content height as the basis of a percentage `top` or
-/// `bottom`: its definite height, or in vertical flow its inline size.
+/// `bottom`, when it is definite.
 fn relative_height(geometry: &FlowGeometry) -> Option<f32> {
-    if geometry.axes.writing_mode() == WritingMode::HorizontalTb {
-        geometry.definite_height
-    } else {
-        Some(geometry.content_size.height)
-    }
+    geometry.definite_height
 }
 
 /// Whether the root's `direction` is `rtl`.
