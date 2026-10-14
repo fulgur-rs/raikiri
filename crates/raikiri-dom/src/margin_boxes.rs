@@ -1452,44 +1452,14 @@ fn margin_box_margins(
     font_size: f32,
     ctx: &ResolveContext,
 ) -> [f32; 4] {
-    let shorthand = margin_box_property(rule, PropertyKey::Margin).and_then(|value| match value {
-        // cov:ignore: page rules expand the margin shorthand into longhands when parsed
-        PropertyValue::Margin(sides) => Some(**sides),
-        _ => None,
-    });
+    // Margin-box rules expand the `margin` shorthand into its longhands when
+    // parsed, so there is no shorthand to fall back to.
+    let side = |key, basis| margin_box_side_margin(rule, key, basis, None, font_size, ctx);
     [
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginTop,
-            height_basis,
-            shorthand.map(|sides| sides.top),
-            font_size,
-            ctx,
-        ),
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginRight,
-            width_basis,
-            shorthand.map(|sides| sides.right),
-            font_size,
-            ctx,
-        ),
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginBottom,
-            height_basis,
-            shorthand.map(|sides| sides.bottom),
-            font_size,
-            ctx,
-        ),
-        margin_box_side_margin(
-            rule,
-            PropertyKey::MarginLeft,
-            width_basis,
-            shorthand.map(|sides| sides.left),
-            font_size,
-            ctx,
-        ),
+        side(PropertyKey::MarginTop, height_basis),
+        side(PropertyKey::MarginRight, width_basis),
+        side(PropertyKey::MarginBottom, height_basis),
+        side(PropertyKey::MarginLeft, width_basis),
     ]
 }
 
@@ -1499,11 +1469,7 @@ fn margin_box_padding(
     font_size: f32,
     ctx: &ResolveContext,
 ) -> [f32; 4] {
-    let shorthand = margin_box_property(rule, PropertyKey::Padding).and_then(|value| match value {
-        // cov:ignore: page rules expand the padding shorthand into longhands when parsed
-        PropertyValue::Padding(sides) => Some(**sides),
-        _ => None,
-    });
+    // As for margins, only the `padding` longhands reach a margin-box rule.
     let side = |key: PropertyKey, fallback: Option<LengthPercentageOrCalc>| {
         margin_box_property(rule, key)
             .and_then(|value| match value {
@@ -1517,16 +1483,10 @@ fn margin_box_padding(
             .unwrap_or(0.0)
     };
     [
-        side(PropertyKey::PaddingTop, shorthand.map(|sides| sides.top)),
-        side(
-            PropertyKey::PaddingRight,
-            shorthand.map(|sides| sides.right),
-        ),
-        side(
-            PropertyKey::PaddingBottom,
-            shorthand.map(|sides| sides.bottom),
-        ),
-        side(PropertyKey::PaddingLeft, shorthand.map(|sides| sides.left)),
+        side(PropertyKey::PaddingTop, None),
+        side(PropertyKey::PaddingRight, None),
+        side(PropertyKey::PaddingBottom, None),
+        side(PropertyKey::PaddingLeft, None),
     ]
 }
 
