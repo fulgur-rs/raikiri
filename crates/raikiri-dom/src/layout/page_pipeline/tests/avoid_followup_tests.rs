@@ -463,14 +463,21 @@ fn an_avoiding_box_in_a_grid_with_intrinsic_rows_moves() {
 
 #[test]
 fn an_avoiding_box_in_a_grid_of_definite_height_stays() {
+    assert_avoiding_box_in_a_bounded_grid_stays(
+        "display:grid;height:150px;grid-template-rows:auto",
+    );
+}
+
+#[test]
+fn an_avoiding_box_in_a_grid_with_a_min_height_stays() {
+    assert_avoiding_box_in_a_bounded_grid_stays("display:grid;min-height:150px");
+}
+
+fn assert_avoiding_box_in_a_bounded_grid_stays(grid_css: &str) {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
         block(doc, body, "display:block;height:60px");
-        let grid = block(
-            doc,
-            body,
-            "display:grid;height:150px;grid-template-rows:auto",
-        );
+        let grid = block(doc, body, grid_css);
         ids.push(grid);
         let item = block(doc, grid, "display:block");
         block(doc, item, "display:block;height:20px");

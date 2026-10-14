@@ -6717,15 +6717,17 @@ fn has_bounded_clipping_ancestor(
 }
 
 /// Whether the items of `grid` stack in block order like blocks, none
-/// beside or over another: the grid has one column track and no definite
-/// height, its rows all size to their content, and its items sit in rows
-/// that follow one another without overlapping. A sized row fixes the height of the item
+/// beside or over another: the grid has one column track, no definite
+/// height and no `min-height` that could stretch its rows, its rows all
+/// size to their content, and its items sit in rows that follow one
+/// another without overlapping. A sized row fixes the height of the item
 /// stretched into it, so that item cannot grow to hold a moved box.
 fn grid_stacks_items(document: &Document, grid: usize) -> bool {
     let node = &document.nodes[grid];
     if node.grid_column_count != 1
         || !grid_rows_size_to_content(document, grid)
         || !node.style.size.height.is_auto() && definite_content_height(document, grid).is_some()
+        || !node.style.min_size.height.is_auto()
     {
         return false;
     }
