@@ -572,14 +572,25 @@ fn inline_level(cv: &ComputedValues) -> bool {
 /// The block offset that layout applies to a box in normal flow for its
 /// `position: relative` or `position: sticky` insets, which layout treats
 /// alike, resolved against the containing block as layout resolves them.
-fn layout_relative_offset_y(document: &Document, cv: &ComputedValues, id: usize) -> f32 {
+fn layout_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    cv: &ComputedValues,
+    id: usize,
+) -> f32 {
     if !matches!(cv.position, PositionValue::Relative | PositionValue::Sticky) {
         return 0.0;
     }
     // Layout takes `top` over `-bottom` in every writing mode.
-    crate::layout::used_relative_insets(document, cv, id, crate::layout::Precedence::LeftTop)
-        .1
-        .unwrap_or(0.0)
+    crate::layout::used_relative_insets(
+        document,
+        cascade,
+        cv,
+        id,
+        crate::layout::Precedence::LeftTop,
+    )
+    .1
+    .unwrap_or(0.0)
 }
 
 /// How the built-in painter moves one element and its subtree from their
@@ -637,9 +648,12 @@ pub(super) fn box_paint_shift(
                 | DisplayValue::TableFooterGroup
         );
     let (mut dx, mut dy) = if painted_inset && !inline_level(cv) {
-        crate::layout::used_relative_offset(document, cv, id)
+        crate::layout::used_relative_offset(document, cascade, cv, id)
     } else if node.needs_relative_block_paint_offset() {
-        (0.0, crate::layout::used_relative_offset(document, cv, id).1)
+        (
+            0.0,
+            crate::layout::used_relative_offset(document, cascade, cv, id).1,
+        )
     } else {
         (0.0, 0.0)
     };
@@ -1216,7 +1230,7 @@ fn layout_applied_relative_offset_y(
     if document.nodes[id].needs_relative_block_paint_offset() {
         0.0
     } else {
-        layout_relative_offset_y(document, &cascade.computed[id], id)
+        layout_relative_offset_y(document, cascade, &cascade.computed[id], id)
     }
 }
 

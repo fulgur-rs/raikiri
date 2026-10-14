@@ -1110,21 +1110,6 @@ fn flex_pagination_child_order(
     children
 }
 
-/// Nearest ancestor box, skipping elements that do not generate a box.
-pub(crate) fn pagination_box_parent(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-) -> Option<usize> {
-    let mut parent = document.parent_of(node_id);
-    while let Some(id) = parent
-        && cascade.computed[id].display == DisplayValue::Contents
-    {
-        parent = document.parent_of(id);
-    }
-    parent
-}
-
 /// Whether a float declaration creates a floating box in pagination.
 /// Ordinary floats on flex items remain in normal flow. Footnotes retain
 /// their existing page-local placement; Contents elements generate no box.
@@ -1143,17 +1128,19 @@ pub(crate) fn is_floating_box_for_pagination(
         computed.display,
         DisplayValue::None | DisplayValue::Contents
     ) && (matches!(computed.float, FloatValue::Footnote)
-        || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
-            // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
-            // Grid 1 §6.1).
-            matches!(
-                cascade.computed[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        }))
+        || !box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
+            |parent| {
+                // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
+                // Grid 1 §6.1).
+                matches!(
+                    cascade.computed[parent].display,
+                    DisplayValue::Flex
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::Grid
+                        | DisplayValue::InlineGrid
+                )
+            },
+        ))
 }
 
 /// Last in-flow effective item in the flex container's visual page order.
@@ -1284,17 +1271,18 @@ pub(crate) fn page_applies_to_box(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let blockified = pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
-        cascade.computed.get(parent).is_some_and(|parent| {
-            matches!(
-                parent.display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        })
-    });
+    let blockified =
+        box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent| {
+            cascade.computed.get(parent).is_some_and(|parent| {
+                matches!(
+                    parent.display,
+                    DisplayValue::Flex
+                        | DisplayValue::InlineFlex
+                        | DisplayValue::Grid
+                        | DisplayValue::InlineGrid
+                )
+            })
+        });
     blockified
         || matches!(
             cascade.computed[node_id].position,
@@ -1382,7 +1370,7 @@ pub(crate) fn establishes_orthogonal_flow(
     {
         return false;
     }
-    pagination_box_parent(document, cascade, node_id)
+    box_parent(document, cascade, node_id, BoxParentScope::Document)
         .filter(|&parent| document.nodes[parent].kind() == NodeKind::Element)
         .is_some_and(|parent| vertical(parent) != vertical(node_id))
 }

@@ -2940,13 +2940,13 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::InlineGrid
                             | DisplayValue::InlineTable
                     ) {
-                    raikiri_dom::used_relative_offset(document, cv, node_id)
+                    raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
                     // the existing X location already includes its inset.
                     (
                         0.0,
-                        raikiri_dom::used_relative_offset(document, cv, node_id).1,
+                        raikiri_dom::used_relative_offset(document, cascade, cv, node_id).1,
                     )
                 } else {
                     (0.0, 0.0)
