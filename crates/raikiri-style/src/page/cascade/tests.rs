@@ -7501,3 +7501,86 @@ fn page_border_radius_from_a_variable_yields_to_a_later_corner() {
         })
     );
 }
+
+fn px_margin(value: f32) -> crate::property::LengthOrAuto {
+    crate::property::LengthOrAuto::Length(Length::Px(value))
+}
+
+/// A `var()` page `direction` is substituted before the flow-relative
+/// margins are mapped, so they follow the computed `rtl`.
+#[test]
+fn page_var_direction_maps_logical_margins() {
+    let result = page(
+        "@page { --d: rtl; direction: var(--d); margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginRight),
+        Some(&PropertyValue::MarginRight(px_margin(1.0)))
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginLeft),
+        Some(&PropertyValue::MarginLeft(px_margin(0.0)))
+    );
+}
+
+/// A `writing-mode` that `all: revert-layer` rolls back does not decide the
+/// mapping of the page's flow-relative margins.
+#[test]
+fn page_rolled_back_writing_mode_does_not_map_logical_margins() {
+    let result = page(
+        "@layer top { @page { writing-mode: vertical-rl; all: revert-layer } } \
+         @page { margin: 0; margin-inline-start: 1px }",
+        &ComputedValues::initial(),
+    );
+    let declarations = result.declarations();
+    assert!(!declarations.contains_key(&PropertyKey::WritingMode));
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginLeft),
+        Some(&PropertyValue::MarginLeft(px_margin(1.0)))
+    );
+    assert_eq!(
+        declarations.get(&PropertyKey::MarginTop),
+        Some(&PropertyValue::MarginTop(px_margin(0.0)))
+    );
+}
+
+/// Margin boxes map flow-relative margins through their own `direction`,
+/// or else the page context's, and the result competes with the physical
+/// longhand for that side.
+#[test]
+fn margin_box_logical_margins_follow_the_margin_context_direction() {
+    let margins = |css: &str| {
+        let margin = page(css, &ComputedValues::initial())
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+            .unwrap();
+        margin
+            .declarations
+            .into_iter()
+            .filter(|declaration| {
+                matches!(
+                    declaration.value.key(),
+                    PropertyKey::MarginLeft | PropertyKey::MarginRight
+                )
+            })
+            .map(|declaration| declaration.value)
+            .collect::<Vec<_>>()
+    };
+    for css in [
+        "@page { @top-left { content: 'X'; --d: rtl; direction: var(--d); \
+         margin-right: 2px; margin-inline-start: 1px } }",
+        "@page { direction: rtl; @top-left { content: 'X'; \
+         margin-right: 2px; margin-inline-start: 1px } }",
+    ] {
+        assert_eq!(
+            margins(css),
+            [PropertyValue::MarginRight(px_margin(1.0))],
+            "{css}"
+        );
+    }
+    assert_eq!(
+        margins("@page { @top-left { content: 'X'; margin-inline-start: 1px } }"),
+        [PropertyValue::MarginLeft(px_margin(1.0))]
+    );
+}

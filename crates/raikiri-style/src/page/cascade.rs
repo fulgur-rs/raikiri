@@ -12,8 +12,9 @@ use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_pr
 use crate::logical::{FlowMapping, LogicalSide};
 use crate::media::MediaContext;
 use crate::property::{
-    BackgroundImage, BorderStyle, CssColor, CustomProperty, Length, LengthPercentageOrCalc,
-    OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue, Sides,
+    BackgroundImage, BorderStyle, CssColor, CustomProperty, Direction, Length,
+    LengthPercentageOrCalc, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
+    Sides, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -93,6 +94,7 @@ struct MarginBoxInheritance {
     background_color: CssColor,
     background_color_expression: Option<SmolStr>,
     font_size: ComputedLength,
+    direction: Direction,
     custom_properties: Arc<CustomPropertyEnvironment>,
 }
 
@@ -103,6 +105,7 @@ impl Default for MarginBoxInheritance {
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,
             font_size: ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
+            direction: Direction::Ltr,
             custom_properties: empty_custom_properties(),
         }
     }
@@ -147,7 +150,7 @@ impl PageMarginBoxCascadeResult {
         inherited: &MarginBoxInheritance,
     ) -> Option<Self> {
         let mut merged = rules.iter().rev().find(|rule| rule.slot == slot)?.clone();
-        let candidates: Vec<_> = rules
+        let declared: Vec<_> = rules
             .iter()
             .enumerate()
             .filter(|(_, rule)| rule.slot == slot)
@@ -159,7 +162,7 @@ impl PageMarginBoxCascadeResult {
             })
             .collect();
         let local_custom =
-            crate::cascade::select_custom_rollback_values(candidates.iter().filter_map(
+            crate::cascade::select_custom_rollback_values(declared.iter().filter_map(
                 |&(rule_index, decl_index, rule, decl)| {
                     let PropertyValue::CustomProperty(custom) = &decl.value else {
                         return None;
@@ -187,6 +190,40 @@ impl PageMarginBoxCascadeResult {
         let custom_properties =
             resolve_custom_property_environment(&inherited.custom_properties, &local_custom)
                 .effective;
+        // Margin boxes are laid out in `horizontal-tb`, so flow-relative
+        // margins and paddings follow the margin context's `direction` alone
+        // (CSS Logical Properties 1 §4). They move to their physical side
+        // before winners are picked so that they compete with the physical
+        // longhands for that side.
+        let flow = FlowMapping {
+            writing_mode: WritingMode::HorizontalTb,
+            direction: margin_box_direction(&declared, &custom_properties)
+                .unwrap_or(inherited.direction),
+        };
+        let mapped: Vec<Option<Declaration>> = declared
+            .iter()
+            .map(|&(_, _, _, decl)| {
+                decl.logical.map(|side| {
+                    Declaration::with_side(
+                        flow.value(decl.value.clone(), side),
+                        decl.important,
+                        None,
+                    )
+                })
+            })
+            .collect();
+        let candidates: Vec<_> = declared
+            .iter()
+            .zip(&mapped)
+            .map(|(&(rule_index, decl_index, rule, decl), mapped)| {
+                (
+                    rule_index,
+                    decl_index,
+                    rule,
+                    mapped.as_ref().unwrap_or(decl),
+                )
+            })
+            .collect();
         let resolved_value = |value: &PropertyValue| {
             if let PropertyValue::Deferred(deferred) = value
                 && matches!(
@@ -873,46 +910,108 @@ fn page_layer_rank(rule: &PageRule, important: bool, layers: &crate::layer::Laye
     layers.priority(rule.layer, rule.origin, important)
 }
 
+/// The margin context's own `direction`: the winning `direction`
+/// declaration among `declared` (exempt from `all`, like the page context's),
+/// with `var()` substituted from `custom_properties`. `None` when no
+/// declaration resolves to a keyword.
+fn margin_box_direction(
+    declared: &[(usize, usize, &PageMarginBoxCascadeResult, &Declaration)],
+    custom_properties: &CustomPropertyEnvironment,
+) -> Option<Direction> {
+    let (.., decl) = declared
+        .iter()
+        .filter(|(.., decl)| decl.value.key() == PropertyKey::Direction)
+        .max_by_key(|&&(rule_index, decl_index, rule, decl)| {
+            let layer = crate::layer::LayerPosition {
+                attached: false,
+                rank: rule.layer_order,
+            };
+            (
+                cascade_rank(rule.origin, decl.important),
+                layer.priority(decl.important),
+                rule.specificity,
+                rule.source_order,
+                rule_index,
+                decl_index,
+            )
+        })?;
+    let value = match &decl.value {
+        PropertyValue::Deferred(deferred) => {
+            resolve_page_deferred_value(deferred, custom_properties)?
+        }
+        value => value.clone(),
+    };
+    match value {
+        PropertyValue::Direction(direction) => Some(direction),
+        _ => None,
+    }
+}
+
 /// The writing mode and direction of the page context: its own winning
 /// `writing-mode` and `direction` declarations, or else the values it
-/// inherits from the root element. A winner that is not a plain keyword
-/// also falls back to the inherited value.
+/// inherits from the root element. Winners are picked the way the page
+/// cascade below picks them: `writing-mode` honours `revert-layer` and
+/// `all: revert-layer` rollback, `direction` is exempt from `all` and keeps
+/// its plain winner, and `var()` values are substituted from
+/// `custom_properties`. A winner that does not resolve to a keyword falls
+/// back to the inherited value.
 fn page_flow_mapping(
     candidates: &[(PropertyValue, bool, Origin, u32, PageSpecificity, u32)],
     inherited: &ComputedValues,
+    custom_properties: &CustomPropertyEnvironment,
+    rollback: impl Fn(&PropertyValue) -> crate::cascade::rollback::Rollback,
 ) -> FlowMapping {
-    type Winner<'a> = (u8, u32, PageSpecificity, u32, &'a PropertyValue);
-    let mut writing_mode: Option<Winner<'_>> = None;
-    let mut direction: Option<Winner<'_>> = None;
-    for (value, important, origin, layer, spec, order) in candidates {
-        let slot = match value.key() {
-            PropertyKey::WritingMode => &mut writing_mode,
-            PropertyKey::Direction => &mut direction,
-            _ => continue,
-        };
-        let rank = |winner: &Winner<'_>| (winner.0, winner.1, winner.2, winner.3);
-        let candidate = (
-            cascade_rank(*origin, *important),
-            *layer,
-            *spec,
-            *order,
-            value,
-        );
-        // Same order as `page_beats`: a later declaration wins a tie.
-        if slot
-            .as_ref()
-            .is_none_or(|existing| rank(&candidate) >= rank(existing))
-        {
-            *slot = Some(candidate);
+    let winner = |key: PropertyKey| {
+        let index = crate::cascade::rollback::select_layered_winner(
+            candidates,
+            |index, (value, important, origin, priority, spec, order)| {
+                let reset_all = key == PropertyKey::WritingMode
+                    && matches!(value, PropertyValue::AllRevertLayer);
+                if value.key() != key && !reset_all {
+                    return None;
+                }
+                let layer = crate::layer::LayerPosition {
+                    attached: false,
+                    rank: if *important {
+                        u32::MAX - *priority
+                    } else {
+                        *priority
+                    },
+                };
+                let rollback = if key == PropertyKey::WritingMode {
+                    rollback(value)
+                } else {
+                    crate::cascade::rollback::Rollback::None
+                };
+                Some((
+                    (
+                        cascade_rank(*origin, *important),
+                        *priority,
+                        *spec,
+                        *order,
+                        index,
+                    ),
+                    *origin,
+                    layer,
+                    *important,
+                    rollback,
+                ))
+            },
+        )?;
+        match &candidates[index].0 {
+            PropertyValue::Deferred(deferred) => {
+                resolve_page_deferred_value(deferred, custom_properties)
+            }
+            value => Some(value.clone()),
         }
-    }
+    };
     FlowMapping {
-        writing_mode: match writing_mode.map(|winner| winner.4) {
-            Some(PropertyValue::WritingMode(mode)) => *mode,
+        writing_mode: match winner(PropertyKey::WritingMode) {
+            Some(PropertyValue::WritingMode(mode)) => mode,
             _ => inherited.cssom_writing_mode,
         },
-        direction: match direction.map(|winner| winner.4) {
-            Some(PropertyValue::Direction(direction)) => *direction,
+        direction: match winner(PropertyKey::Direction) {
+            Some(PropertyValue::Direction(direction)) => direction,
             _ => inherited.direction,
         },
     }
@@ -1224,11 +1323,31 @@ pub(crate) fn cascade_page_with_normal_line_height(
     };
     let custom_properties =
         resolve_custom_property_environment(inherited_custom_properties, &custom_local).effective;
+    // Defaulting after substitution participates in rollback before selecting
+    // ordinary winners. Invalid computed values still win their own slot.
+    let candidate_rollback = |value: &PropertyValue| {
+        if let PropertyValue::Deferred(deferred) = value {
+            resolve_page_deferred_value(deferred, custom_properties.as_ref())
+                .as_ref()
+                .map_or(
+                    crate::cascade::rollback::Rollback::None,
+                    crate::cascade::rollback::rollback_kind,
+                )
+        } else {
+            crate::cascade::rollback::rollback_kind(value)
+        }
+    };
+
     // Flow-relative declarations and the logical preferred sizes take the
     // page context's own writing mode and direction (CSS Logical Properties 1
     // §4, read through CSS Paged Media 3 §6: the page context inherits from
     // the root element unless an `@page` rule sets them).
-    let flow = page_flow_mapping(&candidates, inherited);
+    let flow = page_flow_mapping(
+        &candidates,
+        inherited,
+        custom_properties.as_ref(),
+        &candidate_rollback,
+    );
     for ((value, ..), side) in candidates.iter_mut().zip(&sides) {
         if let Some(side) = *side {
             let declared = match &*value {
@@ -1245,21 +1364,6 @@ pub(crate) fn cascade_page_with_normal_line_height(
             flow,
         );
     }
-
-    // Defaulting after substitution participates in rollback before selecting
-    // ordinary winners. Invalid computed values still win their own slot.
-    let candidate_rollback = |value: &PropertyValue| {
-        if let PropertyValue::Deferred(deferred) = value {
-            resolve_page_deferred_value(deferred, custom_properties.as_ref())
-                .as_ref()
-                .map_or(
-                    crate::cascade::rollback::Rollback::None,
-                    crate::cascade::rollback::rollback_kind,
-                )
-        } else {
-            crate::cascade::rollback::rollback_kind(value)
-        }
-    };
 
     // Winner selection — sibling arm to `cascade::pick_winners`.
     let mut best: HashMap<PropertyKey, (u8, u32, PageSpecificity, u32, PropertyValue)> =
@@ -1541,6 +1645,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
             _ => CssColor::TRANSPARENT,
         },
         font_size,
+        direction: flow.direction,
         custom_properties,
     };
     PageCascadeResult {
