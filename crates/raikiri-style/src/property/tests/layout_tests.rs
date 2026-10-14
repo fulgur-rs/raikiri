@@ -419,9 +419,16 @@ fn display_parse_ruby_types() {
 
 #[test]
 fn resolve_display_for_float_blockifies_ruby_types() {
-    // CSS Display 3 §2.7: a floated ruby box becomes a block box.
+    // CSS Display 3 §2.7: a floated internal ruby box becomes a block box,
+    // and a floated ruby container a block box with a ruby inside.
+    assert_eq!(
+        resolve_display_for_float(DisplayValue::Ruby, FloatValue::Left),
+        DisplayValue::BlockRuby
+    );
+    assert!(DisplayValue::BlockRuby.is_ruby() && DisplayValue::BlockRuby.is_ruby_container());
+    assert!(!DisplayValue::BlockRuby.is_inline_level());
+    assert_eq!(DisplayValue::BlockRuby.as_css_str(), "block ruby");
     for display in [
-        DisplayValue::Ruby,
         DisplayValue::RubyBase,
         DisplayValue::RubyText,
         DisplayValue::RubyBaseContainer,

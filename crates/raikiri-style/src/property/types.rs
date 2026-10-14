@@ -3454,6 +3454,10 @@ pub enum DisplayValue {
     /// `ruby-text-container` — CSS Ruby 1 §2.1 `<display-internal>`: a box
     /// grouping ruby annotations of one level (`<rtc>`).
     RubyTextContainer,
+    /// `block ruby` — CSS Display 3 §2.7 / CSS Ruby 1 §2.1: a block box that
+    /// holds a ruby container. It is the computed value of a blockified
+    /// `ruby`, such as a floated one; the two-keyword form is not parsed.
+    BlockRuby,
 }
 
 css_keywords!(DisplayValue {
@@ -3483,6 +3487,7 @@ css_keywords!(DisplayValue {
     RubyText => "ruby-text",
     RubyBaseContainer => "ruby-base-container",
     RubyTextContainer => "ruby-text-container",
+    BlockRuby => "block ruby",
 });
 
 impl DisplayValue {
@@ -3507,7 +3512,13 @@ impl DisplayValue {
     /// Whether this is one of the ruby display types (CSS Ruby 1 §2.1).
     #[must_use]
     pub fn is_ruby(self) -> bool {
-        self.is_inline_flow() && self != Self::Inline
+        (self.is_inline_flow() && self != Self::Inline) || self == Self::BlockRuby
+    }
+
+    /// Whether the box is a ruby container, inline-level or block-level.
+    #[must_use]
+    pub fn is_ruby_container(self) -> bool {
+        matches!(self, Self::Ruby | Self::BlockRuby)
     }
 
     /// Whether the box is inline-level: an inline box, a ruby box, or an
@@ -6525,11 +6536,11 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         | DisplayValue::TableRow
         | DisplayValue::TableCell
         | DisplayValue::TableCaption => DisplayValue::Block,
-        // CSS Display 3 §2.7: a blockified `ruby` becomes `block ruby`, laid
-        // out here as a block container; internal ruby boxes blockify to
-        // `block`.
-        DisplayValue::Ruby
-        | DisplayValue::RubyBase
+        // CSS Display 3 §2.7: a blockified `ruby` becomes `block ruby`, a
+        // block box whose content keeps its ruby layout. Internal ruby boxes
+        // blockify to `block`.
+        DisplayValue::Ruby | DisplayValue::BlockRuby => DisplayValue::BlockRuby,
+        DisplayValue::RubyBase
         | DisplayValue::RubyText
         | DisplayValue::RubyBaseContainer
         | DisplayValue::RubyTextContainer => DisplayValue::Block,

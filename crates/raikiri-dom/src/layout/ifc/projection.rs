@@ -906,9 +906,10 @@ fn project_children_builder(
         )?;
     }
 
-    // A ruby container that lays out its own content (a flex item, or an
-    // absolutely positioned ruby) keeps its ruby layout.
-    let root_plan = if anonymous_children.is_none() && root_cv.display == DisplayValue::Ruby {
+    // A ruby container that lays out its own content (a flex item, an
+    // absolutely positioned ruby, or a floated `block ruby`) keeps its ruby
+    // layout.
+    let root_plan = if anonymous_children.is_none() && root_cv.display.is_ruby_container() {
         super::ruby::plan(doc, cascade, root)
     } else {
         None
