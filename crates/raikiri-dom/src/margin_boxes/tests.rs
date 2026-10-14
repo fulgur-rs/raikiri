@@ -185,10 +185,7 @@ fn fixed_margin_spec() -> MarginBoxSpec {
         background_layer_count: 1,
         background_image_lime: false,
         content_image_lime: false,
-        border_top: None,
-        border_right: None,
-        border_bottom: None,
-        border_left: None,
+        border: [None; 4],
         margin_auto: [false; 4],
         margin: [0.0; 4],
         padding: [0.0; 4],
@@ -650,7 +647,7 @@ fn zero_page_margins_have_no_margin_boxes() {
 #[test]
 fn margin_box_text_is_debuggable_and_borders_clamp_to_the_box() {
     let mut spec = fixed_margin_spec();
-    spec.border_top = Some((80.0, CssColor::BLACK));
+    spec.border[0] = Some((80.0, CssColor::BLACK));
     let placed = place_margin_box(
         &Document::new(),
         &spec,
