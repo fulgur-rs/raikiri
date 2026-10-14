@@ -1163,10 +1163,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &link).unwrap();
 
         let (result, events) = read_font_file_with_events(&link, &canonical_root, FONT_SIZE_CAP);
-        assert!(
-            matches!(result, Ok(None)),
-            "expected a skip, got {result:?}"
-        );
+        assert_eq!(result.expect("the read must not fail"), None);
         assert_eq!(
             events,
             [OwnedWarn::ReadRejected(
@@ -1213,10 +1210,7 @@ mod tests {
         let canonical_root = std::fs::canonicalize(tmp.path()).unwrap();
         let (result, events) =
             read_font_file_with_events(tmp.path(), &canonical_root, FONT_SIZE_CAP);
-        assert!(
-            matches!(result, Ok(None)),
-            "expected a skip, got {result:?}"
-        );
+        assert_eq!(result.expect("the read must not fail"), None);
         assert_eq!(
             events,
             [OwnedWarn::ReadRejected(
@@ -1245,10 +1239,7 @@ mod tests {
             .unwrap();
 
         let (result, events) = read_font_file_with_events(&path, &canonical_root, cap);
-        assert!(
-            matches!(result, Ok(None)),
-            "expected a skip, got {result:?}"
-        );
+        assert_eq!(result.expect("the read must not fail"), None);
         assert_eq!(
             events,
             [OwnedWarn::ReadRejected(
@@ -1338,10 +1329,7 @@ mod tests {
 
         let (result, events) =
             read_font_file_with_events(&leaf_via_intermediate, &canonical_root, FONT_SIZE_CAP);
-        assert!(
-            matches!(result, Ok(None)),
-            "expected a skip for intermediate-symlink escape, got {result:?}"
-        );
+        assert_eq!(result.expect("the read must not fail"), None);
         assert_eq!(
             events,
             [OwnedWarn::ReadRejected(

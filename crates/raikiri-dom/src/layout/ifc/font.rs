@@ -180,10 +180,8 @@ pub(crate) fn wpt_collection(
     let mut families: Vec<String> = Vec::new();
     let mut registered_preferred: HashSet<String> = HashSet::new();
     for path in paths {
-        let Some(bytes) = read_font_file(&path, &canonical_root, FONT_SIZE_CAP, &mut observer)?
-        else {
-            continue;
-        };
+        let read = read_font_file(&path, &canonical_root, FONT_SIZE_CAP, &mut observer)?;
+        let Some(bytes) = read else { continue };
         let family = family_name(&bytes);
         if collection.register(bytes).is_err() {
             emit_warn(&mut observer, FontWarn::RegisterEmpty { path: &path });
