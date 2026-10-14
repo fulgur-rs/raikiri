@@ -95,6 +95,9 @@ pub(crate) fn layout_with_boxes_in(
     perform: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
+    if let Some(root) = tree.nodes[idx].ifc.as_mut() {
+        root.resolve_percent_offsets(geometry.content_size.width);
+    }
     let Some(root) = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -146,6 +149,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     context: FragmentationContext,
     perform: bool,
 ) -> IfcLines {
+    if let Some(root) = tree.nodes[idx].ifc.as_mut() {
+        root.resolve_percent_offsets(geometry.content_size.width);
+    }
     let Some(root) = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -781,6 +787,20 @@ fn run_boxes_segment(
                 }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
                 (y, pending) = (block.next_y, block.pending);
+                // A forced page break after the block starts the lines after
+                // it on a new page, which the floats before the break do not
+                // reach: the lines get clearance past them, as a block after
+                // the break does (CSS Fragmentation 3, 3.1).
+                if tree
+                    .forced_break_line_clearance
+                    .binary_search(&(node.0 as usize))
+                    .is_ok()
+                    && let Some(threshold) = ctx.cleared_threshold(Clear::Both)
+                    && threshold - top_edge > y + pending.resolve()
+                {
+                    y = threshold - top_edge;
+                    pending = CollapsibleMarginSet::ZERO;
+                }
                 token = token_after;
                 // The call count is kept: every block is one of the root's
                 // boxes, so blocks in a row stay within the bound, and a
@@ -1264,7 +1284,13 @@ fn layout_block_child(
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
-        let (dx, dy) = relative_inset(tree, node, geometry.width);
+        let (dx, dy) = relative_inset(
+            tree,
+            node,
+            geometry.content_size.width,
+            relative_height(&geometry),
+            geometry.axes,
+        );
         let location = taffy::Point {
             x: geometry.edges.0 + margin.left + dx,
             y: geometry.top_edge + top + dy,
@@ -1367,7 +1393,7 @@ fn layout_vertical_block_child(
         },
     );
     if perform {
-        let (dx, dy) = relative_inset(tree, node, basis);
+        let (dx, dy) = relative_inset(tree, node, basis, relative_height(&geometry), geometry.axes);
         let location = taffy::Point {
             x: geometry.insets.left + physical.x + dx,
             y: geometry.insets.top + physical.y + dy,
@@ -1502,7 +1528,13 @@ fn layout_formatting_context_child(
     };
     let top = position.y - geometry.top_edge;
     if perform {
-        let (dx, dy) = relative_inset(tree, node, geometry.width);
+        let (dx, dy) = relative_inset(
+            tree,
+            node,
+            geometry.content_size.width,
+            relative_height(&geometry),
+            geometry.axes,
+        );
         let location = taffy::Point {
             x: position.x + extra_left + dx,
             y: position.y + dy,
@@ -1706,7 +1738,13 @@ fn place_atomics(
             // start; the layout is relative to the root's border box. A
             // relatively positioned atomic is drawn offset from that place,
             // which taffy's layout location carries for inline-level boxes.
-            let (dx, dy) = relative_inset(tree, node, geometry.width);
+            let (dx, dy) = relative_inset(
+                tree,
+                node,
+                geometry.content_size.width,
+                relative_height(&geometry),
+                geometry.axes,
+            );
             // A right-to-left line runs from the right edge: its inline axis
             // is mirrored inside the content box.
             let rect = atomic.border_rect;
@@ -1724,11 +1762,24 @@ fn place_atomics(
     }
 }
 
-/// The offset of a relatively positioned box (CSS 2.1 9.4.3): `left` over
-/// `-right`, `top` over `-bottom`, percentages of the root's content width
-/// (a vertical percentage has no definite basis here and is taken as zero).
-/// `(0, 0)` for a box in normal position.
-fn relative_inset(tree: &Document, node: usize, basis: f32) -> (f32, f32) {
+/// The root's content height as the basis of a percentage `top` or
+/// `bottom`, when it is definite.
+fn relative_height(geometry: &FlowGeometry) -> Option<f32> {
+    geometry.definite_height
+}
+
+/// The offset of a relatively positioned box (CSS 2.1 9.4.3): of opposing
+/// insets the one on the start side of the root's `axes` wins, percentages
+/// are of the root's content width and of its `height` when that is definite
+/// (otherwise a vertical percentage computes to `auto`). `(0, 0)` for a box
+/// in normal position.
+fn relative_inset(
+    tree: &Document,
+    node: usize,
+    basis: f32,
+    height: Option<f32>,
+    axes: super::geometry::IfcAxes,
+) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
     if style.position != taffy::Position::Relative
@@ -1741,13 +1792,25 @@ fn relative_inset(tree: &Document, node: usize, basis: f32) -> (f32, f32) {
     }
     let horizontal =
         |value: taffy::LengthPercentageAuto| value.maybe_resolve(Some(basis), resolve_calc);
-    let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(None, resolve_calc);
-    let dx = horizontal(style.inset.left)
-        .or(horizontal(style.inset.right).map(|right| -right))
-        .unwrap_or(0.0);
-    let dy = vertical(style.inset.top)
-        .or(vertical(style.inset.bottom).map(|bottom| -bottom))
-        .unwrap_or(0.0);
+    let vertical = |value: taffy::LengthPercentageAuto| value.maybe_resolve(height, resolve_calc);
+    let (right_wins, bottom_wins) =
+        super::style::inset_precedence(axes.writing_mode(), axes.direction() == Direction::Rtl);
+    let left = horizontal(style.inset.left);
+    let right = horizontal(style.inset.right).map(|right| -right);
+    let dx = if right_wins {
+        right.or(left)
+    } else {
+        left.or(right)
+    }
+    .unwrap_or(0.0);
+    let top = vertical(style.inset.top);
+    let bottom = vertical(style.inset.bottom).map(|bottom| -bottom);
+    let dy = if bottom_wins {
+        bottom.or(top)
+    } else {
+        top.or(bottom)
+    }
+    .unwrap_or(0.0);
     (dx, dy)
 }
 

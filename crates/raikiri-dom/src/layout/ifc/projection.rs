@@ -68,6 +68,10 @@ pub(crate) struct ProjectedIfc {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the elements in `offsets` whose offset depends on the
+    /// root's size, by index in `offsets`; their offset there is that of a
+    /// zero width and a height that is not definite.
+    pub(crate) percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -248,6 +252,25 @@ pub(crate) fn has_in_flow_generated_text(
     Ok(false)
 }
 
+/// Record the paint offset of `id` when it is relatively positioned, with
+/// its insets, by index in `offsets`, when the offset depends on the root's
+/// size or writing mode. `rtl` is the root's direction.
+fn push_relative_offset(
+    offsets: &mut Vec<(usize, (f32, f32))>,
+    percent_insets: &mut Vec<(usize, style::InlineRelativeInsets)>,
+    id: usize,
+    cv: &ComputedValues,
+    rtl: bool,
+) {
+    let Some(insets) = style::InlineRelativeInsets::of(cv) else {
+        return;
+    };
+    if insets.depends_on_containing_block() {
+        percent_insets.push((offsets.len(), insets));
+    }
+    offsets.push((id, insets.offset(0.0, None, rtl)));
+}
+
 /// The images of `::before` and `::after` content of a paragraph: atomic
 /// inlines of a prepared size (CSS Content 3 §2.2).
 struct GeneratedImages {
@@ -256,6 +279,11 @@ struct GeneratedImages {
     /// Paint offsets of the relatively positioned `::before` and `::after`
     /// boxes, by the inline engine's node id of the pseudo-element.
     offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the boxes in `offsets` whose offset depends on the
+    /// root's size, by index in `offsets`.
+    percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
+    /// The root's `direction` is `rtl`.
+    rtl: bool,
 }
 
 /// The atomic size of an image of `width` by `height` CSS pixels, its
@@ -366,9 +394,13 @@ fn push_generated(
         && cv.display != DisplayValue::Contents
         && cv.position == PositionValue::Relative
     {
-        images
-            .offsets
-            .push((id.0 as usize, style::relative_offset_in_lines(cv)));
+        push_relative_offset(
+            &mut images.offsets,
+            &mut images.percent_insets,
+            id.0 as usize,
+            cv,
+            images.rtl,
+        );
     }
     let inline_level = pseudo == PseudoElem::Marker
         || matches!(
@@ -574,6 +606,10 @@ pub(crate) struct ProjectedBuilder {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the elements in `offsets` whose offset depends on the
+    /// root's size, by index in `offsets`; their offset there is that of a
+    /// zero width and a height that is not definite.
+    pub(crate) percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -618,6 +654,7 @@ impl ProjectedBuilder {
             generated_atomics: self.generated_atomics,
             rtl: self.rtl,
             offsets: self.offsets,
+            percent_insets: self.percent_insets,
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
             ellipsis: self.ellipsis,
@@ -719,6 +756,7 @@ pub(crate) fn project_ifc_text_builder(
         generated_atomics: Vec::new(),
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
+        percent_insets: Vec::new(),
         cleared_breaks,
         fixed: false,
         // An anonymous flex or grid item has no overflow of its own.
@@ -826,6 +864,7 @@ fn project_children_builder(
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
+    let mut percent_insets = Vec::new();
     let mut cleared_breaks = Vec::new();
     let mut text_nowrap = HashMap::new();
     let mut first_letter =
@@ -834,6 +873,8 @@ fn project_children_builder(
         atomics: Vec::new(),
         writing_mode,
         offsets: Vec::new(),
+        percent_insets: Vec::new(),
+        rtl: root_cv.direction == Direction::Rtl,
     };
     let marker_atomic = if anonymous_children.is_some() {
         None
@@ -1135,11 +1176,13 @@ fn project_children_builder(
                 }
                 let edges = style::inline_edges(cv, id, fonts)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;
-                // The eligibility check keeps every offset that is not a plain
-                // length out of the paragraph.
-                if cv.position == PositionValue::Relative {
-                    offsets.push((id, style::relative_offset_in_lines(cv)));
-                }
+                push_relative_offset(
+                    &mut offsets,
+                    &mut percent_insets,
+                    id,
+                    cv,
+                    root_cv.direction == Direction::Rtl,
+                );
                 // `clear` on a line break moves the next line below the
                 // floats (CSS 2.1, 9.5.2): the line loop looks for the break.
                 if tag == "br"
@@ -1229,6 +1272,17 @@ fn project_children_builder(
         marker_atomic,
         generated_atomics: generated_images.atomics,
         rtl: root_cv.direction == Direction::Rtl,
+        percent_insets: {
+            // The generated boxes' offsets follow the elements'.
+            let first = offsets.len();
+            percent_insets.extend(
+                generated_images
+                    .percent_insets
+                    .into_iter()
+                    .map(|(index, insets)| (first + index, insets)),
+            );
+            percent_insets
+        },
         offsets: {
             offsets.extend(generated_images.offsets);
             offsets

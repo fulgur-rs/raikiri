@@ -2922,3 +2922,20 @@ fn legacy_always_still_selects_a_page_boundary() {
         );
     }
 }
+
+#[test]
+fn insets_accept_percentages() {
+    // CSS Positioned Layout 3 §3.1: `auto | <length-percentage>`.
+    assert_eq!(
+        parse("25%", "top"),
+        Some(PropertyValue::Top(LengthOrAuto::Length(Length::Percent(
+            25.0
+        ))))
+    );
+    assert_eq!(
+        parse("-5%", "left"),
+        Some(PropertyValue::Left(LengthOrAuto::Length(Length::Percent(
+            -5.0
+        ))))
+    );
+}

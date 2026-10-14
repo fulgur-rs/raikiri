@@ -2258,6 +2258,222 @@ fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
 }
 
 #[test]
+fn a_relative_inline_resolves_a_percentage_against_the_root_width() {
+    // Hand-computed: "aabb" on one line, 10px per glyph, on the 8px
+    // baseline. `left: 50%` of the 200px root moves "bb" by 100px, and
+    // `right` no longer applies; `top: 50%` counts as `auto`, so `bottom`
+    // moves it up by 3px.
+    let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;position:relative;left:50%;right:7px;top:50%;bottom:3px"),
+        );
+        doc.append_text(inner, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(120), px(5)),
+            (px(130), px(5))
+        ]
+    );
+}
+
+#[test]
+fn a_relative_inline_resolves_a_vertical_percentage_against_a_definite_height() {
+    // Hand-computed: "aabb" on one line, 10px per glyph, on the 8px
+    // baseline. `top: 50%` of the root's 100px content height moves "bb"
+    // down by 50px.
+    let (mut doc, cascade, root) = paragraph("width:200px;height:100px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;position:relative;top:50%;bottom:3px"),
+        );
+        doc.append_text(inner, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(20), px(58)),
+            (px(30), px(58))
+        ]
+    );
+}
+
+#[test]
+fn a_relative_inline_resolves_a_vertical_percentage_in_a_fixed_root() {
+    // Hand-computed: as above, but the root is `position: fixed`, which is
+    // laid out apart from the flow; its 100px height still makes `top: 50%`
+    // move "bb" down by 50px.
+    let (mut doc, cascade, _root) = paragraph(
+        "position:fixed;left:0;top:0;width:200px;height:100px",
+        |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;top:50%"),
+            );
+            doc.append_text(inner, "bb");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(20), px(58)),
+            (px(30), px(58))
+        ]
+    );
+}
+
+#[test]
+fn a_relative_inline_ignores_a_vertical_percentage_in_a_flex_item_of_auto_height() {
+    // Hand-computed: a flex item that is not stretched keeps an auto height,
+    // so `top: 50%` computes to `auto` and `bottom: 4px` moves "bb" up by
+    // 4px from the 8px baseline.
+    let (mut doc, cascade, _root) = paragraph(
+        "display:flex;align-items:flex-start;width:200px;height:100px",
+        |doc, root| {
+            let item = doc.append_element(Some(root), "div", Style::default(), Some("width:200px"));
+            doc.append_text(item, "aa");
+            let inner = doc.append_element(
+                Some(item),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;top:50%;bottom:4px"),
+            );
+            doc.append_text(inner, "bb");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(20), px(4)),
+            (px(30), px(4))
+        ]
+    );
+}
+
+#[test]
+fn a_relative_inline_resolves_a_left_percentage_against_a_multicol_root() {
+    // Hand-computed: the containing block of the span is the whole 300px
+    // content box, not one 100px column, so `left: 50%` moves "bb" right by
+    // 150px.
+    let (mut doc, cascade, _root) =
+        paragraph("width:300px;column-count:3;column-gap:0", |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;left:50%"),
+            );
+            doc.append_text(inner, "bb");
+        });
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(170), px(8)),
+            (px(180), px(8))
+        ]
+    );
+}
+
+#[test]
+fn a_relative_inline_ignores_a_vertical_percentage_in_a_vertical_root_of_auto_height() {
+    // The vertical root's height comes from its content, so `top: 50%`
+    // computes to `auto` and "bb" is placed by `bottom: 4px` alone.
+    let placed = |insets: &str| {
+        let (mut doc, cascade, _root) = paragraph(
+            "display:inline-block;writing-mode:vertical-rl;width:20px",
+            |doc, root| {
+                doc.append_text(root, "aa");
+                let inner = doc.append_element(
+                    Some(root),
+                    "span",
+                    Style::default(),
+                    Some(&format!("display:inline;position:relative;{insets}")),
+                );
+                doc.append_text(inner, "bb");
+            },
+        );
+        lay_out(&mut doc, &cascade);
+        let scene = painted(&doc, &cascade);
+        ink(&scene)
+            .iter()
+            .map(|g| (g.1, g.2))
+            .collect::<Vec<(i64, i64)>>()
+    };
+    assert_eq!(placed("top:50%;bottom:4px"), placed("bottom:4px"));
+}
+
+#[test]
+fn a_relative_inline_resolves_a_vertical_percentage_against_a_border_box_height() {
+    // Hand-computed: a 120px border-box with 10px padding above and below
+    // has a 100px content height, so `top: 50%` moves "bb" down by 50px from
+    // the 18px baseline below the top padding.
+    let (mut doc, cascade, _root) = paragraph(
+        "width:200px;height:120px;box-sizing:border-box;padding:10px 0",
+        |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;top:50%"),
+            );
+            doc.append_text(inner, "bb");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(18)),
+            (px(10), px(18)),
+            (px(20), px(68)),
+            (px(30), px(68))
+        ]
+    );
+}
+
+#[test]
 fn a_contents_element_is_transparent_in_the_paragraph() {
     // Hand-computed: "aabbcc" on one line, 10px per glyph, on
     // the 8px baseline; "bb" takes the contents element's colour.
