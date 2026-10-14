@@ -2538,23 +2538,20 @@ impl AncestorFacts {
                 PositionValue::Absolute | PositionValue::Fixed
             );
         self.non_block_flow_ancestor[id] = self.non_block_flow_ancestor[parent]
-            || matches!(
-                values.display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-                    | DisplayValue::Table
-                    | DisplayValue::InlineTable
-                    | DisplayValue::TableRowGroup
-                    | DisplayValue::TableHeaderGroup
-                    | DisplayValue::TableFooterGroup
-                    | DisplayValue::TableRow
-                    | DisplayValue::TableColumnGroup
-                    | DisplayValue::TableColumn
-                    | DisplayValue::TableCell
-                    | DisplayValue::TableCaption
-            );
+            || (values.display.is_flex_or_grid_container()
+                || matches!(
+                    values.display,
+                    DisplayValue::Table
+                        | DisplayValue::InlineTable
+                        | DisplayValue::TableRowGroup
+                        | DisplayValue::TableHeaderGroup
+                        | DisplayValue::TableFooterGroup
+                        | DisplayValue::TableRow
+                        | DisplayValue::TableColumnGroup
+                        | DisplayValue::TableColumn
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                ));
         self.authored_ancestor[id] = if values.display == DisplayValue::Contents
             || matches!(
                 values.width,
@@ -2820,11 +2817,9 @@ pub(crate) fn prepare_multicol_layout(
             element_children.iter().any(|&child| {
                 let mut pending = vec![child];
                 while let Some(descendant) = pending.pop() {
-                    if matches!(
-                        cascade.computed[descendant].display,
-                        DisplayValue::Inline | DisplayValue::InlineBlock
-                    ) && style_dimension_length(doc.nodes[descendant].style.size.height)
-                        .is_some_and(|descendant_height| descendant_height > height + 0.001)
+                    if cascade.computed[descendant].display.is_inline_flow_box()
+                        && style_dimension_length(doc.nodes[descendant].style.size.height)
+                            .is_some_and(|descendant_height| descendant_height > height + 0.001)
                     {
                         return true;
                     }
@@ -2914,7 +2909,7 @@ pub(crate) fn prepare_multicol_layout(
         let has_inline_flow_children = doc.nodes[idx].children.iter().any(|&child| {
             doc.nodes[child].is_in_document()
                 && doc.nodes[child].kind() == NodeKind::Element
-                && is_inline_element_box(cascade, child)
+                && supports_foundational_inline_projection(cascade, child)
         });
         let has_ruby_child = doc.nodes[idx].children.iter().any(|&child| {
             doc.nodes[child].is_in_document()
@@ -2977,16 +2972,14 @@ pub(crate) fn prepare_multicol_layout(
     }
 }
 
-/// Whether `idx`, an element, generates an inline-level box (or none of its
-/// own, for `display: contents`).
-fn is_inline_element_box(cascade: &CascadeResult, idx: usize) -> bool {
-    matches!(
-        cascade.computed[idx].display,
-        DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineTable
-            | DisplayValue::Contents
-    )
+/// Whether this child's display can enable the foundational column
+/// projection. Flex/grid containers do not enable that specialized path,
+/// which rewrites child widths and flex bases. Contents can enable it
+/// without generating a box of its own.
+fn supports_foundational_inline_projection(cascade: &CascadeResult, idx: usize) -> bool {
+    let display = cascade.computed[idx].display;
+    (display.is_inline_level() && !display.is_flex_or_grid_container())
+        || display == DisplayValue::Contents
 }
 
 #[cfg(test)]
