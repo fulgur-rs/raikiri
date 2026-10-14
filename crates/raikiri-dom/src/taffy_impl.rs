@@ -759,14 +759,21 @@ fn compute_ifc_root(
     let mut content_baseline = None;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
     let mut measure = measure;
-    if inputs.sizing_mode == taffy::SizingMode::InherentSize {
-        measure.definite_height = ifc_definite_content_height(
-            &style,
-            inputs.parent_size.height,
-            measure.insets,
-            measure.height_bounds,
-        );
-    }
+    // A known height fixes the box in either sizing mode (taffy's leaf
+    // layout hides it from the measure callback while performing layout);
+    // otherwise the box's own definite `height` does under inherent sizing.
+    measure.definite_height = match inputs.known_dimensions.height {
+        Some(height) => Some((height - measure.insets.top - measure.insets.bottom).max(0.0)),
+        None if inputs.sizing_mode == taffy::SizingMode::InherentSize => {
+            ifc_definite_content_height(
+                &style,
+                inputs.parent_size.height,
+                measure.insets,
+                measure.height_bounds,
+            )
+        }
+        None => None,
+    };
     let auto_vertical_block_size = tree.nodes[idx]
         .ifc
         .as_ref()

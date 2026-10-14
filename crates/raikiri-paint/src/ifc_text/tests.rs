@@ -2319,6 +2319,38 @@ fn a_relative_inline_resolves_a_vertical_percentage_against_a_definite_height() 
 }
 
 #[test]
+fn a_relative_inline_resolves_a_vertical_percentage_in_a_fixed_root() {
+    // Hand-computed: as above, but the root is `position: fixed`, which is
+    // laid out apart from the flow; its 100px height still makes `top: 50%`
+    // move "bb" down by 50px.
+    let (mut doc, cascade, _root) = paragraph(
+        "position:fixed;left:0;top:0;width:200px;height:100px",
+        |doc, root| {
+            doc.append_text(root, "aa");
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;position:relative;top:50%"),
+            );
+            doc.append_text(inner, "bb");
+        },
+    );
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(20), px(58)),
+            (px(30), px(58))
+        ]
+    );
+}
+
+#[test]
 fn a_relative_inline_resolves_a_vertical_percentage_against_a_border_box_height() {
     // Hand-computed: a 120px border-box with 10px padding above and below
     // has a 100px content height, so `top: 50%` moves "bb" down by 50px from
