@@ -382,6 +382,8 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
             | DisplayValue::Grid
             | DisplayValue::InlineGrid
             | DisplayValue::TableCaption
+            | DisplayValue::Ruby
+            | DisplayValue::BlockRuby
     ) && !super::fixed::generates_inline_box(doc, idx, cv);
     if !applies {
         return none;
