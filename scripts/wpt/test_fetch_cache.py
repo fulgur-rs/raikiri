@@ -10,6 +10,16 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+# Fixture repos are removed by TemporaryDirectory; `git commit`/`git fetch`
+# may spawn detached auto-maintenance that keeps writing under
+# `.git/objects/pack` during removal and fails cleanup with ENOTEMPTY.
+GIT_NO_AUTO_MAINTENANCE = {
+    "GIT_CONFIG_COUNT": "2",
+    "GIT_CONFIG_KEY_0": "maintenance.auto",
+    "GIT_CONFIG_VALUE_0": "false",
+    "GIT_CONFIG_KEY_1": "gc.auto",
+    "GIT_CONFIG_VALUE_1": "0",
+}
 
 
 class FetchCacheTests(unittest.TestCase):
@@ -27,12 +37,14 @@ class FetchCacheTests(unittest.TestCase):
         self._make_project()
         self.env = os.environ.copy()
         self.env.update({"HOME": str(self.home), "WPT_REMOTE_URL": str(self.wpt_remote)})
+        self.env.update(GIT_NO_AUTO_MAINTENANCE)
         for key in ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE"):
             self.env.pop(key, None)
 
     def _git(self, cwd: Path, *args: str) -> str:
         result = subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=True,
+            env={**os.environ, **GIT_NO_AUTO_MAINTENANCE},
         )
         return result.stdout.strip()
 
@@ -70,6 +82,7 @@ class FetchCacheTests(unittest.TestCase):
             check=True,
             capture_output=True,
             text=True,
+            env={**os.environ, **GIT_NO_AUTO_MAINTENANCE},
         )
 
     def _make_project(self) -> None:
