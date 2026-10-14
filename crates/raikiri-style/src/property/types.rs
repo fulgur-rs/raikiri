@@ -9158,15 +9158,18 @@ pub type MaskImage = BackgroundImage;
 /// `filter`'s simple "as specified" (which needs no absolutization), discussed
 /// in the "Range restriction" section of the [`FilterFunction`] docs,
 /// `transform` must absolutize `<length>` payloads under the spec: here,
-/// the non-percentage part of the `Length` carried by [`Self::Translate`]/
-/// [`Self::TranslateX`]/[`Self::TranslateY`].
+/// the non-percentage part of the [`LengthPercentageOrCalc`] carried by
+/// [`Self::Translate`]/[`Self::TranslateX`]/[`Self::TranslateY`]. A mixed
+/// `calc()` there keeps its percentage, which resolves against the
+/// transformed box at used-value time.
 ///
 /// On the element path, [`crate::resolve::ComputedTransformFunction`]/
 /// [`crate::resolve::resolve_transform_function`] implements this distinction;
 /// on the `page` path, phase 3 of [`crate::page::cascade_page`] does so through
 /// the `Transform` arm of `absolutize_in_page_context`. They absolutize only
 /// the length part of `<length-percentage>` against font-size/root-font-size,
-/// leaving the percentage part symbolic. This is the same treatment that
+/// leaving the percentage part symbolic, as
+/// [`crate::resolve::ComputedLengthPercentageOrCalc`]. This is the same treatment that
 /// [`crate::resolve::resolve_css_position`]/
 /// [`crate::resolve::resolve_length_percentage`] applies to
 /// `background-position`/`object-position`. The six `<number>` slots in

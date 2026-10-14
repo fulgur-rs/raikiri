@@ -1045,7 +1045,8 @@ fn link_paint_quads_follow_a_translation() {
 // A mixed calc() resolves its percentage against the transformed box.
 #[test]
 fn a_paint_transform_resolves_a_mixed_calc_translation() {
-    let layout = transformed_link_page("translate(calc(50% + 1px), calc(-100% - 2px))");
+    // `scale(1)` takes the general transform path.
+    let layout = transformed_link_page("scale(1) translate(calc(50% + 1px), calc(-100% - 2px))");
     let page = layout.page(0).unwrap();
     let div = find(&page.dom(), page.dom().root(), "div").unwrap();
     assert_eq!(

@@ -32,10 +32,9 @@ use raikiri_style::property::{
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
-    ComputedCssPosition, ComputedLength, ComputedLengthPercentageOrAuto,
-    ComputedLengthPercentageOrCalc, ComputedTransformFunction, ComputedValues,
-    MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext, resolve_background_size, resolve_border,
-    resolve_css_position,
+    ComputedCssPosition, ComputedLength, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
+    ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext, resolve_background_size,
+    resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -7080,13 +7079,6 @@ fn translation_only(cv: &ComputedValues) -> bool {
 // the border-box origin in that same coordinate space, then compose with the
 // ancestor context. This also keeps transforms out of layout geometry.
 fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
-    let resolve = |value: ComputedLengthPercentageOrCalc, basis: f64| match value {
-        ComputedLengthPercentageOrCalc::Px(px) => px as f64,
-        ComputedLengthPercentageOrCalc::Percent(percent) => basis * percent as f64 / 100.0,
-        ComputedLengthPercentageOrCalc::Calc(calc) => {
-            calc.px as f64 + basis * calc.percent as f64 / 100.0
-        }
-    };
     // Border backgrounds and borders use this same snapped paint box.
     let paint_x = (x as f64).round();
     let paint_y = (y as f64).round();
@@ -7100,15 +7092,13 @@ fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f3
     for function in cv.transform.iter() {
         matrix *= match *function {
             ComputedTransformFunction::Matrix(coeffs) => Affine::new(coeffs.map(f64::from)),
-            ComputedTransformFunction::Translate(x, y) => {
-                Affine::translate((resolve(x, paint_width), resolve(y, paint_height)))
-            }
-            ComputedTransformFunction::TranslateX(x) => {
-                Affine::translate((resolve(x, paint_width), 0.0))
-            }
-            ComputedTransformFunction::TranslateY(y) => {
-                Affine::translate((0.0, resolve(y, paint_height)))
-            }
+            ComputedTransformFunction::Translate(..)
+            | ComputedTransformFunction::TranslateX(..)
+            | ComputedTransformFunction::TranslateY(..) => Affine::translate(
+                function
+                    .translation(paint_width, paint_height)
+                    .unwrap_or_default(),
+            ),
             ComputedTransformFunction::Scale(x, y) => Affine::scale_non_uniform(x as f64, y as f64),
             ComputedTransformFunction::ScaleX(x) => Affine::scale_non_uniform(x as f64, 1.0),
             ComputedTransformFunction::ScaleY(y) => Affine::scale_non_uniform(1.0, y as f64),
@@ -7142,21 +7132,12 @@ fn transform_translation(
     if !translation_only(cv) {
         return (0.0, 0.0);
     }
-    let mut dx = 0.0_f32;
-    let mut dy = 0.0_f32;
-    let resolve = |value: ComputedLengthPercentageOrCalc, basis: f32| value.resolve_signed(basis);
-    for function in cv.transform.iter() {
-        match *function {
-            ComputedTransformFunction::Translate(x, y) => {
-                dx += resolve(x, width);
-                dy += resolve(y, height);
-            }
-            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, width),
-            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, height),
-            _ => {}
-        }
-    }
-    (dx, dy)
+    let (dx, dy) = cv
+        .transform
+        .iter()
+        .filter_map(|function| function.translation(f64::from(width), f64::from(height)))
+        .fold((0.0, 0.0), |(dx, dy), (x, y)| (dx + x, dy + y));
+    (dx as f32, dy as f32)
 }
 
 /// Page-local paint origin of a viewport-fixed box.
