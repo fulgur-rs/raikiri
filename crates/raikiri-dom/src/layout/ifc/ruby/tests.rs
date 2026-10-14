@@ -382,7 +382,8 @@ fn display_contents_wrappers_pass_ruby_parts_to_the_container() {
     let mut ids = (0, 0);
     let fixture = block_fixture("line-height:20px", |doc, root| {
         let container = ruby(doc, root);
-        let contents = element(doc, container, "span", "display:contents");
+        let outer = element(doc, container, "span", "display:contents");
+        let contents = element(doc, outer, "span", "display:contents");
         ids.0 = doc.append_text(contents, "a");
         let annotation = rt(doc, contents, "x");
         ids.1 = doc.nodes[annotation].children[0];
@@ -394,6 +395,31 @@ fn display_contents_wrappers_pass_ruby_parts_to_the_container() {
     let annotation = runs.iter().find(|run| run.0 == ids.1).expect("annotation");
     assert!(annotation.1 && !base.1);
     assert!(annotation.2.1 < base.2.1, "{runs:?}");
+}
+
+#[test]
+fn out_of_flow_boxes_in_contents_wrappers_keep_their_segment() {
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let contents = element(doc, container, "span", "display:contents");
+        let base = element(doc, contents, "span", "");
+        doc.append_text(base, "a");
+        element(doc, base, "span", "position:absolute");
+        rt(doc, contents, "x");
+        rb(doc, contents, "b");
+        rt(doc, contents, "y");
+    });
+    let container = fixture.doc.nodes[fixture.root].children[0];
+    let plan = plan(&fixture.doc, &fixture.cascade, container).expect("plain ruby");
+    assert_eq!(plan.segments.len(), 2);
+    // The box is anchored after its own segment, not after the last one.
+    assert_eq!(
+        plan.out_of_flow
+            .iter()
+            .map(|&(index, _)| index)
+            .collect::<Vec<_>>(),
+        [1]
+    );
 }
 
 #[test]
