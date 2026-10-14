@@ -920,18 +920,22 @@ pub(crate) fn flow_mapping(
         Some(PropertyValue::Direction(direction)) => direction,
         _ => inherited.direction,
     };
-    let horizontal_parent = inherited.horizontal_children;
-    let writing_mode = if horizontal_parent {
-        WritingMode::HorizontalTb
-    } else {
-        layout_writing_mode(writing_mode)
-    };
+    // `text-orientation: upright` sets the used direction from the
+    // element's own writing mode, before a horizontal parent's layout
+    // replaces the axes the logical sides map onto.
     let direction = if text_orientation == TextOrientation::Upright
-        && writing_mode != WritingMode::HorizontalTb
-    {
+        && matches!(
+            writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        ) {
         Direction::Ltr
     } else {
         direction
+    };
+    let writing_mode = if inherited.horizontal_children {
+        WritingMode::HorizontalTb
+    } else {
+        layout_writing_mode(writing_mode)
     };
     Some(FlowMapping {
         writing_mode,

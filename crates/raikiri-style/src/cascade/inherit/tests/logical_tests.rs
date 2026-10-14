@@ -360,3 +360,16 @@ fn children_placed_on_horizontal_axes_keep_the_horizontal_mapping() {
         sides(1.0, 2.0, 3.0, 4.0)
     );
 }
+
+#[test]
+fn upright_text_under_a_horizontal_parent_keeps_the_ltr_mapping() {
+    // `text-orientation: upright` makes the used direction `ltr` in a
+    // vertical writing mode, also when a flex parent maps the logical sides
+    // onto horizontal axes.
+    assert_eq!(
+        nested_margins(&[
+            "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; display: flex"
+        ]),
+        sides(2.0, 3.0, 4.0, 1.0)
+    );
+}
