@@ -710,6 +710,7 @@ mod tests;
 
 mod orthogonal_flow;
 mod vertical_oof;
+pub(crate) use vertical_oof::used_writing_mode;
 
 /// Lay out an ifc root: its paragraph is measured and broken into lines by
 /// the inline engine, and taffy sees it as a leaf.

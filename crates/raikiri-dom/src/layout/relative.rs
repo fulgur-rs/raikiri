@@ -1,23 +1,26 @@
 //! Used offsets of relatively positioned boxes whose offset the painter
 //! applies instead of layout.
 
-use super::page::used_computed_length_percentage_or_auto;
+use super::ifc::style::inset_precedence;
+use super::page::{find_body, used_computed_length_percentage_or_auto};
 use super::page_pipeline::{box_parent, definite_content_height};
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
-use raikiri_style::property::{DisplayValue, PositionValue};
+use raikiri_style::property::{DisplayValue, PositionValue, WritingMode};
 use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
 
 /// The used horizontal and vertical insets of `node_id`, whatever its
-/// `position`. `top` wins over `-bottom`, and `left` over `-right` unless
-/// the containing block is right-to-left (CSS 2.1 §9.4.3). `None` stands
-/// for `auto`.
+/// `position`. When opposing insets both apply, the one on the start side
+/// of the containing block's writing mode and direction wins (CSS Position
+/// 3 §3.3). `None` stands for `auto`.
 ///
 /// Percentages and `calc()` resolve against the content box of the
 /// containing block: the nearest ancestor box that is not a non-atomic
-/// inline, and inside a multi-column container its column box. Its width is
-/// always known; a percentage of its height counts as `auto` unless that
-/// height is definite (CSS 2.1 §9.3.2, §10.5), as in layout.
+/// inline, and inside a multi-column container the column box of a child
+/// that does not span the columns. The body is laid out in the page area,
+/// so that is its containing block. The width is always known; a
+/// percentage of the height counts as `auto` unless that height is definite
+/// (CSS 2.1 §9.3.2, §10.5), as in layout.
 pub(crate) fn used_relative_insets(
     document: &Document,
     cv: &ComputedValues,
@@ -26,6 +29,14 @@ pub(crate) fn used_relative_insets(
     let block = containing_block(document, node_id);
     let rtl =
         block.is_some_and(|block| document.nodes[block].style.direction == taffy::Direction::Rtl);
+    let mode = match crate::taffy_impl::used_writing_mode(document, block.unwrap_or(node_id)) {
+        WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
+        WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
+        WritingMode::SidewaysRl => shodo::geometry::WritingMode::SidewaysRl,
+        WritingMode::SidewaysLr => shodo::geometry::WritingMode::SidewaysLr,
+        _ => shodo::geometry::WritingMode::HorizontalTb,
+    };
+    let (right_wins, bottom_wins) = inset_precedence(mode, rtl);
     let length = |value| match value {
         ComputedLengthPercentageOrAuto::Px(px) => Some(Some(px)),
         ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
@@ -41,19 +52,42 @@ pub(crate) fn used_relative_insets(
             basis().and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
         })
     };
-    let width = || block.map(|block| column_content_width(document, block));
-    let height = || block.and_then(|block| definite_content_height(document, block));
-    let (start, end) = if rtl {
-        (cv.right, cv.left)
-    } else {
-        (cv.left, cv.right)
+    // The tag check spares the document walk for every other element.
+    let is_body = || {
+        document.nodes[node_id].tag_name() == Some("body") && find_body(document) == Some(node_id)
     };
-    let sign = if rtl { -1.0 } else { 1.0 };
-    let dx = resolve(start, &width)
-        .map(|start| sign * start)
-        .or_else(|| resolve(end, &width).map(|end| -sign * end));
-    let dy = resolve(cv.top, &height).or_else(|| resolve(cv.bottom, &height).map(|b| -b));
-    (dx, dy)
+    let width = || {
+        if is_body() {
+            return Some(document.fixed_page_area.0);
+        }
+        let block = block?;
+        Some(if document.nodes[node_id].column_span_all {
+            content_width(document, block)
+        } else {
+            column_content_width(document, block)
+        })
+    };
+    let height = || {
+        if is_body() {
+            return Some(document.fixed_page_area.1);
+        }
+        block.and_then(|block| definite_content_height(document, block))
+    };
+    let pick = |start: Option<f32>, end: Option<f32>, end_wins: bool| {
+        if end_wins {
+            end.or(start)
+        } else {
+            start.or(end)
+        }
+    };
+    let left = resolve(cv.left, &width);
+    let right = resolve(cv.right, &width).map(|right| -right);
+    let top = resolve(cv.top, &height);
+    let bottom = resolve(cv.bottom, &height).map(|bottom| -bottom);
+    (
+        pick(left, right, right_wins),
+        pick(top, bottom, bottom_wins),
+    )
 }
 
 /// The nearest ancestor of `node_id` that can be its containing block:
@@ -66,17 +100,22 @@ fn containing_block(document: &Document, node_id: usize) -> Option<usize> {
     Some(block)
 }
 
-/// The content-box width of `block`, or of one of its columns when it is a
-/// multi-column container.
-fn column_content_width(document: &Document, block: usize) -> f32 {
-    let node = &document.nodes[block];
-    let layout = &node.unrounded_layout;
-    let width = layout.size.width
+/// The content-box width of `block`.
+fn content_width(document: &Document, block: usize) -> f32 {
+    let layout = &document.nodes[block].unrounded_layout;
+    layout.size.width
         - layout.padding.left
         - layout.padding.right
         - layout.border.left
-        - layout.border.right;
-    node.multicol
+        - layout.border.right
+}
+
+/// The content-box width of `block`, or of one of its columns when it is a
+/// multi-column container.
+fn column_content_width(document: &Document, block: usize) -> f32 {
+    let width = content_width(document, block);
+    document.nodes[block]
+        .multicol
         .and_then(|style| FragmentationContext::resolve(width, None, style))
         .map_or(width, |context| context.column_width)
 }

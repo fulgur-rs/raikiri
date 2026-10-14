@@ -178,3 +178,80 @@ fn an_inline_ancestor_is_not_the_containing_block() {
         (30.0, 10.0)
     );
 }
+
+#[test]
+fn a_column_spanner_takes_the_full_multicol_width() {
+    // Hand-computed: the spanner's containing block is the whole 200px
+    // content box, not one 90px column.
+    let container = "display:block;width:200px;column-count:2;column-gap:20px";
+    assert_eq!(
+        offset(
+            container,
+            "column-span:all;float:left;position:relative;left:50%"
+        )
+        .0,
+        100.0
+    );
+}
+
+#[test]
+fn a_vertical_containing_block_takes_its_start_side_inset() {
+    // CSS Position 3 §3.3: in `vertical-rl` the right side is the block
+    // start, so `right` wins over `left`.
+    let container = "display:block;width:200px;height:100px;writing-mode:vertical-rl";
+    assert_eq!(
+        offset(container, "float:left;position:relative;left:10%;right:5px").0,
+        -5.0
+    );
+}
+
+#[test]
+fn a_calc_with_a_zero_percentage_needs_no_definite_height() {
+    let container = "display:block;width:200px";
+    assert_eq!(
+        offset(
+            container,
+            "float:left;position:relative;top:calc(5px + 0%);bottom:3px"
+        )
+        .1,
+        5.0
+    );
+}
+
+#[test]
+fn body_percentages_resolve_against_the_page_area() {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let body = document.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;position:relative;left:10%;top:10%"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    let (dx, dy) = used_relative_offset(&document, &cascade.computed[body], body);
+    eprintln!(
+        "body offset {dx} {dy}; html {:?} area {:?}",
+        document.nodes[html].unrounded_layout.size, document.fixed_page_area
+    );
+    assert!(dx > 0.0 && dy > 0.0);
+}
+
+#[test]
+fn a_sideways_containing_block_takes_its_start_side_inset() {
+    // CSS Position 3 §3.3: `sideways-rl` starts its block axis on the right
+    // and `sideways-lr` starts its inline axis at the bottom.
+    let container = "display:block;width:200px;height:100px;writing-mode:sideways-rl";
+    assert_eq!(
+        offset(container, "float:left;position:relative;left:10%;right:5px").0,
+        -5.0
+    );
+    let container = "display:block;width:200px;height:100px;writing-mode:sideways-lr";
+    assert_eq!(
+        offset(container, "float:left;position:relative;top:5px;bottom:10%").1,
+        -10.0
+    );
+}
