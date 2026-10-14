@@ -535,70 +535,10 @@ pub struct Node {
 }
 
 impl Node {
-    /// Construct the Document root node for arena index 0.
-    pub(crate) fn new_document() -> Self {
-        Self {
-            style: Style::default(),
-            display: DisplayValue::Inline,
-            table_layout: TableLayoutValue::Auto,
-            table_vertical_align: VerticalAlign::Baseline,
-            hides_empty_table_cell: false,
-            caption_side: CaptionSideValue::Top,
-            table_grid_box: None,
-            table_first_baseline: None,
-            flex_first_baseline: None,
-            border_collapse: BorderCollapseValue::Separate,
-            computed_border: None,
-            collapsed_border: None,
-            border_spacing: ComputedBorderSpacing {
-                horizontal: raikiri_style::ComputedLength(0.0),
-                vertical: raikiri_style::ComputedLength(0.0),
-            },
-            break_before: BreakBetween::Auto,
-            break_after: BreakBetween::Auto,
-            break_inside: BreakInside::Auto,
-            paragraph_orphans: 2,
-            paragraph_widows: 2,
-            multicol_auto_width: true,
-            has_before_or_after_content: false,
-            paints_whole_box_effects: false,
-            multicol: None,
-            column_span_all: false,
-            multicol_groups: Vec::new(),
-            multicol_rows: Vec::new(),
-            authored_writing_mode: None,
-            has_logical_min_block_size: false,
-            needs_relative_block_paint_offset: false,
-            size_containment: taffy::Size {
-                width: false,
-                height: false,
-            },
-            flex_edge_basis: None,
-            order: 0,
-            order_modified_children: Box::new([]),
-            grid_item_row_starts: Box::new([]),
-            grid_column_count: 0,
-            grid_item_column_starts: Box::new([]),
-            grid_items_without_baseline: Box::new([]),
-            children: Vec::new(),
-            parent: None,
-            cache: Cache::new(),
-            ifc: None,
-            unrounded_layout: Layout::with_order(0),
-            percent_basis_height: None,
-            flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::Document,
-        }
-    }
-
-    /// Construct an Element node with its tag name, style, and inline_style.
-    /// `namespace`, `attributes`, and `template_contents` start empty or None.
-    /// At finish, the raikiri-html sink populates the first two through
-    /// [`crate::Document::set_element_namespace`] and
-    /// [`crate::Document::set_element_attributes`]. For `<template>` elements
-    /// only, the sink eagerly populates `template_contents` in `create_element`
-    /// through [`crate::Document::allocate_template_fragment_root`].
-    pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
+    /// Construct a node carrying `data` and `style`, with every other field at
+    /// its pre-cascade, pre-layout default. Each `new_*` constructor delegates
+    /// here so the defaults live in one place.
+    fn with_data(data: NodeData, style: Style) -> Self {
         Self {
             style,
             display: DisplayValue::Inline,
@@ -649,7 +589,25 @@ impl Node {
             unrounded_layout: Layout::with_order(0),
             percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::Element(Box::new(ElementData {
+            data,
+        }
+    }
+
+    /// Construct the Document root node for arena index 0.
+    pub(crate) fn new_document() -> Self {
+        Self::with_data(NodeData::Document, Style::default())
+    }
+
+    /// Construct an Element node with its tag name, style, and inline_style.
+    /// `namespace`, `attributes`, and `template_contents` start empty or None.
+    /// At finish, the raikiri-html sink populates the first two through
+    /// [`crate::Document::set_element_namespace`] and
+    /// [`crate::Document::set_element_attributes`]. For `<template>` elements
+    /// only, the sink eagerly populates `template_contents` in `create_element`
+    /// through [`crate::Document::allocate_template_fragment_root`].
+    pub(crate) fn new_element(tag: SmolStr, style: Style, inline_style: Option<SmolStr>) -> Self {
+        Self::with_data(
+            NodeData::Element(Box::new(ElementData {
                 tag_name: tag,
                 inline_style,
                 animation_style: None,
@@ -660,63 +618,16 @@ impl Node {
                 image_intrinsic_size: None,
                 canvas_bitmap: None,
             })),
-        }
+            style,
+        )
     }
 
     /// Construct a Text node with its character data.
     pub(crate) fn new_text(text: SmolStr) -> Self {
-        Self {
-            style: Style::default(),
-            display: DisplayValue::Inline,
-            table_layout: TableLayoutValue::Auto,
-            table_vertical_align: VerticalAlign::Baseline,
-            hides_empty_table_cell: false,
-            caption_side: CaptionSideValue::Top,
-            table_grid_box: None,
-            table_first_baseline: None,
-            flex_first_baseline: None,
-            border_collapse: BorderCollapseValue::Separate,
-            computed_border: None,
-            collapsed_border: None,
-            border_spacing: ComputedBorderSpacing {
-                horizontal: raikiri_style::ComputedLength(0.0),
-                vertical: raikiri_style::ComputedLength(0.0),
-            },
-            break_before: BreakBetween::Auto,
-            break_after: BreakBetween::Auto,
-            break_inside: BreakInside::Auto,
-            paragraph_orphans: 2,
-            paragraph_widows: 2,
-            multicol_auto_width: true,
-            has_before_or_after_content: false,
-            paints_whole_box_effects: false,
-            multicol: None,
-            column_span_all: false,
-            multicol_groups: Vec::new(),
-            multicol_rows: Vec::new(),
-            authored_writing_mode: None,
-            has_logical_min_block_size: false,
-            needs_relative_block_paint_offset: false,
-            size_containment: taffy::Size {
-                width: false,
-                height: false,
-            },
-            flex_edge_basis: None,
-            order: 0,
-            order_modified_children: Box::new([]),
-            grid_item_row_starts: Box::new([]),
-            grid_column_count: 0,
-            grid_item_column_starts: Box::new([]),
-            grid_items_without_baseline: Box::new([]),
-            children: Vec::new(),
-            parent: None,
-            cache: Cache::new(),
-            ifc: None,
-            unrounded_layout: Layout::with_order(0),
-            percent_basis_height: None,
-            flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::Text(TextData { text_content: text }),
-        }
+        Self::with_data(
+            NodeData::Text(TextData { text_content: text }),
+            Style::default(),
+        )
     }
 
     /// Construct a Comment node with its character data.
@@ -726,116 +637,17 @@ impl Node {
     /// layout, paint, and cascade automatically skip them through the
     /// `is_in_document()` gate.
     pub(crate) fn new_comment(text: SmolStr) -> Self {
-        Self {
-            style: Style::default(),
-            display: DisplayValue::Inline,
-            table_layout: TableLayoutValue::Auto,
-            table_vertical_align: VerticalAlign::Baseline,
-            hides_empty_table_cell: false,
-            caption_side: CaptionSideValue::Top,
-            table_grid_box: None,
-            table_first_baseline: None,
-            flex_first_baseline: None,
-            border_collapse: BorderCollapseValue::Separate,
-            computed_border: None,
-            collapsed_border: None,
-            border_spacing: ComputedBorderSpacing {
-                horizontal: raikiri_style::ComputedLength(0.0),
-                vertical: raikiri_style::ComputedLength(0.0),
-            },
-            break_before: BreakBetween::Auto,
-            break_after: BreakBetween::Auto,
-            break_inside: BreakInside::Auto,
-            paragraph_orphans: 2,
-            paragraph_widows: 2,
-            multicol_auto_width: true,
-            has_before_or_after_content: false,
-            paints_whole_box_effects: false,
-            multicol: None,
-            column_span_all: false,
-            multicol_groups: Vec::new(),
-            multicol_rows: Vec::new(),
-            authored_writing_mode: None,
-            has_logical_min_block_size: false,
-            needs_relative_block_paint_offset: false,
-            size_containment: taffy::Size {
-                width: false,
-                height: false,
-            },
-            flex_edge_basis: None,
-            order: 0,
-            order_modified_children: Box::new([]),
-            grid_item_row_starts: Box::new([]),
-            grid_column_count: 0,
-            grid_item_column_starts: Box::new([]),
-            grid_items_without_baseline: Box::new([]),
-            children: Vec::new(),
-            parent: None,
-            cache: Cache::new(),
-            ifc: None,
-            unrounded_layout: Layout::with_order(0),
-            percent_basis_height: None,
-            flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::Comment(text),
-        }
+        Self::with_data(NodeData::Comment(text), Style::default())
     }
 
     /// Construct a Processing instruction node with its target and data.
     /// As with Comment nodes, [`crate::Document::mark_in_document_flags`]
     /// clears its `IS_IN_DOCUMENT` bit.
     pub(crate) fn new_processing_instruction(target: SmolStr, data: SmolStr) -> Self {
-        Self {
-            style: Style::default(),
-            display: DisplayValue::Inline,
-            table_layout: TableLayoutValue::Auto,
-            table_vertical_align: VerticalAlign::Baseline,
-            hides_empty_table_cell: false,
-            caption_side: CaptionSideValue::Top,
-            table_grid_box: None,
-            table_first_baseline: None,
-            flex_first_baseline: None,
-            border_collapse: BorderCollapseValue::Separate,
-            computed_border: None,
-            collapsed_border: None,
-            border_spacing: ComputedBorderSpacing {
-                horizontal: raikiri_style::ComputedLength(0.0),
-                vertical: raikiri_style::ComputedLength(0.0),
-            },
-            break_before: BreakBetween::Auto,
-            break_after: BreakBetween::Auto,
-            break_inside: BreakInside::Auto,
-            paragraph_orphans: 2,
-            paragraph_widows: 2,
-            multicol_auto_width: true,
-            has_before_or_after_content: false,
-            paints_whole_box_effects: false,
-            multicol: None,
-            column_span_all: false,
-            multicol_groups: Vec::new(),
-            multicol_rows: Vec::new(),
-            authored_writing_mode: None,
-            has_logical_min_block_size: false,
-            needs_relative_block_paint_offset: false,
-            size_containment: taffy::Size {
-                width: false,
-                height: false,
-            },
-            flex_edge_basis: None,
-            order: 0,
-            order_modified_children: Box::new([]),
-            grid_item_row_starts: Box::new([]),
-            grid_column_count: 0,
-            grid_item_column_starts: Box::new([]),
-            grid_items_without_baseline: Box::new([]),
-            children: Vec::new(),
-            parent: None,
-            cache: Cache::new(),
-            ifc: None,
-            unrounded_layout: Layout::with_order(0),
-            percent_basis_height: None,
-            flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::ProcessingInstruction { target, data },
-        }
+        Self::with_data(
+            NodeData::ProcessingInstruction { target, data },
+            Style::default(),
+        )
     }
 
     /// Construct a Document fragment root. It is typically placed in the arena
@@ -844,58 +656,7 @@ impl Node {
     /// `mark_in_document_flags` clears it because it is unreachable from the
     /// Document root.
     pub(crate) fn new_document_fragment() -> Self {
-        Self {
-            style: Style::default(),
-            display: DisplayValue::Inline,
-            table_layout: TableLayoutValue::Auto,
-            table_vertical_align: VerticalAlign::Baseline,
-            hides_empty_table_cell: false,
-            caption_side: CaptionSideValue::Top,
-            table_grid_box: None,
-            table_first_baseline: None,
-            flex_first_baseline: None,
-            border_collapse: BorderCollapseValue::Separate,
-            computed_border: None,
-            collapsed_border: None,
-            border_spacing: ComputedBorderSpacing {
-                horizontal: raikiri_style::ComputedLength(0.0),
-                vertical: raikiri_style::ComputedLength(0.0),
-            },
-            break_before: BreakBetween::Auto,
-            break_after: BreakBetween::Auto,
-            break_inside: BreakInside::Auto,
-            paragraph_orphans: 2,
-            paragraph_widows: 2,
-            multicol_auto_width: true,
-            has_before_or_after_content: false,
-            paints_whole_box_effects: false,
-            multicol: None,
-            column_span_all: false,
-            multicol_groups: Vec::new(),
-            multicol_rows: Vec::new(),
-            authored_writing_mode: None,
-            has_logical_min_block_size: false,
-            needs_relative_block_paint_offset: false,
-            size_containment: taffy::Size {
-                width: false,
-                height: false,
-            },
-            flex_edge_basis: None,
-            order: 0,
-            order_modified_children: Box::new([]),
-            grid_item_row_starts: Box::new([]),
-            grid_column_count: 0,
-            grid_item_column_starts: Box::new([]),
-            grid_items_without_baseline: Box::new([]),
-            children: Vec::new(),
-            parent: None,
-            cache: Cache::new(),
-            ifc: None,
-            unrounded_layout: Layout::with_order(0),
-            percent_basis_height: None,
-            flags: NodeFlags::IS_IN_DOCUMENT,
-            data: NodeData::DocumentFragment,
-        }
+        Self::with_data(NodeData::DocumentFragment, Style::default())
     }
 
     // ─── inherent accessor methods ─────────────────
