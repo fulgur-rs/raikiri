@@ -257,6 +257,19 @@ pub struct StreamingLayout<'r, 'a, S> {
     /// Input bytes fed since the last checkpoint.
     unchecked_bytes: usize,
     checkpoint_bytes: usize,
+    /// What the pages delivered so far fix for later layouts.
+    progress: Progress,
+    /// The abort signal fired during a checkpoint.
+    aborted: bool,
+    /// The first input failure. [`StreamingLayout::feed`] returns it to its
+    /// caller; a failure inside [`std::io::Write`] is kept here for
+    /// [`StreamingLayout::finish`].
+    failure: Failure,
+}
+
+/// What the pages delivered so far fix for the later layouts of a stream.
+#[derive(Default)]
+struct Progress {
     /// Pages already handed to the sink.
     delivered: u32,
     /// Node count of the document whose pages were delivered first. Fixed
@@ -277,12 +290,37 @@ pub struct StreamingLayout<'r, 'a, S> {
     /// Layout-time warnings of earlier layouts, which a resumed layout
     /// does not repeat for the content it leaves out.
     earlier_warnings: EarlierWarnings,
-    /// The abort signal fired during a checkpoint.
-    aborted: bool,
-    /// The first input failure. [`StreamingLayout::feed`] returns it to its
-    /// caller; a failure inside [`std::io::Write`] is kept here for
-    /// [`StreamingLayout::finish`].
-    failure: Failure,
+}
+
+impl Progress {
+    /// Lay `document` out after the delivered pages, resuming when the
+    /// document allows it, and leaving out the late boxes and the consumer
+    /// property events of delivered nodes. Records the layout's warnings for
+    /// later resumed layouts. Returns `None` when the abort signal fires.
+    fn lay_out(
+        &mut self,
+        settings: &Settings<'_, '_>,
+        document: HtmlDocument,
+    ) -> Result<Option<LaidOut>, RenderError> {
+        let resume = self
+            .resume
+            .as_ref()
+            .filter(|_| can_resume(&document, self.late_nodes_from));
+        let Some((document, laid_out, mut events)) = settings.layout_without_late_boxes(
+            document,
+            self.late_nodes_from,
+            self.delivered,
+            &mut self.hidden_late,
+            resume,
+        )?
+        else {
+            return Ok(None);
+        };
+        drop_delivered_events(&mut events, &self.delivered_nodes);
+        let left_out = settings.left_out(&document, resume);
+        self.earlier_warnings.record(&laid_out, &left_out);
+        Ok(Some((document, laid_out, events)))
+    }
 }
 
 /// What every layout of one stream shares.
@@ -698,14 +736,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             input_bytes: 0,
             unchecked_bytes: 0,
             checkpoint_bytes: CHECKPOINT_BYTES,
-            delivered: 0,
-            late_nodes_from: None,
-            hidden_late: Vec::new(),
-            resume: None,
-            page_names: Vec::new(),
-            delivered_nodes: HashSet::new(),
-            delivered_anchors: AnchorIndex::default(),
-            earlier_warnings: EarlierWarnings::default(),
+            progress: Progress::default(),
             aborted: false,
             failure: Failure::None,
         }
@@ -833,9 +864,12 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             document,
             forward_dependent,
             ..
-        } = self
-            .settings
-            .cascade(parsed, true, self.late_nodes_from, &self.hidden_late)?;
+        } = self.settings.cascade(
+            parsed,
+            true,
+            self.progress.late_nodes_from,
+            &self.progress.hidden_late,
+        )?;
         let frontier = stable_frontier(
             &document.uncascaded.dom,
             &document.cascade,
@@ -845,24 +879,11 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         if frontier == Frontier::At(document.uncascaded.dom.root_index()) {
             return Ok(());
         }
-        let resume = self
-            .resume
-            .as_ref()
-            .filter(|_| can_resume(&document, self.late_nodes_from));
-        let Some((document, laid_out, mut events)) = self.settings.layout_without_late_boxes(
-            document,
-            self.late_nodes_from,
-            self.delivered,
-            &mut self.hidden_late,
-            resume,
-        )?
+        let Some((document, laid_out, events)) = self.progress.lay_out(&self.settings, document)?
         else {
             self.aborted = true;
             return Ok(());
         };
-        drop_delivered_events(&mut events, &self.delivered_nodes);
-        let left_out = self.settings.left_out(&document, resume);
-        self.earlier_warnings.record(&laid_out, &left_out);
         let held = open_text_event_sources(&document, &traced, &events);
         let final_pages = final_page_count(
             &document.uncascaded.dom,
@@ -873,12 +894,12 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         );
         let signal = self.settings.config.signal.clone();
         let (mut by_page, _) = events_by_first_page(&laid_out, events);
-        let from = self.delivered;
+        let from = self.progress.delivered;
         let delivery = deliver(
             &mut self.sink,
             &laid_out,
             &mut by_page,
-            &mut self.delivered,
+            &mut self.progress.delivered,
             final_pages,
             Some(page_count_placeholder(&self.settings.config)),
             signal.as_ref(),
@@ -889,11 +910,16 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         }
         // A page start found in this layout lets the next one leave more
         // out; a start found earlier stays valid when this one has none.
-        if let Some(point) = resume_point(&document, &laid_out, self.delivered, &self.page_names) {
-            self.resume = Some(point);
+        if let Some(point) = resume_point(
+            &document,
+            &laid_out,
+            self.progress.delivered,
+            &self.progress.page_names,
+        ) {
+            self.progress.resume = Some(point);
         }
-        if self.delivered > 0 && self.late_nodes_from.is_none() {
-            self.late_nodes_from = Some(document.uncascaded.dom.node_count());
+        if self.progress.delivered > 0 && self.progress.late_nodes_from.is_none() {
+            self.progress.late_nodes_from = Some(document.uncascaded.dom.node_count());
             self.input
                 .parser()
                 .tokenizer
@@ -904,18 +930,22 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         Ok(())
     }
 
-    /// Remember what later layouts need of pages `from..self.delivered` of
+    /// Remember what later layouts need of pages `from..self.progress.delivered` of
     /// `laid_out`, which were just delivered: their names, the nodes they
     /// show and the anchors on them.
     fn record_delivered(&mut self, laid_out: &DocumentLayout, from: u32) {
-        for index in from..self.delivered {
+        for index in from..self.progress.delivered {
             let page = laid_out.page_at(index as usize);
-            self.page_names.push(page.name().map(str::to_owned));
-            self.delivered_nodes
+            self.progress
+                .page_names
+                .push(page.name().map(str::to_owned));
+            self.progress
+                .delivered_nodes
                 .extend(page.fragments().map(|fragment| fragment.node()));
         }
-        self.delivered_anchors
-            .insert_missing(laid_out.anchors(), self.delivered);
+        self.progress
+            .delivered_anchors
+            .insert_missing(laid_out.anchors(), self.progress.delivered);
     }
 
     /// End the input, lay the document out, and deliver the remaining pages
@@ -940,13 +970,7 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             settings,
             input,
             mut sink,
-            mut delivered,
-            late_nodes_from,
-            mut hidden_late,
-            resume,
-            delivered_nodes,
-            delivered_anchors,
-            earlier_warnings,
+            mut progress,
             ..
         } = self;
         let node_limit = settings.resources.parse_limits().max_dom_nodes;
@@ -963,26 +987,18 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
             mut document,
             mut ignored,
             ..
-        } = settings.cascade(parsed, false, late_nodes_from, &hidden_late)?;
+        } = settings.cascade(
+            parsed,
+            false,
+            progress.late_nodes_from,
+            &progress.hidden_late,
+        )?;
         document.uncascaded.warnings.append(&mut ignored);
-        let resume = resume
-            .as_ref()
-            .filter(|_| can_resume(&document, late_nodes_from));
-        let Some((document, laid_out, mut events)) = settings.layout_without_late_boxes(
-            document,
-            late_nodes_from,
-            delivered,
-            &mut hidden_late,
-            resume,
-        )?
-        else {
+        let Some((document, laid_out, events)) = progress.lay_out(&settings, document)? else {
             return Ok(StreamStatus::Aborted);
         };
-        drop_delivered_events(&mut events, &delivered_nodes);
-        let left_out = settings.left_out(&document, resume);
         drop(document);
-        let mut earlier_warnings = earlier_warnings;
-        earlier_warnings.record(&laid_out, &left_out);
+        let mut delivered = progress.delivered;
         let signal = settings.config.signal.clone();
         let (mut by_page, unplaced_events) = events_by_first_page(&laid_out, events);
         let Some((page_count_margin_boxes, page_count_running_elements)) =
@@ -1007,14 +1023,14 @@ impl<'r, 'a, S: PageSink> StreamingLayout<'r, 'a, S> {
         let DocumentLayout {
             mut out, anchors, ..
         } = laid_out;
-        let mut all_anchors = delivered_anchors;
+        let mut all_anchors = progress.delivered_anchors;
         all_anchors.insert_missing(&anchors, u32::MAX);
         // The warnings of this layout come first, as in a batch layout. A
         // resumed layout leaves out the content of delivered pages, whose
         // warnings only earlier layouts reported.
         let mut warnings = std::mem::take(&mut out.warnings);
         if settings.last_resumed.get() {
-            let missing = earlier_warnings.missing_from(&warnings);
+            let missing = progress.earlier_warnings.missing_from(&warnings);
             warnings.extend(missing);
         }
         let summary = StreamSummary {
