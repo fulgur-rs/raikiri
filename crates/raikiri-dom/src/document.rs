@@ -368,6 +368,11 @@ pub struct Document {
     /// Width and height of the page area the most recent layout placed fixed
     /// boxes against.
     pub(crate) fixed_page_area: (f32, f32),
+    /// The laid-out border-box height of each auto-height box that the most
+    /// recent layout then grew to hold a float descendant it does not
+    /// contain: the flow after such a box follows this height, not its grown
+    /// one (CSS 2.1 §10.6.3).
+    pub(crate) in_flow_heights: HashMap<usize, f32>,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -642,6 +647,7 @@ impl Document {
             body_inline_margins: (0.0, 0.0),
             body_block_start_margin: 0.0,
             fixed_page_area: (0.0, 0.0),
+            in_flow_heights: HashMap::new(),
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -1932,6 +1938,7 @@ impl Document {
             body_inline_margins: _,
             body_block_start_margin: _,
             fixed_page_area: _,
+            in_flow_heights: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
