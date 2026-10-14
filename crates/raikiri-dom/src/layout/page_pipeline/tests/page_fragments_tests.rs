@@ -3330,3 +3330,119 @@ fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
     assert_eq!(absolute_rect(&doc, section).1, 15.0);
     assert_eq!(absolute_rect(&doc, positioned).1, 15.0);
 }
+
+/// Each text's fragments, as `text_fragments` reports them.
+type RunFragments = Vec<Vec<(u32, Option<PageFragmentLineRange>)>>;
+
+/// `html > body > (spacer, [section >] root, after)` as in
+/// `paragraph_after_a_spacer`, with the root's content given as runs of
+/// text, each either direct or wrapped in a span. Returns the page count and
+/// each run's fragments.
+fn inline_runs_after_a_spacer(
+    section: Option<&str>,
+    runs: &[(bool, &str)],
+    root_css: &str,
+) -> (usize, RunFragments) {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let parent = match section {
+        Some(css) => {
+            let css = format!("display:block;{css}");
+            doc.append_element(Some(body), "section", Style::default(), Some(css.as_str()))
+        }
+        None => body,
+    };
+    let style = format!(
+        "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
+    );
+    let root = doc.append_element(Some(parent), "div", Style::default(), Some(style.as_str()));
+    let texts: Vec<_> = runs
+        .iter()
+        .map(|&(wrapped, text)| {
+            let holder = if wrapped {
+                doc.append_element(Some(root), "span", Style::default(), Some("display:inline"))
+            } else {
+                root
+            };
+            doc.append_text(holder, text)
+        })
+        .collect();
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert!(doc.nodes[root].is_ifc_root());
+    let fragments = texts
+        .iter()
+        .map(|&text| text_fragments(&doc, &cascade, page, &slices, text))
+        .collect();
+    (slices.len(), fragments)
+}
+
+#[test]
+fn a_paragraph_wrapped_in_a_span_that_would_leave_a_widow_moves() {
+    // Lines at 15, 25 and 35 on a 40px page, as in the unwrapped case: the
+    // span's text has no block of its own, so the paragraph root moves.
+    for section in [None, Some("")] {
+        let (pages, fragments) =
+            inline_runs_after_a_spacer(section, &[(true, "aaaa bbbb cccc")], "widows:2");
+        assert_eq!(pages, 2, "{section:?}");
+        assert_eq!(fragments, [whole_on_page_1()], "{section:?}");
+    }
+}
+
+#[test]
+fn a_widow_owned_by_a_later_text_node_moves_the_paragraph() {
+    // The first text owns the two lines that fit; the widow belongs to the
+    // span after it, and still counts against the paragraph. Each text
+    // reports its own lines.
+    for section in [None, Some("")] {
+        let (_, fragments) = inline_runs_after_a_spacer(
+            section,
+            &[(false, "aaaa bbbb "), (true, "cccc")],
+            "widows:2",
+        );
+        assert_eq!(
+            fragments,
+            [
+                vec![(1, Some(PageFragmentLineRange::new(0, 2)))],
+                vec![(1, Some(PageFragmentLineRange::new(0, 1)))],
+            ],
+            "{section:?}"
+        );
+    }
+}
+
+#[test]
+fn a_paragraph_of_several_text_nodes_split_within_its_constraints_stays() {
+    // Two lines fit before the break and one follows: with the defaults
+    // relaxed to 1, the paragraph keeps its natural split.
+    let (_, fragments) = inline_runs_after_a_spacer(
+        Some(""),
+        &[(false, "aaaa bbbb "), (true, "cccc")],
+        "orphans:1;widows:1",
+    );
+    assert_eq!(fragments[0], [(0, Some(PageFragmentLineRange::new(0, 2)))]);
+    assert_eq!(
+        fragments[1].last(),
+        Some(&(1, Some(PageFragmentLineRange::new(0, 1))))
+    );
+}
