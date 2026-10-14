@@ -2447,30 +2447,9 @@ impl Document {
         h: i32,
         rgba: [u8; 4],
     ) -> bool {
-        if !matches!(self.try_ensure_canvas_bitmap(id), Ok(Some(_))) {
+        let Some((bitmap, cols, rows)) = self.canvas_clip_rect_mut(id, x, y, w, h) else {
             return false;
-        }
-        let Some(node) = self.nodes.get_mut(id) else {
-            return false; // cov:ignore: try_ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
         };
-        let NodeData::Element(element) = &mut node.data else {
-            return false; // cov:ignore: try_ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
-        };
-        let Some(bitmap) = element.canvas_bitmap.as_mut() else {
-            return false; // cov:ignore: try_ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
-        };
-        if bitmap.width == 0 || bitmap.height == 0 {
-            return true;
-        }
-        let bw = bitmap.width as i64;
-        let bh = bitmap.height as i64;
-        let x0 = (i64::from(x)).max(0).min(bw) as u32;
-        let y0 = (i64::from(y)).max(0).min(bh) as u32;
-        let x1 = (i64::from(x) + i64::from(w)).max(0).min(bw) as u32;
-        let y1 = (i64::from(y) + i64::from(h)).max(0).min(bh) as u32;
-        if x0 >= x1 || y0 >= y1 {
-            return true;
-        }
         let (sr, sg, sb, sa) = (
             u16::from(rgba[0]),
             u16::from(rgba[1]),
@@ -2478,15 +2457,10 @@ impl Document {
             u16::from(rgba[3]),
         );
         if sa == 255 {
-            for row in y0..y1 {
-                let base = (row * bitmap.width + x0) as usize * 4;
-                let count = (x1 - x0) as usize;
-                for i in 0..count {
-                    let off = base + i * 4;
-                    bitmap.rgba[off] = rgba[0];
-                    bitmap.rgba[off + 1] = rgba[1];
-                    bitmap.rgba[off + 2] = rgba[2];
-                    bitmap.rgba[off + 3] = rgba[3];
+            for row in rows {
+                for col in cols.clone() {
+                    let off = ((row * bitmap.width + col) as usize) * 4;
+                    bitmap.rgba[off..off + 4].copy_from_slice(&rgba);
                 }
             }
             return true;
@@ -2495,8 +2469,8 @@ impl Document {
             return true;
         }
         let inv = 255 - sa;
-        for row in y0..y1 {
-            for col in x0..x1 {
+        for row in rows {
+            for col in cols.clone() {
                 let off = ((row * bitmap.width + col) as usize) * 4;
                 let dr = u16::from(bitmap.rgba[off]);
                 let dg = u16::from(bitmap.rgba[off + 1]);
@@ -2519,42 +2493,71 @@ impl Document {
     /// Standard §4.12.5 `clearRect`. Returns `false` for non-canvas nodes or
     /// when resource limits prevent bitmap materialization.
     pub fn canvas_clear_rect(&mut self, id: usize, x: i32, y: i32, w: i32, h: i32) -> bool {
-        if !matches!(self.try_ensure_canvas_bitmap(id), Ok(Some(_))) {
+        let Some((bitmap, cols, rows)) = self.canvas_clip_rect_mut(id, x, y, w, h) else {
             return false;
-        }
-        let Some(node) = self.nodes.get_mut(id) else {
-            return false; // cov:ignore: try_ensure_canvas_bitmap already validated the id, so get_mut cannot fail here
         };
-        let NodeData::Element(element) = &mut node.data else {
-            return false; // cov:ignore: try_ensure_canvas_bitmap only succeeds for canvas elements, so this is always an Element here
-        };
-        let Some(bitmap) = element.canvas_bitmap.as_mut() else {
-            return false; // cov:ignore: try_ensure_canvas_bitmap creates the bitmap when missing, so it is always present here
-        };
-        if bitmap.width == 0 || bitmap.height == 0 {
-            return true;
-        }
-        let bw = bitmap.width as i64;
-        let bh = bitmap.height as i64;
-        let x0 = (i64::from(x)).max(0).min(bw) as u32;
-        let y0 = (i64::from(y)).max(0).min(bh) as u32;
-        let x1 = (i64::from(x) + i64::from(w)).max(0).min(bw) as u32;
-        let y1 = (i64::from(y) + i64::from(h)).max(0).min(bh) as u32;
-        if x0 >= x1 || y0 >= y1 {
-            return true;
-        }
-        for row in y0..y1 {
-            let base = (row * bitmap.width + x0) as usize * 4;
-            let count = (x1 - x0) as usize;
-            for i in 0..count {
-                let off = base + i * 4;
-                bitmap.rgba[off] = 0;
-                bitmap.rgba[off + 1] = 0;
-                bitmap.rgba[off + 2] = 0;
-                bitmap.rgba[off + 3] = 0;
-            }
+        for row in rows {
+            let start = ((row * bitmap.width + cols.start) as usize) * 4;
+            let end = ((row * bitmap.width + cols.end) as usize) * 4;
+            bitmap.rgba[start..end].fill(0);
         }
         true
+    }
+
+    /// Materialize the bitmap of canvas `id` and clip `x, y, w, h` (in bitmap
+    /// px) to it, returning the bitmap with the clipped column and row
+    /// ranges. The ranges are empty when nothing of the rectangle remains.
+    /// Returns `None` for non-canvas nodes or when resource limits prevent
+    /// bitmap materialization.
+    fn canvas_clip_rect_mut(
+        &mut self,
+        id: usize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) -> Option<(
+        &mut CanvasBitmap,
+        std::ops::Range<u32>,
+        std::ops::Range<u32>,
+    )> {
+        self.try_ensure_canvas_bitmap(id).ok().flatten()?;
+        let bitmap = self
+            .nodes
+            .get_mut(id)?
+            .data
+            .as_element_mut()?
+            .canvas_bitmap
+            .as_mut()?;
+        let clip = |start: i32, extent: i32, limit: u32| {
+            let limit = i64::from(limit);
+            let from = i64::from(start).clamp(0, limit) as u32;
+            let to = (i64::from(start) + i64::from(extent)).clamp(0, limit) as u32;
+            from..to.max(from)
+        };
+        let cols = clip(x, w, bitmap.width);
+        let rows = clip(y, h, bitmap.height);
+        Some((bitmap, cols, rows))
+    }
+
+    /// Arena ids of the HTML `<canvas>` elements under the root, in tree
+    /// order.
+    fn canvas_ids_in_tree_order(&self) -> Vec<usize> {
+        let mut ids = Vec::new();
+        let mut stack: Vec<usize> = self
+            .nodes
+            .get(self.root_index())
+            .map(|root| root.children.iter().rev().copied().collect())
+            .unwrap_or_default();
+        while let Some(index) = stack.pop() {
+            if self.is_canvas_element(index) {
+                ids.push(index);
+            }
+            if let Some(node) = self.nodes.get(index) {
+                stack.extend(node.children.iter().rev().copied());
+            }
+        }
+        ids
     }
 
     /// Clone materialized canvas bitmaps in tree order.
@@ -2563,37 +2566,24 @@ impl Document {
     /// them here and restore them onto a reparsed document in the same order.
     /// Unmaterialized transparent canvases carry only their dimensions.
     pub fn canvases_in_tree_order(&self) -> Vec<crate::node::CanvasBitmap> {
-        let mut out = Vec::new();
         let mut sidecar_bytes = 0usize;
-        let mut stack: Vec<usize> = self
-            .nodes
-            .get(self.root_index())
-            .map(|root| root.children.iter().rev().copied().collect())
-            .unwrap_or_default();
-        while let Some(index) = stack.pop() {
-            let Some(node) = self.nodes.get(index) else {
-                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
-            };
-            if self.is_canvas_element(index) {
+        self.canvas_ids_in_tree_order()
+            .into_iter()
+            .map(|index| {
                 let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
-                let bitmap = if let Some(bitmap) = self.canvas_bitmap_ref(index) {
-                    if sidecar_bytes
-                        .checked_add(bitmap.rgba.len())
-                        .is_some_and(|total| total <= MAX_DOCUMENT_CANVAS_BITMAP_BYTES)
+                match self.canvas_bitmap_ref(index) {
+                    Some(bitmap)
+                        if sidecar_bytes
+                            .checked_add(bitmap.rgba.len())
+                            .is_some_and(|total| total <= MAX_DOCUMENT_CANVAS_BITMAP_BYTES) =>
                     {
                         sidecar_bytes += bitmap.rgba.len();
                         bitmap.clone()
-                    } else {
-                        CanvasBitmap::transparent(width, height)
                     }
-                } else {
-                    CanvasBitmap::transparent(width, height)
-                };
-                out.push(bitmap);
-            }
-            stack.extend(node.children.iter().rev().copied());
-        }
-        out
+                    _ => CanvasBitmap::transparent(width, height),
+                }
+            })
+            .collect()
     }
 
     /// Remove and return materialized canvas bitmaps in tree order.
@@ -2602,26 +2592,14 @@ impl Document {
     /// consumers that serialize a live document and then discard or replace
     /// it, such as the WPT reftest paint path.
     pub fn take_canvases_in_tree_order(&mut self) -> Vec<crate::node::CanvasBitmap> {
-        let mut out = Vec::new();
-        let mut stack: Vec<usize> = self
-            .nodes
-            .get(self.root_index())
-            .map(|root| root.children.iter().rev().copied().collect())
-            .unwrap_or_default();
-        while let Some(index) = stack.pop() {
-            let Some(node) = self.nodes.get(index) else {
-                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
-            };
-            stack.extend(node.children.iter().rev().copied());
-            if self.is_canvas_element(index) {
+        self.canvas_ids_in_tree_order()
+            .into_iter()
+            .map(|index| {
                 let (width, height) = self.canvas_size(index).unwrap_or((300, 150));
-                out.push(
-                    self.take_canvas_bitmap_storage(index)
-                        .unwrap_or_else(|| CanvasBitmap::transparent(width, height)),
-                );
-            }
-        }
-        out
+                self.take_canvas_bitmap_storage(index)
+                    .unwrap_or_else(|| CanvasBitmap::transparent(width, height))
+            })
+            .collect()
     }
 
     /// Restore cloned bitmaps collected by [`Document::canvases_in_tree_order`].
@@ -2639,22 +2617,7 @@ impl Document {
     /// (transparent). Consumers that own the sidecar should prefer this over
     /// [`Document::set_canvases_in_tree_order`] to avoid copying pixel buffers.
     pub fn set_canvases_in_tree_order_owned(&mut self, bitmaps: Vec<crate::node::CanvasBitmap>) {
-        let mut ids = Vec::new();
-        let mut stack: Vec<usize> = self
-            .nodes
-            .get(self.root_index())
-            .map(|root| root.children.iter().rev().copied().collect())
-            .unwrap_or_default();
-        while let Some(index) = stack.pop() {
-            let Some(node) = self.nodes.get(index) else {
-                continue; // cov:ignore: Document arena only appends and children always hold valid indices, so traversal from root never misses.
-            };
-            if self.is_canvas_element(index) {
-                ids.push(index);
-            }
-            stack.extend(node.children.iter().rev().copied());
-        }
-        for (id, bitmap) in ids.into_iter().zip(bitmaps) {
+        for (id, bitmap) in self.canvas_ids_in_tree_order().into_iter().zip(bitmaps) {
             let _ = self.try_set_canvas_bitmap(id, bitmap);
         }
     }
