@@ -13760,22 +13760,20 @@ fn a_box_one_ulp_above_a_page_end_starts_on_the_next_page() {
     assert_eq!(flow_page_overlap(top, 27.6, page_start, page_end), None);
     assert_eq!(
         flow_page_overlap(top, 27.6, page_end, page_end + 1_122.52),
-        Some((0.0, top + 27.6 - page_end)),
+        Some((0.0, top + 27.6 - top)),
     );
 }
 
 #[test]
 fn a_box_ending_one_ulp_below_a_page_start_stays_on_the_earlier_page() {
     let (page_start, page_end) = (10_102.677_f32, 11_225.197_f32);
-    let bottom = page_start.next_up();
+    let top = page_start - 30.0;
+    let height = page_start.next_up() - top;
+    assert_eq!(flow_page_overlap(top, height, page_start, page_end), None);
+    let earlier_start = page_start - 1_122.52;
     assert_eq!(
-        flow_page_overlap(
-            page_start - 30.0,
-            bottom - (page_start - 30.0),
-            page_start,
-            page_end
-        ),
-        None
+        flow_page_overlap(top, height, earlier_start, page_start),
+        Some((top - earlier_start, height)),
     );
 }
 
@@ -13795,11 +13793,15 @@ fn a_box_crossing_a_page_edge_by_more_than_rounding_is_split() {
 #[test]
 fn a_box_within_both_rounding_bands_stays_on_the_page_it_starts_on() {
     // Past 2^23px one ulp is 1px, so a whole box can lie within one ulp of
-    // each side of a page edge. It must land on exactly one page.
+    // each side of a page edge. It must land whole on exactly one page.
     let page_end = 16_777_216.0_f32;
+    let page_start = page_end - 1_000.0;
     let top = page_end.next_down();
     let height = page_end.next_up() - top;
-    assert!(flow_page_overlap(top, height, page_end - 1_000.0, page_end).is_some());
+    assert_eq!(
+        flow_page_overlap(top, height, page_start, page_end),
+        Some((top - page_start, height)),
+    );
     assert_eq!(
         flow_page_overlap(top, height, page_end, page_end + 1_000.0),
         None

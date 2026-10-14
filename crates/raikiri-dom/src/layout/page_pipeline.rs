@@ -1662,9 +1662,10 @@ pub(crate) fn project_slices(
 /// as a sum over its ancestors, which can round one ulp either way. Past
 /// 8192px one ulp is 2^-10 px, so an overlap of one ulp at either edge of a
 /// box that crosses it would leave a sliver of the box on the other page.
-/// Such an overlap is rounding, as for the paginator's page ends. A box that
-/// lies within one ulp of both sides of an edge stays on the page it starts
-/// on, so that it is never dropped from both.
+/// Such an overlap is rounding, as for the paginator's page ends: the page
+/// that keeps the box also keeps the part in the band, so no part of the box
+/// is lost. A box that lies within one ulp of both sides of an edge stays
+/// whole on the page it starts on, so that it is never dropped from both.
 fn flow_page_overlap(top: f32, height: f32, page_start: f32, page_end: f32) -> Option<(f32, f32)> {
     let bottom = top + height;
     let starts_after =
@@ -1674,8 +1675,16 @@ fn flow_page_overlap(top: f32, height: f32, page_start: f32, page_end: f32) -> O
     if starts_after || ends_before {
         return None;
     }
-    let visible_top = top.max(page_start);
-    let visible_bottom = bottom.min(page_end);
+    let visible_top = if top.next_up() >= page_start {
+        top
+    } else {
+        page_start
+    };
+    let visible_bottom = if bottom.next_down() <= page_end {
+        bottom
+    } else {
+        page_end
+    };
     Some((
         (visible_top - page_start).max(0.0),
         (visible_bottom - visible_top).max(0.0),
