@@ -137,16 +137,30 @@ pub fn parse_html_with_limits<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    let uncascaded = parse_with_budgets(input, options, &limits)?;
-    assemble_document(uncascaded, options, &limits)
+    parse_html_with_fonts(input, options, limits, None)
 }
 
-/// Check the DOM node cap as a defensive postcondition and run its first-page
-/// cascade.
+/// [`parse_html_with_limits`] for a document laid out with `fonts`, given
+/// to the DOM before the cascade measures `line-height: normal` in them.
+/// `None` leaves the DOM without fonts, so it measures in the installed
+/// fonts its first layout takes.
+pub(crate) fn parse_html_with_fonts<R: Read>(
+    input: R,
+    options: &ParseOptions<'_>,
+    limits: RenderLimits,
+    fonts: Option<shodo::font::FontCollection>,
+) -> Result<HtmlDocument, RenderError> {
+    let uncascaded = parse_with_budgets(input, options, &limits)?;
+    assemble_document(uncascaded, options, &limits, fonts)
+}
+
+/// Check the DOM node cap as a defensive postcondition, give the DOM `fonts`
+/// when there are some, and run its first-page cascade.
 pub(crate) fn assemble_document(
-    uncascaded: UncascadedDocument,
+    mut uncascaded: UncascadedDocument,
     options: &ParseOptions<'_>,
     limits: &RenderLimits,
+    fonts: Option<shodo::font::FontCollection>,
 ) -> Result<HtmlDocument, RenderError> {
     if let Some(limit) = limits.max_dom_nodes {
         let actual = uncascaded.dom.node_count() as u64;
@@ -157,6 +171,9 @@ pub(crate) fn assemble_document(
                 actual,
             });
         }
+    }
+    if let Some(fonts) = fonts {
+        uncascaded.dom.set_font_collection(fonts);
     }
     let effective_base_url = effective_document_base_url(&uncascaded, options.base_url.as_ref());
     let mut first_page = PageContextQuery::default();

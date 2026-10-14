@@ -698,6 +698,11 @@ impl<'a> RenderResources<'a> {
         }
     }
 
+    /// The font layer given to [`fonts`](Self::fonts), if any.
+    pub(crate) fn configured_fonts(&self) -> Option<shodo::font::FontCollection> {
+        self.font_collection.clone()
+    }
+
     pub(crate) fn parse_limits(&self) -> RenderLimits {
         self.render_limits.clone()
     }
@@ -2198,7 +2203,12 @@ pub fn parse_html_with_resources<R: Read>(
         .map(|provider| provider as &dyn NetworkProvider);
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
-    crate::document_parse::parse_html_with_limits(input, &options, resources.parse_limits())
+    crate::document_parse::parse_html_with_fonts(
+        input,
+        &options,
+        resources.parse_limits(),
+        resources.configured_fonts(),
+    )
 }
 
 /// Whether the `pseudo` of element `node` generates a box that can paint

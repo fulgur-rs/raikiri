@@ -519,10 +519,15 @@ impl Document {
     /// else the installed fonts its first layout takes. Every cascade of the
     /// document uses it unless its options carry another, so `1lh` under
     /// `line-height: normal` matches the height of a `normal` line.
+    ///
+    /// Without fonts set, each call returns a new measurer with its own
+    /// cache, which lives as long as the cascade holding it.
     pub fn normal_line_height(&self) -> raikiri_style::NormalLineHeightSource {
-        self.normal_line_height
-            .clone()
-            .unwrap_or_else(crate::normal_line_height::EngineNormalLineHeight::installed)
+        self.normal_line_height.clone().unwrap_or_else(|| {
+            crate::normal_line_height::EngineNormalLineHeight::source(
+                crate::fonts::system_font_collection(),
+            )
+        })
     }
 
     /// Metrics of a font of the inline engine, at `size`. `None` before the

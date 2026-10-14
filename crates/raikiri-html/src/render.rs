@@ -889,7 +889,8 @@ pub(crate) fn run_pipeline(
     first_query.is_first = true;
     first_query.is_right = true;
     // The fonts are given to the document before the element cascade, which
-    // measures `line-height: normal` in them for the `lh` unit, and before
+    // measures `line-height: normal` in the document's fonts for the `lh`
+    // unit, and before
     // the first-page probe, which lays out a clone of this document, so the
     // probe and the layout below use the same fonts.
     let mut dom = doc.uncascaded.dom.clone();
@@ -906,6 +907,8 @@ pub(crate) fn run_pipeline(
     );
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = config.limits.cascade_limits();
+    // The element cascade below runs on the source document, which may have
+    // no fonts, so the measurer comes from `dom`, which has them.
     cascade_options.normal_line_height = Some(dom.normal_line_height());
     // The viewport-percentage lengths need the first page's page area before
     // the element cascade, whose root the page context inherits from. Take it

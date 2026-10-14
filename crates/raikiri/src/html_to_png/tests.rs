@@ -256,16 +256,37 @@ fn ahem_fonts() -> raikiri_html::RenderFonts {
         .expect("fonts")
 }
 
+/// The document `html_to_png_impl` lays out, with `fonts` given.
+fn parsed_with(html: &str, fonts: Option<raikiri_html::RenderFonts>) -> raikiri_html::HtmlDocument {
+    let mut resources = raikiri_html::RenderResources::new();
+    if let Some(fonts) = fonts {
+        resources = resources.fonts(fonts);
+    }
+    raikiri_html::parse_html_with_resources(html.as_bytes(), &resources).expect("parse")
+}
+
 #[test]
 fn a_bundled_font_set_builds_in_parallel() {
-    let mut dom = raikiri_dom::Document::new();
-    use_fonts(&mut dom, None);
-    assert!(!dom.has_font_collection());
-    assert!(!dom.ifc_parallel_build());
-    let mut dom = raikiri_dom::Document::new();
-    use_fonts(&mut dom, Some(ahem_fonts()));
-    assert!(dom.has_font_collection());
-    assert!(dom.ifc_parallel_build());
+    let (uncascaded, _) = parsed_with("<p>a</p>", None).into_parts();
+    assert!(!uncascaded.dom.has_font_collection());
+    assert!(!uncascaded.dom.ifc_parallel_build());
+    let (uncascaded, _) = parsed_with("<p>a</p>", Some(ahem_fonts())).into_parts();
+    assert!(uncascaded.dom.has_font_collection());
+    assert!(uncascaded.dom.ifc_parallel_build());
+}
+
+#[test]
+fn a_bundled_font_set_measures_lh_under_a_normal_line_height() {
+    // Ahem's ascent and descent fill the em box with no line gap.
+    let html = r#"<div style="font-family:Ahem;font-size:20px;height:1lh"></div>"#;
+    let (uncascaded, cascade) = parsed_with(html, Some(ahem_fonts())).into_parts();
+    let div = (0..uncascaded.dom.node_count())
+        .find(|&i| uncascaded.dom.get_node(i).and_then(|n| n.tag_name()) == Some("div"))
+        .expect("the div");
+    assert_eq!(
+        cascade.computed[div].height,
+        raikiri_style::ComputedLengthPercentageOrAuto::Px(20.0)
+    );
 }
 
 const AHEM: &[u8] = include_bytes!(concat!(

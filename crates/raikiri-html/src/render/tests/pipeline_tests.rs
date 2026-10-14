@@ -864,13 +864,19 @@ fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
     )
     .expect("cascade");
     assert_eq!(out.page_styles[0], full.page);
-    // The reference cascade has no fonts to measure `line-height: normal`
-    // with; everything else must match.
-    let mut computed = out.cascade.computed.clone();
-    for values in &mut computed {
-        values.normal_line_height = None;
-    }
-    assert_eq!(computed, full.computed);
+    // The reference cascade measures `line-height: normal` in the installed
+    // fonts, not the pipeline's; everything else must match.
+    let without_normal = |computed: &[raikiri_style::ComputedValues]| {
+        let mut computed = computed.to_vec();
+        for values in &mut computed {
+            values.normal_line_height = None;
+        }
+        computed
+    };
+    assert_eq!(
+        without_normal(&out.cascade.computed),
+        without_normal(&full.computed)
+    );
 }
 
 #[test]

@@ -2995,12 +2995,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // later queries on this document rerun just the `@page` cascade.  The
     // font-face rule tree was built from this same document state.
     let page_for = |base: &raikiri_style::CascadeResult, query: &PageContextQuery| {
-        let mut page = raikiri_style::cascade_page_with_media_context(
-            &font_face_tree,
-            query,
-            raikiri_style::PageInheritance::FromRoot(base.root_element_computed()),
-            &media_context,
-        );
+        let mut page = base.cascade_page_from_root(&font_face_tree, query, &media_context);
         if let Some(prepare) = prepare_cascade_images {
             prepare.prepare_page(&mut page);
         }
@@ -3197,12 +3192,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // Each page below replaces only the page context of this document's
     // element cascade.
     let page_for = |base: &raikiri_style::CascadeResult, query: &PageContextQuery| {
-        raikiri_style::cascade_page_with_media_context(
-            &page_tree,
-            query,
-            raikiri_style::PageInheritance::FromRoot(base.root_element_computed()),
-            &media_context,
-        )
+        base.cascade_page_from_root(&page_tree, query, &media_context)
     };
 
     if let Some(bitmaps) = canvas_bitmaps {
