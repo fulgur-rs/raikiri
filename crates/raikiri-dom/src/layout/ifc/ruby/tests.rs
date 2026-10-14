@@ -529,3 +529,41 @@ fn spaced_bases_text_containers_and_nested_annotations_lay_out() {
     assert!(!runs.iter().any(|run| run.0 == ids[1]), "{runs:?}");
     assert!(runs.iter().any(|run| run.0 == ids[2] && run.1), "{runs:?}");
 }
+
+#[test]
+fn rubies_that_lay_out_their_own_content_keep_their_annotations_over_the_bases() {
+    for extra in ["display:flex", "position:relative"] {
+        let mut ids = (0, 0, 0);
+        let fixture = block_fixture(&format!("line-height:20px;{extra}"), |doc, root| {
+            let style = if extra == "display:flex" {
+                "display:ruby;line-height:20px"
+            } else {
+                "display:ruby;line-height:20px;position:absolute"
+            };
+            let container = element(doc, root, "ruby", style);
+            let base = rb(doc, container, "aa");
+            let annotation = rt(doc, container, "xx");
+            ids = (
+                container,
+                doc.nodes[base].children[0],
+                doc.nodes[annotation].children[0],
+            );
+        });
+        let (mut doc, cascade) = (fixture.doc, fixture.cascade);
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        let lines = PositionedLines::new(&doc, &cascade, ids.0, None).expect("ruby root");
+        let runs: Vec<_> = lines
+            .lines()
+            .flat_map(|line| {
+                line.runs
+                    .iter()
+                    .map(|run| (run.owner, run.annotation.is_some(), run.glyphs[0].y))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let base = runs.iter().find(|run| run.0 == ids.1).expect("base");
+        let annotation = runs.iter().find(|run| run.0 == ids.2).expect("annotation");
+        assert!(!base.1 && annotation.1, "{extra}: {runs:?}");
+        assert!(annotation.2 < base.2, "{extra}: {runs:?}");
+    }
+}

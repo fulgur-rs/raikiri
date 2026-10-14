@@ -906,7 +906,36 @@ fn project_children_builder(
         )?;
     }
 
+    // A ruby container that lays out its own content (a flex item, or an
+    // absolutely positioned ruby) keeps its ruby layout.
+    let root_plan = if anonymous_children.is_none() && root_cv.display == DisplayValue::Ruby {
+        super::ruby::plan(doc, cascade, root)
+    } else {
+        None
+    };
+    if let Some(plan) = &root_plan {
+        super::ruby::push(
+            &mut builder,
+            doc,
+            cascade,
+            root,
+            plan,
+            fonts,
+            limits,
+            &mut super::ruby::Sink {
+                boxes: &mut boxes,
+                text_nowrap: &mut text_nowrap,
+                offsets: &mut offsets,
+                percent_insets: &mut percent_insets,
+                first_letter: &mut first_letter,
+                counters,
+                rtl: root_cv.direction == Direction::Rtl,
+            },
+            true,
+        )?; // cov:ignore: ruby content fails only on the style and counter errors the plain inline path reports for the same content.
+    }
     let mut stack: Vec<Step> = match anonymous_children {
+        _ if root_plan.is_some() => Vec::new(),
         Some(children) => children
             .iter()
             .rev()
@@ -1148,6 +1177,7 @@ fn project_children_builder(
                             counters,
                             rtl: root_cv.direction == Direction::Rtl,
                         },
+                        false,
                     )?; // cov:ignore: ruby content fails only on the style and counter errors the plain inline path reports for the same content.
                     continue;
                 }

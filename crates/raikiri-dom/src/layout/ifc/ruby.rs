@@ -604,7 +604,7 @@ impl Content<'_, '_> {
             if cv.display == DisplayValue::Ruby
                 && let Some(plan) = plan(self.doc, self.cascade, id)
             {
-                self.ruby(builder, id, &plan.segments)?;
+                self.ruby(builder, id, &plan.segments, false)?;
                 continue;
             }
             let edges = style::inline_edges(cv, id, self.fonts)?;
@@ -702,18 +702,23 @@ impl Content<'_, '_> {
     /// shodo gives every segment a container box of its own, without edges.
     /// The container's edges go on one inline box around all the segments,
     /// and each segment's box takes the id of a text of the segment, so the
-    /// container's own box is the only one with its id.
+    /// container's own box is the only one with its id. A container that is
+    /// the paragraph's root (`root`) is a block box of its own and gets no
+    /// inline box.
     fn ruby(
         &mut self,
         builder: &mut ParagraphBuilder,
         ruby: usize,
         segments: &[Segment],
+        root: bool,
     ) -> Result<(), IfcError> {
         let cv = &self.cascade.computed[ruby];
-        let edges = style::inline_edges(cv, ruby, self.fonts)?;
         let container = styled(self.doc, self.cascade, cv, ruby, self.fonts)?;
-        self.record_element(ruby);
-        builder.open_inline(NodeId(ruby as u64), &container, edges);
+        if !root {
+            let edges = style::inline_edges(cv, ruby, self.fonts)?;
+            self.record_element(ruby);
+            builder.open_inline(NodeId(ruby as u64), &container, edges);
+        }
         for segment in segments {
             self.push_nodes(builder, &segment.gap, (None, None), Letter::Base)?;
             // A segment without text draws nothing; one with text names its
@@ -763,7 +768,9 @@ impl Content<'_, '_> {
                 builder.push_ruby(NodeId(id as u64), &container, value);
             }
         }
-        builder.close_inline();
+        if !root {
+            builder.close_inline();
+        }
         Ok(())
     }
 
@@ -877,7 +884,8 @@ fn visibility(visibility: Visibility) -> shodo::RubyVisibility {
     }
 }
 
-/// Push the ruby container `ruby`, laid out as `plan` says.
+/// Push the ruby container `ruby`, laid out as `plan` says. `root` is set
+/// when the container is the root of the paragraph.
 ///
 /// # Errors
 /// [`IfcError::Unsupported`] for a style the inline engine does not map, and
@@ -892,6 +900,7 @@ pub(super) fn push(
     fonts: &FontCollection,
     limits: &Limits,
     sink: &mut Sink<'_>,
+    root: bool,
 ) -> Result<(), IfcError> {
     for &id in &plan.out_of_flow {
         let kind = match box_kind(cascade, doc, id) {
@@ -916,7 +925,7 @@ pub(super) fn push(
         limits,
         sink,
     }
-    .ruby(builder, ruby, &plan.segments)
+    .ruby(builder, ruby, &plan.segments, root)
 }
 
 #[cfg(test)]
