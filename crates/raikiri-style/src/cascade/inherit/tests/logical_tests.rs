@@ -241,3 +241,39 @@ fn page_var_preferred_sizes_follow_the_page_writing_mode() {
     assert!(page_size("writing-mode: horizontal-tb").contains("30.0"));
     assert!(page_size("writing-mode: vertical-lr").contains("40.0"));
 }
+
+fn sheet_margins(css: &str) -> Sides<ComputedLengthPercentageOrAuto> {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(style, css);
+    let div = doc.push_element(html, "div", None);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    result.computed[div].margin
+}
+
+#[test]
+fn a_rolled_back_logical_margin_falls_back_to_the_physical_side_it_maps_to() {
+    let css = |value: &str| {
+        format!(
+            "@layer low, high; \
+             @layer low {{ div {{ margin: 0; margin-right: 7px; margin-inline-end: 5px }} }} \
+             @layer high {{ div {{ direction: rtl; margin-inline-start: {value} }} }}"
+        )
+    };
+    // The low layer's `margin-inline-end` maps to the left side under `rtl`.
+    assert_eq!(
+        sheet_margins(&css("revert-layer")),
+        sides(0.0, 7.0, 0.0, 5.0)
+    );
+    // A surviving flow-relative declaration moves to its own side.
+    assert_eq!(
+        sheet_margins(
+            "@layer low, high; \
+             @layer low { div { margin: 0; --m: 3px 4px; margin-inline: var(--m) } } \
+             @layer high { div { direction: rtl; margin-right: revert-layer } }"
+        ),
+        sides(0.0, 3.0, 0.0, 4.0)
+    );
+}

@@ -7587,3 +7587,34 @@ fn margin_box_logical_margins_follow_the_margin_context_direction() {
         [PropertyValue::MarginLeft(px_margin(1.0))]
     );
 }
+
+/// A `var()` flow-relative shorthand in a margin box is split by its own
+/// name before its longhands move to their physical sides.
+#[test]
+fn margin_box_var_logical_shorthand_is_split_before_mapping() {
+    let margin = page(
+        "@page { @top-left { content: 'X'; direction: rtl; --m: 1px 2px; margin-inline: var(--m) } }",
+        &ComputedValues::initial(),
+    )
+    .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+    .unwrap();
+    let mut margins: Vec<_> = margin
+        .declarations
+        .into_iter()
+        .map(|declaration| declaration.value)
+        .filter(|value| {
+            matches!(
+                value.key(),
+                PropertyKey::MarginLeft | PropertyKey::MarginRight
+            )
+        })
+        .collect();
+    margins.sort_by_key(|value| value.key() == PropertyKey::MarginRight);
+    assert_eq!(
+        margins,
+        [
+            PropertyValue::MarginLeft(px_margin(2.0)),
+            PropertyValue::MarginRight(px_margin(1.0)),
+        ]
+    );
+}

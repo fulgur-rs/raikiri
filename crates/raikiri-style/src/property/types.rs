@@ -9787,7 +9787,7 @@ pub enum PropertyValue {
     /// blocks out along a horizontal block axis ([`resolve_writing_mode`]), so
     /// only `direction` moves them for now. The `@page` cascade maps with the
     /// page context's specified writing mode and direction. See
-    /// `crate::logical` for the details.
+    /// [`mod@crate::logical`] for the details.
     ///
     /// # Why the 8 longhands have no dedicated `PropertyValue` variants
     ///

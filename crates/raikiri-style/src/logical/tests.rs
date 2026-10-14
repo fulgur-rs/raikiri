@@ -75,7 +75,7 @@ fn margins_of(writing_mode: WritingMode, direction: Direction) -> [PropertyKey; 
 #[test]
 fn sides_follow_the_abstract_to_physical_table() {
     use PropertyKey::{MarginBottom as B, MarginLeft as L, MarginRight as R, MarginTop as T};
-    // [block-start, inline-end, block-end, inline-start]
+    // Sides in the order block-start, inline-end, block-end, inline-start.
     for (writing_mode, direction, expected) in [
         (WritingMode::HorizontalTb, Direction::Ltr, [T, R, B, L]),
         (WritingMode::HorizontalTb, Direction::Rtl, [T, L, B, R]),

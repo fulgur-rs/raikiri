@@ -200,15 +200,20 @@ impl PageMarginBoxCascadeResult {
             direction: margin_box_direction(&declared, &custom_properties)
                 .unwrap_or(inherited.direction),
         };
+        // A `var()` value is substituted first: a flow-relative shorthand's
+        // value is split by the shorthand's own name.
         let mapped: Vec<Option<Declaration>> = declared
             .iter()
             .map(|&(_, _, _, decl)| {
                 decl.logical.map(|side| {
-                    Declaration::with_side(
-                        flow.value(decl.value.clone(), side),
-                        decl.important,
-                        None,
-                    )
+                    let declared = match &decl.value {
+                        PropertyValue::Deferred(deferred) => {
+                            resolve_page_deferred_value(deferred, custom_properties.as_ref())
+                                .unwrap_or_else(|| decl.value.clone())
+                        }
+                        value => value.clone(),
+                    };
+                    Declaration::with_side(flow.value(declared, side), decl.important, None)
                 })
             })
             .collect();
