@@ -105,9 +105,11 @@ pub(super) fn prepare(
                 .ifc_layout_node(root.node)
                 .expect("generated candidates retain their paragraph");
             work.charge(node.ifc_relative_offsets().len())?;
-            for _ in document.inclusive_ancestors(document.ifc_source_owner(root.node)) {
-                work.charge(1)?;
-            }
+            work.charge(
+                document
+                    .inclusive_ancestors(document.ifc_source_owner(root.node))
+                    .count(),
+            )?;
             entry.insert(placement(document, cascade, &context, root.node).ok());
         }
         let Some(paint_shift) = eligible[&root.node] else {

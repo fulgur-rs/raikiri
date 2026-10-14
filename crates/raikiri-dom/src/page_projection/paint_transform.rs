@@ -532,23 +532,21 @@ impl<'a> PageMotion<'a> {
             transform: Some(PaintTransform::IDENTITY),
             columns: (0.0, 0.0),
         };
-        let mut found = None;
-        for node in self.document.inclusive_ancestors(id) {
+        let mut ancestors = self.document.inclusive_ancestors(id);
+        let mut space = loop {
+            let Some(node) = ancestors.next() else {
+                // Above the body, where the paint order starts, nothing moves.
+                path.clear();
+                break identity;
+            };
             if let Some(&known) = self.spaces.get(&node) {
-                found = Some(known);
-                break;
+                break known;
             }
             path.push(node);
             if Some(node) == body {
-                found = Some(identity);
-                break;
+                break identity;
             }
-        }
-        let mut space = found.unwrap_or_else(|| {
-            // Above the body, where the paint order starts, nothing moves.
-            path.clear();
-            identity
-        });
+        };
         for &node in path.iter().rev() {
             space = self.child_space(space, node);
             self.spaces.insert(node, space);

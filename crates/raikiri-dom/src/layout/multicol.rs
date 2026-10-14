@@ -2118,14 +2118,12 @@ fn refresh_nested_text_fragments_in(
         for child in boxes {
             // A box may sit inside inline elements of the paragraph; only
             // those elements lie between it and this root.
-            let mut between = Vec::new();
-            let inside_root = tree.ancestors(child).any(|id| {
-                let reached = id == node_id;
-                if !reached {
-                    between.push(id);
-                }
-                reached
-            });
+            let between: Vec<_> = tree
+                .ancestors(child)
+                .take_while(|&id| id != node_id)
+                .collect();
+            let inside_root =
+                tree.parent_of(between.last().copied().unwrap_or(child)) == Some(node_id);
             let child_chain = if inside_root {
                 between
                     .into_iter()

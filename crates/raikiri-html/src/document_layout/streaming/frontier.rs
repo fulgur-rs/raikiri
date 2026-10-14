@@ -150,20 +150,20 @@ fn surrounding_run_start(
     id: usize,
 ) -> usize {
     let root = document.root_index();
-    document
-        .inclusive_ancestors(id)
-        .zip(document.ancestors(id))
-        .take_while(|&(current, parent)| {
-            parent != root && joins_inline_run(document, cascade, current)
-        })
-        .filter_map(|(_, parent)| trailing_inline_run(document, cascade, parent))
-        .fold(id, |held, start| {
-            if position[start] < position[held] {
-                start
-            } else {
-                held
-            }
-        })
+    let mut held = id;
+    let mut current = id;
+    for parent in document.ancestors(id) {
+        if parent == root || !joins_inline_run(document, cascade, current) {
+            break;
+        }
+        if let Some(start) = trailing_inline_run(document, cascade, parent)
+            && position[start] < position[held]
+        {
+            held = start;
+        }
+        current = parent;
+    }
+    held
 }
 
 /// The HTML elements of `document` that may still receive children, given

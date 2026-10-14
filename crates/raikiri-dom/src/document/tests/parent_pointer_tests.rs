@@ -160,6 +160,9 @@ fn ancestors_walk_parent_pointers_nearest_first() {
     );
     assert_eq!(doc.ancestors(0).next(), None);
     assert_eq!(doc.inclusive_ancestors(0).collect::<Vec<_>>(), vec![0]);
+    assert!(doc.is_ancestor_or_self(outer, text));
+    assert!(doc.is_ancestor_or_self(text, text));
+    assert!(!doc.is_ancestor_or_self(text, outer));
 
     // A detached subtree ends at its own top.
     let detached = doc.append_element(None, "p", Style::default(), None::<&str>);

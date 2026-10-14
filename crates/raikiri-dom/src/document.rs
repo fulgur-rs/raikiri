@@ -1026,6 +1026,12 @@ impl Document {
         std::iter::successors(Some(node), move |&id| self.parent_of(id))
     }
 
+    /// Whether `ancestor` is `node` or one of its ancestors, following
+    /// [`Self::inclusive_ancestors`] (so not through a `<template>` host).
+    pub fn is_ancestor_or_self(&self, ancestor: usize, node: usize) -> bool {
+        self.inclusive_ancestors(node).any(|id| id == ancestor)
+    }
+
     /// Used left and right margins of `<body>`, in CSS pixels, as of the most
     /// recent layout.
     ///

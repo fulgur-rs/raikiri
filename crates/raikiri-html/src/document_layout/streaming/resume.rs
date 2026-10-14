@@ -190,7 +190,8 @@ fn skipped_before(
     target: usize,
 ) -> Option<Vec<usize>> {
     let mut skipped = Vec::new();
-    for (child, parent) in dom.inclusive_ancestors(target).zip(dom.ancestors(target)) {
+    let mut child = target;
+    for parent in dom.ancestors(target) {
         let inline_content = layout
             .get_node(child)
             .is_some_and(|node| node.in_ifc_subtree());
@@ -223,6 +224,7 @@ fn skipped_before(
                 }
             }
         }
+        child = parent;
     }
     Some(skipped)
 }

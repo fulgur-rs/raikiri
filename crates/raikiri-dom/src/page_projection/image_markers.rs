@@ -61,9 +61,7 @@ pub(super) fn prepare(
         // The placement walks the marker owner's ancestors.
         let owner = generated_origin(root.node)
             .map_or_else(|| document.ifc_source_owner(root.node), |(owner, _)| owner);
-        for _ in document.inclusive_ancestors(owner) {
-            work.charge(1)?;
-        }
+        work.charge(document.inclusive_ancestors(owner).count())?;
         let shift = super::text_runs::placement(document, cascade, &context, root.node)
             .unwrap_or((0.0, 0.0));
         roots.push((root, shift, kind));

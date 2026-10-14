@@ -217,11 +217,6 @@ impl Document {
         }
     }
 
-    /// Whether `ancestor` is `node` or one of its ancestors.
-    fn is_ancestor_or_self(&self, ancestor: usize, node: usize) -> bool {
-        self.inclusive_ancestors(node).any(|id| id == ancestor)
-    }
-
     /// The nodes whose content starts on projected page `page_index`, or
     /// continues onto it outside the normal flow, such as a float that
     /// starts on an earlier page, but come before `token` in source order,

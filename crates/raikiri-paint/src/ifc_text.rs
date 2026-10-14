@@ -757,17 +757,18 @@ fn paint_box(
     if style_owner != owner || !is_text {
         return style_owner;
     }
-    let is_contents = |id| {
-        computed_for_id(cascade, id)
-            .is_some_and(|cv| cv.display == raikiri_style::property::DisplayValue::Contents)
-    };
     // Past the last ancestor, the walk stays on it even when it is
     // `display: contents`.
-    document
-        .ancestors(owner)
-        .find(|&id| !is_contents(id))
-        .or_else(|| document.ancestors(owner).last())
-        .unwrap_or(owner)
+    let mut node = owner;
+    for id in document.ancestors(owner) {
+        node = id;
+        if !computed_for_id(cascade, id)
+            .is_some_and(|cv| cv.display == raikiri_style::property::DisplayValue::Contents)
+        {
+            break;
+        }
+    }
+    node
 }
 
 fn normalized_coords(run: &shodo::GlyphRunView<'_>) -> Vec<i16> {
