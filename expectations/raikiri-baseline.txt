@@ -1450,6 +1450,7 @@ css/css-page/page-name-propagated-002-print.html
 # The other six are negative tests whose subject must have no effect (page names inside
 # monolithic or row-flex content, background-clip on the root page), so the audit reports
 # them VACUOUS-UNSTYLED; each failed before the matching pagination fix and is kept as a guard.
+css/css-page/page-background-001-print.html
 css/css-page/page-background-004-print.html
 css/css-page/page-name-003-print.html
 css/css-page/page-name-flex-002-print.html
