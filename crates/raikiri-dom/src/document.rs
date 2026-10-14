@@ -2458,9 +2458,10 @@ impl Document {
         );
         if sa == 255 {
             for row in rows {
-                for col in cols.clone() {
-                    let off = ((row * bitmap.width + col) as usize) * 4;
-                    bitmap.rgba[off..off + 4].copy_from_slice(&rgba);
+                let start = ((row * bitmap.width + cols.start) as usize) * 4;
+                let end = ((row * bitmap.width + cols.end) as usize) * 4;
+                for pixel in bitmap.rgba[start..end].chunks_exact_mut(4) {
+                    pixel.copy_from_slice(&rgba);
                 }
             }
             return true;
@@ -2521,7 +2522,7 @@ impl Document {
         std::ops::Range<u32>,
         std::ops::Range<u32>,
     )> {
-        self.try_ensure_canvas_bitmap(id).ok().flatten()?;
+        self.ensure_canvas_bitmap(id)?;
         let bitmap = self
             .nodes
             .get_mut(id)?

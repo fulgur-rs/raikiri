@@ -1953,7 +1953,7 @@ fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
 /// pre-overlap space, so the caller passes the outer-domain target
 /// (`min_outer - distrib_insets` = `min_content + overlap`).
 fn distribute_extra(sizes: &mut [f32], hidden: Option<&[bool]>, target: f32) {
-    let is_hidden = |index: usize| hidden.is_some_and(|hidden| hidden[index]);
+    let is_hidden = |index: usize| hidden.and_then(|hidden| hidden.get(index)) == Some(&true);
     let n = (0..sizes.len()).filter(|&index| !is_hidden(index)).count();
     if n == 0 {
         return;
