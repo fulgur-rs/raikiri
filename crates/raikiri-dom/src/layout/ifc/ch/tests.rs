@@ -66,3 +66,27 @@ fn ch_falls_back_to_half_an_em_when_the_face_has_no_zero() {
         .expect("register the canvas font");
     assert_eq!(ch_advance(&canvas, &key(&["CanvasTestNoSpace"], 10.0)), 5.0);
 }
+
+#[test]
+fn normal_line_height_measures_the_first_face_even_without_a_space() {
+    // CanvasTestNoSpace has no U+0020, but the engine still sets a `normal`
+    // line in it as the first family's face, so `lh` measures it too rather
+    // than the next family's Ahem.
+    let fonts = empty_collection();
+    fonts
+        .register(CANVAS_TEST.to_vec())
+        .expect("register the canvas font");
+    fonts
+        .register(crate::layout::ifc::test_support::AHEM.to_vec())
+        .expect("register Ahem");
+    let canvas = key(&["CanvasTestNoSpace"], 20.0);
+    let measured = measure_normal_line_height(&fonts, &canvas).expect("a face");
+    assert_eq!(
+        measure_normal_line_height(&fonts, &key(&["CanvasTestNoSpace", "Ahem"], 20.0)),
+        Some(measured)
+    );
+    assert_ne!(
+        measure_normal_line_height(&fonts, &key(&["Ahem"], 20.0)),
+        Some(measured)
+    );
+}
