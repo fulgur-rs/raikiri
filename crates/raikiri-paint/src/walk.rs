@@ -1896,6 +1896,9 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             decorations: text::DecorationContext,
+            /// Whether the paragraph's lines wait for the end of the layer,
+            /// as those of the explicit cells beside it do.
+            defer: bool,
         },
         RestoreTransform(Affine),
         /// The lines of one paragraph, drawn where this frame pops: in place
@@ -1941,6 +1944,15 @@ pub(crate) fn paint_document_impl(
         /// Close a layer of deferred inline content: paint what its blocks
         /// deferred, then drop the layer.
         EndDeferral,
+        /// Reopen the overflow clip of a block around the content its layer
+        /// handed to the enclosing one (see
+        /// [`raikiri_dom::paint_rules::merges_clipped_inline_content`]), in
+        /// the transform the block was painted in.
+        PushClip {
+            node_id: usize,
+            clip: raikiri_traits::PaintClip,
+            transform: Affine,
+        },
         PopClip,
         /// Open the opacity group of a translucent inline element around a
         /// box laid out beside its paragraph's lines.
@@ -2098,9 +2110,54 @@ pub(crate) fn paint_document_impl(
     // Boxes recorded before the lines of their paragraph, which place them:
     // the paragraph root, the box and its paint.
     let mut early_boxes: Vec<(usize, usize, anyrender::Scene)> = Vec::new();
-    // Each open layer collects the inline content its plain blocks defer,
-    // in tree order. The outermost layer closes after the whole body.
-    let mut deferral_scopes: Vec<Vec<PaintFrame>> = vec![Vec::new()];
+    // How an open layer ends once its subtree is done.
+    #[derive(Clone, Copy)]
+    enum LayerClose {
+        /// Paint what the layer collected.
+        Paint,
+        /// Hand what the layer collected to the enclosing layer, inside the
+        /// overflow clip of the block that opened it.
+        Merge {
+            node_id: usize,
+            clip: raikiri_traits::PaintClip,
+            transform: Affine,
+        },
+        /// Paint the deferred inline content, and hand the positioned boxes
+        /// to the enclosing layer.
+        Hoist,
+    }
+    // An open layer: the inline content its plain blocks defer and the
+    // positioned boxes that wait for its end, each in tree order, whether
+    // blocks inside it may defer (the content of a block in columns stays
+    // with its column clip), and how it ends.
+    struct DeferralLayer<'a> {
+        pending: Vec<PaintFrame<'a>>,
+        positioned: Vec<PaintFrame<'a>>,
+        allowed: bool,
+        close: LayerClose,
+        /// Whether the layer's end is painting its positioned boxes: the
+        /// boxes it pops then paint where they pop rather than waiting again.
+        flushing: bool,
+        /// Whether the standalone `::after` of the block that opened the
+        /// layer waits right below the layer's end frame. It follows the
+        /// block's content wherever that paints.
+        after: bool,
+    }
+    impl<'a> DeferralLayer<'a> {
+        fn new(allowed: bool, close: LayerClose) -> Self {
+            Self {
+                pending: Vec::new(),
+                positioned: Vec::new(),
+                allowed,
+                close,
+                flushing: false,
+                after: false,
+            }
+        }
+    }
+    // Each open layer collects the content that waits for its end. The
+    // outermost layer closes after the whole body.
+    let mut deferral_scopes: Vec<DeferralLayer> = vec![DeferralLayer::new(true, LayerClose::Paint)];
     let mut stack = vec![
         PaintFrame::EndDeferral,
         PaintFrame::Visit {
@@ -2143,17 +2200,39 @@ pub(crate) fn paint_document_impl(
         })
     };
     while let Some(frame) = stack.pop() {
-        // A box that does not defer, such as a positioned one, paints after
+        // A positioned box waits for the end of its layer, after the
+        // backgrounds of the blocks that follow it.
+        if let PaintFrame::Visit { node_id, .. } = &frame
+            && let Some(layer) = deferral_scopes.last_mut()
+            && layer.allowed
+            && !layer.flushing
+            && raikiri_dom::paint_rules::defers_to_positioned_layer(document, cascade, *node_id)
+        {
+            layer.positioned.push(frame);
+            continue;
+        }
+        // The lines of an anonymous cell in a table part that defers wait
+        // for the end of the layer, in tree order with the other cells'.
+        let mut frame = frame;
+        if let PaintFrame::AnonymousParagraph { defer, .. } = &mut frame
+            && std::mem::take(defer)
+        {
+            if let Some(layer) = deferral_scopes.last_mut() {
+                layer.pending.push(frame);
+            }
+            continue;
+        }
+        // A box that does not defer, such as a flex container, paints after
         // the inline content deferred before it.
         if let PaintFrame::Visit { node_id, .. } = &frame
             && deferral_scopes
                 .last()
-                .is_some_and(|pending| !pending.is_empty())
+                .is_some_and(|layer| !layer.pending.is_empty())
             && raikiri_dom::paint_rules::closes_deferred_inline_content(document, cascade, *node_id)
         {
             let pending = deferral_scopes
                 .last_mut()
-                .map(std::mem::take)
+                .map(|layer| std::mem::take(&mut layer.pending))
                 .unwrap_or_default();
             stack.push(frame);
             stack.extend(pending.into_iter().rev());
@@ -2190,6 +2269,7 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 decorations,
+                defer: _,
             } => {
                 let layout = cell.unrounded_layout;
                 let probe = cell
@@ -2277,17 +2357,75 @@ pub(crate) fn paint_document_impl(
                 continue;
             }
             PaintFrame::EndDeferral => {
-                let pending = deferral_scopes
+                // Keep the layer open while its content paints, so a box
+                // among it that closes deferred content flushes into it.
+                let replay = deferral_scopes
                     .last_mut()
-                    .map(std::mem::take)
+                    .map(|layer| match layer.close {
+                        LayerClose::Merge { .. } => Vec::new(),
+                        _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
+                        LayerClose::Paint => {
+                            layer.flushing = true;
+                            std::mem::take(&mut layer.positioned)
+                        }
+                        LayerClose::Hoist => Vec::new(),
+                    })
                     .unwrap_or_default();
-                if pending.is_empty() {
-                    deferral_scopes.pop();
-                } else {
-                    // Keep the layer open while its content paints, so a
-                    // positioned box among it flushes into this layer.
+                if !replay.is_empty() {
                     stack.push(PaintFrame::EndDeferral);
-                    stack.extend(pending.into_iter().rev());
+                    stack.extend(replay.into_iter().rev());
+                    continue;
+                }
+                let closed = deferral_scopes.pop();
+                if let (Some(layer), Some(outer)) = (closed, deferral_scopes.last_mut()) {
+                    match layer.close {
+                        LayerClose::Paint => {}
+                        LayerClose::Merge {
+                            node_id,
+                            clip,
+                            transform,
+                        } => {
+                            let mut pending = layer.pending;
+                            if layer.after
+                                && !pending.is_empty()
+                                && matches!(stack.last(), Some(PaintFrame::PaintAfter { .. }))
+                            {
+                                pending.extend(stack.pop());
+                            }
+                            for (frames, into) in [
+                                (pending, &mut outer.pending),
+                                (layer.positioned, &mut outer.positioned),
+                            ] {
+                                if !frames.is_empty() {
+                                    into.push(PaintFrame::PushClip {
+                                        node_id,
+                                        clip,
+                                        transform,
+                                    });
+                                    into.extend(frames);
+                                    into.push(PaintFrame::PopClip);
+                                }
+                            }
+                        }
+                        LayerClose::Hoist => outer.positioned.extend(layer.positioned),
+                    }
+                }
+                continue;
+            }
+            PaintFrame::PushClip {
+                node_id,
+                clip,
+                transform,
+            } => {
+                let saved_transform = scene.transform;
+                scene.transform = transform;
+                let rect = push_overflow_clip(scene, clip, &page_box);
+                scene.transform = saved_transform;
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PushOverflowClip(
+                        node_id,
+                        [rect.x0, rect.y0, rect.x1, rect.y1],
+                    ));
                 }
                 continue;
             }
@@ -2395,14 +2533,14 @@ pub(crate) fn paint_document_impl(
                 // the recording starts, as its visit would.
                 if deferral_scopes
                     .last()
-                    .is_some_and(|pending| !pending.is_empty())
+                    .is_some_and(|layer| !layer.pending.is_empty())
                     && raikiri_dom::paint_rules::closes_deferred_inline_content(
                         document, cascade, node_id,
                     )
                 {
                     let pending = deferral_scopes
                         .last_mut()
-                        .map(std::mem::take)
+                        .map(|layer| std::mem::take(&mut layer.pending))
                         .unwrap_or_default();
                     stack.push(PaintFrame::BeginBox {
                         root,
@@ -3532,7 +3670,7 @@ pub(crate) fn paint_document_impl(
                 // clip origin flooring. The clip is pushed only after painting the
                 // element itself, then popped after its complete subtree via the
                 // explicit stack frame.
-                let mut overflow_clip_pushed = false;
+                let mut overflow_clip_pushed = None;
                 if let Some(resolved) = raikiri_dom::paint_rules::overflow_clip(
                     document,
                     cascade,
@@ -3545,9 +3683,10 @@ pub(crate) fn paint_document_impl(
                         layout.border.left,
                     ),
                 ) {
+                    let transform = scene.transform;
                     let clip = push_overflow_clip(scene, resolved, &page_box);
                     stack.push(PaintFrame::PopClip);
-                    overflow_clip_pushed = true;
+                    overflow_clip_pushed = Some((resolved, transform));
                     if let Some(t) = trace.as_deref_mut() {
                         t.push(crate::PaintTraceEvent::PushOverflowClip(
                             node_id,
@@ -3826,17 +3965,41 @@ pub(crate) fn paint_document_impl(
                 // content to the end of the layer (CSS 2.1 Appendix E): its
                 // lines and the boxes laid out beside them paint after the
                 // backgrounds of the blocks that follow it.
-                let defers =
-                    raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id)
-                        && !overflow_clip_pushed
-                        && !multicol_clip_pushed
-                        && !fragmentainer_clip_pushed
-                        && fragmentainer.is_none()
-                        && !is_fragment_visit
-                        && !fixed_in_viewport;
+                let defers_here = !multicol_clip_pushed
+                    && !fragmentainer_clip_pushed
+                    && fragmentainer.is_none()
+                    && !is_fragment_visit
+                    && !fixed_in_viewport;
+                let defers = defers_here
+                    && overflow_clip_pushed.is_none()
+                    && raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id);
+                // A plain block that clips collects its inline content in a
+                // layer of its own, which it hands to the enclosing layer
+                // inside its clip.
+                let merge = overflow_clip_pushed
+                    .filter(|_| {
+                        defers_here
+                            && deferral_scopes.last().is_some_and(|layer| layer.allowed)
+                            && raikiri_dom::paint_rules::merges_clipped_inline_content(
+                                document, cascade, node_id,
+                            )
+                    })
+                    .map(|(clip, transform)| LayerClose::Merge {
+                        node_id,
+                        clip,
+                        transform,
+                    });
                 // Frames of the children, last child first.
                 let mut child_frames = Vec::new();
                 let mut below_lines_frames = Vec::new();
+                // In-flow blocks inside the paragraph's inline content, whose
+                // backgrounds paint before its lines.
+                let mut block_frames = Vec::new();
+                let blocks_first = node.is_ifc_root()
+                    && !children.is_empty()
+                    && !raikiri_dom::paint_rules::holds_negative_stack_level(
+                        document, cascade, node_id,
+                    );
                 for child in children.into_iter().rev() {
                     if let Some(cell) = document
                         .ifc_layout_node(child)
@@ -3853,6 +4016,7 @@ pub(crate) fn paint_document_impl(
                             fragmentainer,
                             inside_fixed: ifc_inside_fixed,
                             decorations: child_decorations.clone(),
+                            defer: defers,
                         });
                         continue;
                     }
@@ -3928,7 +4092,13 @@ pub(crate) fn paint_document_impl(
                             child_cv.position != PositionValue::Static
                                 && matches!(child_cv.z_index, ZIndexValue::Integer(level) if level < 0)
                         });
-                    let frames = if below_lines {
+                    let block = blocks_first
+                        && raikiri_dom::paint_rules::paints_before_paragraph_lines(
+                            document, cascade, node_id, child,
+                        );
+                    let frames = if block {
+                        &mut block_frames
+                    } else if below_lines {
                         &mut below_lines_frames
                     } else {
                         &mut child_frames
@@ -3936,7 +4106,7 @@ pub(crate) fn paint_document_impl(
                     // A box beside held lines joins the groups of the
                     // paragraph, which composite it with the rest of their
                     // paint once the lines and boxes are all recorded.
-                    if hold_lines {
+                    if hold_lines && !block {
                         frames.push(PaintFrame::EndBox {
                             root: node_id,
                             node_id: child,
@@ -3973,7 +4143,7 @@ pub(crate) fn paint_document_impl(
                             .rev()
                             .map(|&(node_id, alpha)| PaintFrame::PushOpacity { node_id, alpha }),
                     );
-                    if hold_lines {
+                    if hold_lines && !block {
                         frames.push(PaintFrame::BeginBox {
                             root: node_id,
                             node_id: child,
@@ -3982,30 +4152,44 @@ pub(crate) fn paint_document_impl(
                     }
                 }
                 let finish_lines = hold_lines.then_some(PaintFrame::FinishLines { root: node_id });
-                if defers && node.is_ifc_root() {
-                    if let Some(pending) = deferral_scopes.last_mut() {
+                // A `display: contents` element has no box, so its children
+                // share the enclosing layer.
+                if !defers && raikiri_dom::paint_rules::generates_box(cv) {
+                    let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
+                        && matches!(cv.column_count, ColumnCountValue::Auto)
+                        && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
+                    let close = merge.unwrap_or(
+                        if raikiri_dom::paint_rules::hoists_positioned_content(cascade, node_id) {
+                            LayerClose::Hoist
+                        } else {
+                            LayerClose::Paint
+                        },
+                    );
+                    let mut layer = DeferralLayer::new(allowed, close);
+                    layer.after = after_pushed;
+                    deferral_scopes.push(layer);
+                    stack.push(PaintFrame::EndDeferral);
+                }
+                if (defers || merge.is_some()) && node.is_ifc_root() {
+                    if let Some(layer) = deferral_scopes.last_mut() {
+                        let pending = &mut layer.pending;
                         pending.extend(below_lines_frames.into_iter().rev());
                         pending.extend(lines_frame);
                         pending.extend(child_frames.into_iter().rev());
                         pending.extend(finish_lines);
                         // A standalone `::after` still follows the content
                         // it is generated after.
-                        if after_pushed {
+                        if defers && after_pushed {
                             pending.extend(stack.pop());
                         }
                     }
                 } else {
-                    // A `display: contents` element has no box, so its
-                    // children share the enclosing layer.
-                    if !defers && raikiri_dom::paint_rules::generates_box(cv) {
-                        deferral_scopes.push(Vec::new());
-                        stack.push(PaintFrame::EndDeferral);
-                    }
                     stack.extend(finish_lines);
                     stack.extend(child_frames);
                     stack.extend(lines_frame);
                     stack.extend(below_lines_frames);
                 }
+                stack.extend(block_frames);
             }
             NodeKind::Text => {
                 let layout = node_layout;

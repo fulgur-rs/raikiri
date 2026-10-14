@@ -614,9 +614,12 @@ fn anonymous_text_trace_interleaves_generated_and_real_text_with_cells() {
                 _ => false,
             })
             .collect();
+        // The cell's background is a block background of the layer, below
+        // the text of the anonymous cells around it (CSS 2.1 Appendix E
+        // steps 4 and 7).
         let expected = vec![
-            PaintTraceEvent::Text(row),
             PaintTraceEvent::Box(cell),
+            PaintTraceEvent::Text(row),
             PaintTraceEvent::Text(row),
         ];
         assert_eq!(traced, expected);
@@ -1859,6 +1862,15 @@ fn anonymous_cells_share_css22_empty_row_classification_after_main_integration()
                 "display:block;position:absolute;left:0;top:{expected_following_y}px;width:40px;height:20px;background:green"
             ),
         );
+        // An absolutely positioned child paints above the following row's
+        // in-flow content (CSS 2.1 Appendix E step 8), at its static position.
+        if child_style.contains("position:absolute") {
+            element(
+                &mut rectangles,
+                body,
+                "display:block;position:absolute;left:0;top:5px;width:40px;height:20px;background:blue",
+            );
+        }
         let rectangles_computed = layout(&mut rectangles);
         assert_exact_pixels(
             raster(scene(&actual, &computed)),

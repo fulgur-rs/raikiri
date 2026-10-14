@@ -241,6 +241,8 @@ fn run_groups_share_one_letter_table_per_paragraph() {
         &table,
         &document.cached_letter_groups(&cascade, root)
     ));
+    assert!(!table.approximated);
+    assert!(document.paint_order_approximations(&cascade).is_empty());
 }
 
 #[test]
@@ -258,6 +260,13 @@ fn letter_groups_past_the_id_limit_stay_inside_one_parent_group() {
             assert_eq!(*parents.entry(own).or_insert(held), held);
         }
     }
+    // The paragraph reports that the fragments past the limit composite
+    // with an approximate opacity.
+    assert!(table.approximated);
+    assert_eq!(
+        document.paint_order_approximations(&cascade),
+        [(NodeId::new(root as u64), LETTER_GROUP_LIMIT)]
+    );
     // The last span's quote and the paragraph's own letter come past the
     // limit, each with no group of its own inside its parent to share.
     assert_eq!(

@@ -23,6 +23,9 @@ pub(super) struct LetterGroups {
     pub(super) fragments: HashMap<(usize, usize), (Option<usize>, Option<usize>)>,
     /// Each group's opacity and the innermost group around it.
     groups: HashMap<usize, (f32, Option<usize>)>,
+    /// Whether a fragment needed a group past the ones an id can name, so
+    /// it composites with the opacity of another group, or none of its own.
+    pub(super) approximated: bool,
 }
 
 impl LetterGroups {
@@ -152,7 +155,12 @@ impl Document {
                                     // Beyond the groups an id can name, fragments
                                     // share a group inside the same group around
                                     // them, so no group is opened in two places.
-                                    None => last.get(&(key.0, group)).copied(),
+                                    // Their opacity is then approximated, which
+                                    // the paragraph reports.
+                                    None => {
+                                        table.approximated = true;
+                                        last.get(&(key.0, group)).copied()
+                                    }
                                 }
                             })
                     });
