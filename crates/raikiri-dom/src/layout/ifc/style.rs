@@ -93,7 +93,8 @@ pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
 /// the root's content box, which is not known when the paragraph is
 /// projected; [`Self::offset`] takes it once layout knows it. A percentage in
 /// `top` or `bottom` against a height that is not definite counts as `auto`
-/// (CSS 2.1 §10.5).
+/// (CSS 2.1 §10.5). When both `left` and `right` apply, the one at the end
+/// of the containing block's line is ignored (CSS 2.1 §9.4.3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct InlineRelativeInsets {
     left: Option<InsetTerms>,
@@ -102,22 +103,22 @@ pub(crate) struct InlineRelativeInsets {
     bottom: Option<InsetTerms>,
 }
 
-/// The terms of a non-`auto` inset: a length plus a percentage of the
-/// containing block.
+/// The terms of a non-`auto` inset: a length plus, for a percentage or a
+/// calc() with a percentage, a percentage of the containing block.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct InsetTerms {
     px: f32,
-    percent: f32,
+    percent: Option<f32>,
 }
 
 impl InsetTerms {
     /// The used value against `basis`, or `None` (`auto`) when the inset
     /// has a percentage and the basis is not definite.
     fn resolve(self, basis: Option<f32>) -> Option<f32> {
-        if self.percent == 0.0 {
-            return Some(self.px);
+        match self.percent {
+            None => Some(self.px),
+            Some(percent) => basis.map(|basis| self.px + basis * percent / 100.0),
         }
-        basis.map(|basis| self.px + basis * self.percent / 100.0)
     }
 }
 
@@ -129,11 +130,14 @@ impl InlineRelativeInsets {
             return None;
         }
         let terms = |value: LengthOrAuto| match value {
-            LengthOrAuto::Px(px) => Some(InsetTerms { px, percent: 0.0 }),
-            LengthOrAuto::Percent(percent) => Some(InsetTerms { px: 0.0, percent }),
+            LengthOrAuto::Px(px) => Some(InsetTerms { px, percent: None }),
+            LengthOrAuto::Percent(percent) => Some(InsetTerms {
+                px: 0.0,
+                percent: Some(percent),
+            }),
             LengthOrAuto::Calc(calc) => Some(InsetTerms {
                 px: calc.px,
-                percent: calc.percent,
+                percent: Some(calc.percent),
             }),
             LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
         };
@@ -150,23 +154,21 @@ impl InlineRelativeInsets {
         [self.left, self.right, self.top, self.bottom]
             .into_iter()
             .flatten()
-            .any(|terms| terms.percent != 0.0)
+            .any(|terms| terms.percent.is_some())
     }
 
     /// The paint offset against a containing block `width` wide and, when it
-    /// is definite, `height` high: `left` over `-right`, `top` over `-bottom`
-    /// (CSS 2.1 §9.4.3).
-    pub(crate) fn offset(&self, width: f32, height: Option<f32>) -> (f32, f32) {
+    /// is definite, `height` high: `left` over `-right` (`-right` over `left`
+    /// when the containing block is `rtl`), `top` over `-bottom` (CSS 2.1
+    /// §9.4.3).
+    pub(crate) fn offset(&self, width: f32, height: Option<f32>, rtl: bool) -> (f32, f32) {
         let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
-        let dx = self
-            .left
+        let left = self.left.and_then(|terms| terms.resolve(Some(width)));
+        let right = self
+            .right
             .and_then(|terms| terms.resolve(Some(width)))
-            .or_else(|| {
-                self.right
-                    .and_then(|terms| terms.resolve(Some(width)))
-                    .map(|r| -r)
-            })
-            .unwrap_or(0.0);
+            .map(|right| -right);
+        let dx = if rtl { right.or(left) } else { left.or(right) }.unwrap_or(0.0);
         let dy = self
             .top
             .and_then(|terms| terms.resolve(height))

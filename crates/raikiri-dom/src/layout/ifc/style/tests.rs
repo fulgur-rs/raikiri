@@ -755,34 +755,56 @@ fn inline_relative_insets_resolve_percentages_against_the_width() {
         });
         InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative")
     };
-    assert_eq!(insets("left:2px;top:3px").offset(200.0, None), (2.0, 3.0));
     assert_eq!(
-        insets("right:2px;bottom:3px").offset(200.0, None),
+        insets("left:2px;top:3px").offset(200.0, None, false),
+        (2.0, 3.0)
+    );
+    assert_eq!(
+        insets("right:2px;bottom:3px").offset(200.0, None, false),
         (-2.0, -3.0)
     );
     assert!(!insets("left:2px;top:3px").has_percentage());
     // A z-index does not drop the offset; the stacking context is not drawn.
-    assert_eq!(insets("left:2px;z-index:1").offset(200.0, None), (2.0, 0.0));
+    assert_eq!(
+        insets("left:2px;z-index:1").offset(200.0, None, false),
+        (2.0, 0.0)
+    );
     // A horizontal percentage refers to the containing block's width, and
     // `left` wins over `right` before the width is known.
     let percent = insets("left:50%;right:10px");
     assert!(percent.has_percentage());
-    assert_eq!(percent.offset(0.0, None), (0.0, 0.0));
-    assert_eq!(percent.offset(200.0, None), (100.0, 0.0));
+    assert_eq!(percent.offset(0.0, None, false), (0.0, 0.0));
+    assert_eq!(percent.offset(200.0, None, false), (100.0, 0.0));
     assert_eq!(
-        insets("right:calc(10% + 1px)").offset(200.0, None),
+        insets("right:calc(10% + 1px)").offset(200.0, None, false),
         (-21.0, 0.0)
     );
     // A vertical percentage refers to a definite height, and counts as
     // `auto` without one; `bottom` then applies.
     let vertical = insets("top:50%;bottom:4px");
     assert!(vertical.has_percentage());
-    assert_eq!(vertical.offset(200.0, None), (0.0, -4.0));
-    assert_eq!(vertical.offset(200.0, Some(200.0)), (0.0, 100.0));
+    assert_eq!(vertical.offset(200.0, None, false), (0.0, -4.0));
+    assert_eq!(vertical.offset(200.0, Some(200.0), false), (0.0, 100.0));
     assert_eq!(
-        insets("top:calc(1% + 1px)").offset(200.0, Some(100.0)),
+        insets("top:calc(1% + 1px)").offset(200.0, Some(100.0), false),
         (0.0, 2.0)
     );
+    // A zero percentage is still a percentage.
+    let zero = insets("top:0%;bottom:4px");
+    assert!(zero.has_percentage());
+    assert_eq!(zero.offset(200.0, None, false), (0.0, -4.0));
+    assert_eq!(zero.offset(200.0, Some(100.0), false), (0.0, 0.0));
+}
+
+#[test]
+fn inline_relative_insets_prefer_right_in_an_rtl_containing_block() {
+    let fixture = block_fixture("position:relative;left:5px;right:10%", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let insets =
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative");
+    assert_eq!(insets.offset(200.0, None, false), (5.0, 0.0));
+    assert_eq!(insets.offset(200.0, None, true), (-20.0, 0.0));
 }
 
 #[test]

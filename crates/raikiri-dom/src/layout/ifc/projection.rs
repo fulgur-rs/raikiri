@@ -69,8 +69,8 @@ pub(crate) struct ProjectedIfc {
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
     /// The insets of the elements in `offsets` whose offset depends on the
-    /// root's size; their offset there is that of a zero width and a height
-    /// that is not definite.
+    /// root's size, by index in `offsets`; their offset there is that of a
+    /// zero width and a height that is not definite.
     pub(crate) percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
@@ -253,20 +253,22 @@ pub(crate) fn has_in_flow_generated_text(
 }
 
 /// Record the paint offset of `id` when it is relatively positioned, with
-/// its insets when the offset depends on the root's size.
+/// its insets, by index in `offsets`, when the offset depends on the root's
+/// size. `rtl` is the root's direction.
 fn push_relative_offset(
     offsets: &mut Vec<(usize, (f32, f32))>,
     percent_insets: &mut Vec<(usize, style::InlineRelativeInsets)>,
     id: usize,
     cv: &ComputedValues,
+    rtl: bool,
 ) {
     let Some(insets) = style::InlineRelativeInsets::of(cv) else {
         return;
     };
-    offsets.push((id, insets.offset(0.0, None)));
     if insets.has_percentage() {
-        percent_insets.push((id, insets));
+        percent_insets.push((offsets.len(), insets));
     }
+    offsets.push((id, insets.offset(0.0, None, rtl)));
 }
 
 /// The images of `::before` and `::after` content of a paragraph: atomic
@@ -278,8 +280,10 @@ struct GeneratedImages {
     /// boxes, by the inline engine's node id of the pseudo-element.
     offsets: Vec<(usize, (f32, f32))>,
     /// The insets of the boxes in `offsets` whose offset depends on the
-    /// root's size.
+    /// root's size, by index in `offsets`.
     percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
+    /// The root's `direction` is `rtl`.
+    rtl: bool,
 }
 
 /// The atomic size of an image of `width` by `height` CSS pixels, its
@@ -395,6 +399,7 @@ fn push_generated(
             &mut images.percent_insets,
             id.0 as usize,
             cv,
+            images.rtl,
         );
     }
     let inline_level = pseudo == PseudoElem::Marker
@@ -602,8 +607,8 @@ pub(crate) struct ProjectedBuilder {
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
     /// The insets of the elements in `offsets` whose offset depends on the
-    /// root's size; their offset there is that of a zero width and a height
-    /// that is not definite.
+    /// root's size, by index in `offsets`; their offset there is that of a
+    /// zero width and a height that is not definite.
     pub(crate) percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
@@ -869,6 +874,7 @@ fn project_children_builder(
         writing_mode,
         offsets: Vec::new(),
         percent_insets: Vec::new(),
+        rtl: root_cv.direction == Direction::Rtl,
     };
     let marker_atomic = if anonymous_children.is_some() {
         None
@@ -1170,7 +1176,13 @@ fn project_children_builder(
                 }
                 let edges = style::inline_edges(cv, id, fonts)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;
-                push_relative_offset(&mut offsets, &mut percent_insets, id, cv);
+                push_relative_offset(
+                    &mut offsets,
+                    &mut percent_insets,
+                    id,
+                    cv,
+                    root_cv.direction == Direction::Rtl,
+                );
                 // `clear` on a line break moves the next line below the
                 // floats (CSS 2.1, 9.5.2): the line loop looks for the break.
                 if tag == "br"
@@ -1260,13 +1272,20 @@ fn project_children_builder(
         marker_atomic,
         generated_atomics: generated_images.atomics,
         rtl: root_cv.direction == Direction::Rtl,
+        percent_insets: {
+            // The generated boxes' offsets follow the elements'.
+            let first = offsets.len();
+            percent_insets.extend(
+                generated_images
+                    .percent_insets
+                    .into_iter()
+                    .map(|(index, insets)| (first + index, insets)),
+            );
+            percent_insets
+        },
         offsets: {
             offsets.extend(generated_images.offsets);
             offsets
-        },
-        percent_insets: {
-            percent_insets.extend(generated_images.percent_insets);
-            percent_insets
         },
         cleared_breaks,
         fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
