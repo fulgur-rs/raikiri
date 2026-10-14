@@ -6069,19 +6069,8 @@ fn grown_auto_height(
     // One that does not resolve behaves as `0` for `min-height` and as
     // `none` for `max-height`.
     let bound = |value: taffy::LengthPercentageAuto, auto: f32| {
-        let raw = value.into_raw();
-        if value.is_auto() {
-            auto
-        } else if raw.tag() == taffy::CompactLength::LENGTH_TAG {
-            raw.value() + box_sizing_edges
-        } else if raw.is_calc() {
-            containing_height.map_or(auto, |height| {
-                crate::taffy_impl::resolve_calc(raw.calc_value(), height) + box_sizing_edges
-            })
-        } else {
-            // The remaining tag is a percentage.
-            containing_height.map_or(auto, |height| raw.value() * height + box_sizing_edges)
-        }
+        resolve_length_percentage_auto(value, containing_height)
+            .map_or(auto, |value| value + box_sizing_edges)
     };
     let min = bound(style.min_size.height, 0.0);
     let max = bound(style.max_size.height, f32::INFINITY).max(min);

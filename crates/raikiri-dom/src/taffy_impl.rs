@@ -87,12 +87,7 @@ pub(crate) fn calc_has_percentage(val: *const ()) -> bool {
 /// block's inline size.
 fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> f32 {
     let basis = parent_inline_size.unwrap_or(0.0);
-    let raw = value.into_raw();
-    if raw.is_calc() {
-        resolve_calc(raw.calc_value(), basis)
-    } else {
-        crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
-    }
+    crate::layout::used_style_length_percentage(value, basis).unwrap_or(0.0)
 }
 
 /// The physical dimension used by percentage margins, padding, and borders
@@ -1043,12 +1038,7 @@ fn ifc_content_axis_bounds(
 ) -> (f32, f32) {
     let edge_basis = edge_basis.unwrap_or(0.0);
     let resolve_lp = |value: taffy::LengthPercentage| {
-        let raw = value.into_raw();
-        if raw.is_calc() {
-            resolve_calc(raw.calc_value(), edge_basis)
-        } else {
-            crate::layout::used_style_length_percentage(value, edge_basis).unwrap_or(0.0)
-        }
+        crate::layout::used_style_length_percentage(value, edge_basis).unwrap_or(0.0)
     };
     let insets = if box_sizing == taffy::BoxSizing::BorderBox {
         resolve_lp(padding[0])
@@ -1060,23 +1050,12 @@ fn ifc_content_axis_bounds(
     };
     let resolve_dim = |value: taffy::LengthPercentageAuto, auto: f32| {
         let raw = value.into_raw();
-        // Calc pointers carry address bits in `tag()`, so test them first.
         // A percentage of an indefinite basis behaves as the initial value,
         // as taffy's leaf sizing resolves it.
-        let resolved = if raw.is_calc() {
-            match dimension_basis {
-                Some(basis) => resolve_calc(raw.calc_value(), basis),
-                None if !calc_has_percentage(raw.calc_value()) => {
-                    resolve_calc(raw.calc_value(), 0.0)
-                }
-                None => return auto,
-            }
-        } else {
-            match (raw.tag(), dimension_basis) {
-                (taffy::CompactLength::LENGTH_TAG, _) => raw.value(),
-                (taffy::CompactLength::PERCENT_TAG, Some(basis)) => raw.value() * basis,
-                _ => return auto,
-            }
+        let basis = dimension_basis
+            .or_else(|| (raw.is_calc() && !calc_has_percentage(raw.calc_value())).then_some(0.0));
+        let Some(resolved) = crate::layout::resolve_length_percentage_auto(value, basis) else {
+            return auto;
         };
         if resolved.is_finite() {
             (resolved - insets).max(0.0)
@@ -1093,28 +1072,11 @@ fn ifc_content_axis_bounds(
 /// Whether the box's own `width` resolves to a length, as taffy's leaf layout
 /// resolves it before calling the measure callback.
 fn ifc_has_definite_width(style: &Style, parent_width: Option<f32>) -> bool {
-    let raw = style.size.width.into_raw();
-    // Calc pointers carry address bits in `tag()`, so test them first.
-    if raw.is_calc() {
-        return parent_width.is_some();
-    }
-    match raw.tag() {
-        taffy::CompactLength::LENGTH_TAG => true,
-        taffy::CompactLength::PERCENT_TAG => parent_width.is_some(),
-        _ => false,
-    }
+    crate::layout::resolve_dimension(style.size.width, parent_width).is_some()
 }
 
 fn ifc_has_definite_height(style: &Style, parent_height: Option<f32>) -> bool {
-    let raw = style.size.height.into_raw();
-    if raw.is_calc() {
-        return parent_height.is_some();
-    }
-    match raw.tag() {
-        taffy::CompactLength::LENGTH_TAG => true,
-        taffy::CompactLength::PERCENT_TAG => parent_height.is_some(),
-        _ => false,
-    }
+    crate::layout::resolve_dimension(style.size.height, parent_height).is_some()
 }
 
 /// What the measure callback of an ifc root needs besides the available

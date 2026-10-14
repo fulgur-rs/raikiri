@@ -1856,6 +1856,135 @@ fn explicit_table_height_respects_box_sizing() {
 }
 
 #[test]
+fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
+    // The table algorithm receives indefinite known dimensions, so it must
+    // resolve its own calc bounds rather than rely on an outer Taffy clamp.
+    for (box_sizing, expected) in [
+        (
+            "content-box",
+            Size {
+                width: 76.0,
+                height: 66.0,
+            },
+        ),
+        (
+            "border-box",
+            Size {
+                width: 60.0,
+                height: 50.0,
+            },
+        ),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some(&format!(
+                "display:table;border-spacing:0;box-sizing:{box_sizing};\
+                 padding:5px;border:3px solid black;\
+                 min-width:calc(50% + 10px);min-height:calc(50% + 10px)"
+            )),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display:table-cell"),
+        );
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+        let mut inputs = column_probe_input();
+        inputs.parent_size = Size {
+            width: Some(100.0),
+            height: Some(80.0),
+        };
+        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        assert_eq!(output.size, expected);
+        assert_eq!(
+            doc.nodes[cell].unrounded_layout.size,
+            Size {
+                width: expected.width - 16.0,
+                height: expected.height - 16.0,
+            }
+        );
+    }
+}
+
+#[test]
+fn fixed_table_first_row_calc_width_leaves_the_remainder_for_the_auto_column() {
+    assert_eq!(fixed_table_calc_column_geometry(false), (60.0, 140.0, 60.0));
+}
+
+#[test]
+fn fixed_table_col_calc_width_leaves_the_remainder_for_the_auto_column() {
+    assert_eq!(fixed_table_calc_column_geometry(true), (60.0, 140.0, 60.0));
+}
+
+fn fixed_table_calc_column_geometry(from_column: bool) -> (f32, f32, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;table-layout:fixed;width:200px;border-spacing:0"),
+    );
+    if from_column {
+        doc.append_element(
+            Some(table),
+            "col",
+            Style::default(),
+            Some("display:table-column;width:calc(25% + 10px)"),
+        );
+    }
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let first = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some(if from_column {
+            "display:table-cell"
+        } else {
+            "display:table-cell;width:calc(25% + 10px)"
+        }),
+    );
+    let second = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    let mut inputs = column_probe_input();
+    inputs.parent_size.width = Some(200.0);
+    let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+    assert_eq!(output.size.width, 200.0);
+    (
+        doc.nodes[first].unrounded_layout.size.width,
+        doc.nodes[second].unrounded_layout.size.width,
+        doc.nodes[second].unrounded_layout.location.x,
+    )
+}
+
+#[test]
 fn table_min_size_respects_box_sizing() {
     // WPT css/css-tables/min-max-size-table-content-box (CSS Sizing 3
     // §3.3, csswg-drafts#5336 / Mozilla bug 1651530): with
