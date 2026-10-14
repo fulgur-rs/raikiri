@@ -13,7 +13,7 @@ use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,
     LayoutConfig, LayoutError, PageBox, PageDefaults, PolicyViolation, RenderError, RenderWarning,
     ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
-    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    ResourceKind, ResourcePolicy, WarningKind,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -26,11 +26,11 @@ use raikiri_style::{
 
 use crate::HtmlDocument;
 use crate::cascade::build_rule_tree_with_limits;
+use crate::fetch::{redacted_url, sanitize_policy_violation, url_policy_violation};
 #[cfg(doc)]
 use crate::parse_html_with_resources;
 use crate::resources::{
     NetworkFontFaceLoader, RenderResources, SharedRenderWarnings, push_resource_warning,
-    redacted_url, sanitize_policy_violation,
 };
 
 pub(crate) mod continuation;
@@ -101,14 +101,7 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .record(&url, Vec::new());
         let mut resolved = if let Some(policy) = self.policy {
-            let violation_type = if !policy.is_scheme_allowed(url.scheme(), ResourceKind::Image) {
-                Some(ViolationType::SchemeNotAllowed)
-            } else if !policy.is_host_allowed(url.host_str().unwrap_or(""), ResourceKind::Image) {
-                Some(ViolationType::HostNotAllowed)
-            } else {
-                None
-            };
-            if let Some(violation_type) = violation_type {
+            if let Some(violation_type) = url_policy_violation(policy, &url, ResourceKind::Image) {
                 let violation = PolicyViolation {
                     kind: ResourceKind::Image,
                     url: url.clone(),

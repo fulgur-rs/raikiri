@@ -11,12 +11,13 @@ use cssparser::{
     AtRuleParser, CowRcStr, ParseError, Parser, ParserInput, ParserState, QualifiedRuleParser,
     StyleSheetParser, Token, match_ignore_ascii_case,
 };
-use raikiri_traits::{
-    Body, Method, NetworkError, NetworkProvider, PolicyViolation, RenderWarning, Request,
-    ResourceKind, ViolationType, WarningKind,
-};
+use raikiri_traits::{NetworkError, NetworkProvider, RenderWarning, ResourceKind, WarningKind};
 use url::Url;
 
+use crate::fetch::{
+    get_request, mime_essence, network_error_summary, policy_violation_warning_kind, redacted_url,
+    resolve_url, url_without_fragment,
+};
 use crate::{StylesheetPart, StylesheetSource};
 
 /// Conservative fallback bound used when the provider does not expose a policy
@@ -232,22 +233,11 @@ impl ImportExpander<'_> {
         let summary = network_error_summary(&error);
         let (kind, details) = match error {
             NetworkError::PolicyViolation(violation) => {
-                let (kind, reason) = match &violation.violation_type {
-                    ViolationType::FetchTooLarge { limit, actual }
-                    | ViolationType::DecodedTooLarge { limit, actual } => (
-                        WarningKind::ResourceLimitExceeded {
-                            kind: violation.kind,
-                            limit: *limit,
-                            actual: *actual,
-                        },
-                        "resource response exceeded a byte limit",
-                    ),
-                    _ => (
-                        WarningKind::PolicyWarning {
-                            violation: sanitize_policy_violation((*violation).clone()),
-                        },
-                        "fetch violated network policy",
-                    ),
+                let kind = policy_violation_warning_kind(&violation, violation.kind);
+                let reason = if matches!(kind, WarningKind::ResourceLimitExceeded { .. }) {
+                    "resource response exceeded a byte limit"
+                } else {
+                    "fetch violated network policy"
                 };
                 (kind, format!("stylesheet @import {reason} for {safe_url}"))
             }
@@ -284,7 +274,7 @@ impl ImportExpander<'_> {
         if import.url.len() > MAX_IMPORT_URL_LENGTH {
             return None;
         }
-        let requested_url = canonical_url(resolve_url(&import.url, base_url)?);
+        let requested_url = url_without_fragment(&resolve_url(&import.url, base_url)?);
         if has_credentials(&requested_url)
             || requested_url.scheme().eq_ignore_ascii_case("javascript")
         {
@@ -302,15 +292,11 @@ impl ImportExpander<'_> {
         }
 
         self.budget.fetches += 1;
-        let fetched = match self.network.fetch(Request {
-            url: requested_url.clone(),
-            method: Method::Get,
-            content_type: None,
-            headers: Vec::new(),
-            body: Body::Empty,
-            signal: None,
-            kind: ResourceKind::StylesheetImport,
-        }) {
+        let fetched = match self.network.fetch(get_request(
+            requested_url.clone(),
+            ResourceKind::StylesheetImport,
+            None,
+        )) {
             Ok(fetched) => fetched,
             Err(error) => {
                 self.record_import_fetch_error(requested_url, error);
@@ -359,7 +345,7 @@ impl ImportExpander<'_> {
             );
             return None;
         }
-        let fetched_url = canonical_url(fetched.final_url);
+        let fetched_url = url_without_fragment(&fetched.final_url);
         if has_credentials(&fetched_url) {
             self.record_import_fallback(
                 fetched_url,
@@ -706,46 +692,11 @@ fn is_invalid_media_token(token: &Token<'_>) -> bool {
 }
 
 fn is_css_content_type(content_type: &str) -> bool {
-    content_type
-        .split(';')
-        .next()
-        .map(str::trim)
-        .is_some_and(|essence| essence.eq_ignore_ascii_case("text/css"))
+    mime_essence(content_type).eq_ignore_ascii_case("text/css")
 }
 
 fn has_credentials(url: &Url) -> bool {
     !url.username().is_empty() || url.password().is_some()
-}
-
-pub(crate) fn redacted_url(url: &Url) -> Url {
-    let mut redacted = url.clone();
-    let _ = redacted.set_username("");
-    let _ = redacted.set_password(None);
-    redacted
-}
-
-/// Keep provider-controlled diagnostics out of parse warnings. URLs are
-/// already carried in structured warning fields, and free-form network errors
-/// may contain credentials, headers, or other secrets supplied by a provider.
-pub(crate) fn network_error_summary(error: &NetworkError) -> String {
-    match error {
-        NetworkError::Aborted => "request aborted".to_owned(),
-        NetworkError::PolicyViolation(_) => "request denied by network policy".to_owned(),
-        NetworkError::Io(_) => "network I/O error".to_owned(),
-        NetworkError::Http(status) => format!("HTTP status error: {status}"),
-        NetworkError::Other(_) => "provider returned a network error".to_owned(),
-        _ => "provider returned an unknown network error".to_owned(),
-    }
-}
-
-/// Policy details are provider-controlled free text. Retain the structured
-/// violation type and redacted URL, but replace the free-form detail with a
-/// fixed message so warning consumers cannot receive leaked credentials or
-/// tokens from an untrusted provider.
-pub(crate) fn sanitize_policy_violation(mut violation: PolicyViolation) -> PolicyViolation {
-    violation.url = redacted_url(&violation.url);
-    violation.details = "network policy denied the request".to_owned();
-    violation
 }
 
 fn normalize_base_url(url: Option<&Url>) -> Option<Url> {
@@ -753,19 +704,7 @@ fn normalize_base_url(url: Option<&Url>) -> Option<Url> {
     if url.as_str().len() > MAX_IMPORT_URL_LENGTH || has_credentials(url) {
         return None;
     }
-    Some(canonical_url(url.clone()))
-}
-
-fn canonical_url(mut url: Url) -> Url {
-    url.set_fragment(None);
-    url
-}
-
-fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
-    match base {
-        Some(base) => base.join(href).ok(),
-        None => Url::parse(href).ok(),
-    }
+    Some(url_without_fragment(url))
 }
 
 #[cfg(test)]

@@ -1,7 +1,8 @@
 use super::*;
 use bytes::Bytes;
 use raikiri_traits::{
-    FetchOutcome, FetchedResource, NetworkError, PolicyViolation, ResourceKind, ViolationType,
+    FetchOutcome, FetchedResource, NetworkError, PolicyViolation, Request, ResourceKind,
+    ViolationType,
 };
 use std::collections::HashMap;
 use std::sync::Mutex;

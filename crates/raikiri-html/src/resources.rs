@@ -14,14 +14,18 @@ use raikiri_style::{
 };
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
 use raikiri_traits::{
-    AbortSignal, Body, DecodedImage, FetchOutcome, ImageIntrinsicSize, ImageRasterSize, Method,
-    NetworkError, NetworkProvider, PolicyViolation, RenderLimits, RenderWarning, Request,
-    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    AbortSignal, DecodedImage, FetchOutcome, ImageIntrinsicSize, ImageRasterSize, NetworkError,
+    NetworkProvider, PolicyViolation, RenderLimits, RenderWarning, Request, ResourceKind,
+    ResourcePolicy, ViolationType, WarningKind,
 };
 use url::Url;
 
 use raikiri_traits::{ImagePixelSource, ReplacedResolver};
 
+use crate::fetch::{
+    get_request, mime_essence, min_limit, policy_violation_warning_kind, redacted_url, resolve_url,
+    sanitize_policy_violation, url_policy_violation, url_without_fragment,
+};
 use crate::{HtmlDocument, ParseOptions};
 
 /// Default maximum response size accepted through [`RenderResources`].
@@ -945,10 +949,7 @@ impl<'a> RenderResources<'a> {
                         .is_none_or(|marker| marker.content.is_empty())
             })
             .filter_map(|(_, cv)| match &cv.list_style_image {
-                BackgroundImage::Url(raw) => Url::parse(raw)
-                    .ok()
-                    .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
-                    .map(|url| url.to_string()),
+                BackgroundImage::Url(raw) => resolve_url(raw, base_url).map(|url| url.to_string()),
                 _ => None,
             })
             .collect();
@@ -1067,50 +1068,37 @@ impl<'a> RenderResources<'a> {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let Some(original_url) = Url::parse(raw_url)
-                .ok()
-                .or_else(|| base_url.and_then(|base| base.join(raw_url).ok()))
-            else {
+            let Some(original_url) = resolve_url(raw_url, base_url) else {
                 continue;
             };
             if original_url.cannot_be_a_base() && original_url.scheme() != "data" {
                 continue;
             }
-            let url = image_url_without_fragment(&original_url);
+            let url = url_without_fragment(&original_url);
             if !seen.insert(url.clone()) {
                 continue;
             }
-            if let Some(policy) = self.policy {
-                let violation_type =
-                    if !policy.is_scheme_allowed(original_url.scheme(), ResourceKind::Image) {
-                        Some(ViolationType::SchemeNotAllowed)
-                    } else if !policy
-                        .is_host_allowed(original_url.host_str().unwrap_or(""), ResourceKind::Image)
-                    {
-                        Some(ViolationType::HostNotAllowed)
-                    } else {
-                        None
-                    };
-                if let Some(violation_type) = violation_type {
-                    let violation = PolicyViolation {
-                        kind: ResourceKind::Image,
-                        url: original_url.clone(),
-                        violation_type,
-                        details: "CSS background image URL denied by resource policy".to_owned(),
-                    };
-                    push_resource_warning(
-                        warnings,
-                        RenderWarning {
-                            kind: WarningKind::PolicyWarning {
-                                violation: sanitize_policy_violation(violation),
-                            },
-                            node_id: None,
-                            details: "CSS background image was denied by the resource policy"
-                                .into(),
+            if let Some(violation_type) = self
+                .policy
+                .and_then(|policy| url_policy_violation(policy, &original_url, ResourceKind::Image))
+            {
+                let violation = PolicyViolation {
+                    kind: ResourceKind::Image,
+                    url: original_url.clone(),
+                    violation_type,
+                    details: "CSS background image URL denied by resource policy".to_owned(),
+                };
+                push_resource_warning(
+                    warnings,
+                    RenderWarning {
+                        kind: WarningKind::PolicyWarning {
+                            violation: sanitize_policy_violation(violation),
                         },
-                    );
-                    continue;
-                }
+                        node_id: None,
+                        details: "CSS background image was denied by the resource policy".into(),
+                    },
+                );
+                continue;
             }
             if self
                 .image_pixel_source
@@ -1199,20 +1187,8 @@ impl<'a> RenderResources<'a> {
         let fetched = match network.fetch(get_request(url.clone(), ResourceKind::Image, signal)) {
             Ok(fetched) => fetched,
             Err(NetworkError::PolicyViolation(violation)) => {
-                let kind = match &violation.violation_type {
-                    ViolationType::FetchTooLarge { limit, actual } => {
-                        WarningKind::ResourceLimitExceeded {
-                            kind: ResourceKind::Image,
-                            limit: *limit,
-                            actual: *actual,
-                        }
-                    }
-                    _ => WarningKind::PolicyWarning {
-                        violation: sanitize_policy_violation(*violation),
-                    },
-                };
                 let warning = RenderWarning {
-                    kind,
+                    kind: policy_violation_warning_kind(&violation, ResourceKind::Image),
                     node_id: None,
                     details: "CSS background image was denied by the resource policy".into(),
                 };
@@ -1265,10 +1241,7 @@ impl<'a> RenderResources<'a> {
             return Some(warning);
         }
         let is_svg = content_type.as_deref().is_some_and(|content_type| {
-            content_type
-                .split(';')
-                .next()
-                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("image/svg+xml"))
+            mime_essence(content_type).eq_ignore_ascii_case("image/svg+xml")
         }) || url.path().to_ascii_lowercase().ends_with(".svg");
         let start = Instant::now();
         let _permit = self.acquire_decode_permit();
@@ -1386,15 +1359,9 @@ impl<'a> RenderResources<'a> {
         url: &Url,
         warnings: &SharedRenderWarnings,
     ) -> Option<(Vec<u8>, String)> {
-        let violation_type = self.policy.and_then(|policy| {
-            if !policy.is_scheme_allowed(url.scheme(), ResourceKind::Image) {
-                Some(ViolationType::SchemeNotAllowed)
-            } else if !policy.is_host_allowed("", ResourceKind::Image) {
-                Some(ViolationType::HostNotAllowed)
-            } else {
-                None
-            }
-        });
+        let violation_type = self
+            .policy
+            .and_then(|policy| url_policy_violation(policy, url, ResourceKind::Image));
         if let Some(violation_type) = violation_type {
             let violation = PolicyViolation {
                 kind: ResourceKind::Image,
@@ -1456,14 +1423,11 @@ impl<'a> RenderResources<'a> {
             }
         };
         let actual = bytes.len() as u64;
-        let policy_limit = self
-            .policy
-            .and_then(|policy| policy.max_fetch_bytes(ResourceKind::Image));
-        let limit = match (self.resource_limits.max_resource_bytes, policy_limit) {
-            (Some(local), Some(policy)) => Some(local.min(policy)),
-            (Some(local), None) | (None, Some(local)) => Some(local),
-            (None, None) => None,
-        };
+        let limit = min_limit(
+            self.resource_limits.max_resource_bytes,
+            self.policy
+                .and_then(|policy| policy.max_fetch_bytes(ResourceKind::Image)),
+        );
         if let Some(limit) = limit
             && actual > limit
         {
@@ -1529,7 +1493,7 @@ impl ImagePixelSource for RenderResources<'_> {
         if !self.image_url_allowed(url) {
             return None;
         }
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             match cached.source {
                 CachedBackgroundSource::Raster(image) => return Some(image),
@@ -1547,7 +1511,7 @@ impl ImagePixelSource for RenderResources<'_> {
         if !self.image_url_allowed(url) {
             return None;
         }
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             return Some(match cached.source {
                 CachedBackgroundSource::Raster(image) => image_intrinsic_size(&image),
@@ -1561,7 +1525,7 @@ impl ImagePixelSource for RenderResources<'_> {
         if !self.image_url_allowed(url) {
             return None;
         }
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             return match cached.source {
                 CachedBackgroundSource::Raster(image) => Some(image.rgba.len() as u64),
@@ -1591,7 +1555,7 @@ impl ImagePixelSource for RenderResources<'_> {
             (Some(requested), None) => Some(requested),
             (None, limit) => limit,
         };
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             match cached.source {
                 CachedBackgroundSource::Raster(image) => {
@@ -1663,10 +1627,8 @@ impl ImagePixelSource for RenderResources<'_> {
 
 impl RenderResources<'_> {
     fn image_url_allowed(&self, url: &Url) -> bool {
-        self.policy.is_none_or(|policy| {
-            policy.is_scheme_allowed(url.scheme(), ResourceKind::Image)
-                && policy.is_host_allowed(url.host_str().unwrap_or(""), ResourceKind::Image)
-        })
+        self.policy
+            .is_none_or(|policy| url_policy_violation(policy, url, ResourceKind::Image).is_none())
     }
 
     fn image_within_policy(&self, image: Arc<DecodedImage>) -> Option<Arc<DecodedImage>> {
@@ -1737,12 +1699,6 @@ fn decode_background_raster(
         height,
         rgba: pixels,
     })
-}
-
-fn image_url_without_fragment(url: &Url) -> Url {
-    let mut normalized = url.clone();
-    normalized.set_fragment(None);
-    normalized
 }
 
 fn image_intrinsic_size(image: &DecodedImage) -> ImageIntrinsicSize {
@@ -1864,33 +1820,23 @@ impl ResourceNetworkProvider<'_> {
         let Some(policy) = self.policy else {
             return Ok(());
         };
-        if !policy.is_scheme_allowed(url.scheme(), request.kind) {
-            return Err(Self::violation(
-                request,
-                url,
-                ViolationType::SchemeNotAllowed,
-                "resource URL scheme is denied by policy",
-            ));
+        match url_policy_violation(policy, url, request.kind) {
+            None => Ok(()),
+            Some(violation_type) => {
+                let details = match violation_type {
+                    ViolationType::SchemeNotAllowed => "resource URL scheme is denied by policy",
+                    _ => "resource URL host is denied by policy",
+                };
+                Err(Self::violation(request, url, violation_type, details))
+            }
         }
-        let host = url.host_str().unwrap_or("");
-        if !policy.is_host_allowed(host, request.kind) {
-            return Err(Self::violation(
-                request,
-                url,
-                ViolationType::HostNotAllowed,
-                "resource URL host is denied by policy",
-            ));
-        }
-        Ok(())
     }
 
     fn byte_limit(&self, kind: ResourceKind) -> Option<u64> {
-        let policy_limit = self.policy.and_then(|policy| policy.max_fetch_bytes(kind));
-        match (self.limits.max_resource_bytes, policy_limit) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(limit), None) | (None, Some(limit)) => Some(limit),
-            (None, None) => None,
-        }
+        min_limit(
+            self.limits.max_resource_bytes,
+            self.policy.and_then(|policy| policy.max_fetch_bytes(kind)),
+        )
     }
 }
 
@@ -1968,11 +1914,7 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
                         "resource response did not include a required MIME type",
                     )
                 })?;
-                let mime = content_type
-                    .split(';')
-                    .next()
-                    .unwrap_or(content_type)
-                    .trim();
+                let mime = mime_essence(content_type);
                 if !allowed
                     .iter()
                     .any(|candidate| candidate.eq_ignore_ascii_case(mime))
@@ -2012,33 +1954,10 @@ impl NetworkProvider for ResourceNetworkProvider<'_> {
     }
 
     fn max_import_depth(&self) -> Option<u32> {
-        match (
+        min_limit(
             self.policy.map(ResourcePolicy::max_import_depth),
             self.inner.max_import_depth(),
-        ) {
-            (Some(policy), Some(provider)) => Some(policy.min(provider)),
-            (Some(limit), None) | (None, Some(limit)) => Some(limit),
-            (None, None) => None,
-        }
-    }
-}
-
-/// Build a GET request for one resolved resource URL.
-///
-/// The caller passes its render abort signal through so a provider that honors
-/// [`AbortSignal`] can fail fast instead of
-/// buffering a response nobody will use. Providers only check the signal up
-/// front; a signal that fires mid-fetch does not interrupt bytes already in
-/// flight.
-pub(crate) fn get_request(url: Url, kind: ResourceKind, signal: Option<&AbortSignal>) -> Request {
-    Request {
-        url,
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: signal.cloned(),
-        kind,
+        )
     }
 }
 
@@ -2050,21 +1969,6 @@ pub(crate) fn push_resource_warning(warnings: &SharedRenderWarnings, warning: Re
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(warning);
-}
-
-pub(crate) fn redacted_url(url: &Url) -> Url {
-    let mut redacted = url.clone();
-    let _ = redacted.set_username("");
-    let _ = redacted.set_password(None);
-    redacted.set_query(None);
-    redacted.set_fragment(None);
-    redacted
-}
-
-pub(crate) fn sanitize_policy_violation(mut violation: PolicyViolation) -> PolicyViolation {
-    violation.url = redacted_url(&violation.url);
-    violation.details = "network policy denied the request".to_owned();
-    violation
 }
 
 /// Adapter that routes font-face URLs through the same policy-checked provider
@@ -2098,10 +2002,7 @@ impl<'a> NetworkFontFaceLoader<'a> {
 
 impl FontFaceLoader for NetworkFontFaceLoader<'_> {
     fn load(&self, source: &str) -> Option<Vec<u8>> {
-        let url = Url::parse(source)
-            .ok()
-            .or_else(|| self.base_url.and_then(|base| base.join(source).ok()));
-        let Some(url) = url else {
+        let Some(url) = resolve_url(source, self.base_url) else {
             push_resource_warning(
                 &self.warnings,
                 RenderWarning {
@@ -2150,23 +2051,10 @@ impl NetworkFontFaceLoader<'_> {
         match network.fetch(get_request(url.clone(), ResourceKind::Font, None)) {
             Ok(fetched) => Some(fetched.bytes.to_vec()),
             Err(NetworkError::PolicyViolation(violation)) => {
-                let kind = match &violation.violation_type {
-                    ViolationType::FetchTooLarge { limit, actual }
-                    | ViolationType::DecodedTooLarge { limit, actual } => {
-                        WarningKind::ResourceLimitExceeded {
-                            kind: ResourceKind::Font,
-                            limit: *limit,
-                            actual: *actual,
-                        }
-                    }
-                    _ => WarningKind::PolicyWarning {
-                        violation: sanitize_policy_violation((*violation).clone()),
-                    },
-                };
                 push_resource_warning(
                     &self.warnings,
                     RenderWarning {
-                        kind,
+                        kind: policy_violation_warning_kind(&violation, ResourceKind::Font),
                         node_id: None,
                         details: "font-face source was denied by the resource policy".into(),
                     },

@@ -1,6 +1,6 @@
 use super::*;
 use raikiri_traits::{
-    FetchOutcome, FetchedResource, ImagePixelSource, ImageRasterSize, NetworkError,
+    Body, FetchOutcome, FetchedResource, ImagePixelSource, ImageRasterSize, Method, NetworkError,
     NetworkProvider, Request, ResourceKind,
 };
 use std::sync::Mutex;
@@ -1065,7 +1065,7 @@ fn same_url_concurrent_fetches_share_one_provider_request() {
     );
     assert!(
         resources
-            .cached_background_image(&image_url_without_fragment(&url))
+            .cached_background_image(&url_without_fragment(&url))
             .is_some(),
         "shared URL is cached once"
     );
