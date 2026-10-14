@@ -79,9 +79,12 @@ fn writing_system_font_unpinned_exact_passes() {
         result.mismatched_pixels
     );
 }
+/// `run_pair` leaves out the pages' support stylesheet, so this guards only
+/// the rendering without it. With the stylesheet loaded these pages are
+/// expected failures, since `text-group-align` is not implemented.
 #[test]
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
-fn text_group_align_unpinned_exact_passes() {
+fn text_group_align_matches_without_its_support_stylesheet() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
     let candidates = [
         "css/css-text/text-group-align/text-group-align-center-vlr.html",
