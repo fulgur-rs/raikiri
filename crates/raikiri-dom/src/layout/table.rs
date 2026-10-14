@@ -1585,12 +1585,17 @@ fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
     doc.ifc_layout_node(node_id)
         .expect("table box layout view")
         .attribute("rowspan")
-        .and_then(|value| value.parse::<u16>().ok())
+        // Parse wide before clamping so values above u16::MAX retain their span.
+        .and_then(|value| value.parse::<u32>().ok())
         .map_or(1, |v| {
             // HTML §4.9.9: rowspan=0 spans to the end of the table section.
             // The reservation pass clamps this sentinel to the source row
             // group before layout consumes the grid.
-            if v == 0 { u16::MAX } else { v.clamp(1, 65534) }
+            if v == 0 {
+                u16::MAX
+            } else {
+                v.clamp(1, 65534) as u16
+            }
         })
 }
 
