@@ -13,7 +13,7 @@ use raikiri_traits::{
     ConsumerPropertyEvent, ConsumerPropertyObserver, ConsumerPropertyValue, IntrinsicBox,
     LayoutConfig, LayoutError, PageBox, PageDefaults, PolicyViolation, RenderError, RenderWarning,
     ReplacedResolver, ResolveDisposition, ResolvedIntrinsic, ResolverError, ResolverRequest,
-    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    ResourceKind, ResourcePolicy, WarningKind,
 };
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -25,23 +25,16 @@ use raikiri_style::{
 };
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree_with_limits;
+use crate::cascade::{build_rule_tree_with_limits, first_page_query};
+use crate::fetch::{redacted_url, sanitize_policy_violation, url_policy_violation};
 #[cfg(doc)]
 use crate::parse_html_with_resources;
 use crate::resources::{
     NetworkFontFaceLoader, RenderResources, SharedRenderWarnings, push_resource_warning,
-    redacted_url, sanitize_policy_violation,
 };
 
 pub(crate) mod continuation;
 pub(crate) use continuation::Continuation;
-
-struct RenderExecutionResources<'a> {
-    font_faces: &'a FontFaceRegistry,
-    font_face_loader: &'a dyn FontFaceLoader,
-    effective_base_url: Option<&'a url::Url>,
-    warnings: SharedRenderWarnings,
-}
 
 struct FallbackRecordingResolver<'a> {
     inner: &'a (dyn ReplacedResolver + Send + Sync),
@@ -101,14 +94,7 @@ impl ReplacedResolver for FallbackRecordingResolver<'_> {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .record(&url, Vec::new());
         let mut resolved = if let Some(policy) = self.policy {
-            let violation_type = if !policy.is_scheme_allowed(url.scheme(), ResourceKind::Image) {
-                Some(ViolationType::SchemeNotAllowed)
-            } else if !policy.is_host_allowed(url.host_str().unwrap_or(""), ResourceKind::Image) {
-                Some(ViolationType::HostNotAllowed)
-            } else {
-                None
-            };
-            if let Some(violation_type) = violation_type {
+            if let Some(violation_type) = url_policy_violation(policy, &url, ResourceKind::Image) {
                 let violation = PolicyViolation {
                     kind: ResourceKind::Image,
                     url: url.clone(),
@@ -660,10 +646,6 @@ fn page_area_size(page: &PageCascadeResult, defaults: &PageDefaults) -> (f32, f3
     (content_box.width, content_box.height)
 }
 
-fn content_width_for_geometry(geometry: ResolvedPageGeometry) -> f32 {
-    geometry.content_box.width
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct PageGeometrySchedule {
     page_steps: Vec<f32>,
@@ -682,17 +664,10 @@ fn page_geometry_schedule(
             .collect(),
         page_widths: page_geometries
             .iter()
-            .map(|geometry| content_width_for_geometry(*geometry))
+            .map(|geometry| geometry.content_box.width)
             .collect(),
         page_names: slices.iter().map(|slice| slice.page_name.clone()).collect(),
     }
-}
-
-fn geometry_differs(left: ResolvedPageGeometry, right: ResolvedPageGeometry) -> bool {
-    left.page_box != right.page_box
-        || left.margins != right.margins
-        || left.content_insets != right.content_insets
-        || left.content_box != right.content_box
 }
 
 fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError {
@@ -775,6 +750,18 @@ pub(crate) struct ResumePoint {
     pub(crate) earlier_fragments: Vec<raikiri_dom::CrossingBox>,
 }
 
+/// Unwrap a layout step of [`run_pipeline`]: an abort ends the pipeline
+/// with [`PipelineRun::Aborted`], and any other error fails it.
+macro_rules! layout_step {
+    ($result:expr) => {
+        match $result {
+            Ok(value) => value,
+            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
+            Err(error) => return Err(RenderError::from(error)),
+        }
+    };
+}
+
 pub(crate) fn run_pipeline(
     doc: &HtmlDocument,
     defaults: PageDefaults,
@@ -849,18 +836,12 @@ pub(crate) fn run_pipeline(
     // just like the element and page cascades below.
     let layout_font_faces =
         (*media_context != MediaContext::default()).then(|| tree.font_faces_for(media_context));
-    let runtime = RenderExecutionResources {
-        font_faces: layout_font_faces.as_ref().unwrap_or(&doc.font_faces),
-        font_face_loader: &font_loader,
-        effective_base_url: effective_base_url.as_ref(),
-        warnings: Arc::clone(&warnings),
-    };
+    let font_faces = layout_font_faces.as_ref().unwrap_or(&doc.font_faces);
+    let base_url = effective_base_url.as_ref();
 
     // Resolve the first page context before layout so `:first` and the first
     // resolved `@page size` participate in the initial fragmentainer.
-    let mut first_query = PageContextQuery::default();
-    first_query.is_first = true;
-    first_query.is_right = true;
+    let mut first_query = first_page_query();
     // The fonts are given to the document before the element cascade, which
     // measures `line-height: normal` in the document's fonts for the `lh`
     // unit, and before
@@ -869,15 +850,10 @@ pub(crate) fn run_pipeline(
     let mut dom = doc.uncascaded.dom.clone();
     // Paint resolves relative `url()` values against the base the images
     // were fetched with, which the resources' fallback base can change.
-    if let Some(base_url) = runtime.effective_base_url {
+    if let Some(base_url) = base_url {
         dom.set_base_url(Some(base_url.clone()));
     }
-    let font_report = enable_inline_engine(
-        &mut dom,
-        resources,
-        runtime.font_faces,
-        runtime.font_face_loader,
-    );
+    let font_report = enable_inline_engine(&mut dom, resources, font_faces, &font_loader);
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = config.limits.cascade_limits();
     // The element cascade below runs on the source document, which may have
@@ -920,14 +896,14 @@ pub(crate) fn run_pipeline(
     let mut marker_image_attempts = 0;
     resources.preload_list_marker_images(
         &first_cascade,
-        runtime.effective_base_url,
-        &runtime.warnings,
+        base_url,
+        &warnings,
         &mut marker_image_seen,
         &mut marker_image_attempts,
         signal.as_ref(),
     );
     if let Some(source) = resources.image_pixel_source_ref() {
-        dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
+        dom.prepare_list_marker_images(&first_cascade, source, base_url);
     }
     // A resumed layout already knows the first page's name, which the probe
     // would look for in content the layout skips.
@@ -939,7 +915,7 @@ pub(crate) fn run_pipeline(
             first_query.page_name.as_ref().map(ToString::to_string),
             first_cascade,
             page_box,
-            InitialPageProbeResources::new(Some(&resolver), runtime.effective_base_url),
+            InitialPageProbeResources::new(Some(&resolver), base_url),
             |page_name, cascade| {
                 first_query.page_name = page_name.map(Atom::from);
                 let page = cascade_page_for_query(&tree, cascade, media_context, &first_query);
@@ -974,14 +950,14 @@ pub(crate) fn run_pipeline(
         // the marker's font, which can be viewport-relative.
         resources.preload_list_marker_images(
             &first_cascade,
-            runtime.effective_base_url,
-            &runtime.warnings,
+            base_url,
+            &warnings,
             &mut marker_image_seen,
             &mut marker_image_attempts,
             signal.as_ref(),
         );
         if let Some(source) = resources.image_pixel_source_ref() {
-            dom.prepare_list_marker_images(&first_cascade, source, runtime.effective_base_url);
+            dom.prepare_list_marker_images(&first_cascade, source, base_url);
         }
     }
     let first_cascade = first_cascade;
@@ -991,7 +967,7 @@ pub(crate) fn run_pipeline(
 
     for family in font_report.skipped {
         push_resource_warning(
-            &runtime.warnings,
+            &warnings,
             RenderWarning {
                 kind: WarningKind::ResourceFallback {
                     kind: ResourceKind::Font,
@@ -1042,7 +1018,7 @@ pub(crate) fn run_pipeline(
                 cascade_for_page: &cascade_for_page,
                 page_geometries: &page_geometries_for,
                 resolver: &resolver,
-                base_url: runtime.effective_base_url,
+                base_url,
                 max_pages: config.limits.max_document_pages,
                 abort_check: &is_aborted,
                 skipped: &resume.skipped,
@@ -1056,11 +1032,8 @@ pub(crate) fn run_pipeline(
             &resume.earlier_fragments,
         );
         drop(pristine);
-        let continuations = match resumed {
-            Ok(Some(continuations)) => continuations,
-            Ok(None) => return Ok(PipelineRun::NotResumed),
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-            Err(error) => return Err(RenderError::from(error)),
+        let Some(continuations) = layout_step!(resumed) else {
+            return Ok(PipelineRun::NotResumed);
         };
         let page_styles = resolve_page_geometries(&page_cascader, &defaults, &slices).1;
         (slices, page_geometries, page_styles, continuations)
@@ -1069,18 +1042,14 @@ pub(crate) fn run_pipeline(
         // cascade at other page sizes: they break the lines of the first
         // pass's paragraphs again instead of shaping them anew.
         document.set_ifc_retain_paragraphs(true);
-        let mut slices = match layout_pages_with_resolver_and_base_url_and_control(
+        let mut slices = layout_step!(layout_pages_with_resolver_and_base_url_and_control(
             &mut document,
             &first_cascade,
             page_box,
             &resolver,
-            runtime.effective_base_url,
+            base_url,
             &discovery_control,
-        ) {
-            Ok(slices) => slices,
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-            Err(error) => return Err(RenderError::from(error)),
-        };
+        ));
         let mut pagination_truncated = discovery_control.page_limit_reached();
         if is_aborted() {
             return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
@@ -1095,7 +1064,7 @@ pub(crate) fn run_pipeline(
             };
             let geometry_varies = page_geometries
                 .iter()
-                .any(|geometry| geometry_differs(*geometry, first_geometry));
+                .any(|geometry| *geometry != first_geometry);
             let schedule_must_be_applied = std::mem::take(&mut schedule_changed);
             if !geometry_varies && !pagination_truncated && !schedule_must_be_applied {
                 break;
@@ -1113,20 +1082,18 @@ pub(crate) fn run_pipeline(
             } else {
                 &page_control
             };
-            slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-                &mut document,
-                &first_cascade,
-                page_box,
-                &schedule.page_steps,
-                &schedule.page_widths,
-                &resolver,
-                runtime.effective_base_url,
-                scheduled_control,
-            ) {
-                Ok(slices) => slices,
-                Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-                Err(error) => return Err(RenderError::from(error)),
-            };
+            slices = layout_step!(
+                layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+                    &mut document,
+                    &first_cascade,
+                    page_box,
+                    &schedule.page_steps,
+                    &schedule.page_widths,
+                    &resolver,
+                    base_url,
+                    scheduled_control,
+                )
+            );
             if is_aborted() {
                 return Ok(PipelineRun::Aborted); // cov:ignore: closes the race after the paginator's final cancellation poll.
             }
@@ -1140,20 +1107,18 @@ pub(crate) fn run_pipeline(
                 // The soft pass confirmed the geometry schedule only for the
                 // configured prefix. Re-run it strictly before treating that
                 // prefix as a complete document.
-                slices = match layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-                    &mut document,
-                    &first_cascade,
-                    page_box,
-                    &schedule.page_steps,
-                    &schedule.page_widths,
-                    &resolver,
-                    runtime.effective_base_url,
-                    &page_control,
-                ) {
-                    Ok(slices) => slices,
-                    Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted),
-                    Err(error) => return Err(RenderError::from(error)),
-                };
+                slices = layout_step!(
+                    layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+                        &mut document,
+                        &first_cascade,
+                        page_box,
+                        &schedule.page_steps,
+                        &schedule.page_widths,
+                        &resolver,
+                        base_url,
+                        &page_control,
+                    )
+                );
                 // A cancellation arriving after the paginator's final poll is a race-only case.
                 // cov:ignore: closes the cancellation race after strict confirmation completes.
                 if is_aborted() {
@@ -1209,25 +1174,21 @@ pub(crate) fn run_pipeline(
             .iter()
             .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
             .collect();
-        match document.project_pages_with_control(
+        layout_step!(document.project_pages_with_control(
             &first_cascade,
             page_box,
             &slices,
             &geometries,
             &page_control,
-        ) {
-            Ok(()) => {}
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
-            Err(error) => return Err(RenderError::from(error)),
-        }
+        ));
 
-        let continuations = match continuation::continue_at_page_widths(
+        let continuations = layout_step!(continuation::continue_at_page_widths(
             &continuation::ContinuationInputs {
                 pristine: &pristine,
                 cascade_for_page: &cascade_for_page,
                 page_geometries: &page_geometries_for,
                 resolver: &resolver,
-                base_url: runtime.effective_base_url,
+                base_url,
                 max_pages: config.limits.max_document_pages,
                 abort_check: &is_aborted,
                 skipped: &[],
@@ -1236,27 +1197,19 @@ pub(crate) fn run_pipeline(
             &first_cascade,
             &mut slices,
             &mut page_geometries,
-        ) {
-            Ok(continuations) => continuations,
-            Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during a relayout
-            Err(error) => return Err(RenderError::from(error)),
-        };
+        ));
         drop(pristine);
         let page_styles = if let Some(first) = continuations.first() {
             // The first layout keeps only the pages before the first continuation.
             let own = first.first_page as usize;
-            match document.project_pages_with_control(
+            // These pages were projected once already with the same limits.
+            layout_step!(document.project_pages_with_control(
                 &first_cascade,
                 page_box,
                 &slices[..own],
                 &geometries[..own],
                 &page_control,
-            ) {
-                Ok(()) => {}
-                // These pages were projected once already with the same limits.
-                Err(LayoutError::Aborted) => return Ok(PipelineRun::Aborted), // cov:ignore: needs a cancellation landing during this projection
-                Err(error) => return Err(RenderError::from(error)), // cov:ignore: the same projection succeeded above
-            }
+            ));
             resolve_page_geometries(&page_cascader, &defaults, &slices).1
         } else {
             page_styles
@@ -1271,8 +1224,8 @@ pub(crate) fn run_pipeline(
             &page_cascader,
             &slices,
             resources,
-            runtime.effective_base_url,
-            &runtime.warnings,
+            base_url,
+            &warnings,
             signal.as_ref(),
             &mut marker_image_seen,
             &mut marker_image_attempts,
@@ -1297,16 +1250,17 @@ pub(crate) fn run_pipeline(
         }
     }
 
-    let mut warnings = doc.uncascaded.warnings.clone();
-    warnings.extend(
-        runtime
-            .warnings
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .cloned(),
-    );
-    drop(runtime);
+    let warnings = {
+        let mut all = doc.uncascaded.warnings.clone();
+        all.extend(
+            warnings
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
+        all
+    };
     let replaced_resources = resolver
         .outcomes
         .into_inner()

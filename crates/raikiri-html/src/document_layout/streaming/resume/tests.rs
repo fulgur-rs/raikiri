@@ -318,7 +318,10 @@ fn layouts_resume_after_a_late_stamp_is_left_out() {
     for piece in tail.as_bytes().chunks(2048) {
         stream.feed(piece).expect("feed");
     }
-    assert!(!stream.hidden_late.is_empty(), "the stamp is left out");
+    assert!(
+        !stream.progress.hidden_late.is_empty(),
+        "the stamp is left out"
+    );
     assert!(
         stream.settings.resumed.get() > before,
         "layouts after the stamp resume"
@@ -640,7 +643,10 @@ fn a_resumed_layout_reports_the_resources_of_delivered_pages_as_last_loaded() {
     // The first layout fails to load the flaky image before its page is
     // final; every later one loads it.
     stream.feed(pieces.next().expect("input")).expect("feed");
-    assert_eq!(stream.delivered, 0, "the images' page is not delivered yet");
+    assert_eq!(
+        stream.progress.delivered, 0,
+        "the images' page is not delivered yet"
+    );
     resolver
         .flaky
         .store(false, std::sync::atomic::Ordering::SeqCst);
