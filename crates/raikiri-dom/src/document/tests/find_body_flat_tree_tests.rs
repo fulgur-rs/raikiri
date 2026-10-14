@@ -74,3 +74,24 @@ fn layout_depth_counts_from_the_real_body() {
             if limit == MAX_LAYOUT_DEPTH && actual == MAX_LAYOUT_DEPTH + 1
     ));
 }
+
+#[test]
+fn every_body_lookup_finds_a_body_moved_out_of_a_template_before_flags_refresh() {
+    // A script moves the ghost body out of the template contents and in
+    // front of the real body. The move leaves the in-document bits stale
+    // until layout refreshes them, but the depth check runs first, so it
+    // must already measure the body layout will pick.
+    let (mut doc, ghost, real) = document_with_template_ghost_body();
+    doc.mark_in_document_flags();
+    let html = doc.parent_of(real).expect("body has a parent");
+    nest_divs(&mut doc, ghost, MAX_LAYOUT_DEPTH);
+    doc.detach_from_parent(ghost);
+    doc.insert_child_before(html, real, ghost);
+
+    assert_eq!(layout_find_body(&doc), Some(ghost));
+    assert_eq!(find_paint_root(&doc), Some(ghost));
+    assert!(matches!(
+        validate_layout_depth(&doc),
+        Err(LayoutError::TreeDepthLimitExceeded { .. })
+    ));
+}
