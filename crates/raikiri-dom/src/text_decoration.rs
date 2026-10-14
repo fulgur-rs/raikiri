@@ -479,22 +479,32 @@ fn context_for_text(
 
 /// The decoration context of the text node `text_node` in a ruby annotation.
 ///
-/// Decorations of the ruby container and its ancestors are not propagated to
-/// its annotations (CSS Text Decoration 3 §2), so the context folds only the
-/// elements between the nearest ruby container and the text.
+/// Decorations of a ruby container and its ancestors are not propagated to
+/// its annotations (CSS Text Decoration 3 §2, CSS Ruby 1 §4.4), so the
+/// context folds only the elements below the ruby container whose annotation
+/// holds the text. A ruby nested in that annotation passes its decorations
+/// to its own base like any other ruby container.
 fn annotation_context(
     document: &Document,
     cascade: &CascadeResult,
     text_node: usize,
 ) -> DecorationContext {
     let mut chain = Vec::new();
+    let mut in_annotation = false;
     let mut current = document.parent_of(text_node);
     while let Some(id) = current {
         let Some(cv) = computed_for_id(cascade, id) else {
             break; // cov:ignore: annotation runs are positioned only for cascaded text.
         };
         if cv.display.is_ruby_container() {
-            break;
+            if in_annotation {
+                break;
+            }
+        } else if matches!(
+            cv.display,
+            DisplayValue::RubyText | DisplayValue::RubyTextContainer
+        ) {
+            in_annotation = true;
         }
         chain.push((id, cv));
         current = document.parent_of(id);

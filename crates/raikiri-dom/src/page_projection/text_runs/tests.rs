@@ -709,6 +709,93 @@ fn ruby_annotations_project_above_their_base_without_its_decorations() {
     assert!(annotation.text_offset >= base.text_offset + base.text.len());
 }
 
+/// A ruby nested in a decorated annotation passes the annotation's
+/// decorations to its base, not to its own annotation.
+#[test]
+fn nested_ruby_bases_keep_their_annotation_decorations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let outer = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let base = document.append_element(
+        Some(outer),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(outer),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:underline"),
+    );
+    let inner = document.append_element(
+        Some(annotation),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let inner_base = document.append_element(
+        Some(inner),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(inner_base, "bb");
+    let inner_annotation = document.append_element(
+        Some(inner),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(inner_annotation, "yy");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base run");
+    let nested_base = runs
+        .iter()
+        .find(|run| run.text == "bb")
+        .expect("nested base");
+    let nested_annotation = runs
+        .iter()
+        .find(|run| run.text == "yy")
+        .expect("nested annotation");
+    assert!(base.decorations.is_empty());
+    assert_eq!(nested_base.decorations.len(), 1);
+    assert!(nested_annotation.decorations.is_empty());
+}
+
 /// A floated ruby is a `block ruby` container: its decorations reach its
 /// base but not its annotations.
 #[test]

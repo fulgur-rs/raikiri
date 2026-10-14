@@ -337,6 +337,47 @@ fn the_first_letter_continues_after_annotations_in_the_base_text() {
 }
 
 #[test]
+fn a_forced_break_in_a_base_ends_the_first_letter() {
+    let mut text = 0;
+    let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
+        let container = ruby(doc, root);
+        let base = element(doc, container, "rb", "display:ruby-base");
+        element(doc, base, "br", "");
+        text = doc.append_text(base, "AB");
+        rt(doc, container, "x");
+    });
+    let runs = runs(fixture);
+    let xs: Vec<f32> = runs
+        .iter()
+        .filter(|run| run.0 == text)
+        .map(|run| run.2.0)
+        .collect();
+    // `A` is on the second formatted line: no first letter splits `AB`.
+    assert_eq!(xs, [0.0], "{runs:?}");
+}
+
+#[test]
+fn annotation_text_owns_the_line_it_is_placed_over() {
+    let mut text = 0;
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "a");
+        let annotation = rt(doc, container, "x");
+        text = doc.nodes[annotation].children[0];
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = doc.ifc_text_lines(text).expect("annotation lines");
+    assert_eq!(lines.root, root);
+    assert_eq!(
+        lines.lines.iter().map(|line| line.line).collect::<Vec<_>>(),
+        [0]
+    );
+    let by_node = doc.ifc_text_lines_by_node(root);
+    assert_eq!(by_node.get(&text), Some(&lines));
+}
+
+#[test]
 fn skipped_children_are_left_out() {
     let plan = plan_of(|doc, ruby| {
         rb(doc, ruby, "a");

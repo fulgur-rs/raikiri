@@ -624,6 +624,8 @@ impl Content<'_, '_> {
             }
             let cv = &self.cascade.computed[id];
             if node.tag_name() == Some("br") {
+                // A forced break ends the first formatted line.
+                self.sink.first_letter.stop();
                 builder.push_forced_break(NodeId(id as u64));
                 continue;
             }
