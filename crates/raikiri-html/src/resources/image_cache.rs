@@ -33,7 +33,7 @@ pub(super) enum CachedBackgroundSource {
 
 /// Rasters kept per background image, one per paint size, so that an SVG
 /// painted at a few sizes in turn is not rasterized again at every switch.
-pub(super) const MAX_RASTER_SIZES: usize = 4;
+const MAX_RASTER_SIZES: usize = 4;
 
 #[derive(Clone)]
 pub(super) struct CachedBackgroundImage {
@@ -51,7 +51,7 @@ impl CachedBackgroundImage {
     }
 }
 
-pub(super) fn image_bytes(image: &DecodedImage) -> u64 {
+fn image_bytes(image: &DecodedImage) -> u64 {
     u64::try_from(image.rgba.len()).unwrap_or(u64::MAX)
 }
 
@@ -121,7 +121,7 @@ impl ProcessImageBudget {
             .saturating_sub(retained.saturating_sub(prior))
     }
 
-    pub(super) fn try_reserve(&self, delta: u64) -> bool {
+    fn try_reserve(&self, delta: u64) -> bool {
         let mut retained = self
             .retained
             .lock()
@@ -134,7 +134,7 @@ impl ProcessImageBudget {
         true
     }
 
-    pub(super) fn release(&self, amount: u64) {
+    fn release(&self, amount: u64) {
         if amount == 0 {
             return;
         }
@@ -200,7 +200,7 @@ impl Drop for ProcessDecodeGuard {
     }
 }
 
-pub(super) struct InflightState {
+struct InflightState {
     done: bool,
     warning: Option<RenderWarning>,
 }
@@ -275,7 +275,7 @@ impl Drop for DecodedImageCache {
 }
 
 impl DecodedImageCache {
-    pub(super) fn raster_bytes(entry: &CachedBackgroundImage) -> u64 {
+    fn raster_bytes(entry: &CachedBackgroundImage) -> u64 {
         if entry.rasters.is_empty() {
             return match &entry.source {
                 CachedBackgroundSource::Raster(image) => image_bytes(image),

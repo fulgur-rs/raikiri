@@ -30,7 +30,7 @@ impl ResourceNetworkProvider<'_> {
     /// failed actually inspected, which after a redirect hop is not
     /// necessarily `request.url` — rather than always reporting the
     /// original request URL regardless of which URL was actually denied.
-    pub(super) fn violation(
+    fn violation(
         request: &Request,
         url: &Url,
         violation_type: ViolationType,
@@ -44,7 +44,7 @@ impl ResourceNetworkProvider<'_> {
         }))
     }
 
-    pub(super) fn check_url_policy(
+    fn check_url_policy(
         &self,
         request: &Request,
         url: &Url,
@@ -64,7 +64,7 @@ impl ResourceNetworkProvider<'_> {
         }
     }
 
-    pub(super) fn byte_limit(&self, kind: ResourceKind) -> Option<u64> {
+    fn byte_limit(&self, kind: ResourceKind) -> Option<u64> {
         min_limit(
             self.limits.max_resource_bytes,
             self.policy.and_then(|policy| policy.max_fetch_bytes(kind)),
@@ -253,7 +253,7 @@ impl FontFaceLoader for NetworkFontFaceLoader<'_> {
 }
 
 impl NetworkFontFaceLoader<'_> {
-    pub(super) fn fetch_uncached(&self, url: &Url) -> Option<Vec<u8>> {
+    fn fetch_uncached(&self, url: &Url) -> Option<Vec<u8>> {
         let Some(network) = self.network else {
             push_resource_warning(
                 &self.warnings,
