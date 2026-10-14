@@ -3234,3 +3234,45 @@ fn a_zero_min_height_does_not_keep_a_nested_paragraph_from_moving() {
     );
     assert_eq!(laid_out.fragments, whole_on_page_1());
 }
+
+#[test]
+fn a_paragraph_in_a_floated_section_is_not_moved_for_its_widow() {
+    // A float is placed by the float rules rather than by the block flow, so
+    // its paragraph keeps the existing whole-box path.
+    let laid_out = paragraph_after_a_spacer(
+        Some("float:left;width:100px"),
+        15.0,
+        "orphans:2;widows:2",
+        40.0,
+    );
+    assert_eq!(
+        laid_out.fragments,
+        vec![
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+}
+
+#[test]
+fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let aside = doc.append_element(Some(body), "aside", Style::default(), Some("display:block"));
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some("display:block"));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).expect("pages");
+    assert!(super::super::is_block_flow_paragraph(
+        &doc, &cascade, paragraph, body
+    ));
+    // No ancestor of the paragraph is the aside, so it is not in that flow.
+    assert!(!super::super::is_block_flow_paragraph(
+        &doc, &cascade, paragraph, aside
+    ));
+}

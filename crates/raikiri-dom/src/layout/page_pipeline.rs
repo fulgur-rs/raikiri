@@ -5020,29 +5020,32 @@ pub fn layout_pages_with_page_geometry_and_control(
                                        target_y: f32| {
                 let relative =
                     accumulated_relative_offset_y(document, cascade, body_id, &parent_of, block_id);
-                let delta = target_y + relative - from_y;
-                if !delta.is_finite() || delta <= 0.0 {
-                    return 0.0;
-                }
-                let moved = if nested {
-                    first_box_ancestor_at_top(document, cascade, block_id, body_id, &parent_of)
-                } else {
-                    block_id
-                };
-                let moved_y = current_abs_y(document, moved, &parent_of) + delta;
-                materialize_y(document, moved, moved_y, &parent_of);
-                if nested {
-                    grow_ancestors_for_shift(
-                        document,
-                        cascade,
-                        moved,
-                        delta,
-                        body_id,
-                        &parent_of,
-                        &mut pending_bounded_shifts,
-                        &mut pending_context_growth,
-                        page_before_candidate,
-                    );
+                // A negative or undefined move, which a relative offset can
+                // produce, leaves the block where it is.
+                let delta = Some(target_y + relative - from_y)
+                    .filter(|delta| delta.is_finite() && *delta > 0.0)
+                    .unwrap_or(0.0);
+                if delta > 0.0 {
+                    let moved = if nested {
+                        first_box_ancestor_at_top(document, cascade, block_id, body_id, &parent_of)
+                    } else {
+                        block_id
+                    };
+                    let moved_y = current_abs_y(document, moved, &parent_of) + delta;
+                    materialize_y(document, moved, moved_y, &parent_of);
+                    if nested {
+                        grow_ancestors_for_shift(
+                            document,
+                            cascade,
+                            moved,
+                            delta,
+                            body_id,
+                            &parent_of,
+                            &mut pending_bounded_shifts,
+                            &mut pending_context_growth,
+                            page_before_candidate,
+                        );
+                    }
                 }
                 delta
             };
@@ -6629,29 +6632,27 @@ fn is_block_flow_paragraph(
         return false;
     }
     let mut child = block;
-    while let Some(parent) = document.layout_parent_of(child) {
-        if is_floating_box_for_pagination(document, cascade, child)
+    loop {
+        let placed_apart = is_floating_box_for_pagination(document, cascade, child)
             || matches!(
                 cascade.computed[child].position,
                 PositionValue::Absolute | PositionValue::Fixed
-            )
-        {
-            return false;
+            );
+        match document.layout_parent_of(child) {
+            Some(parent) if !placed_apart && parent == body_id => return true,
+            // A `display: contents` element has no box; its parent lays the
+            // child out.
+            Some(parent)
+                if !placed_apart
+                    && (cascade.computed[parent].display == DisplayValue::Contents
+                        || moves_later_siblings(document, cascade, parent)
+                            && height_follows_content(document, parent)) =>
+            {
+                child = parent;
+            }
+            _ => return false,
         }
-        if parent == body_id {
-            return true;
-        }
-        // A `display: contents` element has no box; its parent lays the
-        // child out.
-        if cascade.computed[parent].display != DisplayValue::Contents
-            && (!moves_later_siblings(document, cascade, parent)
-                || !height_follows_content(document, parent))
-        {
-            return false;
-        }
-        child = parent;
     }
-    false
 }
 
 /// Whether the height of `block` is that of its content: no `height`,
