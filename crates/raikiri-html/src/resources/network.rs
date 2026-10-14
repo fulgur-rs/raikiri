@@ -44,11 +44,7 @@ impl ResourceNetworkProvider<'_> {
         }))
     }
 
-    fn check_url_policy(
-        &self,
-        request: &Request,
-        url: &Url,
-    ) -> Result<(), NetworkError> {
+    fn check_url_policy(&self, request: &Request, url: &Url) -> Result<(), NetworkError> {
         let Some(policy) = self.policy else {
             return Ok(());
         };
