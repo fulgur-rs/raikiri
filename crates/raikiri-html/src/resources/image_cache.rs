@@ -12,7 +12,7 @@ use super::DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES;
 
 /// Maximum CSS background image decodes that may run at once, process-wide.
 ///
-/// Independent [`RenderResources`] instances share this semaphore, so decoder
+/// Independent [`RenderResources`](super::RenderResources) instances share this semaphore, so decoder
 /// concurrency stays bounded no matter how many resource contexts exist.
 /// Unrelated images proceed concurrently up to this bound instead of sharing
 /// one exclusive mutex; only work beyond the bound waits.
@@ -55,11 +55,11 @@ fn image_bytes(image: &DecodedImage) -> u64 {
     u64::try_from(image.rgba.len()).unwrap_or(u64::MAX)
 }
 
-/// Process-wide budget shared by every [`RenderResources`] for CSS background decoding.
+/// Process-wide budget shared by every [`RenderResources`](super::RenderResources) for CSS background decoding.
 ///
 /// The per-set 128 MiB cache bounds one security context; this object bounds
 /// their sum plus concurrent decoder slots process-wide. Reconfigured
-/// [`RenderResources`] clones keep sharing the same budget object while their
+/// [`RenderResources`](super::RenderResources) clones keep sharing the same budget object while their
 /// caches, provider budgets, and in-flight maps are replaced, so cache and
 /// policy isolation holds while decoder concurrency and retained peak stay
 /// bounded across independent contexts.
