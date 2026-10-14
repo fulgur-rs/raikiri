@@ -75,6 +75,7 @@ css/css-backgrounds/parsing/background-position-valid.html
 css/css-backgrounds/parsing/background-position-x-invalid.html
 css/css-backgrounds/parsing/background-position-y-invalid.html
 css/css-backgrounds/parsing/background-repeat-valid.html
+css/css-backgrounds/parsing/background-shorthand-serialization.html
 css/css-backgrounds/parsing/background-size-valid.html
 css/css-backgrounds/parsing/border-color-invalid.html
 css/css-backgrounds/parsing/border-image-invalid.html
@@ -1719,6 +1720,9 @@ css/css-multicol/nested-at-outer-boundary-as-fieldset.html
 css/css-multicol/nested-past-fragmentation-line.html
 css/css-multicol/resize-multicol-with-fixed-size-children.html
 
+# --- multicol min-block-size children avoiding breaks sliced at column edges (exact 800x600, bundled WPT fonts, audit KEEP, 2026-10-14) ---
+css/css-break/break-inside-avoid-min-block-size-1.html
+
 # --- ::first-line opacity group (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-13) ---
 # KEEP in two audit-vacuous-passes runs.
 css/css-pseudo/first-line-opacity-001.html
@@ -1822,7 +1826,6 @@ css/CSS2/pagination/row-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-5-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-7-print.html
-css/CSS2/positioning/absolute-non-replaced-height-013.html
 css/CSS2/positioning/absolute-non-replaced-max-001.html
 css/CSS2/positioning/absolute-non-replaced-min-001.html
 css/CSS2/positioning/absolute-non-replaced-min-max-001.html

@@ -659,7 +659,7 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
             push_longhand(PropertyValue::ListStylePosition(value.position));
             push_longhand(PropertyValue::ListStyleImage(value.image.clone()));
         }
-        PropertyValue::BorderRadius(radius) => {
+        PropertyValue::BorderRadius(ref radius) => {
             push_longhand(PropertyValue::BorderRadiusTopLeft(radius.top_left));
             push_longhand(PropertyValue::BorderRadiusTopRight(radius.top_right));
             push_longhand(PropertyValue::BorderRadiusBottomRight(radius.bottom_right));

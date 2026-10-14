@@ -654,6 +654,12 @@ pub struct ComputedValues {
     /// to downstream paint. By contrast, [`ComputedLineHeight::Length`] is px
     /// fixed at the declaring element, which children **inherit unchanged**.
     pub line_height: ComputedLineHeight,
+    /// The used length of `line-height: normal` for this element's first
+    /// available font, the `lh` basis when [`Self::line_height`] is
+    /// [`ComputedLineHeight::Normal`]. Not a CSS property: the cascade measures
+    /// it with [`crate::CascadeOptions::normal_line_height`], and it is `None`
+    /// without a measurer or when the line height is not `normal`.
+    pub normal_line_height: Option<ComputedLength>,
     /// `display`. **Not inherited**; initial: `DisplayValue::Inline`
     /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>).
     /// Currently supports 18 keywords (`block` / `inline` / `inline-block` /
@@ -2020,6 +2026,17 @@ pub struct ComputedValues {
 }
 
 impl ComputedValues {
+    /// This element's `lh` basis: its line height as an absolute length,
+    /// with `normal` taken from [`Self::normal_line_height`]. `None` when
+    /// `normal` was not measured.
+    pub fn lh_basis(&self) -> Option<ComputedLength> {
+        crate::resolve::used_line_height_length_or(
+            self.line_height,
+            self.font_size,
+            self.normal_line_height,
+        )
+    }
+
     /// The background layers, top first (see [`Self::background_layers`]).
     /// Never empty.
     pub fn background_layers(&self) -> &[ComputedBackgroundLayer] {
@@ -2091,6 +2108,7 @@ impl ComputedValues {
             // CSS Inline 3 §5.1: initial line-height is `normal`; paint resolves
             // it using font metrics equivalent to ascent + descent.
             line_height: ComputedLineHeight::Normal,
+            normal_line_height: None,
             display: DisplayValue::Inline,
             list_style_type: ListStyleType::Disc,
             list_style_position: ListStylePosition::Outside,

@@ -517,9 +517,11 @@ pub enum Length {
     /// a real font instance, see the [`crate::resolve::used_line_height_length`]
     /// documentation (the same obstacle as `cap`/`rcap`). Unlike `ex`/`ch`/`ic`,
     /// the spec gives no font-size-ratio fallback. Under our independent-
-    /// implementation policy, we do not invent one: resolution instead falls
-    /// back per property to a value equivalent to that property’s initial value
-    /// (see the `resolve_*` function docs in [`crate::resolve`]).
+    /// implementation policy, we do not invent one. A cascade given a
+    /// [`crate::resolve::NormalLineHeight`] measures `normal` in the element's
+    /// fonts; without one, resolution falls back per property to a value
+    /// equivalent to that property’s initial value (see the `resolve_*`
+    /// function docs in [`crate::resolve`]).
     ///
     /// # Self-reference (when used as the value of `line-height` itself)
     ///
@@ -7451,6 +7453,12 @@ impl<T: Copy> From<T> for CornerRadius<T> {
     }
 }
 
+impl From<Length> for CornerRadius<LengthPercentageOrCalc> {
+    fn from(value: Length) -> Self {
+        Self::circular(value.into())
+    }
+}
+
 /// Four physical corners of a `border-radius` shorthand.
 ///
 /// This is the shorthand from CSS Backgrounds and Borders Level 3 §4.1
@@ -7463,37 +7471,40 @@ impl<T: Copy> From<T> for CornerRadius<T> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BorderRadius {
     /// top-left corner radius.
-    pub top_left: CornerRadius<Length>,
+    pub top_left: CornerRadius<LengthPercentageOrCalc>,
     /// top-right corner radius.
-    pub top_right: CornerRadius<Length>,
+    pub top_right: CornerRadius<LengthPercentageOrCalc>,
     /// bottom-right corner radius.
-    pub bottom_right: CornerRadius<Length>,
+    pub bottom_right: CornerRadius<LengthPercentageOrCalc>,
     /// bottom-left corner radius.
-    pub bottom_left: CornerRadius<Length>,
+    pub bottom_left: CornerRadius<LengthPercentageOrCalc>,
 }
 
 impl BorderRadius {
     /// Expand four horizontal and four vertical radii in clockwise order.
-    pub const fn elliptical(horizontal: [Length; 4], vertical: [Length; 4]) -> Self {
+    pub fn elliptical<T: Into<LengthPercentageOrCalc>>(
+        horizontal: [T; 4],
+        vertical: [T; 4],
+    ) -> Self {
+        let [h0, h1, h2, h3] = horizontal.map(Into::into);
+        let [v0, v1, v2, v3] = vertical.map(Into::into);
         Self {
-            top_left: CornerRadius::new(horizontal[0], vertical[0]),
-            top_right: CornerRadius::new(horizontal[1], vertical[1]),
-            bottom_right: CornerRadius::new(horizontal[2], vertical[2]),
-            bottom_left: CornerRadius::new(horizontal[3], vertical[3]),
+            top_left: CornerRadius::new(h0, v0),
+            top_right: CornerRadius::new(h1, v1),
+            bottom_right: CornerRadius::new(h2, v2),
+            bottom_left: CornerRadius::new(h3, v3),
         }
     }
 
     /// Expand four scalar corner values, using each value on both axes.
-    pub const fn corners(
-        top_left: Length,
-        top_right: Length,
-        bottom_right: Length,
-        bottom_left: Length,
+    pub fn corners<T: Into<LengthPercentageOrCalc>>(
+        top_left: T,
+        top_right: T,
+        bottom_right: T,
+        bottom_left: T,
     ) -> Self {
-        Self::elliptical(
-            [top_left, top_right, bottom_right, bottom_left],
-            [top_left, top_right, bottom_right, bottom_left],
-        )
+        let values = [top_left, top_right, bottom_right, bottom_left].map(Into::into);
+        Self::elliptical(values, values)
     }
 }
 
@@ -7624,6 +7635,12 @@ pub struct Outline {
 /// `right`/`bottom`, it is folded into `Start`. `End` occurs only with
 /// non-percentage offsets (such as the horizontal component of
 /// `right 10px top`) that would require an equivalent `calc()` expression.
+///
+/// A mixed-unit `calc()` offset is always measured from the start edge
+/// ([`Self::Calc`] / [`Self::RelativeCalc`]): one authored after `right` or
+/// `bottom` is folded when parsed, so `right calc(20% + 10px)` is stored as
+/// `calc(80% - 10px)`. Positions accept negative values, so no offset is
+/// clamped.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CssPositionOffset {
@@ -7632,6 +7649,24 @@ pub enum CssPositionOffset {
     /// Offset from the end edge (horizontal: `right`, vertical: `bottom`) —
     /// see "Why two variants?" in the type docs above.
     End(Length),
+    /// A percentage with an absolute-length offset, measured from the start
+    /// edge.
+    Calc(CalcLengthPercentage),
+    /// A `calc()` with font-relative or viewport terms, measured from the
+    /// start edge and absolutized at computed-value time.
+    RelativeCalc(RelativeCalcLengthPercentage),
+}
+
+impl CssPositionOffset {
+    /// The start-edge offset of a mixed-unit `calc()`, folded like
+    /// [`LengthOrAuto::from_relative_calc`].
+    pub(crate) fn from_relative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match LengthPercentageOrCalc::from_relative_calc(value) {
+            LengthPercentageOrCalc::Length(length) => Self::Start(length),
+            LengthPercentageOrCalc::Calc(calc) => Self::Calc(calc),
+            LengthPercentageOrCalc::RelativeCalc(calc) => Self::RelativeCalc(calc),
+        }
+    }
 }
 
 /// The `<position>` value type (CSS Backgrounds and Borders 3 §2.6;
@@ -10481,17 +10516,19 @@ pub enum PropertyValue {
     /// `border-radius` — non-inherited. Expands the four-corner
     /// `<length-percentage>` shorthand into [`BorderRadius`]. Percentages are
     /// retained independently on both axes through computed-value processing.
-    BorderRadius(BorderRadius),
+    /// Boxed because four corners of mixed-unit `calc()` values outgrow the
+    /// size bound on this enum.
+    BorderRadius(Box<BorderRadius>),
     /// `border-radius: inherit` — resolved from the parent computed corners.
     BorderRadiusInherit,
     /// `border-top-left-radius` with one or two `<length-percentage>` values.
-    BorderRadiusTopLeft(CornerRadius<Length>),
+    BorderRadiusTopLeft(CornerRadius<LengthPercentageOrCalc>),
     /// `border-top-right-radius` with one or two `<length-percentage>` values.
-    BorderRadiusTopRight(CornerRadius<Length>),
+    BorderRadiusTopRight(CornerRadius<LengthPercentageOrCalc>),
     /// `border-bottom-right-radius` with one or two `<length-percentage>` values.
-    BorderRadiusBottomRight(CornerRadius<Length>),
+    BorderRadiusBottomRight(CornerRadius<LengthPercentageOrCalc>),
     /// `border-bottom-left-radius` with one or two `<length-percentage>` values.
-    BorderRadiusBottomLeft(CornerRadius<Length>),
+    BorderRadiusBottomLeft(CornerRadius<LengthPercentageOrCalc>),
     /// `box-shadow: none | <shadow>#` — non-inherited. Retains multiple entries.
     /// Each entry retains `inset` and omitted colors.
     BoxShadow(Arc<Vec<BoxShadowItem>>),

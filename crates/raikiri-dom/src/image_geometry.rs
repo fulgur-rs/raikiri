@@ -87,8 +87,11 @@ fn background_length(value: ComputedLengthPercentageOrAuto, basis: f64) -> Optio
         ComputedLengthPercentageOrAuto::Px(px) => Some(px as f64),
         ComputedLengthPercentageOrAuto::Percent(percent) => Some(basis * percent as f64 / 100.0),
         ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => None,
+        // `background-size` does not accept negative values, so a `calc()`
+        // that resolves below zero clamps to zero (CSS Values 4 "Range
+        // Checking").
         ComputedLengthPercentageOrAuto::Calc(calc) => {
-            Some(basis * calc.percent as f64 / 100.0 + calc.px as f64)
+            Some((basis * calc.percent as f64 / 100.0 + calc.px as f64).max(0.0))
         }
     }
 }
@@ -481,6 +484,9 @@ pub fn position_offset(offset: ComputedCssPositionOffset, free_space: f64) -> f6
                 free_space * (1.0 - percent as f64 / 100.0)
             }
         },
+        ComputedCssPositionOffset::Calc(calc) => {
+            free_space * calc.percent as f64 / 100.0 + calc.px as f64
+        }
         _ => free_space / 2.0, // cov:ignore: defensive fallback for future position variants
     }
 }

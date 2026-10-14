@@ -165,6 +165,7 @@ impl PageLengthBasis<'_> {
             match computed {
                 ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
                 ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+                ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
             }
         }
         let computed =
@@ -291,34 +292,26 @@ impl PageLengthBasis<'_> {
     }
 
     /// Convert the four `border-radius` corners from computed lengths back
-    /// to the `Length::Px` representation carried by `PropertyValue`.
+    /// to the `Length::Px` representation carried by `PropertyValue`, with a
+    /// mixed `calc()` kept as one.
     /// The page bag has the same computed-value contract as the element path's
     /// `ComputedValues`, but reuses specified-side payload types to preserve
     /// the existing bag API.
     fn corner_radius_value(
         self,
-        specified: crate::property::CornerRadius<Length>,
-    ) -> crate::property::CornerRadius<Length> {
-        specified.map(|axis| match axis {
-            Length::Percent(percent) => Length::Percent(percent),
-            value => Length::Px(
-                resolve_length(value, self.font_size, self.own_line_height, self.ctx).px(),
-            ),
-        })
+        specified: crate::property::CornerRadius<LengthPercentageOrCalc>,
+    ) -> crate::property::CornerRadius<LengthPercentageOrCalc> {
+        specified.map(|axis| self.lpc(axis))
     }
 
-    fn border_radius_value(self, specified: BorderRadius) -> BorderRadius {
+    fn border_radius_value(self, specified: &BorderRadius) -> BorderRadius {
         let computed =
-            resolve_border_radius(specified, self.font_size, self.own_line_height, self.ctx);
-        let length = |value: ComputedLengthPercentage| match value {
-            ComputedLengthPercentage::Px(px) => Length::Px(px),
-            ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-        };
+            resolve_border_radius(*specified, self.font_size, self.own_line_height, self.ctx);
         BorderRadius {
-            top_left: computed.top_left.map(length),
-            top_right: computed.top_right.map(length),
-            bottom_right: computed.bottom_right.map(length),
-            bottom_left: computed.bottom_left.map(length),
+            top_left: computed.top_left.map(lift_length_percentage_or_calc),
+            top_right: computed.top_right.map(lift_length_percentage_or_calc),
+            bottom_right: computed.bottom_right.map(lift_length_percentage_or_calc),
+            bottom_left: computed.bottom_left.map(lift_length_percentage_or_calc),
         }
     }
 
@@ -825,7 +818,7 @@ pub(super) fn absolutize_in_page_context(
         }
         PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),
         // ── border-radius / box-shadow / outline ─────────────────────────
-        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(basis.border_radius_value(v)),
+        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(Box::new(basis.border_radius_value(&v))),
         PropertyValue::BorderRadiusInherit => PropertyValue::BorderRadiusInherit,
         PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(basis.corner_radius_value(v)),
         PropertyValue::BorderRadiusTopRight(v) => PropertyValue::BorderRadiusTopRight(basis.corner_radius_value(v)),

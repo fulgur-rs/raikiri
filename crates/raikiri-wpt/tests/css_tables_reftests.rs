@@ -169,7 +169,6 @@ fn css_tables_border_collapse_and_paint_pairs_are_pixel_exact_at_800x600() {
         "css/css-tables/collapsed-border-vertical-lr-rtl-overflow.html",
         "css/css-tables/collapsed-border-vertical-rtl-overflow.html",
         "css/css-tables/out-of-order-elements-collapsed-border.html",
-        "css/css-tables/paint/col-change-span-bg-invalidation-002.html",
         "css/css-tables/paint/col-paint-htb-rtl.html",
         "css/css-tables/paint/table-border-paint-caption-change.html",
         "css/css-tables/rowspan-cell-border-after-color.html",

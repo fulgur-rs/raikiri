@@ -267,6 +267,7 @@ fn parent_fixture() -> ComputedValues {
         font_size_keyword_basis: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Number(1.5),
+        normal_line_height: None,
         display: DisplayValue::Block,
         list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
         list_style_position: ListStylePosition::Inside,
@@ -309,10 +310,10 @@ fn parent_fixture() -> ComputedValues {
             color: BorderColor::Resolved(CssColor::BLACK),
         }),
         border_radius: ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(1.0).into(),
-            top_right: ComputedLengthPercentage::Px(2.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(3.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(4.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(1.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(2.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(3.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(4.0).into(),
         },
         box_shadow: Arc::new(vec![ComputedBoxShadowItem {
             offset_x: ComputedLength(1.0),

@@ -40,6 +40,17 @@ pub(crate) struct IfcRoot {
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the elements in `offsets` whose offset depends on the
+    /// root's size or writing mode, by index in `offsets`, which
+    /// [`Self::resolve_percent_offsets`] applies.
+    pub(crate) percent_insets: Vec<(usize, super::style::InlineRelativeInsets)>,
+    /// The root's content height when it is definite, which a percentage
+    /// `top` or `bottom` of its inline elements refers to.
+    pub(crate) definite_height: Option<f32>,
+    /// The root's physical content width, which a percentage `left` or
+    /// `right` of its inline elements refers to. Lines may be narrower when
+    /// the root lays them out in columns.
+    pub(crate) containing_width: Option<f32>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
@@ -294,6 +305,9 @@ impl IfcRoot {
             generated_atomics: projected.generated_atomics,
             rtl: projected.rtl,
             offsets: projected.offsets,
+            percent_insets: projected.percent_insets,
+            definite_height: None,
+            containing_width: None,
             cleared_breaks: projected.cleared_breaks.into_iter().collect(),
             fixed: projected.fixed,
             multicol_fragments: None,
@@ -304,6 +318,18 @@ impl IfcRoot {
             letter_styles: projected.letter_styles,
             first_line_opacity: projected.first_line_opacity,
             letter_style_index,
+        }
+    }
+
+    /// Resolve the offsets that depend on the root's size against a content
+    /// box [`Self::containing_width`] (else `width`) wide and
+    /// [`Self::definite_height`] high, the containing block of its inline
+    /// elements.
+    pub(crate) fn resolve_percent_offsets(&mut self, width: f32) {
+        let width = self.containing_width.unwrap_or(width);
+        for (index, insets) in &self.percent_insets {
+            self.offsets[*index].1 =
+                insets.offset_in(width, self.definite_height, self.writing_mode, self.rtl);
         }
     }
 
@@ -320,6 +346,9 @@ impl IfcRoot {
             generated_atomics: self.generated_atomics.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
+            percent_insets: self.percent_insets.clone(),
+            definite_height: self.definite_height,
+            containing_width: self.containing_width,
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,

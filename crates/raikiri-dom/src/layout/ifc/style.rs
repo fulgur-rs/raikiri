@@ -85,28 +85,143 @@ pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
     Some((dx, dy))
 }
 
-/// The paint offset of a `position: relative` inline element of a paragraph
-/// laid out by the inline engine, as [`relative_offset`] gives it, with what
-/// the lines do not model degraded: an inset in a percentage or calc() is
-/// taken as zero (the root's width is not known when the paragraph is
-/// projected), and a `z-index` is drawn in the paragraph's order instead of
-/// as a stacking context of its own.
-pub(crate) fn relative_offset_in_lines(cv: &ComputedValues) -> (f32, f32) {
-    if cv.position != p::PositionValue::Relative {
-        return (0.0, 0.0);
+/// The insets of a `position: relative` inline element of a paragraph laid
+/// out by the inline engine. A `z-index` is drawn in the paragraph's order
+/// instead of as a stacking context of its own.
+///
+/// A percentage refers to the size of the containing block (CSS 2.1 §9.3.2),
+/// the root's content box, which is not known when the paragraph is
+/// projected; [`Self::offset`] takes it once layout knows it. A percentage in
+/// `top` or `bottom` against a height that is not definite counts as `auto`
+/// (CSS 2.1 §10.5). When both `left` and `right` apply, the one at the end
+/// of the containing block's line is ignored (CSS 2.1 §9.4.3).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InlineRelativeInsets {
+    left: Option<InsetTerms>,
+    right: Option<InsetTerms>,
+    top: Option<InsetTerms>,
+    bottom: Option<InsetTerms>,
+}
+
+/// The terms of a non-`auto` inset: a length plus, for a percentage or a
+/// calc() with a percentage, a percentage of the containing block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InsetTerms {
+    px: f32,
+    percent: Option<f32>,
+}
+
+impl InsetTerms {
+    /// The used value against `basis`, or `None` (`auto`) when the inset
+    /// has a percentage and the basis is not definite.
+    fn resolve(self, basis: Option<f32>) -> Option<f32> {
+        match self.percent {
+            None => Some(self.px),
+            // Scale the percentage first so a large one does not overflow.
+            Some(percent) => basis.map(|basis| self.px + basis * (percent / 100.0)),
+        }
     }
-    let inset = |value: LengthOrAuto| match value {
-        LengthOrAuto::Px(px) => Some(px),
-        LengthOrAuto::Auto => None,
-        _ => Some(0.0),
-    };
-    let dx = inset(cv.left)
-        .or(inset(cv.right).map(|r| -r))
+}
+
+impl InlineRelativeInsets {
+    /// The insets of `cv`, or `None` when the box is not relatively
+    /// positioned.
+    pub(crate) fn of(cv: &ComputedValues) -> Option<Self> {
+        if cv.position != p::PositionValue::Relative {
+            return None;
+        }
+        let terms = |value: LengthOrAuto| match value {
+            LengthOrAuto::Px(px) => Some(InsetTerms { px, percent: None }),
+            LengthOrAuto::Percent(percent) => Some(InsetTerms {
+                px: 0.0,
+                percent: Some(percent),
+            }),
+            LengthOrAuto::Calc(calc) => Some(InsetTerms {
+                px: calc.px,
+                percent: Some(calc.percent),
+            }),
+            LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
+        };
+        Some(Self {
+            left: terms(cv.left),
+            right: terms(cv.right),
+            top: terms(cv.top),
+            bottom: terms(cv.bottom),
+        })
+    }
+
+    /// Whether the offset depends on the containing block's size.
+    pub(crate) fn has_percentage(&self) -> bool {
+        [self.left, self.right, self.top, self.bottom]
+            .into_iter()
+            .flatten()
+            .any(|terms| terms.percent.is_some())
+    }
+
+    /// Whether the offset depends on the containing block: its size, for a
+    /// percentage, or its writing mode, when opposing insets both apply.
+    pub(crate) fn depends_on_containing_block(&self) -> bool {
+        self.has_percentage()
+            || (self.left.is_some() && self.right.is_some())
+            || (self.top.is_some() && self.bottom.is_some())
+    }
+
+    /// The paint offset against a horizontal containing block `width` wide
+    /// and, when it is definite, `height` high; see [`Self::offset_in`].
+    pub(crate) fn offset(&self, width: f32, height: Option<f32>, rtl: bool) -> (f32, f32) {
+        self.offset_in(width, height, WritingMode::HorizontalTb, rtl)
+    }
+
+    /// The paint offset against a containing block `width` wide and, when it
+    /// is definite, `height` high, with the writing `mode` and direction
+    /// `rtl`: when opposing insets both apply, the one on the containing
+    /// block's end side is ignored (CSS Position 3 §3.3).
+    pub(crate) fn offset_in(
+        &self,
+        width: f32,
+        height: Option<f32>,
+        mode: WritingMode,
+        rtl: bool,
+    ) -> (f32, f32) {
+        let (right_wins, bottom_wins) = inset_precedence(mode, rtl);
+        let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
+        let left = self.left.and_then(|terms| terms.resolve(Some(width)));
+        let right = self
+            .right
+            .and_then(|terms| terms.resolve(Some(width)))
+            .map(|right| -right);
+        let dx = if right_wins {
+            right.or(left)
+        } else {
+            left.or(right)
+        }
         .unwrap_or(0.0);
-    let dy = inset(cv.top)
-        .or(inset(cv.bottom).map(|b| -b))
+        let top = self.top.and_then(|terms| terms.resolve(height));
+        let bottom = self
+            .bottom
+            .and_then(|terms| terms.resolve(height))
+            .map(|bottom| -bottom);
+        let dy = if bottom_wins {
+            bottom.or(top)
+        } else {
+            top.or(bottom)
+        }
         .unwrap_or(0.0);
-    (dx, dy)
+        (finite(dx), finite(dy))
+    }
+}
+
+/// Whether `right` wins over `left`, and `bottom` over `top`, when both of a
+/// pair apply in a containing block with the writing `mode` and direction
+/// `rtl`: the inset on the start side of each axis wins (CSS Position 3
+/// §3.3).
+pub(crate) fn inset_precedence(mode: WritingMode, rtl: bool) -> (bool, bool) {
+    match mode {
+        WritingMode::HorizontalTb => (rtl, false),
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => (true, rtl),
+        WritingMode::VerticalLr => (false, rtl),
+        WritingMode::SidewaysLr => (false, !rtl),
+    }
 }
 
 /// The key of this element's own font, which measures a `ch` value declared

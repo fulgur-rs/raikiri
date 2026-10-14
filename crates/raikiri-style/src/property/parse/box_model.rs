@@ -1252,7 +1252,7 @@ pub(super) fn parse_inset(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
     }
-    let length = parse_length_value(input, false)?;
+    let length = parse_length_value(input, true)?;
     Some(LengthOrAuto::Length(length))
 }
 
@@ -1287,17 +1287,11 @@ pub(super) fn parse_border_radius(input: &mut Parser<'_, '_>) -> Option<BorderRa
     Some(BorderRadius::elliptical(horizontal, vertical))
 }
 
-fn parse_border_radius_axis(input: &mut Parser<'_, '_>) -> Option<[Length; 4]> {
-    let first = parse_non_negative_length_percentage(input)?;
-    let second = input
-        .try_parse(parse_non_negative_length_percentage_res)
-        .ok();
-    let third = input
-        .try_parse(parse_non_negative_length_percentage_res)
-        .ok();
-    let fourth = input
-        .try_parse(parse_non_negative_length_percentage_res)
-        .ok();
+fn parse_border_radius_axis(input: &mut Parser<'_, '_>) -> Option<[LengthPercentageOrCalc; 4]> {
+    let first = parse_border_radius_value(input)?;
+    let second = input.try_parse(parse_border_radius_value_res).ok();
+    let third = input.try_parse(parse_border_radius_value_res).ok();
+    let fourth = input.try_parse(parse_border_radius_value_res).ok();
     let second = second.unwrap_or(first);
     let third = third.unwrap_or(first);
     let fourth = fourth.unwrap_or(second);
@@ -1307,13 +1301,29 @@ fn parse_border_radius_axis(input: &mut Parser<'_, '_>) -> Option<[Length; 4]> {
 /// A corner longhand accepts one or two non-negative axis values.
 pub(super) fn parse_border_radius_corner(
     input: &mut Parser<'_, '_>,
-) -> Option<CornerRadius<Length>> {
-    let horizontal = parse_non_negative_length_percentage(input)?;
+) -> Option<CornerRadius<LengthPercentageOrCalc>> {
+    let horizontal = parse_border_radius_value(input)?;
     let vertical = input
-        .try_parse(parse_non_negative_length_percentage_res)
+        .try_parse(parse_border_radius_value_res)
         .ok()
         .unwrap_or(horizontal);
     Some(CornerRadius::new(horizontal, vertical))
+}
+
+/// One `<length-percentage [0,∞]>` radius. A mixed-unit `calc()` reaches this
+/// parser only after substitution or simplification failed to fold it to one
+/// dimension; it is clamped to the range rather than rejected.
+fn parse_border_radius_value(input: &mut Parser<'_, '_>) -> Option<LengthPercentageOrCalc> {
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LengthPercentageOrCalc::from_non_negative_calc(calc));
+    }
+    parse_non_negative_length_percentage(input).map(LengthPercentageOrCalc::Length)
+}
+
+fn parse_border_radius_value_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthPercentageOrCalc, ParseError<'i, ()>> {
+    parse_border_radius_value(input).ok_or_else(|| input.new_custom_error(()))
 }
 
 pub(super) fn parse_non_negative_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {

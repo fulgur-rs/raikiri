@@ -8211,6 +8211,21 @@ fn measure_ch_advance_uses_the_engine_fonts() {
 }
 
 #[test]
+fn measure_normal_line_height_uses_the_engine_fonts() {
+    // Ahem's ascent and descent fill the em box with no line gap.
+    let key = raikiri_style::ChFontKey {
+        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        size: raikiri_style::ComputedLength(20.0),
+        weight: 400.0,
+        style: raikiri_style::property::FontStyle::Normal,
+    };
+    assert_eq!(
+        crate::layout::measure_normal_line_height(&ifc_ahem_fonts(), &key),
+        Some(20.0)
+    );
+}
+
+#[test]
 fn a_fixed_root_and_a_paragraph_in_an_unsized_fixed_box_are_laid_out_by_the_engine() {
     // A fixed box shrinks against the page area; "aaaa bbbb cccc" is one
     // 140px line wherever the box sits, also under a zero-wide positioned
@@ -13168,6 +13183,84 @@ fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
 }
 
 #[test]
+fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
+    let fragment = |parent, y, height, clip_height: Option<f32>| crate::fragment::LayoutFragment {
+        node_id: 0,
+        parent,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y,
+            width: 10.0,
+            height,
+        },
+        fragmentainer_clip: clip_height.map(|height| crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height,
+        }),
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // A column clipped at 50px holds an unclipped 250px fragment, which
+    // holds an unclipped 400px one 20px down.
+    let fragments = [
+        fragment(None, 0.0, 300.0, Some(50.0)),
+        fragment(Some(0), 0.0, 250.0, None),
+        fragment(Some(1), 20.0, 400.0, None),
+    ];
+    let children = HashMap::from([(0, vec![1]), (1, vec![2])]);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        150.0
+    );
+    // Without the outer clip, the deepest fragment paints to its own end.
+    let fragments = [fragment(None, 0.0, 300.0, None), fragments[1], fragments[2]];
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        520.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[], 100.0, |_| false),
+        f32::NEG_INFINITY
+    );
+}
+
+#[test]
+fn fragment_tree_end_caps_descendants_of_overflow_clipping_fragments() {
+    let fragment = |node_id, parent, height| crate::fragment::LayoutFragment {
+        node_id,
+        parent,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height,
+        },
+        fragmentainer_clip: None,
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // A 30px wrapper that clips its overflow holds a 400px fragment.
+    let fragments = [fragment(1, None, 30.0), fragment(2, Some(0), 400.0)];
+    let children = HashMap::from([(0, vec![1])]);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |node_id| node_id == 1),
+        30.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |_| false),
+        400.0
+    );
+}
+
+#[test]
 fn lines_after_a_forced_break_clear_the_earlier_floats() {
     for (break_css, cleared) in [("break-after:page", true), ("break-after:auto", false)] {
         let mut ids = Vec::new();
@@ -13406,4 +13499,252 @@ fn an_absolutely_positioned_box_of_the_paragraph_keeps_its_inset_place() {
     });
     assert_eq!(page_flow_y(&doc, ids[2]), 100.0);
     assert_eq!(page_flow_y(&doc, ids[3]), 0.0);
+}
+
+/// The block positions of `position: relative` children inside a parent
+/// with the style `parent`.
+fn relative_child_positions(parent: &str, children: &[&str]) -> Vec<f32> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{parent}")),
+    );
+    let children: Vec<_> = children
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some(&format!(
+                    "display:block;position:relative;height:10px;{style}"
+                )),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 500.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    children
+        .into_iter()
+        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .collect()
+}
+
+#[test]
+fn a_percentage_relative_offset_resolves_against_a_definite_height() {
+    // CSS 2.1 §9.4.3: `top` and `bottom` percentages refer to the height of
+    // the containing block.
+    let positions = relative_child_positions(
+        "height:100px",
+        &["top:30%", "bottom:20%", "top:calc(10% + 5px)"],
+    );
+    assert_eq!(positions.len(), 3);
+    assert!((positions[0] - 30.0).abs() < 1e-3, "{positions:?}");
+    assert!((positions[1] - (10.0 - 20.0)).abs() < 1e-3, "{positions:?}");
+    assert!((positions[2] - (20.0 + 15.0)).abs() < 1e-3, "{positions:?}");
+}
+
+#[test]
+fn a_percentage_relative_offset_is_auto_without_a_definite_height() {
+    // With an auto-height containing block the percentage computes to `auto`.
+    assert_eq!(
+        relative_child_positions("", &["top:30%", "bottom:50%"]),
+        vec![0.0, 10.0]
+    );
+}
+
+/// The physical position of an `inline-block` with the style `atomic`
+/// inside a vertical-rl root 100px wide and 200px high.
+fn vertical_atomic_location(atomic: &str) -> (f32, f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:100px;height:200px"),
+    );
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some(&format!(
+            "display:inline-block;width:10px;height:10px;position:relative;{atomic}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 500.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    let location = doc.get_node(atomic).unwrap().unrounded_layout.location;
+    (location.x, location.y)
+}
+
+#[test]
+fn a_vertical_atomic_resolves_a_left_percentage_against_the_physical_width() {
+    // CSS 2.1 §9.4.3: `left` percentages refer to the containing block's
+    // width, which is the block extent of a vertical root.
+    let (x0, y0) = vertical_atomic_location("left:0");
+    let (x, y) = vertical_atomic_location("left:50%");
+    assert!((x - x0 - 50.0).abs() < 1e-3, "{x0} -> {x}");
+    assert_eq!(y, y0);
+}
+
+#[test]
+fn a_relative_block_in_a_mixed_root_resolves_a_top_percentage_against_its_height() {
+    // CSS 2.1 §9.4.3: `top` percentages refer to the height of the
+    // containing block, here the 200px root that also holds a line of text.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;position:relative;top:50%"),
+        );
+    });
+    let still_y = doc.nodes[still].unrounded_layout.location.y;
+    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    assert_eq!(moved_y - still_y, 10.0 + 100.0);
+}
+
+#[test]
+fn a_relative_block_in_an_rtl_mixed_root_prefers_right() {
+    // CSS 2.1 §9.4.3: when both `left` and `right` apply in a right-to-left
+    // containing block, `left` is ignored.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px;direction:rtl;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:50px;height:10px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:50px;height:10px;position:relative;left:5px;right:10%"),
+        );
+    });
+    let still_x = doc.nodes[still].unrounded_layout.location.x;
+    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    assert_eq!(moved_x - still_x, -20.0);
+}
+
+#[test]
+fn a_relative_block_in_a_vertical_rl_mixed_root_prefers_right() {
+    // CSS Position 3 §3.3: in a vertical-rl containing block the right side
+    // is the block start, so `right` wins over `left` even with `direction:
+    // ltr`.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;writing-mode:vertical-rl;width:200px;height:100px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px;position:relative;left:5px;right:10%"),
+        );
+    });
+    let still_x = doc.nodes[still].unrounded_layout.location.x;
+    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    // The moved block sits 10px left of the other before its offset.
+    assert_eq!(moved_x - still_x, -10.0 - 20.0);
+}
+
+#[test]
+fn a_relative_block_in_an_rtl_vertical_mixed_root_prefers_bottom() {
+    // CSS Position 3 §3.3: in a right-to-left vertical containing block the
+    // inline axis starts at the bottom, so `bottom` wins over `top`.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;writing-mode:vertical-rl;direction:rtl;width:200px;height:100px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px;position:relative;top:3px;bottom:4px"),
+        );
+    });
+    let still_y = doc.nodes[still].unrounded_layout.location.y;
+    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    assert_eq!(moved_y - still_y, -4.0);
 }

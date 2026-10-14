@@ -6018,7 +6018,9 @@ pub(crate) fn paint_inline_box(
             && cv.transform.is_empty()
             && cv.filter.is_empty(),
     );
-    let square = raikiri_style::property::CornerRadius::circular(ComputedLengthPercentage::Px(0.0));
+    let square = raikiri_style::property::CornerRadius::circular(
+        raikiri_style::resolve::ComputedLengthPercentageOrCalc::Px(0.0),
+    );
     if !left_edge {
         radius.top_left = square;
         radius.bottom_left = square;
@@ -6861,8 +6863,9 @@ fn fixup_conic_offsets(stops: &[Option<f32>]) -> Vec<f32> {
 /// One axis of a conic center inside its positioning area.
 ///
 /// Percentages resolve against the area size, lengths offset from the
-/// matching edge. Only pixel and percentage lengths survive style
-/// resolution, so other length kinds fall back to the area middle.
+/// matching edge, and a `calc()` from the start edge. Only pixel and
+/// percentage lengths and absolute `calc()` sums survive style resolution, so
+/// other length kinds fall back to the area middle.
 fn conic_axis_center(offset: &CssPositionOffset, start: f64, end: f64) -> f64 {
     match offset {
         CssPositionOffset::Start(Length::Px(px)) => start + f64::from(*px),
@@ -6872,6 +6875,9 @@ fn conic_axis_center(offset: &CssPositionOffset, start: f64, end: f64) -> f64 {
         CssPositionOffset::End(Length::Px(px)) => end - f64::from(*px),
         CssPositionOffset::End(Length::Percent(percent)) => {
             end - (end - start) * f64::from(*percent) / 100.0
+        }
+        CssPositionOffset::Calc(calc) => {
+            start + (end - start) * f64::from(calc.percent) / 100.0 + f64::from(calc.px)
         }
         // cov:ignore: only Px and Percent survive resolution, other lengths are unreachable
         _ => (start + end) / 2.0,
