@@ -466,7 +466,7 @@ pub struct Document {
     /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
     pub(crate) orthogonal_block_in_layout: Option<usize>,
     /// Vertical block containers being laid out on transposed axes, the
-    /// innermost last; see `taffy_impl::vertical_block`.
+    /// innermost last; see [`crate::taffy_impl::TransposedBlock`].
     pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
     /// Block containers being laid out, each with the content-box width its
     /// children's percentage padding and borders resolve against; see
