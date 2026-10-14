@@ -392,7 +392,7 @@ fn border_image_longhand(
             PropertyValue::BorderImageSource(shorthand.source.clone())
         }
         PropertyKey::BorderImageSlice => PropertyValue::BorderImageSlice(shorthand.slice),
-        PropertyKey::BorderImageWidth => PropertyValue::BorderImageWidth(shorthand.width),
+        PropertyKey::BorderImageWidth => PropertyValue::BorderImageWidth(Box::new(shorthand.width)),
         PropertyKey::BorderImageOutset => PropertyValue::BorderImageOutset(shorthand.outset),
         PropertyKey::BorderImageRepeat => PropertyValue::BorderImageRepeat(shorthand.repeat),
         _ => return None,

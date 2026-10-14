@@ -5218,7 +5218,7 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
     }
     assert_eq!(
         resolve_against_inherited(PropertyValue::MarginInherit, &root, &ctx).into_property_value(),
-        PropertyValue::Margin(root.margin.map(|value| match value {
+        PropertyValue::Margin(Box::new(root.margin.map(|value| match value {
             ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
             ComputedLengthPercentageOrAuto::Percent(percent) => {
                 LengthOrAuto::Length(Length::Percent(percent))
@@ -5226,7 +5226,7 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::Length(Length::Px(0.0)),
-        }))
+        })))
     );
 }
 
@@ -7361,7 +7361,7 @@ fn apply_value_direct_padding_shorthand_direct_assign() {
         bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
         left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
     };
-    apply_value(PropertyValue::Padding(sides), &mut cv);
+    apply_value(PropertyValue::Padding(Box::new(sides)), &mut cv);
     assert_eq!(cv.padding, sides);
 }
 
@@ -7754,7 +7754,7 @@ fn apply_value_direct_margin_shorthand_fall_through() {
         bottom: LengthOrAuto::Length(Length::Px(3.0)),
         left: LengthOrAuto::Length(Length::Px(4.0)),
     };
-    apply_value(PropertyValue::Margin(sides), &mut cv);
+    apply_value(PropertyValue::Margin(Box::new(sides)), &mut cv);
     assert_eq!(cv.margin, sides);
 }
 
@@ -8471,14 +8471,14 @@ fn apply_value_direct_font_shorthand_fall_through() {
     use std::sync::Arc;
     let mut cv = SpecifiedValues::initial();
     apply_value(
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             style: FontStyle::Italic,
             variant: FontVariantCaps::SmallCaps,
             weight: FontWeightValue::Bolder,
             size: FontShorthandSize::Relative(RelativeFontSize::Larger),
             line_height: LineHeight::Number(1.5),
             family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-        }),
+        })),
         &mut cv,
     );
     assert_eq!(cv.font_style, FontStyle::Italic);
@@ -8491,14 +8491,14 @@ fn apply_value_direct_font_shorthand_fall_through() {
     // delegation shape as the `Relative` case above).
     let mut cv = SpecifiedValues::initial();
     apply_value(
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             style: FontStyle::Normal,
             variant: FontVariantCaps::Normal,
             weight: FontWeightValue::Absolute(400.0),
             size: FontShorthandSize::Absolute(Length::Px(12.0)),
             line_height: LineHeight::Normal,
             family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-        }),
+        })),
         &mut cv,
     );
     assert_eq!(cv.font_size, Length::Px(12.0));

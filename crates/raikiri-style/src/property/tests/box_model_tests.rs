@@ -291,9 +291,9 @@ fn padding_shorthand_one_value_all_sides() {
     let px10 = Length::Px(10.0);
     assert_eq!(
         parse("10px", "padding"),
-        Some(PropertyValue::Padding(Sides::all(
+        Some(PropertyValue::Padding(Box::new(Sides::all(
             LengthPercentageOrCalc::Length(px10)
-        )))
+        ))))
     );
 }
 
@@ -304,9 +304,9 @@ fn padding_shorthand_two_values_top_bottom_left_right() {
     let px20 = Length::Px(20.0);
     assert_eq!(
         parse("10px 20px", "padding"),
-        Some(PropertyValue::Padding(padding_sides(
+        Some(PropertyValue::Padding(Box::new(padding_sides(
             px10, px20, px10, px20
-        )))
+        ))))
     );
 }
 
@@ -318,9 +318,9 @@ fn padding_shorthand_three_values_top_horizontal_bottom() {
     let px30 = Length::Px(30.0);
     assert_eq!(
         parse("10px 20px 30px", "padding"),
-        Some(PropertyValue::Padding(padding_sides(
+        Some(PropertyValue::Padding(Box::new(padding_sides(
             px10, px20, px30, px20
-        )))
+        ))))
     );
 }
 
@@ -329,12 +329,12 @@ fn padding_shorthand_four_values_clockwise() {
     // 4 values → top / right / bottom / left (clockwise from top)
     assert_eq!(
         parse("10px 20px 30px 40px", "padding"),
-        Some(PropertyValue::Padding(padding_sides(
+        Some(PropertyValue::Padding(Box::new(padding_sides(
             Length::Px(10.0),
             Length::Px(20.0),
             Length::Px(30.0),
             Length::Px(40.0),
-        )))
+        ))))
     );
 }
 
@@ -344,12 +344,12 @@ fn padding_shorthand_mixed_units() {
     // mixed units are also valid (padding: 10px 5% 1em 12pt).
     assert_eq!(
         parse("10px 5% 1em 12pt", "padding"),
-        Some(PropertyValue::Padding(padding_sides(
+        Some(PropertyValue::Padding(Box::new(padding_sides(
             Length::Px(10.0),
             Length::Percent(5.0),
             Length::Em(1.0),
             Length::Pt(12.0),
-        )))
+        ))))
     );
 }
 
@@ -597,7 +597,10 @@ fn padding_key_maps_to_padding_property_keys() {
         PropertyKey::PaddingLeft
     );
     assert_eq!(
-        PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Px(0.0)))).key(),
+        PropertyValue::Padding(Box::new(Sides::all(LengthPercentageOrCalc::Length(
+            Length::Px(0.0)
+        ))))
+        .key(),
         PropertyKey::Padding
     );
 }
@@ -1136,7 +1139,10 @@ fn margin_shorthand_one_value_spreads_all_sides() {
     // Verification 4-a (§3.2 "If there is only one component value, it
     // applies to all sides"): `margin: 10px` sets all four sides to 10px.
     let want = Sides::all(LengthOrAuto::Length(Length::Px(10.0)));
-    assert_eq!(parse("10px", "margin"), Some(PropertyValue::Margin(want)));
+    assert_eq!(
+        parse("10px", "margin"),
+        Some(PropertyValue::Margin(Box::new(want)))
+    );
 }
 
 #[test]
@@ -1152,7 +1158,7 @@ fn margin_shorthand_two_values_top_bottom_and_right_left() {
     };
     assert_eq!(
         parse("10px 20px", "margin"),
-        Some(PropertyValue::Margin(want))
+        Some(PropertyValue::Margin(Box::new(want)))
     );
 }
 
@@ -1170,7 +1176,7 @@ fn margin_shorthand_three_values_top_horiz_bottom() {
     };
     assert_eq!(
         parse("10px 20px 30px", "margin"),
-        Some(PropertyValue::Margin(want))
+        Some(PropertyValue::Margin(Box::new(want)))
     );
 }
 
@@ -1186,7 +1192,7 @@ fn margin_shorthand_four_values_clockwise() {
     };
     assert_eq!(
         parse("10px 20px 30px 40px", "margin"),
-        Some(PropertyValue::Margin(want))
+        Some(PropertyValue::Margin(Box::new(want)))
     );
 }
 
@@ -1195,7 +1201,10 @@ fn margin_shorthand_all_auto() {
     // Verification 5-a: `margin: auto` (one auto value) sets all four sides to Auto.
     // Pin parsing of the browser convention for "block-level centering".
     let want = Sides::all(LengthOrAuto::Auto);
-    assert_eq!(parse("auto", "margin"), Some(PropertyValue::Margin(want)));
+    assert_eq!(
+        parse("auto", "margin"),
+        Some(PropertyValue::Margin(Box::new(want)))
+    );
 }
 
 #[test]
@@ -1212,7 +1221,10 @@ fn margin_shorthand_zero_and_auto_horizontal_center() {
         bottom: LengthOrAuto::Length(Length::Px(0.0)),
         left: LengthOrAuto::Auto,
     };
-    assert_eq!(parse("0 auto", "margin"), Some(PropertyValue::Margin(want)));
+    assert_eq!(
+        parse("0 auto", "margin"),
+        Some(PropertyValue::Margin(Box::new(want)))
+    );
 }
 
 #[test]
@@ -1227,7 +1239,7 @@ fn margin_shorthand_mixed_units() {
     };
     assert_eq!(
         parse("10px auto 50% 2em", "margin"),
-        Some(PropertyValue::Margin(want))
+        Some(PropertyValue::Margin(Box::new(want)))
     );
 }
 
@@ -1260,7 +1272,7 @@ fn margin_shorthand_leaves_extra_values_for_caller_exhausted_check() {
     };
     assert_eq!(
         parse("10px 20px 30px 40px 50px", "margin"),
-        Some(PropertyValue::Margin(want))
+        Some(PropertyValue::Margin(Box::new(want)))
     );
 }
 
@@ -1275,7 +1287,7 @@ fn margin_shorthand_case_insensitive_auto_and_units() {
     };
     assert_eq!(
         parse("AUTO 20PX", "margin"),
-        Some(PropertyValue::Margin(want))
+        Some(PropertyValue::Margin(Box::new(want)))
     );
 }
 
@@ -1293,7 +1305,8 @@ fn margin_longhand_keys_map_correctly() {
     assert_eq!(bottom.key(), PropertyKey::MarginBottom);
     let left = PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Px(1.0)));
     assert_eq!(left.key(), PropertyKey::MarginLeft);
-    let shorthand = PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(1.0))));
+    let shorthand =
+        PropertyValue::Margin(Box::new(Sides::all(LengthOrAuto::Length(Length::Px(1.0)))));
     assert_eq!(shorthand.key(), PropertyKey::Margin);
 }
 

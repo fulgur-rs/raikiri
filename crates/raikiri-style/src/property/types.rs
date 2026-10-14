@@ -855,8 +855,10 @@ pub struct CalcLengthPercentage {
 /// declaring font by layout, which this representation cannot carry.
 ///
 /// At most [`Self::MAX_RELATIVE_TERMS`] distinct relative bases are kept, so
-/// the value stays small enough to be `Copy` inside [`LengthOrAuto`]; a sum
-/// with more is rejected like any other unsupported calc.
+/// the value stays `Copy` and fixed-size inside [`LengthOrAuto`]; a sum with
+/// more is rejected like any other unsupported calc. Two bases cover sums
+/// such as `calc(100vh - 2em)`. The shorthand values that hold four of these
+/// lengths are boxed in [`PropertyValue`] to keep it within its size bound.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RelativeCalcLengthPercentage {
     /// Percentage coefficient (`100%` is `100.0`).
@@ -917,7 +919,7 @@ struct RelativeCalcTerm {
 
 impl RelativeCalcLengthPercentage {
     /// The number of distinct relative bases one value can hold.
-    pub const MAX_RELATIVE_TERMS: usize = 1;
+    pub const MAX_RELATIVE_TERMS: usize = 2;
 
     /// A value made of one relative term.
     pub(crate) fn relative(unit: RelativeCalcUnit, coefficient: f32) -> Option<Self> {
@@ -9778,7 +9780,7 @@ pub enum PropertyValue {
     /// the canonical documentation for [`crate::cascade::apply_value`] and
     /// [`crate::rule::expand_shorthand_into`]).
     /// Consider migrating to the margin-style parse-time expansion model (follow-up task).
-    Padding(Sides<LengthPercentageOrCalc>),
+    Padding(Box<Sides<LengthPercentageOrCalc>>),
     /// `padding-inline: <'padding-top'>{1,2}` shorthand — CSS Logical
     /// Properties and Values 1 §4.4 "Flow-Relative Padding: the
     /// padding-block-start, padding-block-end, padding-inline-start,
@@ -9876,7 +9878,7 @@ pub enum PropertyValue {
     /// four longhand winners. Reaching it is already a bug; it cannot degrade
     /// gracefully. See the canonical descriptions in the docs for
     /// [`crate::cascade::apply_value`] and [`crate::rule::expand_shorthand_into`].
-    Margin(Sides<LengthOrAuto>),
+    Margin(Box<Sides<LengthOrAuto>>),
     /// `margin-inline: <'margin-top'>{1,2}` shorthand — CSS Logical
     /// Properties and Values 1 §4.2 "Flow-Relative Margins: the
     /// margin-block-start, margin-block-end, margin-inline-start,
@@ -10885,7 +10887,7 @@ pub enum PropertyValue {
     /// [`crate::rule::expand_shorthand_into`]), so discriminant order does not
     /// matter. Avoiding shifts of existing variants takes priority (see the
     /// declaration-order section of [`PropertyKey`]).
-    Font(FontShorthand),
+    Font(Box<FontShorthand>),
     /// `text-decoration-skip-ink` — **inherited**, initial:
     /// [`TextDecorationSkipInk::Auto`] (see [`TextDecorationSkipInk`]).
     /// The element cascade preserves this keyword in the staging and computed
@@ -11058,7 +11060,7 @@ pub enum PropertyValue {
     BorderImageSlice(BorderImageSlice),
     /// `border-image-width` — non-inherited, initial `1` (§6.3). Lengths are
     /// absolutized in phase 3.
-    BorderImageWidth(Sides<BorderImageWidthSide<LengthPercentageOrCalc>>),
+    BorderImageWidth(Box<Sides<BorderImageWidthSide<LengthPercentageOrCalc>>>),
     /// `border-image-outset` — non-inherited, initial `0` (§6.4). Lengths
     /// are absolutized in phase 3.
     BorderImageOutset(Sides<BorderImageOutsetSide<Length>>),

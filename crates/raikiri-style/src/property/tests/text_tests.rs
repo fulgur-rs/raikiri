@@ -5100,7 +5100,7 @@ fn text_shadow_key_maps_to_text_shadow_property_key() {
 
 fn expect_font(value: Option<PropertyValue>) -> FontShorthand {
     match value {
-        Some(PropertyValue::Font(shorthand)) => shorthand,
+        Some(PropertyValue::Font(shorthand)) => *shorthand,
         // cov:ignore: this branch only executes when a caller's
         // `parse(..., "font")` unexpectedly fails to parse or parses to
         // the wrong variant; every call site in this test module passes
@@ -5314,14 +5314,14 @@ fn font_shorthand_rejects_unknown_keyword() {
 
 #[test]
 fn font_shorthand_key_maps_to_font_property_key() {
-    let v = PropertyValue::Font(FontShorthand {
+    let v = PropertyValue::Font(Box::new(FontShorthand {
         style: FontStyle::Normal,
         variant: FontVariantCaps::Normal,
         weight: FontWeightValue::Absolute(400.0),
         size: FontShorthandSize::Absolute(Length::Px(16.0)),
         line_height: LineHeight::Normal,
         family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-    });
+    }));
     assert_eq!(v.key(), PropertyKey::Font);
 }
 

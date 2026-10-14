@@ -80,6 +80,12 @@ fn serialize_length_or_auto_formats_relative_calc_terms_in_canonical_order() {
         "calc(50% + 1vw)"
     );
     assert_eq!(
+        serialize_length_or_auto(&LengthOrAuto::RelativeCalc(
+            term(100.0, "vh").add_scaled(term(2.0, "em"), -1.0).unwrap()
+        )),
+        "calc(-2em + 100vh)"
+    );
+    assert_eq!(
         serialize_relative_calc_length_percentage(&RelativeCalcLengthPercentage::default()),
         "calc(0px)"
     );
@@ -144,36 +150,36 @@ fn serialize_value_excludes_width_height_min_max_variants() {
 #[test]
 fn serialize_value_collapses_sides_by_css_box_model_rules() {
     assert_eq!(
-        serialize_value(&PropertyValue::Padding(Sides::all(
+        serialize_value(&PropertyValue::Padding(Box::new(Sides::all(
             LengthPercentageOrCalc::Length(Length::Px(10.0))
-        ))),
+        )))),
         Some("10px".to_owned())
     );
     assert_eq!(
-        serialize_value(&PropertyValue::Padding(Sides {
+        serialize_value(&PropertyValue::Padding(Box::new(Sides {
             top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
             right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
             bottom: LengthPercentageOrCalc::Length(Length::Px(1.0)),
             left: LengthPercentageOrCalc::Length(Length::Px(2.0)),
-        })),
+        }))),
         Some("1px 2px".to_owned())
     );
     assert_eq!(
-        serialize_value(&PropertyValue::Padding(Sides {
+        serialize_value(&PropertyValue::Padding(Box::new(Sides {
             top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
             right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
             bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
             left: LengthPercentageOrCalc::Length(Length::Px(2.0)),
-        })),
+        }))),
         Some("1px 2px 3px".to_owned())
     );
     assert_eq!(
-        serialize_value(&PropertyValue::Padding(Sides {
+        serialize_value(&PropertyValue::Padding(Box::new(Sides {
             top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
             right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
             bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
             left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
-        })),
+        }))),
         Some("1px 2px 3px 4px".to_owned())
     );
 }
@@ -737,14 +743,14 @@ fn serialize_value_writes_border_image_longhands() {
         Some("100%".to_owned())
     );
     assert_eq!(
-        serialize_value(&PropertyValue::BorderImageWidth(Sides {
+        serialize_value(&PropertyValue::BorderImageWidth(Box::new(Sides {
             top: BorderImageWidthSide::LengthPercentage(LengthPercentageOrCalc::Length(
                 Length::Px(1.0)
             )),
             right: BorderImageWidthSide::Number(2.0),
             bottom: BorderImageWidthSide::Auto,
             left: BorderImageWidthSide::Number(2.0),
-        })),
+        }))),
         Some("1px 2 auto".to_owned())
     );
     assert_eq!(

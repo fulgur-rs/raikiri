@@ -441,14 +441,13 @@ pub fn page_content_insets_for_page(
 fn page_margin_value(
     declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
     side: PropertyKey,
-    shorthand: Option<LengthOrAuto>,
 ) -> Option<LengthOrAuto> {
     match (side, declarations.get(&side)) {
         (PropertyKey::MarginTop, Some(PropertyValue::MarginTop(value)))
         | (PropertyKey::MarginRight, Some(PropertyValue::MarginRight(value)))
         | (PropertyKey::MarginBottom, Some(PropertyValue::MarginBottom(value)))
         | (PropertyKey::MarginLeft, Some(PropertyValue::MarginLeft(value))) => Some(*value),
-        _ => shorthand,
+        _ => None,
     }
 }
 
@@ -506,30 +505,12 @@ pub fn page_margins_for_page(
     } else {
         page_box
     };
-    let shorthand = match declarations.get(&PropertyKey::Margin) {
-        Some(PropertyValue::Margin(sides)) => Some(*sides),
-        _ => None,
-    };
-    let top_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginTop,
-        shorthand.map(|s| s.top),
-    );
-    let right_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginRight,
-        shorthand.map(|s| s.right),
-    );
-    let bottom_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginBottom,
-        shorthand.map(|s| s.bottom),
-    );
-    let left_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginLeft,
-        shorthand.map(|s| s.left),
-    );
+    // Page rules expand the `margin` shorthand into its longhands when
+    // parsed, so only the longhands are read here.
+    let top_value = page_margin_value(declarations, PropertyKey::MarginTop);
+    let right_value = page_margin_value(declarations, PropertyKey::MarginRight);
+    let bottom_value = page_margin_value(declarations, PropertyKey::MarginBottom);
+    let left_value = page_margin_value(declarations, PropertyKey::MarginLeft);
     let mut margins = PageMargins {
         top: top_value.map_or(0.0, |value| page_margin_length(value, margin_basis.height)),
         right: right_value.map_or(0.0, |value| page_margin_length(value, margin_basis.width)),

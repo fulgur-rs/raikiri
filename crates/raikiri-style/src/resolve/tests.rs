@@ -2141,14 +2141,12 @@ fn relative_calc_arithmetic_rejects_non_finite_results() {
     assert_eq!(calc.add_scaled(calc, 1e30), None);
     let percent = RelativeCalcLengthPercentage::from_unit(1e30, "%").unwrap();
     assert_eq!(percent.add_scaled(percent, 1e30), None);
-    // A second relative basis does not fit.
-    assert_eq!(
-        calc.add_scaled(
-            RelativeCalcLengthPercentage::from_unit(1.0, "vw").unwrap(),
-            1.0
-        ),
-        None
-    );
+    // A second relative basis fits; a third does not.
+    let vw = RelativeCalcLengthPercentage::from_unit(1.0, "vw").unwrap();
+    let rem = RelativeCalcLengthPercentage::from_unit(1.0, "rem").unwrap();
+    let two = calc.add_scaled(vw, 1.0).unwrap();
+    assert_eq!(two.relative_terms().count(), 2);
+    assert_eq!(two.add_scaled(rem, 1.0), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1e38, "in"), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "svx"), None);
     assert_eq!(RelativeCalcLengthPercentage::from_unit(1.0, "ch"), None);
