@@ -372,4 +372,9 @@ fn upright_text_under_a_horizontal_parent_keeps_the_ltr_mapping() {
         ]),
         sides(2.0, 3.0, 4.0, 1.0)
     );
+    // In a horizontal writing mode `text-orientation` has no effect.
+    assert_eq!(
+        nested_margins(&["direction: rtl; text-orientation: upright"]),
+        sides(2.0, 1.0, 4.0, 3.0)
+    );
 }
