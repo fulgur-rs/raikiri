@@ -48,8 +48,8 @@ use crate::property::{
     LengthOrAuto, LengthOrNormal, LengthPercentageOrCalc, LetterSpacingValue, LineBreak,
     LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
     OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
-    RelativeCalcLengthPercentage, RubyPosition, SelfAlignmentValue, Sides, TabSize,
-    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    RelativeCalcLengthPercentage, RelativeCalcUnit, RubyPosition, SelfAlignmentValue, Sides,
+    TabSize, TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
     TextDecorationColor, TextDecorationInset, TextDecorationLine, TextDecorationSkipInk,
     TextDecorationSkipSpaces, TextDecorationStyle, TextDecorationThickness, TextEmphasisHEdge,
     TextEmphasisPosition, TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge,
@@ -1747,12 +1747,8 @@ impl SpecifiedValues {
         // Measured only when a self-referential `lh` / `rlh` needs it.
         let self_referential = |length: &Length| matches!(length, Length::Lh(_) | Length::Rlh(_));
         let calc_self_referential = |calc: &RelativeCalcLengthPercentage| {
-            calc.relative_terms().any(|(unit, _)| {
-                matches!(
-                    unit,
-                    crate::property::RelativeCalcUnit::Lh | crate::property::RelativeCalcUnit::Rlh
-                )
-            })
+            calc.relative_terms()
+                .any(|(unit, _)| matches!(unit, RelativeCalcUnit::Lh | RelativeCalcUnit::Rlh))
         };
         let initial_line_height = normal_line_height
             .filter(|_| {

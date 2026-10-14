@@ -865,6 +865,14 @@ fn line_height_resolves_a_mixed_calc_against_its_own_font_size() {
         r.computed[substituted].line_height,
         ComputedLineHeight::Length(ComputedLength(12.0))
     );
+    // On the root, `lh` refers to the initial font's `normal` line.
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("line-height: calc(1lh + 2px)"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    assert_eq!(
+        r.computed[html].line_height,
+        ComputedLineHeight::Length(ComputedLength(22.0))
+    );
 }
 
 #[test]

@@ -1490,11 +1490,9 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // exporting the keyword would follow the instance's size instead.
         // usvg has no font-family dependent `medium` either, so a definition
         // reused under a different generic family keeps the size of the
-        // family where it is defined.
-        PropertyValue::FontSizeKeyword(_) => None,
-        // SVG 1.1 lengths have no `calc()`, so a mixed calc keeps its
-        // computed px size, as the keywords above do.
-        PropertyValue::FontSizeCalc(_) => None,
+        // family where it is defined. SVG 1.1 lengths have no `calc()`, so a
+        // mixed calc keeps its computed px size as well.
+        PropertyValue::FontSizeKeyword(_) | PropertyValue::FontSizeCalc(_) => None,
         _ => None,
     }
 }
