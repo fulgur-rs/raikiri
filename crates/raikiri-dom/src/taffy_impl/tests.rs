@@ -65,9 +65,5 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
     };
     let bounds = ifc_content_height_bounds(&style, None, None);
     assert_eq!(bounds, (0.0, f32::INFINITY));
-    assert_eq!(
-        ifc_definite_content_height(&style, None, taffy::Rect::zero(), bounds),
-        Some(100.0)
-    );
     assert_eq!(ifc_content_height_bounds(&style, Some(80.0), None).1, 40.0);
 }

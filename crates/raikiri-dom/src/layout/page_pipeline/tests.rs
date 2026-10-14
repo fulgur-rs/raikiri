@@ -8392,6 +8392,413 @@ fn avoiding_sibling_positions(before: &str, after: &str) -> (Vec<f32>, usize) {
     page_sibling_positions(&[60, 30, 30], before, after, "break-inside:avoid")
 }
 
+/// `body > div(60px) > div(wrapper_css) > div(avoid, 60px)` on 100px pages.
+/// Returns the avoiding box's page-flow y, the wrapper's height and the
+/// page count.
+fn nested_avoiding_block(wrapper_css: &str, avoid_css: &str) -> (f32, f32, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:60px"),
+    );
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;width:100px;{wrapper_css}")),
+    );
+    let avoiding = doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some(&format!(
+            "display:block;width:100px;height:60px;{avoid_css}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    let wrapper_layout = doc.get_node(wrapper).unwrap().unrounded_layout;
+    (
+        wrapper_layout.location.y + doc.get_node(avoiding).unwrap().unrounded_layout.location.y,
+        wrapper_layout.size.height,
+        pages.len(),
+    )
+}
+
+#[test]
+fn a_nested_avoiding_block_moves_to_the_next_page_and_lengthens_its_ancestor() {
+    // The avoiding box would cross the page edge at 100px, so it starts the
+    // second page; the wrapper grows by the distance it moved.
+    assert_eq!(
+        nested_avoiding_block("", "break-inside:avoid"),
+        (100.0, 100.0, 2)
+    );
+    // Without `avoid` the box breaks where it falls.
+    assert_eq!(nested_avoiding_block("", ""), (60.0, 60.0, 2));
+    // An ancestor bounded by `min-height` keeps its used size, and one
+    // bounded by `max-height` does not grow past it.
+    assert_eq!(
+        nested_avoiding_block("min-height:100px", "break-inside:avoid"),
+        (100.0, 100.0, 2)
+    );
+    assert_eq!(
+        nested_avoiding_block("max-height:60px", "break-inside:avoid"),
+        (100.0, 60.0, 2)
+    );
+    // Bounds the content already satisfies do not stop the growth.
+    for wrapper in ["min-height:10px", "max-height:500px"] {
+        assert_eq!(
+            nested_avoiding_block(wrapper, "break-inside:avoid"),
+            (100.0, 100.0, 2),
+            "{wrapper}"
+        );
+    }
+    // Neither do the wrapper's bottom padding and border.
+    assert_eq!(
+        nested_avoiding_block(
+            "padding-bottom:5px;border-bottom:5px solid",
+            "break-inside:avoid"
+        ),
+        (100.0, 110.0, 2)
+    );
+    // Items of a multi-column grid or a row flex container do not follow
+    // each other in block flow.
+    assert_eq!(
+        nested_avoiding_block(
+            "display:grid;grid-template-columns:50px 50px",
+            "break-inside:avoid"
+        ),
+        (60.0, 60.0, 2)
+    );
+    assert_eq!(
+        nested_avoiding_block("display:inline-flex", "break-inside:avoid").0,
+        60.0
+    );
+    // Nor do boxes in different columns of a multi-column container.
+    assert_eq!(
+        nested_avoiding_block("columns:2;column-gap:0", "break-inside:avoid").0,
+        nested_avoiding_block("columns:2;column-gap:0", "").0
+    );
+}
+
+/// `body > [div(60px), div(outer_css) > div(wrapper_css) > div(avoid_css,
+/// 60px), div(10px)]`. Returns the page-flow y of the avoiding box and the
+/// block after the outer one, and the wrapper's height.
+fn avoiding_block_in_wrapper(
+    outer_css: &str,
+    wrapper_css: &str,
+    avoid_css: &str,
+) -> (f32, f32, f32) {
+    let (mut wrapper, mut avoiding, mut after) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{outer_css}")),
+        );
+        wrapper = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{wrapper_css}")),
+        );
+        avoiding = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "width:40px;height:60px;break-inside:avoid;{avoid_css}"
+            )),
+        );
+        after = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+    });
+    (
+        page_flow_y(&doc, avoiding),
+        page_flow_y(&doc, after),
+        doc.nodes[wrapper].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_moved_box_after_a_wrappers_text_still_lengthens_it() {
+    let (mut wrapper, mut avoiding) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_text(wrapper, " ");
+        avoiding = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    let (wrapper_y, avoiding_y) = (page_flow_y(&doc, wrapper), page_flow_y(&doc, avoiding));
+    assert_eq!(avoiding_y, 100.0);
+    assert_eq!(
+        doc.nodes[wrapper].unrounded_layout.size.height,
+        avoiding_y + 60.0 - wrapper_y
+    );
+}
+
+#[test]
+fn a_moved_box_inside_a_contents_element_lengthens_the_box_around_it() {
+    let (mut wrapper, mut avoiding) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let contents = doc.append_element(
+            Some(wrapper),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        );
+        avoiding = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, avoiding), 100.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 110.0);
+}
+
+#[test]
+fn a_formatting_context_keeps_the_moved_boxs_margin_when_it_grows() {
+    // The flow root contains its last child's bottom margin, so a bound it
+    // reaches with that margin no longer holds it.
+    assert_eq!(
+        nested_avoiding_block(
+            "display:flow-root;min-height:100px",
+            "break-inside:avoid;margin-bottom:20px"
+        ),
+        (100.0, 120.0, 2)
+    );
+}
+
+#[test]
+fn an_avoiding_block_in_a_multi_column_body_grid_stays_in_its_column() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:grid;grid-template-columns:50px 50px;margin:0"),
+    );
+    let item = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;height:60px"),
+    );
+    let avoiding = doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;height:60px;break-inside:avoid"),
+    );
+    let other = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(other),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(page_flow_y(&doc, avoiding), 60.0);
+    assert_eq!(page_flow_y(&doc, other), 0.0);
+}
+
+/// `body > [div(30px), div(wrapper_css) > [div(20px), div(avoid, 60px),
+/// div(avoid, 10px)]]`. Returns the page-flow y of both avoiding boxes and
+/// the wrapper's height.
+fn wrapper_with_avoiding_children(wrapper_css: &str) -> (f32, f32, f32) {
+    let (mut wrapper, mut avoiding, mut last) = (0, 0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{wrapper_css}")),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        avoiding = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        last = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;break-inside:avoid"),
+        );
+    });
+    (
+        page_flow_y(&doc, avoiding),
+        page_flow_y(&doc, last),
+        doc.nodes[wrapper].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_wrapper_grows_by_how_far_its_content_extends_after_a_moved_child() {
+    assert_eq!(wrapper_with_avoiding_children(""), (100.0, 160.0, 140.0));
+    // The boxes after the moved one inside a fixed-height wrapper still
+    // follow it, while the wrapper keeps its size.
+    assert_eq!(
+        wrapper_with_avoiding_children("height:90px"),
+        (100.0, 160.0, 90.0)
+    );
+}
+
+#[test]
+fn a_wrappers_max_height_follows_its_box_sizing() {
+    assert_eq!(
+        nested_avoiding_block(
+            "box-sizing:content-box;padding-bottom:5px;max-height:70px",
+            "break-inside:avoid"
+        ),
+        (100.0, 75.0, 2)
+    );
+    assert_eq!(
+        nested_avoiding_block(
+            "box-sizing:border-box;padding-bottom:5px;max-height:70px",
+            "break-inside:avoid"
+        ),
+        (100.0, 70.0, 2)
+    );
+}
+
+#[test]
+fn a_float_moved_by_an_earlier_float_can_move_again_to_avoid_a_break() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:50px;break-inside:avoid",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The clearing float follows the first one to 160px, then crosses the
+    // second page's end and starts the third page.
+    assert_eq!(ys, vec![100.0, 200.0], "{ys:?}");
+}
+
+#[test]
+fn a_moved_box_shifts_what_follows_only_as_far_as_its_ancestors_grow() {
+    // Auto-height ancestors grow with the moved box and push the block after
+    // them down; a fixed-height wrapper keeps its size, so the box overflows
+    // it and the block after it keeps its place.
+    assert_eq!(
+        avoiding_block_in_wrapper("", "", "display:block"),
+        (100.0, 160.0, 100.0)
+    );
+    assert_eq!(
+        avoiding_block_in_wrapper("", "height:60px", "display:block"),
+        (100.0, 120.0, 60.0)
+    );
+    // A percentage bound resolves against the fixed-height block around it.
+    assert_eq!(
+        avoiding_block_in_wrapper("height:200px", "max-height:100%", "display:block"),
+        (100.0, 260.0, 100.0)
+    );
+    assert_eq!(
+        avoiding_block_in_wrapper("height:200px", "max-height:30%", "display:block"),
+        (100.0, 260.0, 60.0)
+    );
+    // A bound that does not resolve to a length does not hold the wrapper
+    // (CSS 2.1 §10.7).
+    assert_eq!(
+        avoiding_block_in_wrapper(
+            "height:200px",
+            "max-height:calc(50% + 10px)",
+            "display:block"
+        ),
+        (100.0, 260.0, 100.0)
+    );
+    assert_eq!(
+        avoiding_block_in_wrapper("", "min-height:10%;max-height:50%", "display:block"),
+        (100.0, 160.0, 100.0)
+    );
+    // A moved float does not lengthen the block around it.
+    assert_eq!(
+        avoiding_block_in_wrapper("", "", "float:left"),
+        (100.0, 60.0, 60.0)
+    );
+}
+
 #[test]
 fn automatic_overflow_keeps_each_avoiding_block_intact() {
     assert_eq!(
@@ -10316,6 +10723,1478 @@ fn repeated_header_table_grows_over_anonymous_cells_on_later_pages() {
     );
 }
 
+/// `html > body(margin:0)` built by `build`, laid out on 100px-square pages.
+/// Returns the document and its page count.
+fn paged_body(build: impl FnOnce(&mut Document, usize)) -> (Document, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:100px"),
+    );
+    build(&mut doc, body);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (doc, pages.len())
+}
+
+fn page_flow_y(doc: &Document, node: usize) -> f32 {
+    crate::layout::test_support::absolute_rect(doc, node).1
+}
+
+#[test]
+fn an_avoiding_float_moves_alone_and_later_floats_stay_below_it() {
+    let mut ids = Vec::new();
+    let (doc, pages) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:20px",
+            "display:block;height:10px",
+            "display:block;height:50px;break-inside:avoid",
+            "float:left;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The avoiding float starts the second page and the clearing float
+    // stays below it; the in-flow block after them keeps its place. The
+    // avoiding block then moves to 100, and the last float, which fits
+    // beside the clearing float, starts no higher than that float's top.
+    assert_eq!(ys, vec![100.0, 160.0, 60.0, 100.0, 160.0], "{ys:?}");
+    assert_eq!(pages, 2);
+}
+
+#[test]
+fn a_later_float_below_a_moved_float_keeps_its_place() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "display:block;height:150px",
+            "float:left;clear:left;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The last float already starts below the moved float's new bottom.
+    assert_eq!(ys, vec![100.0, 60.0, 210.0], "{ys:?}");
+}
+
+#[test]
+fn a_clearing_float_stays_below_the_moved_floats_bottom_margin() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;margin-bottom:10px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 170.0], "{ys:?}");
+}
+
+#[test]
+fn a_clearing_block_stays_below_the_moved_floats_bottom() {
+    for (side, clear) in [
+        ("left", "left"),
+        ("left", "both"),
+        ("right", "right"),
+        ("right", "left"),
+        ("left", "inline-start"),
+        ("right", "inline-start"),
+        ("right", "inline-end"),
+    ] {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            for css in [
+                format!("float:{side};width:40px;height:60px;break-inside:avoid"),
+                format!("display:block;clear:{clear};height:10px"),
+            ] {
+                ids.push(doc.append_element(Some(body), "div", Style::default(), Some(&css)));
+            }
+        });
+        let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+        // A block clearing only the other side keeps its place, and so does
+        // one with a logical `clear`, which layout does not apply either.
+        let expected = if side == "right" && clear == "left" || clear.starts_with("inline") {
+            60.0
+        } else {
+            160.0
+        };
+        assert_eq!(
+            ys,
+            vec![100.0, expected],
+            "float:{side} clear:{clear} {ys:?}"
+        );
+    }
+}
+
+#[test]
+fn an_opposite_side_float_moves_only_to_the_moved_floats_top() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:right;width:40px;height:10px",
+            "display:block;height:80px",
+            "float:right;width:40px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // A float on the other side may sit beside the moved float, so it only
+    // keeps from rising above that float's top; one already lower stays.
+    assert_eq!(ys, vec![100.0, 100.0, 60.0, 140.0], "{ys:?}");
+}
+
+#[test]
+fn an_avoiding_float_at_the_top_of_a_page_stays_there() {
+    let mut float = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        float = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:150px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, float), 100.0);
+}
+
+/// `body > div(60px) > table > [caption] > tbody(group_css) > rows`, each
+/// row holding one cell of the given height. Returns the first cell's
+/// page-flow y.
+fn avoiding_row_group(group_css: &str, rows: &[(f32, &str)], caption: Option<&str>) -> f32 {
+    let mut first_cell = None;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(if caption == Some("") {
+                "display:block;height:40px"
+            } else {
+                "display:block;height:60px"
+            }),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        if let Some(caption_css) = caption {
+            let caption = doc.append_element(
+                Some(table),
+                "caption",
+                Style::default(),
+                Some(&format!("display:table-caption;{caption_css}")),
+            );
+            doc.append_element(
+                Some(caption),
+                "div",
+                Style::default(),
+                Some("display:block;height:20px"),
+            );
+        }
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some(&format!("display:table-row-group;{group_css}")),
+        );
+        for (height, row_css) in rows {
+            let row = doc.append_element(
+                Some(group),
+                "tr",
+                Style::default(),
+                Some(&format!("display:table-row;{row_css}")),
+            );
+            let cell = doc.append_element(
+                Some(row),
+                "td",
+                Style::default(),
+                Some(&format!("display:table-cell;padding:0;height:{height}px")),
+            );
+            first_cell.get_or_insert(cell);
+        }
+    });
+    page_flow_y(&doc, first_cell.unwrap())
+}
+
+#[test]
+fn an_avoiding_row_group_starts_the_next_page_with_its_table_spacing() {
+    let rows = [(20.0, ""), (30.0, "")];
+    // Without `avoid` the first row stays after the 60px block and the
+    // table's 2px spacing.
+    assert_eq!(avoiding_row_group("", &rows, None), 62.0);
+    // The group would cross the page edge, so it moves as a whole; the
+    // spacing above the table's first row moves with it.
+    assert_eq!(avoiding_row_group("break-inside:avoid", &rows, None), 102.0);
+    // A group that fits stays where it is.
+    assert_eq!(
+        avoiding_row_group("break-inside:avoid", &[(20.0, "")], None),
+        62.0
+    );
+}
+
+#[test]
+fn an_avoiding_row_group_ends_at_a_forced_break_and_leaves_a_caption_behind() {
+    // The forced break before the second row splits the group, and its
+    // first part fits on the page.
+    assert_eq!(
+        avoiding_row_group(
+            "break-inside:avoid",
+            &[(20.0, ""), (30.0, "break-before:page"), (10.0, "")],
+            None
+        ),
+        62.0
+    );
+    // So does a forced break after the first row.
+    assert_eq!(
+        avoiding_row_group(
+            "break-inside:avoid",
+            &[(20.0, "break-after:page"), (30.0, "")],
+            None
+        ),
+        62.0
+    );
+    // A caption below the grid leaves the table's spacing with the row.
+    assert_eq!(
+        avoiding_row_group(
+            "break-inside:avoid",
+            &[(20.0, ""), (30.0, "")],
+            Some("caption-side:bottom")
+        ),
+        102.0
+    );
+    // With a caption above the grid, the row starts at the top of the page.
+    assert_eq!(
+        avoiding_row_group("break-inside:avoid", &[(20.0, ""), (30.0, "")], Some("")),
+        100.0
+    );
+}
+
+#[test]
+fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
+    let mut footer_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        let footer = doc.append_element(
+            Some(table),
+            "tfoot",
+            Style::default(),
+            Some("display:table-footer-group;break-inside:avoid"),
+        );
+        footer_cell = append_row(doc, footer, "", 20.0).1;
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        append_row(doc, group, "", 20.0);
+    });
+    // The footer is laid out after the body, so the body row is the table's
+    // first row and the footer moves to the top of the next page alone.
+    assert_eq!(page_flow_y(&doc, footer_cell), 100.0);
+}
+
+/// Appends `table > tbody(break-inside:avoid)` to `parent` and returns the
+/// row group.
+fn append_avoiding_table(doc: &mut Document, parent: usize) -> usize {
+    let table = doc.append_element(
+        Some(parent),
+        "table",
+        Style::default(),
+        Some("display:table;width:100px;border-spacing:2px"),
+    );
+    doc.append_element(
+        Some(table),
+        "tbody",
+        Style::default(),
+        Some("display:table-row-group;break-inside:avoid"),
+    )
+}
+
+fn append_row(doc: &mut Document, group: usize, row_css: &str, height: f32) -> (usize, usize) {
+    let row = doc.append_element(
+        Some(group),
+        "tr",
+        Style::default(),
+        Some(&format!("display:table-row;{row_css}")),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some(&format!("display:table-cell;padding:0;height:{height}px")),
+    );
+    (row, cell)
+}
+
+#[test]
+fn an_avoiding_row_group_of_a_wrapped_table_keeps_its_table_spacing() {
+    let mut first_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let group = append_avoiding_table(doc, wrapper);
+        first_cell = append_row(doc, group, "", 20.0).1;
+        append_row(doc, group, "", 30.0);
+    });
+    assert_eq!(page_flow_y(&doc, first_cell), 102.0);
+}
+
+#[test]
+fn a_nested_table_does_not_hide_a_forced_break_after_its_row() {
+    let mut first_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let group = append_avoiding_table(doc, body);
+        let (_, cell) = append_row(doc, group, "break-after:page", 0.0);
+        first_cell = cell;
+        let inner = doc.append_element(
+            Some(cell),
+            "table",
+            Style::default(),
+            Some("display:table;width:50px"),
+        );
+        let inner_group = doc.append_element(
+            Some(inner),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        append_row(doc, inner_group, "", 10.0);
+        append_row(doc, group, "", 30.0);
+    });
+    // The forced break after the outer row ends the group, whose first part
+    // fits on the page.
+    assert_eq!(page_flow_y(&doc, first_cell), 62.0);
+}
+
+#[test]
+fn break_inside_avoid_does_not_move_an_inline_box() {
+    // `break-inside` does not apply to inline boxes: the block inside the
+    // avoiding inline box breaks where it falls. The same box made
+    // block-level moves to the next page.
+    for (display, expected) in [("inline", 60.0), ("block", 100.0)] {
+        let mut inner = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            let avoiding = doc.append_element(
+                Some(body),
+                "span",
+                Style::default(),
+                Some(&format!("display:{display};break-inside:avoid")),
+            );
+            inner = doc.append_element(
+                Some(avoiding),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+        });
+        assert_eq!(page_flow_y(&doc, inner), expected, "{display}");
+    }
+}
+
+#[test]
+fn a_line_after_a_moved_box_lengthens_a_bounded_wrapper() {
+    let (mut wrapper, mut after) = (0, 0);
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;min-height:100px;font:10px/10px monospace"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        doc.append_text(wrapper, "x");
+        after = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+    });
+    // The block moves 40px, and the line after it now ends 110px into the
+    // wrapper, past its `min-height`.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 110.0);
+    assert_eq!(page_flow_y(&doc, after), 170.0);
+}
+
+#[test]
+fn a_percentage_bound_resolves_against_a_percentage_height() {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let fixed = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px"),
+        );
+        let half = doc.append_element(
+            Some(fixed),
+            "div",
+            Style::default(),
+            Some("display:block;height:50%"),
+        );
+        wrapper = doc.append_element(
+            Some(half),
+            "div",
+            Style::default(),
+            Some("display:block;max-height:70%"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    // The wrapper grows only up to 70% of its 100px containing block.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 70.0);
+}
+
+#[test]
+fn a_contained_negative_margin_shortens_the_grown_content() {
+    // The moved box's margin box still ends 80px into the flow root, so its
+    // `min-height` keeps holding it and the block after it stays.
+    assert_eq!(
+        avoiding_block_in_wrapper(
+            "",
+            "display:flow-root;min-height:80px",
+            "display:block;margin-bottom:-20px"
+        ),
+        (100.0, 140.0, 80.0)
+    );
+}
+
+#[test]
+fn leaving_two_bounded_shifts_returns_to_the_wrappers_page() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        for css in [
+            "display:block;height:80px",
+            "display:block;height:40px;break-inside:avoid",
+            "display:block;height:90px;break-inside:avoid",
+        ] {
+            ids.push(doc.append_element(Some(wrapper), "div", Style::default(), Some(css)));
+        }
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // Both avoiding children move inside the fixed-height wrapper, which
+    // stays on the first page, so the block after it still crosses that
+    // page's end and moves.
+    assert_eq!(ys, vec![0.0, 100.0, 200.0, 100.0], "{ys:?}");
+}
+
+/// `body > outer(outer_css; 10px lines) > [text?, wrapper > avoiding 60px,
+/// text?]` after a 60px block. Returns the outer box's height.
+fn bounded_box_with_lines(outer_css: &str, text_before: bool, text_after: bool) -> f32 {
+    let mut outer = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:block;font:10px/10px monospace;{outer_css}"
+            )),
+        );
+        if text_before {
+            doc.append_text(outer, "x");
+        }
+        let wrapper =
+            doc.append_element(Some(outer), "div", Style::default(), Some("display:block"));
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        if text_after {
+            doc.append_text(outer, "x");
+        }
+    });
+    doc.nodes[outer].unrounded_layout.size.height
+}
+
+#[test]
+fn the_lines_around_a_grown_box_bound_its_bounded_ancestor() {
+    // A line before the grown wrapper does not move: the avoiding block
+    // moves 30px, and the wrapper below the line now ends 100px in.
+    assert_eq!(
+        bounded_box_with_lines("min-height:95px", true, false),
+        100.0
+    );
+    // A line after the grown wrapper follows its 40px growth, 110px in.
+    assert_eq!(
+        bounded_box_with_lines("min-height:100px", false, true),
+        110.0
+    );
+}
+
+#[test]
+fn a_margin_after_collapsed_white_space_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            doc.append_text(body, "\n  ");
+            let second = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, second]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_margin_after_a_box_inside_a_contents_element_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:contents"),
+            );
+            let first = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let second = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, second]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_first_childs_margin_is_not_truncated_against_its_parents_sibling() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            let wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;padding-top:1px"),
+            );
+            let nested = doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, wrapper, nested]
+        },
+        &[],
+    );
+    // The nested box keeps its margin, 31px into the wrapper.
+    assert_eq!(ys, [0.0, 80.0, 31.0]);
+}
+
+#[test]
+fn a_float_shifted_after_a_moved_float_holds_the_next_one_below_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:30px",
+            "float:left;clear:left;width:40px;height:30px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 190.0], "{ys:?}");
+}
+
+#[test]
+fn a_percentage_bound_under_a_contents_element_resolves_against_its_box() {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let fixed = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        let contents = doc.append_element(
+            Some(fixed),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        wrapper = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;max-height:50%"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 50.0);
+}
+
+/// `body > [div 60px, floats…]` on 100px pages; returns each float's
+/// page-flow y.
+fn floats_after_a_moved_float(floats: &[&str]) -> Vec<f32> {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in floats {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(*css)));
+        }
+    });
+    ids.iter().map(|&id| page_flow_y(&doc, id)).collect()
+}
+
+#[test]
+fn a_later_floats_top_margin_stays_below_the_moved_float() {
+    // The follower's margin box, not its border box, starts below the
+    // moved float's bottom.
+    assert_eq!(
+        floats_after_a_moved_float(&[
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:30px;margin-top:20px",
+        ]),
+        vec![100.0, 180.0]
+    );
+}
+
+#[test]
+fn each_float_side_keeps_its_own_floor() {
+    // The right float only moves level with the moved left float. The left
+    // float that sat beside the first one moves with them rather than
+    // staying above the moved float's top.
+    assert_eq!(
+        floats_after_a_moved_float(&[
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:right;width:40px;height:30px",
+            "float:left;width:40px;height:30px",
+        ]),
+        vec![100.0, 100.0, 130.0]
+    );
+}
+
+/// `body > [div lead_px, wrapper(wrapper_css) > children]` on 100px pages.
+/// Returns the wrapper's height.
+fn bounded_wrapper_height(lead_px: f32, wrapper_css: &str, children: &[&str]) -> f32 {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;height:{lead_px}px")),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;{wrapper_css}")),
+        );
+        for css in children {
+            doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;{css}")),
+            );
+        }
+    });
+    doc.nodes[wrapper].unrounded_layout.size.height
+}
+
+#[test]
+fn an_earlier_childs_collapsed_margin_does_not_grow_the_box() {
+    // The first child's bottom margin collapses with the negative top
+    // margin after it, so the content ends at the moved child's bottom,
+    // 20px lower than before and still within the minimum height.
+    assert_eq!(
+        bounded_wrapper_height(
+            20.0,
+            "display:flow-root;min-height:150px",
+            &[
+                "height:60px;margin-bottom:100px",
+                "height:60px;margin-top:-100px;break-inside:avoid",
+            ],
+        ),
+        150.0
+    );
+}
+
+#[test]
+fn a_relative_offset_does_not_grow_a_bounded_box() {
+    // The box's flow position 50..110 crosses the page end and moves 50px;
+    // it then ends 110px into the wrapper. The 30px offset it is drawn
+    // with does not count.
+    assert_eq!(
+        bounded_wrapper_height(
+            50.0,
+            "min-height:100px",
+            &["position:relative;top:30px;height:60px;break-inside:avoid"],
+        ),
+        110.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_comment_is_truncated() {
+    let ys = paginated_ys(
+        |doc, body| {
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:80px"),
+            );
+            doc.append_comment(Some(body), "note");
+            let second = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-top:30px;height:20px"),
+            );
+            vec![first, second]
+        },
+        &[],
+    );
+    assert_eq!(ys, [0.0, 100.0]);
+}
+
+#[test]
+fn a_smaller_follower_shift_keeps_the_moved_floats_floor() {
+    // The second right float only moves 20px to the moved left float's
+    // top; the clearing left float after it still needs the full 40px to
+    // stay below the moved float.
+    assert_eq!(
+        floats_after_a_moved_float(&[
+            "float:right;width:40px;height:20px",
+            "float:left;width:60px;height:60px;break-inside:avoid",
+            "float:right;width:40px;height:30px",
+            "float:left;clear:left;width:40px;height:30px",
+        ]),
+        vec![60.0, 100.0, 100.0, 160.0]
+    );
+}
+
+#[test]
+fn a_nested_avoiding_box_taller_than_a_page_stays_at_the_page_top() {
+    let mut child = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        child = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:150px;break-inside:avoid"),
+        );
+    });
+    // Moving it would leave the first page blank and still break it.
+    assert_eq!(page_flow_y(&doc, child), 0.0);
+}
+
+#[test]
+fn a_calc_bound_resolves_against_a_definite_containing_block() {
+    let mut wrapper = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px"),
+        );
+        doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        wrapper = doc.append_element(
+            Some(container),
+            "div",
+            Style::default(),
+            Some("display:block;max-height:calc(30% + 10px)"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px;break-inside:avoid"),
+        );
+    });
+    // The box crosses the page end at 100 and moves 30px; the wrapper's
+    // content would end at 90, but its bound is 30% of 200 plus 10.
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 70.0);
+}
+
+#[test]
+fn a_float_in_another_formatting_context_ignores_a_moved_float() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:50px"),
+        );
+        ids.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:10px;height:20px;break-inside:avoid"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The flow-root's own float fits beside the moved one's old place and
+    // is not held below it.
+    assert_eq!(ys, vec![100.0, 60.0]);
+}
+
+#[test]
+fn an_avoiding_header_group_that_is_not_repeated_moves_as_a_whole() {
+    let mut cells = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:70px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:0"),
+        );
+        let head = doc.append_element(
+            Some(table),
+            "thead",
+            Style::default(),
+            Some("display:table-header-group;break-inside:avoid"),
+        );
+        cells.push(append_row(doc, head, "", 20.0).1);
+        cells.push(append_row(doc, head, "", 20.0).1);
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        cells.push(append_row(doc, group, "", 20.0).1);
+    });
+    // The 40px header is too tall to repeat on 100px pages.
+    let ys: Vec<f32> = cells.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 120.0, 140.0]);
+}
+
+#[test]
+fn a_float_after_a_moved_float_in_another_context_keeps_the_first_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;width:50px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:10px;height:60px;break-inside:avoid"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;clear:left;width:20px;height:20px"),
+        ));
+    });
+    // The flow-root's moved float does not replace the body float's edges.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_nested_float_follows_a_moved_float_in_its_context() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("float:left;clear:left;width:20px;height:20px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_nested_clearing_block_follows_a_moved_float_and_grows_its_parent() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        ids.push(wrapper);
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;clear:left;height:20px"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The clearing block stays below the moved float's new bottom, and the
+    // wrapper grows from 60 to 180 to hold it.
+    assert_eq!(ys, vec![100.0, 60.0, 160.0, 180.0]);
+    assert_eq!(doc.nodes[ids[1]].unrounded_layout.size.height, 120.0);
+}
+
+#[test]
+fn a_box_moving_inside_a_fixed_height_context_keeps_the_outer_float_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;break-inside:avoid"),
+        ));
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;height:30px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        ids.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;clear:left;width:20px;height:20px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
+}
+
+#[test]
+fn a_sticky_offset_does_not_grow_the_ancestor_of_a_moved_box() {
+    for position in ["relative", "sticky"] {
+        let mut wrapper = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:50px"),
+            );
+            wrapper = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;min-height:100px"),
+            );
+            doc.append_element(
+                Some(wrapper),
+                "div",
+                Style::default(),
+                Some(&format!(
+                    "display:block;position:{position};top:30px;height:60px;break-inside:avoid"
+                )),
+            );
+        });
+        // The box's flow position 50..110 crosses the page end, so it moves
+        // 50px and ends 110px into the wrapper. The 30px inset moves the box
+        // but not the flow it ends.
+        assert_eq!(
+            doc.nodes[wrapper].unrounded_layout.size.height, 110.0,
+            "{position}"
+        );
+    }
+}
+
+#[test]
+fn a_negative_bottom_margin_lowers_a_moved_float_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:60px;margin-bottom:-20px;break-inside:avoid"),
+        ));
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:90px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;clear:left;height:10px"),
+        ));
+    });
+    // The float's margin box ends at 140, above where the block already is.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 150.0]);
+}
+
+#[test]
+fn a_moved_float_keeps_no_truncated_top_margin_in_its_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;margin-top:20px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:right;width:20px;height:10px"),
+        ));
+    });
+    // The unforced break truncates the left float's top margin, so its
+    // margin box starts at the page top and the right float stays below it.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0]);
+}
+
+#[test]
+fn a_float_in_a_containment_context_ignores_a_moved_float() {
+    for contain in ["layout", "paint"] {
+        let mut ids = Vec::new();
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            ids.push(doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("float:left;width:40px;height:60px;break-inside:avoid"),
+            ));
+            let root = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;contain:{contain};width:50px")),
+            );
+            ids.push(doc.append_element(
+                Some(root),
+                "div",
+                Style::default(),
+                Some("float:left;width:10px;height:20px;break-inside:avoid"),
+            ));
+        });
+        // Layout and paint containment each make the box its own block
+        // formatting context (CSS Containment 2 §3.1, §3.3).
+        let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+        assert_eq!(ys, vec![100.0, 60.0], "{contain}");
+    }
+}
+
+#[test]
+fn a_containment_context_keeps_the_moved_boxs_margin_when_it_grows() {
+    for contain in ["layout", "paint"] {
+        assert_eq!(
+            nested_avoiding_block(
+                &format!("contain:{contain};min-height:100px"),
+                "break-inside:avoid;margin-bottom:20px"
+            ),
+            (100.0, 120.0, 2),
+            "{contain}"
+        );
+    }
+}
+
+#[test]
+fn a_relative_offset_does_not_move_a_box_that_fits_in_flow() {
+    let mut wrapper = 0;
+    let mut child = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        wrapper = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        child = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:30px;height:60px;break-inside:avoid"),
+        );
+    });
+    // Its normal-flow range is 20..80; only the painted box crosses 100.
+    assert_eq!(page_flow_y(&doc, child), 50.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 60.0);
+}
+
+#[test]
+fn a_moved_relative_box_keeps_its_offset() {
+    for nested in [false, true] {
+        let mut id = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:60px"),
+            );
+            let parent = if nested {
+                doc.append_element(Some(body), "div", Style::default(), Some("display:block"))
+            } else {
+                body
+            };
+            id = doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some("display:block;position:relative;top:10px;height:60px;break-inside:avoid"),
+            );
+        });
+        assert_eq!(page_flow_y(&doc, id), 110.0, "nested={nested}");
+    }
+}
+
+#[test]
+fn a_logical_float_moves_like_an_in_flow_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;float:inline-start;width:40px;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    // Layout floats only `left` and `right`, so the box stays in flow and
+    // the next block follows it.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn an_empty_box_between_two_blocks_keeps_their_margin_adjoining() {
+    for empty in ["", "height:0"] {
+        for nested in [false, true] {
+            let mut id = 0;
+            let (doc, _) = paged_body(|doc, body| {
+                let parent = if nested {
+                    doc.append_element(Some(body), "div", Style::default(), Some("display:block"))
+                } else {
+                    body
+                };
+                doc.append_element(
+                    Some(parent),
+                    "div",
+                    Style::default(),
+                    Some("display:block;height:80px;break-inside:avoid"),
+                );
+                doc.append_element(
+                    Some(parent),
+                    "div",
+                    Style::default(),
+                    Some(&format!("display:block;{empty}")),
+                );
+                id = doc.append_element(
+                    Some(parent),
+                    "div",
+                    Style::default(),
+                    Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
+                );
+            });
+            // Only margins lie between the blocks, so the break at 100 falls
+            // in the margin before the last one and truncates it, whether or
+            // not the empty box's own margins collapse through it.
+            assert_eq!(
+                page_flow_y(&doc, id),
+                100.0,
+                "empty={empty:?} nested={nested}"
+            );
+        }
+    }
+}
+
 #[test]
 fn forced_break_clearance_applies_to_paged_layout_only() {
     use raikiri_style::{build_rule_tree, cascade};
@@ -10619,4 +12498,789 @@ fn a_vertical_atomic_resolves_a_left_percentage_against_the_physical_width() {
     let (x, y) = vertical_atomic_location("left:50%");
     assert!((x - x0 - 50.0).abs() < 1e-3, "{x0} -> {x}");
     assert_eq!(y, y0);
+}
+
+#[test]
+fn a_moved_float_keeps_its_floor_below_a_block_that_opened_the_page() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px;margin-top:20px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;clear:left;height:10px"),
+        ));
+    });
+    // The block moves only 20px, to 100, so the float still ends below it
+    // at 160 and the clearing block stays under the float.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
+}
+
+#[test]
+fn an_ancestors_relative_offset_does_not_move_a_box_that_fits_in_flow() {
+    let mut wrapper = 0;
+    let mut child = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:30px"),
+        );
+        child = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    // The child's normal-flow range is 20..80; only the offset wrapper
+    // draws it across 100.
+    assert_eq!(page_flow_y(&doc, child), 50.0);
+    assert_eq!(doc.nodes[wrapper].unrounded_layout.size.height, 60.0);
+}
+
+#[test]
+fn a_box_moved_inside_an_offset_ancestor_keeps_the_offset() {
+    let mut child = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:10px"),
+        );
+        child = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, child), 110.0);
+}
+
+#[test]
+fn a_float_on_a_grid_item_moves_with_the_grid_flow() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px"),
+        );
+        ids.push(doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("float:left;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some("height:20px;background:red"),
+        ));
+    });
+    // `float` does not apply to a grid item, so the next row follows it.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_relative_table_does_not_move_a_row_group_that_fits_in_flow() {
+    let mut cells = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:0;position:relative;top:30px"),
+        );
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group;break-inside:avoid"),
+        );
+        cells.push(append_row(doc, group, "", 40.0).1);
+        cells.push(append_row(doc, group, "", 40.0).1);
+    });
+    // The rows' normal-flow range is 20..100; only the offset draws them
+    // past the page end.
+    let ys: Vec<f32> = cells.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![50.0, 90.0]);
+}
+
+#[test]
+fn a_followers_negative_margin_keeps_the_moved_floats_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "float:left;clear:left;width:40px;height:10px;margin-bottom:-20px",
+            "display:block;clear:left;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    // The follower's margin box ends at 150, but the moved float still
+    // reaches 160.
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 160.0]);
+}
+
+#[test]
+fn a_float_too_wide_to_sit_beside_a_moved_float_stays_below_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:40px;height:60px;break-inside:avoid",
+            "display:block;height:30px;margin-top:20px;break-inside:avoid",
+            "float:left;width:70px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
+}
+
+#[test]
+fn a_trailing_margin_does_not_move_a_nested_avoiding_box() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let parent = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px;margin-bottom:20px;break-inside:avoid"),
+        );
+    });
+    // The block-end margin is truncated at the page end, so no break falls
+    // inside the box.
+    assert_eq!(page_flow_y(&doc, id), 20.0);
+}
+
+#[test]
+fn an_ancestors_relative_offset_does_not_lower_a_moved_floats_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:30px"),
+        );
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;clear:left;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The float keeps the wrapper's offset; the clearing box outside the
+    // wrapper clears its normal-flow bottom.
+    assert_eq!(ys, vec![130.0, 160.0]);
+}
+
+#[test]
+fn a_float_stays_below_moved_floats_whose_combined_width_leaves_no_room() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:10px;height:60px;break-inside:avoid",
+            "float:left;width:80px;height:60px;break-inside:avoid",
+            "float:right;width:15px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 100.0, 160.0]);
+}
+
+#[test]
+fn a_display_contents_ancestor_adds_no_relative_offset() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        let contents = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:contents;position:relative;top:30px"),
+        );
+        let parent = doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block"),
+        );
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 100.0);
+}
+
+#[test]
+fn a_calc_relative_offset_does_not_move_a_box_that_fits_in_flow() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:calc(10% + 20px);height:60px;break-inside:avoid"),
+        );
+    });
+    // The 30px offset is not part of the flow, so the box fits at 20px.
+    assert_eq!(page_flow_y(&doc, id), 50.0);
+}
+
+#[test]
+fn a_float_moved_twice_keeps_only_its_last_place_in_the_floor() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        for css in [
+            "float:left;width:60px;height:60px;break-inside:avoid",
+            "float:left;width:60px;height:60px;break-inside:avoid",
+            "float:right;width:30px;height:10px",
+        ] {
+            ids.push(doc.append_element(Some(body), "div", Style::default(), Some(css)));
+        }
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 200.0, 200.0]);
+}
+
+#[test]
+fn a_box_in_a_bounded_clipping_ancestor_does_not_move() {
+    let mut id = 0;
+    let (doc, pages) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:40px;overflow:hidden"),
+        );
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!((page_flow_y(&doc, id), pages), (60.0, 1));
+}
+
+#[test]
+fn a_formatting_context_does_not_grow_past_a_float_that_still_holds_the_moved_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root"),
+        );
+        ids.push(root);
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:20px;height:150px"),
+        );
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    // The moved box ends at 160px, inside the float's 210px end.
+    assert_eq!(ys, vec![60.0, 210.0]);
+}
+
+#[test]
+fn blocks_after_a_moved_nested_box_follow_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0, 180.0]);
+}
+
+#[test]
+fn a_relative_offset_resolves_against_a_percentage_height_that_is_definite() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let outer = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:100px"),
+        );
+        let parent = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:block;height:100%"),
+        );
+        id = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;top:calc(10% + 20px);height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 50.0);
+}
+
+#[test]
+fn a_clipping_ancestor_below_its_max_height_grows_with_a_moved_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;overflow:hidden;max-height:500px"),
+        );
+        ids.push(wrapper);
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+    });
+    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((page_flow_y(&doc, ids[1]), wrapper_height), (100.0, 160.0));
+}
+
+#[test]
+fn an_ancestor_with_a_percentage_height_of_an_auto_block_grows() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let outer = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let wrapper = doc.append_element(
+            Some(outer),
+            "div",
+            Style::default(),
+            Some("display:block;height:50%"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        ids.push(doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_formatting_context_grows_around_a_moved_float() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root"),
+        );
+        ids.push(doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        ));
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 160.0]);
+}
+
+#[test]
+fn a_formatting_context_grows_around_a_moved_float_up_to_its_max_height() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:flow-root;max-height:80px"),
+        );
+        ids.push(root);
+        doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("float:left;width:40px;height:60px;break-inside:avoid"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let root_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((root_height, page_flow_y(&doc, ids[1])), (80.0, 140.0));
+}
+
+#[test]
+fn an_ancestor_grows_only_past_its_min_height_when_later_boxes_follow_a_moved_box() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;min-height:100px"),
+        );
+        ids.push(wrapper);
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+    });
+    let wrapper_height = doc.nodes[ids[0]].unrounded_layout.size.height;
+    assert_eq!((wrapper_height, page_flow_y(&doc, ids[1])), (120.0, 180.0));
+}
+
+#[test]
+fn a_content_box_max_height_is_compared_with_the_content_height() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;overflow:hidden;max-height:100px;padding:45px 0"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 100.0);
+}
+
+#[test]
+fn preserved_white_space_keeps_a_nested_avoiding_box_in_place() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;white-space:pre;font-size:10px;line-height:10px"),
+        );
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px;break-inside:avoid"),
+        );
+        doc.append_text(wrapper, "\n\n\n");
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 140.0);
+}
+
+#[test]
+fn a_sticky_avoiding_float_moves_by_its_normal_flow_position() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        id = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;position:sticky;top:30px;width:40px;height:60px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 100.0);
+}
+
+#[test]
+fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
+    let mut id = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let wrapper =
+            doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:80px;break-inside:avoid"),
+        );
+        let contents = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        doc.append_element(
+            Some(contents),
+            "div",
+            Style::default(),
+            Some("display:block;height:0px"),
+        );
+        id = doc.append_element(
+            Some(wrapper),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;margin-top:30px;break-inside:avoid"),
+        );
+    });
+    assert_eq!(page_flow_y(&doc, id), 140.0);
 }
