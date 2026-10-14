@@ -422,6 +422,31 @@ fn display_contents_wrappers_pass_ruby_parts_to_the_container() {
 }
 
 #[test]
+fn display_contents_wrappers_pass_ruby_parts_to_internal_containers() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let bases = element(doc, container, "rbc", "display:ruby-base-container");
+        let contents = element(doc, bases, "span", "display:contents");
+        let base = rb(doc, contents, "a");
+        let annotations = element(doc, container, "rtc", "display:ruby-text-container");
+        let contents = element(doc, annotations, "span", "display:contents");
+        let annotation = rt(doc, contents, "x");
+        ids = (
+            doc.nodes[base].children[0],
+            doc.nodes[annotation].children[0],
+        );
+    });
+    let container = fixture.doc.nodes[fixture.root].children[0];
+    assert!(plan(&fixture.doc, &fixture.cascade, container).is_some());
+    let runs = runs(fixture);
+    let base = runs.iter().find(|run| run.0 == ids.0).expect("base");
+    let annotation = runs.iter().find(|run| run.0 == ids.1).expect("annotation");
+    assert!(annotation.1 && !base.1);
+    assert!(annotation.2.1 < base.2.1, "{runs:?}");
+}
+
+#[test]
 fn out_of_flow_boxes_in_contents_wrappers_keep_their_segment() {
     let fixture = block_fixture("line-height:20px", |doc, root| {
         let container = ruby(doc, root);

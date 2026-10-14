@@ -326,7 +326,7 @@ impl Planner<'_> {
                 annotations.push(Part::new(None, container, run));
             }
         };
-        for &child in &doc.nodes[container].children {
+        for child in flattened_children(doc, self.cascade, container) {
             if is_skipped(doc, self.cascade, child) {
                 continue;
             }
@@ -366,7 +366,7 @@ impl Planner<'_> {
         self.close_pending();
         self.start_base();
         self.pending_owner = container;
-        for &base in &self.doc.nodes[container].children {
+        for base in flattened_children(self.doc, self.cascade, container) {
             if is_skipped(self.doc, self.cascade, base) {
                 continue;
             }
@@ -469,6 +469,27 @@ impl Planner<'_> {
         }
         Some(())
     }
+}
+
+/// The children of the ruby-internal container `container`, with every
+/// `display: contents` element holding ruby parts replaced by its children
+/// (CSS Display 3 §2.5).
+fn flattened_children(doc: &Document, cascade: &CascadeResult, container: usize) -> Vec<usize> {
+    let mut children = Vec::new();
+    let mut stack: Vec<usize> = doc.nodes[container]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    while let Some(id) = stack.pop() {
+        if holds_ruby_parts(doc, cascade, id) {
+            stack.extend(doc.nodes[id].children.iter().rev());
+        } else {
+            children.push(id);
+        }
+    }
+    children
 }
 
 /// Whether `id` is an element with `display: contents` whose children, seen
