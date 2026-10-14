@@ -190,30 +190,14 @@ pub(crate) fn apply_page_content_box_to_body(
 /// shrink-to-fit path applies. Keep float (§10.3.5) and line-break handling
 /// out of this module.
 pub(crate) fn used_style_length_percentage(value: LengthPercentage, basis: f32) -> Option<f32> {
-    let raw = value.into_raw();
-    let resolved = match raw.tag() {
-        CompactLength::LENGTH_TAG => raw.value(),
-        CompactLength::PERCENT_TAG => raw.value() * basis,
-        // Calc handles in a document style point into its calc arena.
-        _ if raw.is_calc() => crate::taffy_impl::resolve_calc(raw.calc_value(), basis),
-        _ => return None,
-    };
-    resolved.is_finite().then_some(resolved)
+    super::resolve_length_percentage(value, Some(basis)).filter(|value| value.is_finite())
 }
 
 pub(crate) fn used_style_length_percentage_auto(
     value: LengthPercentageAuto,
     basis: f32,
 ) -> Option<f32> {
-    let raw = value.into_raw();
-    let resolved = match raw.tag() {
-        CompactLength::LENGTH_TAG => raw.value(),
-        CompactLength::PERCENT_TAG => raw.value() * basis,
-        // Calc handles in a document style point into its calc arena.
-        _ if raw.is_calc() => crate::taffy_impl::resolve_calc(raw.calc_value(), basis),
-        _ => return None,
-    };
-    resolved.is_finite().then_some(resolved)
+    super::resolve_length_percentage_auto(value, Some(basis)).filter(|value| value.is_finite())
 }
 
 pub(crate) fn used_computed_length_percentage_or_auto(
