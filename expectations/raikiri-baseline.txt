@@ -229,6 +229,7 @@ css/css-logical/parsing/min-inline-size-invalid.html
 css/css-backgrounds/background-attachment-fixed-border-radius-offset.html
 css/css-backgrounds/background-attachment-fixed-inline-scrolled.html
 css/css-backgrounds/background-attachment-fixed-inside-transform-1.html
+css/css-backgrounds/background-attachment-margin-root-001.html
 css/css-backgrounds/background-attachment-margin-root-002.html
 css/css-backgrounds/background-clip-007.html
 css/css-backgrounds/background-clip-008.html
@@ -268,6 +269,9 @@ css/css-backgrounds/background-image-large-with-auto.html
 css/css-backgrounds/background-image-table-cells-zoomed.html
 css/css-backgrounds/background-image-with-border-radius-fidelity.html
 css/css-backgrounds/background-margin-iframe-root.html
+css/css-backgrounds/background-margin-root.html
+css/css-backgrounds/background-margin-transformed-root.html
+css/css-backgrounds/background-margin-will-change-root.html
 css/css-backgrounds/background-multiple-layers-table-cell.html
 css/css-backgrounds/background-paint-order-001.html
 css/css-backgrounds/background-position-negative-percentage-comparison-002.html
@@ -1445,6 +1449,7 @@ css/css-page/page-name-propagated-002-print.html
 # The other six are negative tests whose subject must have no effect (page names inside
 # monolithic or row-flex content, background-clip on the root page), so the audit reports
 # them VACUOUS-UNSTYLED; each failed before the matching pagination fix and is kept as a guard.
+css/css-page/page-background-001-print.html
 css/css-page/page-background-004-print.html
 css/css-page/page-name-003-print.html
 css/css-page/page-name-flex-002-print.html
