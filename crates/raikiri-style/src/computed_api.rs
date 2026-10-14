@@ -44,7 +44,8 @@ pub use crate::property::{
     CssPositionOffset, GradientColorInterpolation, GradientColorStop, GradientStopColor,
     HorizontalSide, Length, LengthPercentageOrCalc, LinearGradient, LinearGradientDirection,
     OutlineColor, OutlineStyle, OverflowValue, RadialExtent, RadialGradient, RadialShape,
-    RadialSize, SideOrCorner, TextShadowColor, TextShadowItem, TextShadowLength, VerticalSide,
+    RadialSize, SideOrCorner, TextShadowColor, TextShadowItem, TextShadowLength, UnboundedColor,
+    VerticalSide,
 };
 
 use crate::property;

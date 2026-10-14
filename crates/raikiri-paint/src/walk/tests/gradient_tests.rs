@@ -1225,8 +1225,8 @@ fn degenerate_shapes_and_lengths_still_resolve() {
 
 #[test]
 fn average_colors_of_few_or_transparent_stops() {
-    let red = CssColor::from_hex("ff0000").unwrap();
-    let clear = CssColor::from_hex("00000000").unwrap();
+    let red = css_color_to_dynamic(CssColor::from_hex("ff0000").unwrap());
+    let clear = css_color_to_dynamic(CssColor::from_hex("00000000").unwrap());
     assert_eq!(gradient::average_color(&[]), Color::TRANSPARENT);
     assert_eq!(
         gradient::average_color(&[(0.0, red)]),
@@ -1269,4 +1269,66 @@ fn mixed_calc_stops_and_radii_resolve_against_the_gradient_box() {
         gradient::gradient_fill(&gradient_of(&cv), Rect::new(0.0, 0.0, 0.0, 100.0), cv.color),
         Some(gradient::GradientFill::Solid(_))
     ));
+}
+
+#[test]
+fn out_of_gamut_stops_interpolate_before_clipping() {
+    // Two stops 270 degrees apart draw the same colors as the same turn
+    // split into four stops, which both stay outside the sRGB gamut.
+    let two = raster_layer(
+        "background-image: linear-gradient(to right in lch increasing hue, \
+         lch(50% 100% 0deg), lch(50% 100% 270deg))",
+        200,
+        4,
+    );
+    let four = raster_layer(
+        "background-image: linear-gradient(to right in lch increasing hue, \
+         lch(50% 100% 0deg), lch(50% 100% 90deg), lch(50% 100% 180deg), \
+         lch(50% 100% 270deg))",
+        200,
+        4,
+    );
+    let largest = two
+        .iter()
+        .zip(&four)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .expect("pixels");
+    assert!(largest <= 4, "largest channel difference {largest}");
+    // Halfway the hue is 135 degrees, a green outside the gamut: red clips
+    // to zero instead of the value 8-bit stops would interpolate.
+    assert_eq!(pixel(&two, 200, 100, 2)[0], 0);
+}
+
+#[test]
+fn unbounded_stop_colors_keep_their_space() {
+    for (css, expected) in [
+        // Hand-checked against the CSS Color 4 conversions; 100% lch
+        // chroma is 150.
+        ("lch(50% 100% 0deg)", [1.232, -0.548, 0.503]),
+        ("lab(50% 120 0)", [1.094, -0.412, 0.494]),
+        ("oklch(60% 0.4 30deg)", [1.156, -0.458, -0.290]),
+        ("oklab(60% 0.4 0)", [1.102, -0.439, 0.465]),
+        ("color(srgb 1.2 0 0)", [1.2, 0.0, 0.0]),
+        ("color(srgb-linear 1.5 0 0)", [1.194, 0.0, 0.0]),
+    ] {
+        let cv = computed_for(&format!("background-image: linear-gradient({css}, red)"));
+        let Gradient::Linear(linear) = gradient_of(&cv) else {
+            panic!("expected a linear gradient");
+        };
+        let color = gradient_stop_dynamic(linear.stops[0].color, cv.color)
+            .to_alpha_color::<Srgb>()
+            .components;
+        for channel in 0..3 {
+            assert!(
+                (color[channel] - expected[channel]).abs() < 0.002,
+                "{css}: {color:?}"
+            );
+        }
+        // An 8-bit consumer gets the clipped color.
+        assert_eq!(
+            resolve_gradient_stop_color(linear.stops[0].color, cv.color).a,
+            255
+        );
+    }
 }

@@ -3828,3 +3828,70 @@ fn transform_origin_accepts_axis_keywords_lengths_and_optional_z_length() {
         assert!(parse(value, "transform-origin").is_none(), "{value}");
     }
 }
+
+/// The color of the first stop of a parsed `linear-gradient()`.
+fn first_linear_stop_color(css: &str) -> GradientStopColor {
+    match parse(css, "background-image") {
+        Some(PropertyValue::BackgroundImage(layers)) => match &layers[0] {
+            BackgroundImage::Gradient(gradient) => match &**gradient {
+                Gradient::Linear(linear) => linear.stops[0].color,
+                other => panic!("expected a linear gradient, got {other:?}"),
+            },
+            other => panic!("expected a gradient, got {other:?}"),
+        },
+        other => panic!("expected a background image, got {other:?}"),
+    }
+}
+
+#[test]
+fn gradient_stops_outside_the_srgb_gamut_keep_their_own_coordinates() {
+    let GradientStopColor::Unbounded(color) =
+        first_linear_stop_color("linear-gradient(lch(50% 100% 90deg), red)")
+    else {
+        panic!("an out-of-gamut lch() stop should stay unbounded");
+    };
+    assert_eq!(color.space, MixColorSpace::Lch);
+    assert_eq!(color.components[0], 50.0);
+    assert_eq!(color.components[1], 150.0);
+    assert!((color.components[2] - 90.0).abs() < 1e-3);
+    assert_eq!(color.alpha, 1.0);
+    // The 8-bit fallback is the clipped color.
+    assert_eq!(color.srgb.a, 255);
+
+    for (css, space) in [
+        ("oklch(60% 0.4 30deg)", MixColorSpace::Oklch),
+        ("lab(50% 120 0)", MixColorSpace::Lab),
+        ("oklab(60% 0.4 0)", MixColorSpace::Oklab),
+        ("color(srgb 1.2 0 0)", MixColorSpace::Srgb),
+        ("color(srgb-linear 1.5 0 0)", MixColorSpace::SrgbLinear),
+    ] {
+        let source = format!("linear-gradient({css}, red)");
+        match first_linear_stop_color(&source) {
+            GradientStopColor::Unbounded(color) => assert_eq!(color.space, space, "{css}"),
+            other => panic!("{css}: expected an unbounded stop, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn gradient_stops_inside_the_gamut_or_at_a_lightness_boundary_stay_8_bit() {
+    assert_eq!(
+        first_linear_stop_color("linear-gradient(lch(50% 0 0deg), red)"),
+        GradientStopColor::Resolved(CssColor {
+            r: 119,
+            g: 119,
+            b: 119,
+            a: 255,
+        })
+    );
+    // White at the lightness boundary, whatever its chroma.
+    assert_eq!(
+        first_linear_stop_color("linear-gradient(lch(100% 150 0deg), red)"),
+        GradientStopColor::Resolved(CssColor {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        })
+    );
+}

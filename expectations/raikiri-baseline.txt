@@ -2805,7 +2805,16 @@ css/css-images/conic-gradient-angle-negative.html
 css/css-images/gradient-move-stops.html
 css/css-images/gradient/gradient-analogous-missing-components-001.html
 css/css-images/gradient/gradient-analogous-missing-components-004.html
+css/css-images/gradient/gradient-decreasing-hue-lch.html
 css/css-images/gradient/gradient-hue-direction.html
+css/css-images/gradient/gradient-increasing-hue-lch.html
+css/css-images/gradient/gradient-longer-hue-lch-001.html
+css/css-images/gradient/gradient-longer-hue-lch-002.html
+css/css-images/gradient/gradient-longer-hue-lch-003.html
+css/css-images/gradient/gradient-longer-hue-lch-004.html
+css/css-images/gradient/gradient-longer-hue-lch-005.html
+css/css-images/gradient/gradient-longer-hue-lch-006.html
+css/css-images/gradient/gradient-longer-hue-lch-007.html
 css/css-images/gradient/gradient-longer-hue-lch-008.html
 css/css-images/gradient/gradient-longer-hue-lch-009.html
 css/css-images/gradient/gradient-longer-hue-lch-010.html

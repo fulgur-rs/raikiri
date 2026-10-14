@@ -876,6 +876,36 @@ impl ParsedColor {
         rgb_f32_to_css_color(self.to_srgb(), self.alpha)
     }
 
+    /// The color with its own coordinates when it lies outside the sRGB
+    /// gamut, so interpolation can use it before any clipping. A color at the
+    /// black or white lightness boundary is fixed to that sRGB color instead.
+    pub(crate) fn to_unbounded(self) -> Option<UnboundedColor> {
+        if self.lightness_boundary.is_some()
+            || self
+                .to_srgb()
+                .iter()
+                .all(|component| (0.0..=1.0).contains(component))
+        {
+            return None;
+        }
+        let [first, second, hue] = self.coordinates;
+        let (space, components) = match self.space {
+            ParsedColorSpace::Srgb => (MixColorSpace::Srgb, self.coordinates),
+            ParsedColorSpace::SrgbLinear => (MixColorSpace::SrgbLinear, self.coordinates),
+            ParsedColorSpace::Lab => (MixColorSpace::Lab, self.coordinates),
+            ParsedColorSpace::Oklab => (MixColorSpace::Oklab, self.coordinates),
+            // Polar coordinates keep their hue in radians here.
+            ParsedColorSpace::Lch => (MixColorSpace::Lch, [first, second, hue.to_degrees()]),
+            ParsedColorSpace::Oklch => (MixColorSpace::Oklch, [first, second, hue.to_degrees()]),
+        };
+        Some(UnboundedColor {
+            space,
+            components,
+            alpha: self.alpha,
+            srgb: self.to_css_color(),
+        })
+    }
+
     pub(crate) fn to_srgb(self) -> [f32; 3] {
         // Boundary provenance requests CSS Color's fixed black/white mapping;
         // retained interpolation coordinates otherwise use unbounded conversion.

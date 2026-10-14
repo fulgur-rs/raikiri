@@ -245,21 +245,10 @@ const MAX_GRADIENT_TILES: usize = 16_384;
 /// The average color along a gradient brush, weighting each pair of stops by
 /// the distance between them.
 fn brush_average_color(brush: &PenikoGradient) -> Color {
-    let mut stops: Vec<(f64, CssColor)> = brush
+    let mut stops: Vec<(f64, DynamicColor)> = brush
         .stops
         .iter()
-        .map(|stop| {
-            let color = stop.color.to_alpha_color::<Srgb>().to_rgba8();
-            (
-                f64::from(stop.offset),
-                CssColor {
-                    r: color.r,
-                    g: color.g,
-                    b: color.b,
-                    a: color.a,
-                },
-            )
-        })
+        .map(|stop| (f64::from(stop.offset), stop.color))
         .collect();
     // A padded brush shows its first and last colors before and after its
     // stops.
@@ -473,7 +462,7 @@ fn radial_fill(
             average_color(&stops)
         } else {
             let (_, last) = *stops.last()?;
-            Color::from_rgba8(last.r, last.g, last.b, last.a)
+            solid_color(last)
         };
         return Some(GradientFill::Solid(color));
     };
@@ -540,7 +529,7 @@ fn resolved_stops(
     length: f64,
     percent_basis: f64,
     current_color: CssColor,
-) -> Vec<(f64, CssColor)> {
+) -> Vec<(f64, DynamicColor)> {
     let raw: Vec<Option<f32>> = stops
         .iter()
         .map(|stop| {
@@ -597,7 +586,7 @@ fn resolved_stops(
         .map(|(offset, stop)| {
             (
                 f64::from(offset),
-                resolve_gradient_stop_color(stop.color, current_color),
+                gradient_stop_dynamic(stop.color, current_color),
             )
         })
         .collect()
@@ -609,12 +598,12 @@ fn resolved_stops(
 /// Returns the solid color the gradient paints when every stop lies before
 /// the center.
 fn clip_stops_at_zero(
-    stops: &mut Vec<(f64, CssColor)>,
+    stops: &mut Vec<(f64, DynamicColor)>,
     interpolation: &GradientColorInterpolation,
 ) -> Option<Color> {
     let Some(index) = stops.iter().position(|stop| stop.0 >= 0.0) else {
         let &(_, last) = stops.last()?;
-        return Some(Color::from_rgba8(last.r, last.g, last.b, last.a));
+        return Some(solid_color(last));
     };
     if index == 0 {
         return None;
@@ -636,34 +625,34 @@ fn clip_stops_at_zero(
 /// The color `t` of the way from `from` to `to` in the gradient's
 /// interpolation space, with premultiplied alpha (CSS Images 4 §3.5.2).
 fn lerp_color(
-    from: CssColor,
-    to: CssColor,
+    from: DynamicColor,
+    to: DynamicColor,
     t: f64,
     interpolation: &GradientColorInterpolation,
-) -> CssColor {
-    let color = css_color_to_dynamic(from)
-        .interpolate(
-            css_color_to_dynamic(to),
-            conic_interpolation_tag(interpolation.color_space),
-            conic_hue_direction(interpolation.hue_method),
-        )
-        .eval(t as f32)
-        .to_alpha_color::<Srgb>()
-        .to_rgba8();
-    CssColor {
-        r: color.r,
-        g: color.g,
-        b: color.b,
-        a: color.a,
-    }
+) -> DynamicColor {
+    from.interpolate(
+        to,
+        conic_interpolation_tag(interpolation.color_space),
+        conic_hue_direction(interpolation.hue_method),
+    )
+    .eval(t as f32)
+}
+
+/// A dynamic color drawn as one solid 8-bit sRGB color.
+fn solid_color(color: DynamicColor) -> Color {
+    let CssColor { r, g, b, a } = dynamic_to_css_color(color);
+    Color::from_rgba8(r, g, b, a)
 }
 
 /// The average color of one period of stops (CSS Images 4 §3.5.3): each pair
 /// of neighboring stops contributes the mean of its two colors, weighted by
 /// the distance between them, in premultiplied sRGB. Stops that share one
 /// position are spread evenly, so each pair weighs the same.
-pub(super) fn average_color(stops: &[(f64, CssColor)]) -> Color {
-    let premultiplied: Vec<[f64; 4]> = stops.iter().map(|(_, color)| premultiply(*color)).collect();
+pub(super) fn average_color(stops: &[(f64, DynamicColor)]) -> Color {
+    let premultiplied: Vec<[f64; 4]> = stops
+        .iter()
+        .map(|(_, color)| premultiply(dynamic_to_css_color(*color)))
+        .collect();
     let period = match stops {
         [first, .., last] => last.0 - first.0,
         _ => 0.0,
@@ -722,7 +711,7 @@ enum Normalized {
     Stops {
         first: f64,
         last: f64,
-        stops: Vec<(f32, CssColor)>,
+        stops: Vec<(f32, DynamicColor)>,
     },
 }
 
@@ -736,7 +725,7 @@ enum Normalized {
 /// one whose period, measured along `length` CSS pixels, is too short for any
 /// output resolution to show.
 fn normalize_stops(
-    stops: Vec<(f64, CssColor)>,
+    stops: Vec<(f64, DynamicColor)>,
     repeating: bool,
     length: f64,
 ) -> Option<Normalized> {
@@ -800,15 +789,11 @@ fn normalize_stops(
 
 fn finish_brush(
     brush: PenikoGradient,
-    stops: &[(f32, CssColor)],
+    stops: &[(f32, DynamicColor)],
     repeating: bool,
     color_space: MixColorSpace,
     hue_method: HueInterpolationMethod,
 ) -> PenikoGradient {
-    let stops: Vec<(f32, DynamicColor)> = stops
-        .iter()
-        .map(|(offset, color)| (*offset, css_color_to_dynamic(*color)))
-        .collect();
     let space = conic_interpolation_tag(color_space);
     let brush = brush.with_extend(if repeating {
         PenikoExtend::Repeat
@@ -816,9 +801,9 @@ fn finish_brush(
         PenikoExtend::Pad
     });
     if space == ColorSpaceTag::Srgb {
-        return brush.with_stops(stops.as_slice());
+        return brush.with_stops(stops);
     }
-    let stops = expand_stops(&stops, space, conic_hue_direction(hue_method), repeating);
+    let stops = expand_stops(stops, space, conic_hue_direction(hue_method), repeating);
     brush.with_stops(stops.as_slice())
 }
 
@@ -829,6 +814,23 @@ const COINCIDENT_STEP: f32 = 1e-5;
 /// steps between coincident stops are shorter, and those are hard
 /// transitions with nothing to interpolate.
 const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
+
+/// Exact samples between two approximated stops when either lies outside
+/// the sRGB gamut.
+const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
+
+/// Every sRGB channel lies in 0..=1.
+fn in_gamut(color: AlphaColor<Srgb>) -> bool {
+    color.components[..3]
+        .iter()
+        .all(|channel| (0.0..=1.0).contains(channel))
+}
+
+/// The color clipped to the sRGB gamut, as it is drawn.
+fn clipped(color: AlphaColor<Srgb>) -> DynamicColor {
+    let [r, g, b, a] = color.components.map(|channel| channel.clamp(0.0, 1.0));
+    DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([r, g, b, a]))
+}
 
 /// Approximate interpolation in `space` with dense sRGB stops.
 ///
@@ -858,13 +860,27 @@ fn expand_stops(
             expanded.push((from_offset, from));
             continue;
         }
+        let exact = from.interpolate(to, space, direction);
+        let mut previous: Option<(f32, AlphaColor<Srgb>)> = None;
         for (t, color) in peniko::color::gradient::<Srgb>(from, to, space, direction, 0.01) {
-            if t < 1.0 {
-                expanded.push((
-                    from_offset + span * t,
-                    DynamicColor::from_alpha_color(color.un_premultiply()),
-                ));
+            let color = color.un_premultiply();
+            // The approximation error is bounded before clipping, but a
+            // channel leaving the gamut bends the clipped curve within one
+            // step. Sample such a step exactly so the drawn colors follow it.
+            if let Some((previous_t, previous_color)) = previous
+                && (!in_gamut(previous_color) || !in_gamut(color))
+            {
+                for step in 1..OUT_OF_GAMUT_SUBSTEPS {
+                    let t =
+                        previous_t + (t - previous_t) * step as f32 / OUT_OF_GAMUT_SUBSTEPS as f32;
+                    let sample = exact.eval(t).to_alpha_color::<Srgb>();
+                    expanded.push((from_offset + span * t, clipped(sample)));
+                }
             }
+            if t < 1.0 {
+                expanded.push((from_offset + span * t, clipped(color)));
+            }
+            previous = Some((t, color));
         }
     }
     if let Some((offset, color)) = stops.last() {

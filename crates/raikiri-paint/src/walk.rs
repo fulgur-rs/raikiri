@@ -15,7 +15,9 @@
 
 use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
-use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
+use peniko::color::{
+    AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Lab, Lch, LinearSrgb, Oklab, Oklch, Srgb,
+};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
     background_image_dimensions, background_tiles, border_image_geometry, position_offset,
@@ -27,8 +29,8 @@ use raikiri_style::property::{
     CssColor, CssPosition, CssPositionOffset, DisplayValue, FloatValue, Gradient,
     GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
     ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
-    PropertyValue, Sides, TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
-    ZIndexValue,
+    PropertyValue, Sides, TextShadowColor, UnboundedColor, VerticalAlign, Visibility, VisualBox,
+    WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -6787,9 +6789,50 @@ fn gradient_first_color(gradient: &Gradient, current_color: CssColor) -> Option<
 fn resolve_gradient_stop_color(c: GradientStopColor, current_color: CssColor) -> CssColor {
     match c {
         GradientStopColor::Resolved(color) => color,
+        GradientStopColor::Unbounded(color) => color.srgb,
         GradientStopColor::CurrentColor => current_color,
         // non_exhaustive
         _ => current_color,
+    }
+}
+
+/// A gradient stop color for interpolation. A color outside the sRGB gamut
+/// keeps its own coordinates, so the gradient is clipped only when drawn.
+fn gradient_stop_dynamic(c: GradientStopColor, current_color: CssColor) -> DynamicColor {
+    match c {
+        GradientStopColor::Unbounded(color) => unbounded_to_dynamic(color),
+        other => css_color_to_dynamic(resolve_gradient_stop_color(other, current_color)),
+    }
+}
+
+/// Convert a style color kept in its own space to a peniko dynamic color.
+fn unbounded_to_dynamic(color: UnboundedColor) -> DynamicColor {
+    let [first, second, third] = color.components;
+    let components = [first, second, third, color.alpha];
+    match color.space {
+        MixColorSpace::SrgbLinear => {
+            DynamicColor::from_alpha_color(AlphaColor::<LinearSrgb>::new(components))
+        }
+        MixColorSpace::Lab => DynamicColor::from_alpha_color(AlphaColor::<Lab>::new(components)),
+        MixColorSpace::Lch => DynamicColor::from_alpha_color(AlphaColor::<Lch>::new(components)),
+        MixColorSpace::Oklab => {
+            DynamicColor::from_alpha_color(AlphaColor::<Oklab>::new(components))
+        }
+        MixColorSpace::Oklch => {
+            DynamicColor::from_alpha_color(AlphaColor::<Oklch>::new(components))
+        }
+        _ => DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new(components)),
+    }
+}
+
+/// The 8-bit sRGB color a dynamic color is drawn as, clipped to the gamut.
+fn dynamic_to_css_color(color: DynamicColor) -> CssColor {
+    let rgba = color.to_alpha_color::<Srgb>().to_rgba8();
+    CssColor {
+        r: rgba.r,
+        g: rgba.g,
+        b: rgba.b,
+        a: rgba.a,
     }
 }
 
@@ -6966,8 +7009,7 @@ fn conic_to_peniko(
     let offsets = fixup_conic_offsets(&raw);
     let mut peniko_stops: Vec<(f32, DynamicColor)> = Vec::with_capacity(conic.stops.len());
     for (stop, offset) in conic.stops.iter().zip(offsets.iter()) {
-        let base = resolve_gradient_stop_color(stop.color, current_color);
-        peniko_stops.push((*offset, css_color_to_dynamic(base)));
+        peniko_stops.push((*offset, gradient_stop_dynamic(stop.color, current_color)));
     }
     let from_degrees = if conic.angle.0.is_finite() {
         conic.angle.0
