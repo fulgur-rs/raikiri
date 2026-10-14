@@ -2854,3 +2854,17 @@ fn page_orientation_rotates_the_presented_page_a_quarter_turn() {
     let left = rotate_presented_page(wide(), Some(raikiri_style::PageRotation::RotateLeft));
     assert_eq!(pixels(&left), vec![2, 5, 1, 4, 0, 3]);
 }
+
+#[test]
+fn blitz_oracle_renders_a_print_reftest_on_the_print_paper() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_path = dir.path().join("oracle-print.html");
+    std::fs::write(&test_path, "<link rel=match href=oracle-ref.html><p>a</p>").unwrap();
+    std::fs::write(dir.path().join("oracle-ref.html"), "<p>a</p>").unwrap();
+    let pairs = discover_pairs_for_file(&test_path).unwrap();
+    let config = ReftestConfig::default();
+    let (raikiri, oracle) = run_pair_with_oracle(&pairs[0], config).unwrap();
+    let paper = u64::from(config.print_page_width) * u64::from(config.print_page_height);
+    assert_eq!(raikiri.total_pixels, paper);
+    assert_eq!(oracle.total_pixels, paper);
+}
