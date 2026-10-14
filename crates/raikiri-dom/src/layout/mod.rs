@@ -63,6 +63,7 @@ pub(crate) mod multicol;
 mod page;
 mod page_pipeline;
 mod relative;
+mod root_box;
 pub(crate) mod sanitize;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -125,6 +126,7 @@ pub use page_pipeline::{
 #[doc(hidden)]
 pub use relative::used_relative_offset;
 pub(crate) use relative::{Precedence, used_relative_insets};
+pub use root_box::{RootBox, root_box};
 
 pub(crate) use page_pipeline::{
     line_center_on_page, page_fragment_events_from_pages, project_slices_with_control,

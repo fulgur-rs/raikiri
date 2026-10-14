@@ -510,6 +510,7 @@ fn canvas_background_paints_a_propagated_body_gradient() {
         &cascade,
         page_box,
         None,
+        None,
         &mut warnings,
     );
     assert!(warnings.is_empty());
@@ -543,6 +544,7 @@ fn canvas_gradient_ignores_background_clip() {
             &document,
             &cascade,
             page_box,
+            None,
             None,
             &mut warnings,
         );
@@ -613,6 +615,7 @@ fn page_box_paints_its_gradient_over_its_color() {
         &document,
         &cascade,
         page_box,
+        None,
         None,
         &mut warnings,
     );
@@ -872,6 +875,7 @@ fn page_gradients_resolve_font_lengths_with_the_page_font() {
         &cascade,
         page_box,
         None,
+        None,
         &mut warnings,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -903,6 +907,7 @@ fn page_gradients_inherit_current_color_from_the_root() {
         &document,
         &cascade,
         page_box,
+        None,
         None,
         &mut warnings,
     );

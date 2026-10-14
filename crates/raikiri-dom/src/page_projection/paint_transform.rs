@@ -108,14 +108,14 @@ pub(super) fn translation_only(cv: &ComputedValues) -> bool {
 
 /// A 2D affine matrix in double precision, as the painter computes it.
 #[derive(Debug, Clone, Copy)]
-struct Affine([f64; 6]);
+pub(crate) struct Affine(pub(crate) [f64; 6]);
 
 impl Affine {
-    fn translate(x: f64, y: f64) -> Self {
+    pub(crate) fn translate(x: f64, y: f64) -> Self {
         Self([1.0, 0.0, 0.0, 1.0, x, y])
     }
 
-    fn then(self, inner: Self) -> Self {
+    pub(crate) fn then(self, inner: Self) -> Self {
         let [a, b, c, d, e, f] = self.0;
         let [ia, ib, ic, id, ie, iff] = inner.0;
         Self([
@@ -136,7 +136,7 @@ impl Affine {
 
 /// The product of `cv`'s transform functions, with percentages resolved
 /// against a `width` by `height` box.
-fn function_matrix(cv: &ComputedValues, width: f64, height: f64) -> Affine {
+pub(crate) fn function_matrix(cv: &ComputedValues, width: f64, height: f64) -> Affine {
     let skew = |x: f32, y: f32| {
         Affine([
             1.0,

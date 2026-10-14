@@ -58,17 +58,72 @@ macro_rules! css_keywords {
 /// allocating a new heap slot per node; cloning only bumps the reference count.
 ///
 /// As a defense against cascade memory DoS, `ComputedValues.content` and
-/// `.string_set` are wrapped in `Arc<Vec<..>>`. Calling
-/// `Arc::new(Vec::new())` for every node would add 2N small heap allocations
+/// `.string_set` are wrapped in `Arc`. Allocating a new empty list for every
+/// node would add 2N small heap allocations
 /// for an N-node document. `OnceLock` keeps **one empty Arc per process**,
 /// and [`empty_content_list`] / [`empty_string_set_entries`] clone it at each
 /// initial-value site (incrementing only the Arc reference count).
 ///
-/// An empty `Vec::new()` allocates no buffer, but its 24-byte `Vec` struct
-/// still exists per node. The Arc replaces it with an 8-byte pointer to shared data.
-pub(crate) fn empty_content_list() -> Arc<Vec<ContentComponent>> {
-    static EMPTY: OnceLock<Arc<Vec<ContentComponent>>> = OnceLock::new();
-    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+/// An empty list allocates no buffer, but its struct would still exist per
+/// node. The Arc replaces it with an 8-byte pointer to shared data.
+pub(crate) fn empty_content_list() -> Arc<ContentList> {
+    static EMPTY: OnceLock<Arc<ContentList>> = OnceLock::new();
+    EMPTY
+        .get_or_init(|| Arc::new(ContentList::default()))
+        .clone()
+}
+
+/// A parsed `content` value: its items and its alternative text
+/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>).
+///
+/// The list dereferences to its items, so `.iter()`, `.len()`,
+/// `.is_empty()` and slice patterns read the items as they would a
+/// `Vec<ContentComponent>`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContentList {
+    items: Vec<ContentComponent>,
+    alt: Option<Box<[ContentComponent]>>,
+}
+
+impl ContentList {
+    /// A list of `items` with the alternative text `alt`, the components
+    /// after `/`: strings, `counter()` / `counters()` and `attr()`.
+    pub fn new(items: Vec<ContentComponent>, alt: Option<Vec<ContentComponent>>) -> Self {
+        Self {
+            items,
+            alt: alt.map(Vec::into_boxed_slice),
+        }
+    }
+
+    /// The alternative text given after `/`, or `None` when the value has
+    /// none. Assistive technology reads it in place of the content, and an
+    /// empty alternative text leaves decorative content out of the
+    /// accessibility tree (CSS Content 3
+    /// <https://www.w3.org/TR/css-content-3/#alt>).
+    pub fn alt(&self) -> Option<&[ContentComponent]> {
+        self.alt.as_deref()
+    }
+}
+
+impl From<Vec<ContentComponent>> for ContentList {
+    fn from(items: Vec<ContentComponent>) -> Self {
+        Self { items, alt: None }
+    }
+}
+
+/// A list equals the items alone when it has no alternative text.
+impl PartialEq<Vec<ContentComponent>> for ContentList {
+    fn eq(&self, items: &Vec<ContentComponent>) -> bool {
+        self.alt.is_none() && self.items == *items
+    }
+}
+
+impl std::ops::Deref for ContentList {
+    type Target = Vec<ContentComponent>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
 }
 
 /// One `string-set` entry: a `(<custom-ident> name, content-list)` pair
@@ -190,7 +245,7 @@ pub(crate) fn initial_font_family() -> Arc<Vec<FontFamilyName>> {
 /// Shared Arc for the empty `text-shadow` list (`none`), following the same
 /// `OnceLock` shared-slot pattern as [`empty_content_list`] to avoid per-node
 /// allocation regressions. Representing `none` as an empty list follows
-/// `parse_content` / `parse_counter_property`
+/// `parse_content_with_alt` / `parse_counter_property`
 /// (see the [`TextShadowItem`] documentation).
 pub(crate) fn empty_text_shadow_list() -> Arc<Vec<TextShadowItem>> {
     static EMPTY: OnceLock<Arc<Vec<TextShadowItem>>> = OnceLock::new();
@@ -3021,7 +3076,7 @@ pub enum ContentComponent {
     /// [`SmolStr`] stores up to 22 bytes inline; longer values use an internal
     /// `Arc<str>`, making a clone an O(1) bump. This is a secondary defense
     /// against the direct DoS vector `content: "<large>"`; the primary defense
-    /// is the [`Arc<Vec<..>>`] wrapper on the outer [`PropertyValue::Content`].
+    /// is the [`Arc<ContentList>`] wrapper on the outer [`PropertyValue::Content`].
     ///
     /// **For consumers**:
     /// The previous payload type was `String`. SmolStr provides
@@ -3163,14 +3218,14 @@ pub enum ContentComponent {
     /// Specification verbatim: "The element's descendants". Resolving whether
     /// pseudo-elements are generated and the consumption order (do nothing if
     /// already used by another pseudo-element) is outside this crate's
-    /// static-side scope. As with `normal`/`none` in the parse_content
-    /// documentation, downstream consumers decide whether to generate content.
+    /// static-side scope. As with `normal`/`none` in the
+    /// [`parse_content_with_alt`] documentation, downstream consumers decide whether to generate content.
     ///
     /// **Asymmetry with `normal` (intentional)**: The specification states
     /// verbatim (§2.3) that "the initial
     /// value of content is `normal` and `normal` computes to `contents` on an
     /// element". However,
-    /// [`parse_content`] stores `normal` as an empty `Vec`; expanding `normal`
+    /// [`parse_content_with_alt`] stores `normal` as an empty `Vec`; expanding `normal`
     /// to `contents` at computed-value time is outside this crate's static-side
     /// (specified-value layer) scope. In contrast, explicit `content: none` is
     /// retained as a [`ContentComponent::None`] sentinel so pseudo-element
@@ -4038,7 +4093,7 @@ pub struct GridTrackList {
 ///
 /// Wrapping the list in `Arc` follows the memory-DoS mitigation described
 /// in the [`PropertyValue`] docs, under "cascade memory DoS countermeasures".
-/// Like the [`ContentComponent`] list's `Content(Arc<Vec<..>>)`, a track
+/// Like the [`ContentComponent`] list's `Content(Arc<ContentList>)`, a track
 /// list is a heap payload that may contain arbitrarily many `repeat()` calls
 /// and may be cloned whenever a cascade winner is selected.
 #[non_exhaustive]
@@ -7860,7 +7915,7 @@ pub struct LinearGradient {
     pub interpolation: GradientColorInterpolation,
     /// Color stop list. Contains at least 2 stops (see the scope-carving
     /// section of [`BackgroundImage`] docs). `Arc` follows the same cheap-clone
-    /// pattern as other comma-separated list payloads (`Content(Arc<Vec<..>>)` etc.).
+    /// pattern as other comma-separated list payloads (`Content(Arc<ContentList>)` etc.).
     pub stops: Arc<Vec<GradientColorStop>>,
 }
 
@@ -9346,7 +9401,9 @@ pub enum FilterFunction {
 /// fulgur consumers need to migrate the following:
 ///
 /// - [`Content`](PropertyValue::Content): `Content(Vec<ContentComponent>)` →
-///   `Content(Arc<Vec<ContentComponent>>)`
+///   `Content(Arc<Vec<ContentComponent>>)`, and later `Content(Arc<ContentList>)`
+///   to keep the alternative text; build one with
+///   `Arc::new(ContentList::from(vec![...]))` or [`ContentList::new`]
 /// - [`StringSet`](PropertyValue::StringSet): wrap the outer payload `Vec<..>` in `Arc<Vec<..>>`
 ///
 /// The same cascade-memory DoS mitigation was extended to counter-*. There was
@@ -9367,7 +9424,8 @@ pub enum FilterFunction {
 /// `PropertyValue::Content(components) => components.iter()` still works
 /// (`&Arc<Vec<T>>` autoderefs to `&[T]`). Consumers that **construct** payloads,
 /// however, must change `PropertyValue::Content(vec![...])` to
-/// `PropertyValue::Content(Arc::new(vec![...]))`.
+/// `PropertyValue::Content(Arc::new(ContentList::from(vec![...])))`;
+/// [`ContentList`] dereferences to its items like the `Vec` did.
 /// The payload of `text-indent` ([`TextIndentValue`]).
 ///
 /// It preserves all components of the CSS Text 3 §8.1 grammar
@@ -9576,7 +9634,7 @@ pub enum PropertyValue {
     /// (A downstream layer decides whether to generate pseudo-elements.) CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// The [`Arc<Vec<..>>`] wrapper makes cloning a cascade winner, cloning an
+    /// The [`Arc<ContentList>`] wrapper makes cloning a cascade winner, cloning an
     /// inheritance-walk stack entry, and writing each node **shallow (only an Arc
     /// reference-count increment)**. Sharing one heap slot prevents the O(N × M)
     /// memory blow-up from `* { content: "<large>" }` across N elements (a
@@ -9585,11 +9643,11 @@ pub enum PropertyValue {
     /// **For consumers:**
     /// Consumers that **read** payloads through pattern matching can continue to
     /// use `PropertyValue::Content(components) =>
-    /// components.iter().for_each(..)` unchanged, thanks to the `Arc<Vec<T>>` deref
-    /// chain (Vec → slice). Only consumers that **construct** payloads must change
-    /// to `PropertyValue::Content(Arc::new(vec![..]))`.
+    /// components.iter().for_each(..)` unchanged, thanks to the deref chain
+    /// `Arc` → [`ContentList`] → `Vec` → slice. Only consumers that **construct**
+    /// payloads must change to `PropertyValue::Content(Arc::new(ContentList::from(vec![..])))`.
     /// See also the enum-level `#[non_exhaustive]` semantics documentation.
-    Content(Arc<Vec<ContentComponent>>),
+    Content(Arc<ContentList>),
     /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited.
     /// The spec's initial value is `none`, represented here by an empty list. Each
     /// entry is a `(name, content-list)` pair.
@@ -9598,7 +9656,8 @@ pub enum PropertyValue {
     /// Name resolution and runtime `string()` references belong to the downstream
     /// layer (raikiri-dom).
     ///
-    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as [`Self::Content`]: it
+    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as the
+    /// [`Arc<ContentList>`] of [`Self::Content`]: it
     /// prevents the same kind of DoS along the `* { string-set: name "<large>" }`
     /// path across N elements.
     ///

@@ -1,8 +1,7 @@
 //! Canonical serialization of the `content` property from its source text.
 //!
-//! The parsed `content` value drops the alternative text after `/`, which
-//! CSSOM still reads back, so this re-parses the source text with
-//! [`parse_content_with_alt`] and serializes both lists (CSSOM
+//! This re-parses the source text with [`parse_content_with_alt`] and
+//! serializes the items and the alternative text after `/` (CSSOM
 //! "serialize a CSS value"; CSS Content 3 §1).
 
 use cssparser::{Parser, ParserInput, serialize_identifier, serialize_string};

@@ -44,6 +44,7 @@ fn missing_script_error_event_can_release_wait_and_paint_exact_pixels() {
         height: 40,
         tolerance: Tolerance::EXACT,
         require_inline_fonts: false,
+        ..ReftestConfig::default()
     };
     let prepared = prepare(html, &test, "", config).unwrap();
     assert!(!prepared.html.contains("reftest-wait"));
@@ -146,6 +147,7 @@ fn prepare_serves_shared_helper_and_records_genuine_scroll() {
         height: 600,
         tolerance: crate::runner::Tolerance::EXACT,
         require_inline_fonts: false,
+        ..ReftestConfig::default()
     };
     let prepared = prepare(html, &path, "", config).expect("live prepare should succeed");
     assert!(
@@ -179,6 +181,7 @@ fn prepare_runs_reference_side_scroll_without_wait() {
         height: 600,
         tolerance: crate::runner::Tolerance::EXACT,
         require_inline_fonts: false,
+        ..ReftestConfig::default()
     };
     let prepared = prepare(html, &path, "", config).expect("reference prepare should succeed");
     assert!(

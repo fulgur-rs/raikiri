@@ -74,11 +74,19 @@ fn drawn(page: &Page<'_>, page_count: u32) -> Vec<(u32, f64, f64)> {
         page.index() % 2 == 1,
     )
     .expect("paint");
+    // The runs are in the coordinates inside the root's transform.
+    let root = page
+        .root_box()
+        .and_then(|root| root.transform)
+        .map_or(kurbo::Affine::IDENTITY, |t| {
+            kurbo::Affine::new([t.a, t.b, t.c, t.d, t.e, t.f].map(f64::from)).inverse()
+        });
     let mut out = Vec::new();
     for command in &scene.commands {
         if let RenderCommand::GlyphRun(run) = command {
             for glyph in &run.glyphs {
-                let point = run.transform * Point::new(f64::from(glyph.x), f64::from(glyph.y));
+                let point =
+                    root * run.transform * Point::new(f64::from(glyph.x), f64::from(glyph.y));
                 out.push((glyph.id, point.x, point.y));
             }
         }
@@ -1151,8 +1159,8 @@ fn relatively_positioned_text_matches_paint() {
             "<p>moved</p>",
             "body { position: relative; left: 6px; top: 4px }",
         ),
-        // The painter starts at the body and ignores the root's transform,
-        // also for a fixed box.
+        // The runs leave out the root's transform, which the painter draws
+        // the whole page through, also for a fixed box.
         ("<p>moved</p>", "html { transform: translateX(20px) }"),
         (
             &format!(

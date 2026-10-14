@@ -469,6 +469,42 @@ fn named_strings_and_running_elements_resolve_to_document_text() {
 }
 
 #[test]
+fn named_strings_and_running_elements_keep_no_break_spaces_and_form_feeds() {
+    // CSS Text 3 §4.1 collapses only spaces, tabs and segment breaks;
+    // U+00A0 and U+000C are ordinary text in the string value.
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "h1 { string-set: title content() } \
+         div { position: running(hdr) } \
+         @page { margin: 40px; \
+           @top-left { content: string(title) } \
+           @top-right { content: element(hdr) } }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+    doc.append_text(h1, " A\u{A0}\u{A0}B ");
+    let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    doc.append_text(hdr, "C\u{C}D");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let contents: Vec<_> = layout_page(&doc, &cascade, small_page())
+        .into_iter()
+        .map(|margin_box| (margin_box.slot, margin_box.content))
+        .collect();
+    assert_eq!(
+        contents,
+        [
+            (PageMarginBoxSlot::TopLeft, "A\u{A0}\u{A0}B".to_owned()),
+            (PageMarginBoxSlot::TopRight, "C\u{C}D".to_owned()),
+        ]
+    );
+}
+
+#[test]
 fn shared_named_values_take_the_last_assignment_on_every_page() {
     let mut doc = engine_document();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
