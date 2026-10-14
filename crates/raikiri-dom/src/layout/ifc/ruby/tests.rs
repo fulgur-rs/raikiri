@@ -699,6 +699,31 @@ fn annotations_take_their_position_from_the_annotation_container() {
 }
 
 #[test]
+fn intra_level_white_space_takes_the_style_of_its_parent() {
+    let mut text = 0;
+    let fixture = block_fixture("line-height:40px", |doc, root| {
+        let container = ruby(doc, root);
+        text_element(
+            doc,
+            container,
+            "rb",
+            "display:ruby-base;font-size:30px",
+            "a",
+        );
+        doc.append_text(container, " ");
+        let base = rb(doc, container, "b");
+        rt(doc, container, "x");
+        rt(doc, container, "y");
+        text = doc.nodes[base].children[0];
+    });
+    let runs = runs(fixture);
+    let x = runs.iter().find(|run| run.0 == text).expect("base").2.0;
+    // `a` is 30px wide and the white space after it 10px, at the font size
+    // of the ruby, not of the base before it.
+    assert_eq!(x, 40.0, "{runs:?}");
+}
+
+#[test]
 fn hidden_annotations_draw_only_their_visible_descendants() {
     let mut ids = (0, 0, 0);
     let fixture = block_fixture("line-height:20px", |doc, root| {

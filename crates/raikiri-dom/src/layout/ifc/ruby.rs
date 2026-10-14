@@ -924,7 +924,14 @@ impl Content<'_, '_> {
     /// or an empty box when only another level has white space there. An
     /// empty box takes the id of `text`, the segment's first text.
     fn space(&mut self, part: &Part, text: usize) -> Result<(NodeId, RubyContent), IfcError> {
-        let owner = part.style_owner;
+        // The white space is a sibling of the part: its style comes from
+        // their parent, not from the part.
+        let owner = part
+            .tail
+            .first()
+            .or(part.element.as_ref())
+            .and_then(|&id| self.doc.parent_of(id))
+            .unwrap_or(part.style_owner);
         let node = part.tail.first().copied().unwrap_or(text);
         let paragraph = self.paragraph(owner)?;
         let mut builder = ParagraphBuilder::new(&paragraph, self.limits);
