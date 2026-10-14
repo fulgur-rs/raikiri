@@ -1435,6 +1435,8 @@ fn monospace_keyword_scaling_survives_a_percent_and_em_calc() {
     assert_eq!(size("calc(50% + 1em + 0 * 1ex)"), ComputedLength(19.5));
     // A negative sum clamps to zero.
     assert_eq!(size("calc(50% - 1em)"), ComputedLength(0.0));
+    // A sum that overflows the parent's size falls back to the initial size.
+    assert_eq!(size("calc(1e38em + 1%)"), ComputedLength(16.0));
 
     let c = cascade_chain(&[
         "font-family: monospace",

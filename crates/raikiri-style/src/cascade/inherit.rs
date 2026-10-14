@@ -3082,15 +3082,18 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.font_size_keyword_declared = false;
         }
         // A sum of `%` and true `em` terms only scales the parent's size, so
-        // it keeps a keyword-derived parent size keyword-derived, like the
-        // equivalent percentage.
-        // A sum of `%` and true `em` terms only scales the parent's size, so
         // it is applied as the equivalent `em` multiple and keeps a
         // keyword-derived parent size keyword-derived. Otherwise phase 2
         // resolves the calc once the root font size and the parent's line
         // height are known; the parent's keyword information does not carry
-        // over to a size that mixes in other terms.
-        PropertyValue::FontSizeCalc(calc) => match calc.font_size_scale() {
+        // over to a size that mixes in other terms. A multiple that would
+        // overflow the parent's size also stays a calc, whose resolution
+        // falls back to the initial size.
+        PropertyValue::FontSizeCalc(calc) => match calc
+            .font_size_scale()
+            // Still the `Length::Px` parent seed, as for `FontSizeRelative`.
+            .filter(|scale| (target.font_size.payload() * scale).is_finite())
+        {
             Some(scale) => apply_value(PropertyValue::FontSize(Length::Em(scale)), target),
             None => {
                 target.font_size_calc = Some(calc);
