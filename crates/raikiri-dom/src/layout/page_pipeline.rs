@@ -4856,7 +4856,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                         &mut pending_bounded_shifts,
                         &mut pending_context_growth,
                         current_page,
-                        true,
                     );
                 }
                 // The box may now start on a later page than the flow.
@@ -5485,26 +5484,17 @@ pub fn layout_pages_with_page_geometry_and_control(
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
                     follow_moved_ifc_block(document, node_id, node_delta);
-                    // A nested block that moves to the next page, to avoid
-                    // a break inside it or after a forced break before it,
+                    // A nested avoiding block that moves to the next page
                     // lengthens the ancestors whose content box holds it, so
                     // their continuation (and any `overflow` clip) reaches the
-                    // moved content, and the boxes after it in block flow
-                    // follow it. Flex, grid and table containers place their
-                    // items themselves.
+                    // moved content.
                     // A float does not lengthen the block around it; its
                     // own shift ends with its subtree.
                     let mut moved_in_bounded_ancestor = false;
-                    if (page_overflow
-                        || forced_transition
-                            && !candidate.is_flex_item
-                            && !candidate.is_grid_item
-                            && !candidate.is_table_row
-                            && stacks_in_block_flow(document, cascade, node_id, body_id))
-                        && !candidate.is_direct_body_element
+                    let nested_block = !candidate.is_direct_body_element
                         && node_delta > 0.0
-                        && !is_floating_box_for_pagination(document, cascade, node_id)
-                    {
+                        && !is_floating_box_for_pagination(document, cascade, node_id);
+                    if page_overflow && nested_block {
                         moved_in_bounded_ancestor = grow_ancestors_for_shift(
                             document,
                             cascade,
@@ -5515,8 +5505,26 @@ pub fn layout_pages_with_page_geometry_and_control(
                             &mut pending_bounded_shifts,
                             &mut pending_context_growth,
                             page_before_candidate,
-                            !forced_transition,
                         );
+                    } else if forced_transition
+                        && nested_block
+                        && !candidate.is_flex_item
+                        && !candidate.is_grid_item
+                        && !candidate.is_table_row
+                        && stacks_in_block_flow(document, cascade, node_id, body_id)
+                    {
+                        // A forced break ends its ancestors' fragments on
+                        // this page, which their continuations account for;
+                        // only the boxes after it in block flow follow it.
+                        let mut child = node_id;
+                        while let Some(parent) = parent_of[child]
+                            && parent != body_id
+                        {
+                            shift_later_block_siblings(
+                                document, cascade, parent, child, node_delta,
+                            );
+                            child = parent;
+                        }
                     }
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
@@ -5628,7 +5636,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                                     &mut pending_bounded_shifts,
                                     &mut pending_context_growth,
                                     page_before_candidate,
-                                    true,
                                 );
                                 pending_context_growth.push((context, growth));
                             }
@@ -6391,12 +6398,11 @@ fn push_in_flow_boxes_rev(
 }
 
 /// Grows the auto-height ancestors of `node_id`, which moved down by
-/// `delta`, to hold it. When `returns` is set, the part of the shift an
-/// ancestor does not pass on to the flow after it, because its height
-/// cannot grow or a float in it already reaches below the moved content, is
-/// recorded in `pending_bounded_shifts` with `flow_page`, the page the flow
-/// returns to past that ancestor; a forced break keeps the flow after it
-/// past the break instead. An ancestor that grows more than the flow inside
+/// `delta`, to hold it. The part of the shift an ancestor does not pass on
+/// to the flow after it, because its height cannot grow or a float in it
+/// already reaches below the moved content, is recorded in
+/// `pending_bounded_shifts` with `flow_page`, the page the flow returns to
+/// past that ancestor. An ancestor that grows more than the flow inside
 /// it moved is recorded in `pending_growth`, for the flow after it to
 /// follow. Returns whether an ancestor's height kept it from holding the
 /// moved content.
@@ -6411,7 +6417,6 @@ fn grow_ancestors_for_shift(
     pending_bounded_shifts: &mut Vec<(usize, f32, u32)>,
     pending_growth: &mut Vec<(usize, f32)>,
     flow_page: u32,
-    returns: bool,
 ) -> bool {
     let mut bounded = false;
     let mut child = node_id;
@@ -6442,20 +6447,18 @@ fn grow_ancestors_for_shift(
             body_id,
         );
         let Some(grown) = grown else {
-            if returns {
-                pending_bounded_shifts.push((parent, flow_delta, flow_page));
-                bounded = true;
-            }
+            pending_bounded_shifts.push((parent, flow_delta, flow_page));
+            bounded = true;
             break;
         };
         let (old_in_flow, in_flow) = grown.in_flow_heights;
         let limit = flow_delta.max(size_delta);
         let size_absorbed = (grown.height - height).clamp(0.0, limit);
         let flow_absorbed = (in_flow - old_in_flow).clamp(0.0, limit);
-        if returns && flow_absorbed < flow_delta - 0.001 {
+        if flow_absorbed < flow_delta - 0.001 {
             pending_bounded_shifts.push((parent, flow_delta - flow_absorbed, flow_page));
             bounded |= grown.capped;
-        } else if returns && flow_absorbed > flow_delta + 0.001 {
+        } else if flow_absorbed > flow_delta + 0.001 {
             // A box holding its floats grew around a float that moved with
             // the content it overflowed: the flow after the box follows.
             pending_growth.push((parent, flow_absorbed - flow_delta));
