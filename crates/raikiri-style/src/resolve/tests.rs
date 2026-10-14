@@ -1874,6 +1874,53 @@ fn relative_calc_plus_1px(value: f32, unit: &str) -> RelativeCalcLengthPercentag
 }
 
 #[test]
+fn a_signed_length_percentage_or_calc_keeps_negative_values() {
+    let resolve =
+        |value| resolve_length_percentage_or_calc(value, ComputedLength(10.0), None, &CTX);
+    let calc = |percent, px| CalcLengthPercentage { percent, px };
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Length(Length::Em(-1.0))),
+        ComputedLengthPercentageOrCalc::Px(-10.0)
+    );
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Calc(calc(0.0, -3.0))),
+        ComputedLengthPercentageOrCalc::Px(-3.0)
+    );
+    let mixed = ComputedLengthPercentageOrCalc::Calc(calc(-50.0, 2.0));
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Calc(calc(-50.0, 2.0))),
+        mixed
+    );
+    let em_only = relative_calc_plus_1px(-2.0, "em");
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(em_only)),
+        ComputedLengthPercentageOrCalc::Px(-19.0)
+    );
+    let percent = RelativeCalcLengthPercentage::from_unit(-20.0, "%").unwrap();
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(percent)),
+        ComputedLengthPercentageOrCalc::Percent(-20.0)
+    );
+    // An `lh` term without a basis falls back to zero.
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(
+            relative_calc_plus_1px(1.0, "lh")
+        )),
+        ComputedLengthPercentageOrCalc::Px(0.0)
+    );
+    assert_eq!(mixed.resolve_signed(100.0), -48.0);
+    assert_eq!(mixed.resolve(100.0), 0.0);
+    assert_eq!(
+        ComputedLengthPercentageOrCalc::Percent(-10.0).resolve_signed(50.0),
+        -5.0
+    );
+    assert!(mixed.has_percent());
+    assert!(ComputedLengthPercentageOrCalc::Percent(1.0).has_percent());
+    assert!(!ComputedLengthPercentageOrCalc::Px(1.0).has_percent());
+    assert!(!ComputedLengthPercentageOrCalc::Calc(calc(0.0, 1.0)).has_percent());
+}
+
+#[test]
 fn relative_calc_terms_resolve_against_their_bases() {
     let ctx = ResolveContext {
         root_line_height: Some(ComputedLength(30.0)),

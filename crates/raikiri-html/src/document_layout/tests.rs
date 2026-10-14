@@ -1042,6 +1042,18 @@ fn link_paint_quads_follow_a_translation() {
     );
 }
 
+// A mixed calc() resolves its percentage against the transformed box.
+#[test]
+fn a_paint_transform_resolves_a_mixed_calc_translation() {
+    let layout = transformed_link_page("translate(calc(50% + 1px), calc(-100% - 2px))");
+    let page = layout.page(0).unwrap();
+    let div = find(&page.dom(), page.dom().root(), "div").unwrap();
+    assert_eq!(
+        page.paint_transform(div),
+        Some(PaintTransform::translate(11.0, -22.0))
+    );
+}
+
 // Text takes the transform of the element it is in.
 #[test]
 fn link_paint_quads_of_text_follow_the_enclosing_transform() {
