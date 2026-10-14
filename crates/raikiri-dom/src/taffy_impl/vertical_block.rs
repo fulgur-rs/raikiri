@@ -28,8 +28,8 @@ use std::collections::HashMap;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
-    AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout, LayoutInput, LayoutOutput,
-    Line, NodeId, Point, Position as TaffyPosition, Rect, Size, SizingMode, Style,
+    AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout, LayoutInput,
+    LayoutOutput, Line, NodeId, Point, Position as TaffyPosition, Rect, Size, SizingMode, Style,
     TraversePartialTree, compute_block_layout,
 };
 
