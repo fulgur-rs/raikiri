@@ -6241,9 +6241,6 @@ fn grown_auto_height(
         extend(&mut flow, ends);
         extend(&mut size, ends);
     }
-    if !shifted {
-        return None;
-    }
     // The in-flow content also ends the box.
     extend(&mut size, flow);
     // The grown height, and whether `max-height` cut it short.
@@ -6258,7 +6255,7 @@ fn grown_auto_height(
         .get(&parent)
         .map_or(old, |&height| height.min(old));
     let (in_flow_height, capped) = grow(old_in_flow, flow);
-    Some(GrownHeight {
+    shifted.then(|| GrownHeight {
         height: grow(old, size).0.max(in_flow_height),
         in_flow_heights: (old_in_flow, in_flow_height),
         capped,
