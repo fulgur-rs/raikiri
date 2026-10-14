@@ -482,3 +482,42 @@ fn vertical_container_padding_percentages_follow_a_horizontal_parent() {
     assert_eq!(rects[0].2, 396.0);
     assert_eq!(rects[1].0, 188.0);
 }
+
+#[test]
+fn vertical_container_padding_looks_through_a_contents_parent() {
+    // A horizontal `display: contents` parent has no box: the containing
+    // block is the vertical body around it, whose inline size is the 600px
+    // page height, so `padding-right: 10%` is 60px.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;writing-mode:vertical-rl"),
+    );
+    let contents = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:contents;writing-mode:horizontal-tb"),
+    );
+    let container = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:100px;height:200px;padding-right:10%"),
+    );
+    let child = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, container).2, 160.0);
+    assert_eq!(absolute_rect(&doc, child).0, 720.0);
+}
