@@ -42,14 +42,8 @@ impl Document {
         {
             return Some(key);
         }
-        let mut current = self.parent_of(node);
-        while let Some(id) = current {
-            if self.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
-                return Some(id);
-            }
-            current = self.parent_of(id);
-        }
-        None
+        self.ancestors(node)
+            .find(|&id| self.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT))
     }
 
     /// Whether the location of `node` is part of the position of its DOM
