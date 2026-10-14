@@ -4,7 +4,9 @@
 //! via raikiri and blitz (oracle), and compares pixels under a tolerance.
 //!
 //! The default viewport is 800×600 CSS px (WPT reftest test setup default).
-//! Callers may supply a custom size via [`ReftestConfig`].
+//! Print reftests are printed on 5in×3in paper with 0.5in page margins, as
+//! wptrunner prints them. Callers may supply custom sizes via
+//! [`ReftestConfig`].
 
 mod dynamic;
 mod fuzzy;
@@ -21,6 +23,14 @@ use crate::runner::{TestOutcome, Tolerance};
 pub const DEFAULT_REFTTEST_WIDTH: u32 = 800;
 /// Default reftest viewport height (CSS px).
 pub const DEFAULT_REFTTEST_HEIGHT: u32 = 600;
+/// Paper width of a WPT print reftest (CSS px): wptrunner prints on 5in×3in
+/// paper.
+pub const DEFAULT_PRINT_PAGE_WIDTH: u32 = 480;
+/// Paper height of a WPT print reftest (CSS px).
+pub const DEFAULT_PRINT_PAGE_HEIGHT: u32 = 288;
+/// wptrunner prints with 0.5in page margins. As a user-origin rule it is the
+/// fallback that any authored `@page` margin overrides.
+pub(crate) const WPT_PRINT_PAGE_MARGIN_CSS: &str = "@page { margin: 0.5in; }";
 // ── ReftestKind ────────────────────────────────────────────────────────
 
 /// Whether a reftest requires visual match or explicit mismatch.
@@ -144,6 +154,9 @@ pub(crate) struct PrintRenderResources<'a> {
     /// Fail instead of falling back to the installed fonts when the inline
     /// engine cannot get the WPT fonts.
     pub(crate) require_inline_fonts: bool,
+    /// Give every page wptrunner's print page margins unless the document
+    /// authors its own.
+    pub(crate) print_page_margin: bool,
 }
 
 fn resolve_custom_highlights(
@@ -303,6 +316,11 @@ pub struct ReftestConfig {
     pub width: u32,
     /// Viewport height.
     pub height: u32,
+    /// Paper width of a print reftest (see [`is_print_reftest`]), which
+    /// replaces `width` for both sides of such a pair.
+    pub print_page_width: u32,
+    /// Paper height of a print reftest, which replaces `height`.
+    pub print_page_height: u32,
     /// Pixel tolerance for comparison.
     pub tolerance: Tolerance,
     /// Refuse to render when the inline engine cannot get the WPT fonts.
@@ -318,10 +336,47 @@ impl Default for ReftestConfig {
         Self {
             width: DEFAULT_REFTTEST_WIDTH,
             height: DEFAULT_REFTTEST_HEIGHT,
+            print_page_width: DEFAULT_PRINT_PAGE_WIDTH,
+            print_page_height: DEFAULT_PRINT_PAGE_HEIGHT,
             tolerance: Tolerance::EXACT,
             require_inline_fonts: false,
         }
     }
+}
+
+impl ReftestConfig {
+    /// This configuration with the print paper as its viewport.
+    fn printed(self) -> Self {
+        Self {
+            width: self.print_page_width,
+            height: self.print_page_height,
+            ..self
+        }
+    }
+}
+
+/// Whether WPT runs `test` as a print reftest: its file name ends in the
+/// `-print` type flag, or a directory on its path is named `print`. This is
+/// the rule of WPT's manifest (`SourceFile.name_is_print_reftest`). Only the
+/// directories below the WPT root count when `test` is inside a checkout.
+pub fn is_print_reftest(test: &Path) -> bool {
+    let type_flag = test
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.rsplit_once('-'))
+        .and_then(|(_, flag)| flag.split('.').next());
+    if type_flag == Some("print") {
+        return true;
+    }
+    let Some(dir) = test.parent() else {
+        return false;
+    };
+    let root = local_resources::wpt_root_above(dir);
+    let dir = root
+        .as_deref()
+        .and_then(|root| dir.strip_prefix(root).ok())
+        .unwrap_or(dir);
+    dir.components().any(|part| part.as_os_str() == "print")
 }
 
 // ── Link discovery ─────────────────────────────────────────────────────
@@ -1836,6 +1891,21 @@ fn viewport_rule_tree(
         };
         tree.add_stylesheet(source, origin);
     }
+    for sheet in &document.user_stylesheet_sources {
+        for part in &sheet.parts {
+            let guards: Vec<_> = part
+                .media
+                .iter()
+                .map(String::as_str)
+                .chain(sheet.media.as_deref())
+                .collect();
+            tree.add_stylesheet_with_media_conditions(
+                &part.source,
+                raikiri_style::Origin::User,
+                &guards,
+            );
+        }
+    }
     for sheet in &document.stylesheet_sources {
         for part in &sheet.parts {
             let source = expand_css_viewport_units_with_media_basis(
@@ -2420,10 +2490,55 @@ fn page_box_from_cascade(
             let mut page_box = raikiri_traits::PageBox::new();
             page_box.width = width + insets.left + insets.right + margins.left + margins.right;
             page_box.height = height + insets.top + insets.bottom + margins.top + margins.bottom;
-            page_box
+            // Layout resolves percentage padding (and, without `size`,
+            // percentage margins) against the page box this returns, so size
+            // the box against itself rather than against `base`.
+            if page_has_auto_margin(declarations) {
+                return page_box;
+            }
+            self_consistent_page_box(page, width, height).unwrap_or(page_box)
         }
         _ => base,
     }
+}
+
+/// The page box whose page area is `width`×`height` once its margins, border
+/// and padding are resolved against that same page box.
+///
+/// Each axis adds `fixed + ratio × box` around the page area, where `ratio`
+/// sums the percentages of that axis, so the box is
+/// `(area + fixed) / (1 - ratio)`. Percentages that add up to 100% or more
+/// leave no positive page area, and give `None`.
+fn self_consistent_page_box(
+    page: &raikiri_style::PageCascadeResult,
+    width: f32,
+    height: f32,
+) -> Option<raikiri_traits::PageBox> {
+    // The edge sizes are linear in the page box, so two samples give the
+    // fixed part and the ratio.
+    const SAMPLE: f32 = 1000.0;
+    let edges = |side: f32| {
+        let mut sample = raikiri_traits::PageBox::new();
+        sample.width = side;
+        sample.height = side;
+        let margins = raikiri_dom::page_margins_for_page(page, sample);
+        let insets = raikiri_dom::page_content_insets_for_page(page, sample);
+        (
+            margins.left + margins.right + insets.left + insets.right,
+            margins.top + margins.bottom + insets.top + insets.bottom,
+        )
+    };
+    let (fixed_x, fixed_y) = edges(0.0);
+    let (sample_x, sample_y) = edges(SAMPLE);
+    let solve = |area: f32, fixed: f32, sample: f32| {
+        let ratio = (sample - fixed) / SAMPLE;
+        let side = (area + fixed) / (1.0 - ratio);
+        (ratio < 1.0 && side.is_finite() && side > 0.0).then_some(side)
+    };
+    let mut page_box = raikiri_traits::PageBox::new();
+    page_box.width = solve(width, fixed_x, sample_x)?;
+    page_box.height = solve(height, fixed_y, sample_y)?;
+    Some(page_box)
 }
 
 /// Prepared WPT document state for JavaScript DOM bindings. The live runner owns this document and rebuilds style/layout after DOM mutations.
@@ -2724,6 +2839,7 @@ fn render_raikiri_pages_inner(
         font_base,
         InlineEngineChoice {
             require_inline_fonts: false,
+            print_page_margin: false,
         },
         None,
         None,
@@ -2779,16 +2895,19 @@ fn restore_animation_styles(
     Ok(())
 }
 
-/// The fonts of one rendering.
+/// The fonts and page setup of one rendering.
 #[derive(Clone, Copy)]
 struct InlineEngineChoice {
     require_inline_fonts: bool,
+    /// Print with wptrunner's page margins.
+    print_page_margin: bool,
 }
 
 impl InlineEngineChoice {
-    fn of(config: &ReftestConfig) -> Self {
+    fn of(config: &ReftestConfig, print: bool) -> Self {
         Self {
             require_inline_fonts: config.require_inline_fonts,
+            print_page_margin: print,
         }
     }
 }
@@ -2854,6 +2973,7 @@ fn render_raikiri_pages_inner_with_canvases(
                 .as_ref()
                 .map(|preparer| preparer as &dyn CascadeImagePreparer),
             require_inline_fonts: engine.require_inline_fonts,
+            print_page_margin: engine.print_page_margin,
             canvas_bitmaps,
             animation_styles,
             custom_highlight_ranges,
@@ -2934,8 +3054,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let image_pixel_source = resources.image_pixel_source;
     let base_url = resources.base_url;
     let prepare_cascade_images = resources.prepare_cascade_images;
+    let print_sheets = [WPT_PRINT_PAGE_MARGIN_CSS];
     let opts = ParseOptions {
-        extra_stylesheets: &[],
+        extra_stylesheets: if resources.print_page_margin {
+            &print_sheets
+        } else {
+            &[]
+        },
         network: resources.network,
         base_url: resources.parse_base_url.cloned(),
     };
@@ -3873,10 +3998,20 @@ where
     let ref_html = read_html(&pair.reference)?;
     let fuzzy = fuzzy::metadata(&test_html, pair)?;
     let selections = page_selections_for_pair(&test_html, &pair.reference);
+    // wptrunner prints both sides of a print reftest on its paper, with its
+    // page margins.
+    let print = is_print_reftest(&pair.test);
+    let config = if print { config.printed() } else { config };
     let test_prepared = dynamic::prepare(&test_html, &pair.test, variant_query, config)?;
     let reference_suffix = with_variant_query(&pair.reference_suffix, variant_query);
     let ref_prepared = dynamic::prepare(&ref_html, &pair.reference, &reference_suffix, config)?;
-    let ref_html = mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
+    // A printed reference gets the print page margin on its own.
+    let ref_html = if print {
+        ref_prepared.html
+    } else {
+        mirror_default_page_margin(&test_prepared.html, &ref_prepared.html)
+    };
+    let engine = InlineEngineChoice::of(&config, print);
     let test_doc = render_raikiri_pages_inner_with_canvases(
         &test_prepared.html,
         config.width,
@@ -3887,7 +4022,7 @@ where
             None
         },
         pair.test.parent(),
-        InlineEngineChoice::of(&config),
+        engine,
         Some(&test_prepared.animation_styles),
         Some(test_prepared.canvases),
         Some(&test_prepared.custom_highlight_ranges),
@@ -3903,7 +4038,7 @@ where
             None
         },
         pair.reference.parent(),
-        InlineEngineChoice::of(&config),
+        engine,
         Some(&ref_prepared.animation_styles),
         Some(ref_prepared.canvases),
         Some(&ref_prepared.custom_highlight_ranges),

@@ -1410,7 +1410,6 @@ css/css-position/position-absolute-center-004.html
 css/css-position/fixed-z-index-blend.html
 css/css-page/page-name-000-print.html
 css/css-page/page-name-001-print.html
-css/css-page/page-name-002-print.html
 css/css-page/page-left-right-001-print.html
 css/css-page/page-name-flex-003-print.html
 css/css-page/page-name-flex-004-print.html
@@ -1512,8 +1511,6 @@ css/css-page/fixedpos-001-print.html
 css/css-page/fixedpos-002-print.html
 css/css-page/fixedpos-003-print.html
 css/css-page/fixedpos-004-print.html
-css/css-page/fixedpos-005-print.html
-css/css-page/fixedpos-006-print.html
 css/css-page/fixedpos-007-print.html
 css/css-page/fixedpos-008-print.html
 css/css-page/fixedpos-009-print.html
@@ -2014,7 +2011,6 @@ css/css-break/out-of-flow-in-multicolumn-102.html
 css/css-break/out-of-flow-in-multicolumn-116.html
 css/css-break/out-of-flow-in-multicolumn-127.html
 css/css-break/overflow-clip-004.html
-css/css-break/root-margin-001-print.html
 css/css-break/ruby-000.html
 css/css-break/ruby-001.html
 css/css-break/ruby-002.html
@@ -2936,7 +2932,6 @@ css/css-multicol/balance-break-avoidance-002.html
 css/css-multicol/baseline-000.html
 css/css-multicol/baseline-005.html
 css/css-multicol/baseline-008.html
-css/css-multicol/column-balancing-paged-001-print.html
 css/css-multicol/column-count-used-001.html
 css/css-multicol/intrinsic-width-change-column-count.html
 css/css-multicol/multicol-basic-001.html
@@ -3024,7 +3019,6 @@ css/css-page/monolithic-overflow-015-print.html
 css/css-page/monolithic-overflow-021-print.html
 css/css-page/monolithic-overflow-024-print.html
 css/css-page/monolithic-overflow-025-print.html
-css/css-page/page-box-000-print.html
 css/css-page/page-box-001-print.html
 css/css-page/page-box-002-print.html
 css/css-page/page-box-003-print.html
@@ -4434,7 +4428,6 @@ css/css-backgrounds/css3-background-size-contain.html
 css/css-backgrounds/css3-background-size.html
 css/css-backgrounds/css3-border-image-repeat-repeat.html
 css/css-backgrounds/css3-border-image-source.html
-css/css-break/overflowing-block-print.html
 css/css-conditional/at-media-003.html
 css/css-conditional/at-supports-045.html
 css/css-contain/contain-content-004.html
@@ -4643,3 +4636,10 @@ css/css-writing-modes/table-cell-002.html
 css/filter-effects/background-image-blur-repaint.html
 css/filter-effects/filter-cb-abspos-inline-001.html
 css/printing/background-image-print.html
+
+# --- print reftests on the WPT print page (5in x 3in, 0.5in margins; WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once print reftests use wptrunner's paper; KEEP in two audit-vacuous-passes runs.
+css/css-page/monolithic-overflow-030-print.html
+css/css-page/page-orientation-on-landscape-001-print.html
+css/css-page/page-orientation-on-portrait-001-print.html
+css/css-values/viewport-page-print.html

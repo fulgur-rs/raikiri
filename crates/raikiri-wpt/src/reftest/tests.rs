@@ -72,6 +72,7 @@ fn animation_viewport_units_are_resolved_after_geometry_reparse() {
     }];
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
+        print_page_margin: false,
     };
     let actual = render_raikiri_pages_inner_with_canvases(
         &source,
@@ -495,6 +496,7 @@ fn animation_style_sidecar_is_restored_after_geometry_reparse() {
     }];
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
+        print_page_margin: false,
     };
     let rendered = render_raikiri_pages_inner_with_canvases(
         &source,
@@ -1647,6 +1649,7 @@ fn no_wait_scripts_mutate_before_comparison() {
         height: 40,
         tolerance: Tolerance::EXACT,
         require_inline_fonts: false,
+        ..ReftestConfig::default()
     };
     let result = run_pair(&pair, config).unwrap();
     assert!(
@@ -1687,6 +1690,7 @@ fn no_wait_canvas_paints_and_compares_pixels() {
         height: 40,
         tolerance: Tolerance::EXACT,
         require_inline_fonts: false,
+        ..ReftestConfig::default()
     };
     let paint = |color: &str| {
         format!(
@@ -1738,6 +1742,7 @@ fn wasmtime_canvas_sidecar_path_runs_with_matching_pages() {
         height: 40,
         tolerance: Tolerance::EXACT,
         require_inline_fonts: false,
+        ..ReftestConfig::default()
     };
     let html = "<!DOCTYPE html><body style='margin:0'><canvas width='2' height='2'></canvas><script>var c = document.getElementsByTagName('canvas')[0]; var ctx = c.getContext('2d'); ctx.fillStyle = 'red'; ctx.fillRect(0, 0, 2, 2);</script>";
     let test = dir.path().join("test.html");
@@ -1784,6 +1789,7 @@ fn render_with_engine(html: &str) -> RenderedDocument {
         None,
         InlineEngineChoice {
             require_inline_fonts: false,
+            print_page_margin: false,
         },
         None,
         None,
@@ -1866,6 +1872,110 @@ fn legacy_page_width_and_height_size_the_page_area_inside_the_margins() {
     );
     let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
     assert_eq!((page_box.width, page_box.height), (702.0, 152.0));
+}
+
+/// The page area that layout gets from `page_box`, which resolves page
+/// percentages against `page_box` itself.
+fn laid_out_page_area(
+    page: &raikiri_style::PageCascadeResult,
+    page_box: raikiri_traits::PageBox,
+) -> (f32, f32) {
+    let margins = raikiri_dom::page_margins_for_page(page, page_box);
+    let insets = raikiri_dom::page_content_insets_for_page(page, page_box);
+    (
+        insets.page_area_width(margins, page_box),
+        insets.page_area_height(margins, page_box),
+    )
+}
+
+#[test]
+fn legacy_page_area_survives_percentage_padding_and_margins() {
+    let base = page_box_of(793.7, 1122.5);
+    let close = |(width, height): (f32, f32), expected: (f32, f32)| {
+        assert!(
+            (width - expected.0).abs() < 0.01 && (height - expected.1).abs() < 0.01,
+            "page area {width}×{height}, expected {expected:?}"
+        );
+    };
+    // Percentage padding is resolved against the page box it widens.
+    let page = page_context("@page { width: 100px; height: 100px; padding: 0 10% }");
+    let page_box = page_box_from_cascade(&page, base);
+    assert!((page_box.width - 125.0).abs() < 0.01, "{page_box:?}");
+    close(laid_out_page_area(&page, page_box), (100.0, 100.0));
+    // Without `size`, percentage margins share that basis.
+    let page = page_context(
+        "@page { width: 200px; height: 100px; margin: 5% 10px; border: 2px solid; padding: 10% 3px }",
+    );
+    close(
+        laid_out_page_area(&page, page_box_from_cascade(&page, base)),
+        (200.0, 100.0),
+    );
+    // With `size`, margins keep the paper as their basis.
+    let page = page_context(
+        "@page { size: 500px 700px; margin: 10%; padding: 10%; width: 200px; height: 300px }",
+    );
+    close(
+        laid_out_page_area(&page, page_box_from_cascade(&page, base)),
+        (200.0, 300.0),
+    );
+}
+
+#[test]
+fn legacy_page_area_with_percentages_of_100_or_more_keeps_the_base_resolution() {
+    let page = page_context("@page { width: 100px; height: 100px; padding: 0 50%; margin: 0 }");
+    let page_box = page_box_from_cascade(&page, page_box_of(1.0, 1.0));
+    // No page box has a 100px area once 100% of it is padding: keep the
+    // padding resolved against the default A4 paper.
+    let a4 = raikiri_traits::PageBox::from_page_size(None);
+    assert_eq!((page_box.width, page_box.height), (100.0 + a4.width, 100.0));
+}
+
+#[test]
+fn print_reftests_are_recognized_by_type_flag_or_directory() {
+    assert!(is_print_reftest(Path::new(
+        "css/css-page/page-box-001-print.html"
+    )));
+    assert!(is_print_reftest(Path::new(
+        "css/css-page/a-print.tentative.html"
+    )));
+    assert!(is_print_reftest(Path::new("css/printing/print/test.html")));
+    assert!(!is_print_reftest(Path::new(
+        "css/css-page/page-box-001-print-ref.html"
+    )));
+    assert!(!is_print_reftest(Path::new("css/css-page/printing.html")));
+    assert!(!is_print_reftest(Path::new("print.html")));
+    // A `print` directory above the WPT root is not part of the test's path.
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().join("print").join("wpt");
+    std::fs::create_dir_all(root.join("fonts")).unwrap();
+    std::fs::write(root.join("fonts").join("ahem.css"), "").unwrap();
+    assert!(!is_print_reftest(&root.join("css").join("a.html")));
+    assert!(is_print_reftest(
+        &root.join("css").join("print").join("a.html")
+    ));
+}
+
+#[test]
+fn print_reftests_render_on_the_wpt_paper_with_its_page_margins() {
+    let dir = tempfile::tempdir().unwrap();
+    let test_path = dir.path().join("margin-print.html");
+    std::fs::write(
+        &test_path,
+        "<!DOCTYPE html><link rel=match href=margin-ref.html>\
+         <style>body{margin:0}div{height:192px;background:green}</style><div></div>",
+    )
+    .unwrap();
+    // The reference draws the 0.5in margins itself on a margin-less page.
+    std::fs::write(
+        dir.path().join("margin-ref.html"),
+        "<!DOCTYPE html><style>@page{margin:0}body{margin:0}\
+         div{margin:48px;height:192px;background:green}</style><div></div>",
+    )
+    .unwrap();
+    let pairs = discover_pairs_for_file(&test_path).unwrap();
+    let result = run_pair(&pairs[0], ReftestConfig::default()).unwrap();
+    assert_eq!(result.outcome, TestOutcome::Pass);
+    assert_eq!(result.total_pixels, 480 * 288);
 }
 
 #[test]
@@ -2620,6 +2730,7 @@ fn render_in_checkout(root: &Path, html: &str) -> RenderedDocument {
         Some(&page_dir),
         InlineEngineChoice {
             require_inline_fonts: false,
+            print_page_margin: false,
         },
         None,
         None,
