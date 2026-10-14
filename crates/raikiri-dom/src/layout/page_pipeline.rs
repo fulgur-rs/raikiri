@@ -1759,7 +1759,7 @@ pub(crate) fn project_slices_with_control(
     struct PageFragmentSource {
         node_id: NodeId,
         node_kind: NodeKind,
-        tag_name: Option<String>,
+        is_img: bool,
         abs_x: f32,
         abs_y: f32,
         width: f32,
@@ -2090,7 +2090,7 @@ pub(crate) fn project_slices_with_control(
             let source = PageFragmentSource {
                 node_id: NodeId::new(node_id as u64),
                 node_kind: node.kind(),
-                tag_name: node.tag_name().map(str::to_owned),
+                is_img: node.tag_name() == Some("img"),
                 abs_x: abs_x + node.table_grid_box.map_or(0.0, |rect| rect.x),
                 abs_y: abs_y + node.table_grid_box.map_or(0.0, |rect| rect.y),
                 width: node.table_grid_box.map_or(width, |rect| rect.width),
@@ -2246,9 +2246,7 @@ pub(crate) fn project_slices_with_control(
         let is_table_header = header_placements.is_some();
         let kind = match source.node_kind {
             NodeKind::Text => PageFragmentKind::Text,
-            NodeKind::Element if source.tag_name.as_deref() == Some("img") => {
-                PageFragmentKind::Replaced
-            }
+            NodeKind::Element if source.is_img => PageFragmentKind::Replaced,
             _ => PageFragmentKind::Box,
         };
         let mut placements = Vec::new();
