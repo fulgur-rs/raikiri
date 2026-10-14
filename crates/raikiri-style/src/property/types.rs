@@ -914,6 +914,10 @@ impl RelativeCalcUnit {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct RelativeCalcTerm {
     unit: RelativeCalcUnit,
+    /// Whether an `em` term folds in an `ex` or `ic` approximation, so it is
+    /// not a pure multiple of the font size. It fits in the padding after
+    /// `unit`.
+    approximates_font_metrics: bool,
     coefficient: f32,
 }
 
@@ -924,7 +928,11 @@ impl RelativeCalcLengthPercentage {
     /// A value made of one relative term.
     pub(crate) fn relative(unit: RelativeCalcUnit, coefficient: f32) -> Option<Self> {
         let mut value = Self::default();
-        value.terms[0] = Some(RelativeCalcTerm { unit, coefficient });
+        value.terms[0] = Some(RelativeCalcTerm {
+            unit,
+            approximates_font_metrics: false,
+            coefficient,
+        });
         value.normalized()
     }
 
@@ -935,14 +943,16 @@ impl RelativeCalcLengthPercentage {
             Some(b's' | b'l' | b'd') if unit.len() > 2 && unit[1..].starts_with('v') => &unit[1..],
             _ => unit,
         };
-        let relative = |unit, factor: f32| {
+        let relative_term = |unit, factor: f32, approximates_font_metrics| {
             let mut term = Self::default();
             term.terms[0] = Some(RelativeCalcTerm {
                 unit,
+                approximates_font_metrics,
                 coefficient: value * factor,
             });
             term
         };
+        let relative = |unit, factor| relative_term(unit, factor, false);
         let absolute = |percent: f32, px: f32| Self {
             percent,
             px,
@@ -964,8 +974,9 @@ impl RelativeCalcLengthPercentage {
             "q" => absolute(0.0, value * 96.0 / 101.6),
             "pt" => absolute(0.0, value * 96.0 / 72.0),
             "pc" => absolute(0.0, value * 16.0),
-            "em" | "ic" => relative(RelativeCalcUnit::Em, 1.0),
-            "ex" => relative(RelativeCalcUnit::Em, 0.5),
+            "em" => relative(RelativeCalcUnit::Em, 1.0),
+            "ic" => relative_term(RelativeCalcUnit::Em, 1.0, true),
+            "ex" => relative_term(RelativeCalcUnit::Em, 0.5, true),
             "rem" | "ric" => relative(RelativeCalcUnit::Rem, 1.0),
             "rex" | "rch" => relative(RelativeCalcUnit::Rem, 0.5),
             "lh" => relative(RelativeCalcUnit::Lh, 1.0),
@@ -989,11 +1000,12 @@ impl RelativeCalcLengthPercentage {
                 .find(|existing| existing.unit == term.unit)
             {
                 existing.coefficient += coefficient;
+                existing.approximates_font_metrics |= term.approximates_font_metrics;
             } else {
                 let slot = self.terms.iter_mut().find(|slot| slot.is_none())?;
                 *slot = Some(RelativeCalcTerm {
-                    unit: term.unit,
                     coefficient,
+                    ..term
                 });
             }
         }
@@ -1023,6 +1035,37 @@ impl RelativeCalcLengthPercentage {
             .iter()
             .flatten()
             .map(|term| (term.unit, term.coefficient))
+    }
+
+    /// The value with its `em` term, if any, marked as folding in an `ex` or
+    /// `ic` approximation.
+    pub(crate) fn approximating_font_metrics(mut self, approximates: bool) -> Self {
+        for term in self.terms.iter_mut().flatten() {
+            term.approximates_font_metrics = approximates && term.unit == RelativeCalcUnit::Em;
+        }
+        self
+    }
+
+    /// The factor that scales the parent's font size to this value when it
+    /// is used as `font-size`, for a non-negative sum of `%` and true `em`
+    /// terms only. `None` when any other term (including `ex` or `ic`) takes
+    /// part, since those do not scale a keyword-derived parent size. `None`
+    /// also when no `em` term is left, since `ex` or `ic` terms that folded
+    /// to a zero `em` coefficient leave no term to record them.
+    pub(crate) fn font_size_scale(&self) -> Option<f32> {
+        if self.px != 0.0 {
+            return None;
+        }
+        let mut scale = self.percent / 100.0;
+        let mut has_em = false;
+        for term in self.terms.iter().flatten() {
+            if term.unit != RelativeCalcUnit::Em || term.approximates_font_metrics {
+                return None;
+            }
+            scale += term.coefficient;
+            has_em = true;
+        }
+        (has_em && scale >= 0.0).then_some(scale)
     }
 
     /// The value without font-relative or viewport terms, when it has none.

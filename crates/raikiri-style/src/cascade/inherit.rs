@@ -1497,6 +1497,12 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         PropertyValue::FontSize(Length::Ic(value)) => {
             crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(*value)))
         }
+        // A calc that only scales the parent's size stays relative as its
+        // `em` multiple; any other calc keeps its computed px size (SVG 1.1
+        // lengths have no `calc()`).
+        PropertyValue::FontSizeCalc(calc) => calc.font_size_scale().and_then(|scale| {
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
+        }),
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
@@ -1507,9 +1513,8 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // exporting the keyword would follow the instance's size instead.
         // usvg has no font-family dependent `medium` either, so a definition
         // reused under a different generic family keeps the size of the
-        // family where it is defined. SVG 1.1 lengths have no `calc()`, so a
-        // mixed calc keeps its computed px size as well.
-        PropertyValue::FontSizeKeyword(_) | PropertyValue::FontSizeCalc(_) => None,
+        // family where it is defined.
+        PropertyValue::FontSizeKeyword(_) => None,
         _ => None,
     }
 }
@@ -3076,14 +3081,29 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.font_size_calc = None;
             target.font_size_keyword_declared = false;
         }
-        // Phase 2 resolves the calc once the root font size and the parent's
-        // line height are known; the parent's keyword information does not
-        // carry over to a size that mixes in other terms.
-        PropertyValue::FontSizeCalc(calc) => {
-            target.font_size_calc = Some(calc);
-            target.font_size_keyword = None;
-            target.font_size_keyword_declared = false;
-        }
+        // A sum of `%` and true `em` terms only scales the parent's size, so
+        // it is applied as the equivalent `em` multiple and keeps a
+        // keyword-derived parent size keyword-derived. Otherwise phase 2
+        // resolves the calc once the root font size and the parent's line
+        // height are known; the parent's keyword information does not carry
+        // over to a size that mixes in other terms. A multiple that would
+        // overflow the parent's size, or the keyword size it carries under
+        // the larger 16px `medium` of a later family change, also stays a
+        // calc, whose resolution falls back to the initial size.
+        PropertyValue::FontSizeCalc(calc) => match calc.font_size_scale().filter(|&scale| {
+            // Still the `Length::Px` parent seed, as for `FontSizeRelative`.
+            (target.font_size.payload() * scale).is_finite()
+                && target
+                    .font_size_keyword
+                    .is_none_or(|info| info.scaled(scale).resolve(&[]).0.is_finite())
+        }) {
+            Some(scale) => apply_value(PropertyValue::FontSize(Length::Em(scale)), target),
+            None => {
+                target.font_size_calc = Some(calc);
+                target.font_size_keyword = None;
+                target.font_size_keyword_declared = false;
+            }
+        },
         PropertyValue::FontSizeRelative(rel) => {
             // Always the `Length::Px` parent seed: `FontSize` shares this
             // key's single winner slot, so it has not overwritten the seed.

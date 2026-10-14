@@ -5758,3 +5758,31 @@ fn hanging_punctuation_declarations_reject_invalid_important_suffixes() {
         );
     }
 }
+
+#[test]
+fn font_size_scale_takes_only_percent_and_true_em_terms() {
+    use crate::property::RelativeCalcLengthPercentage as Calc;
+    let term = |value, unit| Calc::from_unit(value, unit).unwrap();
+    let sum = |a: Calc, b: Calc| a.add_scaled(b, 1.0).unwrap();
+    assert_eq!(
+        sum(term(50.0, "%"), term(1.0, "em")).font_size_scale(),
+        Some(1.5)
+    );
+    // An `ex` or `ic` folded into the `em` term keeps it from scaling, also
+    // after a true `em` is added to it.
+    assert_eq!(
+        sum(term(1.0, "ex"), term(1.0, "em")).font_size_scale(),
+        None
+    );
+    assert_eq!(
+        sum(term(1.0, "em"), term(1.0, "ic")).font_size_scale(),
+        None
+    );
+    // Other bases, absolute lengths and negative sums do not scale.
+    assert_eq!(term(1.0, "rem").font_size_scale(), None);
+    assert_eq!(
+        sum(term(1.0, "em"), term(1.0, "px")).font_size_scale(),
+        None
+    );
+    assert_eq!(term(-1.0, "em").font_size_scale(), None);
+}
