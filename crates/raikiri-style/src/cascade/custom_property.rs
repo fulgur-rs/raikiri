@@ -298,10 +298,30 @@ struct LinearTerms {
     percent: f32,
     px: f32,
     relative: [f32; RelativeCalcUnit::ALL.len()],
+    /// `ex` and `ic` coefficients, kept apart from `em` until the value is
+    /// built so that one which cancels out does not mark the `em` term as
+    /// an approximation.
+    ex: f32,
+    ic: f32,
 }
 
 impl LinearTerms {
     fn from_unit(value: f32, unit: &str) -> Option<Self> {
+        match unit {
+            "ex" => {
+                return Some(Self {
+                    ex: value,
+                    ..Self::default()
+                });
+            }
+            "ic" => {
+                return Some(Self {
+                    ic: value,
+                    ..Self::default()
+                });
+            }
+            _ => {}
+        }
         let single = RelativeCalcLengthPercentage::from_unit(value, unit)?;
         let mut terms = Self {
             percent: single.percent,
@@ -315,7 +335,7 @@ impl LinearTerms {
     }
 
     fn coefficients_mut(&mut self) -> impl Iterator<Item = &mut f32> {
-        [&mut self.percent, &mut self.px]
+        [&mut self.percent, &mut self.px, &mut self.ex, &mut self.ic]
             .into_iter()
             .chain(self.relative.iter_mut())
     }
@@ -348,7 +368,10 @@ impl LinearTerms {
         let mut value = RelativeCalcLengthPercentage::default();
         value.percent = self.percent;
         value.px = self.px;
-        for (unit, coefficient) in RelativeCalcUnit::ALL.into_iter().zip(self.relative) {
+        // `ex` and `ic` fold into `em` (see `RelativeCalcLengthPercentage`).
+        let mut relative = self.relative;
+        relative[RelativeCalcUnit::Em as usize] += 0.5 * self.ex + self.ic;
+        for (unit, coefficient) in RelativeCalcUnit::ALL.into_iter().zip(relative) {
             if coefficient != 0.0 {
                 value = value.add_scaled(
                     RelativeCalcLengthPercentage::relative(unit, coefficient)?,
@@ -356,7 +379,7 @@ impl LinearTerms {
                 )?;
             }
         }
-        Some(value)
+        Some(value.approximating_font_metrics(self.ex != 0.0 || self.ic != 0.0))
     }
 }
 
