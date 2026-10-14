@@ -1233,16 +1233,13 @@ fn measure_ifc_root(
         known_height.or(measure.definite_height)
     };
     // A percentage `left` or `right` refers to the whole content box, not to
-    // the column the lines are broken in.
-    let containing_width = if vertical {
-        physical_block_extent
-    } else {
-        width
-    };
+    // the column the lines are broken in. A vertical root's physical width
+    // is settled by the layout below, which resolves against it.
+    let containing_width = (!vertical).then_some(width);
     // The root's paragraph was taken above, so it is present.
     tree.nodes[idx].ifc.iter_mut().for_each(|root| {
         root.definite_height = definite_height;
-        root.containing_width = Some(containing_width);
+        root.containing_width = containing_width;
     });
     let axes = IfcAxes::new(writing_mode, direction);
     let mut geometry = flow::FlowGeometry::new(axes, content_size, measure.insets);

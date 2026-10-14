@@ -794,6 +794,10 @@ fn inline_relative_insets_resolve_percentages_against_the_width() {
     assert!(zero.has_percentage());
     assert_eq!(zero.offset(200.0, None, false), (0.0, -4.0));
     assert_eq!(zero.offset(200.0, Some(100.0), false), (0.0, 0.0));
+    // A large percentage is scaled before it is multiplied, so a used value
+    // within range does not overflow on the way.
+    let (dx, _) = insets("left:1e37%").offset(100.0, None, false);
+    assert!((dx / 1e37 - 1.0).abs() < 1e-3, "{dx}");
 }
 
 #[test]

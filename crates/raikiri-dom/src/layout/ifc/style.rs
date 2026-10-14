@@ -117,7 +117,8 @@ impl InsetTerms {
     fn resolve(self, basis: Option<f32>) -> Option<f32> {
         match self.percent {
             None => Some(self.px),
-            Some(percent) => basis.map(|basis| self.px + basis * percent / 100.0),
+            // Scale the percentage first so a large one does not overflow.
+            Some(percent) => basis.map(|basis| self.px + basis * (percent / 100.0)),
         }
     }
 }

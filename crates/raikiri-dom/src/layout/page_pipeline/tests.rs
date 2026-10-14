@@ -13316,3 +13316,35 @@ fn a_relative_block_in_a_mixed_root_resolves_a_top_percentage_against_its_height
     let moved_y = doc.nodes[moved].unrounded_layout.location.y;
     assert_eq!(moved_y - still_y, 10.0 + 100.0);
 }
+
+#[test]
+fn a_relative_block_in_an_rtl_mixed_root_prefers_right() {
+    // CSS 2.1 §9.4.3: when both `left` and `right` apply in a right-to-left
+    // containing block, `left` is ignored.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px;direction:rtl;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:50px;height:10px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:50px;height:10px;position:relative;left:5px;right:10%"),
+        );
+    });
+    let still_x = doc.nodes[still].unrounded_layout.location.x;
+    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    assert_eq!(moved_x - still_x, -20.0);
+}
