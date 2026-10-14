@@ -317,6 +317,10 @@ impl StyleDom for Document {
     fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {
         Document::parent_of(self, child.0 as usize).map(|p| StyleNodeId::new(p as u64))
     }
+
+    fn normal_line_height(&self) -> Option<raikiri_style::NormalLineHeightSource> {
+        Some(Document::normal_line_height(self))
+    }
 }
 
 /// [`raikiri_traits::QuirksMode`] (raikiri-html's parse-time mirror of

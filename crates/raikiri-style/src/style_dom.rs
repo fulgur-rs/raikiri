@@ -185,6 +185,18 @@ pub trait StyleDom {
     fn parent_id(&self, _child: StyleNodeId) -> Option<StyleNodeId> {
         None
     }
+
+    /// The measurer of `line-height: normal` in the fonts this document's
+    /// text is laid out with, used by a cascade whose
+    /// [`crate::CascadeOptions::normal_line_height`] is `None`.
+    ///
+    /// The default `None` leaves the basis of the `lh` and `rlh` units
+    /// unresolved on elements whose line height is `normal`; a DOM that
+    /// knows its fonts overrides it so every cascade of the document
+    /// resolves those units the same way, whichever entry point runs it.
+    fn normal_line_height(&self) -> Option<crate::resolve::NormalLineHeightSource> {
+        None
+    }
 }
 
 /// DOM node abstraction — kind dispatch and common API.

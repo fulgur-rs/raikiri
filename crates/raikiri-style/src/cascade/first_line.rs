@@ -169,7 +169,8 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
     options: &CascadeOptions,
 ) -> Result<FirstLineCascade, CascadeError> {
     let limits = options.limits;
-    let measurer = options.normal_line_height.as_ref().map(|source| &*source.0);
+    let normal_line_height = options.normal_line_height_for(dom);
+    let measurer = normal_line_height.as_ref().map(|source| &*source.0);
     let viewport = options.viewport.unwrap_or((
         media.viewport_width() as f32,
         media.viewport_height() as f32,
@@ -195,7 +196,7 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
     output.add(outputs.counts.output_bytes)?;
     let query = PageContextQuery::default();
     let mut normal = finish(dom, rule_tree, &query, media, outputs, measurer);
-    normal.normal_line_height = options.normal_line_height.clone();
+    normal.normal_line_height = normal_line_height.clone();
     let error = |id: StyleNodeId| CascadeError::Internal {
         message: format!(
             "unsupported first-line node {} (one block with inline descendants required)",

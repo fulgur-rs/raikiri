@@ -52,6 +52,7 @@ pub mod image_geometry;
 mod image_resolve;
 mod margin_boxes;
 mod node;
+mod normal_line_height;
 mod page_projection;
 mod phase_b;
 mod running;

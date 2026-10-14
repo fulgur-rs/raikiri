@@ -263,6 +263,11 @@ impl DocumentHost for WptDocumentHost {
         self.flushes.set(self.flushes.get() + 1);
         self.resync_stylesheets();
         self.setup.uncascaded.dom.mark_in_document_flags();
+        // Before the cascade, which measures `line-height: normal` in them.
+        self.setup
+            .uncascaded
+            .dom
+            .set_font_collection(self.setup.fonts.clone());
         let resolved = crate::reftest::resolved_live_viewport_document(
             &self.setup.uncascaded,
             &self.setup.media_context,
@@ -273,10 +278,6 @@ impl DocumentHost for WptDocumentHost {
             &self.setup.page_query,
         )
         .map_err(|error| HostError(error.to_string()))?;
-        self.setup
-            .uncascaded
-            .dom
-            .set_font_collection(self.setup.fonts.clone());
         let image_resolver = raikiri_net::ImageResolver::new(
             crate::reftest::local_resources::WptFileNetworkProvider::new(
                 self.canonical_root.clone(),

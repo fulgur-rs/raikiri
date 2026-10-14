@@ -18,9 +18,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use raikiri_style::{
-    Atom, CascadeOptions, CascadeResult, ComputedLength, ConsumerPropertyGrammar,
-    ConsumerPropertyRegistration, MediaContext, NormalLineHeight, NormalLineHeightSource,
-    PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
+    Atom, CascadeOptions, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
+    MediaContext, PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
     cascade_page_with_media_context, cascade_with_options,
 };
 
@@ -737,68 +736,22 @@ fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError
 /// Faces from `@font-face` go into a document layer over the shared font
 /// layer under their authored family names, so computed font families need
 /// no rewriting. The faces are fetched through `font_loader`. Returns which
-/// faces were registered and which had no usable source, and a measurer of
-/// `line-height: normal` in those fonts for the cascade.
+/// faces were registered and which had no usable source. The cascades of
+/// `dom` then measure `line-height: normal` in those fonts.
 fn enable_inline_engine(
     dom: &mut raikiri_dom::Document,
     resources: &RenderResources<'_>,
     font_faces: &FontFaceRegistry,
     font_loader: &dyn FontFaceLoader,
-) -> (raikiri_dom::FontFaceApplyReport, NormalLineHeightSource) {
+) -> raikiri_dom::FontFaceApplyReport {
     let shared = resources.inline_engine_fonts();
     let (fonts, report) = if font_faces.is_empty() {
         (shared, raikiri_dom::FontFaceApplyReport::default())
     } else {
         raikiri_dom::build_inline_document_fonts(&shared, font_faces, font_loader)
     };
-    let measurer = NormalLineHeightSource::new(EngineNormalLineHeight::new(fonts.clone()));
     dom.set_font_collection(fonts);
-    (report, measurer)
-}
-
-/// Measures `line-height: normal` for the `lh` unit in the fonts the inline
-/// engine lays text out with, so `1lh` matches the height of a `normal` line.
-///
-/// Measures are kept per family list, size and weight, with one entry per
-/// style, since a document uses few fonts and cascades it more than once.
-struct EngineNormalLineHeight {
-    fonts: shodo::font::FontCollection,
-    measured: Mutex<NormalLineHeights>,
-}
-
-type NormalLineHeights = HashMap<
-    (Arc<Vec<raikiri_style::FontFamilyName>>, u32, u32),
-    Vec<(raikiri_style::property::FontStyle, Option<f32>)>,
->;
-
-impl EngineNormalLineHeight {
-    fn new(fonts: shodo::font::FontCollection) -> Self {
-        Self {
-            fonts,
-            measured: Mutex::default(),
-        }
-    }
-}
-
-impl NormalLineHeight for EngineNormalLineHeight {
-    fn normal_line_height(&self, font: &raikiri_style::ChFontKey) -> Option<ComputedLength> {
-        let key = (
-            font.family.clone(),
-            font.size.0.to_bits(),
-            font.weight.to_bits(),
-        );
-        let mut measured = self.measured.lock().unwrap_or_else(|e| e.into_inner());
-        let styles = measured.entry(key).or_default();
-        let value = match styles.iter().find(|(style, _)| *style == font.style) {
-            Some(&(_, value)) => value,
-            None => {
-                let value = raikiri_dom::layout::measure_normal_line_height(&self.fonts, font);
-                styles.push((font.style, value));
-                value
-            }
-        };
-        value.map(ComputedLength)
-    }
+    report
 }
 
 pub(crate) struct PipelineOutput {
@@ -945,7 +898,7 @@ pub(crate) fn run_pipeline(
     if let Some(base_url) = runtime.effective_base_url {
         dom.set_base_url(Some(base_url.clone()));
     }
-    let (font_report, normal_line_height) = enable_inline_engine(
+    let font_report = enable_inline_engine(
         &mut dom,
         resources,
         runtime.font_faces,
@@ -953,7 +906,7 @@ pub(crate) fn run_pipeline(
     );
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = config.limits.cascade_limits();
-    cascade_options.normal_line_height = Some(normal_line_height);
+    cascade_options.normal_line_height = Some(dom.normal_line_height());
     // The viewport-percentage lengths need the first page's page area before
     // the element cascade, whose root the page context inherits from. Take it
     // from the page context inheriting initial values; the root's styles only
