@@ -20,6 +20,7 @@ use rustc_hash::FxHashMap;
 use smol_str::SmolStr;
 use taffy::Style;
 
+use crate::fetch::mime_essence;
 use crate::types::UncascadedDocument;
 
 /// The raikiri implementation of html5ever `TreeSink`. Handles are indices
@@ -660,36 +661,25 @@ pub(crate) enum HeadStylesheetSource {
 /// this internal projection lets the post-parse network pass rebuild the same
 /// vector with external responses at their actual `<link>` positions.
 pub(crate) fn collect_head_stylesheet_sources(doc: &Document) -> Vec<HeadStylesheetSource> {
-    use raikiri_traits::{Dom, Element, Node};
+    use raikiri_traits::{Element, Node};
 
     let Some(head_id) = find_head_element(doc) else {
         return Vec::new();
     };
 
     let mut out = Vec::new();
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
-    while let Some(id) = stack.pop() {
-        let Some(node) = doc.node(id) else {
-            // Every pushed id originates in this document's own tree. Keep the
-            // defensive branch required by the `Dom::node` contract.
-            continue;
+    walk_in_document_order(doc, head_id, |id, node| {
+        let Some(el) = node.as_element() else {
+            return Walk::Descend;
         };
-        if !node.is_in_document() {
-            continue;
-        }
-
-        if let Some(el) = node.as_element()
-            && is_stylesheet_style_element(&el)
-        {
+        if is_stylesheet_style_element(&el) {
             if inline_stylesheet_has_content(doc, id) {
                 out.push(HeadStylesheetSource::Inline { node_id: id });
             }
             // `<style>` contents are CSS text, not nested HTML elements.
-            continue;
+            return Walk::SkipChildren;
         }
-
-        if let Some(el) = node.as_element()
-            && el.tag_name() == "link"
+        if el.tag_name() == "link"
             && is_stylesheet_link(el.attr("rel"), el.attr("type"), el.attr("title"))
             && let Some(href) = el.attr("href")
         {
@@ -701,13 +691,8 @@ pub(crate) fn collect_head_stylesheet_sources(doc: &Document) -> Vec<HeadStylesh
                 });
             }
         }
-
-        // Push in reverse so LIFO pop yields document order.
-        let children: Vec<_> = doc.child_ids(id).collect();
-        for child_id in children.into_iter().rev() {
-            stack.push(child_id);
-        }
-    }
+        Walk::Descend
+    });
     out
 }
 
@@ -815,16 +800,9 @@ pub(crate) fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_
 
     let head_id = find_head_element(doc);
     let mut out = Vec::new();
-    let mut stack = vec![doc.root_id()];
-    while let Some(id) = stack.pop() {
+    walk_in_document_order(doc, doc.root_id(), |id, node| {
         if head_id == Some(id) {
-            continue;
-        }
-        let Some(node) = doc.node(id) else {
-            continue;
-        };
-        if !node.is_in_document() {
-            continue;
+            return Walk::SkipChildren;
         }
         if node
             .as_element()
@@ -833,36 +811,72 @@ pub(crate) fn collect_body_inline_stylesheet_ids(doc: &Document) -> Vec<raikiri_
             if inline_stylesheet_has_content(doc, id) {
                 out.push(id);
             }
-            continue;
+            return Walk::SkipChildren;
         }
-        let children: Vec<_> = doc.child_ids(id).collect();
-        for child_id in children.into_iter().rev() {
-            stack.push(child_id);
-        }
-    }
+        Walk::Descend
+    });
     out
 }
 
-/// Find the `<head>` element in the Document tree with iterative DFS.
+/// Find the `<head>` element in the Document tree.
 /// It is usually the first child under `<html>`, but html5ever tree building
 /// can place it elsewhere. Return None if a linear scan finds no head.
 fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
     use raikiri_traits::{Dom, Element, Node};
 
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![doc.root_id()];
-    while let Some(id) = stack.pop() {
-        if let Some(node) = doc.node(id)
-            && let Some(el) = node.as_element()
-            && el.tag_name() == "head"
-        {
-            return Some(id);
+    let mut head = None;
+    walk_in_document_order(doc, doc.root_id(), |id, node| {
+        if node.as_element().is_some_and(|el| el.tag_name() == "head") {
+            head = Some(id);
+            return Walk::Stop;
         }
-        let kids: Vec<_> = doc.child_ids(id).collect();
-        for c in kids.into_iter().rev() {
-            stack.push(c);
+        Walk::Descend
+    });
+    head
+}
+
+/// What [`walk_in_document_order`] does after visiting a node.
+enum Walk {
+    /// Visit the node's children next.
+    Descend,
+    /// Leave the node's descendants out.
+    SkipChildren,
+    /// End the walk.
+    Stop,
+}
+
+/// Visit `root` and its descendants in document order, leaving out nodes
+/// that are not in the document together with their subtrees. An explicit
+/// stack keeps deeply nested markup from overflowing the call stack.
+fn walk_in_document_order<'a>(
+    doc: &'a Document,
+    root: raikiri_traits::NodeId,
+    mut visit: impl FnMut(
+        raikiri_traits::NodeId,
+        <Document as raikiri_traits::Dom>::NodeRef<'a>,
+    ) -> Walk,
+) {
+    use raikiri_traits::{Dom, Node};
+
+    let mut stack = vec![root];
+    while let Some(id) = stack.pop() {
+        let Some(node) = doc.node(id) else {
+            continue;
+        };
+        if !node.is_in_document() {
+            continue;
+        }
+        match visit(id, node) {
+            Walk::Descend => {
+                // Push in reverse so LIFO pop yields document order.
+                let first_child = stack.len();
+                stack.extend(doc.child_ids(id));
+                stack[first_child..].reverse();
+            }
+            Walk::SkipChildren => {}
+            Walk::Stop => return,
         }
     }
-    None
 }
 
 /// Find the first `<base>` element with a nonempty `href` inside `<head>`
@@ -896,35 +910,25 @@ fn find_head_element(doc: &Document) -> Option<raikiri_traits::NodeId> {
 /// (as described for link hrefs in `collect_external_stylesheet_hrefs`),
 /// mistaking an effectively empty href for an override.
 pub(crate) fn find_document_base_href(doc: &Document) -> Option<String> {
-    use raikiri_traits::{Dom, Element, Node};
+    use raikiri_traits::{Element, Node};
 
     let head_id = find_head_element(doc)?;
 
-    let mut stack: Vec<raikiri_traits::NodeId> = vec![head_id];
-    while let Some(id) = stack.pop() {
-        let Some(node) = doc.node(id) else {
-            // cov:ignore: unreachable in practice, mirrors the identical
-            // defensive branch in `collect_external_stylesheet_hrefs` below.
-            continue;
-        };
-        if !node.is_in_document() {
-            continue;
-        }
+    let mut base_href = None;
+    walk_in_document_order(doc, head_id, |_, node| {
         if let Some(el) = node.as_element()
             && el.tag_name() == "base"
             && let Some(href) = el.attr("href")
         {
             let trimmed = href.trim();
             if !trimmed.is_empty() {
-                return Some(trimmed.to_string());
+                base_href = Some(trimmed.to_string());
+                return Walk::Stop;
             }
         }
-        let kids: Vec<_> = doc.child_ids(id).collect();
-        for c in kids.into_iter().rev() {
-            stack.push(c);
-        }
-    }
-    None
+        Walk::Descend
+    });
+    base_href
 }
 
 /// Collect `<link rel="stylesheet" href="...">` elements inside `<head>`
@@ -1042,14 +1046,7 @@ fn is_stylesheet_link(rel: Option<&str>, type_attr: Option<&str>, title: Option<
     if has_alternate_token && title.is_some_and(|t| !t.is_empty()) {
         return false;
     }
-    type_attr.is_none_or(|t| {
-        t.is_empty()
-            || t.split(';')
-                .next()
-                .unwrap_or(t)
-                .trim()
-                .eq_ignore_ascii_case("text/css")
-    })
+    type_attr.is_none_or(|t| t.is_empty() || mime_essence(t).eq_ignore_ascii_case("text/css"))
 }
 
 /// Copy the contents of the metadata tables (`qual_names` / `attributes`)

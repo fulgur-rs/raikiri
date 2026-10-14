@@ -961,14 +961,10 @@ fn svg_font_family(style: &ComputedValues) -> String {
             if family.1 == raikiri_style::property::FontFamilyKind::Generic {
                 family.as_str().to_owned()
             } else {
-                let name = family
-                    .as_str()
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\n', "\\a ")
-                    .replace('\r', "\\d ")
-                    .replace('\u{c}', "\\c ");
-                format!("\"{name}\"")
+                // Writing to a `String` cannot fail.
+                let mut quoted = String::new();
+                let _ = cssparser::serialize_string(family.as_str(), &mut quoted);
+                quoted
             }
         })
         .collect::<Vec<_>>()

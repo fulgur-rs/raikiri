@@ -1394,9 +1394,7 @@ impl<'a> RenderResources<'a> {
             );
             return None;
         };
-        let mime = metadata
-            .split(';')
-            .next()
+        let mime = Some(mime_essence(metadata))
             .filter(|mime| !mime.is_empty())
             .unwrap_or("text/plain")
             .to_owned();
