@@ -1987,13 +1987,17 @@ fn a_font_size_calc_resolves_against_the_parent_and_clamps() {
         resolve(lh, None),
         ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)
     );
-    // A percentage term that overflows once scaled by the parent's size
-    // falls back the same way.
-    let huge = unit(3.0e38, "%").add_scaled(unit(1.0, "px"), 1.0).unwrap();
+    // A sum that overflows once the percentage is scaled by the parent's
+    // size falls back the same way, while a large percentage alone does not.
+    let huge = unit(3.0e38, "%")
+        .add_scaled(unit(3.4e38, "px"), 1.0)
+        .unwrap();
     assert_eq!(
         resolve(huge, None),
         ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)
     );
+    let large = unit(3.0e38, "%").add_scaled(unit(1.0, "px"), 1.0).unwrap();
+    assert!(resolve(large, None).px() > 1.0e37);
 }
 
 #[test]
@@ -2022,7 +2026,9 @@ fn a_line_height_calc_resolves_against_the_own_font_size_and_clamps() {
     let lh = relative_calc_plus_1px(1.0, "lh");
     assert_eq!(resolve(lh, Some(ComputedLength(20.0))), length(21.0));
     assert_eq!(resolve(lh, None), ComputedLineHeight::Normal);
-    let huge = unit(3.0e38, "%").add_scaled(unit(1.0, "px"), 1.0).unwrap();
+    let huge = unit(3.0e38, "%")
+        .add_scaled(unit(3.4e38, "px"), 1.0)
+        .unwrap();
     assert_eq!(resolve(huge, None), ComputedLineHeight::Normal);
 }
 

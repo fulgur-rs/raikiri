@@ -2831,8 +2831,8 @@ fn resolve_relative_calc_against_basis(
 ) -> Option<f32> {
     let px = match resolve_relative_calc(calc, basis, own_line_height, ctx)? {
         ComputedLengthPercentageOrAuto::Px(px) => px,
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis.0 * percent / 100.0,
-        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis.0 * calc.percent / 100.0,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis.0 * (percent / 100.0),
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis.0 * (calc.percent / 100.0),
         _ => return None, // cov:ignore: a relative calc resolves only to Px, Percent or Calc
     };
     px.is_finite().then_some(px.max(0.0))
