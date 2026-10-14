@@ -3576,6 +3576,28 @@ pub fn resolve_line_height(
                 None => ComputedLineHeight::Normal,
             }
         }
+        // A percentage and an `em` are both relative to the element's own
+        // font size (CSS Inline 3 §5.1), and an `lh` term to the parent's
+        // line height. An `lh` term without that basis leaves the value
+        // unresolvable, as a plain `lh` is; a sum is clamped to `[0,∞]`.
+        LineHeight::Calc(calc) => match resolve_relative_calc_with(
+            calc,
+            font_size,
+            self_reference_basis,
+            ctx,
+            |coefficient, basis| resolve_lh_multiplier(coefficient, basis).map(ComputedLength::px),
+        ) {
+            Some(ComputedLengthPercentageOrAuto::Px(px)) => {
+                ComputedLineHeight::Length(ComputedLength(px.max(0.0)))
+            }
+            Some(ComputedLengthPercentageOrAuto::Percent(percent)) => {
+                ComputedLineHeight::Length(ComputedLength((font_size.0 * percent / 100.0).max(0.0)))
+            }
+            Some(ComputedLengthPercentageOrAuto::Calc(calc)) => ComputedLineHeight::Length(
+                ComputedLength((calc.px + font_size.0 * calc.percent / 100.0).max(0.0)),
+            ),
+            _ => ComputedLineHeight::Normal,
+        },
         LineHeight::Length(len) => ComputedLineHeight::Length(match len {
             // CSS Inline 3 §5.1 "Percentages: computed relative to 1em" —
             // Absolutize percentages against the declaring element's computed

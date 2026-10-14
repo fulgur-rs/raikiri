@@ -444,8 +444,6 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 /// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
 ///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
 ///   the canonical list of five keywords and the rationale.
-/// - **(b) Unsupported**: `calc()` / `var()` are not implemented (css-variables-and-math);
-///   both are silently dropped.
 /// - **(a) Invalid under the specification → dropped**: negative `<number>` / `<length-percentage>` values;
 ///   `auto`, `medium`, and other invalid keywords violate the grammar and are dropped.
 pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
@@ -468,7 +466,13 @@ pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight
         // A value outside the specification's `<number [0,∞]>` range drops the declaration (do not fall through to Length).
         return (n >= 0.0).then_some(LineHeight::Number(n));
     }
-    // 3. Match `<length-percentage [0,∞]>`; the helper accepts every unit and `%`.
+    // 3. A mixed-unit `calc()` reaches this parser only after substitution or
+    //    simplification failed to fold it to one dimension. A math function
+    //    is clamped to the range rather than rejected, once it is resolved.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LineHeight::Calc(calc));
+    }
+    // 4. Match `<length-percentage [0,∞]>`; the helper accepts every unit and `%`.
     //       Negative values are dropped by a post-filter (the helper deliberately does not check signs;
     //       see "Sign / range" in the parse_length_value documentation).
     let l = parse_length_value(input, true)?;

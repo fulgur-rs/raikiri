@@ -4907,6 +4907,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             // CSS Inline 3 §5.1: `normal` / `<number>` remain computed values.
             LineHeight::Normal | LineHeight::Number(_) => None,
             LineHeight::Length(l) => length_absolute_only(l, "line-height: <percentage>"),
+            LineHeight::Calc(_) => Some("LineHeight::Calc"),
         }
     }
     fn font_weight(fw: FontWeightValue) -> Option<&'static str> {

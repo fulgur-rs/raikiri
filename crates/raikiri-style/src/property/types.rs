@@ -2683,6 +2683,10 @@ pub enum LineHeight {
     /// `24px` → `Length(Length::Px(24.0))`; `150%` → `Length(Length::Percent(150.0))`.
     /// Per spec §5.1, `Length::Percent` is relative to the element's own font size.
     Length(Length),
+    /// A mixed-unit `calc()`, such as `calc(150% + 2px)`, whose percentage
+    /// and font-relative terms are absolutized against the element's own font
+    /// size at computed-value time and clamped to the `[0,∞]` range.
+    Calc(RelativeCalcLengthPercentage),
 }
 
 /// The parsed result of `<counter-style>`.

@@ -1727,7 +1727,17 @@ impl SpecifiedValues {
         let initial_line_height = normal_line_height
             .filter(|_| {
                 self_referential(&self.font_size)
-                    || matches!(&self.line_height, LineHeight::Length(l) if self_referential(l))
+                    || match &self.line_height {
+                        LineHeight::Length(l) => self_referential(l),
+                        LineHeight::Calc(calc) => calc.relative_terms().any(|(unit, _)| {
+                            matches!(
+                                unit,
+                                crate::property::RelativeCalcUnit::Lh
+                                    | crate::property::RelativeCalcUnit::Rlh
+                            )
+                        }),
+                        _ => false,
+                    }
             })
             .and_then(|measurer| {
                 measurer.normal_line_height(&ChFontKey {

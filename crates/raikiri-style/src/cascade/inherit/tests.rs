@@ -840,6 +840,34 @@ fn rlh_and_parent_lh_use_the_measured_normal_line_height() {
 }
 
 #[test]
+fn line_height_resolves_a_mixed_calc_against_its_own_font_size() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size: 16px; --lh: calc(1em + 2px)"));
+    let mixed = doc.push_element(
+        html,
+        "p",
+        Some("font-size: 10px; line-height: calc(150% + 1lh)"),
+    );
+    let clamped = doc.push_element(html, "p", Some("line-height: calc(10% - 5px)"));
+    let substituted = doc.push_element(html, "p", Some("font-size: 10px; line-height: var(--lh)"));
+    let (r, _) = cascade_measuring_normal(&doc);
+    // The percentage takes the element's own 10px font size, and `lh` the
+    // root's 20px `normal` line.
+    assert_eq!(
+        r.computed[mixed].line_height,
+        ComputedLineHeight::Length(ComputedLength(35.0))
+    );
+    assert_eq!(
+        r.computed[clamped].line_height,
+        ComputedLineHeight::Length(ComputedLength(0.0))
+    );
+    assert_eq!(
+        r.computed[substituted].line_height,
+        ComputedLineHeight::Length(ComputedLength(12.0))
+    );
+}
+
+#[test]
 fn normal_line_height_is_measured_only_where_the_font_changes() {
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", None);
