@@ -877,11 +877,13 @@ fn layout_single_page_with_table_projection(
     // the bottom margin has no effect on a root sized to the page content
     // box. The horizontal margins, UA or authored, become inline padding of
     // the root after Step 4 (`move_body_inline_margins_into_padding`).
-    // A body laid out on vertical axes stacks its children along the
-    // physical x axis: its top and bottom margins are inline margins, which
-    // become padding after Step 4 instead, and its block-start margin
-    // cannot collapse with a child's (see `taffy_impl::vertical_block`).
-    let vertical_body = !document.nodes[body_id].is_ifc_root()
+    // A body laid out on vertical axes, whether it stacks blocks or lines,
+    // advances along the physical x axis: its top and bottom margins are
+    // inline margins, which become padding after Step 4 instead, and its
+    // block-start margin cannot collapse with a child's (see
+    // `taffy_impl::vertical_block`). A vertical flex or grid body still
+    // lays out on horizontal axes and keeps the horizontal path.
+    let vertical_body = crate::layout::bridge::lays_out_vertically(cascade, body_id)
         && crate::taffy_impl::block_right_to_left(document, body_id).is_some();
     let body_margin_top = if vertical_body {
         0.0
@@ -1352,11 +1354,11 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
         };
         // A box sized by its vertical logical sizes takes their `ch` lengths
         // on the physical axes the layout bridge gave them.
-        let (width_ch, height_ch) =
-            match crate::layout::bridge::vertical_logical_size(doc, cascade, idx) {
-                Some(size) => (&size.width_ch, &size.height_ch),
-                None => (&cv.width_ch, &cv.height_ch),
-            };
+        let (width_ch, height_ch) = match crate::layout::bridge::vertical_logical_size(cascade, idx)
+        {
+            Some(size) => (&size.width_ch, &size.height_ch),
+            None => (&cv.width_ch, &cv.height_ch),
+        };
         let width = measure(width_ch).map(|value| value.max(0.0));
         let height = measure(height_ch).map(|value| value.max(0.0));
         let min_width = measure(&cv.min_width_ch).map(|value| value.max(0.0));

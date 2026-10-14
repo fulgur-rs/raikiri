@@ -2120,6 +2120,8 @@ impl SpecifiedValues {
         // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
         // phase 3 like overflow cross-axis coupling.
         let display = resolve_display_for_float(self.display, self.float);
+        // A `display: contents` element has no box to be a multicol container.
+        let generates_box = !matches!(display, DisplayValue::Contents | DisplayValue::None);
         let mut running_templates = std::mem::take(&mut self.running_templates);
         ComputedValues {
             color: self.color,
@@ -2707,8 +2709,9 @@ impl SpecifiedValues {
             },
             column_width,
             multicol_flow: self.inside_multicol
-                || matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
-                || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0),
+                || (generates_box
+                    && (matches!(self.column_count, ColumnCountValue::Count(count) if count > 0)
+                        || matches!(column_width, crate::resolve::ComputedColumnWidth::Px(width) if width > 0.0))),
             custom_properties: crate::computed::empty_custom_properties(),
             local_custom_properties: crate::computed::empty_custom_properties(),
         }

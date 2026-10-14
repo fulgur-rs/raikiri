@@ -1,7 +1,7 @@
 use crate::Document;
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600, with_ahem};
-use taffy::Style;
+use taffy::{LengthPercentage, Style};
 
 /// A document whose body (8px margin) holds a container styled
 /// `container_css` with one child per entry of `children`, each a
@@ -283,4 +283,100 @@ fn vertical_flex_item_stretches_to_its_flex_line() {
         &["writing-mode:vertical-rl;width:30px"],
     );
     assert_eq!(rects[1], (8.0, 8.0, 30.0, 100.0));
+}
+
+/// Lays out a body styled `body_css` holding one element per entry of
+/// `children` (`tag`, `css`, `text`) and returns the document and the ids
+/// of the body and its children.
+fn layout_body(body_css: &str, children: &[(&str, &str, &str)]) -> (Document, Vec<usize>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some(format!("font-family:Ahem;font-size:10px;line-height:10px;{body_css}").as_str()),
+    );
+    let mut ids = vec![body];
+    for &(tag, css, text) in children {
+        if tag == "text" {
+            doc.append_text(body, text);
+            continue;
+        }
+        let child = doc.append_element(Some(body), tag, Style::default(), Some(css));
+        if !text.is_empty() {
+            doc.append_text(child, text);
+        }
+        ids.push(child);
+    }
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    (doc, ids)
+}
+
+#[test]
+fn vertical_body_of_text_keeps_its_bottom_margin() {
+    // The body's lines run down the page: its top and bottom margins are
+    // inline margins, carried as padding like the left and right ones.
+    let (doc, ids) = layout_body(
+        "display:block;margin:8px;writing-mode:vertical-rl",
+        &[("text", "", "aa bb")],
+    );
+    let eight = LengthPercentage::length(8.0);
+    let padding = doc.nodes[ids[0]].style.padding;
+    assert_eq!((padding.top, padding.bottom), (eight, eight));
+}
+
+#[test]
+fn vertical_flex_body_keeps_its_vertical_margins() {
+    let (doc, ids) = layout_body(
+        "display:flex;margin:8px;writing-mode:vertical-rl",
+        &[("div", "width:20px;height:10px", "")],
+    );
+    // A flex body lays its items out on horizontal axes, below its top
+    // margin rather than below padding in place of it.
+    let padding = doc.nodes[ids[0]].style.padding;
+    let zero = LengthPercentage::length(0.0);
+    assert_eq!((padding.top, padding.bottom), (zero, zero));
+    assert_eq!(absolute_rect(&doc, ids[1]), (8.0, 8.0, 20.0, 10.0));
+}
+
+#[test]
+fn contents_element_with_columns_keeps_its_children_vertical() {
+    // A `display: contents` element is no multicol container, so its child
+    // keeps the vertical mapping of `margin-block-start`.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:8px"),
+    );
+    let container = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:300px;height:200px"),
+    );
+    let contents = doc.append_element(
+        Some(container),
+        "div",
+        Style::default(),
+        Some("display:contents;column-count:2"),
+    );
+    let child = doc.append_element(
+        Some(contents),
+        "div",
+        Style::default(),
+        Some("display:block;width:30px;margin-block-start:10px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, child), (268.0, 8.0, 30.0, 200.0));
 }

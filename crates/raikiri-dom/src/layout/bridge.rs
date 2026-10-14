@@ -102,7 +102,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// on horizontal axes, and so do flex and grid containers: their algorithms
 /// place items on physical axes, together with the horizontally mapped
 /// logical margins.
-pub(crate) fn lays_out_vertically(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
     let values = &cascade.computed[idx];
     if !matches!(
         values.cssom_writing_mode,
@@ -116,42 +116,26 @@ pub(crate) fn lays_out_vertically(doc: &Document, cascade: &CascadeResult, idx: 
     ) {
         return false;
     }
-    let mut current = Some(idx);
-    while let Some(id) = current {
-        if cascade
-            .computed
-            .get(id)
-            .is_some_and(|values| multicol_style_from_computed(values).is_some())
-        {
-            return false;
-        }
-        current = doc.parent_of(id);
-    }
-    true
+    !values.multicol_flow
 }
 
 /// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
 /// lays out vertical lines on its own axes ([`lays_out_vertically`]). Other
 /// boxes keep the horizontal mapping in [`ComputedValues::width`] /
 /// [`ComputedValues::height`].
-pub(crate) fn vertical_logical_size<'a>(
-    doc: &Document,
-    cascade: &'a CascadeResult,
+pub(crate) fn vertical_logical_size(
+    cascade: &CascadeResult,
     idx: usize,
-) -> Option<&'a raikiri_style::VerticalLogicalSize> {
+) -> Option<&raikiri_style::VerticalLogicalSize> {
     cascade.computed[idx]
         .vertical_logical_size
         .as_ref()
-        .filter(|_| lays_out_vertically(doc, cascade, idx))
+        .filter(|_| lays_out_vertically(cascade, idx))
 }
 
 /// The computed values of `idx` with [`vertical_logical_size`] applied.
-fn vertical_logical_sized(
-    doc: &Document,
-    cascade: &CascadeResult,
-    idx: usize,
-) -> Option<ComputedValues> {
-    let size = vertical_logical_size(doc, cascade, idx)?;
+fn vertical_logical_sized(cascade: &CascadeResult, idx: usize) -> Option<ComputedValues> {
+    let size = vertical_logical_size(cascade, idx)?;
     let mut sized = cascade.computed[idx].clone();
     sized.width = size.width;
     sized.width_ch = size.width_ch.clone();
@@ -172,7 +156,7 @@ pub(crate) fn apply_computed_to_style(
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }
-        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let vertical_sized = vertical_logical_sized(cascade, idx);
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         // Preserve full DisplayValue for table dispatch before taffy collapses it.
         doc.nodes[idx].display = cv.display;
@@ -280,7 +264,7 @@ pub(crate) fn apply_computed_to_style(
         doc.nodes[idx].needs_relative_block_paint_offset = false;
         let is_multicol_container = doc.nodes[idx].multicol.is_some();
         // Table boxes keep horizontal axes even in vertical writing.
-        let vertical_axes = lays_out_vertically(doc, cascade, idx)
+        let vertical_axes = lays_out_vertically(cascade, idx)
             && !crate::taffy_impl::is_table_box(cascade.computed[idx].display);
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv, vertical_axes);
@@ -337,7 +321,7 @@ pub(crate) fn apply_computed_to_style(
         }
         // The sizes bridged above, which a vertical box takes from its
         // logical sizing properties.
-        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let vertical_sized = vertical_logical_sized(cascade, idx);
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
