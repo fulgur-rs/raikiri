@@ -136,8 +136,21 @@ impl GeneratedBlock {
         let mut left = length_or_auto(self.margin.left, Some(width));
         let mut right = length_or_auto(self.margin.right, Some(width));
         let insets = |left: f32, right: f32| (left + edges.left, right + edges.right);
-        let Some(content) = self.content_width(Some(width), edges) else {
-            return insets(left.unwrap_or(0.0), right.unwrap_or(0.0));
+        let content = match self.content_width(Some(width), edges) {
+            Some(content) => content,
+            None => {
+                // An `auto` width stretches over the room its margins leave.
+                // When `min-width` or `max-width` clamps it, the box is placed
+                // as one with that definite width (CSS 2.1 10.4).
+                let stretched =
+                    (width - left.unwrap_or(0.0) - right.unwrap_or(0.0) - edges.left - edges.right)
+                        .max(0.0);
+                let clamped = self.clamp_width(stretched, Some(width), edges);
+                if clamped == stretched {
+                    return insets(left.unwrap_or(0.0), right.unwrap_or(0.0));
+                }
+                clamped
+            }
         };
         let free = width - content - edges.left - edges.right;
         // An over-constrained box takes its `auto` margins as zero.
@@ -158,34 +171,50 @@ impl GeneratedBlock {
     /// The definite content-box width of the box, clamped by its minimum and
     /// maximum; `None` for an `auto` width or a percentage without `basis`.
     fn content_width(&self, basis: Option<f32>, edges: &Sides<f32>) -> Option<f32> {
-        let content_box = |value| {
-            length_or_auto(value, basis).map(|size: f32| {
-                if self.border_box {
-                    (size - edges.left - edges.right).max(0.0)
-                } else {
-                    size
-                }
-            })
-        };
-        let mut content = content_box(self.width)?;
-        if let Some(max) = content_box(self.max_width) {
-            content = content.min(max);
-        }
-        if let Some(min) = content_box(self.min_width) {
-            content = content.max(min);
-        }
-        Some(content.max(0.0))
+        let content = self.content_box_width(self.width, basis, edges)?;
+        Some(self.clamp_width(content, basis, edges))
     }
 
-    /// The margin-box width of a box with a definite width, for the
-    /// intrinsic widths of its paragraph. Percentages count as zero, as the
-    /// width they resolve against is not known yet. The lines of an
+    /// The content-box width `content` clamped by the box's minimum and
+    /// maximum widths, never below zero.
+    fn clamp_width(&self, mut content: f32, basis: Option<f32>, edges: &Sides<f32>) -> f32 {
+        if let Some(max) = self.content_box_width(self.max_width, basis, edges) {
+            content = content.min(max);
+        }
+        if let Some(min) = self.content_box_width(self.min_width, basis, edges) {
+            content = content.max(min);
+        }
+        content.max(0.0)
+    }
+
+    /// The content-box width a width property `value` gives, if definite.
+    fn content_box_width(
+        &self,
+        value: ComputedLengthPercentageOrAuto,
+        basis: Option<f32>,
+        edges: &Sides<f32>,
+    ) -> Option<f32> {
+        length_or_auto(value, basis).map(|size| {
+            if self.border_box {
+                (size - edges.left - edges.right).max(0.0)
+            } else {
+                size
+            }
+        })
+    }
+
+    /// The margin-box width the box needs at least, for the intrinsic widths
+    /// of its paragraph: its definite width, or for an `auto` width its
+    /// minimum width, with its edges and margins. Percentages count as zero,
+    /// as the width they resolve against is not known yet. The lines of an
     /// `auto`-width box are measured with the paragraph's own lines.
-    pub(crate) fn intrinsic_width(&self) -> Option<f32> {
+    pub(crate) fn intrinsic_width(&self) -> f32 {
         let edges = self.edges(0.0);
-        let content = self.content_width(None, &edges)?;
+        let content = self
+            .content_width(None, &edges)
+            .unwrap_or_else(|| self.clamp_width(0.0, None, &edges));
         let margins = self.margins(0.0);
-        Some((content + edges.left + edges.right + margins.left + margins.right).max(0.0))
+        (content + edges.left + edges.right + margins.left + margins.right).max(0.0)
     }
 }
 
@@ -260,6 +289,8 @@ pub(crate) struct OpenBlock {
     continued: bool,
     /// The physical left and right insets of the box's lines.
     pub(crate) inline: (f32, f32),
+    /// The paragraph is right-to-left: the left side is the end side.
+    rtl: bool,
 }
 
 impl OpenBlock {
@@ -282,8 +313,17 @@ impl OpenBlock {
         space: super::flow::LineSpace,
         width: f32,
     ) -> super::flow::LineSpace {
-        let start = space.inline_start.max(self.inline.0);
-        let end = (space.inline_start + space.inline_size).min(width - self.inline.1);
+        // A negative end-side inset, from a negative margin or a box wider
+        // than the paragraph, moves the end of the lines out past the line
+        // space. The start of a line cannot move before the content box.
+        let (left, right) = self.inline;
+        let (left_out, right_out) = if self.rtl {
+            (left.min(0.0), 0.0)
+        } else {
+            (0.0, right.min(0.0))
+        };
+        let start = space.inline_start.max(left.max(0.0)) + left_out;
+        let end = (space.inline_start + space.inline_size).min(width - right.max(0.0)) - right_out;
         super::flow::LineSpace {
             inline_start: start,
             inline_size: (end - start).max(0.0),
@@ -348,6 +388,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         has_clearance: clearance.is_some(),
         continued: false,
         inline: block.inline_insets(flow.width, flow.rtl, &edges),
+        rtl: flow.rtl,
     }
 }
 

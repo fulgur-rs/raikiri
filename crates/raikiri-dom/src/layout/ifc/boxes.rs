@@ -568,6 +568,11 @@ fn run_boxes_segment(
                 Direction::Ltr
             },
         );
+        if open_block.is_some() {
+            // The lines of a generated block wider than the paragraph run out
+            // past its content box, which the physical insets cannot say.
+            constraint.available_inline_size = space.inline_size;
+        }
         constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
@@ -2142,7 +2147,7 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
         for width in root
             .generated_blocks
             .iter()
-            .filter_map(generated_blocks::GeneratedBlock::intrinsic_width)
+            .map(generated_blocks::GeneratedBlock::intrinsic_width)
         {
             intrinsics.blocks.0 = intrinsics.blocks.0.max(width);
             intrinsics.blocks.1 = intrinsics.blocks.1.max(width);

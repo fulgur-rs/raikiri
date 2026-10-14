@@ -291,3 +291,45 @@ fn multicol_with_a_leading_block_before_keeps_its_height() {
     );
     assert_eq!(boxes(&document, "div")[0].3, 40.0);
 }
+
+#[test]
+fn a_minimum_width_block_before_widens_a_shrink_to_fit_box() {
+    let document = lay_out(
+        "<span style='float:left'>A</span>",
+        "span::before{content:'';display:block;min-width:60px;padding-left:10px}",
+    );
+    assert_eq!(boxes(&document, "span")[0].2, 70.0);
+}
+
+#[test]
+fn a_maximum_width_breaks_the_lines_of_an_auto_width_block_before() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'XX YY';display:block;max-width:40px}",
+    );
+    assert_eq!(
+        runs(&document)[..2],
+        [
+            (0, "XX ".to_owned(), (0.0, 16.0)),
+            (0, "YY".to_owned(), (0.0, 36.0))
+        ]
+    );
+}
+
+#[test]
+fn a_block_before_wider_than_its_element_keeps_its_width() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'XXX XX';display:block;width:120px}",
+    );
+    assert_eq!(runs(&document)[0], (0, "XXX XX".to_owned(), (0.0, 16.0)));
+}
+
+#[test]
+fn a_right_to_left_block_before_wider_than_its_element_runs_out_at_the_left() {
+    let document = lay_out(
+        "<div dir=rtl>A</div>",
+        "div::before{content:'XXX XX';display:block;width:120px}",
+    );
+    assert_eq!(runs(&document)[0], (0, "XXX XX".to_owned(), (-20.0, 16.0)));
+}

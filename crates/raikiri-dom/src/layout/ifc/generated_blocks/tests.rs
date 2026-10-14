@@ -107,13 +107,50 @@ fn auto_margins_share_the_room_a_definite_width_leaves() {
 }
 
 #[test]
-fn only_a_definite_width_counts_for_intrinsic_widths() {
-    assert_eq!(block("").intrinsic_width(), None);
-    assert_eq!(block("width: 50%").intrinsic_width(), None);
+fn a_definite_or_minimum_width_counts_for_intrinsic_widths() {
+    assert_eq!(block("").intrinsic_width(), 0.0);
+    assert_eq!(block("width: 50%").intrinsic_width(), 0.0);
     assert_eq!(
         block("width: 40px; padding: 0 5px; margin: 0 3px 0 auto").intrinsic_width(),
-        Some(53.0)
+        53.0
     );
+    assert_eq!(
+        block("min-width: 60px; padding-left: 10px").intrinsic_width(),
+        70.0
+    );
+    assert_eq!(block("margin-left: -10px").intrinsic_width(), 0.0);
+}
+
+#[test]
+fn a_clamped_auto_width_is_placed_as_a_definite_one() {
+    assert_eq!(
+        insets("max-width: 40px; margin: 0 auto", false),
+        (30.0, 30.0)
+    );
+    assert_eq!(insets("max-width: 40px", true), (60.0, 0.0));
+    assert_eq!(insets("min-width: 120px", false), (0.0, -20.0));
+    assert_eq!(insets("min-width: 10px; padding: 0 5px", false), (5.0, 5.0));
+}
+
+#[test]
+fn a_negative_end_inset_moves_the_line_ends_out_past_the_line_space() {
+    let space = super::super::flow::LineSpace {
+        inline_start: 0.0,
+        inline_size: 100.0,
+    };
+    let narrowed = |css: &str, rtl: bool| {
+        let block = block(css);
+        let mut bfc = taffy::BlockFormattingContext::new();
+        let ctx = bfc.root_block_context();
+        let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+        let mut flow = flow(&mut y, &mut pending, &mut leading, &ctx);
+        flow.rtl = rtl;
+        let line = open(&block, flow).narrow(space, 100.0);
+        (line.inline_start, line.inline_size)
+    };
+    assert_eq!(narrowed("margin: 0 -20px 0 -10px", false), (0.0, 120.0));
+    assert_eq!(narrowed("margin: 0 -20px 0 -10px", true), (-10.0, 110.0));
+    assert_eq!(narrowed("margin: 0 15px 0 5px", false), (5.0, 80.0));
 }
 
 #[test]
