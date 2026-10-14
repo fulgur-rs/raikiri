@@ -336,6 +336,12 @@ pub struct Document {
     /// break. A pass that clears another set dirties the layout cache,
     /// since the change bypasses the cascade.
     pub(crate) forced_break_clearance: Vec<usize>,
+    /// The blocks of a paragraph laid out by the inline engine whose
+    /// following lines the last paged layout started below the floats
+    /// before them, for a forced page break between the block and the
+    /// lines. Sorted, like `forced_break_clearance`, and dirties the layout
+    /// cache the same way when it changes.
+    pub(crate) forced_break_line_clearance: Vec<usize>,
     /// Page values that paged layout gives clearance by in place of the
     /// cascade's, for a layout that otherwise ignores page names.
     pub(crate) clearance_page_values: Option<Vec<raikiri_style::property::PageValue>>,
@@ -604,6 +610,7 @@ impl Document {
             root: 0,
             layout_dirty: false,
             forced_break_clearance: Vec::new(),
+            forced_break_line_clearance: Vec::new(),
             clearance_page_values: None,
             ifc_width_probe: false,
             ifc: None,
@@ -1892,6 +1899,7 @@ impl Document {
             root: _,
             layout_dirty: _,
             forced_break_clearance: _,
+            forced_break_line_clearance: _,
             clearance_page_values: _,
             ifc_width_probe: _,
             ifc,
