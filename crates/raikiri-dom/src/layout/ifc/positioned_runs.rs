@@ -418,9 +418,13 @@ impl<'a> PositionedLines<'a> {
 }
 
 impl<'a> PositionedLines<'a> {
-    /// Add the runs of the visible ruby `annotation`, whose line `placement`
-    /// maps to the paragraph, and of the annotations nested in it. They are
-    /// read at `text_offset` of the paragraph line's text.
+    /// Add the runs of the ruby `annotation`, whose line `placement` maps to
+    /// the paragraph, and of the annotations nested in it. They are read at
+    /// `text_offset` of the paragraph line's text.
+    ///
+    /// A hidden annotation still draws its explicitly visible descendants
+    /// (CSS 2 §11.2), so visibility is checked run by run. A collapsed
+    /// annotation is not laid out and has no line here.
     fn annotation_runs(
         &self,
         annotation: shodo::RubyAnnotationView<'a>,
@@ -429,9 +433,6 @@ impl<'a> PositionedLines<'a> {
         converter: &PhysicalConverter,
         runs: &mut Vec<PositionedRun<'a>>,
     ) {
-        if annotation.visibility() != shodo::RubyVisibility::Visible {
-            return;
-        }
         let line = annotation.line();
         for fragment in line.fragments() {
             match fragment {

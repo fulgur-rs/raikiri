@@ -651,3 +651,67 @@ fn ruby_annotations_project_above_their_base_without_its_decorations() {
     // Annotations are read after their base.
     assert!(annotation.text_offset >= base.text_offset + base.text.len());
 }
+
+/// A floated ruby is a `block ruby` container: its decorations reach its
+/// base but not its annotations.
+#[test]
+fn floated_ruby_decorations_skip_its_annotations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;float:left;text-decoration:underline"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(annotation, "xx");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base run");
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    assert!(annotation.origin.1 < base.origin.1);
+    assert!(!base.decorations.is_empty());
+    assert!(annotation.decorations.is_empty());
+}

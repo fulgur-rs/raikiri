@@ -81,9 +81,12 @@ struct Segment {
 #[derive(Debug)]
 pub(super) struct Plan {
     segments: Vec<Segment>,
-    /// Floats and absolutely positioned boxes inside the container. They
-    /// generate no ruby boxes; they are anchored where the container starts.
-    out_of_flow: Vec<usize>,
+    /// Floats and absolutely positioned boxes inside the container, in
+    /// source order, each with the index of the segment it is anchored
+    /// before. They generate no ruby boxes, so one inside a segment is
+    /// anchored after that segment; an index past the last segment anchors
+    /// it at the end of the container.
+    out_of_flow: Vec<(usize, usize)>,
 }
 
 /// The paragraph data a ruby container adds to, besides the builder.
@@ -158,7 +161,10 @@ struct Planner<'a> {
     between: Vec<usize>,
     /// White space after the last annotation, before the next segment.
     gap: Vec<usize>,
-    out_of_flow: Vec<usize>,
+    out_of_flow: Vec<(usize, usize)>,
+    /// Floats and absolutely positioned boxes found in the content of the
+    /// child being added, anchored once it is in the current segment.
+    found: Vec<usize>,
 }
 
 impl Planner<'_> {
@@ -180,7 +186,7 @@ impl Planner<'_> {
             return true;
         }
         if is_out_of_flow(doc, cascade, id) {
-            self.out_of_flow.push(id);
+            self.found.push(id);
             return true;
         }
         if doc.nodes[id].kind() != NodeKind::Element
@@ -196,7 +202,8 @@ impl Planner<'_> {
                 .all(|&child| self.is_plain_inline_at(child, depth + 1)),
             DisplayValue::Ruby => match plan_at(doc, cascade, id, self.depth + depth + 1) {
                 Some(nested) => {
-                    self.out_of_flow.extend(nested.out_of_flow);
+                    self.found
+                        .extend(nested.out_of_flow.into_iter().map(|(_, id)| id));
                     true
                 }
                 None => false,
@@ -322,7 +329,7 @@ impl Planner<'_> {
                 continue;
             }
             if is_out_of_flow(doc, self.cascade, child) {
-                self.out_of_flow.push(child);
+                self.found.push(child);
                 continue;
             }
             if doc.nodes[child].kind() == NodeKind::Element
@@ -362,7 +369,7 @@ impl Planner<'_> {
                 continue;
             }
             if is_out_of_flow(self.doc, self.cascade, base) {
-                self.out_of_flow.push(base);
+                self.found.push(base);
                 continue;
             }
             if self.doc.nodes[base].kind() == NodeKind::Element
@@ -382,7 +389,18 @@ impl Planner<'_> {
         Some(())
     }
 
+    /// Add the child `child` of the ruby container `ruby`, and anchor what
+    /// its content sets aside after the segment it joins.
     fn push_child(&mut self, ruby: usize, child: usize) -> Option<()> {
+        self.push_child_content(ruby, child)?;
+        let index = self.segments.len() + 1;
+        let found = std::mem::take(&mut self.found);
+        self.out_of_flow
+            .extend(found.into_iter().map(|id| (index, id)));
+        Some(())
+    }
+
+    fn push_child_content(&mut self, ruby: usize, child: usize) -> Option<()> {
         let (doc, cascade) = (self.doc, self.cascade);
         if is_skipped(doc, cascade, child) {
             return Some(());
@@ -399,9 +417,14 @@ impl Planner<'_> {
             return Some(());
         }
         // A positioned or floated box generates no ruby box, whatever its
-        // display.
+        // display. It is anchored before the current segment until that
+        // segment has content, and after it from then on.
         if is_out_of_flow(doc, cascade, child) {
-            self.out_of_flow.push(child);
+            let started = !self.current.bases.is_empty()
+                || !self.current.levels.is_empty()
+                || self.pending.iter().any(|&id| !is_white_space_text(doc, id));
+            let index = self.segments.len() + usize::from(started);
+            self.out_of_flow.push((index, child));
             return Some(());
         }
         let internal =
@@ -458,6 +481,7 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
         between: Vec::new(),
         gap: Vec::new(),
         out_of_flow: Vec::new(),
+        found: Vec::new(),
     };
     for &child in &doc.nodes[ruby].children {
         planner.push_child(ruby, child)?;
@@ -604,7 +628,8 @@ impl Content<'_, '_> {
             if cv.display == DisplayValue::Ruby
                 && let Some(plan) = plan(self.doc, self.cascade, id)
             {
-                self.ruby(builder, id, &plan.segments, false)?;
+                // The outer ruby container anchors what this one sets aside.
+                self.ruby(builder, id, &plan.segments, &[], false)?;
                 continue;
             }
             let edges = style::inline_edges(cv, id, self.fonts)?;
@@ -697,7 +722,8 @@ impl Content<'_, '_> {
         }
     }
 
-    /// Push the ruby container `ruby`, grouped into `segments`.
+    /// Push the ruby container `ruby`, grouped into `segments`, with the
+    /// boxes it sets aside anchored as `out_of_flow` says.
     ///
     /// shodo gives every segment a container box of its own, without edges.
     /// The container's edges go on one inline box around all the segments,
@@ -710,6 +736,7 @@ impl Content<'_, '_> {
         builder: &mut ParagraphBuilder,
         ruby: usize,
         segments: &[Segment],
+        out_of_flow: &[(usize, usize)],
         root: bool,
     ) -> Result<(), IfcError> {
         let cv = &self.cascade.computed[ruby];
@@ -719,7 +746,11 @@ impl Content<'_, '_> {
             self.record_element(ruby);
             builder.open_inline(NodeId(ruby as u64), &container, edges);
         }
-        for segment in segments {
+        let mut anchors = out_of_flow.iter().peekable();
+        for (index, segment) in segments.iter().enumerate() {
+            while let Some(&(_, id)) = anchors.next_if(|&&(before, _)| before <= index) {
+                self.anchor(builder, id);
+            }
             self.push_nodes(builder, &segment.gap, (None, None), Letter::Base)?;
             // A segment without text draws nothing; one with text names its
             // boxes without an element of their own after its first text.
@@ -768,10 +799,34 @@ impl Content<'_, '_> {
                 builder.push_ruby(NodeId(id as u64), &container, value);
             }
         }
+        for &(_, id) in anchors {
+            self.anchor(builder, id);
+        }
         if !root {
             builder.close_inline();
         }
         Ok(())
+    }
+
+    /// Anchor the float or absolutely positioned box `id` here in the line.
+    fn anchor(&mut self, builder: &mut ParagraphBuilder, id: usize) {
+        let float = box_kind(self.cascade, self.doc, id) == Some(IfcBoxKind::Float);
+        builder.push_out_of_flow(
+            NodeId(id as u64),
+            if float {
+                OutOfFlowKind::Float
+            } else {
+                OutOfFlowKind::Absolute
+            },
+        );
+        self.sink.boxes.push(IfcBox {
+            node: id,
+            kind: if float {
+                IfcBoxKind::Float
+            } else {
+                IfcBoxKind::OutOfFlow
+            },
+        });
     }
 
     /// The column of intra-level white space after `part`: its white space,
@@ -902,21 +957,6 @@ pub(super) fn push(
     sink: &mut Sink<'_>,
     root: bool,
 ) -> Result<(), IfcError> {
-    for &id in &plan.out_of_flow {
-        let kind = match box_kind(cascade, doc, id) {
-            Some(IfcBoxKind::Float) => IfcBoxKind::Float,
-            _ => IfcBoxKind::OutOfFlow,
-        };
-        builder.push_out_of_flow(
-            NodeId(id as u64),
-            if kind == IfcBoxKind::Float {
-                OutOfFlowKind::Float
-            } else {
-                OutOfFlowKind::Absolute
-            },
-        );
-        sink.boxes.push(IfcBox { node: id, kind });
-    }
     Content {
         in_line: true,
         doc,
@@ -925,7 +965,7 @@ pub(super) fn push(
         limits,
         sink,
     }
-    .ruby(builder, ruby, &plan.segments, root)
+    .ruby(builder, ruby, &plan.segments, &plan.out_of_flow, root)
 }
 
 #[cfg(test)]

@@ -185,7 +185,7 @@ fn inline_content_nested_rubies_and_floats_stay_plain() {
         describe(&fixture.doc, &fixture.cascade, &plan),
         ["|(aby)|[rt(x)]"]
     );
-    assert_eq!(plan.out_of_flow, [float]);
+    assert_eq!(plan.out_of_flow, [(1, float)]);
 }
 
 #[test]
@@ -328,19 +328,25 @@ fn annotations_sit_over_their_bases() {
 }
 
 #[test]
-fn hidden_annotations_draw_nothing_and_nested_ones_are_drawn() {
-    let mut ids = (0, 0);
+fn hidden_annotations_draw_only_their_visible_descendants() {
+    let mut ids = (0, 0, 0);
     let fixture = block_fixture("line-height:20px", |doc, root| {
         let outer = ruby(doc, root);
         let inner = ruby(doc, outer);
         rb(doc, inner, "a");
         let nested = rt(doc, inner, "y");
         let hidden = text_element(doc, outer, "rt", "display:ruby-text;visibility:hidden", "x");
-        ids = (doc.nodes[nested].children[0], doc.nodes[hidden].children[0]);
+        let visible = text_element(doc, hidden, "span", "visibility:visible", "v");
+        ids = (
+            doc.nodes[nested].children[0],
+            doc.nodes[hidden].children[0],
+            doc.nodes[visible].children[0],
+        );
     });
     let runs = runs(fixture);
     assert!(runs.iter().any(|run| run.0 == ids.0 && run.1), "{runs:?}");
     assert!(!runs.iter().any(|run| run.0 == ids.1), "{runs:?}");
+    assert!(runs.iter().any(|run| run.0 == ids.2 && run.1), "{runs:?}");
 }
 
 #[test]
@@ -408,11 +414,48 @@ fn positioned_annotations_are_set_aside() {
     });
     let container = ids.remove(0);
     let plan = plan(&fixture.doc, &fixture.cascade, container).expect("plain ruby");
-    assert_eq!(plan.out_of_flow, ids);
+    assert_eq!(plan.out_of_flow, [(1, ids[0]), (1, ids[1]), (2, ids[2])]);
     assert_eq!(
         describe(&fixture.doc, &fixture.cascade, &plan),
         ["|rb(a)|[rt(x)]; rtc[]", "|rb(c)|"]
     );
+}
+
+#[test]
+fn out_of_flow_boxes_are_anchored_between_segments_in_source_order() {
+    let mut ids = Vec::new();
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        ids.push(container);
+        ids.push(element(
+            doc,
+            container,
+            "i",
+            "float:left;width:5px;height:5px",
+        ));
+        doc.append_text(container, "a");
+        rt(doc, container, "x");
+        ids.push(element(doc, container, "i", "position:absolute"));
+        doc.append_text(container, "b");
+        let inner = ruby(doc, container);
+        rb(doc, inner, "c");
+        ids.push(element(doc, inner, "i", "position:absolute"));
+        rt(doc, container, "y");
+        ids.push(element(
+            doc,
+            container,
+            "i",
+            "float:right;width:5px;height:5px",
+        ));
+    });
+    let container = ids.remove(0);
+    let plan = plan(&fixture.doc, &fixture.cascade, container).expect("plain ruby");
+    assert_eq!(
+        plan.out_of_flow,
+        [(0, ids[0]), (1, ids[1]), (2, ids[2]), (2, ids[3])]
+    );
+    let runs = runs(fixture);
+    assert!(runs.iter().filter(|run| run.1).count() >= 2, "{runs:?}");
 }
 
 #[test]

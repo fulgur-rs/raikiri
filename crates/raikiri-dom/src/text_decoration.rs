@@ -497,7 +497,7 @@ fn annotation_context(
         let Some(cv) = computed_for_id(cascade, id) else {
             break; // cov:ignore: annotation runs are positioned only for cascaded text.
         };
-        if cv.display == DisplayValue::Ruby {
+        if cv.display.is_ruby_container() {
             break;
         }
         chain.push((id, cv));
