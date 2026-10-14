@@ -2039,13 +2039,13 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
         let y = match (top, bottom) {
             (Some(top), Some(bottom)) if auto_vertical_margins => {
                 let free_space = cb_height - top - bottom - output.size.height;
-                border.top
-                    + top
-                    + if vertical_root {
-                        free_space.max(0.0)
-                    } else {
-                        free_space
-                    } / 2.0
+                if !vertical_root || free_space >= 0.0 {
+                    border.top + top + free_space / 2.0
+                } else if rtl {
+                    border.top + cb_height - bottom - output.size.height
+                } else {
+                    border.top + top
+                }
             }
             (Some(top), _) => border.top + top + margin.top,
             (None, Some(bottom)) => {
