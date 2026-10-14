@@ -82,9 +82,9 @@ pub(crate) fn first_line_property_applies(key: PropertyKey) -> bool {
 use super::inherit::{WalkOptions, apply_winners, walk};
 use super::limits::{Counter, bytes_of, try_filled};
 use super::value_heap::own_heap_bytes;
-use super::{CascadeLimits, CascadeResult, finish};
+use super::{CascadeOptions, CascadeResult, finish};
 use crate::property::DisplayValue;
-use crate::resolve::{ResolveContext, used_line_height_length};
+use crate::resolve::ResolveContext;
 use crate::style_dom::{StyleDom, StyleNode, StyleNodeId, StyleNodeKind};
 use crate::{
     CascadeError, CascadeLimitKind, ComputedValues, MediaContext, PageContextQuery, RuleTree,
@@ -121,7 +121,7 @@ pub struct FirstLineStyles {
 /// Custom properties, non-inherited properties explicitly set to inherit, and
 /// excluded writing properties retain their non-pseudo inheritance channels.
 ///
-/// The cascade runs within the default [`CascadeLimits`]; the root's
+/// The cascade runs within the default [`CascadeLimits`](super::CascadeLimits); the root's
 /// subtree's candidates, kept for the first-line styles, count as retained
 /// candidates.
 ///
@@ -135,17 +135,45 @@ pub fn cascade_with_first_line<D: StyleDom>(
     media: &MediaContext,
     root: StyleNodeId,
 ) -> Result<FirstLineCascade, CascadeError> {
-    cascade_with_first_line_within(dom, rule_tree, media, root, CascadeLimits::default())
+    cascade_with_first_line_options(dom, rule_tree, media, root, &CascadeOptions::default())
 }
 
 /// [`cascade_with_first_line`] within `limits`.
+#[cfg(test)]
 pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
     dom: &D,
     rule_tree: &RuleTree,
     media: &MediaContext,
     root: StyleNodeId,
-    limits: CascadeLimits,
+    limits: super::CascadeLimits,
 ) -> Result<FirstLineCascade, CascadeError> {
+    let options = CascadeOptions {
+        limits,
+        ..CascadeOptions::default()
+    };
+    cascade_with_first_line_options(dom, rule_tree, media, root, &options)
+}
+
+/// [`cascade_with_first_line`] with `options`: its limits, the basis of the
+/// viewport-percentage lengths, and the measurer of `line-height: normal`
+/// apply to the whole cascade and to the first-line styles, as in
+/// [`super::cascade_with_options`].
+///
+/// # Errors
+/// As [`cascade_with_first_line`].
+pub fn cascade_with_first_line_options<D: StyleDom>(
+    dom: &D,
+    rule_tree: &RuleTree,
+    media: &MediaContext,
+    root: StyleNodeId,
+    options: &CascadeOptions,
+) -> Result<FirstLineCascade, CascadeError> {
+    let limits = options.limits;
+    let measurer = options.normal_line_height.as_ref().map(|source| &*source.0);
+    let viewport = options.viewport.unwrap_or((
+        media.viewport_width() as f32,
+        media.viewport_height() as f32,
+    ));
     let mut outputs = walk(
         dom,
         rule_tree,
@@ -153,6 +181,8 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
         WalkOptions {
             retain_subtree: Some(root),
             limits,
+            viewport: options.viewport,
+            normal_line_height: measurer,
             ..WalkOptions::default()
         },
     )?;
@@ -164,7 +194,8 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
     let mut output = Counter::new(limits.max_output_bytes, CascadeLimitKind::OutputBytes);
     output.add(outputs.counts.output_bytes)?;
     let query = PageContextQuery::default();
-    let normal = finish(dom, rule_tree, &query, media, outputs);
+    let mut normal = finish(dom, rule_tree, &query, media, outputs, measurer);
+    normal.normal_line_height = options.normal_line_height.clone();
     let error = |id: StyleNodeId| CascadeError::Internal {
         message: format!(
             "unsupported first-line node {} (one block with inline descendants required)",
@@ -195,19 +226,13 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
         let ctx = if ctx.is_none() && node.kind() == StyleNodeKind::Element {
             let cv = &normal.computed[id.0 as usize];
             Some(
-                ResolveContext::with_root_line_height(
-                    cv.font_size,
-                    used_line_height_length(cv.line_height, cv.font_size),
-                )
-                // The walk above resolves viewport-percentage lengths against
-                // the media context's viewport too.
-                .with_viewport(
-                    media.viewport_width() as f32,
-                    media.viewport_height() as f32,
-                )
-                .with_vertical_root(
-                    cv.cssom_writing_mode != crate::property::WritingMode::HorizontalTb,
-                ),
+                ResolveContext::with_root_line_height(cv.font_size, cv.lh_basis())
+                    // The walk above resolves viewport-percentage lengths against
+                    // the same viewport.
+                    .with_viewport(viewport.0, viewport.1)
+                    .with_vertical_root(
+                        cv.cssom_writing_mode != crate::property::WritingMode::HorizontalTb,
+                    ),
             )
         } else {
             ctx
@@ -269,7 +294,7 @@ pub(crate) fn cascade_with_first_line_within<D: StyleDom>(
                 None,
             );
         }
-        let mut cv = specified.finalize(&inherited, &context);
+        let mut cv = specified.finalize_with(&inherited, &context, measurer);
         cv.custom_properties = ordinary.custom_properties.clone();
         cv.local_custom_properties = ordinary.local_custom_properties.clone();
         output.add(own_heap_bytes(&cv, &inherited))?;
@@ -320,6 +345,7 @@ pub(super) fn first_line_parent(normal: &ComputedValues, first: &ComputedValues)
     parent.letter_spacing_computed = first.letter_spacing_computed;
     parent.line_break = first.line_break;
     parent.line_height = first.line_height;
+    parent.normal_line_height = first.normal_line_height;
     parent.list_style_image = first.list_style_image.clone();
     parent.list_style_position = first.list_style_position;
     parent.list_style_type = first.list_style_type.clone();

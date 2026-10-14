@@ -26,6 +26,22 @@ fn border_radius_used_values_resolve_percentages_on_each_axis() {
 }
 
 #[test]
+fn border_radius_used_values_resolve_a_calc_against_its_axis() {
+    let calc =
+        |percent, px| ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    let radius = ComputedBorderRadius::elliptical([calc(50.0, -10.0); 4], [calc(10.0, 5.0); 4]);
+    assert_eq!(radius.used(100.0, 50.0), [[40.0, 10.0]; 4]);
+    // A sum below zero makes the corner square.
+    let radius = ComputedBorderRadius::corners(
+        calc(10.0, -50.0),
+        calc(10.0, 0.0),
+        calc(10.0, 0.0),
+        calc(10.0, 0.0),
+    );
+    assert_eq!(radius.used(100.0, 100.0)[0], [0.0, 0.0]);
+}
+
+#[test]
 fn border_radius_used_values_scale_both_axes_by_one_edge_ratio() {
     let radius = ComputedBorderRadius::elliptical(
         [ComputedLengthPercentage::Px(80.0); 4],
@@ -1164,10 +1180,10 @@ fn border_radius_and_box_shadow_resolve_all_length_components() {
             &CTX,
         ),
         ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(20.0).into(),
-            top_right: ComputedLengthPercentage::Px(8.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(16.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(20.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(20.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(8.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(16.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(20.0).into(),
         }
     );
 
@@ -1214,6 +1230,38 @@ fn resolve_css_position_absolutizes_each_offset() {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(16.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(30.0)),
         }
+    );
+}
+
+/// An end-edge `calc()` offset was folded to `100% - offset` when parsed.
+/// Without an `lh` basis, only the `lh` term falls back to zero, so the
+/// offset stays on the end edge as a plain `right 1lh` does.
+#[test]
+fn resolve_css_position_relative_calc_drops_only_an_unresolvable_lh_term() {
+    let full = RelativeCalcLengthPercentage::from_unit(100.0, "%").unwrap();
+    let lh = relative_calc_plus_1px(1.0, "lh");
+    let specified = CssPosition {
+        horizontal: CssPositionOffset::RelativeCalc(full.add_scaled(lh, -1.0).unwrap()),
+        vertical: CssPositionOffset::RelativeCalc(relative_calc_plus_1px(1.0, "rlh")),
+    };
+    assert_eq!(
+        resolve_css_position(specified, ComputedLength(16.0), None, &CTX),
+        ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::Calc(CalcLengthPercentage {
+                percent: 100.0,
+                px: -1.0,
+            }),
+            vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(1.0)),
+        }
+    );
+    // A sum that overflows falls back to zero.
+    let overflow = CssPosition {
+        horizontal: CssPositionOffset::RelativeCalc(relative_calc_plus_1px(2.0, "em")),
+        vertical: CssPositionOffset::Start(Length::Px(0.0)),
+    };
+    assert_eq!(
+        resolve_css_position(overflow, ComputedLength(f32::MAX), None, &CTX).horizontal,
+        ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)),
     );
 }
 
@@ -2100,5 +2148,33 @@ fn a_calc_gap_that_folds_to_one_term_computes_as_that_term() {
     assert_eq!(
         gap(LengthPercentageOrCalc::Calc(calc)),
         ComputedLengthPercentageOrNormal::Calc(calc)
+    );
+}
+
+#[test]
+fn normal_line_height_sources_are_equal_when_they_share_a_measurer() {
+    struct Fixed;
+    impl NormalLineHeight for Fixed {
+        fn normal_line_height(&self, _: &crate::ChFontKey) -> Option<ComputedLength> {
+            Some(ComputedLength(18.0))
+        }
+    }
+    let source = NormalLineHeightSource::new(Fixed);
+    assert_eq!(source, source.clone());
+    assert_ne!(source, NormalLineHeightSource::new(Fixed));
+    assert_eq!(format!("{source:?}"), "NormalLineHeightSource(..)");
+}
+
+#[test]
+fn used_line_height_length_or_takes_normal_from_the_caller() {
+    let size = ComputedLength(10.0);
+    let normal = Some(ComputedLength(12.0));
+    assert_eq!(
+        used_line_height_length_or(ComputedLineHeight::Normal, size, normal),
+        normal
+    );
+    assert_eq!(
+        used_line_height_length_or(ComputedLineHeight::Number(2.0), size, normal),
+        Some(ComputedLength(20.0))
     );
 }

@@ -170,7 +170,7 @@ impl CascadeResult {
             None,
             None,
         );
-        let mut computed = specified.finalize(inherited, context);
+        let mut computed = specified.finalize_with(inherited, context, self.normal_line_height());
         computed.custom_properties = ordinary.custom_properties.clone();
         computed.local_custom_properties = ordinary.local_custom_properties.clone();
         computed
@@ -212,7 +212,8 @@ impl CascadeResult {
             None,
             None,
         );
-        let mut computed = specified.finalize(parent, &inputs.context);
+        let mut computed =
+            specified.finalize_with(parent, &inputs.context, self.normal_line_height());
         computed.local_custom_properties = custom.local;
         computed.custom_properties = custom.effective;
         Some(computed)

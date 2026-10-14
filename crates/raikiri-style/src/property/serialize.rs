@@ -108,11 +108,14 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderRadiusTopRight(corner)
         | PropertyValue::BorderRadiusBottomRight(corner)
         | PropertyValue::BorderRadiusBottomLeft(corner) => {
-            let horizontal = serialize_length(&corner.horizontal);
+            let horizontal = serialize_length_percentage_or_calc(&corner.horizontal);
             Some(if corner.horizontal == corner.vertical {
                 horizontal
             } else {
-                format!("{horizontal} {}", serialize_length(&corner.vertical))
+                format!(
+                    "{horizontal} {}",
+                    serialize_length_percentage_or_calc(&corner.vertical)
+                )
             })
         }
 

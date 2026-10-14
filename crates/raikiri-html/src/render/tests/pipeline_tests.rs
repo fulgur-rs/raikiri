@@ -864,7 +864,13 @@ fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
     )
     .expect("cascade");
     assert_eq!(out.page_styles[0], full.page);
-    assert_eq!(out.cascade.computed, full.computed);
+    // The reference cascade has no fonts to measure `line-height: normal`
+    // with; everything else must match.
+    let mut computed = out.cascade.computed.clone();
+    for values in &mut computed {
+        values.normal_line_height = None;
+    }
+    assert_eq!(computed, full.computed);
 }
 
 #[test]

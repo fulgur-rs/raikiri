@@ -117,22 +117,23 @@ pub use resolve::{
     ComputedLetterSpacing, ComputedLineHeight, ComputedOutline, ComputedTabSize,
     ComputedTextDecorationInset, ComputedTextDecorationThickness, ComputedTextIndent,
     ComputedTextShadow, ComputedTextUnderlineOffset, ComputedTransformFunction,
-    ComputedWordSpacing, ResolveContext, lift_border_spacing, lift_font_size,
-    lift_length_or_normal, lift_length_percentage, lift_length_percentage_or_calc,
-    lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_text_shadow_item,
-    lift_word_spacing, resolve_background_size, resolve_border, resolve_border_radius,
-    resolve_border_spacing, resolve_box_shadow_item, resolve_column_width, resolve_css_position,
-    resolve_flex_basis, resolve_font_size, resolve_grid_auto_track_list,
-    resolve_grid_inflexible_breadth, resolve_grid_template_tracks, resolve_grid_track_breadth,
-    resolve_grid_track_list, resolve_grid_track_size, resolve_length_or_normal,
-    resolve_length_or_normal_with_ch, resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
-    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
+    ComputedWordSpacing, NormalLineHeight, NormalLineHeightSource, ResolveContext,
+    lift_border_spacing, lift_font_size, lift_length_or_normal, lift_length_percentage,
+    lift_length_percentage_or_calc, lift_letter_spacing, lift_line_height, lift_tab_size,
+    lift_text_indent, lift_text_shadow_item, lift_word_spacing, resolve_background_size,
+    resolve_border, resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item,
+    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    resolve_grid_auto_track_list, resolve_grid_inflexible_breadth, resolve_grid_template_tracks,
+    resolve_grid_track_breadth, resolve_grid_track_list, resolve_grid_track_size,
+    resolve_length_or_normal, resolve_length_or_normal_with_ch, resolve_length_percentage,
+    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
+    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
+    resolve_line_height, resolve_margin_length_or_auto,
     resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
     resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
     resolve_transform_function, resolve_word_spacing, resolve_word_spacing_with_ch,
-    used_line_height_length,
+    used_line_height_length, used_line_height_length_or,
 };
 
 pub mod specified;
@@ -141,7 +142,8 @@ pub use specified::SpecifiedValues;
 pub mod cascade;
 pub use cascade::{
     CascadeLimits, CascadeOptions, CascadeResult, FirstLineCascade, FirstLineStyles,
-    SelectorMatcher, SelectorQuery, cascade, cascade_with_first_line, cascade_with_media_context,
+    SelectorMatcher, SelectorQuery, cascade, cascade_with_first_line,
+    cascade_with_first_line_options, cascade_with_media_context,
     cascade_with_media_context_for_page, cascade_with_options,
 };
 

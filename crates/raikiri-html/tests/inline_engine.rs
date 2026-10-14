@@ -155,3 +155,24 @@ fn a_cached_font_fetch_is_not_charged_to_the_budget_twice() {
         [30.0, 40.0]
     );
 }
+
+/// `lh` under `line-height: normal` is the height of a `normal` line in the
+/// first available font: Ahem's ascent and descent fill its em box.
+const NORMAL_LH: &str = r#"<html><body style="margin:0"><div id="line" style="font-family:Ahem;font-size:20px">a</div><div id="lh" style="font-family:Ahem;font-size:20px;height:1lh"></div><div id="calc" style="font-family:Ahem;font-size:20px;height:calc(2lh + 5px)"></div></body></html>"#;
+
+#[test]
+fn lh_under_a_normal_line_height_matches_a_normal_line() {
+    let resources = RenderResources::new().fonts(ahem_fonts());
+    assert_eq!(
+        box_heights(NORMAL_LH, &resources, &["line", "lh", "calc"]),
+        [20.0, 20.0, 45.0]
+    );
+}
+
+#[test]
+fn lh_under_a_normal_line_height_measures_an_at_font_face_family() {
+    let server = FontServer::default();
+    let resources = RenderResources::new().network_provider(&server);
+    let html = r#"<html><head><style>@font-face{font-family:Boxy;src:url(https://example.test/ahem.ttf)}</style></head><body style="margin:0"><div id="lh" style="font-family:Boxy;font-size:12px;height:1lh"></div></body></html>"#;
+    assert_eq!(box_height(html, &resources, "lh"), 12.0);
+}
