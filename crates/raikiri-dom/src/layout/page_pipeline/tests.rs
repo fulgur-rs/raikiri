@@ -13166,3 +13166,244 @@ fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
     });
     assert_eq!(page_flow_y(&doc, id), 140.0);
 }
+
+#[test]
+fn lines_after_a_forced_break_clear_the_earlier_floats() {
+    for (break_css, cleared) in [("break-after:page", true), ("break-after:auto", false)] {
+        let mut ids = Vec::new();
+        let (doc, pages) = paged_body(|doc, body| {
+            for (tag, css) in [
+                ("div", "float:left;width:40px;height:80px".to_string()),
+                ("div", format!("display:block;height:10px;{break_css}")),
+                (
+                    "span",
+                    "display:inline-block;width:20px;height:10px".to_string(),
+                ),
+            ] {
+                ids.push(doc.append_element(Some(body), tag, Style::default(), Some(&css)));
+            }
+        });
+        let (x, y, _, _) = crate::layout::test_support::absolute_rect(&doc, ids[2]);
+        if cleared {
+            // The line starts the second page, which the float does not
+            // reach, so it is not narrowed by it.
+            assert_eq!(doc.forced_break_line_clearance, vec![ids[1]]);
+            assert_eq!((x, y, pages), (0.0, 100.0, 2));
+        } else {
+            assert!(doc.forced_break_line_clearance.is_empty());
+            assert_eq!((x, pages), (40.0, 1));
+        }
+    }
+}
+
+#[test]
+fn text_after_a_forced_break_starts_below_the_earlier_floats() {
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:right;width:40px;height:80px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;break-after:page"),
+        );
+        doc.append_text(body, "text");
+    });
+    let body = find_body(&doc).unwrap();
+    let lines = doc.nodes[body]
+        .ifc
+        .as_ref()
+        .unwrap()
+        .lines
+        .as_ref()
+        .unwrap();
+    assert!(!lines.beside_floats);
+}
+
+#[test]
+fn only_the_block_right_before_a_break_clears_the_lines_after_it() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        // The lines after the first block come before the break, and the
+        // float that carries it is not a block of the paragraph.
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        ));
+        doc.append_text(body, "a");
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:10px;height:10px;break-before:page"),
+        );
+        doc.append_text(body, "b");
+        // Nor does a float's own break after it.
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("float:left;width:10px;height:10px;break-after:page"),
+        );
+        doc.append_text(body, "c");
+        // A change of page type between a block and the text after it is a
+        // forced break too.
+        ids.push(doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;page:a"),
+        ));
+        doc.append_text(body, "d");
+    });
+    assert_eq!(doc.forced_break_line_clearance, vec![ids[1]]);
+}
+
+#[test]
+fn forced_break_line_clearance_applies_to_paged_layout_only() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("float:left;width:40px;height:50px"),
+    );
+    let block = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;break-after:page;height:10px"),
+    );
+    let span = doc.append_element(
+        Some(body),
+        "span",
+        Style::default(),
+        Some("display:inline-block;width:20px;height:10px"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
+    assert_eq!(doc.forced_break_line_clearance, vec![block]);
+
+    // A single page has no break, so the line sits beside the float again.
+    layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
+    assert!(doc.forced_break_line_clearance.is_empty());
+    let (x, y, _, _) = crate::layout::test_support::absolute_rect(&doc, span);
+    assert_eq!(x, 40.0);
+    assert!(y < 50.0, "{y}");
+}
+
+#[test]
+fn later_paragraph_blocks_follow_a_moved_block_whatever_their_top_margin() {
+    for margin in [-20.0_f32, 0.0, 10.0] {
+        let mut ids = Vec::new();
+        let (doc, pages) = paged_body(|doc, body| {
+            let root =
+                doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+            for (tag, css) in [
+                ("div", "display:block;height:50px".to_string()),
+                (
+                    "span",
+                    "display:inline-block;width:10px;height:10px;vertical-align:top".to_string(),
+                ),
+                (
+                    "div",
+                    "display:block;height:60px;break-inside:avoid".to_string(),
+                ),
+                (
+                    "div",
+                    format!("display:block;height:10px;margin-top:{margin}px"),
+                ),
+            ] {
+                ids.push(doc.append_element(Some(root), tag, Style::default(), Some(&css)));
+            }
+        });
+        let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+        // The avoiding block starts the second page; the block after it
+        // keeps its offset from it, a negative margin included, and the
+        // content before it stays where it was.
+        assert_eq!(ys[0], 0.0, "{margin}: {ys:?}");
+        assert_eq!(ys[1], 50.0, "{margin}: {ys:?}");
+        assert_eq!(ys[2], 100.0, "{margin}: {ys:?}");
+        assert_eq!(ys[3], 160.0 + margin, "{margin}: {ys:?}");
+        assert_eq!(pages, 2);
+    }
+}
+
+#[test]
+fn generated_after_content_after_a_forced_break_clears_the_earlier_floats() {
+    for (content, cleared) in [("'x'", true), ("none", false)] {
+        let mut block = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            let html = doc.parent_of(body).unwrap();
+            let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
+            let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+            doc.append_text(style, format!("body::after {{ content: {content} }}"));
+            doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("float:left;width:40px;height:80px"),
+            );
+            block = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;height:10px;break-after:page"),
+            );
+        });
+        let expected = if cleared { vec![block] } else { Vec::new() };
+        assert_eq!(doc.forced_break_line_clearance, expected, "{content}");
+    }
+}
+
+#[test]
+fn an_absolutely_positioned_box_of_the_paragraph_keeps_its_inset_place() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative"),
+        );
+        for (tag, css) in [
+            ("div", "display:block;height:50px"),
+            (
+                "span",
+                "display:inline-block;width:10px;height:10px;vertical-align:top",
+            ),
+            ("div", "display:block;height:60px;break-inside:avoid"),
+            ("span", "position:absolute;top:0;width:10px;height:10px"),
+        ] {
+            ids.push(doc.append_element(Some(root), tag, Style::default(), Some(css)));
+        }
+    });
+    assert_eq!(page_flow_y(&doc, ids[2]), 100.0);
+    assert_eq!(page_flow_y(&doc, ids[3]), 0.0);
+}

@@ -781,6 +781,20 @@ fn run_boxes_segment(
                 }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
                 (y, pending) = (block.next_y, block.pending);
+                // A forced page break after the block starts the lines after
+                // it on a new page, which the floats before the break do not
+                // reach: the lines get clearance past them, as a block after
+                // the break does (CSS Fragmentation 3, 3.1).
+                if tree
+                    .forced_break_line_clearance
+                    .binary_search(&(node.0 as usize))
+                    .is_ok()
+                    && let Some(threshold) = ctx.cleared_threshold(Clear::Both)
+                    && threshold - top_edge > y + pending.resolve()
+                {
+                    y = threshold - top_edge;
+                    pending = CollapsibleMarginSet::ZERO;
+                }
                 token = token_after;
                 // The call count is kept: every block is one of the root's
                 // boxes, so blocks in a row stay within the bound, and a
