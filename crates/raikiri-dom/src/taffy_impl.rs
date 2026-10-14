@@ -2346,12 +2346,13 @@ fn row_sizing_functions(
     let explicit = usize::from(rows.explicit_tracks);
     let positive = usize::from(rows.positive_implicit_tracks);
     let auto_rows = &style.grid_auto_rows;
+    // Without `grid-auto-rows`, implicit rows are `auto`.
     let implicit = |index: usize| {
-        if auto_rows.is_empty() {
-            TrackSizingFunction::AUTO
-        } else {
-            auto_rows[index % auto_rows.len()]
-        }
+        let count = auto_rows.len().max(1);
+        auto_rows
+            .get(index % count)
+            .copied()
+            .unwrap_or(TrackSizingFunction::AUTO)
     };
     let mut functions = Vec::with_capacity(negative + explicit + positive);
     // The implicit rows before the explicit grid end with the last of

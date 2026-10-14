@@ -124,11 +124,27 @@ fn auto_vertical_margins_of_absolute_boxes_split_negative_free_space() {
         "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
     );
     assert_eq!(absolute_rect(&doc, abs), (0.0, 55.0 + 50.0, 10.0, 100.0));
-    // A positive free space is split as before.
+    // A positive free space is split as before, whether the containing
+    // block is the parent or a further ancestor.
+    for (parent, wrapper) in [
+        ("position:relative;height:200px", ""),
+        ("", "position:relative;height:200px"),
+    ] {
+        let (doc, abs) = laid_out(
+            parent,
+            wrapper,
+            "position:absolute;top:0;bottom:0;height:100px;width:10px;margin:auto",
+        );
+        assert_eq!(
+            absolute_rect(&doc, abs),
+            (0.0, 100.0, 10.0, 100.0),
+            "{parent}{wrapper}"
+        );
+    }
     let (doc, abs) = laid_out(
-        "position:relative;height:200px",
         "",
-        "position:absolute;top:0;bottom:0;height:100px;width:10px;margin:auto",
+        "position:relative;height:200px",
+        "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
     );
     assert_eq!(absolute_rect(&doc, abs), (0.0, 100.0, 10.0, 100.0));
 }
