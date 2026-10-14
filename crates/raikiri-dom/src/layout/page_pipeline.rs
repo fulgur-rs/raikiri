@@ -3415,8 +3415,8 @@ pub fn layout_pages_with_page_geometry_and_control(
     }
 
     /// The outermost box whose top edge is that of `block`, which starts its
-    /// ancestors: each of them up to it has no top border or padding and begins
-    /// where its child does. Moving that box moves `block` without leaving the
+    /// ancestors: each of them up to it has no top border or padding, begins
+    /// where its child does and renders nothing before it. Moving that box moves `block` without leaving the
     /// ancestors' empty starts behind on the earlier page.
     fn first_box_ancestor_at_top(
         document: &Document,
@@ -3432,6 +3432,29 @@ pub fn layout_pages_with_page_geometry_and_control(
         while let Some(parent) = document.layout_parent_of(child)
             && parent != body_id
         {
+            // Content before `child`, such as a float beside the paragraph,
+            // already sits on this page; moving the ancestor would take it
+            // along.
+            let renders_before = document.nodes[parent]
+                .layout_children()
+                .iter()
+                .take_while(|&&sibling| sibling != child)
+                .any(|&sibling| {
+                    let node = &document.nodes[sibling];
+                    match node.kind() {
+                        NodeKind::Element => {
+                            node.is_in_document()
+                                && !node.is_non_rendered_html_element()
+                                && cascade.computed[sibling].display != DisplayValue::None
+                        }
+                        _ => node
+                            .text_content()
+                            .is_some_and(|text| !text.trim().is_empty()),
+                    }
+                });
+            if renders_before {
+                break;
+            }
             child = parent;
             if cascade.computed[parent].display == DisplayValue::Contents {
                 continue;

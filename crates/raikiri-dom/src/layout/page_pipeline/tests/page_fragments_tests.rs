@@ -3156,3 +3156,56 @@ fn a_fixed_height_paragraph_whose_first_line_overflows_moves_only_as_a_direct_ch
         ]
     );
 }
+
+#[test]
+fn a_nested_paragraph_moved_for_a_widow_leaves_an_earlier_float_behind() {
+    // `body > (spacer, section > (float, paragraph))`: the 5px float and the
+    // paragraph beside it both start the section at y 15. The paragraph's
+    // lines at 15, 25 and 35 on a 40px page would leave a widow, so it moves
+    // to page 1; the float, already placed on page 0, stays there.
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block"),
+    );
+    let float = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:5px;height:5px"),
+    );
+    let root = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:50px;\
+             orphans:2;widows:2",
+        ),
+    );
+    let text = doc.append_text(root, "aaaa bbbb cccc");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        whole_on_page_1()
+    );
+    assert_eq!(absolute_rect(&doc, float).1, 15.0);
+}
