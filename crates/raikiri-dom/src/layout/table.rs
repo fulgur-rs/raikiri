@@ -1317,21 +1317,11 @@ fn collect_col_widths(
     table_idx: usize,
 ) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
     fn col_span(doc: &Document, node_id: usize) -> usize {
-        if let crate::node::NodeData::Element(data) = &doc
-            .ifc_layout_node(node_id)
+        doc.ifc_layout_node(node_id)
             .expect("table box layout view")
-            .data
-        {
-            for a in &data.attributes {
-                if a.namespace.is_none()
-                    && a.local.as_str() == "span"
-                    && let Ok(v) = a.value.parse::<usize>()
-                {
-                    return v.clamp(1, 1000);
-                }
-            }
-        }
-        1
+            .attribute("span")
+            .and_then(|value| value.parse::<usize>().ok())
+            .map_or(1, |v| v.clamp(1, 1000))
     }
     fn sizing_of(doc: &Document, col_id: usize) -> ColSizing {
         let st = &doc.nodes[col_id].style;
@@ -1591,48 +1581,26 @@ fn collect_cells_in_row(
 /// the value must parse as a plain unsigned integer, anything else falls
 /// back to 1.
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
-    if let crate::node::NodeData::Element(data) = &doc
-        .ifc_layout_node(node_id)
+    // Parse wide (u32) so huge values (e.g. "100000", which overflows u16)
+    // clamp to 1000 instead of failing to parse and falling back to 1.
+    doc.ifc_layout_node(node_id)
         .expect("table box layout view")
-        .data
-    {
-        for a in &data.attributes {
-            if a.namespace.is_none()
-                && a.local.as_str() == "colspan"
-                && let Ok(v) = a.value.parse::<u32>()
-            {
-                // Parse wide (u32) so huge values (e.g. "100000", which
-                // overflows u16) clamp to 1000 instead of failing to parse
-                // and falling back to 1.
-                return v.clamp(1, 1000) as u16;
-            }
-        }
-    }
-    1
+        .attribute("colspan")
+        .and_then(|value| value.parse::<u32>().ok())
+        .map_or(1, |v| v.clamp(1, 1000) as u16)
 }
 
 fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
-    if let crate::node::NodeData::Element(data) = &doc
-        .ifc_layout_node(node_id)
+    doc.ifc_layout_node(node_id)
         .expect("table box layout view")
-        .data
-    {
-        for a in &data.attributes {
-            if a.namespace.is_none()
-                && a.local.as_str() == "rowspan"
-                && let Ok(v) = a.value.parse::<u16>()
-            {
-                // HTML §4.9.9: rowspan=0 spans to the end of the table
-                // section. The reservation pass clamps this sentinel to
-                // the source row group before layout consumes the grid.
-                if v == 0 {
-                    return u16::MAX;
-                }
-                return v.clamp(1, 65534);
-            }
-        }
-    }
-    1
+        .attribute("rowspan")
+        .and_then(|value| value.parse::<u16>().ok())
+        .map_or(1, |v| {
+            // HTML §4.9.9: rowspan=0 spans to the end of the table section.
+            // The reservation pass clamps this sentinel to the source row
+            // group before layout consumes the grid.
+            if v == 0 { u16::MAX } else { v.clamp(1, 65534) }
+        })
 }
 
 // ---------------------------------------------------------------------------

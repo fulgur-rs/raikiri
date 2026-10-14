@@ -198,6 +198,31 @@ pub struct ElementData {
     pub(crate) canvas_bitmap: Option<CanvasBitmap>,
 }
 
+impl ElementData {
+    /// Null-namespace attribute value; see [`Node::attribute`].
+    #[inline]
+    pub(crate) fn attribute(&self, local: &str) -> Option<&str> {
+        if local == "style" {
+            return self.inline_style.as_deref();
+        }
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.namespace.is_none() && attribute.local == local)
+            .map(|attribute| attribute.value.as_str())
+    }
+
+    /// Namespace-qualified attribute value; see [`Node::attribute_ns`].
+    #[inline]
+    pub(crate) fn attribute_ns(&self, namespace: &str, local: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|attribute| {
+                attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
+            })
+            .map(|attribute| attribute.value.as_str())
+    }
+}
+
 /// Live bitmap of an HTML `<canvas>` element (HTML Standard §4.12.5).
 ///
 /// When materialized, `rgba` holds premultiplied-free `width * height * 4`
@@ -1116,14 +1141,7 @@ impl Node {
         let NodeData::Element(element) = &self.data else {
             return None;
         };
-        if local == "style" {
-            return element.inline_style.as_deref();
-        }
-        element
-            .attributes
-            .iter()
-            .find(|attribute| attribute.namespace.is_none() && attribute.local == local)
-            .map(|attribute| attribute.value.as_str())
+        element.attribute(local)
     }
 
     /// Return a namespace-qualified element attribute value, if present.
@@ -1144,13 +1162,7 @@ impl Node {
         let NodeData::Element(element) = &self.data else {
             return None;
         };
-        element
-            .attributes
-            .iter()
-            .find(|attribute| {
-                attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
-            })
-            .map(|attribute| attribute.value.as_str())
+        element.attribute_ns(namespace, local)
     }
 
     /// Whether this node belongs to an inline SVG source subtree.
