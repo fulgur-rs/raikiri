@@ -133,13 +133,20 @@ pub fn pages(count: usize) -> String {
         "<!doctype html><html><head><style>\
          @page { size: 640px 480px; margin: 20px }\
          body { margin: 0; font-family: Ahem; font-size: 10px; line-height: 12px }\
-         section { break-after: page } section:last-child { break-after: auto }\
+         section { break-after: page } section.last-page { break-after: auto }\
          p { margin: 0 }</style></head><body>",
     );
     for page in 0..count {
+        // A class marks the last page without a forward-dependent selector
+        // that would hold every streaming page until EOF.
+        let class = if page + 1 == count {
+            " class=last-page"
+        } else {
+            ""
+        };
         write!(
             html,
-            "<section><p>Page {page}: alpha beta gamma.</p></section>"
+            "<section{class}><p>Page {page}: alpha beta gamma.</p></section>"
         )
         .unwrap();
     }
