@@ -3042,7 +3042,7 @@ fn paragraph_after_a_spacer(
     }
 }
 
-/// What [`paragraph_after_a_spacer`] laid out.
+/// What `paragraph_after_a_spacer` laid out.
 struct MovedParagraph {
     pages: usize,
     /// The text's fragments.
