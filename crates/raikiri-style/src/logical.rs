@@ -4,13 +4,23 @@
 //! physical longhand they map to in `horizontal-tb` with `direction: ltr`,
 //! and tags the declaration with the flow-relative side it was written for.
 //! The cascade moves a tagged declaration to the physical side that side maps
-//! to under the element's (or page context's) own `writing-mode` and
+//! to under the element's (or page context's) own writing mode and
 //! `direction` before it picks winners, so that a flow-relative declaration
 //! and a physical one compete for the same physical side by the usual cascade
 //! order (CSS Logical Properties 1 §4, "Flow-Relative Box Model Properties",
 //! <https://www.w3.org/TR/css-logical-1/#box>, and CSS Writing Modes 4 §6.4
 //! "Abstract-to-Physical Mappings",
 //! <https://www.w3.org/TR/css-writing-modes-4/#logical-to-physical>).
+//!
+//! Elements map through their renderer-facing writing mode, which stays
+//! `horizontal-tb` while block layout only stacks blocks vertically (see
+//! [`crate::property::resolve_writing_mode`]). The page context maps through
+//! its specified writing mode, because the page box's margins and padding do
+//! not depend on block layout.
+//!
+//! `text-orientation: upright` makes the used direction `ltr` in vertical
+//! writing modes (CSS Writing Modes 4 §5.1); the mapping does not take that
+//! into account yet and uses the computed `direction`.
 
 use smol_str::SmolStr;
 
@@ -100,26 +110,26 @@ impl FlowMapping {
 
     /// `value`, declared for `side`, moved to the physical side this mapping
     /// sends `side` to.
-    pub(crate) fn value(self, value: &PropertyValue, side: LogicalSide) -> PropertyValue {
+    pub(crate) fn value(self, value: PropertyValue, side: LogicalSide) -> PropertyValue {
         let to = self.physical(side);
         match value {
             PropertyValue::MarginTop(v)
             | PropertyValue::MarginRight(v)
             | PropertyValue::MarginBottom(v)
             | PropertyValue::MarginLeft(v) => match to {
-                PhysicalSide::Top => PropertyValue::MarginTop(*v),
-                PhysicalSide::Right => PropertyValue::MarginRight(*v),
-                PhysicalSide::Bottom => PropertyValue::MarginBottom(*v),
-                PhysicalSide::Left => PropertyValue::MarginLeft(*v),
+                PhysicalSide::Top => PropertyValue::MarginTop(v),
+                PhysicalSide::Right => PropertyValue::MarginRight(v),
+                PhysicalSide::Bottom => PropertyValue::MarginBottom(v),
+                PhysicalSide::Left => PropertyValue::MarginLeft(v),
             },
             PropertyValue::PaddingTop(v)
             | PropertyValue::PaddingRight(v)
             | PropertyValue::PaddingBottom(v)
             | PropertyValue::PaddingLeft(v) => match to {
-                PhysicalSide::Top => PropertyValue::PaddingTop(*v),
-                PhysicalSide::Right => PropertyValue::PaddingRight(*v),
-                PhysicalSide::Bottom => PropertyValue::PaddingBottom(*v),
-                PhysicalSide::Left => PropertyValue::PaddingLeft(*v),
+                PhysicalSide::Top => PropertyValue::PaddingTop(v),
+                PhysicalSide::Right => PropertyValue::PaddingRight(v),
+                PhysicalSide::Bottom => PropertyValue::PaddingBottom(v),
+                PhysicalSide::Left => PropertyValue::PaddingLeft(v),
             },
             PropertyValue::MarginTopInherit
             | PropertyValue::MarginRightInherit
@@ -130,16 +140,14 @@ impl FlowMapping {
                 PhysicalSide::Bottom => PropertyValue::MarginBottomInherit,
                 PhysicalSide::Left => PropertyValue::MarginLeftInherit,
             },
-            PropertyValue::Deferred(deferred) => match BoxProperty::of_key(deferred.key) {
-                Some(property) => {
-                    let mut deferred = deferred.clone();
+            PropertyValue::Deferred(mut deferred) => {
+                if let Some(property) = BoxProperty::of_key(deferred.key) {
                     deferred.key = property.key(to);
                     deferred.property = SmolStr::new_static(property.name(to));
-                    PropertyValue::Deferred(deferred)
                 }
-                None => value.clone(),
-            },
-            other => other.clone(),
+                PropertyValue::Deferred(deferred)
+            }
+            other => other,
         }
     }
 }
@@ -206,6 +214,11 @@ pub(crate) fn longhand_side(name: &str) -> Option<LogicalSide> {
         ("padding-block-start", LogicalSide::BlockStart),
         ("padding-block-end", LogicalSide::BlockEnd),
     ];
+    // Every declaration passes through here; most names are shorter or
+    // longer than any of the eight, so their length rules them out first.
+    if !(16..=20).contains(&name.len()) {
+        return None;
+    }
     LONGHANDS
         .iter()
         .find(|(longhand, _)| longhand.eq_ignore_ascii_case(name))

@@ -1272,13 +1272,17 @@ pub(crate) fn apply_winners(
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
+    let mut deferred_resolver = DeferredResolver::new(custom_properties);
     let flow = flow_mapping(
         candidates,
-        inherited.cssom_writing_mode,
+        inherited.writing_mode,
         inherited.direction,
+        |value| match value {
+            PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred),
+            value => Some(value.clone()),
+        },
     );
     pick_winners(candidates, winners, flow);
-    let mut deferred_resolver = DeferredResolver::new(custom_properties);
     // The drain below takes every slot, so the white-space winners are read
     // first; their applied values are collected during the drain.
     let white_space_winners = WhiteSpaceWinners::read(winners);
@@ -1294,7 +1298,7 @@ pub(crate) fn apply_winners(
             // slot names once its value is known.
             let to_slot =
                 |value: PropertyValue| match (candidates.decls()[winner.idx].logical(), flow) {
-                    (Some(side), Some(flow)) => flow.value(&value, side),
+                    (Some(side), Some(flow)) => flow.value(value, side),
                     _ => value,
                 };
             let mut literal_inherit = false;

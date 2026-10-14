@@ -296,6 +296,7 @@ pub(crate) fn same_candidates(
                 && a.decls.iter().zip(b.decls).all(|(x, y)| {
                     x.key == y.key
                         && x.rollback == y.rollback
+                        && x.logical == y.logical
                         && x.precedence == y.precedence
                         && same_value((a.source, x.value), (b.source, y.value))
                 })

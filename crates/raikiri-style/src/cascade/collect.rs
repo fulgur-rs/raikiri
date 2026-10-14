@@ -12,7 +12,7 @@ use crate::RaikiriSelectorImpl;
 use crate::error::CascadeError;
 use crate::logical::FlowMapping;
 use crate::media::MediaContext;
-use crate::property::{Direction, PropertyKey, PropertyValue, WritingMode};
+use crate::property::{Direction, PropertyKey, PropertyValue, WritingMode, resolve_writing_mode};
 use crate::rule::{Declaration, parse_declaration_block_within};
 
 use super::candidate::{
@@ -868,14 +868,20 @@ pub(crate) fn pick_winners(
 /// among `candidates`, or `None` when there are none.
 ///
 /// The element's own `writing-mode` and `direction` winners decide them,
-/// falling back to `inherited` (CSS Logical Properties 1 §4: a flow-relative
-/// property maps "according to the element's own writing-mode and
-/// direction"). A winner that is not a plain keyword (a `var()` or CSS-wide
-/// keyword) also falls back to `inherited`.
+/// falling back to the inherited values (CSS Logical Properties 1 §4: a
+/// flow-relative property maps "according to the element's own writing-mode
+/// and direction"). `resolve` substitutes a `var()` winner; a winner that
+/// still is not a keyword (a CSS-wide keyword, or an invalid substitution)
+/// takes the inherited value too.
+///
+/// The writing mode is the renderer-facing one ([`resolve_writing_mode`]):
+/// block layout runs in `horizontal-tb`, so mapping a block-axis margin to a
+/// vertical side would move it off the axis blocks are stacked on.
 pub(crate) fn flow_mapping(
     candidates: ElementCandidates<'_>,
     inherited_writing_mode: WritingMode,
     inherited_direction: Direction,
+    mut resolve: impl FnMut(&PropertyValue) -> Option<PropertyValue>,
 ) -> Option<FlowMapping> {
     let decls = candidates.decls();
     if decls.iter().all(|candidate| candidate.logical().is_none()) {
@@ -894,12 +900,13 @@ pub(crate) fn flow_mapping(
             *slot = Some(ranked);
         }
     }
-    let writing_mode = match writing_mode.map(|winner| candidates.value(winner.idx)) {
-        Some(PropertyValue::WritingMode(mode)) => *mode,
+    let mut winner = |slot: Option<RankedDecl>| slot.and_then(|w| resolve(candidates.value(w.idx)));
+    let writing_mode = match winner(writing_mode) {
+        Some(PropertyValue::WritingMode(mode)) => resolve_writing_mode(mode),
         _ => inherited_writing_mode,
     };
-    let direction = match direction.map(|winner| candidates.value(winner.idx)) {
-        Some(PropertyValue::Direction(direction)) => *direction,
+    let direction = match winner(direction) {
+        Some(PropertyValue::Direction(direction)) => direction,
         _ => inherited_direction,
     };
     Some(FlowMapping {

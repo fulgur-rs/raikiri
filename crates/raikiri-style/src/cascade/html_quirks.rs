@@ -2,6 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::error::CascadeError;
+use crate::logical::LogicalSide;
 use crate::property::{Length, LengthOrAuto, PropertyValue};
 use crate::rule::Declaration;
 use crate::ruletree::Origin;
@@ -244,10 +245,9 @@ fn substantial_sibling_bounds<D: StyleDom>(
 /// 1. Any "element with default margins"
 ///    ([`is_element_with_default_margins`]) that is the child of a
 ///    `body`/`td`/`th` element and has no substantial previous siblings:
-///    `margin-block-start` (this crate's `margin-top` — no writing-mode
-///    support, so physical == logical unconditionally here, same posture
-///    minimal.css's own `margin-block` substitution already takes)
-///    zeroed.
+///    `margin-block-start` zeroed. The declaration is written for the
+///    block-start side, so the cascade maps it like any flow-relative
+///    margin.
 /// 2. Same as 1, plus the element is "blank" ([`is_blank_element`]):
 ///    `margin-block-end` (`margin-bottom`) also zeroed.
 /// 3. Any such element that is the child of a `td`/`th` element, has no
@@ -374,9 +374,11 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
         zero_end = true;
     }
 
-    let mut quirk = |value| {
+    // The quirk cancels the UA `margin-block` of the element, so it is
+    // written for the same flow-relative sides.
+    let mut quirk = |value, side| {
         sink.push_local(
-            Cow::Owned(Declaration::new(value, false)),
+            Cow::Owned(Declaration::with_side(value, false, Some(side))),
             Precedence::new(
                 Origin::UserAgent,
                 false,
@@ -387,14 +389,16 @@ pub(crate) fn push_margin_collapsing_quirk_declarations<D: StyleDom>(
         )
     };
     if zero_start {
-        quirk(PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(
-            0.0,
-        ))))?;
+        quirk(
+            PropertyValue::MarginTop(LengthOrAuto::Length(Length::Px(0.0))),
+            LogicalSide::BlockStart,
+        )?;
     }
     if zero_end {
-        quirk(PropertyValue::MarginBottom(LengthOrAuto::Length(
-            Length::Px(0.0),
-        )))?;
+        quirk(
+            PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Px(0.0))),
+            LogicalSide::BlockEnd,
+        )?;
     }
     Ok(())
 }

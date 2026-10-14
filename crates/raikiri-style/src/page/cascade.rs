@@ -881,14 +881,16 @@ fn page_flow_mapping(
     candidates: &[(PropertyValue, bool, Origin, u32, PageSpecificity, u32)],
     inherited: &ComputedValues,
 ) -> FlowMapping {
-    let mut writing_mode: Option<(u8, u32, PageSpecificity, u32, &PropertyValue)> = None;
-    let mut direction: Option<(u8, u32, PageSpecificity, u32, &PropertyValue)> = None;
+    type Winner<'a> = (u8, u32, PageSpecificity, u32, &'a PropertyValue);
+    let mut writing_mode: Option<Winner<'_>> = None;
+    let mut direction: Option<Winner<'_>> = None;
     for (value, important, origin, layer, spec, order) in candidates {
         let slot = match value.key() {
             PropertyKey::WritingMode => &mut writing_mode,
             PropertyKey::Direction => &mut direction,
             _ => continue,
         };
+        let rank = |winner: &Winner<'_>| (winner.0, winner.1, winner.2, winner.3);
         let candidate = (
             cascade_rank(*origin, *important),
             *layer,
@@ -896,20 +898,21 @@ fn page_flow_mapping(
             *order,
             value,
         );
-        if slot.as_ref().is_none_or(|existing| {
-            (candidate.0, candidate.1, candidate.2, candidate.3)
-                >= (existing.0, existing.1, existing.2, existing.3)
-        }) {
+        // Same order as `page_beats`: a later declaration wins a tie.
+        if slot
+            .as_ref()
+            .is_none_or(|existing| rank(&candidate) >= rank(existing))
+        {
             *slot = Some(candidate);
         }
     }
     FlowMapping {
-        writing_mode: match writing_mode.map(|winner| winner.4.clone()) {
-            Some(PropertyValue::WritingMode(mode)) => mode,
+        writing_mode: match writing_mode.map(|winner| winner.4) {
+            Some(PropertyValue::WritingMode(mode)) => *mode,
             _ => inherited.cssom_writing_mode,
         },
-        direction: match direction.map(|winner| winner.4.clone()) {
-            Some(PropertyValue::Direction(direction)) => direction,
+        direction: match direction.map(|winner| winner.4) {
+            Some(PropertyValue::Direction(direction)) => *direction,
             _ => inherited.direction,
         },
     }
@@ -1099,10 +1102,11 @@ pub(crate) fn cascade_page_with_normal_line_height(
                         .declarations
                         .iter()
                         .map(|decl| {
-                            Declaration::new(
+                            Declaration::with_side(
                                 // Margin boxes are laid out in horizontal-tb.
                                 preferred_size(decl.value.clone(), FlowMapping::HORIZONTAL),
                                 decl.important,
+                                decl.logical,
                             )
                         })
                         .collect(),
@@ -1234,7 +1238,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
                 }
                 other => other.clone(),
             };
-            *value = flow.value(&declared, side);
+            *value = flow.value(declared, side);
         }
         *value = preferred_size(
             std::mem::replace(value, PropertyValue::AllRevertLayer),

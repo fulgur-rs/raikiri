@@ -9782,9 +9782,12 @@ pub enum PropertyValue {
     /// writing mode and direction map it to, before picking winners, so it
     /// competes with the physical longhand of that side by cascade order
     /// ("corresponding flow-relative and physical properties" share one
-    /// computed value). The `@page` cascade does the same with the page
-    /// context's writing mode and direction. `text-orientation` does not
-    /// affect the mapping.
+    /// computed value). For elements the writing mode is the renderer-facing
+    /// one, which stays `horizontal-tb` while block layout does not lay
+    /// blocks out along a horizontal block axis ([`resolve_writing_mode`]), so
+    /// only `direction` moves them for now. The `@page` cascade maps with the
+    /// page context's specified writing mode and direction. See
+    /// `crate::logical` for the details.
     ///
     /// # Why the 8 longhands have no dedicated `PropertyValue` variants
     ///

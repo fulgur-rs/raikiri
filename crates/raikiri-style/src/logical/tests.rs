@@ -24,7 +24,7 @@ fn non_box_keys_keep_their_slot() {
         PropertyKey::Color
     );
     let value = PropertyValue::Opacity(0.5);
-    assert_eq!(flow.value(&value, LogicalSide::BlockStart), value);
+    assert_eq!(flow.value(value.clone(), LogicalSide::BlockStart), value);
 }
 
 #[test]
@@ -34,7 +34,7 @@ fn css_wide_markers_move_with_their_side() {
         direction: Direction::Ltr,
     };
     assert_eq!(
-        flow.value(&PropertyValue::MarginLeftInherit, LogicalSide::BlockStart),
+        flow.value(PropertyValue::MarginLeftInherit, LogicalSide::BlockStart),
         PropertyValue::MarginRightInherit
     );
     for (key, side, expected) in [
@@ -55,5 +55,42 @@ fn css_wide_markers_move_with_their_side() {
         ),
     ] {
         assert_eq!(flow.key(key, side), expected);
+    }
+}
+
+fn margins_of(writing_mode: WritingMode, direction: Direction) -> [PropertyKey; 4] {
+    let flow = FlowMapping {
+        writing_mode,
+        direction,
+    };
+    [
+        LogicalSide::BlockStart,
+        LogicalSide::InlineEnd,
+        LogicalSide::BlockEnd,
+        LogicalSide::InlineStart,
+    ]
+    .map(|side| flow.key(PropertyKey::MarginTop, side))
+}
+
+#[test]
+fn sides_follow_the_abstract_to_physical_table() {
+    use PropertyKey::{MarginBottom as B, MarginLeft as L, MarginRight as R, MarginTop as T};
+    // [block-start, inline-end, block-end, inline-start]
+    for (writing_mode, direction, expected) in [
+        (WritingMode::HorizontalTb, Direction::Ltr, [T, R, B, L]),
+        (WritingMode::HorizontalTb, Direction::Rtl, [T, L, B, R]),
+        (WritingMode::VerticalRl, Direction::Ltr, [R, B, L, T]),
+        (WritingMode::VerticalRl, Direction::Rtl, [R, T, L, B]),
+        (WritingMode::SidewaysRl, Direction::Ltr, [R, B, L, T]),
+        (WritingMode::VerticalLr, Direction::Ltr, [L, B, R, T]),
+        (WritingMode::VerticalLr, Direction::Rtl, [L, T, R, B]),
+        (WritingMode::SidewaysLr, Direction::Ltr, [L, T, R, B]),
+        (WritingMode::SidewaysLr, Direction::Rtl, [L, B, R, T]),
+    ] {
+        assert_eq!(
+            margins_of(writing_mode, direction),
+            expected,
+            "{writing_mode:?} {direction:?}"
+        );
     }
 }

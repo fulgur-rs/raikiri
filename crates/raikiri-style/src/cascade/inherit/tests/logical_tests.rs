@@ -42,73 +42,66 @@ fn horizontal_rtl_swaps_the_inline_sides() {
 }
 
 #[test]
-fn vertical_rl_puts_block_start_on_the_right() {
+fn vertical_elements_map_like_horizontal_ones_while_blocks_stack_vertically() {
+    // Block layout runs in horizontal-tb, so the block axis stays vertical.
     assert_eq!(
         margins(&format!("writing-mode: vertical-rl; {ALL_FOUR}")),
-        sides(1.0, 2.0, 3.0, 4.0)
-    );
-}
-
-#[test]
-fn vertical_lr_puts_block_start_on_the_left() {
-    assert_eq!(
-        margins(&format!("writing-mode: vertical-lr; {ALL_FOUR}")),
-        sides(1.0, 4.0, 3.0, 2.0)
-    );
-}
-
-#[test]
-fn vertical_rtl_starts_the_line_at_the_bottom() {
-    assert_eq!(
-        margins(&format!(
-            "writing-mode: vertical-rl; direction: rtl; {ALL_FOUR}"
-        )),
-        sides(3.0, 2.0, 1.0, 4.0)
-    );
-}
-
-#[test]
-fn sideways_lr_starts_the_line_at_the_bottom() {
-    assert_eq!(
-        margins(&format!("writing-mode: sideways-lr; {ALL_FOUR}")),
-        sides(3.0, 4.0, 1.0, 2.0)
+        sides(2.0, 3.0, 4.0, 1.0)
     );
     assert_eq!(
         margins(&format!(
             "writing-mode: sideways-lr; direction: rtl; {ALL_FOUR}"
         )),
-        sides(1.0, 4.0, 3.0, 2.0)
+        sides(2.0, 1.0, 4.0, 3.0)
     );
 }
 
 #[test]
-fn the_writing_mode_is_inherited_from_the_parent() {
+fn the_direction_is_inherited_from_the_parent() {
     let mut doc = TestDoc::new();
-    let parent = doc.push_element(0, "div", Some("writing-mode: vertical-rl"));
-    let child = doc.push_element(parent, "p", Some("margin: 0; margin-block-end: 5px"));
+    let parent = doc.push_element(0, "div", Some("direction: rtl"));
+    let child = doc.push_element(parent, "p", Some("margin: 0; margin-inline-start: 5px"));
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(result.computed[child].margin, sides(0.0, 0.0, 0.0, 5.0));
+    assert_eq!(result.computed[child].margin, sides(0.0, 5.0, 0.0, 0.0));
+}
+
+#[test]
+fn a_var_direction_is_substituted_before_mapping() {
+    assert_eq!(
+        margins("--d: rtl; direction: var(--d); margin: 0; margin-inline-end: 5px"),
+        sides(0.0, 0.0, 0.0, 5.0)
+    );
+}
+
+#[test]
+fn siblings_with_a_physical_and_a_logical_margin_do_not_share_styles() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("direction: rtl"));
+    let first = doc.push_element(parent, "p", Some("margin: 0; margin-left: 5px"));
+    let second = doc.push_element(parent, "p", Some("margin: 0; margin-inline-start: 5px"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(result.computed[first].margin, sides(0.0, 0.0, 0.0, 5.0));
+    assert_eq!(result.computed[second].margin, sides(0.0, 5.0, 0.0, 0.0));
 }
 
 #[test]
 fn shorthands_map_both_sides() {
     assert_eq!(
-        margins(
-            "writing-mode: vertical-rl; margin: 0; margin-block: 1px 2px; margin-inline: 3px 4px"
-        ),
-        sides(3.0, 1.0, 4.0, 2.0)
+        margins("direction: rtl; margin: 0; margin-block: 1px 2px; margin-inline: 3px 4px"),
+        sides(1.0, 3.0, 2.0, 4.0)
     );
 }
 
 #[test]
 fn a_later_physical_declaration_overrides_the_side_a_logical_one_maps_to() {
     assert_eq!(
-        margins("writing-mode: vertical-rl; margin: 0; margin-block-start: 1px; margin-right: 2px"),
+        margins("direction: rtl; margin: 0; margin-inline-start: 1px; margin-right: 2px"),
         sides(0.0, 2.0, 0.0, 0.0)
     );
     assert_eq!(
-        margins("writing-mode: vertical-rl; margin: 0; margin-right: 2px; margin-block-start: 1px"),
+        margins("direction: rtl; margin: 0; margin-right: 2px; margin-inline-start: 1px"),
         sides(0.0, 1.0, 0.0, 0.0)
     );
 }
@@ -117,10 +110,10 @@ fn a_later_physical_declaration_overrides_the_side_a_logical_one_maps_to() {
 fn var_values_map_after_substitution() {
     assert_eq!(
         margins(
-            "--a: 6px; --b: 7px 8px; writing-mode: vertical-lr; margin: 0; \
+            "--a: 6px; --b: 7px 8px; direction: rtl; margin: 0; \
              margin-block-start: var(--a); margin-inline: var(--b)"
         ),
-        sides(7.0, 0.0, 8.0, 6.0)
+        sides(6.0, 7.0, 0.0, 8.0)
     );
 }
 
@@ -130,14 +123,14 @@ fn padding_maps_like_margin() {
     let root = doc.push_element(
         0,
         "div",
-        Some("writing-mode: vertical-rl; padding-block-start: 1px; padding-inline-end: 2px"),
+        Some("direction: rtl; padding-block-start: 1px; padding-inline-end: 2px"),
     );
     let tree = build_rule_tree(&doc);
     let result = cascade(&doc, &tree).expect("cascade Ok");
     let padding = &result.computed[root].padding;
-    assert_eq!(padding.right, ComputedLengthPercentageOrCalc::Px(1.0));
-    assert_eq!(padding.bottom, ComputedLengthPercentageOrCalc::Px(2.0));
-    assert_eq!(padding.top, ComputedLengthPercentageOrCalc::Px(0.0));
+    assert_eq!(padding.top, ComputedLengthPercentageOrCalc::Px(1.0));
+    assert_eq!(padding.left, ComputedLengthPercentageOrCalc::Px(2.0));
+    assert_eq!(padding.right, ComputedLengthPercentageOrCalc::Px(0.0));
 }
 
 #[test]
