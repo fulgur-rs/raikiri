@@ -40,6 +40,9 @@ pub(crate) struct IfcRoot {
     /// Paint offsets of the relatively positioned inline elements of the
     /// paragraph, by DOM node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the elements in `offsets` whose offset depends on the
+    /// root's width, which [`Self::resolve_width_offsets`] applies.
+    pub(crate) width_insets: Vec<(usize, super::style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: ClearBreakIndex,
@@ -294,6 +297,7 @@ impl IfcRoot {
             generated_atomics: projected.generated_atomics,
             rtl: projected.rtl,
             offsets: projected.offsets,
+            width_insets: projected.width_insets,
             cleared_breaks: projected.cleared_breaks.into_iter().collect(),
             fixed: projected.fixed,
             multicol_fragments: None,
@@ -304,6 +308,16 @@ impl IfcRoot {
             letter_styles: projected.letter_styles,
             first_line_opacity: projected.first_line_opacity,
             letter_style_index,
+        }
+    }
+
+    /// Resolve the offsets that depend on the root's width against a content
+    /// box `width` wide, the containing block of its inline elements.
+    pub(crate) fn resolve_width_offsets(&mut self, width: f32) {
+        for (id, insets) in &self.width_insets {
+            if let Some((_, offset)) = self.offsets.iter_mut().find(|(owner, _)| owner == id) {
+                *offset = insets.offset(width);
+            }
         }
     }
 
@@ -320,6 +334,7 @@ impl IfcRoot {
             generated_atomics: self.generated_atomics.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
+            width_insets: self.width_insets.clone(),
             cleared_breaks: self.cleared_breaks.clone(),
             fixed: self.fixed,
             multicol_fragments: None,

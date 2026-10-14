@@ -102,6 +102,17 @@ fn calls_test_directly_ignores_helpers_and_methods() {
         "async_test(t => {}); promise_test(f);"
     ));
     assert!(!calls_test_directly("re.test(s); $test(1);"));
+    assert!(!calls_test_directly("tests(1); test_x(2);"));
+}
+
+#[test]
+fn calls_test_directly_skips_comments_and_strings_and_allows_spaces() {
+    assert!(calls_test_directly("test (() => {});"));
+    assert!(calls_test_directly("test /* c */ (() => {});"));
+    assert!(calls_test_directly("x = 'a\\'b'; test(f);"));
+    assert!(!calls_test_directly("// test(() => {});"));
+    assert!(!calls_test_directly("/* test(f) */ run();"));
+    assert!(!calls_test_directly("log(\"test(f)\"); log(`test(f)`);"));
 }
 
 #[test]

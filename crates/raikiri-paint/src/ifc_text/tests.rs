@@ -2258,6 +2258,37 @@ fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
 }
 
 #[test]
+fn a_relative_inline_resolves_a_percentage_against_the_root_width() {
+    // Hand-computed: "aabb" on one line, 10px per glyph, on the 8px
+    // baseline. `left: 50%` of the 200px root moves "bb" by 100px, and
+    // `right` no longer applies; `top: 50%` counts as `auto`, so `bottom`
+    // moves it up by 3px.
+    let (mut doc, cascade, root) = paragraph("width:200px", |doc, root| {
+        doc.append_text(root, "aa");
+        let inner = doc.append_element(
+            Some(root),
+            "span",
+            Style::default(),
+            Some("display:inline;position:relative;left:50%;right:7px;top:50%;bottom:3px"),
+        );
+        doc.append_text(inner, "bb");
+    });
+    lay_out(&mut doc, &cascade);
+    assert!(doc.get_node(root).is_some_and(|n| n.is_ifc_root()));
+    let scene = painted(&doc, &cascade);
+    let placed: Vec<(i64, i64)> = ink(&scene).iter().map(|g| (g.1, g.2)).collect();
+    assert_eq!(
+        placed,
+        [
+            (px(0), px(8)),
+            (px(10), px(8)),
+            (px(120), px(5)),
+            (px(130), px(5))
+        ]
+    );
+}
+
+#[test]
 fn a_contents_element_is_transparent_in_the_paragraph() {
     // Hand-computed: "aabbcc" on one line, 10px per glyph, on
     // the 8px baseline; "bb" takes the contents element's colour.

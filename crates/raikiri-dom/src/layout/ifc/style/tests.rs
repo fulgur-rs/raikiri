@@ -748,19 +748,39 @@ fn no_hanging_punctuation_leaves_the_flags_clear() {
 }
 
 #[test]
-fn a_relative_offset_in_lines_keeps_lengths_and_degrades_the_rest() {
-    let offset = |css: &str| {
+fn inline_relative_insets_resolve_percentages_against_the_width() {
+    let insets = |css: &str| {
         let fixture = block_fixture(&format!("position:relative;{css}"), |doc, root| {
             doc.append_text(root, "x");
         });
-        relative_offset_in_lines(&fixture.cascade.computed[fixture.root])
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative")
     };
-    assert_eq!(offset("left:2px;top:3px"), (2.0, 3.0));
-    assert_eq!(offset("right:2px;bottom:3px"), (-2.0, -3.0));
+    assert_eq!(insets("left:2px;top:3px").offset(200.0), (2.0, 3.0));
+    assert_eq!(insets("right:2px;bottom:3px").offset(200.0), (-2.0, -3.0));
+    assert!(!insets("left:2px;top:3px").needs_width());
     // A z-index does not drop the offset; the stacking context is not drawn.
-    assert_eq!(offset("left:2px;z-index:1"), (2.0, 0.0));
-    // An inset that needs the containing block is taken as zero.
-    assert_eq!(offset("left:calc(1% + 1px);top:4px"), (0.0, 4.0));
+    assert_eq!(insets("left:2px;z-index:1").offset(200.0), (2.0, 0.0));
+    // A horizontal percentage refers to the containing block's width, and
+    // `left` wins over `right` before the width is known.
+    let percent = insets("left:50%;right:10px");
+    assert!(percent.needs_width());
+    assert_eq!(percent.offset(0.0), (0.0, 0.0));
+    assert_eq!(percent.offset(200.0), (100.0, 0.0));
+    assert_eq!(insets("right:calc(10% + 1px)").offset(200.0), (-21.0, 0.0));
+    // A vertical percentage counts as `auto`; `bottom` then applies.
+    assert_eq!(insets("top:50%;bottom:4px").offset(200.0), (0.0, -4.0));
+    assert_eq!(insets("top:calc(1% + 1px)").offset(200.0), (0.0, 0.0));
+}
+
+#[test]
+fn inline_relative_insets_are_none_for_a_box_that_is_not_relative() {
+    let fixture = block_fixture("left:2px", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    assert_eq!(
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]),
+        None
+    );
 }
 
 #[test]

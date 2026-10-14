@@ -85,28 +85,84 @@ pub fn relative_offset(cv: &ComputedValues) -> Option<(f32, f32)> {
     Some((dx, dy))
 }
 
-/// The paint offset of a `position: relative` inline element of a paragraph
-/// laid out by the inline engine, as [`relative_offset`] gives it, with what
-/// the lines do not model degraded: an inset in a percentage or calc() is
-/// taken as zero (the root's width is not known when the paragraph is
-/// projected), and a `z-index` is drawn in the paragraph's order instead of
-/// as a stacking context of its own.
-pub(crate) fn relative_offset_in_lines(cv: &ComputedValues) -> (f32, f32) {
-    if cv.position != p::PositionValue::Relative {
-        return (0.0, 0.0);
+/// The insets of a `position: relative` inline element of a paragraph laid
+/// out by the inline engine. A `z-index` is drawn in the paragraph's order
+/// instead of as a stacking context of its own.
+///
+/// A percentage in `left` or `right` refers to the width of the containing
+/// block (CSS 2.1 §9.3.2), the root's content box, which is not known when
+/// the paragraph is projected; [`Self::offset`] takes it once layout knows
+/// it. A percentage in `top` or `bottom` counts as `auto`: the root's height
+/// is not definite while its lines are laid out, as layout treats the
+/// vertical insets of atomic inlines.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InlineRelativeInsets {
+    left: Option<InsetTerms>,
+    right: Option<InsetTerms>,
+    top: Option<InsetTerms>,
+    bottom: Option<InsetTerms>,
+}
+
+/// The terms of a non-`auto` inset: a length plus a percentage of the
+/// containing block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct InsetTerms {
+    px: f32,
+    percent: f32,
+}
+
+impl InlineRelativeInsets {
+    /// The insets of `cv`, or `None` when the box is not relatively
+    /// positioned.
+    pub(crate) fn of(cv: &ComputedValues) -> Option<Self> {
+        if cv.position != p::PositionValue::Relative {
+            return None;
+        }
+        let terms = |value: LengthOrAuto| match value {
+            LengthOrAuto::Px(px) => Some(InsetTerms { px, percent: 0.0 }),
+            LengthOrAuto::Percent(percent) => Some(InsetTerms { px: 0.0, percent }),
+            LengthOrAuto::Calc(calc) => Some(InsetTerms {
+                px: calc.px,
+                percent: calc.percent,
+            }),
+            LengthOrAuto::Auto | LengthOrAuto::MinContent => None,
+        };
+        Some(Self {
+            left: terms(cv.left),
+            right: terms(cv.right),
+            top: terms(cv.top),
+            bottom: terms(cv.bottom),
+        })
     }
-    let inset = |value: LengthOrAuto| match value {
-        LengthOrAuto::Px(px) => Some(px),
-        LengthOrAuto::Auto => None,
-        _ => Some(0.0),
-    };
-    let dx = inset(cv.left)
-        .or(inset(cv.right).map(|r| -r))
-        .unwrap_or(0.0);
-    let dy = inset(cv.top)
-        .or(inset(cv.bottom).map(|b| -b))
-        .unwrap_or(0.0);
-    (dx, dy)
+
+    /// Whether the horizontal offset depends on the containing block's
+    /// width.
+    pub(crate) fn needs_width(&self) -> bool {
+        [self.left, self.right]
+            .into_iter()
+            .flatten()
+            .any(|terms| terms.percent != 0.0)
+    }
+
+    /// The paint offset against a containing block `width` wide: `left` over
+    /// `-right`, `top` over `-bottom` (CSS 2.1 §9.4.3).
+    pub(crate) fn offset(&self, width: f32) -> (f32, f32) {
+        let horizontal =
+            |terms: Option<InsetTerms>| terms.map(|terms| terms.px + width * terms.percent / 100.0);
+        let vertical = |terms: Option<InsetTerms>| {
+            terms
+                .filter(|terms| terms.percent == 0.0)
+                .map(|terms| terms.px)
+        };
+        let finite = |value: f32| if value.is_finite() { value } else { 0.0 };
+        let dx = horizontal(self.left)
+            .or(horizontal(self.right).map(|right| -right))
+            .unwrap_or(0.0);
+        let dy = vertical(self.top)
+            .or(vertical(self.bottom).map(|bottom| -bottom))
+            .unwrap_or(0.0);
+        (finite(dx), finite(dy))
+    }
 }
 
 /// The key of this element's own font, which measures a `ch` value declared

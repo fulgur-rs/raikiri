@@ -68,6 +68,9 @@ pub(crate) struct ProjectedIfc {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the elements in `offsets` whose offset depends on the
+    /// root's width; their offset there is that of a zero width.
+    pub(crate) width_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -248,6 +251,23 @@ pub(crate) fn has_in_flow_generated_text(
     Ok(false)
 }
 
+/// Record the paint offset of `id` when it is relatively positioned, with
+/// its insets when the offset depends on the root's width.
+fn push_relative_offset(
+    offsets: &mut Vec<(usize, (f32, f32))>,
+    width_insets: &mut Vec<(usize, style::InlineRelativeInsets)>,
+    id: usize,
+    cv: &ComputedValues,
+) {
+    let Some(insets) = style::InlineRelativeInsets::of(cv) else {
+        return;
+    };
+    offsets.push((id, insets.offset(0.0)));
+    if insets.needs_width() {
+        width_insets.push((id, insets));
+    }
+}
+
 /// The images of `::before` and `::after` content of a paragraph: atomic
 /// inlines of a prepared size (CSS Content 3 §2.2).
 struct GeneratedImages {
@@ -256,6 +276,9 @@ struct GeneratedImages {
     /// Paint offsets of the relatively positioned `::before` and `::after`
     /// boxes, by the inline engine's node id of the pseudo-element.
     offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the boxes in `offsets` whose offset depends on the
+    /// root's width.
+    width_insets: Vec<(usize, style::InlineRelativeInsets)>,
 }
 
 /// The atomic size of an image of `width` by `height` CSS pixels, its
@@ -366,9 +389,12 @@ fn push_generated(
         && cv.display != DisplayValue::Contents
         && cv.position == PositionValue::Relative
     {
-        images
-            .offsets
-            .push((id.0 as usize, style::relative_offset_in_lines(cv)));
+        push_relative_offset(
+            &mut images.offsets,
+            &mut images.width_insets,
+            id.0 as usize,
+            cv,
+        );
     }
     let inline_level = pseudo == PseudoElem::Marker
         || matches!(
@@ -574,6 +600,9 @@ pub(crate) struct ProjectedBuilder {
     /// Paint offsets of the relatively positioned inline elements, by DOM
     /// node id.
     pub(crate) offsets: Vec<(usize, (f32, f32))>,
+    /// The insets of the elements in `offsets` whose offset depends on the
+    /// root's width; their offset there is that of a zero width.
+    pub(crate) width_insets: Vec<(usize, style::InlineRelativeInsets)>,
     /// `<br>` elements with a physical `clear`: the line after each starts
     /// below the floats it clears.
     pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
@@ -618,6 +647,7 @@ impl ProjectedBuilder {
             generated_atomics: self.generated_atomics,
             rtl: self.rtl,
             offsets: self.offsets,
+            width_insets: self.width_insets,
             cleared_breaks: self.cleared_breaks,
             fixed: self.fixed,
             ellipsis: self.ellipsis,
@@ -719,6 +749,7 @@ pub(crate) fn project_ifc_text_builder(
         generated_atomics: Vec::new(),
         rtl: cv.direction == Direction::Rtl,
         offsets: Vec::new(),
+        width_insets: Vec::new(),
         cleared_breaks,
         fixed: false,
         // An anonymous flex or grid item has no overflow of its own.
@@ -826,6 +857,7 @@ fn project_children_builder(
     let mut builder = ParagraphBuilder::new(&paragraph_style, limits);
     let mut boxes = Vec::new();
     let mut offsets = Vec::new();
+    let mut width_insets = Vec::new();
     let mut cleared_breaks = Vec::new();
     let mut text_nowrap = HashMap::new();
     let mut first_letter =
@@ -834,6 +866,7 @@ fn project_children_builder(
         atomics: Vec::new(),
         writing_mode,
         offsets: Vec::new(),
+        width_insets: Vec::new(),
     };
     let marker_atomic = if anonymous_children.is_some() {
         None
@@ -1135,11 +1168,7 @@ fn project_children_builder(
                 }
                 let edges = style::inline_edges(cv, id, fonts)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;
-                // The eligibility check keeps every offset that is not a plain
-                // length out of the paragraph.
-                if cv.position == PositionValue::Relative {
-                    offsets.push((id, style::relative_offset_in_lines(cv)));
-                }
+                push_relative_offset(&mut offsets, &mut width_insets, id, cv);
                 // `clear` on a line break moves the next line below the
                 // floats (CSS 2.1, 9.5.2): the line loop looks for the break.
                 if tag == "br"
@@ -1232,6 +1261,10 @@ fn project_children_builder(
         offsets: {
             offsets.extend(generated_images.offsets);
             offsets
+        },
+        width_insets: {
+            width_insets.extend(generated_images.width_insets);
+            width_insets
         },
         cleared_breaks,
         fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,

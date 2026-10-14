@@ -156,13 +156,60 @@ pub fn run_parsing_invalid_file(
 /// Whether `script` registers a test with a bare `test(` call, as the
 /// serialization pages under `parsing/` do when they set a declaration and
 /// assert on its read-back value themselves instead of through a helper.
+///
+/// Comments and string literals are skipped, and whitespace may separate
+/// the identifier from its argument list.
 fn calls_test_directly(script: &str) -> bool {
-    script.match_indices("test(").any(|(start, _)| {
-        !script[..start]
+    let code = blank_comments_and_strings(script);
+    code.match_indices("test").any(|(start, _)| {
+        !code[..start]
             .chars()
             .next_back()
             .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+            && code[start + 4..].trim_start().starts_with('(')
     })
+}
+
+/// `script` with each comment and the contents of each string literal
+/// replaced by spaces, so that only code is left to search. A template
+/// literal's substitutions are blanked with it.
+fn blank_comments_and_strings(script: &str) -> String {
+    let mut code = String::with_capacity(script.len());
+    let mut chars = script.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '/' if chars.peek() == Some(&'/') => {
+                while chars.next_if(|&c| c != '\n').is_some() {}
+                code.push(' ');
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut star = false;
+                for c in chars.by_ref() {
+                    if star && c == '/' {
+                        break;
+                    }
+                    star = c == '*';
+                }
+                code.push(' ');
+            }
+            '"' | '\'' | '`' => {
+                while let Some(inner) = chars.next() {
+                    if inner == c {
+                        break;
+                    }
+                    if inner == '\\' {
+                        chars.next();
+                    }
+                }
+                code.push(c);
+                code.push(' ');
+                code.push(c);
+            }
+            _ => code.push(c),
+        }
+    }
+    code
 }
 
 /// Run the whole page with the real `testharness.js`, `control` first.
