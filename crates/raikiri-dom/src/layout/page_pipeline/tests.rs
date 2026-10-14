@@ -13407,3 +13407,251 @@ fn an_absolutely_positioned_box_of_the_paragraph_keeps_its_inset_place() {
     assert_eq!(page_flow_y(&doc, ids[2]), 100.0);
     assert_eq!(page_flow_y(&doc, ids[3]), 0.0);
 }
+
+/// The block positions of `position: relative` children inside a parent
+/// with the style `parent`.
+fn relative_child_positions(parent: &str, children: &[&str]) -> Vec<f32> {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(&format!("display:block;{parent}")),
+    );
+    let children: Vec<_> = children
+        .iter()
+        .map(|style| {
+            doc.append_element(
+                Some(parent),
+                "div",
+                Style::default(),
+                Some(&format!(
+                    "display:block;position:relative;height:10px;{style}"
+                )),
+            )
+        })
+        .collect();
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 500.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    children
+        .into_iter()
+        .map(|id| doc.get_node(id).unwrap().unrounded_layout.location.y)
+        .collect()
+}
+
+#[test]
+fn a_percentage_relative_offset_resolves_against_a_definite_height() {
+    // CSS 2.1 §9.4.3: `top` and `bottom` percentages refer to the height of
+    // the containing block.
+    let positions = relative_child_positions(
+        "height:100px",
+        &["top:30%", "bottom:20%", "top:calc(10% + 5px)"],
+    );
+    assert_eq!(positions.len(), 3);
+    assert!((positions[0] - 30.0).abs() < 1e-3, "{positions:?}");
+    assert!((positions[1] - (10.0 - 20.0)).abs() < 1e-3, "{positions:?}");
+    assert!((positions[2] - (20.0 + 15.0)).abs() < 1e-3, "{positions:?}");
+}
+
+#[test]
+fn a_percentage_relative_offset_is_auto_without_a_definite_height() {
+    // With an auto-height containing block the percentage computes to `auto`.
+    assert_eq!(
+        relative_child_positions("", &["top:30%", "bottom:50%"]),
+        vec![0.0, 10.0]
+    );
+}
+
+/// The physical position of an `inline-block` with the style `atomic`
+/// inside a vertical-rl root 100px wide and 200px high.
+fn vertical_atomic_location(atomic: &str) -> (f32, f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let root = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:100px;height:200px"),
+    );
+    let atomic = doc.append_element(
+        Some(root),
+        "span",
+        Style::default(),
+        Some(&format!(
+            "display:inline-block;width:10px;height:10px;position:relative;{atomic}"
+        )),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 500.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    let location = doc.get_node(atomic).unwrap().unrounded_layout.location;
+    (location.x, location.y)
+}
+
+#[test]
+fn a_vertical_atomic_resolves_a_left_percentage_against_the_physical_width() {
+    // CSS 2.1 §9.4.3: `left` percentages refer to the containing block's
+    // width, which is the block extent of a vertical root.
+    let (x0, y0) = vertical_atomic_location("left:0");
+    let (x, y) = vertical_atomic_location("left:50%");
+    assert!((x - x0 - 50.0).abs() < 1e-3, "{x0} -> {x}");
+    assert_eq!(y, y0);
+}
+
+#[test]
+fn a_relative_block_in_a_mixed_root_resolves_a_top_percentage_against_its_height() {
+    // CSS 2.1 §9.4.3: `top` percentages refer to the height of the
+    // containing block, here the 200px root that also holds a line of text.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:200px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px;position:relative;top:50%"),
+        );
+    });
+    let still_y = doc.nodes[still].unrounded_layout.location.y;
+    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    assert_eq!(moved_y - still_y, 10.0 + 100.0);
+}
+
+#[test]
+fn a_relative_block_in_an_rtl_mixed_root_prefers_right() {
+    // CSS 2.1 §9.4.3: when both `left` and `right` apply in a right-to-left
+    // containing block, `left` is ignored.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:200px;direction:rtl;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:50px;height:10px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:50px;height:10px;position:relative;left:5px;right:10%"),
+        );
+    });
+    let still_x = doc.nodes[still].unrounded_layout.location.x;
+    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    assert_eq!(moved_x - still_x, -20.0);
+}
+
+#[test]
+fn a_relative_block_in_a_vertical_rl_mixed_root_prefers_right() {
+    // CSS Position 3 §3.3: in a vertical-rl containing block the right side
+    // is the block start, so `right` wins over `left` even with `direction:
+    // ltr`.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;writing-mode:vertical-rl;width:200px;height:100px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px;position:relative;left:5px;right:10%"),
+        );
+    });
+    let still_x = doc.nodes[still].unrounded_layout.location.x;
+    let moved_x = doc.nodes[moved].unrounded_layout.location.x;
+    // The moved block sits 10px left of the other before its offset.
+    assert_eq!(moved_x - still_x, -10.0 - 20.0);
+}
+
+#[test]
+fn a_relative_block_in_an_rtl_vertical_mixed_root_prefers_bottom() {
+    // CSS Position 3 §3.3: in a right-to-left vertical containing block the
+    // inline axis starts at the bottom, so `bottom` wins over `top`.
+    let mut moved = 0;
+    let mut still = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        let root = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;writing-mode:vertical-rl;direction:rtl;width:200px;height:100px;font:10px/10px monospace"),
+        );
+        doc.append_text(root, "x");
+        still = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px"),
+        );
+        moved = doc.append_element(
+            Some(root),
+            "div",
+            Style::default(),
+            Some("display:block;width:10px;height:50px;position:relative;top:3px;bottom:4px"),
+        );
+    });
+    let still_y = doc.nodes[still].unrounded_layout.location.y;
+    let moved_y = doc.nodes[moved].unrounded_layout.location.y;
+    assert_eq!(moved_y - still_y, -4.0);
+}

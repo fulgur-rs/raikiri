@@ -748,19 +748,78 @@ fn no_hanging_punctuation_leaves_the_flags_clear() {
 }
 
 #[test]
-fn a_relative_offset_in_lines_keeps_lengths_and_degrades_the_rest() {
-    let offset = |css: &str| {
+fn inline_relative_insets_resolve_percentages_against_the_width() {
+    let insets = |css: &str| {
         let fixture = block_fixture(&format!("position:relative;{css}"), |doc, root| {
             doc.append_text(root, "x");
         });
-        relative_offset_in_lines(&fixture.cascade.computed[fixture.root])
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative")
     };
-    assert_eq!(offset("left:2px;top:3px"), (2.0, 3.0));
-    assert_eq!(offset("right:2px;bottom:3px"), (-2.0, -3.0));
+    assert_eq!(
+        insets("left:2px;top:3px").offset(200.0, None, false),
+        (2.0, 3.0)
+    );
+    assert_eq!(
+        insets("right:2px;bottom:3px").offset(200.0, None, false),
+        (-2.0, -3.0)
+    );
+    assert!(!insets("left:2px;top:3px").has_percentage());
     // A z-index does not drop the offset; the stacking context is not drawn.
-    assert_eq!(offset("left:2px;z-index:1"), (2.0, 0.0));
-    // An inset that needs the containing block is taken as zero.
-    assert_eq!(offset("left:calc(1% + 1px);top:4px"), (0.0, 4.0));
+    assert_eq!(
+        insets("left:2px;z-index:1").offset(200.0, None, false),
+        (2.0, 0.0)
+    );
+    // A horizontal percentage refers to the containing block's width, and
+    // `left` wins over `right` before the width is known.
+    let percent = insets("left:50%;right:10px");
+    assert!(percent.has_percentage());
+    assert_eq!(percent.offset(0.0, None, false), (0.0, 0.0));
+    assert_eq!(percent.offset(200.0, None, false), (100.0, 0.0));
+    assert_eq!(
+        insets("right:calc(10% + 1px)").offset(200.0, None, false),
+        (-21.0, 0.0)
+    );
+    // A vertical percentage refers to a definite height, and counts as
+    // `auto` without one; `bottom` then applies.
+    let vertical = insets("top:50%;bottom:4px");
+    assert!(vertical.has_percentage());
+    assert_eq!(vertical.offset(200.0, None, false), (0.0, -4.0));
+    assert_eq!(vertical.offset(200.0, Some(200.0), false), (0.0, 100.0));
+    assert_eq!(
+        insets("top:calc(1% + 1px)").offset(200.0, Some(100.0), false),
+        (0.0, 2.0)
+    );
+    // A zero percentage is still a percentage.
+    let zero = insets("top:0%;bottom:4px");
+    assert!(zero.has_percentage());
+    assert_eq!(zero.offset(200.0, None, false), (0.0, -4.0));
+    assert_eq!(zero.offset(200.0, Some(100.0), false), (0.0, 0.0));
+    // A large percentage is scaled before it is multiplied, so a used value
+    // within range does not overflow on the way.
+    let (dx, _) = insets("left:1e37%").offset(100.0, None, false);
+    assert!((dx / 1e37 - 1.0).abs() < 1e-3, "{dx}");
+}
+
+#[test]
+fn inline_relative_insets_prefer_right_in_an_rtl_containing_block() {
+    let fixture = block_fixture("position:relative;left:5px;right:10%", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let insets =
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative");
+    assert_eq!(insets.offset(200.0, None, false), (5.0, 0.0));
+    assert_eq!(insets.offset(200.0, None, true), (-20.0, 0.0));
+}
+
+#[test]
+fn inline_relative_insets_are_none_for_a_box_that_is_not_relative() {
+    let fixture = block_fixture("left:2px", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    assert_eq!(
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]),
+        None
+    );
 }
 
 #[test]
@@ -877,4 +936,35 @@ fn ellipsis_needs_a_non_visible_inline_overflow() {
     assert!(!ends("text-overflow:ellipsis"));
     assert!(!ends("text-overflow:clip;overflow:hidden"));
     assert!(!ends("overflow:hidden"));
+}
+
+#[test]
+fn inline_relative_insets_prefer_the_start_side_of_a_vertical_containing_block() {
+    let fixture = block_fixture(
+        "position:relative;left:5px;right:10%;top:3px;bottom:4px",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let insets =
+        InlineRelativeInsets::of(&fixture.cascade.computed[fixture.root]).expect("relative");
+    assert!(insets.depends_on_containing_block());
+    // vertical-rl: right is the block start; top is the inline start in ltr.
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::VerticalRl, false),
+        (-20.0, 3.0)
+    );
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::VerticalRl, true),
+        (-20.0, -4.0)
+    );
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::VerticalLr, false),
+        (5.0, 3.0)
+    );
+    // sideways-lr: the inline axis runs bottom to top.
+    assert_eq!(
+        insets.offset_in(200.0, None, WritingMode::SidewaysLr, false),
+        (5.0, -4.0)
+    );
 }

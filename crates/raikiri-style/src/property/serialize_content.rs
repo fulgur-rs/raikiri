@@ -47,6 +47,15 @@ fn serialize_components(items: &[ContentComponent]) -> Option<String> {
     Some(parts.join(" "))
 }
 
+/// Appends `url` as CSSOM serializes a URL: `url(`, the URL as a CSS
+/// string, and `)`.
+pub(super) fn push_url(out: &mut String, url: &str) {
+    out.push_str("url(");
+    // Writing into a `String` cannot fail.
+    let _ = serialize_string(url, out);
+    out.push(')');
+}
+
 fn serialize_component(item: &ContentComponent) -> Option<String> {
     let mut out = String::new();
     // Writing into a `String` cannot fail.
@@ -54,11 +63,7 @@ fn serialize_component(item: &ContentComponent) -> Option<String> {
         ContentComponent::Literal(text) => {
             let _ = serialize_string(text, &mut out);
         }
-        ContentComponent::Image { url } => {
-            out.push_str("url(");
-            let _ = serialize_string(url, &mut out);
-            out.push(')');
-        }
+        ContentComponent::Image { url } => push_url(&mut out, url),
         ContentComponent::Quote(keyword) => out.push_str(keyword.as_css_str()),
         ContentComponent::Contents => out.push_str("contents"),
         ContentComponent::Counter { name, style } => {
