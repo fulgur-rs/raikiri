@@ -164,6 +164,19 @@ fn auto_vertical_margins_of_flex_and_grid_children_split_negative_free_space() {
 }
 
 #[test]
+fn auto_vertical_margins_of_absolute_boxes_in_sideways_containers_stay_zero() {
+    // The physical height of a sideways container is its inline axis.
+    for mode in ["sideways-rl", "sideways-lr"] {
+        let (doc, abs) = laid_out(
+            "",
+            &format!("writing-mode:{mode};position:relative;height:200px"),
+            "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+        );
+        assert_eq!(absolute_rect(&doc, abs).1, 50.0 + 100.0, "{mode}");
+    }
+}
+
+#[test]
 fn the_page_writing_mode_picks_the_axis_that_zeroes_negative_auto_margins() {
     // The box's own writing mode does not change the rule.
     let (doc, fixed) = laid_out(

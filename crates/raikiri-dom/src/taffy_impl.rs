@@ -532,7 +532,7 @@ impl Document {
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
         // the flex container's width up front instead. A vertical item is
-        // left to taffy, as in [`block_layout`].
+        // left to taffy, as in `block_layout`.
         let edge_basis = flex_basis
             .filter(|_| {
                 inputs.parent_size.width.is_none()
@@ -1794,11 +1794,7 @@ pub(crate) fn block_layout(
 /// A height found this way is not definite for the percentages inside: the
 /// box is no more definite than without containment. A width always is, as
 /// the used width of any box.
-pub(crate) fn size_contained_inputs(
-    tree: &mut Document,
-    node_id: NodeId,
-    inputs: LayoutInput,
-) -> LayoutInput {
+fn size_contained_inputs(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> LayoutInput {
     let idx = usize::from(node_id);
     let contained = tree.nodes[idx].size_containment;
     let width = contained.width && inputs.known_dimensions.width.is_none();
@@ -1838,8 +1834,8 @@ pub(crate) fn size_contained_inputs(
 /// unlike the horizontal rule of §10.3.7. Taffy 0.14 applies the horizontal
 /// rule to both axes and zeroes the margins instead, which leaves an
 /// overconstrained box at its `top` edge rather than centered on its
-/// insets. A container in a vertical writing mode is left to its caller to
-/// skip: its physical height is the inline axis, where the horizontal rule
+/// insets. A container in a vertical or sideways writing mode is left
+/// alone: its physical height is the inline axis, where the horizontal rule
 /// is the right one. So is a grid item placed in grid rows, whose
 /// containing block is its grid area rather than the padding box.
 ///
@@ -1854,7 +1850,9 @@ fn center_absolute_children_vertically(
 ) {
     use taffy::{MaybeResolve, Overflow, ResolveOrZero};
 
-    if inputs.run_mode != RunMode::PerformLayout {
+    if inputs.run_mode != RunMode::PerformLayout
+        || used_writing_mode(tree, idx) != raikiri_style::property::WritingMode::HorizontalTb
+    {
         return;
     }
     let style = &tree.nodes[idx].style;
@@ -1922,9 +1920,7 @@ pub(crate) fn flex_layout(
     tree.flex_item_percent_bases.push((idx, basis));
     let output = compute_flexbox_layout(tree, node_id, inputs);
     tree.flex_item_percent_bases.pop();
-    if !tree.has_vertical_writing_mode(idx) {
-        center_absolute_children_vertically(tree, idx, &inputs, output.size);
-    }
+    center_absolute_children_vertically(tree, idx, &inputs, output.size);
     output
 }
 
@@ -1935,10 +1931,7 @@ pub(crate) fn grid_layout(
     inputs: LayoutInput,
 ) -> LayoutOutput {
     let output = compute_grid_layout(tree, node_id, inputs);
-    let idx = usize::from(node_id);
-    if !tree.has_vertical_writing_mode(idx) {
-        center_absolute_children_vertically(tree, idx, &inputs, output.size);
-    }
+    center_absolute_children_vertically(tree, usize::from(node_id), &inputs, output.size);
     output
 }
 

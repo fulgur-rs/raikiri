@@ -471,7 +471,7 @@ pub struct Document {
     pub(crate) flex_item_percent_bases: Vec<(usize, taffy::Size<Option<f32>>)>,
     /// Size-contained boxes being measured as if they had no content, the
     /// innermost last; taffy sees no children under them; see
-    /// [`crate::taffy_impl::size_contained_inputs`].
+    /// [`mod@crate::taffy_impl`]'s `size_contained_inputs`.
     pub(crate) size_contained_measure: Vec<usize>,
     /// HTML5 quirks mode for this whole document. Default
     /// [`QuirksMode::NoQuirks`] (matching the type's own `#[default]`) for
