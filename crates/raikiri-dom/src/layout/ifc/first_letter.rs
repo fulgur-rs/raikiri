@@ -162,6 +162,14 @@ impl FirstLetter {
                             {
                                 continue;
                             }
+                            // Ruby annotations sit beside the base text: the
+                            // first letter continues in the base text after them.
+                            if matches!(
+                                cv.display,
+                                DisplayValue::RubyText | DisplayValue::RubyTextContainer
+                            ) {
+                                continue;
+                            }
                             if cv.display != DisplayValue::Contents {
                                 match super::projection::box_kind(cascade, doc, id) {
                                     Some(

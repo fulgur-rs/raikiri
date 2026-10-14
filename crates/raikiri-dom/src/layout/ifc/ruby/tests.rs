@@ -317,6 +317,26 @@ fn generated_content_falls_back() {
 }
 
 #[test]
+fn the_first_letter_continues_after_annotations_in_the_base_text() {
+    let mut text = 0;
+    let fixture = sheet_fixture("div::first-letter { font-size: 20px }", "", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "(");
+        rt(doc, container, "x");
+        text = doc.append_text(root, "AB");
+    });
+    let runs = runs(fixture);
+    let xs: Vec<f32> = runs
+        .iter()
+        .filter(|run| run.0 == text)
+        .map(|run| run.2.0)
+        .collect();
+    // `A` completes the first letter at 20px; `B` follows it at 10px.
+    assert_eq!(xs.len(), 2, "{runs:?}");
+    assert_eq!(xs[1] - xs[0], 20.0, "{runs:?}");
+}
+
+#[test]
 fn skipped_children_are_left_out() {
     let plan = plan_of(|doc, ruby| {
         rb(doc, ruby, "a");
