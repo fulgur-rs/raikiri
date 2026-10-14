@@ -2033,7 +2033,7 @@ fn edge_track_sizes<'s>(
             } else if center_is_anchored {
                 anchored_side_size
             } else if spec.size(axis).is_some() {
-                spec.outer_size(axis, 0.0).max(0.0)
+                spec.outer_size(axis, 0.0)
             } else if auto_base_total > 0.0 {
                 (auto_bases[index] + auto_remaining * auto_bases[index] / auto_base_total).max(0.0)
             } else {
@@ -2142,7 +2142,7 @@ fn layout_vertical_margin_boxes(
         let margin_left = spec.margin[3];
         let margin_right = spec.margin[1];
         let outer_width = if spec.width.is_some() {
-            spec.outer_size(Axis::Horizontal, 0.0).max(0.0)
+            spec.outer_size(Axis::Horizontal, 0.0)
         } else {
             column_width
         };
