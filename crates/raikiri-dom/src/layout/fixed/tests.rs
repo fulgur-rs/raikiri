@@ -201,6 +201,57 @@ fn auto_vertical_margins_of_absolute_boxes_in_sideways_containers_stay_zero() {
 }
 
 #[test]
+fn auto_horizontal_margins_of_absolute_boxes_in_vertical_containers_split_negative_free_space() {
+    // The physical width of a vertical or sideways container is its block
+    // axis, so CSS 2.1 §10.6.4 applies to it.
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        let (doc, abs) = laid_out(
+            "",
+            &format!("writing-mode:{mode};position:relative;width:200px;height:300px"),
+            "position:absolute;left:50%;right:50%;width:100px;height:10px;margin:auto",
+        );
+        assert_eq!(absolute_rect(&doc, abs).0, 50.0, "{mode}");
+    }
+}
+
+#[test]
+fn auto_vertical_margins_of_absolute_boxes_in_paragraphs_split_negative_free_space() {
+    // A container with inline content places its positioned children on
+    // its own.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:relative;height:200px"),
+    );
+    doc.append_text(parent, "text");
+    let abs = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert!(
+        doc.nodes[parent]
+            .flags
+            .contains(crate::node::NodeFlags::IS_IFC_ROOT)
+    );
+    assert_eq!(absolute_rect(&doc, abs).1, 50.0);
+}
+
+#[test]
 fn the_page_writing_mode_picks_the_axis_that_zeroes_negative_auto_margins() {
     // The box's own writing mode does not change the rule.
     let (doc, fixed) = laid_out(

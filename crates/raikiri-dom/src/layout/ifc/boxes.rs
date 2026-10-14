@@ -1909,6 +1909,7 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
         return;
     }
     let rtl = root.rtl;
+    let vertical_root = root.writing_mode != WritingMode::HorizontalTb;
     let Some(lines) = root.lines.clone() else {
         return;
     };
@@ -1959,6 +1960,10 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             None => (content_left, content_top + lines.height),
         };
         let child = &tree.nodes[node].style;
+        // Auto vertical margins share the free space equally, even when it
+        // is negative (CSS 2.1 §10.6.4), in a horizontal root where the
+        // physical height is the block axis.
+        let auto_vertical_margins = child.margin.top.is_auto() && child.margin.bottom.is_auto();
         let margin = child.margin.map(|margin| {
             margin
                 .resolve_to_option(cb_width, resolve_calc)
@@ -2020,6 +2025,10 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             (None, None) => static_x + margin.left,
         };
         let y = match (top, bottom) {
+            (Some(top), Some(bottom)) if auto_vertical_margins && !vertical_root => {
+                let free_space = cb_height - top - bottom - output.size.height;
+                border.top + top + free_space / 2.0
+            }
             (Some(top), _) => border.top + top + margin.top,
             (None, Some(bottom)) => {
                 border.top + cb_height - bottom - output.size.height - margin.bottom

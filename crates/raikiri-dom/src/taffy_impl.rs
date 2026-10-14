@@ -1766,7 +1766,9 @@ pub(crate) fn block_layout(
 ) -> LayoutOutput {
     let idx = usize::from(node_id);
     if tree.has_vertical_writing_mode(idx) {
-        return compute_block_layout(tree, node_id, inputs, block_ctx);
+        let output = compute_block_layout(tree, node_id, inputs, block_ctx);
+        center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
+        return output;
     }
     let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
     let basis = width.map(|width| width - inline_inset);
@@ -1779,7 +1781,7 @@ pub(crate) fn block_layout(
         output = compute_block_layout(tree, node_id, inputs, None);
         tree.block_item_percent_bases.pop();
     }
-    center_absolute_children_vertically(tree, idx, &inputs, output.size, None);
+    center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
 }
 
@@ -1825,18 +1827,20 @@ fn size_contained_inputs(tree: &mut Document, node_id: NodeId, inputs: LayoutInp
     inputs
 }
 
-/// Split negative free space between the two auto vertical margins of the
-/// absolutely positioned children of block, flex or grid container `idx`.
+/// Split negative free space between the two auto block-axis margins of
+/// the absolutely positioned children of block, flex or grid container
+/// `idx`.
 ///
-/// When `top`, `height` and `bottom` are all non-auto and both vertical
-/// margins are auto, CSS 2.1 §10.6.4 solves for the margins under the
-/// constraint that they are equal, with no exception for a negative result,
-/// unlike the horizontal rule of §10.3.7. Taffy 0.14 applies the horizontal
-/// rule to both axes and zeroes the margins instead, which leaves an
-/// overconstrained box at its `top` edge rather than centered on its
-/// insets. A container in a vertical or sideways writing mode is left
-/// alone: its physical height is the inline axis, where the horizontal rule
-/// is the right one.
+/// When the block-axis insets and size are all non-auto and both
+/// block-axis margins are auto, CSS 2.1 §10.6.4 solves for the margins
+/// under the constraint that they are equal, with no exception for a
+/// negative result, unlike the inline-axis rule of §10.3.7. CSS Writing
+/// Modes 4 §7.1 applies each rule to the axis of the containing block's
+/// writing mode. Taffy 0.14 applies the inline-axis rule to both physical
+/// axes and zeroes or drops a negative margin instead, which leaves an
+/// overconstrained box at its start inset rather than centered on its
+/// insets. The block axis is the physical height in `horizontal-tb` and the
+/// physical width in every other mode.
 ///
 /// The children's containing block is the container's padding box, or for
 /// the children of a grid container, the grid area their grid-placement
@@ -1845,7 +1849,7 @@ fn size_contained_inputs(tree: &mut Document, node_id: NodeId, inputs: LayoutInp
 /// `size` is the container's border box from the layout taffy just
 /// performed; the children's positions are recomputed from their insets, so
 /// running this again on a cached layout changes nothing.
-fn center_absolute_children_vertically(
+fn center_absolute_children_in_block_axis(
     tree: &mut Document,
     idx: usize,
     inputs: &LayoutInput,
@@ -1854,69 +1858,100 @@ fn center_absolute_children_vertically(
 ) {
     use taffy::{MaybeResolve, Overflow, ResolveOrZero};
 
-    if inputs.run_mode != RunMode::PerformLayout
-        || used_writing_mode(tree, idx) != raikiri_style::property::WritingMode::HorizontalTb
-    {
+    if inputs.run_mode != RunMode::PerformLayout {
         return;
     }
+    let block_is_height =
+        used_writing_mode(tree, idx) == raikiri_style::property::WritingMode::HorizontalTb;
     let style = &tree.nodes[idx].style;
     let border = style
         .border
         .resolve_or_zero(inputs.parent_size.width, resolve_calc);
-    // A horizontal scrollbar takes its gutter from the bottom of the
-    // absolute positioning area.
-    let gutter = if style.overflow.x == Overflow::Scroll {
-        style.scrollbar_width
-    } else {
-        0.0
-    };
-    let padding_box = taffy::Rect {
-        left: border.left,
-        right: size.width - border.right,
-        top: border.top,
-        bottom: size.height - border.bottom - gutter,
-    };
     let direction = style.direction;
+    // A scrollbar takes its gutter from the absolute positioning area: a
+    // horizontal one from the bottom, a vertical one from the inline end.
+    let gutter = |overflow: Overflow| {
+        if overflow == Overflow::Scroll {
+            style.scrollbar_width
+        } else {
+            0.0
+        }
+    };
+    let (gutter_x, gutter_y) = (gutter(style.overflow.y), gutter(style.overflow.x));
+    let padding_box = if direction == taffy::Direction::Rtl {
+        taffy::Rect {
+            left: border.left + gutter_x,
+            right: size.width - border.right,
+            top: border.top,
+            bottom: size.height - border.bottom - gutter_y,
+        }
+    } else {
+        taffy::Rect {
+            left: border.left,
+            right: size.width - border.right - gutter_x,
+            top: border.top,
+            bottom: size.height - border.bottom - gutter_y,
+        }
+    };
     let children: Vec<usize> = TaffyChildIter::new(tree, NodeId::from(idx))
         .map(usize::from)
         .filter(|&child| {
             let style = &tree.nodes[child].style;
+            let (start, end) = if block_is_height {
+                (style.margin.top, style.margin.bottom)
+            } else {
+                (style.margin.left, style.margin.right)
+            };
             style.position == TaffyPosition::Absolute
                 && style.display != Display::None
-                && style.margin.top.is_auto()
-                && style.margin.bottom.is_auto()
+                && start.is_auto()
+                && end.is_auto()
         })
         .collect();
     for child in children {
         let node = &tree.nodes[child];
         let style = &node.style;
-        let (area_top, area_bottom) = match grid {
-            Some(grid) => {
-                let area = grid.resolve_absolute_grid_area(
-                    style.grid_row.clone(),
-                    style.grid_column.clone(),
-                    direction,
-                    padding_box,
-                );
-                (area.top, area.bottom)
-            }
-            None => (padding_box.top, padding_box.bottom),
+        let area = match grid {
+            Some(grid) => grid.resolve_absolute_grid_area(
+                style.grid_row.clone(),
+                style.grid_column.clone(),
+                direction,
+                padding_box,
+            ),
+            None => padding_box,
         };
-        let area_height = area_bottom - area_top;
-        let top = style.inset.top.maybe_resolve(area_height, resolve_calc);
-        let bottom = style.inset.bottom.maybe_resolve(area_height, resolve_calc);
-        let (Some(top), Some(bottom)) = (top, bottom) else {
+        let (area_start, area_end, start, end) = if block_is_height {
+            (area.top, area.bottom, style.inset.top, style.inset.bottom)
+        } else {
+            (area.left, area.right, style.inset.left, style.inset.right)
+        };
+        let area_size = area_end - area_start;
+        let start = start.maybe_resolve(area_size, resolve_calc);
+        let end = end.maybe_resolve(area_size, resolve_calc);
+        let (Some(start), Some(end)) = (start, end) else {
             continue;
         };
         let mut layout = node.unrounded_layout;
-        let free_space = area_height - top - bottom - layout.size.height;
+        let box_size = if block_is_height {
+            layout.size.height
+        } else {
+            layout.size.width
+        };
+        let free_space = area_size - start - end - box_size;
         if free_space >= 0.0 {
             continue;
         }
         let margin = free_space / 2.0;
-        layout.margin.top = margin;
-        layout.margin.bottom = margin;
-        layout.location.y = area_top + top + margin;
+        let position = area_start + start + margin;
+        if block_is_height {
+            layout.margin.top = margin;
+            layout.margin.bottom = margin;
+            layout.location.y = position;
+        } else {
+            layout.margin.left = margin;
+            layout.margin.right = margin;
+            layout.location.x = position;
+        }
         tree.set_unrounded_layout(NodeId::from(child), &layout);
     }
 }
@@ -1939,22 +1974,18 @@ pub(crate) fn flex_layout(
     tree.flex_item_percent_bases.push((idx, basis));
     let output = compute_flexbox_layout(tree, node_id, inputs);
     tree.flex_item_percent_bases.pop();
-    center_absolute_children_vertically(tree, idx, &inputs, output.size, None);
+    center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
 }
 
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
-pub(crate) fn grid_layout(
-    tree: &mut Document,
-    node_id: NodeId,
-    inputs: LayoutInput,
-) -> LayoutOutput {
+fn grid_layout(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
     let output = compute_grid_layout(tree, node_id, inputs);
     // Taffy reports the tracks only from a layout it performs.
     let grid = tree.last_grid_info.take().filter(|&(grid, _)| grid == idx);
     if let Some((_, grid)) = grid {
-        center_absolute_children_vertically(tree, idx, &inputs, output.size, Some(&grid));
+        center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
     }
     output
 }

@@ -475,7 +475,7 @@ pub struct Document {
     pub(crate) size_contained_measure: Vec<usize>,
     /// The tracks of the grid container taffy laid out last, kept from
     /// [`taffy::LayoutGridContainer::set_detailed_grid_info`] until
-    /// [`crate::taffy_impl::grid_layout`] resolves the grid areas of its
+    /// [`mod@crate::taffy_impl`]'s `grid_layout` resolves the grid areas of its
     /// absolutely positioned children from them.
     pub(crate) last_grid_info: Option<(usize, taffy::DetailedGridInfo<String>)>,
     /// HTML5 quirks mode for this whole document. Default
