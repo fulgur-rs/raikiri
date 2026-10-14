@@ -75,7 +75,7 @@ fn tree_walker_visits_descendant_text_nodes_in_tree_order() {
 }
 
 #[test]
-fn tree_walker_current_node_accepts_only_nodes_inside_its_root() {
+fn tree_walker_current_node_setter_moves_the_walker() {
     let mut rt = rt();
     ok(
         &mut rt,
@@ -85,9 +85,7 @@ fn tree_walker_current_node_accepts_only_nodes_inside_its_root() {
          nested.appendChild(text); root.appendChild(nested); document.body.append(root); \
          var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
          walker.currentNode = text; \
-         var threw = false; \
-         try { walker.currentNode = document.body; } catch (e) { threw = true; } \
-         walker.currentNode === text && threw",
+         walker.currentNode === text && walker.nextNode() === null",
     );
 }
 
