@@ -75,6 +75,23 @@ fn tree_walker_visits_descendant_text_nodes_in_tree_order() {
 }
 
 #[test]
+fn tree_walker_current_node_accepts_only_nodes_inside_its_root() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var root = document.createElement('div'); \
+         var nested = document.createElement('span'); \
+         var text = document.createTextNode('A'); \
+         nested.appendChild(text); root.appendChild(nested); document.body.append(root); \
+         var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
+         walker.currentNode = text; \
+         var threw = false; \
+         try { walker.currentNode = document.body; } catch (e) { threw = true; } \
+         walker.currentNode === text && threw",
+    );
+}
+
+#[test]
 fn range_set_start_and_end_use_utf16_offsets_and_highlights_store_ranges() {
     let mut rt = rt();
     ok(
