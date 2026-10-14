@@ -791,30 +791,12 @@ fn computed_paint_order_key(computed: &ComputedValues) -> (u8, i32) {
     }
 }
 
-/// Walk the Document arena in DFS order; return the first `<body>` element index.
-///
-/// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid
-/// stack overflow on deep DOMs. Return `None` for fragments (no `<body>`).
-///
-/// Skip subtrees with `!is_in_document()` (such as `<template>` descendants)
-/// so a hypothetical `<body>` in an inert subtree is not selected. The
-/// paint-side and layout-side body lookups are separate to avoid crossing
-/// module boundaries, but share the same contract.
+/// The body element paint starts at: the same element layout starts at
+/// (see [`crate::layout::find_body`]), so a `<body>` inside an inert subtree
+/// such as `<template>` contents is never selected. Return `None` for
+/// fragments (no `<body>`).
 pub fn find_paint_root(doc: &Document) -> Option<usize> {
-    let mut stack: Vec<usize> = vec![doc.root_index()];
-    while let Some(id) = stack.pop() {
-        let node = doc.get_node(id)?;
-        if !node.is_in_document() {
-            continue;
-        }
-        if node.kind() == NodeKind::Element && crate::layout::is_body_element(doc, id) {
-            return Some(id);
-        }
-        for &c in node.children.iter().rev() {
-            stack.push(c);
-        }
-    }
-    None
+    crate::layout::find_body(doc)
 }
 
 /// Whether separate-border `empty-cells: hide` suppresses this cell's box ink.
