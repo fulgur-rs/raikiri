@@ -11,6 +11,7 @@ use crate::fragment::FragmentationContext;
 use crate::node::Node;
 use raikiri_style::property::{DisplayValue, PositionValue, WritingMode};
 use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
+use raikiri_traits::NodeKind;
 
 /// The used horizontal and vertical insets of `node_id`, whatever its
 /// `position`. When opposing insets both apply, the one on the start side
@@ -29,10 +30,23 @@ pub(crate) fn used_relative_insets(
     document: &Document,
     cv: &ComputedValues,
     node_id: usize,
+    precedence: Precedence,
 ) -> (Option<f32>, Option<f32>) {
     let block = containing_block(document, node_id);
-    // An anonymous cell takes its direction and writing mode from its row.
-    let source = block.map(|block| block.source);
+    // The tag check spares the document walk for every other element.
+    let is_body = || {
+        document.nodes[node_id].tag_name() == Some("body") && find_body(document) == Some(node_id)
+    };
+    // An anonymous cell takes its direction and writing mode from its row,
+    // and the initial containing block of the body from the root element
+    // (CSS Writing Modes 4 §8).
+    let source = if is_body() {
+        document
+            .parent_of(node_id)
+            .filter(|&root| document.nodes[root].kind() == NodeKind::Element)
+    } else {
+        block.map(|block| block.source)
+    };
     let rtl =
         source.is_some_and(|block| document.nodes[block].style.direction == taffy::Direction::Rtl);
     let mode = match crate::taffy_impl::used_writing_mode(document, source.unwrap_or(node_id)) {
@@ -57,10 +71,6 @@ pub(crate) fn used_relative_insets(
         length(value).unwrap_or_else(|| {
             basis().and_then(|basis| used_computed_length_percentage_or_auto(value, basis))
         })
-    };
-    // The tag check spares the document walk for every other element.
-    let is_body = || {
-        document.nodes[node_id].tag_name() == Some("body") && find_body(document) == Some(node_id)
     };
     let width = || {
         if is_body() {
@@ -90,10 +100,24 @@ pub(crate) fn used_relative_insets(
     let right = resolve(cv.right, &width).map(|right| -right);
     let top = resolve(cv.top, &height);
     let bottom = resolve(cv.bottom, &height).map(|bottom| -bottom);
-    (
-        pick(left, right, right_wins),
-        pick(top, bottom, bottom_wins),
-    )
+    match precedence {
+        Precedence::WritingMode => (
+            pick(left, right, right_wins),
+            pick(top, bottom, bottom_wins),
+        ),
+        Precedence::LeftTop => (left.or(right), top.or(bottom)),
+    }
+}
+
+/// Which of two opposing insets wins.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Precedence {
+    /// The start side of the containing block's writing mode and direction
+    /// (CSS Position 3 §3.3), as the painter applies.
+    WritingMode,
+    /// `left` and `top`, as taffy's block layout applies whatever the
+    /// writing mode.
+    LeftTop,
 }
 
 /// The containing block of a box: `key` names the box laid out, which may
@@ -106,18 +130,39 @@ struct ContainingBlock {
 }
 
 /// The nearest ancestor of `node_id` that can be its containing block:
-/// `display: contents` elements and non-atomic inlines are skipped, and a
-/// box that table fixup wrapped in an anonymous cell (CSS Tables 3 §3.9)
-/// has that cell instead of its parent.
+/// `display: contents` elements, non-atomic inlines and table rows, row
+/// groups and columns are skipped, so a table cell has its table (CSS
+/// Tables 3 §3.5). A box that table fixup wrapped in an anonymous cell (CSS
+/// Tables 3 §3.9) has that cell instead.
 fn containing_block(document: &Document, node_id: usize) -> Option<ContainingBlock> {
     let mut child = node_id;
-    let mut block = box_parent(document, node_id)?;
-    while is_non_atomic_inline(document, block) {
+    loop {
+        let block = box_parent(document, child)?;
+        if let Some(key) = document.anonymous_cell_of(child) {
+            return Some(ContainingBlock { key, source: block });
+        }
+        if !is_non_atomic_inline(document, block) && !is_table_part(document, block) {
+            return Some(ContainingBlock {
+                key: block,
+                source: block,
+            });
+        }
         child = block;
-        block = box_parent(document, block)?;
     }
-    let key = document.anonymous_cell_of(child).unwrap_or(block);
-    Some(ContainingBlock { key, source: block })
+}
+
+/// Whether `node_id` is a table row, row group, column or column group,
+/// which lay out inside the table's grid.
+fn is_table_part(document: &Document, node_id: usize) -> bool {
+    matches!(
+        document.nodes[node_id].display,
+        DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+            | DisplayValue::TableRow
+            | DisplayValue::TableColumnGroup
+            | DisplayValue::TableColumn
+    )
 }
 
 /// Whether `node_id` lays out as a non-atomic inline box. The cascade keeps
@@ -173,7 +218,7 @@ pub fn used_relative_offset(
     if cv.position != PositionValue::Relative {
         return (0.0, 0.0);
     }
-    let (dx, dy) = used_relative_insets(document, cv, node_id);
+    let (dx, dy) = used_relative_insets(document, cv, node_id, Precedence::WritingMode);
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
 }
 

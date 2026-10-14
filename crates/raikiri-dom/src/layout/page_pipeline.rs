@@ -191,10 +191,16 @@ fn layout_relative_offset_y(
         return 0.0;
     }
     // Percentages resolve against the containing block's height when it
-    // is definite, and otherwise act as `auto` (CSS 2.1 §9.3.2).
-    super::relative::used_relative_insets(document, computed, node_id)
-        .1
-        .unwrap_or(0.0)
+    // is definite, and otherwise act as `auto` (CSS 2.1 §9.3.2). Layout
+    // takes `top` over `-bottom` in every writing mode.
+    super::relative::used_relative_insets(
+        document,
+        computed,
+        node_id,
+        super::relative::Precedence::LeftTop,
+    )
+    .1
+    .unwrap_or(0.0)
 }
 
 /// The relative offsets that layout applied to `node_id` and to its
@@ -6063,7 +6069,7 @@ fn grown_auto_height(
 /// The content-box height of `block` when it is definite: a length, or a
 /// percentage of a definite containing block, the initial containing block
 /// being definite (CSS 2.1 §10.5).
-pub(super) fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
+fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
     let node = &document.nodes[block];
     let raw = node.style.size.height.into_raw();
     let definite = if raw.is_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {

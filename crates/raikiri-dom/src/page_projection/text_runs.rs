@@ -578,7 +578,8 @@ fn layout_relative_offset_y(document: &Document, cv: &ComputedValues, id: usize)
     if !matches!(cv.position, PositionValue::Relative | PositionValue::Sticky) {
         return 0.0;
     }
-    crate::layout::used_relative_insets(document, cv, id)
+    // Layout takes `top` over `-bottom` in every writing mode.
+    crate::layout::used_relative_insets(document, cv, id, crate::layout::Precedence::LeftTop)
         .1
         .unwrap_or(0.0)
 }

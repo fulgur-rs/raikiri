@@ -114,7 +114,12 @@ fn only_relative_boxes_are_offset() {
     );
     let (document, cascade, child) = child_in(container, "position:sticky;top:10%");
     assert_eq!(
-        used_relative_insets(&document, &cascade.computed[child], child),
+        used_relative_insets(
+            &document,
+            &cascade.computed[child],
+            child,
+            Precedence::WritingMode
+        ),
         (None, Some(10.0))
     );
 }
@@ -230,24 +235,43 @@ fn a_calc_with_a_zero_percentage_needs_no_definite_height() {
 
 #[test]
 fn body_percentages_resolve_against_the_page_area() {
-    let mut document = Document::new();
-    let html = document.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
-    let body = document.append_element(
-        Some(html),
-        "body",
-        taffy::Style::default(),
-        Some("display:block;margin:0;position:relative;left:10%;top:10%"),
+    let (document, cascade, body) = relative_body(
+        None,
+        "display:block;margin:0;position:relative;left:10%;top:10%",
     );
+    let (width, height) = document.fixed_page_area;
+    let (dx, dy) = used_relative_offset(&document, &cascade.computed[body], body);
+    assert!((dx - width * 0.1).abs() < 1e-3 && (dy - height * 0.1).abs() < 1e-3);
+}
+
+/// A relatively positioned body of style `body` under an `html` root of
+/// style `html`, laid out on an A4 page.
+fn relative_body(
+    html: Option<&str>,
+    body: &str,
+) -> (Document, raikiri_style::CascadeResult, usize) {
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", taffy::Style::default(), html);
+    let body = document.append_element(Some(html), "body", taffy::Style::default(), Some(body));
     document.mark_in_document_flags();
     let cascade =
         raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
     crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
-    let (dx, dy) = used_relative_offset(&document, &cascade.computed[body], body);
-    eprintln!(
-        "body offset {dx} {dy}; html {:?} area {:?}",
-        document.nodes[html].unrounded_layout.size, document.fixed_page_area
+    (document, cascade, body)
+}
+
+#[test]
+fn the_body_takes_the_direction_of_the_root_element() {
+    // CSS Writing Modes 4 §8: the initial containing block takes the root
+    // element's direction, so `right` wins.
+    let (document, cascade, body) = relative_body(
+        Some("direction:rtl"),
+        "display:block;margin:0;position:relative;left:10px;right:20px",
     );
-    assert!(dx > 0.0 && dy > 0.0);
+    assert_eq!(
+        used_relative_offset(&document, &cascade.computed[body], body).0,
+        -20.0
+    );
 }
 
 #[test]
@@ -447,5 +471,63 @@ fn an_anonymous_table_cell_is_a_containing_block() {
     assert_eq!(
         used_relative_offset(&document, &cascade.computed[child], child),
         (25.0, 0.0)
+    );
+}
+
+#[test]
+fn a_table_cell_resolves_against_its_table() {
+    // CSS Tables 3 §3.5: the cell sits in the 200px by 100px table's grid,
+    // not in its row.
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let table = document.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:table;width:200px;height:100px;border-spacing:0"),
+    );
+    let row = document.append_element(
+        Some(table),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = document.append_element(
+        Some(row),
+        "div",
+        taffy::Style::default(),
+        Some("display:table-cell;position:relative;left:50%;top:50%"),
+    );
+    document.mark_in_document_flags();
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    assert_eq!(
+        used_relative_offset(&document, &cascade.computed[cell], cell),
+        (100.0, 50.0)
+    );
+}
+
+#[test]
+fn layout_precedence_takes_top_in_every_writing_mode() {
+    // The painter takes the block-start `bottom` of an RTL `vertical-rl`
+    // block; taffy's block layout applies `top` whatever the writing mode.
+    let (document, cascade, child) = child_in(
+        "display:block;width:200px;height:100px;writing-mode:vertical-rl;direction:rtl",
+        "float:left;position:relative;top:7px;bottom:3px",
+    );
+    let cv = &cascade.computed[child];
+    assert_eq!(
+        used_relative_insets(&document, cv, child, Precedence::WritingMode).1,
+        Some(-3.0)
+    );
+    assert_eq!(
+        used_relative_insets(&document, cv, child, Precedence::LeftTop).1,
+        Some(7.0)
     );
 }
