@@ -556,19 +556,6 @@ impl RunContext {
     }
 }
 
-/// Whether `cv`'s box sits on an inline formatting context line, where its
-/// relative offset is already part of its layout location.
-fn inline_level(cv: &ComputedValues) -> bool {
-    matches!(
-        cv.display,
-        DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    )
-}
-
 /// The block offset that layout applies to a box in normal flow for its
 /// `position: relative` or `position: sticky` insets, which layout treats
 /// alike, resolved against the containing block as layout resolves them.
@@ -626,15 +613,9 @@ pub(super) fn box_paint_shift(
     // and column fragments are placed without it, and the painter adds it, as
     // it adds the block offset that manual column placement leaves out.
     let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
-        && document.layout_parent_of(id).is_none_or(|parent| {
-            !matches!(
-                cascade.computed[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        });
+        && document
+            .layout_parent_of(id)
+            .is_none_or(|parent| !cascade.computed[parent].display.is_flex_or_grid_container());
     let painted_inset = Some(id) == body
         || float
         || fragmented
@@ -647,7 +628,7 @@ pub(super) fn box_paint_shift(
                 | DisplayValue::TableHeaderGroup
                 | DisplayValue::TableFooterGroup
         );
-    let (mut dx, mut dy) = if painted_inset && !inline_level(cv) {
+    let (mut dx, mut dy) = if painted_inset && !cv.display.is_inline_level() {
         crate::layout::used_relative_offset(document, cascade, cv, id)
     } else if node.needs_relative_block_paint_offset() {
         (
@@ -1246,11 +1227,7 @@ fn first_block_child(
             raikiri_style::property::DisplayValue::Contents => {
                 first_block_child(document, child, in_flow)
             }
-            raikiri_style::property::DisplayValue::Inline
-            | raikiri_style::property::DisplayValue::InlineBlock
-            | raikiri_style::property::DisplayValue::InlineFlex
-            | raikiri_style::property::DisplayValue::InlineGrid
-            | raikiri_style::property::DisplayValue::InlineTable => None,
+            display if display.is_inline_level() => None,
             _ => Some(child),
         }
     })

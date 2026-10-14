@@ -326,23 +326,10 @@ fn relative_offset_is_painted(
         return false;
     }
     let float = matches!(computed.float, FloatValue::Left | FloatValue::Right)
-        && document.layout_parent_of(node_id).is_none_or(|parent| {
-            !matches!(
-                cascade.computed[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        });
-    let inline_level = matches!(
-        computed.display,
-        DisplayValue::Inline
-            | DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    );
+        && document
+            .layout_parent_of(node_id)
+            .is_none_or(|parent| !cascade.computed[parent].display.is_flex_or_grid_container());
+    let inline_level = computed.display.is_inline_level();
     let table_part = matches!(
         computed.display,
         DisplayValue::TableCaption
@@ -537,13 +524,12 @@ fn enclosing_column_context(
             break None;
         };
         let computed = &cascade.computed[parent];
-        if matches!(
-            computed.display,
-            DisplayValue::Flex | DisplayValue::InlineFlex
-        ) && matches!(
-            computed.flex_direction,
-            FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
-        ) {
+        if computed.display.is_flex_container()
+            && matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+            )
+        {
             break Some(parent);
         }
         current = parent;
@@ -645,10 +631,8 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
             continue;
         };
         let parent = &cascade.computed[parent_id];
-        if !matches!(
-            parent.display,
-            DisplayValue::Grid | DisplayValue::InlineGrid
-        ) || !matches!(child.grid_row_start, GridLineValue::Auto)
+        if !parent.display.is_grid_container()
+            || !matches!(child.grid_row_start, GridLineValue::Auto)
             || !matches!(child.grid_row_end, GridLineValue::Auto)
             || !matches!(child.grid_column_start, GridLineValue::Auto)
             || !matches!(child.grid_column_end, GridLineValue::Auto)
@@ -2739,14 +2723,8 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 // An atomic inline box, a replaced element among them, is
                 // content of its parent's line, which pagination does not
                 // break around or inside.
-                let inline_level = matches!(
-                    cascade.computed[child].display,
-                    DisplayValue::Inline
-                        | DisplayValue::InlineBlock
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::InlineGrid
-                        | DisplayValue::InlineTable
-                ) && !is_float(document, child);
+                let inline_level =
+                    cascade.computed[child].display.is_inline_level() && !is_float(document, child);
                 boxes.push((!inline_level).then_some(child));
             }
         }
@@ -4038,12 +4016,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                 // normal-flow page boundary. Keep its inherited page context,
                 // but do not use its explicit name to split pagination.
                 let parent_box = box_parent(document, cascade, node_id, BoxParentScope::Document);
-                let is_direct_flex_item = parent_box.is_some_and(|parent| {
-                    matches!(
-                        cascade.computed[parent].display,
-                        DisplayValue::Flex | DisplayValue::InlineFlex
-                    )
-                });
+                let is_direct_flex_item = parent_box
+                    .is_some_and(|parent| cascade.computed[parent].display.is_flex_container());
                 let own_page_name = if !inline_level
                     && !float_subtree
                     && (!inside_flex || named_flex_context.is_some())
@@ -4063,23 +4037,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                     node_id,
                     inherited_page_name.as_deref(),
                 );
-                let column_flex = matches!(
-                    computed.display,
-                    DisplayValue::Flex | DisplayValue::InlineFlex
-                ) && matches!(
-                    computed.flex_direction,
-                    FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
-                );
+                let column_flex = computed.display.is_flex_container()
+                    && matches!(
+                        computed.flex_direction,
+                        FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+                    );
                 let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
                     && !column_flex
                     && has_nested_named_page_descendant(document, cascade, node_id, 0);
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
-                let row_flex = matches!(
-                    computed.display,
-                    DisplayValue::Flex | DisplayValue::InlineFlex
-                ) && !column_flex;
+                let row_flex = computed.display.is_flex_container() && !column_flex;
                 let page_name = if column_flex
                     || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after)
@@ -4273,24 +4242,18 @@ pub fn layout_pages_with_page_geometry_and_control(
                                     | DisplayValue::TableFooterGroup
                                     | DisplayValue::TableRow
                             ),
-                        matches!(
-                            computed.display,
-                            DisplayValue::Flex | DisplayValue::InlineFlex
-                        ) && matches!(
-                            computed.flex_direction,
-                            FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
-                        ) || (computed.display == DisplayValue::Contents && flex_column_parent),
-                        matches!(
-                            computed.display,
-                            DisplayValue::Grid | DisplayValue::InlineGrid
-                        ) && document.nodes[node_id].grid_column_count == 1,
+                        computed.display.is_flex_container()
+                            && matches!(
+                                computed.flex_direction,
+                                FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+                            )
+                            || (computed.display == DisplayValue::Contents && flex_column_parent),
+                        computed.display.is_grid_container()
+                            && document.nodes[node_id].grid_column_count == 1,
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         if column_flex {
                             Some(node_id)
-                        } else if matches!(
-                            computed.display,
-                            DisplayValue::Flex | DisplayValue::InlineFlex
-                        ) {
+                        } else if computed.display.is_flex_container() {
                             None
                         } else {
                             named_flex_context
@@ -4484,14 +4447,11 @@ pub fn layout_pages_with_page_geometry_and_control(
             continue;
         }
         let eligible = candidate.is_direct_body_element
-            && matches!(
-                computed.display,
-                DisplayValue::Block
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::Flex
-                    | DisplayValue::Grid
-            )
+            && (computed.display.is_block_flex_or_grid_container()
+                || matches!(
+                    computed.display,
+                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                ))
             && !matches!(computed.position, PositionValue::Running(_));
         if !eligible {
             previous = None;
@@ -5479,13 +5439,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let shift_delta = target_y - effective_y;
                 let row_flex_break_before = forced_before
                     && parent_of[node_id].is_some_and(|parent_id| {
-                        matches!(
-                            cascade.computed[parent_id].display,
-                            DisplayValue::Flex | DisplayValue::InlineFlex
-                        ) && matches!(
-                            cascade.computed[parent_id].flex_direction,
-                            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-                        )
+                        cascade.computed[parent_id].display.is_flex_container()
+                            && matches!(
+                                cascade.computed[parent_id].flex_direction,
+                                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+                            )
                     });
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
@@ -6606,13 +6564,9 @@ fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) ->
     let style = &document.nodes[node_id].style;
     let item =
         box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|container| {
-            matches!(
-                cascade.computed[container].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
+            cascade.computed[container]
+                .display
+                .is_flex_or_grid_container()
         });
     item || !matches!(
         computed.display,
@@ -6780,9 +6734,8 @@ fn has_side_by_side_ancestor(
     while let Some(id) = current {
         let display = cascade.computed[id].display;
         if document.nodes[id].multicol.is_some()
-            || matches!(display, DisplayValue::Flex | DisplayValue::InlineFlex)
-            || matches!(display, DisplayValue::Grid | DisplayValue::InlineGrid)
-                && !grid_stacks_items(document, cascade, id)
+            || display.is_flex_container()
+            || display.is_grid_container() && !grid_stacks_items(document, cascade, id)
         {
             return true;
         }
@@ -6816,22 +6769,19 @@ fn ifc_paragraph_of_block(document: &Document, block: usize) -> Option<usize> {
 /// stack like blocks.
 fn stacks_children_in_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     moves_later_siblings(document, cascade, id)
-        || matches!(
-            cascade.computed[id].display,
-            DisplayValue::Grid | DisplayValue::InlineGrid
-        ) && grid_stacks_items(document, cascade, id)
+        || cascade.computed[id].display.is_grid_container()
+            && grid_stacks_items(document, cascade, id)
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose
 /// block-start margin can adjoin a page break between siblings.
 fn is_block_level_flow_box(display: DisplayValue) -> bool {
-    matches!(
-        display,
-        DisplayValue::Block
-            | DisplayValue::FlowRoot
-            | DisplayValue::ListItem
-            | DisplayValue::Flex
-            | DisplayValue::Grid
-            | DisplayValue::Table
-    )
+    display.is_block_flex_or_grid_container()
+        || matches!(
+            display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Table
+        )
 }

@@ -584,37 +584,32 @@ fn initial_page_child_order(
 ) -> Vec<usize> {
     let children = document.nodes[parent_id].children.clone();
     let parent_style = &cascade.computed[parent_id];
-    let is_flex = matches!(
-        parent_style.display,
-        DisplayValue::Flex | DisplayValue::InlineFlex
-    );
+    let is_flex = parent_style.display.is_flex_container();
     if is_flex {
         return flex_pagination_child_order(document, cascade, parent_id);
     }
-    let is_auto_row_grid = matches!(
-        parent_style.display,
-        DisplayValue::Grid | DisplayValue::InlineGrid
-    ) && children
-        .iter()
-        .copied()
-        .filter(|&child_id| {
-            !matches!(
-                cascade.computed[child_id].position,
-                PositionValue::Absolute | PositionValue::Fixed
-            ) && cascade.computed[child_id].display != DisplayValue::None
-        })
-        .all(|child_id| {
-            matches!(
-                &cascade.computed[child_id].grid_row_start,
-                GridLineValue::Auto
-            ) && matches!(
-                &cascade.computed[child_id].grid_row_end,
-                GridLineValue::Auto
-            ) && matches!(
-                &cascade.computed[child_id].grid_column_start,
-                GridLineValue::Auto | GridLineValue::Line(1)
-            )
-        });
+    let is_auto_row_grid = parent_style.display.is_grid_container()
+        && children
+            .iter()
+            .copied()
+            .filter(|&child_id| {
+                !matches!(
+                    cascade.computed[child_id].position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                ) && cascade.computed[child_id].display != DisplayValue::None
+            })
+            .all(|child_id| {
+                matches!(
+                    &cascade.computed[child_id].grid_row_start,
+                    GridLineValue::Auto
+                ) && matches!(
+                    &cascade.computed[child_id].grid_row_end,
+                    GridLineValue::Auto
+                ) && matches!(
+                    &cascade.computed[child_id].grid_column_start,
+                    GridLineValue::Auto | GridLineValue::Line(1)
+                )
+            });
     if !is_auto_row_grid {
         return children;
     }
@@ -878,15 +873,11 @@ pub fn resolve_initial_page_context(
         .page_values
         .iter()
         .any(|page_value| matches!(page_value, raikiri_style::property::PageValue::Named(_)));
-    let has_flex_or_grid = context.cascade.computed.iter().any(|computed| {
-        matches!(
-            computed.display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-        )
-    });
+    let has_flex_or_grid = context
+        .cascade
+        .computed
+        .iter()
+        .any(|computed| computed.display.is_flex_or_grid_container());
     if !has_named_page || !has_flex_or_grid {
         return Ok(context);
     }
@@ -1113,13 +1104,7 @@ pub(crate) fn is_floating_box_for_pagination(
             |parent| {
                 // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
                 // Grid 1 §6.1).
-                matches!(
-                    cascade.computed[parent].display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
-                        | DisplayValue::InlineGrid
-                )
+                cascade.computed[parent].display.is_flex_or_grid_container()
             },
         ))
 }
@@ -1192,21 +1177,13 @@ pub(crate) fn pagination_child_order(
     parent_id: usize,
 ) -> Vec<usize> {
     let computed = &cascade.computed[parent_id];
-    if matches!(
-        computed.display,
-        DisplayValue::Flex | DisplayValue::InlineFlex
-    ) {
+    if computed.display.is_flex_container() {
         return flex_pagination_child_order(document, cascade, parent_id);
     }
-    let is_single_column_grid = matches!(
-        computed.display,
-        DisplayValue::Grid | DisplayValue::InlineGrid
-    ) && document.nodes[parent_id].grid_column_count == 1;
+    let is_single_column_grid =
+        computed.display.is_grid_container() && document.nodes[parent_id].grid_column_count == 1;
     if !is_single_column_grid {
-        if matches!(
-            computed.display,
-            DisplayValue::Grid | DisplayValue::InlineGrid
-        ) {
+        if computed.display.is_grid_container() {
             // Multi-column pagination is not implemented, but named-page
             // propagation and candidate traversal must retain Grid's
             // order-modified child sequence.
@@ -1254,29 +1231,17 @@ pub(crate) fn page_applies_to_box(
 ) -> bool {
     let blockified =
         box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent| {
-            cascade.computed.get(parent).is_some_and(|parent| {
-                matches!(
-                    parent.display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
-                        | DisplayValue::InlineGrid
-                )
-            })
+            cascade
+                .computed
+                .get(parent)
+                .is_some_and(|parent| parent.display.is_flex_or_grid_container())
         });
     blockified
         || matches!(
             cascade.computed[node_id].position,
             PositionValue::Absolute | PositionValue::Fixed
         )
-        || !matches!(
-            cascade.computed[node_id].display,
-            DisplayValue::Inline
-                | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        )
+        || !cascade.computed[node_id].display.is_inline_level()
 }
 
 /// Whether `node_id` is an absolutely positioned box whose block-start and
@@ -1316,13 +1281,7 @@ pub(crate) fn is_monolithic_for_pagination(
         });
     replaced
         || (!page_applies_to_box(document, cascade, node_id)
-            && matches!(
-                cascade.computed[node_id].display,
-                DisplayValue::InlineBlock
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::InlineGrid
-                    | DisplayValue::InlineTable
-            ))
+            && cascade.computed[node_id].display.is_atomic_inline_level())
         || establishes_orthogonal_flow(document, cascade, node_id)
 }
 

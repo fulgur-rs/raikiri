@@ -188,15 +188,10 @@ fn is_non_atomic_inline(document: &Document, cascade: &CascadeResult, node_id: u
             .tag_name()
             .is_some_and(|tag| REPLACED_BOX_TAGS.contains(&tag))
         && !box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent| {
-            cascade.computed.get(parent).is_some_and(|cv| {
-                matches!(
-                    cv.display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
-                        | DisplayValue::InlineGrid
-                )
-            })
+            cascade
+                .computed
+                .get(parent)
+                .is_some_and(|cv| cv.display.is_flex_or_grid_container())
         })
 }
 

@@ -3488,6 +3488,57 @@ pub enum DisplayValue {
     TableCaption,
 }
 
+/// Predicates on the stored display value. Callers remain responsible for
+/// box suppression, replaced elements, and flex/grid item blockification.
+impl DisplayValue {
+    /// Whether the box establishes a flex formatting context, regardless of
+    /// whether its outer display is block or inline.
+    pub const fn is_flex_container(self) -> bool {
+        matches!(self, Self::Flex | Self::InlineFlex)
+    }
+
+    /// Whether the box establishes a grid formatting context, regardless of
+    /// whether its outer display is block or inline.
+    pub const fn is_grid_container(self) -> bool {
+        matches!(self, Self::Grid | Self::InlineGrid)
+    }
+
+    /// Whether the box establishes either a flex or a grid formatting context.
+    pub const fn is_flex_or_grid_container(self) -> bool {
+        self.is_flex_container() || self.is_grid_container()
+    }
+
+    /// Whether the flex or grid container has block outer display.
+    pub const fn is_block_flex_or_grid_container(self) -> bool {
+        self.is_flex_or_grid_container() && !self.is_inline_level()
+    }
+
+    /// Whether the box has inline outer display, including inline tables.
+    /// `contents` generates no box and is therefore excluded.
+    pub const fn is_inline_level(self) -> bool {
+        matches!(
+            self,
+            Self::Inline
+                | Self::InlineBlock
+                | Self::InlineFlex
+                | Self::InlineGrid
+                | Self::InlineTable
+        )
+    }
+
+    /// Whether the box participates in its parent's inline formatting context
+    /// as one atomic box, including inline tables.
+    pub const fn is_atomic_inline_level(self) -> bool {
+        self.is_inline_level() && !matches!(self, Self::Inline)
+    }
+
+    /// Whether the inline-level box uses flow or flow-root layout, rather
+    /// than flex, grid, or table layout.
+    pub const fn is_inline_flow_box(self) -> bool {
+        matches!(self, Self::Inline | Self::InlineBlock)
+    }
+}
+
 css_keywords!(DisplayValue {
     Block => "block",
     Inline => "inline",

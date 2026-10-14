@@ -460,19 +460,16 @@ pub fn defers_to_positioned_layer(
                             // the children of flex and grid containers join the
                             // layer the same way.
                             is_block_container(parent.display)
-                                || matches!(
-                                    parent.display,
-                                    DisplayValue::Flex
-                                        | DisplayValue::InlineFlex
-                                        | DisplayValue::Grid
-                                        | DisplayValue::InlineGrid
-                                        | DisplayValue::Table
-                                        | DisplayValue::InlineTable
-                                        | DisplayValue::TableRowGroup
-                                        | DisplayValue::TableHeaderGroup
-                                        | DisplayValue::TableFooterGroup
-                                        | DisplayValue::TableRow
-                                )
+                                || (parent.display.is_flex_or_grid_container()
+                                    || matches!(
+                                        parent.display,
+                                        DisplayValue::Table
+                                            | DisplayValue::InlineTable
+                                            | DisplayValue::TableRowGroup
+                                            | DisplayValue::TableHeaderGroup
+                                            | DisplayValue::TableFooterGroup
+                                            | DisplayValue::TableRow
+                                    ))
                         })
                 },
             )
@@ -520,15 +517,7 @@ fn is_z_indexed_item(
     matches!(cv.z_index, ZIndexValue::Integer(_))
         && box_parent(document, cascade, node_id, BoxParentScope::Document)
             .and_then(|parent| cascade.computed.get(parent))
-            .is_some_and(|parent| {
-                matches!(
-                    parent.display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
-                        | DisplayValue::InlineGrid
-                )
-            })
+            .is_some_and(|parent| parent.display.is_flex_or_grid_container())
 }
 
 /// Whether box `id`, laid out in paragraph `root`, is an in-flow block
@@ -718,13 +707,7 @@ pub(crate) fn paint_child_key(
     parent_display: DisplayValue,
     cascade: &CascadeResult,
 ) -> PaintChildKey {
-    let order_sensitive_container = matches!(
-        parent_display,
-        DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-    );
+    let order_sensitive_container = parent_display.is_flex_or_grid_container();
     // Direct abspos/fixed children are not flex/grid items: paint them as if
     // their order were zero, while in-flow (including relative) items use the
     // computed `order` value. Stacking buckets stay primary.
@@ -797,14 +780,7 @@ fn computed_paint_order_key(computed: &ComputedValues) -> (u8, i32) {
         // z-index. Keep ordinary static boxes in the normal bucket, but
         // place flex containers with positioned descendants alongside
         // auto-z siblings so their later absolute child paints in tree order.
-        (PositionValue::Static, _)
-            if matches!(
-                computed.display,
-                DisplayValue::Flex | DisplayValue::InlineFlex
-            ) =>
-        {
-            (2, 0)
-        }
+        (PositionValue::Static, _) if computed.display.is_flex_container() => (2, 0),
         (PositionValue::Static, _) => (1, 0),
         (_, ZIndexValue::Auto) => (2, 0),
         (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
