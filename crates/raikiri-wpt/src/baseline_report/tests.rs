@@ -586,10 +586,7 @@ fn a_relative_wpt_root_still_runs_dynamic_reftests() {
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn a_reftest_that_only_passes_without_local_images_still_reports_pass() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-    let row = run_id(
-        &root,
-        "css/css-backgrounds/border-image-repeat-round-1.html",
-    );
+    let row = run_id(&root, "css/css-page/page-background-001-print.html");
     assert_eq!(row.status, Status::Pass, "{}", row.detail);
 }
 
@@ -652,10 +649,7 @@ fn combine_keeps_the_note_only_when_the_deciding_pass_needed_the_fallback() {
 #[ignore = "requires the sparse WPT checkout from scripts/wpt/fetch.sh"]
 fn a_reftest_that_only_passes_without_local_images_carries_the_note() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/wpt");
-    let row = run_id(
-        &root,
-        "css/css-backgrounds/border-image-repeat-round-1.html",
-    );
+    let row = run_id(&root, "css/css-page/page-background-001-print.html");
     assert_eq!(row.status, Status::Pass, "{}", row.detail);
     assert_eq!(row.detail, FALLBACK_NOTE);
 }
