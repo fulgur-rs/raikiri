@@ -4686,6 +4686,8 @@ pub fn layout_pages_with_page_geometry_and_control(
             while let Some(id) = current {
                 if document.nodes[id].is_ifc_root() && !entered_ifc_roots.insert(id) {
                     first = false;
+                    // Higher IFC roots were registered when this root was first entered.
+                    break;
                 }
                 current = parent_of.get(id).copied().flatten();
             }
