@@ -391,6 +391,27 @@ impl ComputedLengthPercentageOrCalc {
             Self::Calc(calc) => (calc.px + basis * calc.percent / 100.0).max(0.0),
         }
     }
+
+    /// The used value in px against the percentage `basis`, without the
+    /// clamp of [`Self::resolve`], for a value that may be negative such as
+    /// a `translate()` argument. It is computed in double precision, as the
+    /// painter composes transforms.
+    pub fn resolve_signed(self, basis: f64) -> f64 {
+        match self {
+            Self::Px(px) => f64::from(px),
+            Self::Percent(percent) => basis * f64::from(percent) / 100.0,
+            Self::Calc(calc) => f64::from(calc.px) + basis * f64::from(calc.percent) / 100.0,
+        }
+    }
+
+    /// Whether the value depends on its percentage basis.
+    pub fn has_percent(self) -> bool {
+        match self {
+            Self::Px(_) => false,
+            Self::Percent(_) => true,
+            Self::Calc(calc) => calc.percent != 0.0,
+        }
+    }
 }
 
 impl From<ComputedLengthPercentage> for ComputedLengthPercentageOrCalc {
@@ -528,6 +549,9 @@ pub enum ComputedCssPositionOffset {
     Start(ComputedLengthPercentage),
     /// Offset from the end edge (`right`/`bottom`).
     End(ComputedLengthPercentage),
+    /// A percentage with an absolute-length offset, measured from the start
+    /// edge (see [`crate::property::CssPositionOffset::Calc`]).
+    Calc(CalcLengthPercentage),
 }
 
 /// Computed `<position>` (counterpart of [`crate::property::CssPosition`]).
@@ -640,6 +664,9 @@ pub enum ComputedGridTrackBreadth {
     MaxContent,
     /// `auto`.
     Auto,
+    /// A percentage with an absolute-length offset, resolved against the
+    /// grid container's content box at used-value time.
+    Calc(CalcLengthPercentage),
 }
 
 /// Computed `<track-size>` (CSS Grid Layout Module Level 1 §7.2.1).
@@ -1135,25 +1162,25 @@ pub fn lift_text_shadow_item(computed: ComputedTextShadow) -> TextShadowItem {
     }
 }
 
-/// Computed `border-radius`. Absolutize lengths to px and retain percentages
-/// until used-value layout.
+/// Computed `border-radius`. Absolutize lengths to px and retain percentages,
+/// and the percentage of a mixed-unit `calc()`, until used-value layout.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ComputedBorderRadius {
     /// Top-left corner radius.
-    pub top_left: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub top_left: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
     /// Top-right corner radius.
-    pub top_right: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub top_right: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
     /// Bottom-right corner radius.
-    pub bottom_right: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub bottom_right: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
     /// Bottom-left corner radius.
-    pub bottom_left: crate::property::CornerRadius<ComputedLengthPercentage>,
+    pub bottom_left: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
 }
 
 impl ComputedBorderRadius {
     /// Fill all corners with the same computed length.
     pub fn all(value: ComputedLength) -> Self {
-        let value = ComputedLengthPercentage::Px(value.0);
+        let value = ComputedLengthPercentageOrCalc::Px(value.0);
         Self {
             top_left: value.into(),
             top_right: value.into(),
@@ -1163,36 +1190,35 @@ impl ComputedBorderRadius {
     }
 
     /// Build a radius from the four physical corner values.
-    pub const fn corners(
-        top_left: ComputedLengthPercentage,
-        top_right: ComputedLengthPercentage,
-        bottom_right: ComputedLengthPercentage,
-        bottom_left: ComputedLengthPercentage,
+    pub fn corners<T: Into<ComputedLengthPercentageOrCalc>>(
+        top_left: T,
+        top_right: T,
+        bottom_right: T,
+        bottom_left: T,
     ) -> Self {
-        Self {
-            top_left: crate::property::CornerRadius::circular(top_left),
-            top_right: crate::property::CornerRadius::circular(top_right),
-            bottom_right: crate::property::CornerRadius::circular(bottom_right),
-            bottom_left: crate::property::CornerRadius::circular(bottom_left),
-        }
+        let values = [top_left, top_right, bottom_right, bottom_left].map(Into::into);
+        Self::elliptical(values, values)
     }
 
     /// Build four corners from independent horizontal and vertical axes.
-    pub const fn elliptical(
-        horizontal: [ComputedLengthPercentage; 4],
-        vertical: [ComputedLengthPercentage; 4],
+    pub fn elliptical<T: Into<ComputedLengthPercentageOrCalc>>(
+        horizontal: [T; 4],
+        vertical: [T; 4],
     ) -> Self {
+        let [h0, h1, h2, h3] = horizontal.map(Into::into);
+        let [v0, v1, v2, v3] = vertical.map(Into::into);
         Self {
-            top_left: crate::property::CornerRadius::new(horizontal[0], vertical[0]),
-            top_right: crate::property::CornerRadius::new(horizontal[1], vertical[1]),
-            bottom_right: crate::property::CornerRadius::new(horizontal[2], vertical[2]),
-            bottom_left: crate::property::CornerRadius::new(horizontal[3], vertical[3]),
+            top_left: crate::property::CornerRadius::new(h0, v0),
+            top_right: crate::property::CornerRadius::new(h1, v1),
+            bottom_right: crate::property::CornerRadius::new(h2, v2),
+            bottom_left: crate::property::CornerRadius::new(h3, v3),
         }
     }
 
     /// Resolve clockwise corner pairs against the border-box width and height.
     ///
-    /// Percentages use their corresponding axis. CSS Backgrounds 3 §4.5
+    /// Percentages, including the percentage of a `calc()`, use their
+    /// corresponding axis. CSS Backgrounds 3 §4.5
     /// scales every radius by the same factor when adjacent corners exceed
     /// an edge. A zero on either axis makes that corner square. Negative or
     /// non-finite dimensions and radii are treated as zero.
@@ -1206,10 +1232,15 @@ impl ComputedBorderRadius {
         };
         let width = finite_non_negative(width as f64);
         let height = finite_non_negative(height as f64);
-        let axis = |value: ComputedLengthPercentage, reference: f64| {
+        let axis = |value: ComputedLengthPercentageOrCalc, reference: f64| {
             finite_non_negative(match value {
-                ComputedLengthPercentage::Px(px) => px as f64,
-                ComputedLengthPercentage::Percent(percent) => reference * percent as f64 / 100.0,
+                ComputedLengthPercentageOrCalc::Px(px) => px as f64,
+                ComputedLengthPercentageOrCalc::Percent(percent) => {
+                    reference * percent as f64 / 100.0
+                }
+                ComputedLengthPercentageOrCalc::Calc(calc) => {
+                    calc.px as f64 + reference * calc.percent as f64 / 100.0
+                }
             })
         };
         let radii = [
@@ -1306,12 +1337,16 @@ impl ComputedOutline {
 pub enum ComputedTransformFunction {
     /// `matrix(<number>{6})` — all six coefficients remain `<number>`.
     Matrix([f32; 6]),
-    /// `translate(<length-percentage>, <length-percentage>)` — absolutize each axis.
-    Translate(ComputedLengthPercentage, ComputedLengthPercentage),
+    /// `translate(<length-percentage>, <length-percentage>)` — absolutize each
+    /// axis, keeping the percentage of a mixed `calc()`.
+    Translate(
+        ComputedLengthPercentageOrCalc,
+        ComputedLengthPercentageOrCalc,
+    ),
     /// `translateX(<length-percentage>)` — absolutized.
-    TranslateX(ComputedLengthPercentage),
+    TranslateX(ComputedLengthPercentageOrCalc),
     /// `translateY(<length-percentage>)` — absolutized.
-    TranslateY(ComputedLengthPercentage),
+    TranslateY(ComputedLengthPercentageOrCalc),
     /// `scale(<number>, <number>)` — retain `<number>`.
     Scale(f32, f32),
     /// `scaleX(<number>)`.
@@ -1326,6 +1361,29 @@ pub enum ComputedTransformFunction {
     SkewX(Angle),
     /// `skewY(<angle>)`.
     SkewY(Angle),
+}
+
+impl ComputedTransformFunction {
+    /// The offset a `translate()`, `translateX()` or `translateY()` moves a
+    /// `width` by `height` box by, with percentages resolved against that
+    /// box (CSS Transforms 1 §6), or `None` for any other function.
+    pub fn translation(self, width: f64, height: f64) -> Option<(f64, f64)> {
+        match self {
+            Self::Translate(x, y) => Some((x.resolve_signed(width), y.resolve_signed(height))),
+            Self::TranslateX(x) => Some((x.resolve_signed(width), 0.0)),
+            Self::TranslateY(y) => Some((0.0, y.resolve_signed(height))),
+            _ => None,
+        }
+    }
+
+    /// Whether the function translates by a percentage of the box.
+    pub fn translates_by_percent(self) -> bool {
+        match self {
+            Self::Translate(x, y) => x.has_percent() || y.has_percent(),
+            Self::TranslateX(v) | Self::TranslateY(v) => v.has_percent(),
+            _ => false,
+        }
+    }
 }
 
 /// Shared computed-layer Arc for an empty `transform` list (`none`). The empty list
@@ -1347,14 +1405,14 @@ pub fn resolve_transform_function(
     match specified {
         TransformFunction::Matrix(m) => ComputedTransformFunction::Matrix(m),
         TransformFunction::Translate(tx, ty) => ComputedTransformFunction::Translate(
-            resolve_length_percentage(tx, font_size, own_line_height, ctx),
-            resolve_length_percentage(ty, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(tx, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(ty, font_size, own_line_height, ctx),
         ),
         TransformFunction::TranslateX(v) => ComputedTransformFunction::TranslateX(
-            resolve_length_percentage(v, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(v, font_size, own_line_height, ctx),
         ),
         TransformFunction::TranslateY(v) => ComputedTransformFunction::TranslateY(
-            resolve_length_percentage(v, font_size, own_line_height, ctx),
+            resolve_length_percentage_or_calc(v, font_size, own_line_height, ctx),
         ),
         TransformFunction::Scale(x, y) => ComputedTransformFunction::Scale(x, y),
         TransformFunction::ScaleX(v) => ComputedTransformFunction::ScaleX(v),
@@ -1379,11 +1437,8 @@ pub fn resolve_border_radius(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorderRadius {
-    let resolve_corner = |value: Length| match value {
-        Length::Percent(percent) => ComputedLengthPercentage::Percent(percent),
-        value => ComputedLengthPercentage::Px(
-            resolve_length(value, font_size, own_line_height, ctx).px(),
-        ),
+    let resolve_corner = |value: LengthPercentageOrCalc| {
+        resolve_non_negative_length_percentage_or_calc(value, font_size, own_line_height, ctx)
     };
     ComputedBorderRadius {
         top_left: specified.top_left.map(resolve_corner),
@@ -1490,9 +1545,10 @@ pub struct ResolveContext {
     pub root_font_size: ComputedLength,
     /// Root element's `lh` value: the `rlh` basis.
     ///
-    /// An **absolutized length in px** derived by [`used_line_height_length`]
-    /// from the root's computed line-height and font-size, or `None` when
-    /// `normal` cannot be resolved. `None` reflects the same lack of font
+    /// An **absolutized length in px** derived by
+    /// [`used_line_height_length_or`] from the root's computed line-height and
+    /// font-size, with `normal` measured by a [`NormalLineHeight`], or `None`
+    /// when `normal` was not measured. `None` reflects the same lack of font
     /// metrics in the style layer as [`ComputedLineHeight::Normal`] (also true
     /// of `cap`/`rcap`; see [`Length::Lh`]). Do not substitute zero or another
     /// fabricated ratio.
@@ -1616,9 +1672,10 @@ impl ResolveContext {
     /// `root_font_size` is the `font-size` initial value (16px), identical to
     /// [`crate::computed::ComputedValues::initial`]'s `font_size`.
     /// `root_line_height` is unresolved (`None`) too. Root line-height follows
-    /// the same no-parent rule and uses its initial value (`normal`); `rlh`
-    /// therefore cannot be resolved under this context (see below and
-    /// [`SpecifiedValues::finalize_as_root`]).
+    /// the same no-parent rule and uses its initial value (`normal`), which
+    /// only a font measurer can resolve;
+    /// [`crate::specified::SpecifiedValues::finalize_as_root_in_viewport_with`] sets it from
+    /// one (see below).
     ///
     /// The root element's own **`font-size: Nrem`** also uses this basis.
     /// CSS Values 4 §6.1.1 "Font-relative Lengths"
@@ -1734,8 +1791,10 @@ fn pc_to_px(v: f32) -> f32 {
 ///   style layer. This is the same limit that split out `cap` / `rcap` (see
 ///   [`crate::property::Length::Lh`]). The spec gives no font-size ratio as a
 ///   fallback here; do not invent one like those for `ex`/`ch`/`ic`.
-///   The caller selects a fallback for the consuming property (see
-///   [`resolve_length_percentage`] and related documentation).
+///   A caller with a [`NormalLineHeight`] measure passes it to
+///   [`used_line_height_length_or`] instead; without one, it selects a
+///   fallback for the consuming property (see [`resolve_length_percentage`]
+///   and related documentation).
 ///
 /// `normal` is the **initial value** for `line-height`. Returning `None` is
 /// therefore common for elements using `lh`/`rlh`, not an edge case.
@@ -1772,6 +1831,65 @@ pub fn used_line_height_length(
     }
 }
 
+/// [`used_line_height_length`] with the used length of `normal` supplied by
+/// the caller.
+///
+/// `normal` is the absolute length that `line-height: normal` takes for this
+/// element's first available font, as a [`NormalLineHeight`] measured it, or
+/// `None` without one; the other values ignore it.
+pub fn used_line_height_length_or(
+    line_height: ComputedLineHeight,
+    font_size: ComputedLength,
+    normal: Option<ComputedLength>,
+) -> Option<ComputedLength> {
+    match line_height {
+        ComputedLineHeight::Normal => normal,
+        _ => used_line_height_length(line_height, font_size),
+    }
+}
+
+/// Measures the used length of `line-height: normal` for the `lh` and `rlh`
+/// units.
+///
+/// CSS Values 4 §6.1.1 [`lh`](https://www.w3.org/TR/css-values-4/#lh)
+/// converts `normal` "to an absolute length by using only the metrics of the
+/// first available font". The style layer has no fonts, so a consumer that
+/// has them passes an implementation through
+/// [`crate::CascadeOptions::normal_line_height`], or the document provides
+/// one through [`crate::StyleDom::normal_line_height`]. Without either,
+/// `normal` stays unresolved and each property applies the fallback its resolver
+/// documents.
+pub trait NormalLineHeight: Send + Sync {
+    /// The used `normal` line height in CSS px of the first available font
+    /// that `font` selects, or `None` when no font can be measured.
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<ComputedLength>;
+}
+
+/// A shared [`NormalLineHeight`] for [`crate::CascadeOptions`].
+///
+/// Two sources compare equal when they share the same measurer.
+#[derive(Clone)]
+pub struct NormalLineHeightSource(pub std::sync::Arc<dyn NormalLineHeight>);
+
+impl NormalLineHeightSource {
+    /// Wrap `measurer`.
+    pub fn new(measurer: impl NormalLineHeight + 'static) -> Self {
+        Self(std::sync::Arc::new(measurer))
+    }
+}
+
+impl std::fmt::Debug for NormalLineHeightSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NormalLineHeightSource(..)")
+    }
+}
+
+impl PartialEq for NormalLineHeightSource {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
 /// Common helper that multiplies an authored `lh` / `rlh` factor by the basis
 /// returned from [`used_line_height_length`]. Pass through `None` when the
 /// basis is unresolved (`normal`). Each `resolve_*` function then chooses a
@@ -1790,7 +1908,8 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// to resolve [`Length::Lh`] (see the `Nlh` row below). The caller first
 /// converts it to an absolute length via
 /// [`used_line_height_length`]`(parent.line_height, parent.font_size)`.
-/// Pass `None` if `normal` cannot be resolved or there is no parent (root).
+/// For a parentless root, pass the initial font's measured `normal` line
+/// height. Pass `None` if `normal` cannot be resolved.
 /// Its name matches the corresponding argument of [`resolve_line_height`]:
 /// both are parent bases for self-referential `lh`. The caller's local may
 /// still be named `parent_line_height_basis`: caller and callee names need not
@@ -1838,13 +1957,13 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// - `rlh` refers to "the lh unit on the root element", a tree-global value
 ///   independent of where it is declared. It is self-referential only when
 ///   declared on the root. [`crate::specified::SpecifiedValues::finalize_as_root`]
-///   handles that case by passing [`ResolveContext::initial`] as `ctx`, so
-///   `ctx.root_line_height` is `None`. On a **non-root** element,
+///   handles that case by setting `ctx.root_line_height` to the initial
+///   font's measured `normal` line height, or `None`. On a **non-root** element,
 ///   `font-size: 1rlh` refers to the separately resolved root node and is not
 ///   self-referential. Like `rlh` on box properties (see [`resolve_length`]),
 ///   it reads `ctx.root_line_height`, not `self_reference_basis`.
 ///
-/// If the basis is `None` (unresolvable `normal`, or no parent for the root),
+/// If the basis is `None` (unresolvable `normal`),
 /// fall back to **the `font-size` initial value itself** (`medium` =
 /// [`INITIAL_FONT_SIZE_PX`]; CSS Fonts 4 `font-size` propdef: "Initial: medium").
 /// This matches [`resolve_line_height`], whose unresolvable `Length::Lh` falls
@@ -1886,8 +2005,9 @@ fn resolve_lh_multiplier(v: f32, basis: Option<ComputedLength>) -> Option<Comput
 /// the entire tree would make `html { font-size: 2rem }` (likewise `2rex` /
 /// `2rch` / `2ric`) self-referential. Under the parent-metrics clause of CSS
 /// Values 4 §6.1.1, a parentless root instead uses initial values.
-/// **Also pass `None` for `self_reference_basis`**: the parentless root's basis
-/// is the initial `line-height: normal`, which cannot be resolved.
+/// **Also pass the initial font's measured `normal` line height (or `None`)
+/// for `self_reference_basis`**: the parentless root's basis is the initial
+/// `line-height: normal`.
 ///
 /// In the cascade pipeline, [`SpecifiedValues::finalize_as_root`] honors this
 /// contract. Three end-to-end checks in [`mod@crate::cascade`] are
@@ -1965,6 +2085,25 @@ pub fn resolve_font_size(
             ComputedLength(ctx.viewport_length(specified).unwrap_or(0.0))
         }
     }
+}
+
+/// Absolutize a mixed-unit `font-size: calc()` against the parent's computed
+/// font size, as [`resolve_font_size`] does a plain length: `%`, `em` and
+/// the other font-relative terms take the parent's font, and `lh` the
+/// parent's line height. The sum is clamped to the `[0,∞]` range (CSS Values
+/// 4 "Range Checking", <https://www.w3.org/TR/css-values-4/#calc-range>).
+pub fn resolve_font_size_calc(
+    calc: RelativeCalcLengthPercentage,
+    parent_font_size: ComputedLength,
+    self_reference_basis: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    // An `lh` term without a basis, or a sum that overflows, falls back to
+    // the initial font size, as a plain unresolvable `lh` does.
+    ComputedLength(
+        resolve_relative_calc_against_basis(calc, parent_font_size, self_reference_basis, ctx)
+            .unwrap_or(INITIAL_FONT_SIZE_PX),
+    )
 }
 
 /// Absolutize a specified value for a property that accepts only `<length>`
@@ -2672,14 +2811,54 @@ fn resolve_relative_calc(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> Option<ComputedLengthPercentageOrAuto> {
+    resolve_relative_calc_with(
+        value,
+        font_size,
+        own_line_height,
+        ctx,
+        |coefficient, basis| resolve_lh_multiplier(coefficient, basis).map(ComputedLength::px),
+    )
+}
+
+/// Resolve a relative `calc()` whose percentage refers to `basis` (also the
+/// `em` basis) down to one length clamped to `[0,∞]`, for properties that
+/// accept no negative values and compute to an absolute length.
+///
+/// `None` when an `lh` term has no basis, or when the sum is not finite
+/// (an overflowing percentage term included).
+fn resolve_relative_calc_against_basis(
+    calc: RelativeCalcLengthPercentage,
+    basis: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Option<f32> {
+    let px = match resolve_relative_calc(calc, basis, own_line_height, ctx)? {
+        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis.0 * (percent / 100.0),
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis.0 * (calc.percent / 100.0),
+        _ => return None, // cov:ignore: a relative calc resolves only to Px, Percent or Calc
+    };
+    px.is_finite().then_some(px.max(0.0))
+}
+
+/// [`resolve_relative_calc`] with `lh_term` resolving each `lh` / `rlh`
+/// coefficient against its basis; `None` from it makes the whole result
+/// `None`.
+fn resolve_relative_calc_with(
+    value: RelativeCalcLengthPercentage,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+    lh_term: impl Fn(f32, Option<ComputedLength>) -> Option<f32>,
+) -> Option<ComputedLengthPercentageOrAuto> {
     let viewport = |length: Length| ctx.viewport_length(length).unwrap_or(0.0);
     let mut px = value.px;
     for (unit, coefficient) in value.relative_terms() {
         px += match unit {
             RelativeCalcUnit::Em => coefficient * font_size.0,
             RelativeCalcUnit::Rem => coefficient * ctx.root_font_size.0,
-            RelativeCalcUnit::Lh => resolve_lh_multiplier(coefficient, own_line_height)?.px(),
-            RelativeCalcUnit::Rlh => resolve_lh_multiplier(coefficient, ctx.root_line_height)?.px(),
+            RelativeCalcUnit::Lh => lh_term(coefficient, own_line_height)?,
+            RelativeCalcUnit::Rlh => lh_term(coefficient, ctx.root_line_height)?,
             RelativeCalcUnit::Vw => viewport(Length::Vw(coefficient)),
             RelativeCalcUnit::Vh => viewport(Length::Vh(coefficient)),
             RelativeCalcUnit::Vi => viewport(Length::Vi(coefficient)),
@@ -2726,6 +2905,33 @@ fn resolve_css_position_offset(
             own_line_height,
             ctx,
         )),
+        CssPositionOffset::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
+        // An `lh` term without a basis falls back to zero, as for a plain
+        // `lh` offset. Only that term is dropped: an end-edge offset was
+        // folded to `100% - offset` at parse time, and its percentage keeps
+        // it on the end edge.
+        CssPositionOffset::RelativeCalc(calc) => match resolve_relative_calc_with(
+            calc,
+            font_size,
+            own_line_height,
+            ctx,
+            |coefficient, basis| {
+                Some(resolve_lh_multiplier(coefficient, basis).map_or(0.0, ComputedLength::px))
+            },
+        )
+        .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0))
+        {
+            ComputedLengthPercentageOrAuto::Px(px) => {
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(px))
+            }
+            ComputedLengthPercentageOrAuto::Percent(percent) => {
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(percent))
+            }
+            ComputedLengthPercentageOrAuto::Calc(calc) => ComputedCssPositionOffset::Calc(calc),
+            ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
+                ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)) // cov:ignore: a relative calc resolves only to Px, Percent or Calc
+            }
+        },
     }
 }
 
@@ -2789,10 +2995,26 @@ pub fn resolve_background_size(
     match specified {
         BackgroundSize::Cover => ComputedBackgroundSize::Cover,
         BackgroundSize::Contain => ComputedBackgroundSize::Contain,
-        BackgroundSize::Explicit { width, height } => ComputedBackgroundSize::Explicit {
-            width: resolve_length_percentage_or_auto(width, font_size, own_line_height, ctx),
-            height: resolve_length_percentage_or_auto(height, font_size, own_line_height, ctx),
-        },
+        BackgroundSize::Explicit { width, height } => {
+            // Each axis is `<length-percentage [0,∞]>`, so a `calc()` is
+            // clamped like a sizing property. A font-relative calc() whose
+            // length terms cancel leaves a bare percentage, clamped as well.
+            let axis = |value| match resolve_size_length_percentage_or_auto(
+                value,
+                font_size,
+                own_line_height,
+                ctx,
+            ) {
+                ComputedLengthPercentageOrAuto::Percent(percent) => {
+                    ComputedLengthPercentageOrAuto::Percent(percent.max(0.0))
+                }
+                computed => computed,
+            };
+            ComputedBackgroundSize::Explicit {
+                width: axis(width),
+                height: axis(height),
+            }
+        }
     }
 }
 
@@ -2848,18 +3070,6 @@ pub fn resolve_gradient(
     }
 }
 
-fn absolutized_length(
-    specified: Length,
-    font_size: ComputedLength,
-    own_line_height: Option<ComputedLength>,
-    ctx: &ResolveContext,
-) -> Length {
-    match resolve_length_percentage(specified, font_size, own_line_height, ctx) {
-        ComputedLengthPercentage::Px(v) => Length::Px(v),
-        ComputedLengthPercentage::Percent(p) => Length::Percent(p),
-    }
-}
-
 fn absolutized_css_position(
     specified: CssPosition,
     font_size: ComputedLength,
@@ -2877,6 +3087,7 @@ fn absolutized_css_position(
         match c {
             ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
             ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+            ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
         }
     }
     CssPosition {
@@ -2896,9 +3107,14 @@ fn resolve_gradient_color_stops(
             .iter()
             .map(|stop| GradientColorStop {
                 color: stop.color,
-                position: stop
-                    .position
-                    .map(|l| absolutized_length(l, font_size, own_line_height, ctx)),
+                position: stop.position.map(|l| {
+                    lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
+                        l,
+                        font_size,
+                        own_line_height,
+                        ctx,
+                    ))
+                }),
             })
             .collect(),
     )
@@ -2910,15 +3126,18 @@ fn resolve_radial_size(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> RadialSize {
+    let radius = |l| {
+        lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
+            l,
+            font_size,
+            own_line_height,
+            ctx,
+        ))
+    };
     match specified {
         RadialSize::Extent(e) => RadialSize::Extent(e),
-        RadialSize::Circle(l) => {
-            RadialSize::Circle(absolutized_length(l, font_size, own_line_height, ctx))
-        }
-        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(
-            absolutized_length(a, font_size, own_line_height, ctx),
-            absolutized_length(b, font_size, own_line_height, ctx),
-        ),
+        RadialSize::Circle(l) => RadialSize::Circle(radius(l)),
+        RadialSize::Ellipse(a, b) => RadialSize::Ellipse(radius(a), radius(b)),
     }
 }
 
@@ -3040,12 +3259,31 @@ pub fn resolve_grid_track_breadth(
         GridTrackBreadth::MinContent => ComputedGridTrackBreadth::MinContent,
         GridTrackBreadth::MaxContent => ComputedGridTrackBreadth::MaxContent,
         GridTrackBreadth::Flex(f) => ComputedGridTrackBreadth::Flex(f),
+        GridTrackBreadth::Calc(calc) => {
+            resolve_grid_breadth_calc(calc, font_size, own_line_height, ctx)
+        }
         GridTrackBreadth::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedGridTrackBreadth::Px(v),
                 ComputedLengthPercentage::Percent(p) => ComputedGridTrackBreadth::Percent(p),
             }
         }
+    }
+}
+
+/// Absolutize the mixed `calc()` arm of a `<track-breadth>` or
+/// `<inflexible-breadth>`; a negative result is clamped as for the other
+/// `<length-percentage [0,∞]>` values.
+fn resolve_grid_breadth_calc(
+    calc: LengthPercentageOrCalc,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedGridTrackBreadth {
+    match resolve_non_negative_length_percentage_or_calc(calc, font_size, own_line_height, ctx) {
+        ComputedLengthPercentageOrCalc::Px(v) => ComputedGridTrackBreadth::Px(v),
+        ComputedLengthPercentageOrCalc::Percent(p) => ComputedGridTrackBreadth::Percent(p),
+        ComputedLengthPercentageOrCalc::Calc(c) => ComputedGridTrackBreadth::Calc(c),
     }
 }
 
@@ -3064,6 +3302,9 @@ pub fn resolve_grid_inflexible_breadth(
         GridInflexibleBreadth::Auto => ComputedGridTrackBreadth::Auto,
         GridInflexibleBreadth::MinContent => ComputedGridTrackBreadth::MinContent,
         GridInflexibleBreadth::MaxContent => ComputedGridTrackBreadth::MaxContent,
+        GridInflexibleBreadth::Calc(calc) => {
+            resolve_grid_breadth_calc(calc, font_size, own_line_height, ctx)
+        }
         GridInflexibleBreadth::Length(len) => {
             match resolve_length_percentage(len, font_size, own_line_height, ctx) {
                 ComputedLengthPercentage::Px(v) => ComputedGridTrackBreadth::Px(v),
@@ -3226,23 +3467,57 @@ pub fn resolve_non_negative_length_percentage_or_calc(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedLengthPercentageOrCalc {
-    let calc = match specified {
+    match resolve_length_percentage_or_calc(specified, font_size, own_line_height, ctx) {
+        ComputedLengthPercentageOrCalc::Px(px) => ComputedLengthPercentageOrCalc::Px(px.max(0.0)),
+        ComputedLengthPercentageOrCalc::Percent(percent) => {
+            ComputedLengthPercentageOrCalc::Percent(percent.max(0.0))
+        }
+        calc @ ComputedLengthPercentageOrCalc::Calc(_) => calc,
+    }
+}
+
+/// Absolutize a `<length-percentage>` that may be a mixed `calc()` and has no
+/// range restriction, such as a `translate()` argument.
+///
+/// A plain length or percentage resolves as in [`resolve_length_percentage`].
+/// A `calc()` keeps its percentage for used-value time, and one whose
+/// percentage is zero folds to a length.
+pub fn resolve_length_percentage_or_calc(
+    specified: LengthPercentageOrCalc,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> ComputedLengthPercentageOrCalc {
+    let resolved = match specified {
         LengthPercentageOrCalc::Length(length) => {
             return resolve_length_percentage(length, font_size, own_line_height, ctx).into();
         }
-        LengthPercentageOrCalc::Calc(calc) => LengthOrAuto::Calc(calc),
-        LengthPercentageOrCalc::RelativeCalc(calc) => LengthOrAuto::RelativeCalc(calc),
+        LengthPercentageOrCalc::Calc(calc) => ComputedLengthPercentageOrAuto::Calc(calc),
+        // An `lh` term without a basis falls back to zero, as a plain `lh`
+        // does; the other terms keep their values. A sum that overflows
+        // falls back to zero, the initial value of the properties that use
+        // this resolver.
+        LengthPercentageOrCalc::RelativeCalc(calc) => resolve_relative_calc_with(
+            calc,
+            font_size,
+            own_line_height,
+            ctx,
+            |coefficient, basis| {
+                Some(resolve_lh_multiplier(coefficient, basis).map_or(0.0, ComputedLength::px))
+            },
+        )
+        .unwrap_or(ComputedLengthPercentageOrAuto::Px(0.0)),
     };
-    // An `lh` term without a basis falls back to zero, the initial value.
-    match resolve_length_percentage_or_auto(calc, font_size, own_line_height, ctx) {
-        ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px.max(0.0)),
+    match resolved {
         ComputedLengthPercentageOrAuto::Percent(percent) => {
-            ComputedLengthPercentageOrCalc::Percent(percent.max(0.0))
+            ComputedLengthPercentageOrCalc::Percent(percent)
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent == 0.0 => {
-            ComputedLengthPercentageOrCalc::Px(calc.px.max(0.0))
+        ComputedLengthPercentageOrAuto::Calc(calc) if calc.percent != 0.0 => {
+            ComputedLengthPercentageOrCalc::Calc(calc)
         }
-        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Calc(calc),
+        ComputedLengthPercentageOrAuto::Calc(calc) => ComputedLengthPercentageOrCalc::Px(calc.px),
+        ComputedLengthPercentageOrAuto::Px(px) => ComputedLengthPercentageOrCalc::Px(px),
+        // cov:ignore: a calc resolves to a length, a percentage or a sum
         ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
             ComputedLengthPercentageOrCalc::Px(0.0)
         }
@@ -3320,8 +3595,8 @@ pub fn resolve_margin_length_or_auto(
 ///
 /// The caller has already absolutized the **parent's** line-height with
 /// [`used_line_height_length`] and passed it as `self_reference_basis`. For a
-/// parentless root, pass `None`: the initial `line-height: normal` cannot be
-/// resolved (see [`ResolveContext::initial`]). If the basis is `None`, return
+/// parentless root, pass the initial font's measured `normal` line height, or
+/// `None` when it cannot be measured. If the basis is `None`, return
 /// line-height's own initial, **`normal`** ([`ComputedLineHeight::Normal`]).
 /// As with the 0px fallback in [`resolve_length_percentage`], treat an
 /// unresolvable declaration like an absent one, using line-height's own
@@ -3334,9 +3609,9 @@ pub fn resolve_margin_length_or_auto(
 /// is "Equal to the value of the lh unit **on the root element**", a tree-global
 /// constant independent of the declaring node. A cycle can arise only when
 /// the declaration is on the root itself. The root case is handled by
-/// [`crate::specified::SpecifiedValues::finalize_as_root`], which passes
-/// [`ResolveContext::initial`] as `ctx`, necessarily setting
-/// `ctx.root_line_height` to `None`. On a **non-root** node,
+/// [`crate::specified::SpecifiedValues::finalize_as_root`], whose `ctx`
+/// sets `root_line_height` to the initial font's measured `normal` line
+/// height (or `None`), the same basis as for `lh`. On a **non-root** node,
 /// `line-height: 1rlh` simply refers to the already resolved root node.
 /// Like `rlh` in a box property, use `ctx.root_line_height` directly;
 /// `self_reference_basis` is the **parent's** line-height and would contradict
@@ -3359,6 +3634,16 @@ pub fn resolve_line_height(
         LineHeight::Length(Length::Rlh(v)) => {
             match resolve_lh_multiplier(v, ctx.root_line_height) {
                 Some(c) => ComputedLineHeight::Length(c),
+                None => ComputedLineHeight::Normal,
+            }
+        }
+        // A percentage and an `em` are both relative to the element's own
+        // font size (CSS Inline 3 §5.1), and an `lh` term to the parent's
+        // line height. An `lh` term without that basis leaves the value
+        // unresolvable, as a plain `lh` is; a sum is clamped to `[0,∞]`.
+        LineHeight::Calc(calc) => {
+            match resolve_relative_calc_against_basis(calc, font_size, self_reference_basis, ctx) {
+                Some(px) => ComputedLineHeight::Length(ComputedLength(px)),
                 None => ComputedLineHeight::Normal,
             }
         }

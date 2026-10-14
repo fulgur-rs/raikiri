@@ -11,19 +11,17 @@ use raikiri_style::property::DisplayValue;
 use raikiri_traits::LayoutError;
 
 fn row_group(doc: &Document, table: usize, marker: usize) -> usize {
-    let mut ancestor = Some(doc.ifc_source_owner(marker));
-    while let Some(source) = ancestor.filter(|&source| source != table) {
-        if matches!(
-            doc.nodes[source].display,
-            DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-        ) {
-            return source;
-        }
-        ancestor = doc.parent_of(source);
-    }
-    table
+    doc.inclusive_ancestors(doc.ifc_source_owner(marker))
+        .take_while(|&source| source != table)
+        .find(|&source| {
+            matches!(
+                doc.nodes[source].display,
+                DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+            )
+        })
+        .unwrap_or(table)
 }
 
 pub(super) fn reserve_columns(

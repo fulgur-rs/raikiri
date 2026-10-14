@@ -3,7 +3,7 @@
 use super::*;
 use taffy::util::MaybeResolve;
 
-pub(super) fn is_spanner(tree: &Document, child: usize) -> bool {
+pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
     let node = &tree.nodes[child];
     node.column_span_all
         && node.is_in_document()

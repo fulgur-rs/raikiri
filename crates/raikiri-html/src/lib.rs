@@ -17,6 +17,7 @@ mod css_urls;
 mod document;
 mod document_layout;
 mod document_parse;
+mod fetch;
 mod font_collection;
 mod import;
 mod input;
@@ -44,8 +45,8 @@ pub use document_layout::{
     FontVariation, Fragment, FragmentKind, GeneratedBox, GeneratedImageId, GeneratedKind, Glyph,
     InlineSvg, LayoutOptions, LayoutStatus, LineBox, Link, MarginBox, MarginBoxBackgroundImage,
     MarginBoxBorder, MarginBoxRunning, MarginBoxText, OverflowClip, Page, PageGeometry, PageMode,
-    PaintEvent, PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RunSource,
-    RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
+    PaintEvent, PlacedRunningElement, PositionedGlyphRun, RasterImage, RepeatKind, RootBox,
+    RunSource, RunningElementLayout, Synthesis, Tag, TextLineId, TextShadow, layout,
 };
 pub use document_layout::{
     PageCountRunningElement, PageSink, StreamPage, StreamStatus, StreamSummary, StreamingLayout,
@@ -56,6 +57,10 @@ pub use font_collection::{
     RenderFonts,
 };
 pub use parse::{effective_document_base_url, parse, parse_fragment, parse_with_sink};
+#[doc(hidden)]
+// Lets a caller that runs its own pagination lay later pages of another
+// content width out again the way `layout` does.
+pub use render::continuation::{Continuation, ContinuationInputs, continue_at_page_widths};
 pub use resources::{
     DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES, DEFAULT_MAX_RESOURCE_BYTES, RenderResources,
     ResourceLimits, parse_html_with_resources,

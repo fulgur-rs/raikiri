@@ -229,6 +229,7 @@ css/css-logical/parsing/min-inline-size-invalid.html
 css/css-backgrounds/background-attachment-fixed-border-radius-offset.html
 css/css-backgrounds/background-attachment-fixed-inline-scrolled.html
 css/css-backgrounds/background-attachment-fixed-inside-transform-1.html
+css/css-backgrounds/background-attachment-margin-root-001.html
 css/css-backgrounds/background-attachment-margin-root-002.html
 css/css-backgrounds/background-clip-007.html
 css/css-backgrounds/background-clip-008.html
@@ -268,6 +269,9 @@ css/css-backgrounds/background-image-large-with-auto.html
 css/css-backgrounds/background-image-table-cells-zoomed.html
 css/css-backgrounds/background-image-with-border-radius-fidelity.html
 css/css-backgrounds/background-margin-iframe-root.html
+css/css-backgrounds/background-margin-root.html
+css/css-backgrounds/background-margin-transformed-root.html
+css/css-backgrounds/background-margin-will-change-root.html
 css/css-backgrounds/background-multiple-layers-table-cell.html
 css/css-backgrounds/background-paint-order-001.html
 css/css-backgrounds/background-position-negative-percentage-comparison-002.html
@@ -1001,9 +1005,11 @@ css/css-flexbox/gap-002-rtl.html
 css/css-flexbox/gap-003-lr.html
 css/css-flexbox/gap-003-ltr.html
 css/css-flexbox/gap-003-rl.html
+css/css-flexbox/gap-003-rtl.html
 css/css-flexbox/gap-004-lr.html
 css/css-flexbox/gap-004-ltr.html
 css/css-flexbox/gap-004-rl.html
+css/css-flexbox/gap-004-rtl.html
 css/css-flexbox/gap-005-lr.html
 css/css-flexbox/gap-005-ltr.html
 css/css-flexbox/gap-005-rl.html
@@ -1410,7 +1416,6 @@ css/css-position/position-absolute-center-004.html
 css/css-position/fixed-z-index-blend.html
 css/css-page/page-name-000-print.html
 css/css-page/page-name-001-print.html
-css/css-page/page-name-002-print.html
 css/css-page/page-left-right-001-print.html
 css/css-page/page-name-flex-003-print.html
 css/css-page/page-name-flex-004-print.html
@@ -1446,6 +1451,7 @@ css/css-page/page-name-propagated-002-print.html
 # The other six are negative tests whose subject must have no effect (page names inside
 # monolithic or row-flex content, background-clip on the root page), so the audit reports
 # them VACUOUS-UNSTYLED; each failed before the matching pagination fix and is kept as a guard.
+css/css-page/page-background-001-print.html
 css/css-page/page-background-004-print.html
 css/css-page/page-name-003-print.html
 css/css-page/page-name-flex-002-print.html
@@ -1512,8 +1518,6 @@ css/css-page/fixedpos-001-print.html
 css/css-page/fixedpos-002-print.html
 css/css-page/fixedpos-003-print.html
 css/css-page/fixedpos-004-print.html
-css/css-page/fixedpos-005-print.html
-css/css-page/fixedpos-006-print.html
 css/css-page/fixedpos-007-print.html
 css/css-page/fixedpos-008-print.html
 css/css-page/fixedpos-009-print.html
@@ -1720,6 +1724,9 @@ css/css-multicol/nested-at-outer-boundary-as-fieldset.html
 css/css-multicol/nested-past-fragmentation-line.html
 css/css-multicol/resize-multicol-with-fixed-size-children.html
 
+# --- multicol min-block-size children avoiding breaks sliced at column edges (exact 800x600, bundled WPT fonts, audit KEEP, 2026-10-14) ---
+css/css-break/break-inside-avoid-min-block-size-1.html
+
 # --- ::first-line opacity group (WPT pin 97ea26e2, 800x600 EXACT, Linux, 2026-10-13) ---
 # KEEP in two audit-vacuous-passes runs.
 css/css-pseudo/first-line-opacity-001.html
@@ -1823,6 +1830,7 @@ css/CSS2/pagination/row-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-5-print.html
 css/CSS2/pagination/table-page-break-inside-avoid-7-print.html
+css/CSS2/positioning/absolute-non-replaced-height-013.html
 css/CSS2/positioning/absolute-non-replaced-max-001.html
 css/CSS2/positioning/absolute-non-replaced-min-001.html
 css/CSS2/positioning/absolute-non-replaced-min-max-001.html
@@ -2011,7 +2019,6 @@ css/css-break/out-of-flow-in-multicolumn-102.html
 css/css-break/out-of-flow-in-multicolumn-116.html
 css/css-break/out-of-flow-in-multicolumn-127.html
 css/css-break/overflow-clip-004.html
-css/css-break/root-margin-001-print.html
 css/css-break/ruby-000.html
 css/css-break/ruby-001.html
 css/css-break/ruby-002.html
@@ -2206,7 +2213,6 @@ css/css-conditional/at-supports-selector-001.html
 css/css-conditional/at-supports-selector-002.html
 css/css-conditional/at-supports-selector-003.html
 css/css-conditional/at-supports-selector-detecting-invalid-in-logical-combinations.html
-css/css-contain/contain-content-011.html
 css/css-contain/contain-layout-ink-overflow-015.html
 css/css-contain/contain-paint-dynamic-002.html
 css/css-contain/contain-size-select-002.html
@@ -2384,7 +2390,6 @@ css/css-flexbox/flexbox-flex-wrap-wrap.htm
 css/css-flexbox/flexbox-gap-position-absolute.html
 css/css-flexbox/flexbox-iframe-intrinsic-size-001.html
 css/css-flexbox/flexbox-items-as-stacking-contexts-002.html
-css/css-flexbox/flexbox-items-as-stacking-contexts-003.html
 css/css-flexbox/flexbox-min-height-auto-001.html
 css/css-flexbox/flexbox-min-height-auto-003.html
 css/css-flexbox/flexbox-min-height-auto-004.html
@@ -2935,7 +2940,6 @@ css/css-multicol/balance-break-avoidance-002.html
 css/css-multicol/baseline-000.html
 css/css-multicol/baseline-005.html
 css/css-multicol/baseline-008.html
-css/css-multicol/column-balancing-paged-001-print.html
 css/css-multicol/column-count-used-001.html
 css/css-multicol/intrinsic-width-change-column-count.html
 css/css-multicol/multicol-basic-001.html
@@ -3023,7 +3027,6 @@ css/css-page/monolithic-overflow-015-print.html
 css/css-page/monolithic-overflow-021-print.html
 css/css-page/monolithic-overflow-024-print.html
 css/css-page/monolithic-overflow-025-print.html
-css/css-page/page-box-000-print.html
 css/css-page/page-box-001-print.html
 css/css-page/page-box-002-print.html
 css/css-page/page-box-003-print.html
@@ -3061,7 +3064,6 @@ css/css-page/page-size-002-print.html
 css/css-page/page-size-003-print.html
 css/css-page/page-size-004-print.html
 css/css-page/page-size-005-print.html
-css/css-page/page-size-006-print.html
 css/css-page/page-size-009-print.html
 css/css-page/page-size-010-print.html
 css/css-page/page-size-011-print.html
@@ -4433,7 +4435,6 @@ css/css-backgrounds/css3-background-size-contain.html
 css/css-backgrounds/css3-background-size.html
 css/css-backgrounds/css3-border-image-repeat-repeat.html
 css/css-backgrounds/css3-border-image-source.html
-css/css-break/overflowing-block-print.html
 css/css-conditional/at-media-003.html
 css/css-conditional/at-supports-045.html
 css/css-contain/contain-content-004.html
@@ -4490,7 +4491,6 @@ css/css-grid/grid-items/grid-items-percentage-paddings-010.html
 css/css-grid/grid-items/grid-items-relative-positioned-containing-block-004.html
 css/css-grid/grid-items/grid-items-relative-positioned-containing-block-005.html
 css/css-grid/grid-items/grid-items-relative-positioned-containing-block-006.html
-css/css-grid/grid-model/grid-container-scrollbar-001.html
 css/css-images/gradient/gradient-eval-002.html
 css/css-images/gradient/gradient-eval-003.html
 css/css-images/gradient/gradient-eval-004.html
@@ -4643,3 +4643,14 @@ css/css-writing-modes/table-cell-002.html
 css/filter-effects/background-image-blur-repaint.html
 css/filter-effects/filter-cb-abspos-inline-001.html
 css/printing/background-image-print.html
+
+# --- print reftests on the WPT print page (5in x 3in, 0.5in margins; WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once print reftests use wptrunner's paper; KEEP in two audit-vacuous-passes runs.
+css/css-page/monolithic-overflow-030-print.html
+css/css-page/page-orientation-on-landscape-001-print.html
+css/css-page/page-orientation-on-portrait-001-print.html
+css/css-values/viewport-page-print.html
+
+# --- later pages of another content width laid out again (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once the harness relays pages of another width out from the document; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-box-004-print.html

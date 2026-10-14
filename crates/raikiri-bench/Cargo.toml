@@ -1,7 +1,7 @@
 [package]
 name = "raikiri-bench"
 version = "0.1.0"
-description = "Performance-parity harness for raikiri vs. the fulgur v0.12 baseline"
+description = "Rendering stage, throughput and memory benchmarks for raikiri"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -27,6 +27,10 @@ criterion = { workspace = true }
 raikiri-html = { workspace = true }
 raikiri-style = { workspace = true }
 triomphe = "0.1.16"
+# Direct stage entry points and the real paint command recorder.
+raikiri-dom = { workspace = true }
+raikiri-paint = { workspace = true }
+anyrender = { workspace = true }
 
 [[bench]]
 name = "fulgur_baseline"
@@ -42,6 +46,26 @@ harness = false
 
 [[bench]]
 name = "pseudo_output_sharing"
+harness = false
+
+[[bench]]
+name = "prepare_document"
+harness = false
+
+[[bench]]
+name = "layout_document"
+harness = false
+
+[[bench]]
+name = "pagination_document"
+harness = false
+
+[[bench]]
+name = "paint_document"
+harness = false
+
+[[bench]]
+name = "streaming_document"
 harness = false
 
 [lints]

@@ -181,6 +181,15 @@ pub fn build_cascaded_with_options(
     cascade_with_options(&doc.dom, &tree, media_context, page_query, options)
 }
 
+/// The page context of a document's first page: `:first`, and `:right`
+/// for a left-to-right page progression. The pre-layout cascades use it.
+pub(crate) fn first_page_query() -> PageContextQuery {
+    let mut query = PageContextQuery::default();
+    query.is_first = true;
+    query.is_right = true;
+    query
+}
+
 /// Build the stylesheet rule tree used by the document cascade.
 ///
 /// Keeping this operation separate lets a paged renderer retain the parsed

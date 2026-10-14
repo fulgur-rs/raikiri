@@ -264,17 +264,6 @@ fn tree_walker_current_node(
     Ok(wrap(context, current_node)?.into())
 }
 
-fn node_is_within_root(document: &raikiri_dom::Document, node: usize, root: usize) -> bool {
-    let mut current = Some(node);
-    while let Some(index) = current {
-        if index == root {
-            return true;
-        }
-        current = document.parent_of(index);
-    }
-    false
-}
-
 fn tree_walker_set_current_node(
     this: &JsValue,
     value: &JsValue,
@@ -287,7 +276,7 @@ fn tree_walker_set_current_node(
         .root;
     let index = arg_node(std::slice::from_ref(value), 0, context)?;
     let inside = with_state(context, |state| {
-        node_is_within_root(state.host.document(), index, root)
+        state.host.document().is_ancestor_or_self(root, index)
     })?;
     if !inside {
         return Err(throw_dom_exception(

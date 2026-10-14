@@ -6,6 +6,20 @@ use kurbo::{Affine, Rect, Shape, Stroke, Vec2};
 use peniko::{BlendMode, Color, Fill, FontData, StyleRef};
 use std::{any::Any, sync::Arc};
 
+/// The matrix of a [`raikiri_traits::PaintTransform`].
+pub(crate) fn affine(transform: raikiri_traits::PaintTransform) -> Affine {
+    let raikiri_traits::PaintTransform {
+        a, b, c, d, e, f, ..
+    } = transform;
+    Affine::new([a, b, c, d, e, f].map(f64::from))
+}
+
+/// Whether `transform` maps the plane onto itself, so that what is painted
+/// through it is rendered (CSS Transforms 1 §6).
+pub(crate) fn is_invertible(transform: Affine) -> bool {
+    transform.is_finite() && transform.determinant() != 0.0
+}
+
 pub(crate) struct TransformScene<'a, S> {
     pub scene: &'a mut S,
     pub transform: Affine,

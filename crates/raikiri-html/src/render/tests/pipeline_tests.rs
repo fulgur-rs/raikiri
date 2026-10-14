@@ -864,7 +864,19 @@ fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
     )
     .expect("cascade");
     assert_eq!(out.page_styles[0], full.page);
-    assert_eq!(out.cascade.computed, full.computed);
+    // The reference cascade measures `line-height: normal` in the installed
+    // fonts, not the pipeline's; everything else must match.
+    let without_normal = |computed: &[raikiri_style::ComputedValues]| {
+        let mut computed = computed.to_vec();
+        for values in &mut computed {
+            values.normal_line_height = None;
+        }
+        computed
+    };
+    assert_eq!(
+        without_normal(&out.cascade.computed),
+        without_normal(&full.computed)
+    );
 }
 
 #[test]
@@ -1217,6 +1229,31 @@ fn pipeline_does_not_count_unfragmented_column_content_as_pages() {
          <div style='columns:2;column-gap:0'><div style='height:300px'></div></div>",
     );
     assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_counts_whole_boxes_overflowing_their_column_as_pages() {
+    // The bordered box avoids breaks and cannot be sliced, so it overflows
+    // the 50px column whole, down to the third page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;height:50px'>\
+         <div style='break-inside:avoid;border:1px solid;height:250px'></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 3);
+}
+
+#[test]
+fn pipeline_moves_overflowing_column_boxes_by_their_relative_offset_when_counting_pages() {
+    // Painting moves the whole overflowing box up by its relative offset,
+    // so it ends within the first page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0}</style>\
+         <div style='columns:2;height:50px'>\
+         <div style='break-inside:avoid;border:1px solid;height:250px;\
+         position:relative;top:-200px'></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
 }
 
 #[test]

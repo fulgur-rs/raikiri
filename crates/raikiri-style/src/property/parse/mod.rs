@@ -403,11 +403,11 @@ pub(crate) fn parse_property_grammar(
         // Arc wrapping reduces cascade memory for DoS resistance (shallow
         // per-element clones). Empty lists use a shared Arc slot to avoid
         // per-node allocation regressions.
-        "content" => parse_content(input).map(|v| {
-            if v.is_empty() {
+        "content" => parse_content_with_alt(input).map(|(items, alt)| {
+            if items.is_empty() {
                 PropertyValue::Content(empty_content_list())
             } else {
-                PropertyValue::Content(Arc::new(v))
+                PropertyValue::Content(Arc::new(ContentList::new(items, alt)))
             }
         }),
         // CSS GCPM 3 §1.1.1 string-set.
@@ -466,11 +466,12 @@ pub(crate) fn parse_property_grammar(
         // parse_padding_shorthand applies the spec's 1–4 value expansion verbatim.
         "padding" => parse_padding_shorthand(input).map(PropertyValue::Padding),
         // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
-        // padding-block-start/-end — physically fixed-mapped onto the
-        // matching padding physical longhand (`PropertyValue::PaddingInline`
-        // doc's Non-goal section covers the writing-mode/direction
-        // rationale). Grammar/non-negative constraint is identical to the
-        // physical longhand, so this reuses `parse_padding_side` verbatim.
+        // padding-block-start/-end — parsed into the padding physical longhand
+        // they map to in horizontal-tb ltr; the cascade moves them by the
+        // element's writing mode (`PropertyValue::PaddingInline` doc's
+        // "Physical mapping" section). Grammar/non-negative constraint is
+        // identical to the physical longhand, so this reuses
+        // `parse_padding_side` verbatim.
         "padding-inline-start" => parse_padding_side(input).map(PropertyValue::PaddingLeft),
         "padding-inline-end" => parse_padding_side(input).map(PropertyValue::PaddingRight),
         "padding-block-start" => parse_padding_side(input).map(PropertyValue::PaddingTop),
@@ -499,7 +500,7 @@ pub(crate) fn parse_property_grammar(
         // doc and `crate::rule::expand_shorthand_into`).
         "margin" => parse_margin_shorthand(input).map(PropertyValue::Margin),
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
-        // margin-block-start/-end — same physically fixed-mapped pattern as
+        // margin-block-start/-end — same pattern as
         // padding-inline-*/padding-block-* above, reusing `parse_margin_side`
         // verbatim (grammar `<'margin-top'>` = `<length-percentage> | auto`
         // is identical to the physical longhand).
@@ -1111,7 +1112,8 @@ pub(crate) fn parse_property_grammar(
                     }))
                 }
             } else {
-                parse_border_radius(input).map(PropertyValue::BorderRadius)
+                parse_border_radius(input)
+                    .map(|radius| PropertyValue::BorderRadius(Box::new(radius)))
             }
         }
         "border-top-left-radius" => {

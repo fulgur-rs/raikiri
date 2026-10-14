@@ -2,11 +2,10 @@
 //!
 //! **Ownership** (design §7.0 line 1904 "shared types → raikiri-traits"): this
 //! is the single canonical [`TargetRegistry`] shared across raikiri-dom,
-//! raikiri-paint, and consumer crates. raikiri-traits owns the type; the
-//! producer side (register-site directive walker,
-//! feeding [`crate::GcpmDirective::RegisterTarget`]) lives in
-//! raikiri-dom and calls [`TargetRegistry::register`] against this
-//! canonical instance.
+//! raikiri-paint, and consumer crates. raikiri-traits owns the type. No
+//! register-site walker in this repository fills it yet; a producer calls
+//! [`TargetRegistry::register`], directly or through
+//! [`crate::GcpmDirective::RegisterTarget`].
 //!
 //! **History** — the impl and tests here were previously a `pub(crate)` shadow
 //! at `crates/raikiri-dom/src/target.rs` alongside an empty
@@ -55,15 +54,15 @@ use crate::error::TargetSlotId;
 /// referenced a fragment before it was walked and must be resolved on a
 /// second pass ([`TargetRegistry::flush_pending`]).
 ///
-/// Producer / register-site walker lives in
-/// raikiri-dom; the canonical type (shape + resolve strategy) lives here.
+/// The canonical type (shape + resolve strategy) lives here; no
+/// register-site walker in this repository fills it yet.
 #[derive(Debug, Default, Clone)]
 #[non_exhaustive]
 pub struct TargetRegistry {
     /// Fragment identifier → resolved target metadata (counter snapshot,
     /// textual content parts). Populated as the runtime walk encounters
-    /// [`crate::GcpmDirective::RegisterTarget`] directives (populator: the
-    /// register-site walker in raikiri-dom).
+    /// [`crate::GcpmDirective::RegisterTarget`] directives or direct
+    /// [`TargetRegistry::register`] calls.
     resolved: HashMap<Symbol, TargetInfo>,
     /// Content-value sites (`target-counter(...)`, `target-counters(...)`,
     /// `target-text(...)`, and future `element(name)`) that referenced a
@@ -451,9 +450,8 @@ impl TargetRegistry {
     ///
     /// **The bulk-replace path via
     /// [`super::context::PageContext::set_targets`] still needs a direct
-    /// call here.** A registry built externally (e.g. by
-    /// `raikiri_dom::target::build_target_registry`'s register-site walker)
-    /// is not yet owned by any `PageContext` — this method must be called
+    /// call here.** A registry built externally (e.g. by a DOM register-site
+    /// walker) is not yet owned by any `PageContext` — this method must be called
     /// on it directly, before it is wired in via `set_targets`, if its
     /// page-index/sequence state needs to be anything other than the
     /// freshly-`Default`-constructed `(0, 0)`. See
@@ -483,10 +481,8 @@ impl TargetRegistry {
     /// `next_sequence` independently before the re-run, or `begin_page` must
     /// gain a force-reset variant — tracked as a follow-up, not fixed here.
     ///
-    /// No production driver calls this directly yet —
-    /// `raikiri_dom::phase_b`'s per-page walk now reaches this method through
-    /// [`super::context::PageContext::begin_page`], but that driver is still
-    /// `#[allow(dead_code)]` and is exercised only by tests. Until a
+    /// No production driver calls this yet, directly or through
+    /// [`super::context::PageContext::begin_page`]. Until a
     /// production driver calls it, every slot is tagged to page 0 — correct
     /// for a single-page document, harmless (just uninformative) for a
     /// multi-page one.
@@ -2016,7 +2012,7 @@ fn format_ethiopic_numeric(value: i32) -> Option<String> {
 /// items (design §7.2's `NamedStringState`, which — unlike this crate's
 /// earlier placeholder — needs real text, not a deferred snapshot).
 /// `pub(crate)` rather than full `pub`: no cross-crate caller needs either
-/// helper directly (raikiri-dom only calls through
+/// helper directly (callers go through
 /// [`crate::page::PageContext::apply_directive`]), so crate-internal
 /// visibility is the minimal fix (resolved here rather than duplicating the
 /// formatting logic elsewhere).

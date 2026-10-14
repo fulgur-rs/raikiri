@@ -2237,21 +2237,21 @@ fn a_text_shadow_moves_with_a_relative_inline() {
 
 #[test]
 fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
-    // `relative_offset` (layout) and the walk's `position_offset_px` (paint)
-    // are two implementations of one rule; pin that they agree.
+    // `relative_offset` (layout) and `used_relative_offset` (paint) are two
+    // implementations of one rule for lengths; pin that they agree.
     for css in [
         "left:5px;top:2px",
         "right:4px;bottom:3px",
         "left:1px;right:9px;top:-2px;bottom:7px",
         "",
     ] {
-        let (_doc, cascade, root) = paragraph(&format!("position:relative;{css}"), |doc, root| {
+        let (doc, cascade, root) = paragraph(&format!("position:relative;{css}"), |doc, root| {
             doc.append_text(root, "x");
         });
         let cv = &cascade.computed[root];
         assert_eq!(
             raikiri_dom::relative_offset(cv),
-            Some(crate::walk::position_offset_px(cv)),
+            Some(raikiri_dom::used_relative_offset(&doc, cv, root)),
             "{css}"
         );
     }

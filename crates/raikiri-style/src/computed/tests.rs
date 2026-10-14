@@ -287,6 +287,7 @@ fn non_initial_parent() -> ComputedValues {
         font_size_keyword_basis: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Length(ComputedLength(30.0)),
+        normal_line_height: None,
         display: DisplayValue::Block,
         list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
         list_style_position: ListStylePosition::Inside,
@@ -294,7 +295,7 @@ fn non_initial_parent() -> ComputedValues {
         counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
         counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
         counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
-        content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))]),
+        content: Arc::new(vec![ContentComponent::Literal(SmolStr::new("x"))].into()),
         string_set: Arc::new(vec![(SmolStr::new("s"), Vec::new())]),
         running_templates: vec![RunningTemplate::new("hdr")],
         text_align: TextAlign::Center,
@@ -336,10 +337,10 @@ fn non_initial_parent() -> ComputedValues {
             color: BorderColor::Resolved(CssColor::BLACK),
         }),
         border_radius: ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(1.0).into(),
-            top_right: ComputedLengthPercentage::Px(2.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(3.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(4.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(1.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(2.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(3.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(4.0).into(),
         },
         box_shadow: Arc::new(vec![ComputedBoxShadowItem {
             offset_x: ComputedLength(1.0),
@@ -678,7 +679,7 @@ fn non_initial_parent() -> ComputedValues {
         // transform and filter are non-inherited, so use values different
         // from their initial `none` (empty lists) in non_initial_parent.
         transform: Arc::new(vec![ComputedTransformFunction::TranslateX(
-            ComputedLengthPercentage::Px(32.0),
+            ComputedLengthPercentageOrCalc::Px(32.0),
         )]),
         filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
         // CSS Tables 3 §4: table-layout is non-inherited, so use a value

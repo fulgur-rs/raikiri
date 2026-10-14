@@ -109,6 +109,11 @@ pub fn paint_single_page(
 /// translated by the origin before the normal walk.  This lets callers render
 /// independent page buffers without cloning the DOM or repainting another
 /// page's content into the current one.
+///
+/// Without the number of pages, an auto-height root element is taken to end
+/// with this page, so canvas images sized or placed against its height can
+/// differ from page to page. Callers that know the page count should use
+/// [`paint_single_page_with_origin_and_page`].
 pub fn paint_single_page_with_origin(
     scene: &mut impl PaintScene,
     document: &Document,
@@ -411,6 +416,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
     }
     let counter_snapshots = shared_counter_snapshots(document, cascade)?;
     let image_cache = walk::ImageBrushCache::for_document(document);
+    let root = raikiri_dom::root_box(document, cascade, page_box, content_origin_y, page_count);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
         &image_cache,
@@ -418,6 +424,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
         document,
         cascade,
         page_box,
+        root.as_ref(),
         pixel_source,
         &mut warnings,
     );
@@ -445,6 +452,10 @@ fn paint_single_page_with_origin_and_page_context_impl(
         pixel_source,
         &mut warnings,
     );
+    let Some(transform) = root_content_transform(root.as_ref()) else {
+        return Ok(());
+    };
+    let scene = &mut transform::TransformScene { scene, transform };
     if let Some(pixel_source) = pixel_source {
         walk::paint_document_with_images_and_warnings(
             &image_cache,
@@ -459,6 +470,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
             pixel_source,
             &mut warnings,
             custom_highlights,
+            transform,
         );
     } else {
         walk::paint_document(
@@ -472,6 +484,7 @@ fn paint_single_page_with_origin_and_page_context_impl(
             active_page_name,
             fixed_page_width,
             custom_highlights,
+            transform,
         );
     }
     Ok(())
@@ -543,6 +556,7 @@ pub fn trace_paint_order(
         None,
         &mut warnings,
         &[],
+        kurbo::Affine::IDENTITY,
         Some(&mut events),
     );
     Ok(events)
@@ -592,6 +606,7 @@ pub fn paint_single_page_with_images_and_warnings(
     // (page 0 of 1, no named-page filtering, unpaired) rather than joining
     // the `paint_single_page_with_origin_and_page_context*` chain.
     let image_cache = walk::ImageBrushCache::for_document(document);
+    let root = raikiri_dom::root_box(document, cascade, page_box, 0.0, 1);
     let mut warnings = Vec::new();
     walk::paint_canvas_background(
         &image_cache,
@@ -599,6 +614,7 @@ pub fn paint_single_page_with_images_and_warnings(
         document,
         cascade,
         page_box,
+        root.as_ref(),
         Some(pixel_source),
         &mut warnings,
     );
@@ -626,9 +642,12 @@ pub fn paint_single_page_with_images_and_warnings(
         Some(pixel_source),
         &mut warnings,
     );
+    let Some(transform) = root_content_transform(root.as_ref()) else {
+        return Ok(warnings);
+    };
     walk::paint_document_with_images_and_warnings(
         &image_cache,
-        scene,
+        &mut transform::TransformScene { scene, transform },
         document,
         cascade,
         &counter_snapshots,
@@ -641,12 +660,25 @@ pub fn paint_single_page_with_images_and_warnings(
         pixel_source,
         &mut warnings,
         &[],
+        transform,
     );
     Ok(warnings)
 }
 
 #[cfg(test)]
 mod tests;
+
+/// The transform the document's boxes paint through: the `transform` of the
+/// root element's box `root`, which moves the whole canvas (CSS Transforms 1
+/// §6), or the identity. `None` when that transform is singular, so the root
+/// and its content are not rendered.
+fn root_content_transform(root: Option<&raikiri_dom::RootBox>) -> Option<kurbo::Affine> {
+    let Some(transform) = root.and_then(|root| root.transform) else {
+        return Some(kurbo::Affine::IDENTITY);
+    };
+    let matrix = transform::affine(transform);
+    transform::is_invertible(matrix).then_some(matrix)
+}
 
 /// Whether the root element is `display: none`, so the document generates
 /// no boxes at all. Such a document prints as blank paper: the page

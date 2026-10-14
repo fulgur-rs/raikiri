@@ -103,9 +103,22 @@ pub enum PaintEvent<'a> {
 /// [`Document::paint_order_approximations`].
 const LEGACY_COLUMN_CLIPS: &str = "legacy column clipping may be incomplete";
 
+/// The reason reported for a paragraph by
+/// [`Document::paint_order_approximations`] when a `::first-letter` in it
+/// forms more opacity groups than [`generated_content::MAX_LETTER_GROUPS`]:
+/// fragments past the limit composite with the opacity of another group of
+/// the same `::first-letter`, or without their own.
+///
+/// [`generated_content::MAX_LETTER_GROUPS`]: crate::generated_content::MAX_LETTER_GROUPS
+const LETTER_GROUP_LIMIT: &str = "::first-letter opacity groups past the id limit are approximated";
+
 enum Frame {
     Visit(usize),
     Paragraph(usize),
+    /// An anonymous cell's paragraph in a table part that defers: its
+    /// content waits for the end of the layer, in tree order with the other
+    /// cells'.
+    DeferredParagraph(usize),
     /// The inline content of a paragraph root, listed where this frame pops:
     /// at the end of the enclosing layer when the block defers it (see
     /// [`paint_rules::defers_inline_content`]).
@@ -113,6 +126,10 @@ enum Frame {
     /// Close a layer of deferred inline content: list what its blocks
     /// deferred, then drop the layer.
     EndDeferral,
+    /// Reopen the overflow clip of a block around the content its layer
+    /// handed to the enclosing one (see
+    /// [`paint_rules::merges_clipped_inline_content`]).
+    PushClip(usize),
     /// An inline opacity group of a paragraph, by paragraph root and element,
     /// with the lines it lists.
     InlineGroup(usize, usize, LinePart),
@@ -125,6 +142,45 @@ enum Frame {
     PopClip,
     PopOpacity,
     PopTransform,
+}
+
+/// How an open layer ends once its subtree is listed.
+#[derive(Clone, Copy)]
+enum LayerClose {
+    /// List what the layer collected.
+    Paint,
+    /// Hand what the layer collected to the enclosing layer, inside the
+    /// overflow clip of the block, by node, that opened it.
+    Merge(usize),
+    /// List the deferred inline content, and hand the positioned boxes to
+    /// the enclosing layer.
+    Hoist,
+}
+
+/// An open layer of the paint walk: the inline content its plain blocks
+/// defer and the positioned boxes that wait for its end, each in tree
+/// order, whether blocks inside it may defer (the content of a block in
+/// columns stays with its column clip, as in the painter), and how it ends.
+struct Layer {
+    pending: Vec<Frame>,
+    positioned: Vec<Frame>,
+    allowed: bool,
+    close: LayerClose,
+    /// Whether the layer's end is listing its positioned boxes: the boxes it
+    /// pops then list where they pop rather than waiting again.
+    flushing: bool,
+}
+
+impl Layer {
+    fn new(allowed: bool, close: LayerClose) -> Self {
+        Self {
+            pending: Vec::new(),
+            positioned: Vec::new(),
+            allowed,
+            close,
+            flushing: false,
+        }
+    }
 }
 
 /// The lines of a paragraph a listing of its content covers. A translucent
@@ -368,8 +424,7 @@ impl Document {
         start: usize,
     ) -> Option<usize> {
         let owner = self.ifc_source_owner(root);
-        let mut current = Some(start);
-        while let Some(id) = current {
+        for id in self.inclusive_ancestors(start) {
             if id == root || id == owner {
                 return None;
             }
@@ -386,7 +441,6 @@ impl Document {
             if !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
                 return None;
             }
-            current = self.parent_of(id);
         }
         None
     }
@@ -440,26 +494,32 @@ impl Document {
         // An explicit stack, like the painter's, so a deep DOM cannot
         // overflow the call stack.
         let mut stack = vec![Frame::EndDeferral, Frame::Visit(root)];
-        // Each open layer collects the inline content its plain blocks
-        // defer, in tree order, and whether blocks inside it may defer: the
-        // content of a block in columns stays with its column clip, as in
-        // the painter.
-        let mut layers: Vec<(Vec<Frame>, bool)> = vec![(Vec::new(), true)];
+        // Each open layer collects the content that waits for its end.
+        let mut layers = vec![Layer::new(true, LayerClose::Paint)];
         let mut motion = super::paint_transform::MotionCache::default();
         // The transforms open around the current event, composed.
         let mut spaces = vec![PaintTransform::IDENTITY];
         while let Some(frame) = stack.pop() {
-            // A box that does not defer, such as a positioned one, paints after
-            // the inline content deferred before it.
+            // A positioned box waits for the end of its layer, after the
+            // backgrounds of the blocks that follow it.
             if let Frame::Visit(node_id) = frame
-                && layers
-                    .last()
-                    .is_some_and(|(pending, _)| !pending.is_empty())
+                && let Some(layer) = layers.last_mut()
+                && layer.allowed
+                && !layer.flushing
+                && paint_rules::defers_to_positioned_layer(self, cascade, node_id)
+            {
+                layer.positioned.push(frame);
+                continue;
+            }
+            // A box that does not defer, such as a flex container, paints
+            // after the inline content deferred before it.
+            if let Frame::Visit(node_id) = frame
+                && layers.last().is_some_and(|layer| !layer.pending.is_empty())
                 && paint_rules::closes_deferred_inline_content(self, cascade, node_id)
             {
                 let pending = layers
                     .last_mut()
-                    .map(|(pending, _)| std::mem::take(pending))
+                    .map(|layer| std::mem::take(&mut layer.pending))
                     .unwrap_or_default();
                 stack.push(frame);
                 stack.extend(pending.into_iter().rev());
@@ -467,15 +527,53 @@ impl Document {
             }
             let node_id = match frame {
                 Frame::EndDeferral => {
-                    let pending = layers
+                    let replay = layers
                         .last_mut()
-                        .map(|(pending, _)| std::mem::take(pending))
+                        .map(|layer| match layer.close {
+                            LayerClose::Merge(_) => Vec::new(),
+                            _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
+                            LayerClose::Paint => {
+                                layer.flushing = true;
+                                std::mem::take(&mut layer.positioned)
+                            }
+                            LayerClose::Hoist => Vec::new(),
+                        })
                         .unwrap_or_default();
-                    if pending.is_empty() {
-                        layers.pop();
-                    } else {
+                    if !replay.is_empty() {
                         stack.push(Frame::EndDeferral);
-                        stack.extend(pending.into_iter().rev());
+                        stack.extend(replay.into_iter().rev());
+                        continue;
+                    }
+                    let closed = layers.pop();
+                    if let (Some(layer), Some(outer)) = (closed, layers.last_mut()) {
+                        match layer.close {
+                            LayerClose::Paint => {}
+                            LayerClose::Merge(owner) => {
+                                for (frames, into) in [
+                                    (layer.pending, &mut outer.pending),
+                                    (layer.positioned, &mut outer.positioned),
+                                ] {
+                                    if !frames.is_empty() {
+                                        into.push(Frame::PushClip(owner));
+                                        into.extend(frames);
+                                        into.push(Frame::PopClip);
+                                    }
+                                }
+                            }
+                            LayerClose::Hoist => outer.positioned.extend(layer.positioned),
+                        }
+                    }
+                    continue;
+                }
+                Frame::DeferredParagraph(key) => {
+                    if let Some(layer) = layers.last_mut() {
+                        layer.pending.push(Frame::Paragraph(key));
+                    }
+                    continue;
+                }
+                Frame::PushClip(owner) => {
+                    if let Some(entry) = items.overflow_clips.get(&NodeId::new(owner as u64)) {
+                        events.push(PaintEvent::PushClip(entry.clip, ClipKind::Overflow));
                     }
                     continue;
                 }
@@ -786,14 +884,28 @@ impl Document {
                     // A plain block in a block container leaves its inline
                     // content to the end of the layer (CSS 2.1 Appendix E),
                     // after the backgrounds of the blocks that follow it.
-                    let deferring = layers.last().is_some_and(|(_, allowed)| *allowed);
+                    let deferring = layers.last().is_some_and(|layer| layer.allowed);
                     let defers = deferring
                         && !clipped
                         && paint_rules::defers_inline_content(self, cascade, node_id);
+                    // A plain block that clips collects its inline content in
+                    // a layer of its own, which it hands to the enclosing
+                    // layer inside its clip.
+                    let merges = deferring
+                        && clipped
+                        && paint_rules::merges_clipped_inline_content(self, cascade, node_id);
+                    // In-flow blocks inside a paragraph's inline content paint
+                    // their backgrounds before its lines.
+                    let blocks: Vec<usize> = if node.is_ifc_root() {
+                        self.paragraph_blocks(cascade, node_id)
+                    } else {
+                        Vec::new()
+                    };
                     if defers && node.is_ifc_root() {
-                        if let Some((pending, _)) = layers.last_mut() {
-                            pending.push(Frame::Content(node_id));
+                        if let Some(layer) = layers.last_mut() {
+                            layer.pending.push(Frame::Content(node_id));
                         }
+                        stack.extend(blocks.into_iter().rev().map(Frame::Visit));
                         continue;
                     }
                     if node.is_inline_svg_root()
@@ -809,7 +921,14 @@ impl Document {
                     if !defers && paint_rules::generates_box(cv) {
                         let columns = !matches!(cv.column_count, ColumnCountValue::Auto)
                             || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
-                        layers.push((Vec::new(), deferring && !columns));
+                        let close = if merges {
+                            LayerClose::Merge(node_id)
+                        } else if paint_rules::hoists_positioned_content(self, cascade, node_id) {
+                            LayerClose::Hoist
+                        } else {
+                            LayerClose::Paint
+                        };
+                        layers.push(Layer::new(deferring && !columns, close));
                         stack.push(Frame::EndDeferral);
                     }
                     if node.is_ifc_root() {
@@ -817,7 +936,14 @@ impl Document {
                         // listed first; only the boxes laid out beside its
                         // lines are visited like ordinary children. Those in
                         // an inline opacity group are visited in the group.
-                        stack.push(Frame::Content(node_id));
+                        if merges {
+                            if let Some(layer) = layers.last_mut() {
+                                layer.pending.push(Frame::Content(node_id));
+                            }
+                        } else {
+                            stack.push(Frame::Content(node_id));
+                        }
+                        stack.extend(blocks.into_iter().rev().map(Frame::Visit));
                         continue;
                     }
                     let mut children =
@@ -827,7 +953,12 @@ impl Document {
                             node.children.clone()
                         };
                     paint_rules::sort_paint_children(&mut children, cv.display, cascade);
-                    stack.extend(children.into_iter().rev().map(|key| self.child_frame(key)));
+                    stack.extend(children.into_iter().rev().map(
+                        |key| match self.child_frame(key) {
+                            Frame::Paragraph(key) if defers => Frame::DeferredParagraph(key),
+                            frame => frame,
+                        },
+                    ));
                 }
                 // A text node laid out as an anonymous flex or grid item is a
                 // paragraph of its own. Any other text node outside a
@@ -1095,7 +1226,9 @@ impl Document {
                             | Frame::PopTransform
                             | Frame::Content(_)
                             | Frame::HeldContent(_)
-                            | Frame::EndDeferral => false, // cov:ignore: never listed here
+                            | Frame::EndDeferral
+                            | Frame::PushClip(_)
+                            | Frame::DeferredParagraph(_) => false, // cov:ignore: never listed here
                         })
                         .unwrap_or(entries.len())
                 });
@@ -1217,6 +1350,23 @@ impl Document {
         false
     }
 
+    /// The in-flow blocks inside the inline content of paragraph `root`
+    /// that paint before its lines (see
+    /// [`paint_rules::paints_before_paragraph_lines`]), in tree order.
+    fn paragraph_blocks(&self, cascade: &CascadeResult, root: usize) -> Vec<usize> {
+        let boxes = self
+            .get_node(root)
+            .map(|node| node.ifc_boxes())
+            .unwrap_or_default();
+        if boxes.is_empty() || paint_rules::holds_negative_stack_level(self, cascade, root) {
+            return Vec::new();
+        }
+        boxes
+            .into_iter()
+            .filter(|&id| paint_rules::paints_before_paragraph_lines(self, cascade, root, id))
+            .collect()
+    }
+
     /// The boxes of paragraph `root` laid out beside its lines whose
     /// innermost inline opacity group is `group`, and that belong to the
     /// lines of `part`: an atomic inline to the line it is on, any other box
@@ -1232,10 +1382,13 @@ impl Document {
             return Vec::new(); // cov:ignore: element paragraph roots are arena nodes
         };
         let mut boxes = node.ifc_boxes();
+        let blocks: HashSet<usize> = self.paragraph_blocks(cascade, root).into_iter().collect();
         boxes.retain(|&id| {
-            self.parent_of(id)
-                .and_then(|parent| self.inline_opacity_group(cascade, root, parent))
-                == group
+            !blocks.contains(&id)
+                && self
+                    .parent_of(id)
+                    .and_then(|parent| self.inline_opacity_group(cascade, root, parent))
+                    == group
                 && match part {
                     LinePart::All => true,
                     LinePart::First => paint_rules::atomic_on_first_line(self, root, id),
@@ -1306,24 +1459,29 @@ impl Document {
             let owner = crate::generated_content::generated_origin(source)
                 .map_or_else(|| self.ifc_source_owner(source), |(owner, _)| owner);
             self.get_node(owner)?;
-            let mut current = Some(owner);
-            while let Some(id) = current {
+            for id in self.inclusive_ancestors(owner) {
                 if !entered.insert(id) {
                     break;
                 }
-                current = self.parent_of(id);
             }
         }
         Some(entered)
     }
 
     /// Multicolumn containers that may need unprojected legacy column-height
-    /// clips, each with the reason.
+    /// clips, and paragraphs whose `::first-letter` opacity groups are
+    /// approximated, each with the reason.
     ///
     /// Explicit fragmentainer clips are projected by
     /// [`Document::page_paint_order`]. Legacy column-height clips synthesized
     /// by the built-in painter are not all represented by layout fragments,
     /// so multicolumn containers retain a conservative approximation warning.
+    ///
+    /// A `::first-letter` whose fragments need more opacity groups than an
+    /// id can name (see [`crate::generated_content::first_letter_group_id`])
+    /// lists the later fragments in another group of the same pseudo-element,
+    /// or in none of their own, so their opacity is not the one the built-in
+    /// painter composites them with.
     #[doc(hidden)]
     pub fn paint_order_approximations(
         &self,
@@ -1338,20 +1496,13 @@ impl Document {
         // Whether the node and all its ancestors are in the document and
         // displayed.
         let is_rendered = |node_id: usize| {
-            let mut cursor = Some(node_id);
-            while let Some(id) = cursor {
-                let Some(node) = self.get_node(id) else {
-                    return false; // cov:ignore: ancestor ids come from the arena
-                };
-                if !node.is_in_document()
-                    || (node.kind() == NodeKind::Element
-                        && (node.is_display_none() || node.is_hidden_by_text_overflow()))
-                {
-                    return false;
-                }
-                cursor = self.parent_of(id);
-            }
-            true
+            self.inclusive_ancestors(node_id).all(|id| {
+                self.get_node(id).is_some_and(|node| {
+                    node.is_in_document()
+                        && !(node.kind() == NodeKind::Element
+                            && (node.is_display_none() || node.is_hidden_by_text_overflow()))
+                })
+            })
         };
         let mut found: Vec<usize> = (0..self.nodes.len())
             .filter(|&node_id| {
@@ -1359,15 +1510,25 @@ impl Document {
                     .is_some_and(|node| node.kind() == NodeKind::Element)
                     && is_multicol(node_id)
                     && is_rendered(node_id)
-                    && !std::iter::successors(self.parent_of(node_id), |&id| self.parent_of(id))
-                        .any(is_multicol)
+                    && !self.ancestors(node_id).any(is_multicol)
             })
             .collect();
         found.sort_unstable();
-        found
+        let mut approximations: Vec<_> = found
             .into_iter()
             .map(|node_id| (NodeId::new(node_id as u64), LEGACY_COLUMN_CLIPS))
-            .collect()
+            .collect();
+        approximations.extend(
+            (0..self.nodes.len())
+                .filter(|&root| {
+                    self.get_node(root).is_some_and(|node| {
+                        node.is_ifc_root() && node.ifc_letter_fragments().next().is_some()
+                    }) && is_rendered(root)
+                        && self.cached_letter_groups(cascade, root).approximated
+                })
+                .map(|root| (NodeId::new(root as u64), LETTER_GROUP_LIMIT)),
+        );
+        approximations
     }
 }
 

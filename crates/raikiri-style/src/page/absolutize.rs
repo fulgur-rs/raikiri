@@ -26,8 +26,9 @@ use crate::resolve::{
     resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
     resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
+    resolve_line_height, resolve_margin_length_or_auto,
+    resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_indent_calc,
     resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
 };
@@ -55,6 +56,16 @@ impl PageLengthBasis<'_> {
     /// mapping as [`Self::lp`], with a calc kept as one.
     fn lpc(self, specified: LengthPercentageOrCalc) -> LengthPercentageOrCalc {
         lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
+    }
+    /// `<length-percentage>` that may be a mixed `calc()` and may be
+    /// negative — same mapping as [`Self::lpc`] without its clamp.
+    fn signed_lpc(self, specified: LengthPercentageOrCalc) -> LengthPercentageOrCalc {
+        lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
             specified,
             self.font_size,
             self.own_line_height,
@@ -165,6 +176,7 @@ impl PageLengthBasis<'_> {
             match computed {
                 ComputedCssPositionOffset::Start(l) => CssPositionOffset::Start(lift(l)),
                 ComputedCssPositionOffset::End(l) => CssPositionOffset::End(lift(l)),
+                ComputedCssPositionOffset::Calc(calc) => CssPositionOffset::Calc(calc),
             }
         }
         let computed =
@@ -291,34 +303,26 @@ impl PageLengthBasis<'_> {
     }
 
     /// Convert the four `border-radius` corners from computed lengths back
-    /// to the `Length::Px` representation carried by `PropertyValue`.
+    /// to the `Length::Px` representation carried by `PropertyValue`, with a
+    /// mixed `calc()` kept as one.
     /// The page bag has the same computed-value contract as the element path's
     /// `ComputedValues`, but reuses specified-side payload types to preserve
     /// the existing bag API.
     fn corner_radius_value(
         self,
-        specified: crate::property::CornerRadius<Length>,
-    ) -> crate::property::CornerRadius<Length> {
-        specified.map(|axis| match axis {
-            Length::Percent(percent) => Length::Percent(percent),
-            value => Length::Px(
-                resolve_length(value, self.font_size, self.own_line_height, self.ctx).px(),
-            ),
-        })
+        specified: crate::property::CornerRadius<LengthPercentageOrCalc>,
+    ) -> crate::property::CornerRadius<LengthPercentageOrCalc> {
+        specified.map(|axis| self.lpc(axis))
     }
 
-    fn border_radius_value(self, specified: BorderRadius) -> BorderRadius {
+    fn border_radius_value(self, specified: &BorderRadius) -> BorderRadius {
         let computed =
-            resolve_border_radius(specified, self.font_size, self.own_line_height, self.ctx);
-        let length = |value: ComputedLengthPercentage| match value {
-            ComputedLengthPercentage::Px(px) => Length::Px(px),
-            ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-        };
+            resolve_border_radius(*specified, self.font_size, self.own_line_height, self.ctx);
         BorderRadius {
-            top_left: computed.top_left.map(length),
-            top_right: computed.top_right.map(length),
-            bottom_right: computed.bottom_right.map(length),
-            bottom_left: computed.bottom_left.map(length),
+            top_left: computed.top_left.map(lift_length_percentage_or_calc),
+            top_right: computed.top_right.map(lift_length_percentage_or_calc),
+            bottom_right: computed.bottom_right.map(lift_length_percentage_or_calc),
+            bottom_left: computed.bottom_left.map(lift_length_percentage_or_calc),
         }
     }
 
@@ -358,10 +362,10 @@ impl PageLengthBasis<'_> {
         match specified {
             TransformFunction::Matrix(m) => TransformFunction::Matrix(m),
             TransformFunction::Translate(tx, ty) => {
-                TransformFunction::Translate(self.lp(tx), self.lp(ty))
+                TransformFunction::Translate(self.signed_lpc(tx), self.signed_lpc(ty))
             }
-            TransformFunction::TranslateX(v) => TransformFunction::TranslateX(self.lp(v)),
-            TransformFunction::TranslateY(v) => TransformFunction::TranslateY(self.lp(v)),
+            TransformFunction::TranslateX(v) => TransformFunction::TranslateX(self.signed_lpc(v)),
+            TransformFunction::TranslateY(v) => TransformFunction::TranslateY(self.signed_lpc(v)),
             TransformFunction::Scale(x, y) => TransformFunction::Scale(x, y),
             TransformFunction::ScaleX(v) => TransformFunction::ScaleX(v),
             TransformFunction::ScaleY(v) => TransformFunction::ScaleY(v),
@@ -381,6 +385,9 @@ fn grid_track_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridTrackBre
     match b {
         ComputedGridTrackBreadth::Px(v) => GridTrackBreadth::Length(Length::Px(v)),
         ComputedGridTrackBreadth::Percent(p) => GridTrackBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridTrackBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
         ComputedGridTrackBreadth::Flex(f) => GridTrackBreadth::Flex(f),
         ComputedGridTrackBreadth::MinContent => GridTrackBreadth::MinContent,
         ComputedGridTrackBreadth::MaxContent => GridTrackBreadth::MaxContent,
@@ -398,6 +405,9 @@ fn grid_inflexible_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridInf
     match b {
         ComputedGridTrackBreadth::Px(v) => GridInflexibleBreadth::Length(Length::Px(v)),
         ComputedGridTrackBreadth::Percent(p) => GridInflexibleBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridInflexibleBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
         ComputedGridTrackBreadth::MinContent => GridInflexibleBreadth::MinContent,
         ComputedGridTrackBreadth::MaxContent => GridInflexibleBreadth::MaxContent,
         // cov:ignore: unreachable per this fn's doc; kept for match
@@ -733,6 +743,12 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::FontSizeKeyword(keyword) => PropertyValue::FontSize(Length::Px(
             keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX),
         )),
+        // ── font-size: calc() ─────────────────────────────────────────────
+        // Also resolved in phase 2 for `cascade_page`.
+        PropertyValue::FontSizeCalc(calc) => PropertyValue::FontSize(Length::Px(
+            crate::resolve::resolve_font_size_calc(calc, font_size, ctx.root_line_height, ctx)
+                .px(),
+        )),
         // ── line-height ───────────────────────────────────────────────────
         // `lh`/`rlh` self-references resolve against the root, hence
         // `ctx.root_line_height` rather than `own_line_height`.
@@ -825,7 +841,7 @@ pub(super) fn absolutize_in_page_context(
         }
         PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),
         // ── border-radius / box-shadow / outline ─────────────────────────
-        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(basis.border_radius_value(v)),
+        PropertyValue::BorderRadius(v) => PropertyValue::BorderRadius(Box::new(basis.border_radius_value(&v))),
         PropertyValue::BorderRadiusInherit => PropertyValue::BorderRadiusInherit,
         PropertyValue::BorderRadiusTopLeft(v) => PropertyValue::BorderRadiusTopLeft(basis.corner_radius_value(v)),
         PropertyValue::BorderRadiusTopRight(v) => PropertyValue::BorderRadiusTopRight(basis.corner_radius_value(v)),
@@ -960,6 +976,15 @@ pub(super) fn absolutize_in_page_context(
                 )),
                 FontShorthandSize::Keyword(keyword) => FontShorthandSize::Absolute(Length::Px(
                     keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX),
+                )),
+                FontShorthandSize::Calc(calc) => FontShorthandSize::Absolute(Length::Px(
+                    crate::resolve::resolve_font_size_calc(
+                        calc,
+                        font_size,
+                        ctx.root_line_height,
+                        ctx,
+                    )
+                    .px(),
                 )),
             },
             line_height: lift_line_height(resolve_line_height(

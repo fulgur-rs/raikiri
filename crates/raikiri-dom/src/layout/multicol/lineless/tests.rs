@@ -56,9 +56,25 @@ fn a_box_ending_at_a_column_edge_stays_in_that_column() {
 }
 
 #[test]
-fn boxes_avoiding_breaks_move_or_overflow_whole() {
+fn boxes_avoiding_breaks_move_then_break_anyway_when_taller_than_a_column() {
     assert_eq!(
         shape(&[avoid(20.0), avoid(40.0), avoid(40.0)], 30.0),
+        vec![
+            vec![(0, 0.0, 20.0)],
+            vec![(1, 0.0, 30.0), (2, 0.0, 10.0)],
+            vec![(3, 0.0, 30.0), (4, 0.0, 10.0)]
+        ]
+    );
+}
+
+#[test]
+fn boxes_avoiding_breaks_that_must_stay_whole_overflow_whole() {
+    let whole = |height| Item {
+        whole: true,
+        ..avoid(height)
+    };
+    assert_eq!(
+        shape(&[whole(20.0), whole(40.0), whole(40.0)], 30.0),
         vec![
             vec![(0, 0.0, 20.0)],
             vec![(1, 0.0, 40.0)],

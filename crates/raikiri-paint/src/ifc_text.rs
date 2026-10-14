@@ -757,14 +757,16 @@ fn paint_box(
     if style_owner != owner || !is_text {
         return style_owner;
     }
-    let mut node = document.parent_of(owner).unwrap_or(owner);
-    while computed_for_id(cascade, node)
-        .is_some_and(|cv| cv.display == raikiri_style::property::DisplayValue::Contents)
-    {
-        let Some(parent) = document.parent_of(node) else {
+    // Past the last ancestor, the walk stays on it even when it is
+    // `display: contents`.
+    let mut node = owner;
+    for id in document.ancestors(owner) {
+        node = id;
+        if !computed_for_id(cascade, id)
+            .is_some_and(|cv| cv.display == raikiri_style::property::DisplayValue::Contents)
+        {
             break;
-        };
-        node = parent;
+        }
     }
     node
 }

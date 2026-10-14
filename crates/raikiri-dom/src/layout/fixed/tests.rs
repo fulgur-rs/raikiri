@@ -97,6 +97,165 @@ fn auto_margins_center_nested_fixed_boxes_in_the_page_area() {
 }
 
 #[test]
+fn auto_vertical_margins_split_negative_free_space() {
+    // CSS 2.1 §10.6.4: both auto vertical margins take equal shares of the
+    // free space even when it is negative, so the box stays centered on its
+    // insets. Horizontally (§10.3.7) they become zero instead.
+    let (doc, fixed) = laid_out(
+        "",
+        "",
+        "position:fixed;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (0.0, 250.0, 10.0, 100.0));
+    let (doc, fixed) = laid_out(
+        "",
+        "",
+        "position:fixed;left:50%;right:50%;width:100px;height:10px;top:0;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed), (400.0, 0.0, 100.0, 10.0));
+}
+
+#[test]
+fn auto_vertical_margins_of_absolute_boxes_split_negative_free_space() {
+    // The same rule for a box placed by its block container.
+    let (doc, abs) = laid_out(
+        "position:relative;height:200px;border-top:5px solid",
+        "",
+        "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs), (0.0, 55.0 + 50.0, 10.0, 100.0));
+    // A positive free space is split as before, whether the containing
+    // block is the parent or a further ancestor.
+    for (parent, wrapper) in [
+        ("position:relative;height:200px", ""),
+        ("", "position:relative;height:200px"),
+    ] {
+        let (doc, abs) = laid_out(
+            parent,
+            wrapper,
+            "position:absolute;top:0;bottom:0;height:100px;width:10px;margin:auto",
+        );
+        assert_eq!(
+            absolute_rect(&doc, abs),
+            (0.0, 100.0, 10.0, 100.0),
+            "{parent}{wrapper}"
+        );
+    }
+    let (doc, abs) = laid_out(
+        "",
+        "position:relative;height:200px",
+        "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs), (0.0, 100.0, 10.0, 100.0));
+}
+
+#[test]
+fn auto_vertical_margins_of_flex_and_grid_children_split_negative_free_space() {
+    // A flex or grid container places its absolutely positioned children
+    // against its padding box by the same rule.
+    for display in ["flex", "grid"] {
+        let (doc, abs) = laid_out(
+            &format!("position:relative;height:200px;display:{display}"),
+            "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+            "",
+        );
+        assert_eq!(absolute_rect(&doc, abs).1, 50.0 + 50.0, "{display}");
+    }
+}
+
+#[test]
+fn auto_vertical_margins_of_grid_children_split_the_free_space_of_their_grid_area() {
+    // The rows are 50px and 150px tall. A line left `auto` stands for the
+    // padding edge, so each placement below resolves to one grid area.
+    for (rows, area_top, area_height) in [
+        ("grid-row-start:2", 50.0, 150.0),
+        ("grid-row:-2 / -1", 50.0, 150.0),
+        ("grid-row-end:2", 0.0, 50.0),
+        ("grid-row:1 / 2", 0.0, 50.0),
+    ] {
+        let (doc, abs) = laid_out(
+            "position:relative;height:200px;display:grid;grid-template-rows:50px 150px",
+            &format!(
+                "position:absolute;{rows};top:50%;bottom:50%;height:100px;width:10px;margin:auto"
+            ),
+            "",
+        );
+        // Centered on the middle of the area: half the free space of
+        // `area_height - 100px` goes to each margin.
+        let expected = 50.0 + area_top + area_height / 2.0 - 50.0;
+        assert_eq!(absolute_rect(&doc, abs).1, expected, "{rows}");
+    }
+}
+
+#[test]
+fn auto_vertical_margins_of_absolute_boxes_in_sideways_containers_stay_zero() {
+    // The physical height of a sideways container is its inline axis.
+    for mode in ["sideways-rl", "sideways-lr"] {
+        let (doc, abs) = laid_out(
+            "",
+            &format!("writing-mode:{mode};position:relative;height:200px"),
+            "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+        );
+        assert_eq!(absolute_rect(&doc, abs).1, 50.0 + 100.0, "{mode}");
+    }
+}
+
+#[test]
+fn auto_horizontal_margins_of_absolute_boxes_in_vertical_containers_split_negative_free_space() {
+    // The physical width of a vertical or sideways container is its block
+    // axis, so CSS 2.1 §10.6.4 applies to it.
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
+        let (doc, abs) = laid_out(
+            "",
+            &format!("writing-mode:{mode};position:relative;width:200px;height:300px"),
+            "position:absolute;left:50%;right:50%;width:100px;height:10px;margin:auto",
+        );
+        assert_eq!(absolute_rect(&doc, abs).0, 50.0, "{mode}");
+    }
+}
+
+#[test]
+fn auto_vertical_margins_of_absolute_boxes_in_paragraphs_split_negative_free_space() {
+    // A container with inline content places its positioned children on
+    // its own.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "height:200px",
+        "top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs).1, 50.0);
+}
+
+#[test]
+fn the_page_writing_mode_picks_the_axis_that_zeroes_negative_auto_margins() {
+    // The box's own writing mode does not change the rule.
+    let (doc, fixed) = laid_out(
+        "",
+        "",
+        "position:fixed;top:50%;bottom:50%;height:100px;width:10px;margin:auto;writing-mode:vertical-rl",
+    );
+    assert_eq!(absolute_rect(&doc, fixed).1, 250.0);
+    // In a vertical page the physical height is the inline axis, where
+    // negative free space zeroes the margins, and the width the block axis,
+    // where it is split.
+    let (doc, fixed) = laid_out_with(
+        "writing-mode:vertical-rl",
+        "",
+        "",
+        "",
+        "position:fixed;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed).1, 300.0);
+    let (doc, fixed) = laid_out_with(
+        "writing-mode:vertical-rl",
+        "",
+        "",
+        "",
+        "position:fixed;left:50%;right:50%;width:100px;height:10px;top:0;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, fixed).0, 350.0);
+}
+
+#[test]
 fn an_axis_with_auto_insets_keeps_the_static_position() {
     let (doc, fixed) = laid_out(
         "margin-left:30px",
@@ -1034,4 +1193,80 @@ fn inline_form_controls_contain_fixed_descendants() {
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_ne!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
+}
+
+/// A paragraph root with `parent_css` holding text and one positioned
+/// child with `abs_css`. Returns the document and the child.
+fn paragraph_with_positioned_child(parent_css: &str, abs_css: &str) -> (Document, usize) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(format!("display:block;position:relative;{parent_css}").as_str()),
+    );
+    doc.append_text(parent, "text");
+    let abs = doc.append_element(
+        Some(parent),
+        "div",
+        Style::default(),
+        Some(format!("display:block;position:absolute;{abs_css}").as_str()),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert!(
+        doc.nodes[parent]
+            .flags
+            .contains(crate::node::NodeFlags::IS_IFC_ROOT)
+    );
+    (doc, abs)
+}
+
+#[test]
+fn auto_margins_of_absolute_boxes_in_paragraphs_follow_the_axes_of_the_root() {
+    // The block axis of a vertical root is its width: negative free space
+    // is split there, and zeroed in the height, its inline axis.
+    for mode in ["vertical-rl", "vertical-lr"] {
+        let (doc, abs) = paragraph_with_positioned_child(
+            &format!("writing-mode:{mode};width:200px;height:200px"),
+            "left:50%;right:50%;width:100px;top:50%;bottom:50%;height:100px;margin:auto",
+        );
+        let (x, y, _, _) = absolute_rect(&doc, abs);
+        assert_eq!((x, y), (50.0, 100.0), "{mode}");
+    }
+    // Positive free space is split in either axis.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "width:200px;height:200px",
+        "left:0;right:0;width:100px;top:0;bottom:0;height:100px;margin:auto",
+    );
+    let (x, y, _, _) = absolute_rect(&doc, abs);
+    assert_eq!((x, y), (50.0, 50.0));
+    // Negative free space in the inline axis of a horizontal root goes to
+    // the end margin.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "width:200px;height:200px",
+        "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs).0, 100.0);
+    // In a right-to-left vertical root the end margin is the top one.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "writing-mode:vertical-rl;direction:rtl;width:200px;height:200px",
+        "left:0;width:10px;top:50%;bottom:50%;height:100px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs).1, 0.0);
+    // In a right-to-left root the end margin is the left one.
+    let (doc, abs) = paragraph_with_positioned_child(
+        "direction:rtl;width:200px;height:200px",
+        "left:50%;right:50%;width:100px;top:0;height:10px;margin:auto",
+    );
+    assert_eq!(absolute_rect(&doc, abs).0, 0.0);
 }

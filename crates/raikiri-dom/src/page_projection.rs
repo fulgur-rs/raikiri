@@ -7,7 +7,7 @@ pub(crate) mod generated_boxes;
 pub(crate) mod generated_images;
 mod image_markers;
 pub(crate) mod paint_order;
-mod paint_transform;
+pub(crate) mod paint_transform;
 pub(crate) mod records;
 pub(crate) mod text_runs;
 
@@ -429,8 +429,7 @@ impl Document {
         let mut clips = BTreeMap::new();
         let mut visited = HashSet::new();
         for item in &page.items {
-            let mut ancestor = Some(item.node_id.0 as usize);
-            while let Some(id) = ancestor {
+            for id in self.inclusive_ancestors(item.node_id.0 as usize) {
                 if !visited.insert(id) {
                     break;
                 }
@@ -444,7 +443,6 @@ impl Document {
                     }
                     clips.insert(node_id, source.on_page(node_id, page));
                 }
-                ancestor = self.nodes[id].parent;
             }
         }
         clips

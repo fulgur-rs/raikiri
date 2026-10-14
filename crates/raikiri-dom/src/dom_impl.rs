@@ -128,14 +128,7 @@ impl<'a> ElementRef<'a> {
             // routes to the inherent `inline_style_source` above without UFCS.
             return self.inline_style_source();
         }
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e
-                .attributes
-                .iter()
-                .find(|a| a.namespace.is_none() && a.local == local)
-                .map(|a| a.value.as_str()),
-            _ => None,
-        }
+        self.node.attribute(local)
     }
 
     /// `id` attribute value, with an empty `id=""` normalized to `None`.
@@ -154,14 +147,7 @@ impl<'a> ElementRef<'a> {
     /// `"href")`. Presence is tracked independently of value, mirroring
     /// [`Self::attr`]. The separate `style` slot is null-namespace only.
     fn attr_ns(&self, namespace: &str, local: &str) -> Option<&str> {
-        match &self.node.data {
-            crate::node::NodeData::Element(e) => e
-                .attributes
-                .iter()
-                .find(|a| a.namespace.as_deref() == Some(namespace) && a.local == local)
-                .map(|a| a.value.as_str()),
-            _ => None,
-        }
+        self.node.attribute_ns(namespace, local)
     }
 }
 
@@ -316,6 +302,10 @@ impl StyleDom for Document {
 
     fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {
         Document::parent_of(self, child.0 as usize).map(|p| StyleNodeId::new(p as u64))
+    }
+
+    fn normal_line_height(&self) -> Option<raikiri_style::NormalLineHeightSource> {
+        Some(Document::normal_line_height(self))
     }
 }
 

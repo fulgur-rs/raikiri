@@ -1990,6 +1990,7 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
         return;
     }
     let rtl = root.rtl;
+    let vertical_root = root.writing_mode != WritingMode::HorizontalTb;
     let Some(lines) = root.lines.clone() else {
         return;
     };
@@ -2040,6 +2041,12 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             None => (content_left, content_top + lines.height),
         };
         let child = &tree.nodes[node].style;
+        // Two auto margins share the free space between the insets equally.
+        // In the root's block axis that holds even when the space is
+        // negative (CSS 2.1 §10.6.4); in its inline axis negative space
+        // goes to the end margin instead (§10.3.7).
+        let auto_vertical_margins = child.margin.top.is_auto() && child.margin.bottom.is_auto();
+        let auto_horizontal_margins = child.margin.left.is_auto() && child.margin.right.is_auto();
         let margin = child.margin.map(|margin| {
             margin
                 .resolve_to_option(cb_width, resolve_calc)
@@ -2094,6 +2101,16 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             },
         );
         let x = match (left, right) {
+            (Some(left), Some(right)) if auto_horizontal_margins => {
+                let free_space = cb_width - left - right - output.size.width;
+                if vertical_root || free_space >= 0.0 {
+                    border.left + left + free_space / 2.0
+                } else if rtl {
+                    border.left + cb_width - right - output.size.width
+                } else {
+                    border.left + left
+                }
+            }
             (Some(left), _) => border.left + left + margin.left,
             (None, Some(right)) => {
                 border.left + cb_width - right - output.size.width - margin.right
@@ -2101,6 +2118,16 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
             (None, None) => static_x + margin.left,
         };
         let y = match (top, bottom) {
+            (Some(top), Some(bottom)) if auto_vertical_margins => {
+                let free_space = cb_height - top - bottom - output.size.height;
+                if !vertical_root || free_space >= 0.0 {
+                    border.top + top + free_space / 2.0
+                } else if rtl {
+                    border.top + cb_height - bottom - output.size.height
+                } else {
+                    border.top + top
+                }
+            }
             (Some(top), _) => border.top + top + margin.top,
             (None, Some(bottom)) => {
                 border.top + cb_height - bottom - output.size.height - margin.bottom

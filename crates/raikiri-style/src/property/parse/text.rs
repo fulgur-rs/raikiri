@@ -369,6 +369,12 @@ pub(crate) fn parse_font_size(input: &mut Parser<'_, '_>) -> Option<PropertyValu
     if let Ok(ident) = input.try_parse(|i| i.expect_ident().cloned()) {
         return parse_font_size_keyword(&ident);
     }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. A math function is
+    // clamped to the range rather than rejected, once it is resolved.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(PropertyValue::FontSizeCalc(calc));
+    }
     let length = parse_length_value(input, true)?;
     (length.payload() >= 0.0).then_some(PropertyValue::FontSize(length))
 }
@@ -444,8 +450,6 @@ fn parse_font_size_keyword(ident: &str) -> Option<PropertyValue> {
 /// - **(b) Unsupported**: CSS-wide keywords are not implemented yet and are silently dropped.
 ///   See the "CSS-wide keywords" section of the [`PropertyValue`] documentation for
 ///   the canonical list of five keywords and the rationale.
-/// - **(b) Unsupported**: `calc()` / `var()` are not implemented (css-variables-and-math);
-///   both are silently dropped.
 /// - **(a) Invalid under the specification → dropped**: negative `<number>` / `<length-percentage>` values;
 ///   `auto`, `medium`, and other invalid keywords violate the grammar and are dropped.
 pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight> {
@@ -468,7 +472,13 @@ pub(super) fn parse_line_height(input: &mut Parser<'_, '_>) -> Option<LineHeight
         // A value outside the specification's `<number [0,∞]>` range drops the declaration (do not fall through to Length).
         return (n >= 0.0).then_some(LineHeight::Number(n));
     }
-    // 3. Match `<length-percentage [0,∞]>`; the helper accepts every unit and `%`.
+    // 3. A mixed-unit `calc()` reaches this parser only after substitution or
+    //    simplification failed to fold it to one dimension. A math function
+    //    is clamped to the range rather than rejected, once it is resolved.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LineHeight::Calc(calc));
+    }
+    // 4. Match `<length-percentage [0,∞]>`; the helper accepts every unit and `%`.
     //       Negative values are dropped by a post-filter (the helper deliberately does not check signs;
     //       see "Sign / range" in the parse_length_value documentation).
     let l = parse_length_value(input, true)?;
@@ -2355,7 +2365,7 @@ fn parse_text_shadow_item_with_mode(
 /// CSS Text Decoration Module Level 3 §4
 /// <https://www.w3.org/TR/css-text-decor-3/#text-shadow-property>.
 ///
-/// `none` means an empty list (a top-level alternative), as in [`parse_content`](super::content::parse_content) and
+/// `none` means an empty list (a top-level alternative), as in [`parse_content_with_alt`](super::content::parse_content_with_alt) and
 /// [`parse_counter_property`](super::content::parse_counter_property). Delegate the comma-separated list to
 /// `cssparser::Parser::parse_comma_separated`; unconsumed tokens in any item
 /// are detected by that method's `parse_until_before` → `parse_entirely`
@@ -2372,7 +2382,8 @@ pub(super) fn parse_text_shadow(input: &mut Parser<'_, '_>) -> Option<Vec<TextSh
 }
 
 /// The `font-size` component of the `font` shorthand. [`parse_font_size`] returns
-/// three forms (`FontSize` / `FontSizeRelative` / `FontSizeKeyword`); carry them
+/// four forms (`FontSize` / `FontSizeRelative` / `FontSizeKeyword` /
+/// `FontSizeCalc`); carry them
 /// unchanged in a small enum. This is private to the [`FontShorthand`] payload and
 /// never enters [`ComputedValues`] / [`SpecifiedValues`] or gets re-exported by
 /// the umbrella crate (as with [`BackgroundShorthand`]).
@@ -2392,6 +2403,10 @@ pub enum FontShorthandSize {
     /// [`PropertyValue::FontSizeKeyword`] variant, into which this component
     /// expands.
     Keyword(AbsoluteFontSize),
+    /// A mixed-unit `calc()`: [`parse_font_size`] returns the
+    /// [`PropertyValue::FontSizeCalc`] variant, into which this component
+    /// expands.
+    Calc(RelativeCalcLengthPercentage),
 }
 
 /// Specified-value carrier for the `font` shorthand: CSS Fonts 4 §2.1, "Font
@@ -2578,7 +2593,8 @@ pub(super) fn parse_font_shorthand(input: &mut Parser<'_, '_>) -> Option<FontSho
         PropertyValue::FontSize(length) => FontShorthandSize::Absolute(length),
         PropertyValue::FontSizeRelative(relative) => FontShorthandSize::Relative(relative),
         PropertyValue::FontSizeKeyword(keyword) => FontShorthandSize::Keyword(keyword),
-        // cov:ignore: `parse_font_size` returns only the three variants above;
+        PropertyValue::FontSizeCalc(calc) => FontShorthandSize::Calc(calc),
+        // cov:ignore: `parse_font_size` returns only the four variants above;
         // its two return paths are canonical. This branch is unreachable.
         _ => return None,
     };

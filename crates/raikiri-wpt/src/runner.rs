@@ -163,12 +163,13 @@ impl WptRunner {
         config: ReftestConfig,
         variant_query: &str,
     ) -> ReftestResult {
+        let paper = config.for_test(&pair.test);
         if let Some(filtered) = self.classify(test_id) {
             return ReftestResult {
                 pair_test_id: test_id.to_owned(),
                 outcome: filtered,
                 mismatched_pixels: 0,
-                total_pixels: u64::from(config.width) * u64::from(config.height),
+                total_pixels: u64::from(paper.width) * u64::from(paper.height),
             };
         }
         let result = if variant_query.is_empty() {
@@ -182,7 +183,7 @@ impl WptRunner {
                 pair_test_id: test_id.to_owned(),
                 outcome: TestOutcome::Error(format!("reftest error: {error}")),
                 mismatched_pixels: 0,
-                total_pixels: u64::from(config.width) * u64::from(config.height),
+                total_pixels: u64::from(paper.width) * u64::from(paper.height),
             },
         };
         result.pair_test_id = test_id.to_owned();
@@ -312,6 +313,8 @@ fn render_pair_with_engine(
 ) -> Result<TestOutcome, String> {
     let test_html = std::fs::read_to_string(&pair.test).map_err(|e| e.to_string())?;
     let ref_html = std::fs::read_to_string(&pair.reference).map_err(|e| e.to_string())?;
+    // The oracle renders on the same paper as Raikiri does.
+    let config = config.for_test(&pair.test);
     let (test_img, ref_img) = match engine {
         Engine::Blitz => (
             render_blitz(&test_html, config.width, config.height).map_err(|e| e.to_string())?,

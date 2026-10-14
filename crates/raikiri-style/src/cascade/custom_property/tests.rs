@@ -1,10 +1,10 @@
 use super::*;
 use crate::cascade::test_support::*;
 use crate::cascade::{apply_value, cascade};
-use crate::property::LengthPercentageOrCalc;
 use crate::property::{
     CalcLengthPercentage, CssColor, Length, OutlineColor, OutlineStyle, PropertyKey, VerticalAlign,
 };
+use crate::property::{CssPositionOffset, LengthPercentageOrCalc};
 use crate::resolve::ComputedLengthPercentageOrCalc;
 use crate::resolve::{ComputedLength, ComputedLengthPercentageOrAuto, ComputedLineHeight};
 use crate::ruletree::build_rule_tree;
@@ -1933,10 +1933,10 @@ fn radius_inheritance_substitution_retains_shorthand_type_before_expansion() {
     );
     assert_eq!(
         project_deferred_value(
-            PropertyValue::BorderRadius(crate::property::BorderRadius::elliptical(
+            PropertyValue::BorderRadius(Box::new(crate::property::BorderRadius::elliptical(
                 [Length::Px(5.0); 4],
                 [Length::Px(5.0); 4]
-            )),
+            ))),
             PropertyKey::Color
         ),
         None
@@ -2268,6 +2268,283 @@ fn mixed_calc_in_flex_basis_keeps_its_percentage_for_used_value_time() {
     // `auto`, as for `width`.
     let cv = cascade_doc("", "div", Some("line-height: normal; flex-basis: 1lh"));
     assert_eq!(cv.flex_basis, ComputedFlexBasis::Auto);
+}
+
+#[test]
+fn mixed_calc_in_border_radius_keeps_its_percentage_for_used_value_time() {
+    use crate::property::CornerRadius;
+    let calc =
+        |percent, px| ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    for declarations in [
+        "font-size: 10px; border-radius: calc(50% - 1em)",
+        "font-size: 10px; border-top-left-radius: calc(50% - 1em)",
+        "font-size: 10px; --r: calc(50% - 1em); border-radius: var(--r)",
+        "font-size: 10px; --r: calc(50% - 1em); border-top-left-radius: var(--r)",
+    ] {
+        let cv = cascade_doc("", "div", Some(declarations));
+        assert_eq!(
+            cv.border_radius.top_left,
+            CornerRadius::circular(calc(50.0, -10.0)),
+            "{declarations}"
+        );
+    }
+    // Each axis of the shorthand keeps its own calc().
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("border-radius: 10px calc(25% + 5px) / calc(100% - 20px)"),
+    );
+    assert_eq!(
+        cv.border_radius.top_left,
+        CornerRadius::new(ComputedLengthPercentageOrCalc::Px(10.0), calc(100.0, -20.0))
+    );
+    assert_eq!(
+        cv.border_radius.top_right,
+        CornerRadius::new(calc(25.0, 5.0), calc(100.0, -20.0))
+    );
+    assert_eq!(
+        cv.border_radius.bottom_left,
+        CornerRadius::new(calc(25.0, 5.0), calc(100.0, -20.0))
+    );
+    // A calc() that is a length once its font-relative terms are known is
+    // clamped to the `[0,∞]` range rather than rejected.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; border-bottom-right-radius: calc(1em - 20px) 5px"),
+    );
+    assert_eq!(
+        cv.border_radius.bottom_right,
+        CornerRadius::new(
+            ComputedLengthPercentageOrCalc::Px(0.0),
+            ComputedLengthPercentageOrCalc::Px(5.0)
+        )
+    );
+}
+
+#[test]
+fn inherited_border_radius_keeps_a_mixed_calc() {
+    use crate::property::CornerRadius;
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-radius: calc(50% + 1px)"));
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some("border-radius: inherit; border-top-right-radius: inherit"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    let expected =
+        CornerRadius::circular(ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 1.0,
+        }));
+    let radius = result.computed[child].border_radius;
+    assert_eq!(radius.top_left, expected);
+    assert_eq!(radius.top_right, expected);
+}
+
+#[test]
+fn mixed_calc_in_background_size_keeps_its_percentage_for_used_value_time() {
+    use crate::resolve::ComputedBackgroundSize;
+    let expected = ComputedBackgroundSize::Explicit {
+        width: ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: -10.0,
+        }),
+        height: ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 100.0,
+            px: 5.0,
+        }),
+    };
+    for declarations in [
+        "font-size: 10px; background-size: calc(50% - 1em) calc(100% + 5px)",
+        "font-size: 10px; background: 0 0 / calc(50% - 1em) calc(100% + 5px)",
+        "font-size: 10px; --s: calc(50% - 1em); background-size: var(--s) calc(100% + 5px)",
+    ] {
+        let cv = cascade_doc("", "div", Some(declarations));
+        assert_eq!(cv.background_layers[0].size, expected, "{declarations}");
+    }
+    // Clamped to the `[0,∞]` range once the font-relative terms are known.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; background-size: calc(1em - 20px) calc(-10% + 1em - 10px)"),
+    );
+    assert_eq!(
+        cv.background_layers[0].size,
+        ComputedBackgroundSize::Explicit {
+            width: ComputedLengthPercentageOrAuto::Px(0.0),
+            height: ComputedLengthPercentageOrAuto::Percent(0.0),
+        }
+    );
+    // Terms that cancel leave a negative length, clamped as well.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; background-size: calc(1em - 1em - 10px)"),
+    );
+    assert_eq!(
+        cv.background_layers[0].size,
+        ComputedBackgroundSize::Explicit {
+            width: ComputedLengthPercentageOrAuto::Px(0.0),
+            height: ComputedLengthPercentageOrAuto::Auto,
+        }
+    );
+}
+
+#[test]
+fn mixed_calc_in_a_position_is_measured_from_the_start_edge() {
+    use crate::resolve::{ComputedCssPositionOffset, ComputedLengthPercentage};
+    let calc = |percent, px| ComputedCssPositionOffset::Calc(CalcLengthPercentage { percent, px });
+    for declarations in [
+        "font-size: 10px; background-position: calc(50% + 10px) calc(100% - 1em)",
+        "font-size: 10px; background: calc(50% + 10px) calc(100% - 1em)",
+        "font-size: 10px; --x: calc(50% + 10px); background-position: var(--x) calc(100% - 1em)",
+        // An offset from the end edge is folded into its start-edge form.
+        "font-size: 10px; background-position: right calc(50% - 10px) bottom 1em",
+        "font-size: 10px; background-position: left calc(50% + 10px) bottom calc(1em - 0%)",
+    ] {
+        let cv = cascade_doc("", "div", Some(declarations));
+        let position = cv.background_layers[0].position;
+        assert_eq!(position.horizontal, calc(50.0, 10.0), "{declarations}");
+        let vertical = match position.vertical {
+            // `bottom 1em` keeps its end edge.
+            ComputedCssPositionOffset::End(ComputedLengthPercentage::Px(px)) => calc(100.0, -px),
+            vertical => vertical,
+        };
+        assert_eq!(vertical, calc(100.0, -10.0), "{declarations}");
+    }
+    // Font-relative terms after an end edge, folded and then absolutized.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; background-position: right calc(1em - 5%) top"),
+    );
+    assert_eq!(
+        cv.background_layers[0].position.horizontal,
+        calc(105.0, -10.0)
+    );
+    // A sum whose percentage cancels, or whose length resolves to zero, is a
+    // plain length or percentage.
+    for (declarations, expected) in [
+        (
+            "background-position: right calc(100% - 10px) top",
+            ComputedLengthPercentage::Px(10.0),
+        ),
+        (
+            "font-size: 10px; background-position: right calc(100% - 1em) top",
+            ComputedLengthPercentage::Px(10.0),
+        ),
+        (
+            "font-size: 0; background-position: calc(20% + 1em) top",
+            ComputedLengthPercentage::Percent(20.0),
+        ),
+        // An `lh` that `line-height: normal` leaves unresolved falls back to
+        // zero, as for a plain `lh` offset; the other terms stay.
+        (
+            "line-height: normal; background-position: calc(10% + 1lh) top",
+            ComputedLengthPercentage::Percent(10.0),
+        ),
+    ] {
+        let cv = cascade_doc("", "div", Some(declarations));
+        assert_eq!(
+            cv.background_layers[0].position.horizontal,
+            ComputedCssPositionOffset::Start(expected),
+            "{declarations}"
+        );
+    }
+    // Positions accept negative values, so nothing is clamped.
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("object-position: calc(10% + 5px) calc(-10% - 5px)"),
+    );
+    assert_eq!(cv.object_position.horizontal, calc(10.0, 5.0));
+    assert_eq!(cv.object_position.vertical, calc(-10.0, -5.0));
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("--o: calc(50% + 10px); transform-origin: var(--o) top"),
+    );
+    assert_eq!(cv.transform_origin.horizontal, calc(50.0, 10.0));
+    assert_eq!(
+        cv.transform_origin.vertical,
+        ComputedCssPositionOffset::Start(ComputedLengthPercentage::Percent(0.0))
+    );
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some(
+            "font-size: 10px; background-image: radial-gradient(at left calc(50% + 1em) bottom calc(10% + 2px), red, blue)",
+        ),
+    );
+    let crate::property::BackgroundImage::Gradient(gradient) = &cv.background_layers[0].image
+    else {
+        panic!("expected a gradient");
+    };
+    let crate::property::Gradient::Radial(radial) = gradient.as_ref() else {
+        panic!("expected a radial gradient");
+    };
+    assert_eq!(
+        radial.position.horizontal,
+        CssPositionOffset::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0
+        })
+    );
+    assert_eq!(
+        radial.position.vertical,
+        CssPositionOffset::Calc(CalcLengthPercentage {
+            percent: 90.0,
+            px: -2.0
+        })
+    );
+}
+
+#[test]
+fn gradient_mixed_calc_stops_and_radii_absolutize_font_terms() {
+    let calc = |percent, px| LengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    let gradient = |declarations: &str| {
+        let cv = cascade_doc("", "div", Some(declarations));
+        let crate::property::BackgroundImage::Gradient(gradient) = &cv.background_layers[0].image
+        else {
+            panic!("expected a gradient"); // cov:ignore: every declaration below sets a gradient
+        };
+        gradient.as_ref().clone()
+    };
+    let crate::property::Gradient::Linear(linear) = gradient(
+        "font-size: 10px; background-image: linear-gradient(red calc(50% + 1em), blue calc(100% - 1em))",
+    ) else {
+        panic!("expected a linear gradient"); // cov:ignore: the declaration sets a linear gradient
+    };
+    assert_eq!(linear.stops[0].position, Some(calc(50.0, 10.0)));
+    assert_eq!(linear.stops[1].position, Some(calc(100.0, -10.0)));
+    let crate::property::Gradient::Radial(radial) = gradient(
+        "font-size: 10px; background-image: radial-gradient(calc(10% + 1em) calc(50% - 1em), red, blue)",
+    ) else {
+        panic!("expected a radial gradient"); // cov:ignore: the declaration sets a radial gradient
+    };
+    assert_eq!(
+        radial.size,
+        crate::property::RadialSize::Ellipse(calc(10.0, 10.0), calc(50.0, -10.0))
+    );
+    // A circle radius has no percentage, so it resolves to a length and a
+    // negative sum clamps to zero.
+    for (size, expected) in [("calc(1em + 2px)", 12.0), ("calc(1em - 20px)", 0.0)] {
+        let crate::property::Gradient::Radial(radial) = gradient(&format!(
+            "font-size: 10px; background-image: radial-gradient({size}, red, blue)"
+        )) else {
+            panic!("expected a radial gradient"); // cov:ignore: the declaration sets a radial gradient
+        };
+        assert_eq!(
+            radial.size,
+            crate::property::RadialSize::Circle(LengthPercentageOrCalc::Length(
+                crate::property::Length::Px(expected)
+            )),
+            "{size}"
+        );
+    }
 }
 
 #[test]

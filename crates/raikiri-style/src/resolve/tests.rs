@@ -26,6 +26,22 @@ fn border_radius_used_values_resolve_percentages_on_each_axis() {
 }
 
 #[test]
+fn border_radius_used_values_resolve_a_calc_against_its_axis() {
+    let calc =
+        |percent, px| ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    let radius = ComputedBorderRadius::elliptical([calc(50.0, -10.0); 4], [calc(10.0, 5.0); 4]);
+    assert_eq!(radius.used(100.0, 50.0), [[40.0, 10.0]; 4]);
+    // A sum below zero makes the corner square.
+    let radius = ComputedBorderRadius::corners(
+        calc(10.0, -50.0),
+        calc(10.0, 0.0),
+        calc(10.0, 0.0),
+        calc(10.0, 0.0),
+    );
+    assert_eq!(radius.used(100.0, 100.0)[0], [0.0, 0.0]);
+}
+
+#[test]
 fn border_radius_used_values_scale_both_axes_by_one_edge_ratio() {
     let radius = ComputedBorderRadius::elliptical(
         [ComputedLengthPercentage::Px(80.0); 4],
@@ -1164,10 +1180,10 @@ fn border_radius_and_box_shadow_resolve_all_length_components() {
             &CTX,
         ),
         ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(20.0).into(),
-            top_right: ComputedLengthPercentage::Px(8.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(16.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(20.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(20.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(8.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(16.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(20.0).into(),
         }
     );
 
@@ -1214,6 +1230,38 @@ fn resolve_css_position_absolutizes_each_offset() {
             horizontal: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(16.0)),
             vertical: ComputedCssPositionOffset::End(ComputedLengthPercentage::Percent(30.0)),
         }
+    );
+}
+
+/// An end-edge `calc()` offset was folded to `100% - offset` when parsed.
+/// Without an `lh` basis, only the `lh` term falls back to zero, so the
+/// offset stays on the end edge as a plain `right 1lh` does.
+#[test]
+fn resolve_css_position_relative_calc_drops_only_an_unresolvable_lh_term() {
+    let full = RelativeCalcLengthPercentage::from_unit(100.0, "%").unwrap();
+    let lh = relative_calc_plus_1px(1.0, "lh");
+    let specified = CssPosition {
+        horizontal: CssPositionOffset::RelativeCalc(full.add_scaled(lh, -1.0).unwrap()),
+        vertical: CssPositionOffset::RelativeCalc(relative_calc_plus_1px(1.0, "rlh")),
+    };
+    assert_eq!(
+        resolve_css_position(specified, ComputedLength(16.0), None, &CTX),
+        ComputedCssPosition {
+            horizontal: ComputedCssPositionOffset::Calc(CalcLengthPercentage {
+                percent: 100.0,
+                px: -1.0,
+            }),
+            vertical: ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(1.0)),
+        }
+    );
+    // A sum that overflows falls back to zero.
+    let overflow = CssPosition {
+        horizontal: CssPositionOffset::RelativeCalc(relative_calc_plus_1px(2.0, "em")),
+        vertical: CssPositionOffset::Start(Length::Px(0.0)),
+    };
+    assert_eq!(
+        resolve_css_position(overflow, ComputedLength(f32::MAX), None, &CTX).horizontal,
+        ComputedCssPositionOffset::Start(ComputedLengthPercentage::Px(0.0)),
     );
 }
 
@@ -1826,6 +1874,165 @@ fn relative_calc_plus_1px(value: f32, unit: &str) -> RelativeCalcLengthPercentag
 }
 
 #[test]
+fn a_signed_length_percentage_or_calc_keeps_negative_values() {
+    let resolve =
+        |value| resolve_length_percentage_or_calc(value, ComputedLength(10.0), None, &CTX);
+    let calc = |percent, px| CalcLengthPercentage { percent, px };
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Length(Length::Em(-1.0))),
+        ComputedLengthPercentageOrCalc::Px(-10.0)
+    );
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Calc(calc(0.0, -3.0))),
+        ComputedLengthPercentageOrCalc::Px(-3.0)
+    );
+    let mixed = ComputedLengthPercentageOrCalc::Calc(calc(-50.0, 2.0));
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::Calc(calc(-50.0, 2.0))),
+        mixed
+    );
+    let em_only = relative_calc_plus_1px(-2.0, "em");
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(em_only)),
+        ComputedLengthPercentageOrCalc::Px(-19.0)
+    );
+    let percent = RelativeCalcLengthPercentage::from_unit(-20.0, "%").unwrap();
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(percent)),
+        ComputedLengthPercentageOrCalc::Percent(-20.0)
+    );
+    // An `lh` term without a basis falls back to zero and the other terms
+    // keep their values; a sum that overflows falls back to zero.
+    assert_eq!(
+        resolve(LengthPercentageOrCalc::RelativeCalc(
+            relative_calc_plus_1px(1.0, "lh")
+        )),
+        ComputedLengthPercentageOrCalc::Px(1.0)
+    );
+    assert_eq!(
+        resolve_length_percentage_or_calc(
+            LengthPercentageOrCalc::RelativeCalc(relative_calc_plus_1px(1e30, "em")),
+            ComputedLength(1e30),
+            None,
+            &CTX,
+        ),
+        ComputedLengthPercentageOrCalc::Px(0.0)
+    );
+    assert_eq!(mixed.resolve_signed(100.0), -48.0);
+    assert_eq!(mixed.resolve(100.0), 0.0);
+    assert_eq!(
+        ComputedLengthPercentageOrCalc::Percent(-10.0).resolve_signed(50.0),
+        -5.0
+    );
+    assert!(mixed.has_percent());
+    assert!(ComputedLengthPercentageOrCalc::Percent(1.0).has_percent());
+    assert!(!ComputedLengthPercentageOrCalc::Px(1.0).has_percent());
+    assert!(!ComputedLengthPercentageOrCalc::Calc(calc(0.0, 1.0)).has_percent());
+}
+
+#[test]
+fn a_translate_function_resolves_its_offset_against_the_box() {
+    let calc = ComputedLengthPercentageOrCalc::Calc(CalcLengthPercentage {
+        percent: 50.0,
+        px: -1.0,
+    });
+    let px = ComputedLengthPercentageOrCalc::Px(2.0);
+    for (function, offset, by_percent) in [
+        (
+            ComputedTransformFunction::Translate(calc, px),
+            Some((49.0, 2.0)),
+            true,
+        ),
+        (
+            ComputedTransformFunction::Translate(px, calc),
+            Some((2.0, 9.0)),
+            true,
+        ),
+        (
+            ComputedTransformFunction::TranslateX(px),
+            Some((2.0, 0.0)),
+            false,
+        ),
+        (
+            ComputedTransformFunction::TranslateY(calc),
+            Some((0.0, 9.0)),
+            true,
+        ),
+        (ComputedTransformFunction::ScaleX(2.0), None, false),
+    ] {
+        assert_eq!(function.translation(100.0, 20.0), offset, "{function:?}");
+        assert_eq!(function.translates_by_percent(), by_percent, "{function:?}");
+    }
+}
+
+#[test]
+fn a_font_size_calc_resolves_against_the_parent_and_clamps() {
+    let resolve = |calc, basis| resolve_font_size_calc(calc, ComputedLength(10.0), basis, &CTX);
+    let unit = |value, unit| RelativeCalcLengthPercentage::from_unit(value, unit).unwrap();
+    assert_eq!(resolve(unit(150.0, "%"), None), ComputedLength(15.0));
+    assert_eq!(
+        resolve(relative_calc_plus_1px(2.0, "em"), None),
+        ComputedLength(21.0)
+    );
+    let percent_minus_px = unit(10.0, "%").add_scaled(unit(5.0, "px"), -1.0).unwrap();
+    assert_eq!(resolve(percent_minus_px, None), ComputedLength(0.0));
+    let lh = relative_calc_plus_1px(1.0, "lh");
+    assert_eq!(
+        resolve(lh, Some(ComputedLength(20.0))),
+        ComputedLength(21.0)
+    );
+    // Without the parent's line height the size falls back to the initial
+    // one, as a plain `lh` does.
+    assert_eq!(
+        resolve(lh, None),
+        ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)
+    );
+    // A sum that overflows once the percentage is scaled by the parent's
+    // size falls back the same way, while a large percentage alone does not.
+    let huge = unit(3.0e38, "%")
+        .add_scaled(unit(3.4e38, "px"), 1.0)
+        .unwrap();
+    assert_eq!(
+        resolve(huge, None),
+        ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)
+    );
+    let large = unit(3.0e38, "%").add_scaled(unit(1.0, "px"), 1.0).unwrap();
+    assert!(resolve(large, None).px() > 1.0e37);
+}
+
+#[test]
+fn a_line_height_calc_resolves_against_the_own_font_size_and_clamps() {
+    let resolve = |calc, basis| {
+        resolve_line_height(LineHeight::Calc(calc), ComputedLength(10.0), basis, &CTX)
+    };
+    let unit = |value, unit| RelativeCalcLengthPercentage::from_unit(value, unit).unwrap();
+    let length = |px| ComputedLineHeight::Length(ComputedLength(px));
+    assert_eq!(resolve(unit(150.0, "%"), None), length(15.0));
+    assert_eq!(resolve(unit(-150.0, "%"), None), length(0.0));
+    assert_eq!(
+        resolve(relative_calc_plus_1px(2.0, "em"), None),
+        length(21.0)
+    );
+    assert_eq!(
+        resolve(relative_calc_plus_1px(-2.0, "em"), None),
+        length(0.0)
+    );
+    let percent_plus_em = unit(50.0, "%").add_scaled(unit(1.0, "em"), 1.0).unwrap();
+    assert_eq!(resolve(percent_plus_em, None), length(15.0));
+    let percent_minus_px = unit(10.0, "%").add_scaled(unit(5.0, "px"), -1.0).unwrap();
+    assert_eq!(resolve(percent_minus_px, None), length(0.0));
+    // `lh` refers to the parent's line height; without one the value is
+    // unresolvable, as a plain `lh` is.
+    let lh = relative_calc_plus_1px(1.0, "lh");
+    assert_eq!(resolve(lh, Some(ComputedLength(20.0))), length(21.0));
+    assert_eq!(resolve(lh, None), ComputedLineHeight::Normal);
+    let huge = unit(3.0e38, "%")
+        .add_scaled(unit(3.4e38, "px"), 1.0)
+        .unwrap();
+    assert_eq!(resolve(huge, None), ComputedLineHeight::Normal);
+}
+
+#[test]
 fn relative_calc_terms_resolve_against_their_bases() {
     let ctx = ResolveContext {
         root_line_height: Some(ComputedLength(30.0)),
@@ -2031,7 +2238,8 @@ fn non_negative_calc_resolution_clamps_and_keeps_percentages() {
         })
     );
     // An absolute calc without a percentage clamps; an `lh` term without a
-    // basis falls back to the initial zero.
+    // basis falls back to zero, as a plain `lh` does, and the other terms
+    // keep their values.
     assert_eq!(
         resolve(
             LengthPercentageOrCalc::Calc(CalcLengthPercentage {
@@ -2049,7 +2257,7 @@ fn non_negative_calc_resolution_clamps_and_keeps_percentages() {
             16.0,
             None,
         ),
-        ComputedLengthPercentageOrCalc::Px(0.0)
+        ComputedLengthPercentageOrCalc::Px(1.0)
     );
     // The computed value lifts back into the specified layer unchanged.
     let calc = CalcLengthPercentage {
@@ -2100,5 +2308,33 @@ fn a_calc_gap_that_folds_to_one_term_computes_as_that_term() {
     assert_eq!(
         gap(LengthPercentageOrCalc::Calc(calc)),
         ComputedLengthPercentageOrNormal::Calc(calc)
+    );
+}
+
+#[test]
+fn normal_line_height_sources_are_equal_when_they_share_a_measurer() {
+    struct Fixed;
+    impl NormalLineHeight for Fixed {
+        fn normal_line_height(&self, _: &crate::ChFontKey) -> Option<ComputedLength> {
+            Some(ComputedLength(18.0))
+        }
+    }
+    let source = NormalLineHeightSource::new(Fixed);
+    assert_eq!(source, source.clone());
+    assert_ne!(source, NormalLineHeightSource::new(Fixed));
+    assert_eq!(format!("{source:?}"), "NormalLineHeightSource(..)");
+}
+
+#[test]
+fn used_line_height_length_or_takes_normal_from_the_caller() {
+    let size = ComputedLength(10.0);
+    let normal = Some(ComputedLength(12.0));
+    assert_eq!(
+        used_line_height_length_or(ComputedLineHeight::Normal, size, normal),
+        normal
+    );
+    assert_eq!(
+        used_line_height_length_or(ComputedLineHeight::Number(2.0), size, normal),
+        Some(ComputedLength(20.0))
     );
 }

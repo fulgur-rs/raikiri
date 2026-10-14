@@ -198,6 +198,31 @@ pub struct ElementData {
     pub(crate) canvas_bitmap: Option<CanvasBitmap>,
 }
 
+impl ElementData {
+    /// Null-namespace attribute value; see [`Node::attribute`].
+    #[inline]
+    pub(crate) fn attribute(&self, local: &str) -> Option<&str> {
+        if local == "style" {
+            return self.inline_style.as_deref();
+        }
+        self.attributes
+            .iter()
+            .find(|attribute| attribute.namespace.is_none() && attribute.local == local)
+            .map(|attribute| attribute.value.as_str())
+    }
+
+    /// Namespace-qualified attribute value; see [`Node::attribute_ns`].
+    #[inline]
+    pub(crate) fn attribute_ns(&self, namespace: &str, local: &str) -> Option<&str> {
+        self.attributes
+            .iter()
+            .find(|attribute| {
+                attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
+            })
+            .map(|attribute| attribute.value.as_str())
+    }
+}
+
 /// Live bitmap of an HTML `<canvas>` element (HTML Standard §4.12.5).
 ///
 /// When materialized, `rgba` holds premultiplied-free `width * height * 4`
@@ -411,6 +436,13 @@ pub struct Node {
     pub(crate) has_logical_min_block_size: bool,
     /// Whether manual multicol placement replaced the relative block position.
     pub(crate) needs_relative_block_paint_offset: bool,
+    /// The physical axes in which size containment sizes this box as if it
+    /// had no content (CSS Containment 2 §3.1, §3.2).
+    pub(crate) size_containment: taffy::Size<bool>,
+    /// The flex container width this node's percentage padding and borders
+    /// were last resolved against while taffy measured it as a flex item;
+    /// its layout cache holds results for that width.
+    pub(crate) flex_edge_basis: Option<f32>,
     /// Computed CSS `order`; consumed only when this node is a flex/grid item.
     pub(crate) order: i32,
     /// Optional order-modified child view for the last style bridge. This is
@@ -423,6 +455,10 @@ pub struct Node {
     /// Taffy's resolved grid column start for each in-flow child, written
     /// with `grid_item_row_starts` and read only for the children it lists.
     pub(crate) grid_item_column_starts: Box<[(usize, u16)]>,
+    /// The in-flow grid items whose block size depends on the size of the
+    /// rows they span: a percentage height in an intrinsic or flexible row.
+    /// They do not take part in baseline alignment (CSS Grid 1 §6.4).
+    pub(crate) grid_items_without_baseline: Box<[usize]>,
     /// Child arena indices (`usize` indices into `Document::nodes`).
     pub children: Vec<usize>,
     /// Arena index of the parent holding this node in its `children`, or
@@ -488,6 +524,10 @@ pub struct Node {
     /// access pattern are unchanged; this documentation states only the
     /// behavioral contract for the **set of observable values** at that boundary.
     pub unrounded_layout: Layout,
+    /// The content-box height that percentages inside this box resolved
+    /// against at its last final layout, as taffy's block algorithm derives
+    /// it: `None` when that height was not definite.
+    pub(crate) percent_basis_height: Option<f32>,
     /// Per-node metadata bits (IS_IN_DOCUMENT, etc.); mutation is crate-private.
     pub(crate) flags: NodeFlags,
     /// Node kind and kind-specific fields (tagged union).
@@ -529,16 +569,23 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Document,
         }
@@ -584,16 +631,23 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Element(Box::new(ElementData {
                 tag_name: tag,
@@ -643,16 +697,23 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Text(TextData { text_content: text }),
         }
@@ -697,16 +758,23 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::Comment(text),
         }
@@ -748,16 +816,23 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::ProcessingInstruction { target, data },
         }
@@ -801,16 +876,23 @@ impl Node {
             authored_writing_mode: None,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            size_containment: taffy::Size {
+                width: false,
+                height: false,
+            },
+            flex_edge_basis: None,
             order: 0,
             order_modified_children: Box::new([]),
             grid_item_row_starts: Box::new([]),
             grid_column_count: 0,
             grid_item_column_starts: Box::new([]),
+            grid_items_without_baseline: Box::new([]),
             children: Vec::new(),
             parent: None,
             cache: Cache::new(),
             ifc: None,
             unrounded_layout: Layout::with_order(0),
+            percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data: NodeData::DocumentFragment,
         }
@@ -1106,14 +1188,7 @@ impl Node {
         let NodeData::Element(element) = &self.data else {
             return None;
         };
-        if local == "style" {
-            return element.inline_style.as_deref();
-        }
-        element
-            .attributes
-            .iter()
-            .find(|attribute| attribute.namespace.is_none() && attribute.local == local)
-            .map(|attribute| attribute.value.as_str())
+        element.attribute(local)
     }
 
     /// Return a namespace-qualified element attribute value, if present.
@@ -1134,13 +1209,7 @@ impl Node {
         let NodeData::Element(element) = &self.data else {
             return None;
         };
-        element
-            .attributes
-            .iter()
-            .find(|attribute| {
-                attribute.namespace.as_deref() == Some(namespace) && attribute.local == local
-            })
-            .map(|attribute| attribute.value.as_str())
+        element.attribute_ns(namespace, local)
     }
 
     /// Whether this node belongs to an inline SVG source subtree.

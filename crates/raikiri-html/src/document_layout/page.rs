@@ -75,7 +75,7 @@ struct PreparedSvg {
 #[derive(Clone, Copy)]
 pub struct Page<'a> {
     pub(super) slice: &'a raikiri_dom::PageSlice,
-    pub(super) geometry: &'a crate::render::ResolvedPageGeometry,
+    pub(super) geometry: &'a raikiri_dom::ResolvedPageGeometry,
     pub(super) style: &'a PageCascadeResult,
     pub(super) document: &'a raikiri_dom::Document,
     pub(super) cascade: &'a raikiri_style::CascadeResult,
@@ -211,26 +211,10 @@ impl<'a> Page<'a> {
             &computed.object_position,
         )?;
         let rect = PaintRect::new(x as f32, y as f32, width as f32, height as f32);
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-        {
+        if !is_finite_rect(&rect) {
             return None;
         }
-        let pixels = source.get_decoded_at_size(
-            &url,
-            raikiri_traits::ImageRasterSize {
-                width: rect.width,
-                height: rect.height,
-            },
-            None,
-        )?;
-        let bytes = (pixels.width as usize)
-            .checked_mul(pixels.height as usize)?
-            .checked_mul(4)?;
-        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
-            return None;
-        }
+        let pixels = checked_pixels(source, &url, raster_size(&rect))?;
         Some(RasterImage {
             node: fragment.node(),
             url,
@@ -252,28 +236,10 @@ impl<'a> Page<'a> {
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
         let (url, rect) = self.document.page_marker_image(self.index(), owner)?;
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-            || rect.width <= 0.0
-            || rect.height <= 0.0
-        {
+        if !is_drawable_rect(&rect) {
             return None;
         }
-        let pixels = source.get_decoded_at_size(
-            url,
-            raikiri_traits::ImageRasterSize {
-                width: rect.width,
-                height: rect.height,
-            },
-            None,
-        )?;
-        let bytes = (pixels.width as usize)
-            .checked_mul(pixels.height as usize)?
-            .checked_mul(4)?;
-        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
-            return None;
-        }
+        let pixels = checked_pixels(source, url, raster_size(&rect))?;
         let element = usize::try_from(owner.0).ok()?;
         let clip_owner =
             if raikiri_dom::generated_content::inside_marker_in_flow(self.cascade, element)
@@ -314,6 +280,33 @@ impl<'a> Page<'a> {
             .page_generated_image_text_position(self.index(), image)
     }
 
+    /// The alternative text of the `content` of the `kind` pseudo-element of
+    /// `owner`: the components after `/`, such as `"Note"` in
+    /// `content: url(icon.png) / "Note"`, with `attr()` and counters
+    /// resolved (CSS Content 3 <https://www.w3.org/TR/css-content-3/#alt>).
+    ///
+    /// Assistive technology reads it in place of the pseudo-element's text
+    /// and images; an empty string marks them as decorative. `None` when
+    /// the value gives no alternative text, and for `::first-letter`, which
+    /// has no `content`.
+    pub fn generated_alt_text(&self, owner: NodeId, kind: crate::GeneratedKind) -> Option<String> {
+        let pseudo = match kind {
+            crate::GeneratedKind::Before => raikiri_style::PseudoElem::Before,
+            crate::GeneratedKind::After => raikiri_style::PseudoElem::After,
+            crate::GeneratedKind::Marker => raikiri_style::PseudoElem::Marker,
+            _ => return None,
+        };
+        let element = usize::try_from(owner.0).ok()?;
+        let snapshots = self.document.shared_counter_snapshots(self.cascade).ok()?;
+        raikiri_dom::generated_content::generated_alt_text(
+            self.document,
+            self.cascade,
+            element,
+            pseudo,
+            &snapshots,
+        )
+    }
+
     /// Cached raster pixels of an image of `::before` or `::after` content
     /// from [`PaintEvent::GeneratedImage`].
     ///
@@ -346,12 +339,7 @@ impl<'a> Page<'a> {
             object.width,
             object.height,
         );
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-            || rect.width <= 0.0
-            || rect.height <= 0.0
-        {
+        if !is_drawable_rect(&rect) {
             return None;
         }
         // The size layout prepared the pixels at, which stays bounded when
@@ -361,17 +349,8 @@ impl<'a> Page<'a> {
                 self.document
                     .content_image_raster_size(owner, pseudo, image.index)
             })
-            .unwrap_or(raikiri_traits::ImageRasterSize {
-                width: rect.width,
-                height: rect.height,
-            });
-        let pixels = source.get_decoded_at_size(url, raster, None)?;
-        let bytes = (pixels.width as usize)
-            .checked_mul(pixels.height as usize)?
-            .checked_mul(4)?;
-        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
-            return None;
-        }
+            .unwrap_or_else(|| raster_size(&rect));
+        let pixels = checked_pixels(source, url, raster)?;
         Some(RasterImage {
             node: image.owner,
             url: url.clone(),
@@ -758,6 +737,38 @@ impl<'a> Page<'a> {
         )
     }
 
+    /// The root element's box on this page, which the canvas background's
+    /// images are sized and positioned against (CSS Backgrounds 3 §2.11.2).
+    ///
+    /// The canvas runs through every page as one surface, so on a later page
+    /// the box sits above the page by the flow the earlier pages hold: an
+    /// image that does not repeat shows only where the box reaches, and
+    /// tiles continue from the page before. Paint the canvas background
+    /// over the page area whatever the box covers.
+    ///
+    /// The box carries the root's `transform`, which [`Self::paint_order`]
+    /// leaves out: it moves the whole canvas, its background images and
+    /// every paint event included (CSS Transforms 1 §6). `None` when the
+    /// document has no root element.
+    ///
+    /// An auto-height root spans the pages of the document. On a page
+    /// streamed before the number of pages is known, it spans the pages
+    /// streamed so far.
+    pub fn root_box(&self) -> Option<super::RootBox> {
+        let page_count = if self.page_count_deferred {
+            self.slice.page_index + 1
+        } else {
+            self.page_count
+        };
+        raikiri_dom::root_box(
+            self.document,
+            self.cascade,
+            self.geometry.page_box,
+            self.slice.content_origin_y,
+            page_count,
+        )
+    }
+
     /// The running element (`position: running(<name>)`) that a page margin
     /// box with `content: element(<name>, <fetch>)` shows on this page, per
     /// CSS GCPM 3 §1.2.2 <https://www.w3.org/TR/css-gcpm-3/#element-syntax>.
@@ -880,6 +891,10 @@ impl<'a> Page<'a> {
     /// the element it is in and, inside columns, the offsets that move its
     /// lines.
     ///
+    /// Like the paint events, the transform is inside the root element's
+    /// own transform, which [`Self::root_box`] reports and the painter
+    /// applies around the whole page.
+    ///
     /// `None` when the painter draws nothing of `node` because a transform
     /// on it or an ancestor is singular, and for an out-of-range node.
     pub fn paint_transform(&self, node: NodeId) -> Option<PaintTransform> {
@@ -890,6 +905,40 @@ impl<'a> Page<'a> {
     }
 }
 
+/// Whether every coordinate of `rect` is finite.
+fn is_finite_rect(rect: &PaintRect) -> bool {
+    [rect.x, rect.y, rect.width, rect.height]
+        .into_iter()
+        .all(f32::is_finite)
+}
+
+/// Whether `rect` is finite and has a positive area.
+fn is_drawable_rect(rect: &PaintRect) -> bool {
+    is_finite_rect(rect) && rect.width > 0.0 && rect.height > 0.0
+}
+
+/// The raster size that paints an image at `rect`.
+fn raster_size(rect: &PaintRect) -> raikiri_traits::ImageRasterSize {
+    raikiri_traits::ImageRasterSize {
+        width: rect.width,
+        height: rect.height,
+    }
+}
+
+/// The cached pixels of `url` at `size`, when they are non-empty and their
+/// RGBA buffer matches their dimensions.
+fn checked_pixels(
+    source: &dyn raikiri_traits::ImagePixelSource,
+    url: &url::Url,
+    size: raikiri_traits::ImageRasterSize,
+) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+    let pixels = source.get_decoded_at_size(url, size, None)?;
+    let bytes = (pixels.width as usize)
+        .checked_mul(pixels.height as usize)?
+        .checked_mul(4)?;
+    (pixels.width != 0 && pixels.height != 0 && pixels.rgba.len() == bytes).then_some(pixels)
+}
+
 fn svg_font_family(style: &ComputedValues) -> String {
     style
         .font_family
@@ -898,14 +947,10 @@ fn svg_font_family(style: &ComputedValues) -> String {
             if family.1 == raikiri_style::property::FontFamilyKind::Generic {
                 family.as_str().to_owned()
             } else {
-                let name = family
-                    .as_str()
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\n', "\\a ")
-                    .replace('\r', "\\d ")
-                    .replace('\u{c}', "\\c ");
-                format!("\"{name}\"")
+                // Writing to a `String` cannot fail.
+                let mut quoted = String::new();
+                let _ = cssparser::serialize_string(family.as_str(), &mut quoted);
+                quoted
             }
         })
         .collect::<Vec<_>>()

@@ -32,9 +32,9 @@ use raikiri_style::property::{
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
-    ComputedCssPosition, ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction, ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext,
-    resolve_background_size, resolve_border, resolve_css_position,
+    ComputedCssPosition, ComputedLength, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
+    ComputedValues, MAX_PAINTED_BACKGROUND_LAYERS, ResolveContext, resolve_background_size,
+    resolve_border, resolve_css_position,
 };
 use raikiri_traits::{
     ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, NodeId, NodeKind, PageBox, PaintInsets,
@@ -61,19 +61,27 @@ pub(crate) fn paint_blank_paper(scene: &mut impl PaintScene, page_box: PageBox) 
     );
 }
 
-/// Canvas background fill site — minimal CSS Backgrounds 3 §2.11 canvas propagation.
+/// Canvas background fill site — CSS Backgrounds 3 §2.11 canvas propagation.
 ///
 /// Page backgrounds cover the paper.  When the page has a non-zero margin,
 /// the html/body canvas background is painted only in the page content area;
 /// this is the geometry that makes `@page { margin: 5px }` visibly different
-/// from a zero-margin page.  With zero page margins the historical canvas
-/// propagation remains a single full-page fill.
+/// from a zero-margin page.  With zero page margins the canvas background
+/// covers the whole paper.
+///
+/// The canvas images are sized and positioned against the root element's
+/// box (§2.11.2), which runs through every page as one surface:
+/// `root` is the root element's box on this page, which sits higher on each
+/// later page, so a later page continues the tiles of the earlier ones and
+/// shows a `no-repeat` image only where the root's box reaches it.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn paint_canvas_background(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
+    root: Option<&raikiri_dom::RootBox>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -92,38 +100,11 @@ pub(crate) fn paint_canvas_background(
         );
     }
 
-    if margins.is_zero() {
-        let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
-        // Keep the page and propagated canvas backgrounds as separate layers.
-        // A canvas color may be translucent; selecting it with `or` would
-        // discard the opaque page color instead of compositing over it.
-        fill_rect(scene, page_color.unwrap_or(white), page_rect);
-        paint_page_background_image(
-            image_cache,
-            scene,
-            document,
-            cascade,
-            page_rect,
-            pixel_source,
-            warnings,
-        );
-        if let Some(color) = canvas_color {
-            fill_rect(scene, color, page_rect);
-        }
-        paint_canvas_background_image(
-            image_cache,
-            scene,
-            document,
-            cascade,
-            page_rect,
-            pixel_source,
-            warnings,
-        );
-        return;
-    }
-
     // The paper is always covered, even when the page background is
-    // transparent; the UA canvas default is white in that case.
+    // transparent; the UA canvas default is white in that case. The page
+    // and propagated canvas backgrounds stay separate layers: a canvas
+    // color may be translucent, and selecting it with `or` would discard
+    // the opaque page color instead of compositing over it.
     let page_rect = kurbo::Rect::new(0.0, 0.0, page_box.width as f64, page_box.height as f64);
     fill_rect(scene, page_color.unwrap_or(white), page_rect);
     paint_page_background_image(
@@ -135,24 +116,122 @@ pub(crate) fn paint_canvas_background(
         pixel_source,
         warnings,
     );
-    let canvas_rect = kurbo::Rect::new(
-        margins.left as f64,
-        margins.top as f64,
-        (page_box.width - margins.right) as f64,
-        (page_box.height - margins.bottom) as f64,
-    );
+    let canvas_rect = if margins.is_zero() {
+        page_rect
+    } else {
+        kurbo::Rect::new(
+            margins.left as f64,
+            margins.top as f64,
+            (page_box.width - margins.right) as f64,
+            (page_box.height - margins.bottom) as f64,
+        )
+    };
     if let Some(color) = canvas_color {
         fill_rect(scene, color, canvas_rect);
     }
+    let insets = raikiri_dom::page_content_insets(cascade, page_box);
+    let page_area = kurbo::Rect::from_origin_size(
+        (
+            f64::from(margins.left + insets.left),
+            f64::from(margins.top + insets.top),
+        ),
+        (
+            f64::from(insets.page_area_width(margins, page_box)),
+            f64::from(insets.page_area_height(margins, page_box)),
+        ),
+    );
     paint_canvas_background_image(
         image_cache,
         scene,
         document,
         cascade,
-        canvas_rect,
+        &CanvasArea::new(canvas_rect, page_area, root),
         pixel_source,
         warnings,
     );
+}
+
+/// Where the images of the canvas background paint and are placed.
+pub(crate) struct CanvasArea {
+    /// The canvas on this page, which every layer covers whatever its
+    /// `background-clip` (CSS Backgrounds 3 §2.11.1).
+    painting: Rect,
+    /// The page area, the initial containing block, which `fixed` layers
+    /// are positioned in (CSS Backgrounds 3 §2.5).
+    viewport: Rect,
+    /// The root element's border box, which the other layers are
+    /// positioned in.
+    root: Rect,
+    /// The root's border widths: left, top, right, bottom.
+    border: (f64, f64, f64, f64),
+    /// The root's padding: left, top, right, bottom.
+    padding: (f64, f64, f64, f64),
+    /// The root's transform, which moves the images with the rest of the
+    /// canvas.
+    transform: Option<Affine>,
+}
+
+impl CanvasArea {
+    /// The canvas `painting` on this page, with its images placed in the
+    /// root element's box `root`, or the page area `viewport` for a `fixed`
+    /// layer. Without a root box the images are placed in the painting area
+    /// itself.
+    pub(crate) fn new(painting: Rect, viewport: Rect, root: Option<&raikiri_dom::RootBox>) -> Self {
+        let Some(root) = root else {
+            return Self {
+                painting,
+                viewport,
+                root: painting,
+                border: (0.0, 0.0, 0.0, 0.0),
+                padding: (0.0, 0.0, 0.0, 0.0),
+                transform: None,
+            };
+        };
+        let edges = |insets: PaintInsets| {
+            (
+                f64::from(insets.left),
+                f64::from(insets.top),
+                f64::from(insets.right),
+                f64::from(insets.bottom),
+            )
+        };
+        let rect = root.border_box;
+        Self {
+            painting,
+            viewport,
+            root: Rect::new(
+                f64::from(rect.x),
+                f64::from(rect.y),
+                f64::from(rect.x + rect.width),
+                f64::from(rect.y + rect.height),
+            ),
+            border: edges(root.border),
+            padding: edges(root.padding),
+            transform: root.transform.map(crate::transform::affine),
+        }
+    }
+
+    /// The positioning area of `layer`: the page area for a `fixed` layer,
+    /// whatever its origin, and otherwise the root's box inset as its
+    /// origin says.
+    fn positioning(
+        &self,
+        layer: &raikiri_style::ComputedBackgroundLayer,
+        image_url: Option<&url::Url>,
+        warnings: &mut Vec<RenderWarning>,
+    ) -> Rect {
+        if layer.attachment == raikiri_style::property::BackgroundAttachment::Fixed {
+            return self.viewport;
+        }
+        origin_inset_rect(
+            self.root,
+            layer.origin,
+            self.border,
+            self.padding,
+            image_url,
+            warnings,
+        )
+    }
 }
 
 /// Paint the root element border at the page edge when the document uses it
@@ -440,7 +519,10 @@ fn canvas_background_owner(document: &Document, cascade: &CascadeResult) -> Opti
         return Some(html_id);
     }
 
-    let body_id = raikiri_dom::paint_rules::find_paint_root(document)?;
+    // Only a `body` propagates its background, not a `frameset` (CSS
+    // Backgrounds 3, 2.11.2).
+    let body_id = raikiri_dom::paint_rules::find_paint_root(document)
+        .filter(|&id| document.get_node(id).and_then(|node| node.tag_name()) == Some("body"))?;
     let body = cascade.computed.get(body_id)?;
     let body_has_background = body.has_background_image() || body.background_color.a != 0;
     body_has_background.then_some(body_id)
@@ -832,24 +914,12 @@ fn paint_page_background_layer(
     }
 }
 
-fn canvas_used_padding(computed: &ComputedValues, area_width: f64) -> (f64, f64, f64, f64) {
-    let resolve = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc| {
-        f64::from(value.resolve(area_width as f32))
-    };
-    (
-        resolve(computed.padding.left),
-        resolve(computed.padding.top),
-        resolve(computed.padding.right),
-        resolve(computed.padding.bottom),
-    )
-}
-
 fn paint_canvas_background_image(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     document: &Document,
     cascade: &CascadeResult,
-    area: Rect,
+    area: &CanvasArea,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
@@ -859,36 +929,74 @@ fn paint_canvas_background_image(
     let Some(computed) = cascade.computed.get(node_id) else {
         return;
     };
+    // spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
+    // A transform on the root moves the whole canvas, its images included,
+    // while the canvas still covers the page: paint the images through the
+    // transform over the part of the canvas that lands on this page, clipped
+    // to it. A singular transform renders none of the root.
+    let (transform, painting) = match area.transform {
+        None => (Affine::IDENTITY, area.painting),
+        Some(transform) if crate::transform::is_invertible(transform) => (
+            transform,
+            transform.inverse().transform_rect_bbox(area.painting),
+        ),
+        Some(_) => return,
+    };
+    let clipped = transform != Affine::IDENTITY;
+    if clipped {
+        scene.push_clip_layer(Affine::IDENTITY, &area.painting);
+    }
+    let mut scene = crate::transform::TransformScene { scene, transform };
     // CSS Backgrounds 3 §2.1: paint from the last layer to the first.
     let painted = painted_background_layers(computed.background_layers(), warnings);
     for layer in painted.iter().rev() {
         paint_canvas_background_layer(
             image_cache,
-            scene,
+            &mut scene,
             computed,
             layer,
             area,
+            painting,
             pixel_source,
             warnings,
         );
     }
+    if clipped {
+        scene.scene.pop_layer();
+    }
 }
 
-/// Paint one background layer propagated to the canvas over the canvas
-/// border box `area`.
+/// Paint one background layer propagated to the canvas over `painting`,
+/// positioned in the root element's box.
+#[allow(clippy::too_many_arguments)]
 fn paint_canvas_background_layer(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
     computed: &ComputedValues,
     layer: &raikiri_style::ComputedBackgroundLayer,
-    area: Rect,
+    area: &CanvasArea,
+    painting: Rect,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
 ) {
+    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
+        return;
+    }
     if let BackgroundImage::Gradient(gradient) = &layer.image
         && paints_gradient_image(&layer.image)
     {
-        paint_canvas_gradient(scene, computed, layer, gradient, area, warnings);
+        let positioning = area.positioning(layer, None, warnings);
+        gradient::paint_gradient_layer(
+            scene,
+            gradient,
+            positioning,
+            painting,
+            None,
+            &layer.size,
+            &layer.position,
+            &layer.repeat,
+            computed.color,
+        );
         return;
     }
     let Some(pixel_source) = pixel_source else {
@@ -900,30 +1008,18 @@ fn paint_canvas_background_layer(
     let Some(url) = image_cache.image_url(raw_url) else {
         return;
     };
-    // Canvas positioning area with nonzero page margins and root borders
-    // (CSS Backgrounds 3 section 2.11 propagation plus section 2.8): `area`
-    // is the canvas border box (page content area inside margins, or full
-    // paper when margins are zero). Origin insets it by the canvas owner's
-    // border and padding. `background-clip` has no effect on a propagated
-    // background (CSS Backgrounds 3 §2.11.1), so the image paints over the
-    // whole of `area`, as the gradient path does.
-    let border = (
-        computed.border.left.width().px() as f64,
-        computed.border.top.width().px() as f64,
-        computed.border.right.width().px() as f64,
-        computed.border.bottom.width().px() as f64,
-    );
-    let padding = canvas_used_padding(computed, area.width());
-    let positioning = origin_inset_rect(area, layer.origin, border, padding, Some(&url), warnings);
-    if area.x1 <= area.x0 || area.y1 <= area.y0 {
-        return;
-    }
+    // The propagated values are treated as the root element's own (CSS
+    // Backgrounds 3 §2.11.2), so origin insets the root's border box by the
+    // root's border and padding. `background-clip` has no effect on a
+    // propagated background (§2.11.1): the image paints over the whole
+    // canvas, as the gradient does.
+    let positioning = area.positioning(layer, Some(&url), warnings);
     paint_background_from_source(
         image_cache,
         scene,
         &url,
         positioning,
-        area,
+        painting,
         &layer.size,
         &layer.position,
         &layer.repeat,
@@ -939,43 +1035,6 @@ fn paints_gradient_image(image: &BackgroundImage) -> bool {
         BackgroundImage::Gradient(gradient)
             if matches!(&**gradient, Gradient::Linear(_) | Gradient::Radial(_))
     )
-}
-
-/// Paint a linear or radial gradient propagated to the canvas (CSS
-/// Backgrounds 3 §2.11.2) over the canvas border box `area`.
-fn paint_canvas_gradient(
-    scene: &mut impl PaintScene,
-    computed: &ComputedValues,
-    layer: &raikiri_style::ComputedBackgroundLayer,
-    gradient: &Gradient,
-    area: Rect,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let border = (
-        computed.border.left.width().px() as f64,
-        computed.border.top.width().px() as f64,
-        computed.border.right.width().px() as f64,
-        computed.border.bottom.width().px() as f64,
-    );
-    let padding = canvas_used_padding(computed, area.width());
-    let positioning = origin_inset_rect(area, layer.origin, border, padding, None, warnings);
-    // The canvas background covers the whole canvas, so the root's
-    // background-clip has no effect (CSS Backgrounds 3 §2.11.1).
-    let painting = area;
-    if painting.x1 <= painting.x0 || painting.y1 <= painting.y0 {
-        return;
-    }
-    gradient::paint_gradient_layer(
-        scene,
-        gradient,
-        positioning,
-        painting,
-        None,
-        &layer.size,
-        &layer.position,
-        &layer.repeat,
-        computed.color,
-    );
 }
 
 fn background_color_with_image_source(
@@ -1753,6 +1812,7 @@ pub(crate) fn paint_document(
     active_page_name: Option<Option<&str>>,
     fixed_page_width: f32,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
 ) {
     let mut warnings = Vec::new();
     paint_document_impl(
@@ -1768,6 +1828,7 @@ pub(crate) fn paint_document(
         None,
         &mut warnings,
         custom_highlights,
+        root_transform,
         None,
     );
 }
@@ -1786,6 +1847,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
     pixel_source: &dyn ImagePixelSource,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
 ) {
     paint_document_impl(
         image_cache,
@@ -1800,6 +1862,7 @@ pub(crate) fn paint_document_with_images_and_warnings(
         Some(pixel_source),
         warnings,
         custom_highlights,
+        root_transform,
         None,
     );
 }
@@ -1818,6 +1881,7 @@ pub(crate) fn paint_document_impl(
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
     custom_highlights: &[crate::TextHighlightRange],
+    root_transform: Affine,
     mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
     let Some(body_id) = raikiri_dom::paint_rules::find_paint_root(document) else {
@@ -1896,6 +1960,9 @@ pub(crate) fn paint_document_impl(
             fragmentainer: Option<usize>,
             inside_fixed: bool,
             decorations: text::DecorationContext,
+            /// Whether the paragraph's lines wait for the end of the layer,
+            /// as those of the explicit cells beside it do.
+            defer: bool,
         },
         RestoreTransform(Affine),
         /// The lines of one paragraph, drawn where this frame pops: in place
@@ -1941,6 +2008,15 @@ pub(crate) fn paint_document_impl(
         /// Close a layer of deferred inline content: paint what its blocks
         /// deferred, then drop the layer.
         EndDeferral,
+        /// Reopen the overflow clip of a block around the content its layer
+        /// handed to the enclosing one (see
+        /// [`raikiri_dom::paint_rules::merges_clipped_inline_content`]), in
+        /// the transform the block was painted in.
+        PushClip {
+            node_id: usize,
+            clip: raikiri_traits::PaintClip,
+            transform: Affine,
+        },
         PopClip,
         /// Open the opacity group of a translucent inline element around a
         /// box laid out beside its paragraph's lines.
@@ -2068,6 +2144,9 @@ pub(crate) fn paint_document_impl(
     // through negative margins. Clip those backgrounds to the physical
     // content box without clipping text ink, which may legitimately overflow
     // its box.
+    // `scene` paints through the root element's `root_transform`, which
+    // moves the document but not the page: page-area clips undo it.
+    let page_clip_transform = root_transform.inverse();
     let page_content_clip = if margins.left > 0.0
         || margins.right > 0.0
         || margins.top > 0.0
@@ -2098,9 +2177,54 @@ pub(crate) fn paint_document_impl(
     // Boxes recorded before the lines of their paragraph, which place them:
     // the paragraph root, the box and its paint.
     let mut early_boxes: Vec<(usize, usize, anyrender::Scene)> = Vec::new();
-    // Each open layer collects the inline content its plain blocks defer,
-    // in tree order. The outermost layer closes after the whole body.
-    let mut deferral_scopes: Vec<Vec<PaintFrame>> = vec![Vec::new()];
+    // How an open layer ends once its subtree is done.
+    #[derive(Clone, Copy)]
+    enum LayerClose {
+        /// Paint what the layer collected.
+        Paint,
+        /// Hand what the layer collected to the enclosing layer, inside the
+        /// overflow clip of the block that opened it.
+        Merge {
+            node_id: usize,
+            clip: raikiri_traits::PaintClip,
+            transform: Affine,
+        },
+        /// Paint the deferred inline content, and hand the positioned boxes
+        /// to the enclosing layer.
+        Hoist,
+    }
+    // An open layer: the inline content its plain blocks defer and the
+    // positioned boxes that wait for its end, each in tree order, whether
+    // blocks inside it may defer (the content of a block in columns stays
+    // with its column clip), and how it ends.
+    struct DeferralLayer<'a> {
+        pending: Vec<PaintFrame<'a>>,
+        positioned: Vec<PaintFrame<'a>>,
+        allowed: bool,
+        close: LayerClose,
+        /// Whether the layer's end is painting its positioned boxes: the
+        /// boxes it pops then paint where they pop rather than waiting again.
+        flushing: bool,
+        /// Whether the standalone `::after` of the block that opened the
+        /// layer waits right below the layer's end frame. It follows the
+        /// block's content wherever that paints.
+        after: bool,
+    }
+    impl<'a> DeferralLayer<'a> {
+        fn new(allowed: bool, close: LayerClose) -> Self {
+            Self {
+                pending: Vec::new(),
+                positioned: Vec::new(),
+                allowed,
+                close,
+                flushing: false,
+                after: false,
+            }
+        }
+    }
+    // Each open layer collects the content that waits for its end. The
+    // outermost layer closes after the whole body.
+    let mut deferral_scopes: Vec<DeferralLayer> = vec![DeferralLayer::new(true, LayerClose::Paint)];
     let mut stack = vec![
         PaintFrame::EndDeferral,
         PaintFrame::Visit {
@@ -2143,17 +2267,39 @@ pub(crate) fn paint_document_impl(
         })
     };
     while let Some(frame) = stack.pop() {
-        // A box that does not defer, such as a positioned one, paints after
+        // A positioned box waits for the end of its layer, after the
+        // backgrounds of the blocks that follow it.
+        if let PaintFrame::Visit { node_id, .. } = &frame
+            && let Some(layer) = deferral_scopes.last_mut()
+            && layer.allowed
+            && !layer.flushing
+            && raikiri_dom::paint_rules::defers_to_positioned_layer(document, cascade, *node_id)
+        {
+            layer.positioned.push(frame);
+            continue;
+        }
+        // The lines of an anonymous cell in a table part that defers wait
+        // for the end of the layer, in tree order with the other cells'.
+        let mut frame = frame;
+        if let PaintFrame::AnonymousParagraph { defer, .. } = &mut frame
+            && std::mem::take(defer)
+        {
+            if let Some(layer) = deferral_scopes.last_mut() {
+                layer.pending.push(frame);
+            }
+            continue;
+        }
+        // A box that does not defer, such as a flex container, paints after
         // the inline content deferred before it.
         if let PaintFrame::Visit { node_id, .. } = &frame
             && deferral_scopes
                 .last()
-                .is_some_and(|pending| !pending.is_empty())
+                .is_some_and(|layer| !layer.pending.is_empty())
             && raikiri_dom::paint_rules::closes_deferred_inline_content(document, cascade, *node_id)
         {
             let pending = deferral_scopes
                 .last_mut()
-                .map(std::mem::take)
+                .map(|layer| std::mem::take(&mut layer.pending))
                 .unwrap_or_default();
             stack.push(frame);
             stack.extend(pending.into_iter().rev());
@@ -2190,6 +2336,7 @@ pub(crate) fn paint_document_impl(
                 fragmentainer,
                 inside_fixed,
                 decorations,
+                defer: _,
             } => {
                 let layout = cell.unrounded_layout;
                 let probe = cell
@@ -2222,7 +2369,7 @@ pub(crate) fn paint_document_impl(
                 }
                 let clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &clip {
-                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 let owner = document.ifc_source_owner(key);
                 if cascade.computed[owner].visibility != Visibility::Hidden
@@ -2277,17 +2424,75 @@ pub(crate) fn paint_document_impl(
                 continue;
             }
             PaintFrame::EndDeferral => {
-                let pending = deferral_scopes
+                // Keep the layer open while its content paints, so a box
+                // among it that closes deferred content flushes into it.
+                let replay = deferral_scopes
                     .last_mut()
-                    .map(std::mem::take)
+                    .map(|layer| match layer.close {
+                        LayerClose::Merge { .. } => Vec::new(),
+                        _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
+                        LayerClose::Paint => {
+                            layer.flushing = true;
+                            std::mem::take(&mut layer.positioned)
+                        }
+                        LayerClose::Hoist => Vec::new(),
+                    })
                     .unwrap_or_default();
-                if pending.is_empty() {
-                    deferral_scopes.pop();
-                } else {
-                    // Keep the layer open while its content paints, so a
-                    // positioned box among it flushes into this layer.
+                if !replay.is_empty() {
                     stack.push(PaintFrame::EndDeferral);
-                    stack.extend(pending.into_iter().rev());
+                    stack.extend(replay.into_iter().rev());
+                    continue;
+                }
+                let closed = deferral_scopes.pop();
+                if let (Some(layer), Some(outer)) = (closed, deferral_scopes.last_mut()) {
+                    match layer.close {
+                        LayerClose::Paint => {}
+                        LayerClose::Merge {
+                            node_id,
+                            clip,
+                            transform,
+                        } => {
+                            let mut pending = layer.pending;
+                            if layer.after
+                                && !pending.is_empty()
+                                && matches!(stack.last(), Some(PaintFrame::PaintAfter { .. }))
+                            {
+                                pending.extend(stack.pop());
+                            }
+                            for (frames, into) in [
+                                (pending, &mut outer.pending),
+                                (layer.positioned, &mut outer.positioned),
+                            ] {
+                                if !frames.is_empty() {
+                                    into.push(PaintFrame::PushClip {
+                                        node_id,
+                                        clip,
+                                        transform,
+                                    });
+                                    into.extend(frames);
+                                    into.push(PaintFrame::PopClip);
+                                }
+                            }
+                        }
+                        LayerClose::Hoist => outer.positioned.extend(layer.positioned),
+                    }
+                }
+                continue;
+            }
+            PaintFrame::PushClip {
+                node_id,
+                clip,
+                transform,
+            } => {
+                let saved_transform = scene.transform;
+                scene.transform = transform;
+                let rect = push_overflow_clip(scene, clip, &page_box);
+                scene.transform = saved_transform;
+                if let Some(t) = trace.as_deref_mut() {
+                    t.push(crate::PaintTraceEvent::PushOverflowClip(
+                        node_id,
+                        [rect.x0, rect.y0, rect.x1, rect.y1],
+                    ));
                 }
                 continue;
             }
@@ -2305,7 +2510,7 @@ pub(crate) fn paint_document_impl(
             } => {
                 let text_clip = text_page_clip(inside_fixed);
                 if let Some(clip) = &text_clip {
-                    scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                    scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 // A paragraph whose lines carry no visible text (only
                 // atomic inlines and whitespace) is not traced as text,
@@ -2395,14 +2600,14 @@ pub(crate) fn paint_document_impl(
                 // the recording starts, as its visit would.
                 if deferral_scopes
                     .last()
-                    .is_some_and(|pending| !pending.is_empty())
+                    .is_some_and(|layer| !layer.pending.is_empty())
                     && raikiri_dom::paint_rules::closes_deferred_inline_content(
                         document, cascade, node_id,
                     )
                 {
                     let pending = deferral_scopes
                         .last_mut()
-                        .map(std::mem::take)
+                        .map(|layer| std::mem::take(&mut layer.pending))
                         .unwrap_or_default();
                     stack.push(PaintFrame::BeginBox {
                         root,
@@ -2735,11 +2940,14 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::InlineGrid
                             | DisplayValue::InlineTable
                     ) {
-                    position_offset_px(cv)
+                    raikiri_dom::used_relative_offset(document, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
                     // the existing X location already includes its inset.
-                    (0.0, position_offset_px(cv).1)
+                    (
+                        0.0,
+                        raikiri_dom::used_relative_offset(document, cv, node_id).1,
+                    )
                 } else {
                     (0.0, 0.0)
                 };
@@ -3104,7 +3312,7 @@ pub(crate) fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(page_clip_transform, &clip);
                         }
                         paint_element_box_shadows(
                             scene,
@@ -3391,7 +3599,7 @@ pub(crate) fn paint_document_impl(
                                 )
                         });
                         if let Some(clip) = clip_background {
-                            scene.scene.push_clip_layer(Affine::IDENTITY, &clip);
+                            scene.scene.push_clip_layer(page_clip_transform, &clip);
                         }
                         paint_element_background(
                             image_cache,
@@ -3532,7 +3740,7 @@ pub(crate) fn paint_document_impl(
                 // clip origin flooring. The clip is pushed only after painting the
                 // element itself, then popped after its complete subtree via the
                 // explicit stack frame.
-                let mut overflow_clip_pushed = false;
+                let mut overflow_clip_pushed = None;
                 if let Some(resolved) = raikiri_dom::paint_rules::overflow_clip(
                     document,
                     cascade,
@@ -3545,9 +3753,10 @@ pub(crate) fn paint_document_impl(
                         layout.border.left,
                     ),
                 ) {
+                    let transform = scene.transform;
                     let clip = push_overflow_clip(scene, resolved, &page_box);
                     stack.push(PaintFrame::PopClip);
-                    overflow_clip_pushed = true;
+                    overflow_clip_pushed = Some((resolved, transform));
                     if let Some(t) = trace.as_deref_mut() {
                         t.push(crate::PaintTraceEvent::PushOverflowClip(
                             node_id,
@@ -3826,17 +4035,41 @@ pub(crate) fn paint_document_impl(
                 // content to the end of the layer (CSS 2.1 Appendix E): its
                 // lines and the boxes laid out beside them paint after the
                 // backgrounds of the blocks that follow it.
-                let defers =
-                    raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id)
-                        && !overflow_clip_pushed
-                        && !multicol_clip_pushed
-                        && !fragmentainer_clip_pushed
-                        && fragmentainer.is_none()
-                        && !is_fragment_visit
-                        && !fixed_in_viewport;
+                let defers_here = !multicol_clip_pushed
+                    && !fragmentainer_clip_pushed
+                    && fragmentainer.is_none()
+                    && !is_fragment_visit
+                    && !fixed_in_viewport;
+                let defers = defers_here
+                    && overflow_clip_pushed.is_none()
+                    && raikiri_dom::paint_rules::defers_inline_content(document, cascade, node_id);
+                // A plain block that clips collects its inline content in a
+                // layer of its own, which it hands to the enclosing layer
+                // inside its clip.
+                let merge = overflow_clip_pushed
+                    .filter(|_| {
+                        defers_here
+                            && deferral_scopes.last().is_some_and(|layer| layer.allowed)
+                            && raikiri_dom::paint_rules::merges_clipped_inline_content(
+                                document, cascade, node_id,
+                            )
+                    })
+                    .map(|(clip, transform)| LayerClose::Merge {
+                        node_id,
+                        clip,
+                        transform,
+                    });
                 // Frames of the children, last child first.
                 let mut child_frames = Vec::new();
                 let mut below_lines_frames = Vec::new();
+                // In-flow blocks inside the paragraph's inline content, whose
+                // backgrounds paint before its lines.
+                let mut block_frames = Vec::new();
+                let blocks_first = node.is_ifc_root()
+                    && !children.is_empty()
+                    && !raikiri_dom::paint_rules::holds_negative_stack_level(
+                        document, cascade, node_id,
+                    );
                 for child in children.into_iter().rev() {
                     if let Some(cell) = document
                         .ifc_layout_node(child)
@@ -3853,6 +4086,7 @@ pub(crate) fn paint_document_impl(
                             fragmentainer,
                             inside_fixed: ifc_inside_fixed,
                             decorations: child_decorations.clone(),
+                            defer: defers,
                         });
                         continue;
                     }
@@ -3928,7 +4162,13 @@ pub(crate) fn paint_document_impl(
                             child_cv.position != PositionValue::Static
                                 && matches!(child_cv.z_index, ZIndexValue::Integer(level) if level < 0)
                         });
-                    let frames = if below_lines {
+                    let block = blocks_first
+                        && raikiri_dom::paint_rules::paints_before_paragraph_lines(
+                            document, cascade, node_id, child,
+                        );
+                    let frames = if block {
+                        &mut block_frames
+                    } else if below_lines {
                         &mut below_lines_frames
                     } else {
                         &mut child_frames
@@ -3936,7 +4176,7 @@ pub(crate) fn paint_document_impl(
                     // A box beside held lines joins the groups of the
                     // paragraph, which composite it with the rest of their
                     // paint once the lines and boxes are all recorded.
-                    if hold_lines {
+                    if hold_lines && !block {
                         frames.push(PaintFrame::EndBox {
                             root: node_id,
                             node_id: child,
@@ -3973,7 +4213,7 @@ pub(crate) fn paint_document_impl(
                             .rev()
                             .map(|&(node_id, alpha)| PaintFrame::PushOpacity { node_id, alpha }),
                     );
-                    if hold_lines {
+                    if hold_lines && !block {
                         frames.push(PaintFrame::BeginBox {
                             root: node_id,
                             node_id: child,
@@ -3982,30 +4222,46 @@ pub(crate) fn paint_document_impl(
                     }
                 }
                 let finish_lines = hold_lines.then_some(PaintFrame::FinishLines { root: node_id });
-                if defers && node.is_ifc_root() {
-                    if let Some(pending) = deferral_scopes.last_mut() {
+                // A `display: contents` element has no box, so its children
+                // share the enclosing layer.
+                if !defers && raikiri_dom::paint_rules::generates_box(cv) {
+                    let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
+                        && matches!(cv.column_count, ColumnCountValue::Auto)
+                        && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
+                    let close = merge.unwrap_or(
+                        if raikiri_dom::paint_rules::hoists_positioned_content(
+                            document, cascade, node_id,
+                        ) {
+                            LayerClose::Hoist
+                        } else {
+                            LayerClose::Paint
+                        },
+                    );
+                    let mut layer = DeferralLayer::new(allowed, close);
+                    layer.after = after_pushed;
+                    deferral_scopes.push(layer);
+                    stack.push(PaintFrame::EndDeferral);
+                }
+                if (defers || merge.is_some()) && node.is_ifc_root() {
+                    if let Some(layer) = deferral_scopes.last_mut() {
+                        let pending = &mut layer.pending;
                         pending.extend(below_lines_frames.into_iter().rev());
                         pending.extend(lines_frame);
                         pending.extend(child_frames.into_iter().rev());
                         pending.extend(finish_lines);
                         // A standalone `::after` still follows the content
                         // it is generated after.
-                        if after_pushed {
+                        if defers && after_pushed {
                             pending.extend(stack.pop());
                         }
                     }
                 } else {
-                    // A `display: contents` element has no box, so its
-                    // children share the enclosing layer.
-                    if !defers && raikiri_dom::paint_rules::generates_box(cv) {
-                        deferral_scopes.push(Vec::new());
-                        stack.push(PaintFrame::EndDeferral);
-                    }
                     stack.extend(finish_lines);
                     stack.extend(child_frames);
                     stack.extend(lines_frame);
                     stack.extend(below_lines_frames);
                 }
+                stack.extend(block_frames);
             }
             NodeKind::Text => {
                 let layout = node_layout;
@@ -4017,7 +4273,7 @@ pub(crate) fn paint_document_impl(
                 {
                     let text_clip = text_page_clip(inside_fixed);
                     if let Some(clip) = &text_clip {
-                        scene.scene.push_clip_layer(Affine::IDENTITY, clip);
+                        scene.scene.push_clip_layer(page_clip_transform, clip);
                     }
                     if node.is_ifc_root() {
                         // A text node laid out as an anonymous flex or grid
@@ -5791,14 +6047,11 @@ pub(crate) fn paint_inline_box(
     // The start edge is on the physical left when the element's own direction
     // is left to right, whatever the paragraph's direction.
     // With `box-decoration-break: clone` every fragment is drawn as a whole
-    // box (CSS Fragmentation 3 §5.4). The inline layout does not reserve the
-    // cloned borders and padding at the breaks yet, so they are drawn over
-    // the fragment's own area there.
+    // box (CSS Fragmentation 3 §5.4): the inline layout gives each fragment
+    // both edges, and its background is laid out over its own box.
     let clone = cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone;
     let background_slice = background_slice.filter(|_| !clone);
-    let (left_edge, right_edge) = if clone {
-        (true, true)
-    } else if cv.direction == raikiri_style::property::Direction::Rtl {
+    let (left_edge, right_edge) = if cv.direction == raikiri_style::property::Direction::Rtl {
         (piece.has_end_edge, piece.has_start_edge)
     } else {
         (piece.has_start_edge, piece.has_end_edge)
@@ -5832,7 +6085,9 @@ pub(crate) fn paint_inline_box(
             && cv.transform.is_empty()
             && cv.filter.is_empty(),
     );
-    let square = raikiri_style::property::CornerRadius::circular(ComputedLengthPercentage::Px(0.0));
+    let square = raikiri_style::property::CornerRadius::circular(
+        raikiri_style::resolve::ComputedLengthPercentageOrCalc::Px(0.0),
+    );
     if !left_edge {
         radius.top_left = square;
         radius.bottom_left = square;
@@ -6675,8 +6930,9 @@ fn fixup_conic_offsets(stops: &[Option<f32>]) -> Vec<f32> {
 /// One axis of a conic center inside its positioning area.
 ///
 /// Percentages resolve against the area size, lengths offset from the
-/// matching edge. Only pixel and percentage lengths survive style
-/// resolution, so other length kinds fall back to the area middle.
+/// matching edge, and a `calc()` from the start edge. Only pixel and
+/// percentage lengths and absolute `calc()` sums survive style resolution, so
+/// other length kinds fall back to the area middle.
 fn conic_axis_center(offset: &CssPositionOffset, start: f64, end: f64) -> f64 {
     match offset {
         CssPositionOffset::Start(Length::Px(px)) => start + f64::from(*px),
@@ -6686,6 +6942,9 @@ fn conic_axis_center(offset: &CssPositionOffset, start: f64, end: f64) -> f64 {
         CssPositionOffset::End(Length::Px(px)) => end - f64::from(*px),
         CssPositionOffset::End(Length::Percent(percent)) => {
             end - (end - start) * f64::from(*percent) / 100.0
+        }
+        CssPositionOffset::Calc(calc) => {
+            start + (end - start) * f64::from(calc.percent) / 100.0 + f64::from(calc.px)
         }
         // cov:ignore: only Px and Percent survive resolution, other lengths are unreachable
         _ => (start + end) / 2.0,
@@ -6884,10 +7143,6 @@ fn translation_only(cv: &ComputedValues) -> bool {
 // the border-box origin in that same coordinate space, then compose with the
 // ancestor context. This also keeps transforms out of layout geometry.
 fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
-    let resolve = |value: ComputedLengthPercentage, basis: f64| match value {
-        ComputedLengthPercentage::Px(px) => px as f64,
-        ComputedLengthPercentage::Percent(percent) => basis * percent as f64 / 100.0,
-    };
     // Border backgrounds and borders use this same snapped paint box.
     let paint_x = (x as f64).round();
     let paint_y = (y as f64).round();
@@ -6901,15 +7156,13 @@ fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f3
     for function in cv.transform.iter() {
         matrix *= match *function {
             ComputedTransformFunction::Matrix(coeffs) => Affine::new(coeffs.map(f64::from)),
-            ComputedTransformFunction::Translate(x, y) => {
-                Affine::translate((resolve(x, paint_width), resolve(y, paint_height)))
-            }
-            ComputedTransformFunction::TranslateX(x) => {
-                Affine::translate((resolve(x, paint_width), 0.0))
-            }
-            ComputedTransformFunction::TranslateY(y) => {
-                Affine::translate((0.0, resolve(y, paint_height)))
-            }
+            ComputedTransformFunction::Translate(..)
+            | ComputedTransformFunction::TranslateX(..)
+            | ComputedTransformFunction::TranslateY(..) => Affine::translate(
+                function
+                    .translation(paint_width, paint_height)
+                    .unwrap_or_default(),
+            ),
             ComputedTransformFunction::Scale(x, y) => Affine::scale_non_uniform(x as f64, y as f64),
             ComputedTransformFunction::ScaleX(x) => Affine::scale_non_uniform(x as f64, 1.0),
             ComputedTransformFunction::ScaleY(y) => Affine::scale_non_uniform(1.0, y as f64),
@@ -6943,24 +7196,12 @@ fn transform_translation(
     if !translation_only(cv) {
         return (0.0, 0.0);
     }
-    let mut dx = 0.0_f32;
-    let mut dy = 0.0_f32;
-    let resolve = |value: ComputedLengthPercentage, basis: f32| match value {
-        ComputedLengthPercentage::Px(px) => px,
-        ComputedLengthPercentage::Percent(percent) => basis * percent / 100.0,
-    };
-    for function in cv.transform.iter() {
-        match *function {
-            ComputedTransformFunction::Translate(x, y) => {
-                dx += resolve(x, width);
-                dy += resolve(y, height);
-            }
-            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, width),
-            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, height),
-            _ => {}
-        }
-    }
-    (dx, dy)
+    let (dx, dy) = cv
+        .transform
+        .iter()
+        .filter_map(|function| function.translation(f64::from(width), f64::from(height)))
+        .fold((0.0, 0.0), |(dx, dy), (x, y)| (dx + x, dy + y));
+    (dx as f32, dy as f32)
 }
 
 /// Page-local paint origin of a viewport-fixed box.
@@ -7031,47 +7272,6 @@ fn fixed_position_px(
         None => content_origin_y,
     };
     Some((x, y))
-}
-
-pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
-    // Only position:relative contributes paint offset. static/absolute/fixed/sticky produce no shift here.
-    // Inset properties are <length-percentage> | auto. Percentages are resolved to px earlier (or auto -> 0).
-    // For relative, left vs right: if left != auto, dx = left, else if right != auto, dx = -right, else 0.
-    // Similarly top vs bottom for dy.
-    if !matches!(
-        cv.position,
-        raikiri_style::property::PositionValue::Relative
-    ) {
-        return (0.0, 0.0);
-    }
-    let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto| -> Option<f32> {
-        match v {
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto => None,
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) => Some(px),
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Percent(_) => None,
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Calc(_)
-            | raikiri_style::resolve::ComputedLengthPercentageOrAuto::MinContent => None, // cov:ignore: only the width / inline-size parser produces min-content
-        }
-    };
-    let left = to_px(cv.left);
-    let right = to_px(cv.right);
-    let top = to_px(cv.top);
-    let bottom = to_px(cv.bottom);
-    let dx = if let Some(l) = left {
-        l
-    } else if let Some(r) = right {
-        -r
-    } else {
-        0.0
-    };
-    let dy = if let Some(t) = top {
-        t
-    } else if let Some(b) = bottom {
-        -b
-    } else {
-        0.0
-    };
-    (dx, dy)
 }
 
 fn vertical_align_shift_px(

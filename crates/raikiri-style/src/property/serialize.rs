@@ -57,6 +57,9 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         PropertyValue::ContextualColor(color) => serialize_one_color(color.source.as_ref()),
         PropertyValue::AllRevertLayer => Some("revert-layer".to_owned()),
         PropertyValue::FontSizeKeyword(keyword) => Some(keyword.as_css_str().to_owned()),
+        PropertyValue::FontSizeCalc(calc) => Some(serialize_length_percentage_or_calc(
+            &LengthPercentageOrCalc::RelativeCalc(*calc),
+        )),
         PropertyValue::ColumnSpan(value) => Some(value.as_css_str().to_owned()),
         PropertyValue::PaddingTop(l)
         | PropertyValue::PaddingRight(l)
@@ -108,11 +111,14 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderRadiusTopRight(corner)
         | PropertyValue::BorderRadiusBottomRight(corner)
         | PropertyValue::BorderRadiusBottomLeft(corner) => {
-            let horizontal = serialize_length(&corner.horizontal);
+            let horizontal = serialize_length_percentage_or_calc(&corner.horizontal);
             Some(if corner.horizontal == corner.vertical {
                 horizontal
             } else {
-                format!("{horizontal} {}", serialize_length(&corner.vertical))
+                format!(
+                    "{horizontal} {}",
+                    serialize_length_percentage_or_calc(&corner.vertical)
+                )
             })
         }
 

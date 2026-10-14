@@ -24,7 +24,7 @@ use raikiri_style::property::WritingMode;
 
 /// The writing mode in effect at `node`: the nearest authored value on the
 /// node or an ancestor, or `horizontal-tb`.
-pub(super) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
+pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
     let mut current = Some(node);
     while let Some(id) = current {
         if let Some(mode) = tree.nodes[id].authored_writing_mode {

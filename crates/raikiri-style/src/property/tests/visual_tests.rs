@@ -986,7 +986,7 @@ const BLUE: CssColor = CssColor {
 fn gradient_stop(color: CssColor, position: Option<Length>) -> GradientColorStop {
     GradientColorStop {
         color: GradientStopColor::Resolved(color),
-        position,
+        position: position.map(LengthPercentageOrCalc::Length),
     }
 }
 
@@ -1389,7 +1389,7 @@ fn background_image_parses_radial_gradient_circle_with_explicit_length() {
         "background-image",
     ));
     assert_eq!(g.shape, RadialShape::Circle);
-    assert_eq!(g.size, RadialSize::Circle(Length::Em(5.0)));
+    assert_eq!(g.size, RadialSize::Circle(Length::Em(5.0).into()));
     assert_eq!(
         g.position,
         CssPosition {
@@ -1408,8 +1408,63 @@ fn background_image_parses_radial_gradient_ellipse_with_two_lengths() {
     assert_eq!(g.shape, RadialShape::Ellipse);
     assert_eq!(
         g.size,
-        RadialSize::Ellipse(Length::Px(20.0), Length::Px(30.0))
+        RadialSize::Ellipse(Length::Px(20.0).into(), Length::Px(30.0).into())
     );
+}
+
+#[test]
+fn background_image_keeps_mixed_calc_stop_positions_and_radii() {
+    let g = expect_linear_gradient(super::box_model_tests::parse_grammar(
+        "linear-gradient(red calc(50% + 10px), blue calc(100% - 1em))",
+        "background-image",
+    ));
+    assert_eq!(
+        g.stops[0].position,
+        Some(LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 10.0
+        }))
+    );
+    assert!(matches!(
+        g.stops[1].position,
+        Some(LengthPercentageOrCalc::RelativeCalc(_))
+    ));
+    let g = expect_radial_gradient(super::box_model_tests::parse_grammar(
+        "radial-gradient(calc(10% + 1em) calc(50% - 4px), red, blue)",
+        "background-image",
+    ));
+    assert_eq!(g.shape, RadialShape::Ellipse);
+    let RadialSize::Ellipse(rx, ry) = g.size else {
+        panic!("expected an ellipse size"); // cov:ignore: the parse above yields an ellipse
+    };
+    assert!(matches!(rx, LengthPercentageOrCalc::RelativeCalc(_)));
+    assert_eq!(
+        ry,
+        LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: -4.0
+        })
+    );
+    let g = expect_radial_gradient(super::box_model_tests::parse_grammar(
+        "radial-gradient(calc(1em + 2px), red, blue)",
+        "background-image",
+    ));
+    assert_eq!(g.shape, RadialShape::Circle);
+    assert!(matches!(
+        g.size,
+        RadialSize::Circle(LengthPercentageOrCalc::RelativeCalc(_))
+    ));
+    // A circle radius is a `<length>`, so a percentage term is invalid.
+    for size in ["calc(10% + 1em)", "calc(10% - 10% + 5px)", "calc(0% + 1em)"] {
+        assert_eq!(
+            super::box_model_tests::parse_grammar(
+                &format!("radial-gradient(circle {size}, red, blue)"),
+                "background-image"
+            ),
+            None,
+            "{size}"
+        );
+    }
 }
 
 #[test]
@@ -1424,7 +1479,7 @@ fn background_image_parses_radial_gradient_bare_length_with_no_shape_keyword_inf
         "background-image",
     ));
     assert_eq!(g.shape, RadialShape::Circle);
-    assert_eq!(g.size, RadialSize::Circle(Length::Px(5.0)));
+    assert_eq!(g.size, RadialSize::Circle(Length::Px(5.0).into()));
 }
 
 #[test]
@@ -1464,7 +1519,7 @@ fn background_image_parses_radial_gradient_explicit_ellipse_shape_with_two_lengt
     assert_eq!(g.shape, RadialShape::Ellipse);
     assert_eq!(
         g.size,
-        RadialSize::Ellipse(Length::Px(20.0), Length::Px(30.0))
+        RadialSize::Ellipse(Length::Px(20.0).into(), Length::Px(30.0).into())
     );
 }
 
@@ -3085,8 +3140,8 @@ fn transform_parse_translate_both_axes() {
     assert_eq!(
         expect_transform(parse("translate(10px, 20%)", "transform")),
         vec![TransformFunction::Translate(
-            Length::Px(10.0),
-            Length::Percent(20.0)
+            LengthPercentageOrCalc::Length(Length::Px(10.0)),
+            LengthPercentageOrCalc::Length(Length::Percent(20.0))
         )]
     );
 }
@@ -3098,9 +3153,36 @@ fn transform_translate_single_argument_defaults_ty_to_0() {
     assert_eq!(
         expect_transform(parse("translate(10px)", "transform")),
         vec![TransformFunction::Translate(
-            Length::Px(10.0),
-            Length::Px(0.0)
+            LengthPercentageOrCalc::Length(Length::Px(10.0)),
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
         )]
+    );
+}
+
+#[test]
+fn transform_translate_keeps_a_mixed_calc() {
+    let functions = expect_transform(super::box_model_tests::parse_grammar(
+        "translate(calc(10% + 5px), calc(1em - 50%)) translateX(calc(100% - 2px))",
+        "transform",
+    ));
+    assert_eq!(functions.len(), 2);
+    let TransformFunction::Translate(tx, ty) = functions[0] else {
+        panic!("translate, got {:?}", functions[0]);
+    };
+    assert_eq!(
+        tx,
+        LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 10.0,
+            px: 5.0
+        })
+    );
+    assert!(matches!(ty, LengthPercentageOrCalc::RelativeCalc(_)));
+    assert_eq!(
+        functions[1],
+        TransformFunction::TranslateX(LengthPercentageOrCalc::Calc(CalcLengthPercentage {
+            percent: 100.0,
+            px: -2.0
+        }))
     );
 }
 
@@ -3113,11 +3195,15 @@ fn transform_translate_requires_at_least_1_argument() {
 fn transform_parse_translate_x_and_y() {
     assert_eq!(
         expect_transform(parse("translateX(5px)", "transform")),
-        vec![TransformFunction::TranslateX(Length::Px(5.0))]
+        vec![TransformFunction::TranslateX(
+            LengthPercentageOrCalc::Length(Length::Px(5.0))
+        )]
     );
     assert_eq!(
         expect_transform(parse("translateY(50%)", "transform")),
-        vec![TransformFunction::TranslateY(Length::Percent(50.0))]
+        vec![TransformFunction::TranslateY(
+            LengthPercentageOrCalc::Length(Length::Percent(50.0))
+        )]
     );
 }
 
@@ -3306,8 +3392,8 @@ fn transform_translate_zero_mantissa_huge_exponent_length_resolves_to_zero() {
     assert_eq!(
         expect_transform(parse("translate(0e999px)", "transform")),
         vec![TransformFunction::Translate(
-            Length::Px(0.0),
-            Length::Px(0.0)
+            LengthPercentageOrCalc::Length(Length::Px(0.0)),
+            LengthPercentageOrCalc::Length(Length::Px(0.0))
         )]
     );
 }

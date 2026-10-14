@@ -2,27 +2,44 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::io::{Cursor, Read};
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
+use std::io::Read;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
-use raikiri_dom::FontFaceLoader;
 use raikiri_style::{
     MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
     property::{BackgroundImage, DisplayValue, PropertyKey, PropertyValue, Visibility},
 };
 use raikiri_svg::{SvgDocument, SvgRootStyle, SvgViewport};
 use raikiri_traits::{
-    AbortSignal, Body, DecodedImage, FetchOutcome, ImageIntrinsicSize, ImageRasterSize, Method,
-    NetworkError, NetworkProvider, PolicyViolation, RenderLimits, RenderWarning, Request,
-    ResourceKind, ResourcePolicy, ViolationType, WarningKind,
+    AbortSignal, DecodedImage, ImageIntrinsicSize, ImageRasterSize, NetworkError, NetworkProvider,
+    PolicyViolation, RenderLimits, RenderWarning, ResourceKind, ResourcePolicy, ViolationType,
+    WarningKind,
 };
 use url::Url;
 
 use raikiri_traits::{ImagePixelSource, ReplacedResolver};
 
+use crate::fetch::{
+    get_request, mime_essence, min_limit, policy_violation_warning_kind, redacted_url, resolve_url,
+    sanitize_policy_violation, url_policy_violation, url_without_fragment,
+};
 use crate::{HtmlDocument, ParseOptions};
+
+mod decode;
+mod image_cache;
+mod network;
+
+use decode::{
+    BackgroundImageDecodeError, decode_background_raster, default_background_raster_size,
+    image_intrinsic_size, push_image_fallback_warning, push_image_limit_warning,
+    svg_intrinsic_size,
+};
+use image_cache::{
+    BackgroundInflight, CachedBackgroundImage, CachedBackgroundSource, DecodedImageCache,
+    ProcessDecodeGuard, ProcessImageBudget,
+};
+pub(crate) use network::{NetworkFontFaceLoader, ResourceNetworkProvider};
 
 /// Default maximum response size accepted through [`RenderResources`].
 pub const DEFAULT_MAX_RESOURCE_BYTES: u64 = 32 * 1024 * 1024;
@@ -32,377 +49,6 @@ pub const DEFAULT_MAX_AGGREGATE_RESOURCE_BYTES: u64 = 128 * 1024 * 1024;
 const DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES: u64 = 128 * 1024 * 1024;
 const MAX_BACKGROUND_IMAGE_ATTEMPTS: usize = 256;
 const MAX_SVG_IMAGE_BYTES: usize = 32 * 1024 * 1024;
-/// Maximum CSS background image decodes that may run at once, process-wide.
-///
-/// Independent [`RenderResources`] instances share this semaphore, so decoder
-/// concurrency stays bounded no matter how many resource contexts exist.
-/// Unrelated images proceed concurrently up to this bound instead of sharing
-/// one exclusive mutex; only work beyond the bound waits.
-const PROCESS_MAX_CONCURRENT_IMAGE_DECODES: usize = 4;
-/// Maximum decoded CSS background raster bytes retained, process-wide.
-///
-/// Each resource set keeps its own 128 MiB cache, but the sum across all live
-/// sets is additionally capped here so independent contexts cannot grow the
-/// process peak without bound. Inserts that would exceed the process cap fail
-/// with the same per-image limit warning the per-set cap produces.
-const PROCESS_MAX_RETAINED_DECODED_BYTES: u64 = 256 * 1024 * 1024;
-
-#[derive(Clone)]
-enum CachedBackgroundSource {
-    Raster(Arc<DecodedImage>),
-    Svg(Arc<SvgDocument>),
-}
-
-/// Rasters kept per background image, one per paint size, so that an SVG
-/// painted at a few sizes in turn is not rasterized again at every switch.
-const MAX_RASTER_SIZES: usize = 4;
-
-#[derive(Clone)]
-struct CachedBackgroundImage {
-    source: CachedBackgroundSource,
-    /// Rasters by paint size, oldest first.
-    rasters: Vec<(ImageRasterSize, Arc<DecodedImage>)>,
-}
-
-impl CachedBackgroundImage {
-    fn raster(&self, size: ImageRasterSize) -> Option<Arc<DecodedImage>> {
-        self.rasters
-            .iter()
-            .find(|(cached, _)| *cached == size)
-            .map(|(_, image)| image.clone())
-    }
-}
-
-fn image_bytes(image: &DecodedImage) -> u64 {
-    u64::try_from(image.rgba.len()).unwrap_or(u64::MAX)
-}
-
-/// Process-wide budget shared by every [`RenderResources`] for CSS background decoding.
-///
-/// The per-set 128 MiB cache bounds one security context; this object bounds
-/// their sum plus concurrent decoder slots process-wide. Reconfigured
-/// [`RenderResources`] clones keep sharing the same budget object while their
-/// caches, provider budgets, and in-flight maps are replaced, so cache and
-/// policy isolation holds while decoder concurrency and retained peak stay
-/// bounded across independent contexts.
-#[derive(Debug)]
-pub(crate) struct ProcessImageBudget {
-    retained: Mutex<u64>,
-    max_retained: u64,
-    permits: Mutex<usize>,
-    cvar: Condvar,
-    max_permits: usize,
-}
-
-impl ProcessImageBudget {
-    fn global() -> Arc<Self> {
-        static GLOBAL: OnceLock<Arc<ProcessImageBudget>> = OnceLock::new();
-        GLOBAL
-            .get_or_init(|| {
-                Arc::new(Self {
-                    retained: Mutex::new(0),
-                    max_retained: PROCESS_MAX_RETAINED_DECODED_BYTES,
-                    permits: Mutex::new(PROCESS_MAX_CONCURRENT_IMAGE_DECODES),
-                    cvar: Condvar::new(),
-                    max_permits: PROCESS_MAX_CONCURRENT_IMAGE_DECODES,
-                })
-            })
-            .clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new(max_retained: u64, max_concurrent: usize) -> Self {
-        Self {
-            retained: Mutex::new(0),
-            max_retained,
-            permits: Mutex::new(max_concurrent),
-            cvar: Condvar::new(),
-            max_permits: max_concurrent.max(1),
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn max_retained(&self) -> u64 {
-        self.max_retained
-    }
-
-    #[cfg(test)]
-    pub(crate) fn retained(&self) -> u64 {
-        *self
-            .retained
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn available_for(&self, prior: u64) -> u64 {
-        let retained = *self
-            .retained
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        self.max_retained
-            .saturating_sub(retained.saturating_sub(prior))
-    }
-
-    fn try_reserve(&self, delta: u64) -> bool {
-        let mut retained = self
-            .retained
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let next = retained.saturating_add(delta);
-        if next > self.max_retained {
-            return false;
-        }
-        *retained = next;
-        true
-    }
-
-    fn release(&self, amount: u64) {
-        if amount == 0 {
-            return;
-        }
-        let mut retained = self
-            .retained
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *retained = retained.saturating_sub(amount);
-    }
-
-    fn acquire(self: &Arc<Self>) -> ProcessDecodeGuard {
-        let mut permits = self
-            .permits
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while *permits == 0 {
-            permits = self
-                .cvar
-                .wait(permits)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        *permits -= 1;
-        ProcessDecodeGuard {
-            budget: Arc::clone(self),
-        }
-    }
-
-    #[cfg(test)]
-    fn try_acquire(self: &Arc<Self>) -> Option<ProcessDecodeGuard> {
-        let mut permits = self
-            .permits
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *permits == 0 {
-            return None;
-        }
-        *permits -= 1;
-        Some(ProcessDecodeGuard {
-            budget: Arc::clone(self),
-        })
-    }
-}
-
-/// Permit holding one process-wide decoder slot.
-///
-/// The slot is held for the whole synchronous decode, including the wall-clock
-/// window a timed-out or aborted decode still occupies. Releasing happens only
-/// when the decoding thread returns, so timed-out or aborted work retains its
-/// budget until it stops.
-pub(crate) struct ProcessDecodeGuard {
-    budget: Arc<ProcessImageBudget>,
-}
-
-impl Drop for ProcessDecodeGuard {
-    fn drop(&mut self) {
-        let mut permits = self
-            .budget
-            .permits
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *permits = (*permits + 1).min(self.budget.max_permits);
-        self.budget.cvar.notify_one();
-    }
-}
-
-struct InflightState {
-    done: bool,
-    warning: Option<RenderWarning>,
-}
-
-struct BackgroundInflight {
-    state: Mutex<InflightState>,
-    cvar: Condvar,
-}
-
-impl BackgroundInflight {
-    fn new() -> Self {
-        Self {
-            state: Mutex::new(InflightState {
-                done: false,
-                warning: None,
-            }),
-            cvar: Condvar::new(),
-        }
-    }
-
-    fn wait_for_done(&self) -> Option<RenderWarning> {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        while !state.done {
-            state = self
-                .cvar
-                .wait(state)
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        state.warning.clone()
-    }
-
-    fn finish(&self, warning: Option<RenderWarning>) {
-        let mut state = self
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.warning = warning;
-        state.done = true;
-        self.cvar.notify_all();
-    }
-}
-
-struct DecodedImageCache {
-    entries: HashMap<Url, CachedBackgroundImage>,
-    decoded_bytes: u64,
-    max_bytes: u64,
-    process_budget: Arc<ProcessImageBudget>,
-}
-
-impl DecodedImageCache {
-    fn new(process_budget: Arc<ProcessImageBudget>) -> Self {
-        Self {
-            entries: HashMap::new(),
-            decoded_bytes: 0,
-            max_bytes: DEFAULT_MAX_DECODED_IMAGE_CACHE_BYTES,
-            process_budget,
-        }
-    }
-
-    fn prior_bytes(&self, url: &Url) -> u64 {
-        self.entries.get(url).map(Self::raster_bytes).unwrap_or(0)
-    }
-}
-
-impl Drop for DecodedImageCache {
-    fn drop(&mut self) {
-        self.process_budget.release(self.decoded_bytes);
-    }
-}
-
-impl DecodedImageCache {
-    fn raster_bytes(entry: &CachedBackgroundImage) -> u64 {
-        if entry.rasters.is_empty() {
-            return match &entry.source {
-                CachedBackgroundSource::Raster(image) => image_bytes(image),
-                CachedBackgroundSource::Svg(_) => 0,
-            };
-        }
-        entry.rasters.iter().fold(0, |sum: u64, (_, image)| {
-            sum.saturating_add(image_bytes(image))
-        })
-    }
-
-    fn remaining_for(&self, url: &Url) -> u64 {
-        let existing = self.prior_bytes(url);
-        self.max_bytes
-            .saturating_sub(self.decoded_bytes.saturating_sub(existing))
-    }
-
-    fn insert_source(&mut self, url: Url, source: CachedBackgroundSource) {
-        let previous = self.entries.remove(&url);
-        if let Some(previous) = previous {
-            let prior = Self::raster_bytes(&previous);
-            if prior > 0 {
-                self.decoded_bytes = self.decoded_bytes.saturating_sub(prior);
-                self.process_budget.release(prior);
-            }
-        }
-        self.entries.insert(
-            url,
-            CachedBackgroundImage {
-                source,
-                rasters: Vec::new(),
-            },
-        );
-    }
-
-    /// Cache `image` as the raster of `url` at `size`, next to the rasters
-    /// of other sizes. The oldest sizes make room when the size count or a
-    /// byte budget would be exceeded; the error reports the budget left for
-    /// `image` alone when even that does not fit.
-    fn insert_raster(
-        &mut self,
-        url: Url,
-        source: CachedBackgroundSource,
-        size: ImageRasterSize,
-        image: Arc<DecodedImage>,
-    ) -> Result<(), (u64, u64)> {
-        let actual = image_bytes(&image);
-        let prior = self.prior_bytes(&url);
-        let per_available = self.remaining_for(&url);
-        let previous = self.entries.get(&url);
-        let svg = matches!(
-            previous.map_or(&source, |entry| &entry.source),
-            CachedBackgroundSource::Svg(_)
-        );
-        // A decoded raster image has one size; only SVG keeps several.
-        let mut rasters: Vec<_> = match previous {
-            Some(entry) if svg => entry.rasters.clone(),
-            _ => Vec::new(),
-        };
-        rasters.retain(|(cached, _)| *cached != size);
-        rasters.push((size, image));
-        let excess = rasters.len().saturating_sub(MAX_RASTER_SIZES);
-        rasters.drain(..excess);
-        loop {
-            let total = rasters.iter().fold(0, |sum: u64, (_, image)| {
-                sum.saturating_add(image_bytes(image))
-            });
-            let fits = total <= per_available
-                && (total <= prior || self.process_budget.try_reserve(total - prior));
-            if fits {
-                if prior > total {
-                    self.process_budget.release(prior - total);
-                }
-                self.decoded_bytes = self
-                    .decoded_bytes
-                    .saturating_sub(prior)
-                    .saturating_add(total);
-                break;
-            }
-            if rasters.len() == 1 {
-                let limit = if actual > per_available {
-                    per_available
-                } else {
-                    self.process_budget.available_for(prior).min(per_available)
-                };
-                return Err((limit, actual));
-            }
-            rasters.remove(0);
-        }
-        let retained_source = self
-            .entries
-            .remove(&url)
-            .map(|entry| entry.source)
-            .unwrap_or(source);
-        self.entries.insert(
-            url,
-            CachedBackgroundImage {
-                source: retained_source,
-                rasters,
-            },
-        );
-        Ok(())
-    }
-}
-
 /// Network response byte limits for one render operation.
 ///
 /// These limits apply to responses after the consumer's [`NetworkProvider`]
@@ -698,6 +344,11 @@ impl<'a> RenderResources<'a> {
         }
     }
 
+    /// The font layer given to [`fonts`](Self::fonts), if any.
+    pub(crate) fn configured_fonts(&self) -> Option<shodo::font::FontCollection> {
+        self.font_collection.clone()
+    }
+
     pub(crate) fn parse_limits(&self) -> RenderLimits {
         self.render_limits.clone()
     }
@@ -940,10 +591,7 @@ impl<'a> RenderResources<'a> {
                         .is_none_or(|marker| marker.content.is_empty())
             })
             .filter_map(|(_, cv)| match &cv.list_style_image {
-                BackgroundImage::Url(raw) => Url::parse(raw)
-                    .ok()
-                    .or_else(|| base_url.and_then(|base| base.join(raw).ok()))
-                    .map(|url| url.to_string()),
+                BackgroundImage::Url(raw) => resolve_url(raw, base_url).map(|url| url.to_string()),
                 _ => None,
             })
             .collect();
@@ -1062,50 +710,37 @@ impl<'a> RenderResources<'a> {
             if trimmed.is_empty() || trimmed.starts_with('#') {
                 continue;
             }
-            let Some(original_url) = Url::parse(raw_url)
-                .ok()
-                .or_else(|| base_url.and_then(|base| base.join(raw_url).ok()))
-            else {
+            let Some(original_url) = resolve_url(raw_url, base_url) else {
                 continue;
             };
             if original_url.cannot_be_a_base() && original_url.scheme() != "data" {
                 continue;
             }
-            let url = image_url_without_fragment(&original_url);
+            let url = url_without_fragment(&original_url);
             if !seen.insert(url.clone()) {
                 continue;
             }
-            if let Some(policy) = self.policy {
-                let violation_type =
-                    if !policy.is_scheme_allowed(original_url.scheme(), ResourceKind::Image) {
-                        Some(ViolationType::SchemeNotAllowed)
-                    } else if !policy
-                        .is_host_allowed(original_url.host_str().unwrap_or(""), ResourceKind::Image)
-                    {
-                        Some(ViolationType::HostNotAllowed)
-                    } else {
-                        None
-                    };
-                if let Some(violation_type) = violation_type {
-                    let violation = PolicyViolation {
-                        kind: ResourceKind::Image,
-                        url: original_url.clone(),
-                        violation_type,
-                        details: "CSS background image URL denied by resource policy".to_owned(),
-                    };
-                    push_resource_warning(
-                        warnings,
-                        RenderWarning {
-                            kind: WarningKind::PolicyWarning {
-                                violation: sanitize_policy_violation(violation),
-                            },
-                            node_id: None,
-                            details: "CSS background image was denied by the resource policy"
-                                .into(),
+            if let Some(violation_type) = self
+                .policy
+                .and_then(|policy| url_policy_violation(policy, &original_url, ResourceKind::Image))
+            {
+                let violation = PolicyViolation {
+                    kind: ResourceKind::Image,
+                    url: original_url.clone(),
+                    violation_type,
+                    details: "CSS background image URL denied by resource policy".to_owned(),
+                };
+                push_resource_warning(
+                    warnings,
+                    RenderWarning {
+                        kind: WarningKind::PolicyWarning {
+                            violation: sanitize_policy_violation(violation),
                         },
-                    );
-                    continue;
-                }
+                        node_id: None,
+                        details: "CSS background image was denied by the resource policy".into(),
+                    },
+                );
+                continue;
             }
             if self
                 .image_pixel_source
@@ -1153,7 +788,11 @@ impl<'a> RenderResources<'a> {
             else {
                 return;
             };
-            let _ = self.decode_and_cache_bytes(url, bytes, Some(content_type), warnings, signal);
+            if let Some(warning) =
+                self.decode_and_cache_bytes(url, bytes, Some(content_type), signal)
+            {
+                push_resource_warning(warnings, warning);
+            }
             return;
         }
         let (entry, is_owner) = self.join_background_inflight(&url);
@@ -1163,23 +802,25 @@ impl<'a> RenderResources<'a> {
             }
             return;
         }
-        let warning = self.fetch_and_decode_network_owned(url.clone(), warnings, signal);
+        let warning = self.fetch_and_decode_network_owned(url.clone(), signal);
+        if let Some(warning) = &warning {
+            push_resource_warning(warnings, warning.clone());
+        }
         self.finish_background_inflight(&url, &entry, warning);
     }
 
+    /// Fetch and decode one network background image, returning the warning
+    /// that explains a skipped image; the caller reports it.
     fn fetch_and_decode_network_owned(
         &self,
         url: Url,
-        warnings: &SharedRenderWarnings,
         signal: Option<&AbortSignal>,
     ) -> Option<RenderWarning> {
         if signal.is_some_and(|signal| signal.is_aborted()) {
-            let warning = self.abort_warning(&url);
-            push_resource_warning(warnings, warning.clone());
-            return Some(warning);
+            return Some(self.abort_warning(&url));
         }
         let Some(network) = self.network_adapter() else {
-            let warning = RenderWarning {
+            return Some(RenderWarning {
                 kind: WarningKind::NetworkFallback {
                     url: redacted_url(&url),
                 },
@@ -1187,89 +828,59 @@ impl<'a> RenderResources<'a> {
                 details:
                     "CSS background image was skipped because no network provider is configured"
                         .into(),
-            };
-            push_resource_warning(warnings, warning.clone());
-            return Some(warning);
+            });
         };
         let fetched = match network.fetch(get_request(url.clone(), ResourceKind::Image, signal)) {
             Ok(fetched) => fetched,
             Err(NetworkError::PolicyViolation(violation)) => {
-                let kind = match &violation.violation_type {
-                    ViolationType::FetchTooLarge { limit, actual } => {
-                        WarningKind::ResourceLimitExceeded {
-                            kind: ResourceKind::Image,
-                            limit: *limit,
-                            actual: *actual,
-                        }
-                    }
-                    _ => WarningKind::PolicyWarning {
-                        violation: sanitize_policy_violation(*violation),
-                    },
-                };
-                let warning = RenderWarning {
-                    kind,
+                return Some(RenderWarning {
+                    kind: policy_violation_warning_kind(&violation, ResourceKind::Image),
                     node_id: None,
                     details: "CSS background image was denied by the resource policy".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
             Err(NetworkError::Aborted) => {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: WarningKind::NetworkFallback {
                         url: redacted_url(&url),
                     },
                     node_id: None,
                     details: "CSS background image fetch was aborted; the image was skipped".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
             Err(_) => {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: WarningKind::NetworkFallback {
                         url: redacted_url(&url),
                     },
                     node_id: None,
                     details: "CSS background image fetch failed; the image was skipped".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
         };
-        self.decode_and_cache_bytes(
-            url,
-            fetched.bytes.to_vec(),
-            fetched.content_type,
-            warnings,
-            signal,
-        )
+        self.decode_and_cache_bytes(url, fetched.bytes.to_vec(), fetched.content_type, signal)
     }
 
+    /// Decode and cache one background image, returning the warning that
+    /// explains a skipped image; the caller reports it.
     fn decode_and_cache_bytes(
         &self,
         url: Url,
         bytes: Vec<u8>,
         content_type: Option<String>,
-        warnings: &SharedRenderWarnings,
         signal: Option<&AbortSignal>,
     ) -> Option<RenderWarning> {
         if signal.is_some_and(|signal| signal.is_aborted()) {
-            let warning = self.abort_warning(&url);
-            push_resource_warning(warnings, warning.clone());
-            return Some(warning);
+            return Some(self.abort_warning(&url));
         }
         let is_svg = content_type.as_deref().is_some_and(|content_type| {
-            content_type
-                .split(';')
-                .next()
-                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case("image/svg+xml"))
+            mime_essence(content_type).eq_ignore_ascii_case("image/svg+xml")
         }) || url.path().to_ascii_lowercase().ends_with(".svg");
         let start = Instant::now();
         let _permit = self.acquire_decode_permit();
         if is_svg {
             if bytes.len() > MAX_SVG_IMAGE_BYTES {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: WarningKind::ResourceLimitExceeded {
                         kind: ResourceKind::Image,
                         limit: MAX_SVG_IMAGE_BYTES as u64,
@@ -1277,22 +888,18 @@ impl<'a> RenderResources<'a> {
                     },
                     node_id: None,
                     details: "SVG background image exceeded its input byte limit".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
             match SvgDocument::parse(&bytes) {
                 Ok(document) => {
                     if self.decode_timed_out(start.elapsed()) {
-                        let warning = self.timeout_warning(&url);
-                        push_resource_warning(warnings, warning.clone());
-                        return Some(warning);
+                        return Some(self.timeout_warning(&url));
                     }
                     self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)));
                     return None;
                 }
                 Err(_) => {
-                    let warning = RenderWarning {
+                    return Some(RenderWarning {
                         kind: WarningKind::ResourceFallback {
                             kind: ResourceKind::Image,
                             url: Some(redacted_url(&url)),
@@ -1300,9 +907,7 @@ impl<'a> RenderResources<'a> {
                         node_id: None,
                         details: "CSS background SVG could not be parsed; the image was skipped"
                             .into(),
-                    };
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    });
                 }
             }
         }
@@ -1312,9 +917,7 @@ impl<'a> RenderResources<'a> {
         match decode_background_raster(&bytes, output_limit) {
             Ok(image) => {
                 if self.decode_timed_out(start.elapsed()) {
-                    let warning = self.timeout_warning(&url);
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    return Some(self.timeout_warning(&url));
                 }
                 let width = image.width as f32;
                 let height = image.height as f32;
@@ -1325,7 +928,7 @@ impl<'a> RenderResources<'a> {
                     ImageRasterSize { width, height },
                     image,
                 ) {
-                    let warning = RenderWarning {
+                    return Some(RenderWarning {
                         kind: WarningKind::ResourceLimitExceeded {
                             kind: ResourceKind::Image,
                             limit,
@@ -1334,14 +937,12 @@ impl<'a> RenderResources<'a> {
                         node_id: None,
                         details: "decoded CSS background image exceeded its cache byte limit"
                             .into(),
-                    };
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    });
                 }
                 None
             }
             Err(BackgroundImageDecodeError::DecodedTooLarge { limit, actual }) => {
-                let warning = RenderWarning {
+                Some(RenderWarning {
                     kind: WarningKind::ResourceLimitExceeded {
                         kind: ResourceKind::Image,
                         limit,
@@ -1351,17 +952,13 @@ impl<'a> RenderResources<'a> {
                     details:
                         "decoded CSS background image exceeded its per-image or cache byte limit"
                             .into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                Some(warning)
+                })
             }
             Err(BackgroundImageDecodeError::Decode) => {
                 if self.decode_timed_out(start.elapsed()) {
-                    let warning = self.timeout_warning(&url);
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    return Some(self.timeout_warning(&url));
                 }
-                let warning = RenderWarning {
+                Some(RenderWarning {
                     kind: WarningKind::ResourceFallback {
                         kind: ResourceKind::Image,
                         url: Some(redacted_url(&url)),
@@ -1369,9 +966,7 @@ impl<'a> RenderResources<'a> {
                     node_id: None,
                     details: "CSS background image could not be decoded; the image was skipped"
                         .into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                Some(warning)
+                })
             }
         }
     }
@@ -1381,15 +976,9 @@ impl<'a> RenderResources<'a> {
         url: &Url,
         warnings: &SharedRenderWarnings,
     ) -> Option<(Vec<u8>, String)> {
-        let violation_type = self.policy.and_then(|policy| {
-            if !policy.is_scheme_allowed(url.scheme(), ResourceKind::Image) {
-                Some(ViolationType::SchemeNotAllowed)
-            } else if !policy.is_host_allowed("", ResourceKind::Image) {
-                Some(ViolationType::HostNotAllowed)
-            } else {
-                None
-            }
-        });
+        let violation_type = self
+            .policy
+            .and_then(|policy| url_policy_violation(policy, url, ResourceKind::Image));
         if let Some(violation_type) = violation_type {
             let violation = PolicyViolation {
                 kind: ResourceKind::Image,
@@ -1422,9 +1011,7 @@ impl<'a> RenderResources<'a> {
             );
             return None;
         };
-        let mime = metadata
-            .split(';')
-            .next()
+        let mime = Some(mime_essence(metadata))
             .filter(|mime| !mime.is_empty())
             .unwrap_or("text/plain")
             .to_owned();
@@ -1451,14 +1038,11 @@ impl<'a> RenderResources<'a> {
             }
         };
         let actual = bytes.len() as u64;
-        let policy_limit = self
-            .policy
-            .and_then(|policy| policy.max_fetch_bytes(ResourceKind::Image));
-        let limit = match (self.resource_limits.max_resource_bytes, policy_limit) {
-            (Some(local), Some(policy)) => Some(local.min(policy)),
-            (Some(local), None) | (None, Some(local)) => Some(local),
-            (None, None) => None,
-        };
+        let limit = min_limit(
+            self.resource_limits.max_resource_bytes,
+            self.policy
+                .and_then(|policy| policy.max_fetch_bytes(ResourceKind::Image)),
+        );
         if let Some(limit) = limit
             && actual > limit
         {
@@ -1524,7 +1108,7 @@ impl ImagePixelSource for RenderResources<'_> {
         if !self.image_url_allowed(url) {
             return None;
         }
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             match cached.source {
                 CachedBackgroundSource::Raster(image) => return Some(image),
@@ -1542,7 +1126,7 @@ impl ImagePixelSource for RenderResources<'_> {
         if !self.image_url_allowed(url) {
             return None;
         }
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             return Some(match cached.source {
                 CachedBackgroundSource::Raster(image) => image_intrinsic_size(&image),
@@ -1556,7 +1140,7 @@ impl ImagePixelSource for RenderResources<'_> {
         if !self.image_url_allowed(url) {
             return None;
         }
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             return match cached.source {
                 CachedBackgroundSource::Raster(image) => Some(image.rgba.len() as u64),
@@ -1586,7 +1170,7 @@ impl ImagePixelSource for RenderResources<'_> {
             (Some(requested), None) => Some(requested),
             (None, limit) => limit,
         };
-        let canonical = image_url_without_fragment(url);
+        let canonical = url_without_fragment(url);
         if let Some(cached) = self.cached_background_image(&canonical) {
             match cached.source {
                 CachedBackgroundSource::Raster(image) => {
@@ -1658,382 +1242,14 @@ impl ImagePixelSource for RenderResources<'_> {
 
 impl RenderResources<'_> {
     fn image_url_allowed(&self, url: &Url) -> bool {
-        self.policy.is_none_or(|policy| {
-            policy.is_scheme_allowed(url.scheme(), ResourceKind::Image)
-                && policy.is_host_allowed(url.host_str().unwrap_or(""), ResourceKind::Image)
-        })
+        self.policy
+            .is_none_or(|policy| url_policy_violation(policy, url, ResourceKind::Image).is_none())
     }
 
     fn image_within_policy(&self, image: Arc<DecodedImage>) -> Option<Arc<DecodedImage>> {
         self.image_policy_limit()
             .is_none_or(|limit| image.rgba.len() as u64 <= limit)
             .then_some(image)
-    }
-}
-
-#[derive(Debug)]
-enum BackgroundImageDecodeError {
-    Decode,
-    DecodedTooLarge { limit: u64, actual: u64 },
-}
-
-fn decode_background_raster(
-    bytes: &[u8],
-    max_decoded_bytes: u64,
-) -> Result<DecodedImage, BackgroundImageDecodeError> {
-    const DECODER_ALLOCATION_HEADROOM: u64 = 16 * 1024 * 1024;
-    const DECODER_ALLOCATION_HARD_LIMIT: u64 = 512 * 1024 * 1024;
-
-    let mut limits = Limits::default();
-    limits.max_alloc = Some(
-        max_decoded_bytes
-            .saturating_mul(2)
-            .saturating_add(DECODER_ALLOCATION_HEADROOM)
-            .min(DECODER_ALLOCATION_HARD_LIMIT),
-    );
-    let mut reader = ImageReader::new(Cursor::new(bytes));
-    reader.limits(limits);
-    let decoder = reader
-        .with_guessed_format()
-        .map_err(|_| BackgroundImageDecodeError::Decode)?
-        .into_decoder()
-        .map_err(|_| BackgroundImageDecodeError::Decode)?;
-    let (width, height) = decoder.dimensions();
-    if width == 0 || height == 0 {
-        return Err(BackgroundImageDecodeError::Decode);
-    }
-    let expected_bytes = u64::from(width)
-        .checked_mul(u64::from(height))
-        .and_then(|pixels| pixels.checked_mul(4))
-        .ok_or(BackgroundImageDecodeError::Decode)?;
-    if expected_bytes > max_decoded_bytes {
-        return Err(BackgroundImageDecodeError::DecodedTooLarge {
-            limit: max_decoded_bytes,
-            actual: expected_bytes,
-        });
-    }
-
-    let rgba = DynamicImage::from_decoder(decoder)
-        .map_err(|_| BackgroundImageDecodeError::Decode)?
-        .into_rgba8();
-    let pixels = rgba.into_raw();
-    let actual_bytes = u64::try_from(pixels.len()).unwrap_or(u64::MAX);
-    if actual_bytes != expected_bytes {
-        return Err(BackgroundImageDecodeError::Decode);
-    }
-    if actual_bytes > max_decoded_bytes {
-        return Err(BackgroundImageDecodeError::DecodedTooLarge {
-            limit: max_decoded_bytes,
-            actual: actual_bytes,
-        });
-    }
-    Ok(DecodedImage {
-        width,
-        height,
-        rgba: pixels,
-    })
-}
-
-fn image_url_without_fragment(url: &Url) -> Url {
-    let mut normalized = url.clone();
-    normalized.set_fragment(None);
-    normalized
-}
-
-fn image_intrinsic_size(image: &DecodedImage) -> ImageIntrinsicSize {
-    let width = image.width as f32;
-    let height = image.height as f32;
-    ImageIntrinsicSize {
-        width: Some(width),
-        height: Some(height),
-        aspect_ratio: (height > 0.0).then_some(width / height),
-    }
-}
-
-fn svg_intrinsic_size(document: &SvgDocument) -> ImageIntrinsicSize {
-    let intrinsic = document.intrinsic_size();
-    ImageIntrinsicSize {
-        width: intrinsic.width,
-        height: intrinsic.height,
-        aspect_ratio: intrinsic.aspect_ratio,
-    }
-}
-
-fn default_background_raster_size(intrinsic: ImageIntrinsicSize) -> ImageRasterSize {
-    const DEFAULT_WIDTH: f32 = 300.0;
-    const DEFAULT_HEIGHT: f32 = 150.0;
-    match (intrinsic.width, intrinsic.height, intrinsic.aspect_ratio) {
-        (Some(width), Some(height), _) => ImageRasterSize { width, height },
-        (Some(width), None, Some(ratio)) if ratio > 0.0 => ImageRasterSize {
-            width,
-            height: width / ratio,
-        },
-        (None, Some(height), Some(ratio)) if ratio > 0.0 => ImageRasterSize {
-            width: height * ratio,
-            height,
-        },
-        (None, None, Some(ratio)) if ratio > 0.0 => {
-            let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);
-            ImageRasterSize {
-                width,
-                height: width / ratio,
-            }
-        }
-        (Some(width), None, _) => ImageRasterSize {
-            width,
-            height: DEFAULT_HEIGHT,
-        },
-        (None, Some(height), _) => ImageRasterSize {
-            width: DEFAULT_WIDTH,
-            height,
-        },
-        _ => ImageRasterSize {
-            width: DEFAULT_WIDTH,
-            height: DEFAULT_HEIGHT,
-        },
-    }
-}
-
-fn push_image_limit_warning(
-    warnings: &SharedRenderWarnings,
-    limit: u64,
-    actual: u64,
-    details: &str,
-) {
-    push_resource_warning(
-        warnings,
-        RenderWarning {
-            kind: WarningKind::ResourceLimitExceeded {
-                kind: ResourceKind::Image,
-                limit,
-                actual,
-            },
-            node_id: None,
-            details: details.to_owned(),
-        },
-    );
-}
-
-fn push_image_fallback_warning(warnings: &SharedRenderWarnings, url: &Url, details: &str) {
-    push_resource_warning(
-        warnings,
-        RenderWarning {
-            kind: WarningKind::ResourceFallback {
-                kind: ResourceKind::Image,
-                url: Some(redacted_url(url)),
-            },
-            node_id: None,
-            details: details.to_owned(),
-        },
-    );
-}
-
-/// Network provider adapter shared by stylesheet imports and font loads.
-pub(crate) struct ResourceNetworkProvider<'a> {
-    inner: &'a dyn NetworkProvider,
-    policy: Option<&'a dyn ResourcePolicy>,
-    limits: ResourceLimits,
-    budget: Arc<Mutex<u64>>,
-}
-
-impl ResourceNetworkProvider<'_> {
-    /// Builds a `PolicyViolation` naming `url` — the URL the check that
-    /// failed actually inspected, which after a redirect hop is not
-    /// necessarily `request.url` — rather than always reporting the
-    /// original request URL regardless of which URL was actually denied.
-    fn violation(
-        request: &Request,
-        url: &Url,
-        violation_type: ViolationType,
-        details: impl Into<String>,
-    ) -> NetworkError {
-        NetworkError::PolicyViolation(Box::new(PolicyViolation {
-            kind: request.kind,
-            url: url.clone(),
-            violation_type,
-            details: details.into(),
-        }))
-    }
-
-    fn check_url_policy(&self, request: &Request, url: &Url) -> Result<(), NetworkError> {
-        let Some(policy) = self.policy else {
-            return Ok(());
-        };
-        if !policy.is_scheme_allowed(url.scheme(), request.kind) {
-            return Err(Self::violation(
-                request,
-                url,
-                ViolationType::SchemeNotAllowed,
-                "resource URL scheme is denied by policy",
-            ));
-        }
-        let host = url.host_str().unwrap_or("");
-        if !policy.is_host_allowed(host, request.kind) {
-            return Err(Self::violation(
-                request,
-                url,
-                ViolationType::HostNotAllowed,
-                "resource URL host is denied by policy",
-            ));
-        }
-        Ok(())
-    }
-
-    fn byte_limit(&self, kind: ResourceKind) -> Option<u64> {
-        let policy_limit = self.policy.and_then(|policy| policy.max_fetch_bytes(kind));
-        match (self.limits.max_resource_bytes, policy_limit) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (Some(limit), None) | (None, Some(limit)) => Some(limit),
-            (None, None) => None,
-        }
-    }
-}
-
-impl NetworkProvider for ResourceNetworkProvider<'_> {
-    fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
-        self.check_url_policy(&request, &request.url)?;
-
-        // Drives `inner.fetch_one_hop` itself rather than delegating to
-        // `inner.fetch()`, so every hop's target is checked against policy
-        // *before* any request reaches it — not only the initial URL and
-        // the final response's URL after the fact, by which point a
-        // provider that follows redirects internally (e.g. `ureq`'s
-        // default behavior) would have already sent every intermediate
-        // request. `hop` here is the real count of redirects actually
-        // taken, unlike a fixed `1` passed to every `allow_redirect` call.
-        let mut current = request.clone();
-        let mut hop = 0u32;
-        let fetched = loop {
-            match self.inner.fetch_one_hop(current.clone())? {
-                FetchOutcome::Body(fetched) => break fetched,
-                FetchOutcome::Redirect { location, .. } => {
-                    if let Some(policy) = self.policy
-                        && (hop >= policy.max_redirect_hops(request.kind)
-                            || !policy.allow_redirect(&current.url, &location, hop + 1))
-                    {
-                        return Err(Self::violation(
-                            &request,
-                            &location,
-                            ViolationType::RedirectDenied,
-                            "resource redirect is denied by policy",
-                        ));
-                    }
-                    // This adapter consumes redirects internally, so the
-                    // outer NetworkProvider::fetch loop cannot enforce its cap.
-                    if self.policy.is_none() && hop >= raikiri_traits::MAX_AUTO_REDIRECT_HOPS {
-                        return Err(NetworkError::Other("too many redirects".to_owned()));
-                    }
-                    hop += 1;
-                    self.check_url_policy(&request, &location)?;
-                    current.url = location;
-                }
-                // cov:ignore: `FetchOutcome` is `#[non_exhaustive]`; this
-                // crate cannot construct a third variant to exercise this
-                // arm from a test, only `Body`/`Redirect` exist today.
-                _ => {
-                    return Err(NetworkError::Other(
-                        "unknown FetchOutcome variant".to_owned(),
-                    ));
-                }
-            }
-        };
-
-        let actual = fetched.bytes.len() as u64;
-        if let Some(limit) = self.byte_limit(request.kind)
-            && actual > limit
-        {
-            return Err(Self::violation(
-                &request,
-                &request.url,
-                ViolationType::FetchTooLarge { limit, actual },
-                "resource response exceeded its byte limit",
-            ));
-        }
-
-        if let Some(policy) = self.policy {
-            let allowed = policy.allowed_mime_types(request.kind);
-            if !allowed.is_empty() {
-                let content_type = fetched.content_type.as_deref().ok_or_else(|| {
-                    Self::violation(
-                        &request,
-                        &request.url,
-                        ViolationType::MimeNotAllowed {
-                            mime: "<missing>".to_owned(),
-                        },
-                        "resource response did not include a required MIME type",
-                    )
-                })?;
-                let mime = content_type
-                    .split(';')
-                    .next()
-                    .unwrap_or(content_type)
-                    .trim();
-                if !allowed
-                    .iter()
-                    .any(|candidate| candidate.eq_ignore_ascii_case(mime))
-                {
-                    return Err(Self::violation(
-                        &request,
-                        &request.url,
-                        ViolationType::MimeNotAllowed {
-                            mime: mime.to_owned(),
-                        },
-                        "resource MIME type is denied by policy",
-                    ));
-                }
-            }
-        }
-
-        let mut used = self
-            .budget
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let total = used.saturating_add(actual);
-        if let Some(limit) = self.limits.max_aggregate_resource_bytes
-            && total > limit
-        {
-            return Err(Self::violation(
-                &request,
-                &request.url,
-                ViolationType::FetchTooLarge {
-                    limit,
-                    actual: total,
-                },
-                "aggregate resource responses exceeded their byte limit",
-            ));
-        }
-        *used = total;
-        Ok(FetchOutcome::Body(fetched))
-    }
-
-    fn max_import_depth(&self) -> Option<u32> {
-        match (
-            self.policy.map(ResourcePolicy::max_import_depth),
-            self.inner.max_import_depth(),
-        ) {
-            (Some(policy), Some(provider)) => Some(policy.min(provider)),
-            (Some(limit), None) | (None, Some(limit)) => Some(limit),
-            (None, None) => None,
-        }
-    }
-}
-
-/// Build a GET request for one resolved resource URL.
-///
-/// The caller passes its render abort signal through so a provider that honors
-/// [`AbortSignal`] can fail fast instead of
-/// buffering a response nobody will use. Providers only check the signal up
-/// front; a signal that fires mid-fetch does not interrupt bytes already in
-/// flight.
-pub(crate) fn get_request(url: Url, kind: ResourceKind, signal: Option<&AbortSignal>) -> Request {
-    Request {
-        url,
-        method: Method::Get,
-        content_type: None,
-        headers: Vec::new(),
-        body: Body::Empty,
-        signal: signal.cloned(),
-        kind,
     }
 }
 
@@ -2045,145 +1261,6 @@ pub(crate) fn push_resource_warning(warnings: &SharedRenderWarnings, warning: Re
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .push(warning);
-}
-
-pub(crate) fn redacted_url(url: &Url) -> Url {
-    let mut redacted = url.clone();
-    let _ = redacted.set_username("");
-    let _ = redacted.set_password(None);
-    redacted.set_query(None);
-    redacted.set_fragment(None);
-    redacted
-}
-
-pub(crate) fn sanitize_policy_violation(mut violation: PolicyViolation) -> PolicyViolation {
-    violation.url = redacted_url(&violation.url);
-    violation.details = "network policy denied the request".to_owned();
-    violation
-}
-
-/// Adapter that routes font-face URLs through the same policy-checked provider
-/// and aggregate byte budget used by stylesheet parsing.
-pub(crate) struct NetworkFontFaceLoader<'a> {
-    network: Option<&'a dyn NetworkProvider>,
-    base_url: Option<&'a Url>,
-    warnings: SharedRenderWarnings,
-    /// The outcome of every source loaded so far, failures included. One
-    /// layout reads each `@font-face` source several times (once per
-    /// cascade, and once more for the inline engine's font layer); without
-    /// this every read would fetch again, spend the aggregate budget again,
-    /// and repeat its warning.
-    loaded: Mutex<HashMap<Url, Option<Vec<u8>>>>,
-}
-
-impl<'a> NetworkFontFaceLoader<'a> {
-    pub(crate) fn new(
-        network: Option<&'a dyn NetworkProvider>,
-        base_url: Option<&'a Url>,
-        warnings: SharedRenderWarnings,
-    ) -> Self {
-        Self {
-            network,
-            base_url,
-            warnings,
-            loaded: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl FontFaceLoader for NetworkFontFaceLoader<'_> {
-    fn load(&self, source: &str) -> Option<Vec<u8>> {
-        let url = Url::parse(source)
-            .ok()
-            .or_else(|| self.base_url.and_then(|base| base.join(source).ok()));
-        let Some(url) = url else {
-            push_resource_warning(
-                &self.warnings,
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
-                        kind: ResourceKind::Font,
-                        url: None,
-                    },
-                    node_id: None,
-                    details: "font-face source could not be resolved against the document base"
-                        .into(),
-                },
-            );
-            return None;
-        };
-        let mut loaded = self
-            .loaded
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(outcome) = loaded.get(&url) {
-            return outcome.clone();
-        }
-        let outcome = self.fetch_uncached(&url);
-        loaded.insert(url, outcome.clone());
-        outcome
-    }
-}
-
-impl NetworkFontFaceLoader<'_> {
-    fn fetch_uncached(&self, url: &Url) -> Option<Vec<u8>> {
-        let Some(network) = self.network else {
-            push_resource_warning(
-                &self.warnings,
-                RenderWarning {
-                    kind: WarningKind::ResourceFallback {
-                        kind: ResourceKind::Font,
-                        url: Some(redacted_url(url)),
-                    },
-                    node_id: None,
-                    details: "font-face source skipped because no network provider is configured"
-                        .into(),
-                },
-            );
-            return None;
-        };
-
-        match network.fetch(get_request(url.clone(), ResourceKind::Font, None)) {
-            Ok(fetched) => Some(fetched.bytes.to_vec()),
-            Err(NetworkError::PolicyViolation(violation)) => {
-                let kind = match &violation.violation_type {
-                    ViolationType::FetchTooLarge { limit, actual }
-                    | ViolationType::DecodedTooLarge { limit, actual } => {
-                        WarningKind::ResourceLimitExceeded {
-                            kind: ResourceKind::Font,
-                            limit: *limit,
-                            actual: *actual,
-                        }
-                    }
-                    _ => WarningKind::PolicyWarning {
-                        violation: sanitize_policy_violation((*violation).clone()),
-                    },
-                };
-                push_resource_warning(
-                    &self.warnings,
-                    RenderWarning {
-                        kind,
-                        node_id: None,
-                        details: "font-face source was denied by the resource policy".into(),
-                    },
-                );
-                None
-            }
-            Err(_) => {
-                push_resource_warning(
-                    &self.warnings,
-                    RenderWarning {
-                        kind: WarningKind::NetworkFallback {
-                            url: redacted_url(url),
-                        },
-                        node_id: None,
-                        details: "font-face fetch failed; the family will use fallback fonts"
-                            .into(),
-                    },
-                );
-                None
-            }
-        }
-    }
 }
 
 /// Parse HTML using the same renderer-neutral resource configuration later
@@ -2198,7 +1275,12 @@ pub fn parse_html_with_resources<R: Read>(
         .map(|provider| provider as &dyn NetworkProvider);
     let extra_stylesheets = resources.extra_stylesheets();
     let options = resources.parse_options(&extra_stylesheets, network_ref);
-    crate::document_parse::parse_html_with_limits(input, &options, resources.parse_limits())
+    crate::document_parse::parse_html_with_fonts(
+        input,
+        &options,
+        resources.parse_limits(),
+        resources.configured_fonts(),
+    )
 }
 
 /// Whether the `pseudo` of element `node` generates a box that can paint

@@ -42,14 +42,8 @@ fn root_of(doc: &Document, node: usize) -> Option<usize> {
     {
         return Some(key);
     }
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if doc.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT) {
-            return Some(id);
-        }
-        current = doc.parent_of(id);
-    }
-    None
+    doc.inclusive_ancestors(node)
+        .find(|&id| doc.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT))
 }
 
 /// The lines `node` has a glyph run on. A line is owned by every text node

@@ -3,6 +3,7 @@ mod nesting_tests;
 
 use super::*;
 use crate::cascade::test_support::*;
+use crate::page::cascade_page_with_media_context;
 use crate::ruletree::{Origin, build_rule_tree};
 use crate::test_dom::TestDoc;
 

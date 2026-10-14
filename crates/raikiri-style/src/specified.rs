@@ -37,17 +37,18 @@ use crate::property::{
     BorderImageOutsetSide, BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderRadius,
     BorderSpacingValue, BorderStyle, BoxDecorationBreak, BoxShadowItem, BoxSizing, BreakBetween,
     BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue, ColumnFillValue,
-    ColumnSpanValue, ColumnWidthValue, Contain, ContentAlignmentValue, ContentComponent, CssColor,
-    CssPosition, CssPositionOffset, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
-    FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyName,
-    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
-    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
-    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
-    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, GridTemplateTracks, GridTrackSize,
-    HangingPunctuation, HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, Length,
-    LengthOrAuto, LengthOrNormal, LengthPercentageOrCalc, LetterSpacingValue, LineBreak,
-    LineHeight, ListStylePosition, ListStyleType, MaskImage, MixBlendMode, ObjectFit, Outline,
-    OutlineColor, OutlineStyle, OverflowValue, OverflowWrap, OverflowXY, PageValue, PositionValue,
+    ColumnSpanValue, ColumnWidthValue, Contain, ContentAlignmentValue, ContentComponent,
+    ContentList, CssColor, CssPosition, CssPositionOffset, Direction, DisplayValue,
+    EmptyCellsValue, FilterFunction, FlexBasisValue, FlexDirectionValue, FlexWrapValue, FloatValue,
+    FontFamilyName, FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing,
+    FontPaletteValue, FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian,
+    FontVariantEmoji, FontVariantLigatures, FontVariantNumeric, FontVariantPosition,
+    FontVariationSettings, GridAutoFlowValue, GridLineValue, GridTemplateAreasValue,
+    GridTemplateTracks, GridTrackSize, HangingPunctuation, HyphenateCharacter, HyphenateLimitChars,
+    Hyphens, Isolation, Length, LengthOrAuto, LengthOrNormal, LengthPercentageOrCalc,
+    LetterSpacingValue, LineBreak, LineHeight, ListStylePosition, ListStyleType, MaskImage,
+    MixBlendMode, ObjectFit, Outline, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
+    OverflowXY, PageValue, PositionValue, RelativeCalcLengthPercentage, RelativeCalcUnit,
     RubyPosition, SelfAlignmentValue, Sides, TabSize, TableLayoutValue, TextAlign, TextAlignLast,
     TextAutospace, TextCombineUpright, TextDecorationColor, TextDecorationInset,
     TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
@@ -63,13 +64,14 @@ use crate::property::{
     resolve_text_align_internal_center, resolve_text_align_match_parent, resolve_writing_mode,
 };
 use crate::resolve::{
-    ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent, ResolveContext,
-    calc_ch_factor, calc_ch_offset, empty_computed_box_shadow_list,
-    empty_computed_text_shadow_list, lift_border_spacing, lift_font_size, lift_letter_spacing,
-    lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing, resolve_background_image,
-    resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
-    resolve_box_shadow_item, resolve_column_width, resolve_css_position, resolve_flex_basis,
-    resolve_font_size, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    ComputedBoxShadowItem, ComputedLength, ComputedLineHeight, ComputedTextIndent,
+    NormalLineHeight, ResolveContext, calc_ch_factor, calc_ch_offset,
+    empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
+    lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
+    lift_word_spacing, resolve_background_image, resolve_background_size, resolve_border,
+    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_column_width,
+    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_font_size_calc,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
     resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
     resolve_line_height, resolve_margin_length_or_auto,
@@ -77,7 +79,7 @@ use crate::resolve::{
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
     resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
     resolve_text_underline_offset, resolve_transform_function, resolve_vertical_align,
-    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length,
+    resolve_word_spacing, resolve_word_spacing_with_ch, used_line_height_length_or,
 };
 
 /// The `text-shadow` of a node's [`SpecifiedValues`].
@@ -181,8 +183,14 @@ pub struct SpecifiedValues {
     /// Staging value for [`ComputedValues::font_family`]; computed-equivalent.
     pub font_family: Arc<Vec<FontFamilyName>>,
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
-    /// against the **parent's** computed font size.
+    /// against the **parent's** computed font size. Ignored while
+    /// [`Self::font_size_calc`] is set.
     pub font_size: Length,
+    /// A declared mixed-unit `font-size: calc()`, which phase 2 resolves in
+    /// place of [`Self::font_size`]. Like [`Self::font_size_keyword_declared`],
+    /// [`crate::cascade::apply_value`] clears it whenever another `font-size`
+    /// value wins.
+    pub(crate) font_size_calc: Option<RelativeCalcLengthPercentage>,
     /// Staging value for [`ComputedValues::font_size_keyword`]. Seeded from
     /// the parent's computed value and updated by
     /// [`crate::cascade::apply_value`]; see
@@ -215,7 +223,7 @@ pub struct SpecifiedValues {
     /// Staging value for [`ComputedValues::counter_set`]; computed-equivalent.
     pub counter_set: Arc<Vec<(SmolStr, i32)>>,
     /// Staging value for [`ComputedValues::content`]; computed-equivalent.
-    pub content: Arc<Vec<ContentComponent>>,
+    pub content: Arc<ContentList>,
     /// Staging value for [`ComputedValues::string_set`]; computed-equivalent.
     pub string_set: Arc<Vec<(SmolStr, Vec<ContentComponent>)>>,
     /// Staging value for [`ComputedValues::running_templates`]; computed-equivalent.
@@ -798,6 +806,7 @@ impl SpecifiedValues {
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: the initial value is `medium` (16px here).
             font_size: Length::Px(crate::computed::INITIAL_FONT_SIZE_PX),
+            font_size_calc: None,
             font_size_keyword: Some(FontSizeKeywordInfo::MEDIUM),
             font_size_keyword_declared: false,
             font_weight: 400.0,
@@ -1148,6 +1157,7 @@ impl SpecifiedValues {
             font_family: parent.font_family.clone(),
             // Losslessly lift a computed `<length>` to specified `Px`, a fixed point.
             font_size: lift_font_size(parent.font_size),
+            font_size_calc: None,
             font_size_keyword: parent.inherited_font_size_keyword(),
             font_size_keyword_declared: false,
             // D5: `bolder` and `lighter` resolve against this value.
@@ -1492,6 +1502,17 @@ impl SpecifiedValues {
     /// `match-parent` have distinct root rules (CSS Text 3 §6.1).
     ///
     pub fn finalize(self, parent: &ComputedValues, ctx: &ResolveContext) -> ComputedValues {
+        self.finalize_with(parent, ctx, None)
+    }
+
+    /// [`Self::finalize`], measuring `line-height: normal` with
+    /// `normal_line_height` for the `lh` unit (see [`NormalLineHeight`]).
+    pub fn finalize_with(
+        self,
+        parent: &ComputedValues,
+        ctx: &ResolveContext,
+        normal_line_height: Option<&dyn NormalLineHeight>,
+    ) -> ComputedValues {
         // Find the parent's line-height reference (CSS Values 4 §6.1.1 self-reference rule). Both
         // `lh` in phase 2 font-size and `lh` in phase 2.5 line-height use this same parent
         // reference. The parent is already resolved before this call in the parent-to-child tree
@@ -1499,20 +1520,16 @@ impl SpecifiedValues {
         // 2 → 2.5 order; only calculating **this node's own** line height before its own font
         // size would do that. See "The expected four stages" in the `mod@crate::resolve` module
         // docs.
-        let parent_line_height_basis =
-            used_line_height_length(parent.line_height, parent.font_size);
+        let parent_line_height_basis = parent.lh_basis();
         // Phase 2: absolutize font-size against the **parent** (the parent-metrics clause of CSS
         // Values 4 §6.1.1). `lh` uses `parent_line_height_basis`; `rlh` uses the tree-global
         // `ctx.root_line_height`. See the self-reference section for `lh` / `rlh` in the
         // `resolve_font_size` docs.
         let font_size = match self.keyword_font_size(&parent.font_family) {
             Some(size) => size,
-            None => resolve_font_size(
-                self.font_size,
-                parent.font_size,
-                parent_line_height_basis,
-                ctx,
-            ),
+            None => {
+                self.resolve_declared_font_size(parent.font_size, parent_line_height_basis, ctx)
+            }
         };
         // Resolve text-align: match-parent (CSS Text 3 §6.1) for a node with a parent. The root's
         // "computes to start" branch is in `finalize_as_root`.
@@ -1527,8 +1544,63 @@ impl SpecifiedValues {
         // `used_line_height_length(line_height, font_size)`.
         let line_height =
             resolve_line_height(self.line_height, font_size, parent_line_height_basis, ctx);
+        let normal = self.measure_normal_line_height(
+            line_height,
+            font_size,
+            Some(parent),
+            normal_line_height,
+        );
         // Phase 3: absolutize everything else against **this node's** font size and line height.
-        self.absolutize_with(font_size, line_height, text_align, ctx)
+        self.absolutize_with(font_size, line_height, normal, text_align, ctx)
+    }
+
+    /// The used length of `line-height: normal` for this node's first
+    /// available font, when `line_height` is `normal`.
+    ///
+    /// A node whose font matches its parent's reuses the parent's measure, so
+    /// a measurer runs only where the font changes, and a node resolved
+    /// without one still gets its parent's measure for the same font.
+    fn measure_normal_line_height(
+        &self,
+        line_height: ComputedLineHeight,
+        font_size: ComputedLength,
+        parent: Option<&ComputedValues>,
+        measurer: Option<&dyn NormalLineHeight>,
+    ) -> Option<ComputedLength> {
+        if line_height != ComputedLineHeight::Normal {
+            return None;
+        }
+        if let Some(parent) = parent.filter(|parent| {
+            parent.normal_line_height.is_some()
+                && parent.font_size == font_size
+                && parent.font_weight == self.font_weight
+                && parent.font_style == self.font_style
+                && (Arc::ptr_eq(&parent.font_family, &self.font_family)
+                    || parent.font_family == self.font_family)
+        }) {
+            return parent.normal_line_height;
+        }
+        measurer?.normal_line_height(&ChFontKey {
+            family: self.font_family.clone(),
+            size: font_size,
+            weight: self.font_weight,
+            style: self.font_style,
+        })
+    }
+
+    /// Phase 2's font size for a declaration other than an
+    /// `<absolute-size>` keyword: a mixed `calc()` when one is declared, or
+    /// else [`Self::font_size`], resolved against the parent's font size.
+    fn resolve_declared_font_size(
+        &self,
+        parent_font_size: ComputedLength,
+        self_reference_basis: Option<ComputedLength>,
+        ctx: &ResolveContext,
+    ) -> ComputedLength {
+        match self.font_size_calc {
+            Some(calc) => resolve_font_size_calc(calc, parent_font_size, self_reference_basis, ctx),
+            None => resolve_font_size(self.font_size, parent_font_size, self_reference_basis, ctx),
+        }
     }
 
     /// The phase 2 font size of a keyword-derived `font-size`, or `None` when
@@ -1645,6 +1717,18 @@ impl SpecifiedValues {
     /// caller: unlike the font-relative bases, it does not come from the
     /// element tree.
     pub fn finalize_as_root_in_viewport(self, width: f32, height: f32) -> ComputedValues {
+        self.finalize_as_root_in_viewport_with(width, height, None)
+    }
+
+    /// [`Self::finalize_as_root_in_viewport`], measuring `line-height:
+    /// normal` with `normal_line_height` for the `lh` and `rlh` units (see
+    /// [`NormalLineHeight`]).
+    pub fn finalize_as_root_in_viewport_with(
+        self,
+        width: f32,
+        height: f32,
+        normal_line_height: Option<&dyn NormalLineHeight>,
+    ) -> ComputedValues {
         // Phase 2: with no parent, use the initial values. The `em` / `rem` reference follows the
         // parent-metrics clause of CSS Values 4 §6.1.1 quoted above. **That clause does not cover
         // `<percentage>`**: its subject is "the font-relative lengths", not percentages. The 24px
@@ -1654,24 +1738,51 @@ impl SpecifiedValues {
         // section says this result explicitly. The `FontSize` arm of
         // `cascade::resolve_against_inherited` makes the same distinction for pages. All three
         // units consequently use 16px here. For `lh`, the root has no parent, so its
-        // self-reference is always `None` ("initial values" = `line-height: normal`, which cannot
-        // be resolved), as with phase 2.5 below. `rlh` likewise sees `root_line_height: None`
-        // from `ResolveContext::initial()`: `font-size: 1rlh` on the root refers to itself under
-        // the ordinary definition of `rlh` (only the root can be its own referent; see the
-        // `resolve_font_size` docs).
-        let initial = ResolveContext::initial()
-            .with_viewport(width, height)
-            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
+        // self-reference uses the initial values: `line-height: normal` in the initial font,
+        // measured by `normal_line_height` (`None` when it cannot be measured), as with phase 2.5
+        // below. `rlh` on the root refers to itself under the ordinary definition of `rlh` (only
+        // the root can be its own referent; see the `resolve_font_size` docs), so it takes the
+        // same basis through `root_line_height`.
+        let initial_font_size = ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX);
+        // Measured only when a self-referential `lh` / `rlh` needs it.
+        let self_referential = |length: &Length| matches!(length, Length::Lh(_) | Length::Rlh(_));
+        let calc_self_referential = |calc: &RelativeCalcLengthPercentage| {
+            calc.relative_terms()
+                .any(|(unit, _)| matches!(unit, RelativeCalcUnit::Lh | RelativeCalcUnit::Rlh))
+        };
+        let initial_line_height = normal_line_height
+            .filter(|_| {
+                self_referential(&self.font_size)
+                    || self
+                        .font_size_calc
+                        .is_some_and(|calc| calc_self_referential(&calc))
+                    || match &self.line_height {
+                        LineHeight::Length(l) => self_referential(l),
+                        LineHeight::Calc(calc) => calc_self_referential(calc),
+                        _ => false,
+                    }
+            })
+            .and_then(|measurer| {
+                measurer.normal_line_height(&ChFontKey {
+                    family: initial_font_family(),
+                    size: initial_font_size,
+                    weight: 400.0,
+                    style: FontStyle::Normal,
+                })
+            });
+        let initial = ResolveContext {
+            root_line_height: initial_line_height,
+            ..ResolveContext::initial()
+        }
+        .with_viewport(width, height)
+        .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
         // The root's parent is the initial style, whose `font-family` is
         // `initial_font_family()`.
         let font_size = match self.keyword_font_size(&initial_font_family()) {
             Some(size) => size,
-            None => resolve_font_size(
-                self.font_size,
-                ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX),
-                None,
-                &initial,
-            ),
+            None => {
+                self.resolve_declared_font_size(initial_font_size, initial_line_height, &initial)
+            }
         };
         // CSS Text 3 §6.1: "Computes to start when specified on the root element." This special
         // case does not consult any parent text_align or direction and stays local to this
@@ -1681,22 +1792,35 @@ impl SpecifiedValues {
             TextAlign::InternalCenter => TextAlign::Center,
             other => other,
         };
-        // Phase 2.5: with no parent, `lh` / `rlh` in the value of `line-height` itself always use
-        // the self-reference basis `None` ("initial values" = `normal`; see above). Other
+        // Phase 2.5: with no parent, `lh` / `rlh` in the value of `line-height` itself use the
+        // initial values' line height as their self-reference basis (see above). Other
         // font-relative units, such as `em`, still use this element's own font size through the
         // same `resolve_line_height` call as in `finalize`.
-        let line_height = resolve_line_height(self.line_height, font_size, None, &initial);
+        // `rem` in `line-height` refers to the root's own computed font size,
+        // since the initial-value basis applies to `font-size` alone.
+        let line_height_ctx = ResolveContext {
+            root_font_size: font_size,
+            ..initial
+        };
+        let line_height = resolve_line_height(
+            self.line_height,
+            font_size,
+            initial_line_height,
+            &line_height_ctx,
+        );
         // Phase 3 context: `rem` uses the root element's computed font size (its own); `rlh`
         // similarly uses its resolved line height. Box properties are outside the self-reference
         // rule above. `used_line_height_length` derives the same value as the `child_ctx` that
         // `crate::cascade::walk_from` supplies to children.
         // `rlh_on_root_element_matches_child_root_line_height_basis` under `mod@crate::cascade`
         // checks that the two agree.
-        let own_line_height = used_line_height_length(line_height, font_size);
+        let normal =
+            self.measure_normal_line_height(line_height, font_size, None, normal_line_height);
+        let own_line_height = used_line_height_length_or(line_height, font_size, normal);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
             .with_viewport(width, height)
             .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
-        self.absolutize_with(font_size, line_height, text_align, &ctx)
+        self.absolutize_with(font_size, line_height, normal, text_align, &ctx)
     }
 
     /// Phase 3: absolutize remaining values against this node's resolved
@@ -1711,7 +1835,7 @@ impl SpecifiedValues {
     /// described under "Why this takes no arguments" above.
     ///
     /// Similarly, `line_height` is **this node's** [`ComputedLineHeight`],
-    /// resolved by the caller in phase 2.5. [`used_line_height_length`]
+    /// resolved by the caller in phase 2.5. [`used_line_height_length`](crate::resolve::used_line_height_length)
     /// converts it to the absolute `own_line_height` used to resolve `lh` on
     /// padding, margin, border, width and height. The caller computes it
     /// first (rather than calling `resolve_line_height` here) because
@@ -1794,13 +1918,15 @@ impl SpecifiedValues {
         mut self,
         font_size: ComputedLength,
         line_height: ComputedLineHeight,
+        normal_line_height: Option<ComputedLength>,
         text_align: TextAlign,
         ctx: &ResolveContext,
     ) -> ComputedValues {
         let vertical_logical_size = self.map_logical_preferred_sizes();
         // Reference for `1lh` on padding, margin, border, width and height. `rlh` uses the
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.
-        let own_line_height = used_line_height_length(line_height, font_size);
+        let own_line_height =
+            used_line_height_length_or(line_height, font_size, normal_line_height);
         let letter_spacing =
             resolve_letter_spacing_with_ch(self.letter_spacing, font_size, own_line_height, ctx);
         let letter_spacing_computed =
@@ -2003,6 +2129,7 @@ impl SpecifiedValues {
             font_size_keyword_basis: font_size,
             font_weight: self.font_weight,
             line_height,
+            normal_line_height,
             display: running_display(&mut running_templates, display),
             list_style_type: self.list_style_type,
             list_style_position: self.list_style_position,

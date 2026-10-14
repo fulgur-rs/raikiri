@@ -51,8 +51,7 @@ use raikiri_style::property::{
     BreakBetween, BreakInside, ColumnCountValue, DisplayValue, FloatValue, PositionValue,
 };
 use raikiri_style::{
-    CascadeResult, ComputedColumnWidth, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
-    ComputedTransformFunction,
+    CascadeResult, ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
 };
 use raikiri_traits::NodeKind;
 
@@ -153,10 +152,10 @@ fn surrounding_run_start(
     let root = document.root_index();
     let mut held = id;
     let mut current = id;
-    while joins_inline_run(document, cascade, current) {
-        let Some(parent) = document.parent_of(current).filter(|&parent| parent != root) else {
+    for parent in document.ancestors(id) {
+        if parent == root || !joins_inline_run(document, cascade, current) {
             break;
-        };
+        }
         if let Some(start) = trailing_inline_run(document, cascade, parent)
             && position[start] < position[held]
         {
@@ -280,7 +279,7 @@ fn is_html_element_in_document(document: &Document, id: usize) -> bool {
 }
 
 fn depth(document: &Document, id: usize) -> usize {
-    std::iter::successors(document.parent_of(id), |&parent| document.parent_of(parent)).count()
+    document.ancestors(id).count()
 }
 
 /// Whether the box's layout, including the position of its first children,
@@ -308,7 +307,7 @@ fn needs_all_children(values: &ComputedValues) -> bool {
 fn paints_from_whole_height(values: &ComputedValues) -> bool {
     values.transform.iter().any(|function| match function {
         ComputedTransformFunction::Translate(_, y) | ComputedTransformFunction::TranslateY(y) => {
-            matches!(y, ComputedLengthPercentage::Percent(_))
+            y.has_percent()
         }
         ComputedTransformFunction::TranslateX(_) => false,
         _ => true,

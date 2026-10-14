@@ -62,6 +62,8 @@ pub(crate) mod ifc;
 pub(crate) mod multicol;
 mod page;
 mod page_pipeline;
+mod relative;
+mod root_box;
 pub(crate) mod sanitize;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -79,12 +81,12 @@ pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };
-#[doc(hidden)]
-pub(crate) use page::find_body;
 pub(crate) use page::is_floating_box_for_pagination;
+#[doc(hidden)]
+pub(crate) use page::{find_body, is_body_element};
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
-pub use ifc::ch::measure_ch_advance;
+pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 
@@ -121,6 +123,10 @@ pub use page_pipeline::{
     layout_single_page, layout_single_page_with_resolver,
     layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
 };
+#[doc(hidden)]
+pub use relative::used_relative_offset;
+pub(crate) use relative::{Precedence, used_relative_insets};
+pub use root_box::{RootBox, root_box};
 
 pub(crate) use page_pipeline::{
     line_center_on_page, page_fragment_events_from_pages, project_slices_with_control,

@@ -1313,15 +1313,14 @@ fn sides_all_spreads_value_to_all_four() {
 //    margin-block-*/padding-inline-*/padding-block-* longhand +
 //    margin-inline/margin-block/padding-inline/padding-block shorthand ──
 //
-// Physical fixed-mapping rationale (writing-mode always HorizontalTb
-// since raikiri does not implement a vertical-writing rendering
-// pipeline, inline axis additionally assumes `direction: ltr`) is
-// `PropertyValue::PaddingInline` doc's canonical record — not repeated
-// per test here.
+// The parser stores each flow-relative longhand under its horizontal-tb,
+// ltr physical side; the cascade remaps it by writing mode and direction.
+// `PropertyValue::PaddingInline` doc's "Physical mapping" section is the
+// canonical record — not repeated per test here.
 
 #[test]
 fn margin_inline_start_parses_to_margin_left() {
-    // §4.2 physical fixed-mapping: `margin-inline-start` produces the
+    // §4.2 parse-time mapping: `margin-inline-start` produces the
     // exact same `PropertyValue` as `margin-left` (no dedicated variant
     // — see the "Why the eight longhands do not have dedicated
     // variants" section of the `PropertyValue::PaddingInline` doc).
@@ -2727,48 +2726,50 @@ fn height_key_maps_to_height_property_key() {
 fn border_radius_expands_one_to_four_lengths_in_clockwise_order() {
     assert_eq!(
         parse_entire("1px 2px 3px 4px", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius::corners(
-            Length::Px(1.0),
-            Length::Px(2.0),
-            Length::Px(3.0),
-            Length::Px(4.0)
+        Some(PropertyValue::BorderRadius(Box::new(
+            BorderRadius::corners(
+                Length::Px(1.0),
+                Length::Px(2.0),
+                Length::Px(3.0),
+                Length::Px(4.0)
+            )
         )))
     );
     assert_eq!(
         parse("1px", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius {
+        Some(PropertyValue::BorderRadius(Box::new(BorderRadius {
             top_left: Length::Px(1.0).into(),
             top_right: Length::Px(1.0).into(),
             bottom_right: Length::Px(1.0).into(),
             bottom_left: Length::Px(1.0).into(),
-        }))
+        })))
     );
     assert_eq!(
         parse("1px 2em", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius {
+        Some(PropertyValue::BorderRadius(Box::new(BorderRadius {
             top_left: Length::Px(1.0).into(),
             top_right: Length::Em(2.0).into(),
             bottom_right: Length::Px(1.0).into(),
             bottom_left: Length::Em(2.0).into(),
-        }))
+        })))
     );
     assert_eq!(
         parse("1px 2px 3px", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius {
+        Some(PropertyValue::BorderRadius(Box::new(BorderRadius {
             top_left: Length::Px(1.0).into(),
             top_right: Length::Px(2.0).into(),
             bottom_right: Length::Px(3.0).into(),
             bottom_left: Length::Px(2.0).into(),
-        }))
+        })))
     );
     assert_eq!(
         parse("1px 2px 3px 4px", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius {
+        Some(PropertyValue::BorderRadius(Box::new(BorderRadius {
             top_left: Length::Px(1.0).into(),
             top_right: Length::Px(2.0).into(),
             bottom_right: Length::Px(3.0).into(),
             bottom_left: Length::Px(4.0).into(),
-        }))
+        })))
     );
 }
 
@@ -2776,12 +2777,12 @@ fn border_radius_expands_one_to_four_lengths_in_clockwise_order() {
 fn border_radius_accepts_percentages_and_rejects_negative_lengths() {
     assert_eq!(
         parse_entire("50% 25%", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius {
+        Some(PropertyValue::BorderRadius(Box::new(BorderRadius {
             top_left: Length::Percent(50.0).into(),
             top_right: Length::Percent(25.0).into(),
             bottom_right: Length::Percent(50.0).into(),
             bottom_left: Length::Percent(25.0).into(),
-        }))
+        })))
     );
     assert_eq!(
         parse_entire("25%", "border-top-left-radius"),
@@ -2821,36 +2822,50 @@ fn border_radius_accepts_independent_horizontal_and_vertical_axes() {
         .into_iter()
         .zip(expected)
         {
-            assert_eq!(corner.horizontal, Length::Px(x));
-            assert_eq!(corner.vertical, Length::Px(y));
+            assert_eq!(
+                corner.horizontal,
+                crate::property::LengthPercentageOrCalc::from(Length::Px(x))
+            );
+            assert_eq!(
+                corner.vertical,
+                crate::property::LengthPercentageOrCalc::from(Length::Px(y))
+            );
         }
     }
     let corner = CornerRadius::new(Length::Percent(50.0), Length::Percent(25.0));
     assert_eq!(
         parse_entire("50% / 25%", "border-radius"),
-        Some(PropertyValue::BorderRadius(BorderRadius {
-            top_left: corner,
-            top_right: corner,
-            bottom_right: corner,
-            bottom_left: corner,
-        }))
+        Some(PropertyValue::BorderRadius(Box::new(BorderRadius {
+            top_left: corner.map(crate::property::LengthPercentageOrCalc::from),
+            top_right: corner.map(crate::property::LengthPercentageOrCalc::from),
+            bottom_right: corner.map(crate::property::LengthPercentageOrCalc::from),
+            bottom_left: corner.map(crate::property::LengthPercentageOrCalc::from),
+        })))
     );
     for (property, expected) in [
         (
             "border-top-left-radius",
-            PropertyValue::BorderRadiusTopLeft(corner),
+            PropertyValue::BorderRadiusTopLeft(
+                corner.map(crate::property::LengthPercentageOrCalc::from),
+            ),
         ),
         (
             "border-top-right-radius",
-            PropertyValue::BorderRadiusTopRight(corner),
+            PropertyValue::BorderRadiusTopRight(
+                corner.map(crate::property::LengthPercentageOrCalc::from),
+            ),
         ),
         (
             "border-bottom-right-radius",
-            PropertyValue::BorderRadiusBottomRight(corner),
+            PropertyValue::BorderRadiusBottomRight(
+                corner.map(crate::property::LengthPercentageOrCalc::from),
+            ),
         ),
         (
             "border-bottom-left-radius",
-            PropertyValue::BorderRadiusBottomLeft(corner),
+            PropertyValue::BorderRadiusBottomLeft(
+                corner.map(crate::property::LengthPercentageOrCalc::from),
+            ),
         ),
     ] {
         assert_eq!(parse_entire("50% 25%", property), Some(expected));
@@ -2866,6 +2881,12 @@ fn border_radius_accepts_independent_horizontal_and_vertical_axes() {
         );
         assert!(parse_entire("30px -15px", property).is_none());
         assert!(parse_entire("30px 15px 10px", property).is_none());
+        // A mixed-unit calc() keeps its terms on each axis.
+        let value = parse_grammar("calc(50% + 10px) calc(1em - 10%)", property).unwrap();
+        assert_eq!(
+            super::super::serialize_value(&value),
+            Some("calc(50% + 10px) calc(-10% + 1em)".to_owned())
+        );
     }
     for css in [
         "30px /",
@@ -3752,7 +3773,7 @@ fn border_top_and_bottom_expand_in_declaration_block_and_reset_omitted_parts() {
 
 /// Parse with the property grammar itself, past the deferral of math
 /// functions that `parse` applies.
-fn parse_grammar(css: &str, property: &str) -> Option<PropertyValue> {
+pub(super) fn parse_grammar(css: &str, property: &str) -> Option<PropertyValue> {
     let mut input = cssparser::ParserInput::new(css);
     let mut parser = cssparser::Parser::new(&mut input);
     let value = crate::property::parse::parse_property_grammar(property, &mut parser)?;

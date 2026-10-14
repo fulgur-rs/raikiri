@@ -10,14 +10,14 @@ use crate::computed::{
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
     GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, Length, LengthOrAuto,
-    LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize, Sides, TextIndentLength,
-    TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue, WritingMode,
-    initial_grid_auto_track_list, resolve_text_align_internal_center,
+    LengthPercentageOrCalc, LetterSpacingValue, PositionValue, PropertyValue, RelativeFontSize,
+    Sides, TextIndentLength, TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WordSpacingValue,
+    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
     resolve_text_align_match_parent,
 };
 use crate::resolve::{
-    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ResolveContext,
-    calc_ch_factor, used_line_height_length,
+    ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
+    calc_ch_factor,
 };
 use crate::rule::{
     expand_background, expand_border, expand_border_bottom, expand_border_bottom_css_wide,
@@ -37,7 +37,8 @@ use super::candidate::{
     SharedDeclarations,
 };
 use super::collect::{
-    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, pick_winners,
+    CASCADED_PSEUDO_ELEMENTS, Collector, RankedDecl, STORED_BLOCK_BUDGET, flow_mapping,
+    pick_winners,
 };
 use super::custom_property::{DeferredResolver, resolve_custom_properties};
 use super::first_line::first_line_property_applies;
@@ -218,7 +219,7 @@ struct WalkEntry {
 
 /// How [`walk`] runs.
 #[derive(Clone, Copy)]
-pub(crate) struct WalkOptions {
+pub(crate) struct WalkOptions<'a> {
     /// Whether siblings with the same cascade input copy each other's
     /// results. Tests turn it off for the reference the shared walk must
     /// reproduce exactly.
@@ -238,9 +239,12 @@ pub(crate) struct WalkOptions {
     /// The basis of the viewport-percentage lengths; see
     /// [`crate::CascadeOptions::viewport`].
     pub(crate) viewport: Option<(f32, f32)>,
+    /// Measures `line-height: normal`; see
+    /// [`crate::CascadeOptions::normal_line_height`].
+    pub(crate) normal_line_height: Option<&'a dyn crate::resolve::NormalLineHeight>,
 }
 
-impl Default for WalkOptions {
+impl Default for WalkOptions<'_> {
     fn default() -> Self {
         Self {
             sibling_sharing: true,
@@ -249,6 +253,7 @@ impl Default for WalkOptions {
             stored_block_budget: STORED_BLOCK_BUDGET,
             limits: CascadeLimits::default(),
             viewport: None,
+            normal_line_height: None,
         }
     }
 }
@@ -680,7 +685,9 @@ pub(crate) fn walk_from<D: StyleDom>(
             // different `rem` bases in these phases, so it needs a dedicated entry
             // point (see the spec quote in `SpecifiedValues::finalize_as_root` docs).
             let mut computed = match &root_ctx {
-                Some(ctx) => specified.finalize(parent_computed, ctx),
+                Some(ctx) => {
+                    specified.finalize_with(parent_computed, ctx, options.normal_line_height)
+                }
                 None => {
                     // `finalize_as_root` fixes the phase-2 basis to the initial
                     // value (§6.1.1: "if the element has no parent"). This is
@@ -705,7 +712,11 @@ pub(crate) fn walk_from<D: StyleDom>(
                          親の computed font-size は initial でなければならない \
                          (subtree の途中から walk を開始していないか?)"
                     );
-                    specified.finalize_as_root_in_viewport(viewport.0, viewport.1)
+                    specified.finalize_as_root_in_viewport_with(
+                        viewport.0,
+                        viewport.1,
+                        options.normal_line_height,
+                    )
                 }
             };
             computed.custom_properties = custom_properties.clone();
@@ -724,12 +735,11 @@ pub(crate) fn walk_from<D: StyleDom>(
             let child_ctx = match root_ctx {
                 Some(ctx) => Some(ctx),
                 None if is_element => Some(
-                    ResolveContext::with_root_line_height(
-                        computed.font_size,
-                        used_line_height_length(computed.line_height, computed.font_size),
-                    )
-                    .with_viewport(viewport.0, viewport.1)
-                    .with_vertical_root(computed.cssom_writing_mode != WritingMode::HorizontalTb),
+                    ResolveContext::with_root_line_height(computed.font_size, computed.lh_basis())
+                        .with_viewport(viewport.0, viewport.1)
+                        .with_vertical_root(
+                            computed.cssom_writing_mode != WritingMode::HorizontalTb,
+                        ),
                 ),
                 None => None,
             };
@@ -828,7 +838,8 @@ pub(crate) fn walk_from<D: StyleDom>(
                          `child_ctx` is `Some` for every element by this point \
                          in the match above",
                     );
-                    let mut pseudo_computed = pseudo_specified.finalize(&computed, &ctx);
+                    let mut pseudo_computed =
+                        pseudo_specified.finalize_with(&computed, &ctx, options.normal_line_height);
                     if pseudo == PseudoElem::FirstLetter {
                         let decls = candidates.unwrap_or(ElementCandidates::EMPTY);
                         let custom = custom_candidates.unwrap_or(CustomCandidates::EMPTY);
@@ -1261,8 +1272,17 @@ pub(crate) fn apply_winners(
     mut authored_writing_mode: Option<&mut Option<WritingMode>>,
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
-    pick_winners(candidates, winners);
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
+    let flow = flow_mapping(
+        candidates,
+        inherited.writing_mode,
+        inherited.direction,
+        |value| match value {
+            PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred),
+            value => Some(value.clone()),
+        },
+    );
+    pick_winners(candidates, winners, flow);
     // The drain below takes every slot, so the white-space winners are read
     // first; their applied values are collected during the drain.
     let white_space_winners = WhiteSpaceWinners::read(winners);
@@ -1274,6 +1294,13 @@ pub(crate) fn apply_winners(
         if let Some(winner) = slot.take() {
             let value = candidates.value(winner.idx);
             let winner_key = candidates.decls()[winner.idx].key();
+            // A flow-relative declaration moves to the physical side its
+            // slot names once its value is known.
+            let to_slot =
+                |value: PropertyValue| match (candidates.decls()[winner.idx].logical(), flow) {
+                    (Some(side), Some(flow)) => flow.value(value, side),
+                    _ => value,
+                };
             let mut literal_inherit = false;
             let mut default_value = |value: PropertyValue| {
                 if let PropertyValue::Deferred(marker) = &value {
@@ -1284,16 +1311,16 @@ pub(crate) fn apply_winners(
                 resolve_defaulting_value(value, inherited)
             };
             let value = match value {
-                PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(
+                PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(Box::new(
                     inherited_border_radius_value(inherited),
-                )),
+                ))),
                 PropertyValue::TextDecorationThicknessInherit => {
                     Some(PropertyValue::TextDecorationThickness(
                         inherited_text_decoration_thickness(inherited),
                     ))
                 }
                 PropertyValue::Deferred(deferred) => {
-                    let resolved = deferred_resolver.resolve(deferred);
+                    let resolved = deferred_resolver.resolve(deferred).map(to_slot);
                     let resolved = match resolved {
                         Some(PropertyValue::Deferred(marker)) => match marker.css_wide_keyword() {
                             Some(
@@ -1319,9 +1346,11 @@ pub(crate) fn apply_winners(
                     };
                     match resolved {
                         None => None,
-                        Some(PropertyValue::BorderRadiusInherit) => Some(
-                            PropertyValue::BorderRadius(inherited_border_radius_value(inherited)),
-                        ),
+                        Some(PropertyValue::BorderRadiusInherit) => {
+                            Some(PropertyValue::BorderRadius(Box::new(
+                                inherited_border_radius_value(inherited),
+                            )))
+                        }
                         Some(
                             PropertyValue::BorderTopWidthCssWide(kw)
                             | PropertyValue::BorderRightWidthCssWide(kw)
@@ -1370,7 +1399,7 @@ pub(crate) fn apply_winners(
                     winner,
                     &mut deferred_resolver,
                 ),
-                _ => Some(value.clone()),
+                _ => Some(to_slot(value.clone())),
             };
             // Record the precedence even for a value invalid at computed-value
             // time: it still decides which of a physical and a logical size wins.
@@ -1478,8 +1507,9 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // exporting the keyword would follow the instance's size instead.
         // usvg has no font-family dependent `medium` either, so a definition
         // reused under a different generic family keeps the size of the
-        // family where it is defined.
-        PropertyValue::FontSizeKeyword(_) => None,
+        // family where it is defined. SVG 1.1 lengths have no `calc()`, so a
+        // mixed calc keeps its computed px size as well.
+        PropertyValue::FontSizeKeyword(_) | PropertyValue::FontSizeCalc(_) => None,
         _ => None,
     }
 }
@@ -1513,13 +1543,13 @@ struct BorderRadiusWinners {
 #[derive(Default)]
 struct BorderRadiusApplied {
     shorthand: Option<BorderRadius>,
-    corners: [Option<CornerRadius<Length>>; 4],
+    corners: [Option<CornerRadius<LengthPercentageOrCalc>>; 4],
 }
 
 impl BorderRadiusApplied {
     fn note(&mut self, value: &PropertyValue) {
         match value {
-            PropertyValue::BorderRadius(radius) => self.shorthand = Some(*radius),
+            PropertyValue::BorderRadius(radius) => self.shorthand = Some(**radius),
             PropertyValue::BorderRadiusTopLeft(corner) => self.corners[0] = Some(*corner),
             PropertyValue::BorderRadiusTopRight(corner) => self.corners[1] = Some(*corner),
             PropertyValue::BorderRadiusBottomRight(corner) => self.corners[2] = Some(*corner),
@@ -1880,12 +1910,9 @@ pub(crate) fn resolve_relative_font_size(keyword: RelativeFontSize, inherited_px
 /// [`crate::page`]). Because `inherited` is unchanged throughout the function,
 /// computing it twice would yield the same result (see the caller's docs).
 pub(crate) fn inherited_border_radius(
-    value: crate::property::CornerRadius<ComputedLengthPercentage>,
-) -> crate::property::CornerRadius<Length> {
-    value.map(|axis| match axis {
-        ComputedLengthPercentage::Px(px) => Length::Px(px),
-        ComputedLengthPercentage::Percent(percent) => Length::Percent(percent),
-    })
+    value: crate::property::CornerRadius<ComputedLengthPercentageOrCalc>,
+) -> crate::property::CornerRadius<LengthPercentageOrCalc> {
+    value.map(crate::resolve::lift_length_percentage_or_calc)
 }
 
 /// Resolve one border width longhand CSS-wide marker for the page path
@@ -2325,7 +2352,7 @@ pub(crate) fn resolve_against_inherited(
 ) -> ResolvedAgainstInherited {
     ResolvedAgainstInherited(match resolve_defaulting_value(value, inherited) {
         PropertyValue::BorderRadiusInherit => {
-            PropertyValue::BorderRadius(inherited_border_radius_value(inherited))
+            PropertyValue::BorderRadius(Box::new(inherited_border_radius_value(inherited)))
         },
         PropertyValue::MarginTopInherit => {
             PropertyValue::MarginTop(inherited_margin_length(inherited.margin.top))
@@ -2456,6 +2483,15 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::FontSize(len) => PropertyValue::FontSize(Length::Px(
             crate::resolve::resolve_font_size(len, inherited.font_size, ctx.root_line_height, ctx)
                 .px(),
+        )),
+        PropertyValue::FontSizeCalc(calc) => PropertyValue::FontSize(Length::Px(
+            crate::resolve::resolve_font_size_calc(
+                calc,
+                inherited.font_size,
+                ctx.root_line_height,
+                ctx,
+            )
+            .px(),
         )),
         // CSS Text 3 §6.1 `#valdef-text-align-match-parent`.
         // `inherited` is the page context's inheritance parent (the root
@@ -2888,11 +2924,12 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::MaskImage(_)
         | PropertyValue::ClipPath(_)
         // transform (CSS Transforms Level 1 §4) / filter (CSS Filter
-        // Effects Level 1 §5) — non-inherited, embedded `Length`/`Angle`/
-        // `f32` payloads that don't depend on the inheritance parent —
-        // nothing for phase 2 to resolve here, same as `MaskImage`/
-        // `ClipPath` above (neither absolutizes at all, see
-        // `TransformFunction`/`FilterFunction` doc's scope notes).
+        // Effects Level 1 §5) — non-inherited, embedded length-percentage/
+        // `Angle`/`f32` payloads that don't depend on the inheritance
+        // parent — nothing for phase 2 to resolve here, same as
+        // `MaskImage`/`ClipPath` above. A translate length is absolutized
+        // against the element's own font when its computed value is built,
+        // not here (see the `TransformFunction` doc).
         | PropertyValue::Transform(_)
         | PropertyValue::TransformOrigin(..)
         | PropertyValue::Filter(_)
@@ -3036,6 +3073,15 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 _ => None,
             };
             target.font_size = s;
+            target.font_size_calc = None;
+            target.font_size_keyword_declared = false;
+        }
+        // Phase 2 resolves the calc once the root font size and the parent's
+        // line height are known; the parent's keyword information does not
+        // carry over to a size that mixes in other terms.
+        PropertyValue::FontSizeCalc(calc) => {
+            target.font_size_calc = Some(calc);
+            target.font_size_keyword = None;
             target.font_size_keyword_declared = false;
         }
         PropertyValue::FontSizeRelative(rel) => {
@@ -3043,6 +3089,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             // key's single winner slot, so it has not overwritten the seed.
             let inherited_px = target.font_size.payload();
             target.font_size = Length::Px(resolve_relative_font_size(rel, inherited_px));
+            target.font_size_calc = None;
             target.font_size_keyword = target
                 .font_size_keyword
                 .map(|info| info.scaled(resolve_relative_font_size(rel, 1.0)));
@@ -3054,6 +3101,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.font_size =
                 Length::Px(keyword.px_for_medium(crate::computed::INITIAL_FONT_SIZE_PX));
             target.font_size_keyword = Some(crate::computed::FontSizeKeywordInfo::new(keyword));
+            target.font_size_calc = None;
             target.font_size_keyword_declared = true;
         }
         PropertyValue::FontWeight(fw) => {
@@ -3321,7 +3369,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::TextShadow(shadows) => {
             target.text_shadow = crate::specified::SpecifiedTextShadow::Specified(shadows);
         }
-        PropertyValue::BorderRadius(v) => target.border_radius = v,
+        PropertyValue::BorderRadius(v) => target.border_radius = *v,
         PropertyValue::BorderRadiusTopLeft(v) => target.border_radius.top_left = v,
         PropertyValue::BorderRadiusTopRight(v) => target.border_radius.top_right = v,
         PropertyValue::BorderRadiusBottomRight(v) => target.border_radius.bottom_right = v,

@@ -3,7 +3,7 @@ use anyrender::Scene;
 use anyrender::recording::RenderCommand;
 use raikiri_dom::Document;
 use raikiri_style::property::ContentComponent;
-use raikiri_style::{build_rule_tree, cascade};
+use raikiri_style::{ComputedLengthPercentage, build_rule_tree, cascade};
 use taffy::Style;
 
 mod gradient_tests;
@@ -949,6 +949,7 @@ fn fill_count(document: &Document, cascade: &CascadeResult) -> usize {
         cascade,
         PageBox::A4,
         None,
+        None,
         &mut warnings,
     );
     assert!(warnings.is_empty());
@@ -969,6 +970,23 @@ fn canvas_background_paints_body_color_over_white_page() {
 #[test]
 fn canvas_background_without_body_color_paints_page_only() {
     let (document, cascade) = canvas_fixture(None, None);
+    assert_eq!(fill_count(&document, &cascade), 1);
+}
+
+#[test]
+fn canvas_background_ignores_a_frameset_background() {
+    // Only a `body` propagates its background to the canvas.
+    let mut document = Document::new();
+    let html = document.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    document.append_element(
+        Some(html),
+        "frameset",
+        Style::default(),
+        Some("background-color: blue"),
+    );
+    document.mark_in_document_flags();
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
     assert_eq!(fill_count(&document, &cascade), 1);
 }
 
@@ -1269,6 +1287,44 @@ fn manually_placed_roots_floats_and_multicol_children_keep_relative_offsets() {
 }
 
 #[test]
+fn painted_relative_offsets_resolve_percentages_against_the_containing_block() {
+    // Hand-computed: the containing block's content box is 100px wide. A
+    // percentage of its height applies only where that height is definite,
+    // and otherwise counts as `auto` (CSS 2.1 §9.3.2), so `bottom` applies.
+    for (markup, expected) in [
+        (
+            "<body style='margin:0'><div style='width:100px;height:200px'><div style='float:left;position:relative;left:10%;top:10%;width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 20.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:100px;height:200px'><div style='float:left;position:relative;left:calc(5% + 5px);top:calc(10% - 8px);width:20px;height:20px;background:green'></div></div>",
+            Point::new(10.0, 12.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:100px'><div style='float:left;position:relative;right:10%;top:10%;bottom:4px;width:20px;height:20px;background:green'></div></div>",
+            Point::new(-10.0, -4.0),
+        ),
+        (
+            "<body style='margin:0'><div style='width:200px;column-count:2;column-gap:0;height:100px'><div style='display:grid;position:relative;top:calc(10% + 2px);width:20px;height:20px;background:green'></div></div>",
+            Point::new(0.0, 12.0),
+        ),
+    ] {
+        let scene = transform_markup_scene(markup);
+        let fill = scene
+            .commands
+            .iter()
+            .rev()
+            .find_map(|command| match command {
+                RenderCommand::Fill(fill) => Some(fill),
+                _ => None,
+            })
+            .expect("child background");
+        let rect = kurbo::Shape::bounding_box(&fill.shape);
+        assert_eq!(fill.transform * rect.origin(), expected, "{markup}");
+    }
+}
+
+#[test]
 fn transformed_opacity_group_keeps_its_clip_in_page_coordinates() {
     let scene = transform_markup_scene(
         "<body style='margin:0'><div style='position:absolute;left:900px;top:0;width:100px;height:100px;background:green;opacity:.5;transform:matrix(1,0,0,1,-900,0)'></div>",
@@ -1502,6 +1558,22 @@ fn fractional_transform_origins_and_percentage_translation_share_painted_bounds(
     let actual =
         element_transform(&cascade.computed[1], 0.4, 0.4, 100.2, 10.4) * Point::new(0.0, 0.0);
     assert_eq!(actual, Point::new(101.0, 11.0));
+
+    // A mixed calc resolves its percentage against the same paint box.
+    let mut document = Document::new();
+    document.append_element(
+        Some(0),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-size:10px;\
+             transform:translate(calc(50% + 1em), calc(-100% - 2px));transform-origin:0 0",
+        ),
+    );
+    let rules = build_rule_tree(&document);
+    let computed = raikiri_style::cascade(&document, &rules).unwrap().computed;
+    let actual = element_transform(&computed[1], 0.4, 0.4, 100.2, 10.4) * Point::new(0.0, 0.0);
+    assert_eq!(actual, Point::new(60.5, -13.0));
 }
 
 fn background_repeat_fixture(
@@ -2632,7 +2704,7 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
         &mut scene,
         &document,
         &cascade,
-        area,
+        &CanvasArea::new(area, area, None),
         Some(&source),
         &mut warnings,
     );
@@ -2655,7 +2727,7 @@ fn background_canvas_image_paints_inside_margins_with_origin_clip() {
             &mut clip_scene,
             &document,
             &clip_cascade,
-            area,
+            &CanvasArea::new(area, area, None),
             Some(&source),
             &mut clip_warnings,
         );
@@ -3236,24 +3308,7 @@ fn background_tiling_edge_cases_cover_defensive_branches() {
 }
 
 #[test]
-fn background_canvas_percent_padding_and_empty_painting() {
-    // Percent padding exercises the percent branch of `canvas_used_padding`.
-    let computed = ComputedValues::initial();
-    let (left, _, _, _) = canvas_used_padding(&computed, 200.0);
-    let _ = left;
-    let mut percent_computed = ComputedValues::initial();
-    percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Percent(10.0);
-    let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
-    assert!((pl - 20.0).abs() < 0.001);
-    percent_computed.padding.left = raikiri_style::ComputedLengthPercentageOrCalc::Calc(
-        raikiri_style::property::CalcLengthPercentage {
-            percent: 10.0,
-            px: 3.0,
-        },
-    );
-    let (pl, _, _, _) = canvas_used_padding(&percent_computed, 200.0);
-    assert!((pl - 23.0).abs() < 0.001);
-
+fn background_canvas_empty_painting() {
     // An empty canvas area skips silently.
     struct RedPixels;
     impl raikiri_traits::ImagePixelSource for RedPixels {
@@ -3282,7 +3337,11 @@ fn background_canvas_percent_padding_and_empty_painting() {
         &mut scene,
         &document,
         &cascade,
-        kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+        &CanvasArea::new(
+            kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+            kurbo::Rect::new(0.0, 0.0, 0.0, 10.0),
+            None,
+        ),
         Some(&source),
         &mut warnings,
     );
@@ -4076,6 +4135,15 @@ fn conic_axis_center_covers_start_end_px_and_percent() {
     assert_eq!(
         conic_axis_center(&CssPositionOffset::End(Length::Percent(25.0)), 0.0, 200.0),
         150.0
+    );
+    // A calc() is measured from the start edge.
+    let calc = raikiri_style::property::CalcLengthPercentage {
+        percent: 50.0,
+        px: -10.0,
+    };
+    assert_eq!(
+        conic_axis_center(&CssPositionOffset::Calc(calc), 100.0, 300.0),
+        190.0
     );
 }
 

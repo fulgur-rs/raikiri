@@ -17,24 +17,24 @@ use crate::property::{
     BackgroundRepeatKeyword, BorderCollapseValue, BorderColor, BorderImageOutsetSide,
     BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxDecorationBreak,
     BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
-    ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent, CssColor,
-    Direction, DisplayValue, EmptyCellsValue, FilterFunction, FlexDirectionValue, FlexWrapValue,
-    FloatValue, FontFamilyKind, FontFamilyName, FontFeatureSettings, FontKerning,
-    FontLanguageOverride, FontOpticalSizing, FontPaletteValue, FontStyle, FontSynthesisValue,
-    FontVariantCaps, FontVariantEastAsian, FontVariantEmoji, FontVariantLigatures,
-    FontVariantNumeric, FontVariantPosition, FontVariationSettings, GridAutoFlowValue,
-    GridLineValue, GridTemplateAreasValue, HangingPunctuation, HyphenateCharacter,
-    HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition, ListStyleType,
-    MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue, OverflowWrap,
-    OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides, TableLayoutValue,
-    TextAlign, TextAlignLast, TextAutospace, TextCombineUpright, TextDecorationColor,
-    TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces, TextDecorationStyle,
-    TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle, TextEmphasisVEdge, TextJustify,
-    TextOrientation, TextOverflowValue, TextSpacingTrim, TextTransform, TextUnderlinePosition,
-    TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign, Visibility, VisualBox, WhiteSpace,
-    WhiteSpaceCollapse, WillChange, WordBreak, WordSpaceTransform, WritingMode, ZIndexValue,
-    empty_content_list, empty_counter_entries, empty_filter_list, empty_quotes_entries,
-    empty_string_set_entries, initial_font_family,
+    ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent,
+    ContentList, CssColor, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
+    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind, FontFamilyName,
+    FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
+    FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
+    FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
+    GridAutoFlowValue, GridLineValue, GridTemplateAreasValue, HangingPunctuation,
+    HyphenateCharacter, HyphenateLimitChars, Hyphens, Isolation, LineBreak, ListStylePosition,
+    ListStyleType, MaskImage, MixBlendMode, ObjectFit, OutlineColor, OutlineStyle, OverflowValue,
+    OverflowWrap, OverflowXY, PositionValue, RubyPosition, SelfAlignmentValue, Sides,
+    TableLayoutValue, TextAlign, TextAlignLast, TextAutospace, TextCombineUpright,
+    TextDecorationColor, TextDecorationLine, TextDecorationSkipInk, TextDecorationSkipSpaces,
+    TextDecorationStyle, TextEmphasisHEdge, TextEmphasisPosition, TextEmphasisStyle,
+    TextEmphasisVEdge, TextJustify, TextOrientation, TextOverflowValue, TextSpacingTrim,
+    TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign,
+    Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
+    WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
+    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -344,10 +344,9 @@ pub(crate) fn empty_custom_properties() -> Arc<CustomPropertyEnvironment> {
 /// `position: running(name)` is removed from the body flow and can be referenced
 /// by `content: element(name)` in an `@page` margin box.
 ///
-/// This struct is the static-side seed for the **two-tier cache** in design doc
-/// §7.3. The cascade captures `name` per node; downstream `raikiri-dom` then
-/// associates the subtree root, pre-cascaded style, and dynamic flags
-/// (`ParsedRunningTemplate`). This crate is a leaf and has no DOM node identity.
+/// The cascade captures `name` per node; downstream `raikiri-dom` indexes the
+/// running elements by name and lays each one out on its own. This crate is
+/// a leaf and has no DOM node identity.
 ///
 /// `#[non_exhaustive]` allows future fields, such as a per-name override of
 /// `alternative_hint`, to be added without breaking callers.
@@ -654,6 +653,13 @@ pub struct ComputedValues {
     /// to downstream paint. By contrast, [`ComputedLineHeight::Length`] is px
     /// fixed at the declaring element, which children **inherit unchanged**.
     pub line_height: ComputedLineHeight,
+    /// The used length of `line-height: normal` for this element's first
+    /// available font, the `lh` basis when [`Self::line_height`] is
+    /// [`ComputedLineHeight::Normal`]. Not a CSS property: the cascade measures
+    /// it with [`crate::CascadeOptions::normal_line_height`] or else the
+    /// document's [`crate::StyleDom::normal_line_height`], and it is `None`
+    /// without a measurer or when the line height is not `normal`.
+    pub normal_line_height: Option<ComputedLength>,
     /// `display`. **Not inherited**; initial: `DisplayValue::Inline`
     /// (CSS Display 3 §2 <https://www.w3.org/TR/css-display-3/#propdef-display>).
     /// Currently supports 18 keywords (`block` / `inline` / `inline-block` /
@@ -710,16 +716,16 @@ pub struct ComputedValues {
     /// wire-through pattern.
     /// See <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// The [`Arc<Vec<..>>`] wrapper makes cascade winner cloning (`value.clone()`
+    /// The [`Arc`] wrapper makes cascade winner cloning (`value.clone()`
     /// during `apply_winners` drain; move in `apply_value`) and inheritance-walk
     /// cloning (stack push in `crate::cascade::walk_from`, then
     /// `out[idx] = computed.clone()`) **shallow (Arc reference-count increments)**.
     /// Sharing one heap allocation prevents O(N × M) memory growth for
     /// `* { content: "<large>" }` across N elements, a security-relevant DoS
-    /// defense. Because `Arc<Vec<T>>: Deref<Target = Vec<T>>`, downstream
-    /// `.iter()`, `.len()`, and `.is_empty()` calls remain unchanged (no
-    /// dom/paint consumer changes).
-    pub content: Arc<Vec<ContentComponent>>,
+    /// defense. [`ContentList`] dereferences to its items, so downstream
+    /// `.iter()`, `.len()`, and `.is_empty()` calls read them as a `Vec`; its
+    /// [`ContentList::alt`] gives the alternative text.
+    pub content: Arc<ContentList>,
     /// Parsed `string-set` entries as `(name, content-list)` pairs.
     /// **Not inherited**. The spec's initial value is `none` (CSS GCPM 3 §1.1.1,
     /// propdef-string-set, "Initial: none"), represented here by an empty list.
@@ -746,9 +752,8 @@ pub struct ComputedValues {
     ///
     /// The `Vec` shape follows the SmolStr wire-through pattern used by
     /// `content` / `string_set` (reuse of an established precedent). Downstream
-    /// `raikiri-dom` concatenates these per-node seeds when building a
-    /// per-document `Vec<RunningTemplate>`. This is the static side of the
-    /// two-tier cache described in design doc §7.3.
+    /// `raikiri-dom` indexes the running elements by name from these per-node
+    /// seeds.
     pub running_templates: Vec<RunningTemplate>,
     /// `position` — **non-inherited**, initial: `static` (CSS Positioned Layout Module Level 3 §3).
     pub position: PositionValue,
@@ -2020,6 +2025,17 @@ pub struct ComputedValues {
 }
 
 impl ComputedValues {
+    /// This element's `lh` basis: its line height as an absolute length,
+    /// with `normal` taken from [`Self::normal_line_height`]. `None` when
+    /// `normal` was not measured.
+    pub fn lh_basis(&self) -> Option<ComputedLength> {
+        crate::resolve::used_line_height_length_or(
+            self.line_height,
+            self.font_size,
+            self.normal_line_height,
+        )
+    }
+
     /// The background layers, top first (see [`Self::background_layers`]).
     /// Never empty.
     pub fn background_layers(&self) -> &[ComputedBackgroundLayer] {
@@ -2091,6 +2107,7 @@ impl ComputedValues {
             // CSS Inline 3 §5.1: initial line-height is `normal`; paint resolves
             // it using font metrics equivalent to ascent + descent.
             line_height: ComputedLineHeight::Normal,
+            normal_line_height: None,
             display: DisplayValue::Inline,
             list_style_type: ListStyleType::Disc,
             list_style_position: ListStylePosition::Outside,

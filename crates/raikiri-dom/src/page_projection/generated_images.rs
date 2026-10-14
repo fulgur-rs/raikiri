@@ -106,11 +106,11 @@ pub(super) fn prepare(
     let context = super::text_runs::RunContext::new(document, roots, pages);
     let mut roots = Vec::with_capacity(prepared.len());
     for (root, images) in prepared {
-        let mut ancestor = Some(document.ifc_source_owner(root.node));
-        while let Some(node) = ancestor {
-            work.charge(1)?;
-            ancestor = document.parent_of(node);
-        }
+        work.charge(
+            document
+                .inclusive_ancestors(document.ifc_source_owner(root.node))
+                .count(),
+        )?;
         let shift = super::text_runs::placement(document, cascade, &context, root.node)
             .unwrap_or((0.0, 0.0));
         roots.push((root, shift, images));

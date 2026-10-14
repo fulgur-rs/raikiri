@@ -223,7 +223,9 @@ fn mask_image_and_clip_path_pass_through_finalize_unchanged() {
 /// `mask_image_and_clip_path_pass_through_finalize_unchanged` above.
 #[test]
 fn transform_and_filter_pass_through_finalize_unchanged() {
-    let transform = Arc::new(vec![TransformFunction::TranslateX(Length::Em(2.0))]);
+    let transform = Arc::new(vec![TransformFunction::TranslateX(
+        LengthPercentageOrCalc::Length(Length::Em(2.0)),
+    )]);
     let filter = Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]);
     let specified = SpecifiedValues {
         transform: transform.clone(),
@@ -236,7 +238,7 @@ fn transform_and_filter_pass_through_finalize_unchanged() {
     assert_eq!(
         computed.transform,
         Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
-            crate::resolve::ComputedLengthPercentage::Px(32.0)
+            crate::resolve::ComputedLengthPercentageOrCalc::Px(32.0)
         )])
     );
     assert_eq!(computed.filter, filter);
@@ -267,6 +269,7 @@ fn parent_fixture() -> ComputedValues {
         font_size_keyword_basis: ComputedLength(24.0),
         font_weight: 700.0,
         line_height: ComputedLineHeight::Number(1.5),
+        normal_line_height: None,
         display: DisplayValue::Block,
         list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
         list_style_position: ListStylePosition::Inside,
@@ -309,10 +312,10 @@ fn parent_fixture() -> ComputedValues {
             color: BorderColor::Resolved(CssColor::BLACK),
         }),
         border_radius: ComputedBorderRadius {
-            top_left: ComputedLengthPercentage::Px(1.0).into(),
-            top_right: ComputedLengthPercentage::Px(2.0).into(),
-            bottom_right: ComputedLengthPercentage::Px(3.0).into(),
-            bottom_left: ComputedLengthPercentage::Px(4.0).into(),
+            top_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(1.0).into(),
+            top_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(2.0).into(),
+            bottom_right: crate::resolve::ComputedLengthPercentageOrCalc::Px(3.0).into(),
+            bottom_left: crate::resolve::ComputedLengthPercentageOrCalc::Px(4.0).into(),
         },
         box_shadow: Arc::new(vec![ComputedBoxShadowItem {
             offset_x: ComputedLength(1.0),
@@ -588,7 +591,7 @@ fn parent_fixture() -> ComputedValues {
         // CSS Transforms Level 1 §4/CSS Filter Effects Level 1 §5: both are non-inherited; set
         // values other than the initial `none` (an empty list).
         transform: Arc::new(vec![crate::resolve::ComputedTransformFunction::TranslateX(
-            crate::resolve::ComputedLengthPercentage::Px(48.0),
+            crate::resolve::ComputedLengthPercentageOrCalc::Px(48.0),
         )]),
         filter: Arc::new(vec![FilterFunction::Blur(Length::Px(3.0))]),
         // CSS Tables 3 §4: table-layout is non-inherited; set a value other than the initial `auto`.

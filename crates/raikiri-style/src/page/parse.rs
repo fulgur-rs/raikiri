@@ -299,6 +299,7 @@ impl<'i> DeclarationParser<'i> for PageDeclParser<'_> {
         Ok(PageBodyItem::Property(ParsedDeclaration {
             value,
             important,
+            logical: crate::logical::longhand_side(name.as_ref()),
         }))
     }
 }

@@ -2,6 +2,7 @@ use super::*;
 use crate::layout::test_support::{ahem_paragraph_with, with_ahem};
 use taffy::Style;
 
+mod avoid_followup_tests;
 mod candidate_text_tests;
 mod grid_parent_tests;
 pub(super) mod link_ancestor_tests;
@@ -5001,15 +5002,12 @@ fn vertical_nested_block_children_match_flat_flow_positions() {
             .into_iter()
             .map(|block| {
                 let layout = doc.nodes[block].unrounded_layout;
-                let mut absolute_x = 0.0;
-                let mut absolute_y = 0.0;
-                let mut ancestor = Some(block);
-                while let Some(node) = ancestor {
-                    let layout = doc.nodes[node].unrounded_layout;
-                    absolute_x += layout.location.x;
-                    absolute_y += layout.location.y;
-                    ancestor = doc.parent_of(node);
-                }
+                let (absolute_x, absolute_y) =
+                    doc.inclusive_ancestors(block)
+                        .fold((0.0, 0.0), |(x, y), node| {
+                            let location = doc.nodes[node].unrounded_layout.location;
+                            (x + location.x, y + location.y)
+                        });
                 (
                     absolute_x,
                     absolute_y,
@@ -8207,6 +8205,21 @@ fn measure_ch_advance_uses_the_engine_fonts() {
     assert_eq!(
         crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
         16.0
+    );
+}
+
+#[test]
+fn measure_normal_line_height_uses_the_engine_fonts() {
+    // Ahem's ascent and descent fill the em box with no line gap.
+    let key = raikiri_style::ChFontKey {
+        family: std::sync::Arc::new(vec![raikiri_style::FontFamilyName::named("Ahem")]),
+        size: raikiri_style::ComputedLength(20.0),
+        weight: 400.0,
+        style: raikiri_style::property::FontStyle::Normal,
+    };
+    assert_eq!(
+        crate::layout::measure_normal_line_height(&ifc_ahem_fonts(), &key),
+        Some(20.0)
     );
 }
 
@@ -13168,6 +13181,84 @@ fn every_box_a_display_contents_sibling_lifts_separates_avoiding_boxes() {
 }
 
 #[test]
+fn fragment_tree_end_intersects_nested_fragments_with_ancestor_clips() {
+    let fragment = |parent, y, height, clip_height: Option<f32>| crate::fragment::LayoutFragment {
+        node_id: 0,
+        parent,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y,
+            width: 10.0,
+            height,
+        },
+        fragmentainer_clip: clip_height.map(|height| crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height,
+        }),
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // A column clipped at 50px holds an unclipped 250px fragment, which
+    // holds an unclipped 400px one 20px down.
+    let fragments = [
+        fragment(None, 0.0, 300.0, Some(50.0)),
+        fragment(Some(0), 0.0, 250.0, None),
+        fragment(Some(1), 20.0, 400.0, None),
+    ];
+    let children = HashMap::from([(0, vec![1]), (1, vec![2])]);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        150.0
+    );
+    // Without the outer clip, the deepest fragment paints to its own end.
+    let fragments = [fragment(None, 0.0, 300.0, None), fragments[1], fragments[2]];
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 100.0, |_| false),
+        520.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[], 100.0, |_| false),
+        f32::NEG_INFINITY
+    );
+}
+
+#[test]
+fn fragment_tree_end_caps_descendants_of_overflow_clipping_fragments() {
+    let fragment = |node_id, parent, height| crate::fragment::LayoutFragment {
+        node_id,
+        parent,
+        fragmentainer: 0,
+        rect: crate::fragment::FragmentRect {
+            x: 0.0,
+            y: 0.0,
+            width: 10.0,
+            height,
+        },
+        fragmentainer_clip: None,
+        fragment_index: 0,
+        fragment_count: 1,
+        line_start: None,
+        line_end: None,
+    };
+    // A 30px wrapper that clips its overflow holds a 400px fragment.
+    let fragments = [fragment(1, None, 30.0), fragment(2, Some(0), 400.0)];
+    let children = HashMap::from([(0, vec![1])]);
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |node_id| node_id == 1),
+        30.0
+    );
+    assert_eq!(
+        fragment_tree_end(&fragments, &children, &[0], 0.0, |_| false),
+        400.0
+    );
+}
+
+#[test]
 fn lines_after_a_forced_break_clear_the_earlier_floats() {
     for (break_css, cleared) in [("break-after:page", true), ("break-after:auto", false)] {
         let mut ids = Vec::new();
@@ -13654,4 +13745,90 @@ fn a_relative_block_in_an_rtl_vertical_mixed_root_prefers_bottom() {
     let still_y = doc.nodes[still].unrounded_layout.location.y;
     let moved_y = doc.nodes[moved].unrounded_layout.location.y;
     assert_eq!(moved_y - still_y, -4.0);
+}
+
+#[test]
+fn a_box_one_ulp_above_a_page_end_starts_on_the_next_page() {
+    // A box the paginator moved to a page origin can read back one ulp above
+    // it once its position is summed from its ancestors'. At a flow offset
+    // past 8192px one ulp is 2^-10 px, so the earlier page would get a
+    // sliver of the box.
+    let (page_start, page_end) = (10_102.677_f32, 11_225.197_f32);
+    let top = page_end.next_down();
+    assert_eq!(flow_page_overlap(top, 27.6, page_start, page_end), None);
+    assert_eq!(
+        flow_page_overlap(top, 27.6, page_end, page_end + 1_122.52),
+        Some((0.0, top + 27.6 - top)),
+    );
+}
+
+#[test]
+fn a_box_ending_one_ulp_below_a_page_start_stays_on_the_earlier_page() {
+    let (page_start, page_end) = (10_102.677_f32, 11_225.197_f32);
+    let top = page_start - 30.0;
+    let height = page_start.next_up() - top;
+    assert_eq!(flow_page_overlap(top, height, page_start, page_end), None);
+    let earlier_start = page_start - 1_122.52;
+    assert_eq!(
+        flow_page_overlap(top, height, earlier_start, page_start),
+        Some((top - earlier_start, height)),
+    );
+}
+
+#[test]
+fn a_box_crossing_a_page_edge_by_more_than_rounding_is_split() {
+    let (page_start, page_end) = (1_000.0_f32, 2_000.0_f32);
+    assert_eq!(
+        flow_page_overlap(1_990.0, 20.0, page_start, page_end),
+        Some((990.0, 10.0)),
+    );
+    assert_eq!(
+        flow_page_overlap(1_990.0, 20.0, page_end, 3_000.0),
+        Some((0.0, 10.0)),
+    );
+}
+
+#[test]
+fn a_box_within_both_rounding_bands_stays_on_the_page_it_starts_on() {
+    // Past 2^23px one ulp is 1px, so a whole box can lie within one ulp of
+    // each side of a page edge. It must land whole on exactly one page.
+    let page_end = 16_777_216.0_f32;
+    let page_start = page_end - 1_000.0;
+    let top = page_end.next_down();
+    let height = page_end.next_up() - top;
+    assert_eq!(
+        flow_page_overlap(top, height, page_start, page_end),
+        Some((top - page_start, height)),
+    );
+    assert_eq!(
+        flow_page_overlap(top, height, page_end, page_end + 1_000.0),
+        None
+    );
+}
+
+#[test]
+fn a_mixed_calc_grid_track_resolves_against_the_container() {
+    // The container is 200px wide with a 10px font: `calc(50% - 1em)` is
+    // 100 - 10 = 90px, and `minmax(calc(10% + 1em), 1fr)` takes the rest.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let grid = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:grid;width:200px;font-size:10px;\
+             grid-template-columns:calc(50% - 1em) minmax(calc(10% + 1em),1fr)",
+        ),
+    );
+    let first = doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    let second = doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    lay_out(&mut doc, &cascade);
+    assert_eq!(doc.nodes[first].unrounded_layout.size.width, 90.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.location.x, 90.0);
+    assert_eq!(doc.nodes[second].unrounded_layout.size.width, 110.0);
 }

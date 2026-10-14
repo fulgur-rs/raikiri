@@ -286,7 +286,7 @@ pub(crate) fn apply_computed_to_style(
         bridge_flex(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_alignment(style, cv);
         bridge_gap(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_grid(style, cv, &mut doc.layout_warnings);
+        bridge_grid(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         if cv.display == DisplayValue::Contents {
             // A `display: contents` element generates no box (CSS Display 3
             // §2.5). Where layout still keeps a node for it, the node stands
@@ -305,6 +305,31 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].column_span_all = false;
             doc.nodes[idx].multicol_auto_width = true;
             doc.nodes[idx].has_logical_min_block_size = false;
+        }
+    }
+    // Whether a box is a non-atomic inline box depends on its parent's
+    // display, which the loop above has now bridged for every node.
+    for idx in 0..doc.nodes.len() {
+        if doc.nodes[idx].kind() != NodeKind::Element {
+            continue;
+        }
+        // The sizes bridged above, which a vertical box takes from its
+        // logical sizing properties.
+        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
+        let containment = size_containment(doc, idx, cv);
+        doc.nodes[idx].size_containment = containment;
+        // Replaced content with size containment has no natural size or
+        // aspect ratio to stand in for an `auto` size.
+        if containment.width || containment.height {
+            let style = &mut doc.nodes[idx].style;
+            style.aspect_ratio = None;
+            if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
+                style.size.width = Dimension::auto();
+            }
+            if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
+                style.size.height = Dimension::auto();
+            }
         }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
@@ -327,6 +352,57 @@ pub(crate) fn apply_computed_to_style(
         }
     }
     Ok(())
+}
+
+/// The physical axes in which `contain` sizes the box as if it had no
+/// content (CSS Containment 2 §3.1 size containment, §3.2 inline-size
+/// containment).
+///
+/// Neither applies to a box that is not generated, to a non-atomic inline
+/// box, or to an internal table box (§3.1, §3.2), which a table caption is
+/// not. Tables are left out as well: their width algorithm sizes the grid
+/// from its cells. Inline-size containment acts on the inline axis of the
+/// box's own writing mode.
+fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::Size<bool> {
+    use raikiri_style::property::{Contain, WritingMode};
+
+    let none = taffy::Size {
+        width: false,
+        height: false,
+    };
+    let applies = matches!(
+        cv.display,
+        DisplayValue::Block
+            | DisplayValue::Inline
+            | DisplayValue::InlineBlock
+            | DisplayValue::FlowRoot
+            | DisplayValue::ListItem
+            | DisplayValue::Flex
+            | DisplayValue::InlineFlex
+            | DisplayValue::Grid
+            | DisplayValue::InlineGrid
+            | DisplayValue::TableCaption
+    ) && !super::fixed::generates_inline_box(doc, idx, cv);
+    if !applies {
+        return none;
+    }
+    if cv.contain.contains(Contain::SIZE) {
+        return taffy::Size {
+            width: true,
+            height: true,
+        };
+    }
+    if !cv.contain.contains(Contain::INLINE_SIZE) {
+        return none;
+    }
+    let vertical = !matches!(
+        crate::taffy_impl::used_writing_mode(doc, idx),
+        WritingMode::HorizontalTb
+    );
+    taffy::Size {
+        width: !vertical,
+        height: vertical,
+    }
 }
 
 /// Whether painting `cv` draws effects sized from the whole border box
@@ -1114,13 +1190,26 @@ fn computed_gap_component_to_taffy(
 /// - `grid-auto-flow` → `style.grid_auto_flow` (§7.7)
 /// - `grid-row-start`/`grid-row-end` / `grid-column-start`/`grid-column-end`
 ///   → `style.grid_row` / `style.grid_column` (`Line<GridPlacement>`, §8.3)
-fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<LayoutWarn>) {
-    let (columns, column_names) =
-        grid_template_tracks_to_taffy(&cv.grid_template_columns, "grid-template-columns", diag);
+fn bridge_grid(
+    style: &mut taffy::Style,
+    cv: &ComputedValues,
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
+    diag: &mut Vec<LayoutWarn>,
+) {
+    let (columns, column_names) = grid_template_tracks_to_taffy(
+        calc_values,
+        &cv.grid_template_columns,
+        "grid-template-columns",
+        diag,
+    );
     style.grid_template_columns = columns;
     style.grid_template_column_names = column_names;
-    let (rows, row_names) =
-        grid_template_tracks_to_taffy(&cv.grid_template_rows, "grid-template-rows", diag);
+    let (rows, row_names) = grid_template_tracks_to_taffy(
+        calc_values,
+        &cv.grid_template_rows,
+        "grid-template-rows",
+        diag,
+    );
     style.grid_template_rows = rows;
     style.grid_template_row_names = row_names;
 
@@ -1153,13 +1242,13 @@ fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
         .grid_auto_columns
         .iter()
         .copied()
-        .map(|t| grid_track_size_to_taffy(t, "grid-auto-columns", diag))
+        .map(|t| grid_track_size_to_taffy(calc_values, t, "grid-auto-columns", diag))
         .collect();
     style.grid_auto_rows = cv
         .grid_auto_rows
         .iter()
         .copied()
-        .map(|t| grid_track_size_to_taffy(t, "grid-auto-rows", diag))
+        .map(|t| grid_track_size_to_taffy(calc_values, t, "grid-auto-rows", diag))
         .collect();
 
     style.grid_auto_flow = match cv.grid_auto_flow {
@@ -1199,6 +1288,7 @@ fn bridge_grid(style: &mut taffy::Style, cv: &ComputedValues, diag: &mut Vec<Lay
 /// `none` maps to a pair of empty `Vec`s — taffy's own default for a
 /// container with no explicit track list.
 fn grid_template_tracks_to_taffy(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     tracks: &ComputedGridTemplateTracks,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
@@ -1211,16 +1301,16 @@ fn grid_template_tracks_to_taffy(
                 .iter()
                 .cloned()
                 .map(|component| match component {
-                    ComputedGridTrackListComponent::Size(size) => {
-                        GridTemplateComponent::Single(grid_track_size_to_taffy(size, site, diag))
-                    }
+                    ComputedGridTrackListComponent::Size(size) => GridTemplateComponent::Single(
+                        grid_track_size_to_taffy(calc_values, size, site, diag),
+                    ),
                     ComputedGridTrackListComponent::Repeat(repeat) => {
                         GridTemplateComponent::Repeat(GridTemplateRepetition {
                             count: grid_repeat_count_to_taffy(repeat.count),
                             tracks: repeat
                                 .tracks
                                 .into_iter()
-                                .map(|t| grid_track_size_to_taffy(t, site, diag))
+                                .map(|t| grid_track_size_to_taffy(calc_values, t, site, diag))
                                 .collect(),
                             line_names: repeat
                                 .line_names
@@ -1270,18 +1360,19 @@ fn grid_repeat_count_to_taffy(count: GridRepeatCount) -> TaffyRepetitionCount {
 /// min side as `auto`, which is what `MinTrackSizingFunction::auto()`
 /// supplies here.
 fn grid_track_size_to_taffy(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     size: ComputedGridTrackSize,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> TrackSizingFunction {
     match size {
         ComputedGridTrackSize::Breadth(b) => TrackSizingFunction {
-            min: grid_track_breadth_to_taffy_min(b, site, diag),
-            max: grid_track_breadth_to_taffy_max(b, site, diag),
+            min: grid_track_breadth_to_taffy_min(calc_values, b, site, diag),
+            max: grid_track_breadth_to_taffy_max(calc_values, b, site, diag),
         },
         ComputedGridTrackSize::MinMax(min, max) => TrackSizingFunction {
-            min: grid_track_breadth_to_taffy_min(min, site, diag),
-            max: grid_track_breadth_to_taffy_max(max, site, diag),
+            min: grid_track_breadth_to_taffy_min(calc_values, min, site, diag),
+            max: grid_track_breadth_to_taffy_max(calc_values, max, site, diag),
         },
         ComputedGridTrackSize::FitContent(lp) => {
             let max = match lp {
@@ -1313,10 +1404,12 @@ fn grid_track_size_to_taffy(
 /// `Flex` variant to produce it from); the arm below is a defensive
 /// fallback to keep the match exhaustive, not a reachable case.
 fn grid_track_breadth_to_taffy_min(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     b: ComputedGridTrackBreadth,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> MinTrackSizingFunction {
+    use crate::taffy_impl::push_calc;
     use ComputedGridTrackBreadth as B;
     match b {
         B::Px(v) => MinTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
@@ -1324,6 +1417,7 @@ fn grid_track_breadth_to_taffy_min(
         B::MinContent => MinTrackSizingFunction::min_content(),
         B::MaxContent => MinTrackSizingFunction::max_content(),
         B::Auto => MinTrackSizingFunction::auto(),
+        B::Calc(calc) => MinTrackSizingFunction::calc(push_calc(calc_values, calc, true)),
         // cov:ignore: see this fn's doc — structurally unreachable, kept
         // only for match exhaustiveness.
         B::Flex(_) => MinTrackSizingFunction::auto(),
@@ -1337,10 +1431,12 @@ fn grid_track_breadth_to_taffy_min(
 /// case here — the `fr` unit is only valid on the max side of `minmax()`
 /// or as a bare `<track-breadth>` (CSS Grid Layout Module Level 1 §7.2.4).
 fn grid_track_breadth_to_taffy_max(
+    calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     b: ComputedGridTrackBreadth,
     site: &'static str,
     diag: &mut Vec<LayoutWarn>,
 ) -> MaxTrackSizingFunction {
+    use crate::taffy_impl::push_calc;
     use ComputedGridTrackBreadth as B;
     match b {
         B::Px(v) => MaxTrackSizingFunction::length(sanitize_taffy(v, site, diag)),
@@ -1349,6 +1445,7 @@ fn grid_track_breadth_to_taffy_max(
         B::MinContent => MaxTrackSizingFunction::min_content(),
         B::MaxContent => MaxTrackSizingFunction::max_content(),
         B::Auto => MaxTrackSizingFunction::auto(),
+        B::Calc(calc) => MaxTrackSizingFunction::calc(push_calc(calc_values, calc, true)),
     }
 }
 

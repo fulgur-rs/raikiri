@@ -184,6 +184,40 @@ fn css_position_center() -> CssPositionOffset {
     CssPositionOffset::Start(Length::Percent(50.0))
 }
 
+/// A `<length-percentage>` offset of a `<position>`, measured from the end
+/// edge when `from_end` is set. A mixed-unit `calc()` reaches this parser only
+/// after substitution or simplification failed to fold it to one dimension;
+/// it keeps its terms and is always measured from the start edge, so one
+/// after an end edge is folded into `100% - offset`.
+fn parse_position_offset(input: &mut Parser<'_, '_>, from_end: bool) -> Option<CssPositionOffset> {
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        let calc = if from_end {
+            RelativeCalcLengthPercentage::from_unit(100.0, "%")?.add_scaled(calc, -1.0)?
+        } else {
+            calc
+        };
+        return Some(CssPositionOffset::from_relative_calc(calc));
+    }
+    let length = parse_length_percentage_res(input).ok()?;
+    Some(if from_end {
+        CssPositionOffset::End(length)
+    } else {
+        CssPositionOffset::Start(length)
+    })
+}
+
+fn parse_start_position_offset_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssPositionOffset, ParseError<'i, ()>> {
+    parse_position_offset(input, false).ok_or_else(|| input.new_custom_error(()))
+}
+
+fn parse_end_position_offset_res<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<CssPositionOffset, ParseError<'i, ()>> {
+    parse_position_offset(input, true).ok_or_else(|| input.new_custom_error(()))
+}
+
 /// Shared helper for reading an edge with an optional offset in the `<position>`
 /// grammar (see [`CssPosition`]). Map `start_kw` (`left`/`top`) to [`CssPositionOffset::Start`]
 /// and `end_kw` (`right`/`bottom`) to [`CssPositionOffset::End`].
@@ -197,14 +231,14 @@ fn parse_position_edge(
         .try_parse(|i| i.expect_ident_matching(start_kw))
         .is_ok()
     {
-        return Some(match input.try_parse(parse_length_percentage_res) {
-            Ok(offset) => (CssPositionOffset::Start(offset), true),
+        return Some(match input.try_parse(parse_start_position_offset_res) {
+            Ok(offset) => (offset, true),
             Err(_) => (CssPositionOffset::Start(Length::Percent(0.0)), false),
         });
     }
     if input.try_parse(|i| i.expect_ident_matching(end_kw)).is_ok() {
-        return Some(match input.try_parse(parse_length_percentage_res) {
-            Ok(offset) => (CssPositionOffset::End(offset), true),
+        return Some(match input.try_parse(parse_end_position_offset_res) {
+            Ok(offset) => (offset, true),
             Err(_) => (CssPositionOffset::End(Length::Percent(0.0)), false),
         });
     }
@@ -416,8 +450,7 @@ fn parse_position_branch2_axis(
     if input.try_parse(|i| i.expect_ident_matching(end_kw)).is_ok() {
         return Some(CssPositionOffset::Start(Length::Percent(100.0)));
     }
-    let lp = input.try_parse(parse_length_percentage_res).ok()?;
-    Some(CssPositionOffset::Start(lp))
+    input.try_parse(parse_start_position_offset_res).ok()
 }
 
 /// `[ left | center | right | <length-percentage> ]`: `<position>` grammar
@@ -542,9 +575,9 @@ fn parse_position_branch1(input: &mut Parser<'_, '_>) -> Option<CssPosition> {
             vertical: CssPositionOffset::Start(Length::Percent(100.0)),
         });
     }
-    let lp = input.try_parse(parse_length_percentage_res).ok()?;
+    let horizontal = input.try_parse(parse_start_position_offset_res).ok()?;
     Some(CssPosition {
-        horizontal: CssPositionOffset::Start(lp),
+        horizontal,
         vertical: css_position_center(),
     })
 }
@@ -1074,9 +1107,18 @@ pub(crate) fn parse_transform_number(input: &mut Parser<'_, '_>) -> Option<f32> 
 /// [`parse_length_value`] already routes through `next_numeric_stable`
 /// (module doc above), so this is likewise defense-in-depth in ordinary
 /// use.
-pub(crate) fn parse_transform_length_percentage(input: &mut Parser<'_, '_>) -> Option<Length> {
+///
+/// A mixed-unit `calc()` reaches this parser only after substitution or
+/// simplification failed to fold it to one dimension; it keeps its terms
+/// until the box it translates is known.
+pub(crate) fn parse_transform_length_percentage(
+    input: &mut Parser<'_, '_>,
+) -> Option<LengthPercentageOrCalc> {
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(LengthPercentageOrCalc::from_relative_calc(calc));
+    }
     let length = parse_length_value(input, true)?;
-    (!length.payload().is_nan()).then_some(length)
+    (!length.payload().is_nan()).then_some(LengthPercentageOrCalc::Length(length))
 }
 
 /// `[<angle> | <zero>]` for `transform`'s `rotate()`/`skew()`/`skewX()`/
@@ -1124,11 +1166,11 @@ pub(crate) fn parse_translate_args<'i>(
 ) -> Result<TransformFunction, ParseError<'i, ()>> {
     let tx = parse_transform_length_percentage(input).ok_or_else(|| input.new_custom_error(()))?;
     let ty = input
-        .try_parse(|i| -> Result<Length, ParseError<'_, ()>> {
+        .try_parse(|i| -> Result<LengthPercentageOrCalc, ParseError<'_, ()>> {
             i.expect_comma()?;
             parse_transform_length_percentage(i).ok_or_else(|| i.new_custom_error(()))
         })
-        .unwrap_or(Length::Px(0.0));
+        .unwrap_or(LengthPercentageOrCalc::Length(Length::Px(0.0)));
     Ok(TransformFunction::Translate(tx, ty))
 }
 
@@ -1611,7 +1653,13 @@ fn parse_gradient_color_stop<'i>(
     input: &mut Parser<'i, '_>,
 ) -> Result<GradientColorStop, ParseError<'i, ()>> {
     let color = parse_gradient_stop_color(input).ok_or_else(|| input.new_custom_error(()))?;
-    let position = input.try_parse(parse_length_percentage_res).ok();
+    let position = match crate::cascade::parse_relative_calc_function(input) {
+        Some(calc) => Some(LengthPercentageOrCalc::from_relative_calc(calc)),
+        None => input
+            .try_parse(parse_length_percentage_res)
+            .ok()
+            .map(LengthPercentageOrCalc::Length),
+    };
     Ok(GradientColorStop { color, position })
 }
 
@@ -1819,8 +1867,8 @@ fn parse_radial_extent<'i>(input: &mut Parser<'i, '_>) -> Result<RadialExtent, P
 /// the same meanings as in [`RadialSize`], but compatibility with `shape` is not yet checked.
 enum RadialSizeAuthored {
     Extent(RadialExtent),
-    Circle(Length),
-    Ellipse(Length, Length),
+    Circle(LengthPercentageOrCalc),
+    Ellipse(LengthPercentageOrCalc, LengthPercentageOrCalc),
 }
 
 /// Return-value shape of [`parse_radial_shape_size_position_group`]: an alias
@@ -1846,16 +1894,44 @@ fn parse_radial_size<'i>(
     if let Ok((a, b)) = input.try_parse(parse_two_non_negative_length_percentages) {
         return Ok(RadialSizeAuthored::Ellipse(a, b));
     }
+    // A circle radius is a `<length>`, so a `calc()` with a percentage term
+    // is invalid here, even one whose percentages cancel out.
+    if let Ok(calc) = input.try_parse(|i| {
+        let start = i.position();
+        let calc = crate::cascade::parse_relative_calc_function(i).ok_or(())?;
+        if crate::property::types::math_source_has_percentage(i.slice(start..i.position())) {
+            return Err(());
+        }
+        Ok(calc)
+    }) {
+        return Ok(RadialSizeAuthored::Circle(
+            LengthPercentageOrCalc::from_non_negative_calc(calc),
+        ));
+    }
     let length = parse_non_negative_length(input).ok_or_else(|| input.new_custom_error(()))?;
-    Ok(RadialSizeAuthored::Circle(length))
+    Ok(RadialSizeAuthored::Circle(LengthPercentageOrCalc::Length(
+        length,
+    )))
 }
 
 fn parse_two_non_negative_length_percentages<'i>(
     input: &mut Parser<'i, '_>,
-) -> Result<(Length, Length), ParseError<'i, ()>> {
-    let a = parse_non_negative_length_percentage_res(input)?;
-    let b = parse_non_negative_length_percentage_res(input)?;
+) -> Result<(LengthPercentageOrCalc, LengthPercentageOrCalc), ParseError<'i, ()>> {
+    let a = parse_radial_ellipse_radius(input)?;
+    let b = parse_radial_ellipse_radius(input)?;
     Ok((a, b))
+}
+
+/// One `<length-percentage [0,∞]>` radius of the ellipse form of
+/// `<radial-size>`. A mixed-unit `calc()` is clamped to zero once its
+/// percentage basis is known.
+fn parse_radial_ellipse_radius<'i>(
+    input: &mut Parser<'i, '_>,
+) -> Result<LengthPercentageOrCalc, ParseError<'i, ()>> {
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Ok(LengthPercentageOrCalc::from_non_negative_calc(calc));
+    }
+    parse_non_negative_length_percentage_res(input).map(LengthPercentageOrCalc::Length)
 }
 
 /// Resolve omitted `shape`/`size` under CSS Images 3 §3.2.1; see the
@@ -2271,6 +2347,16 @@ pub(super) fn parse_layer_list<T>(
 fn parse_background_size_axis(input: &mut Parser<'_, '_>) -> Option<LengthOrAuto> {
     if input.try_parse(|i| i.expect_ident_matching("auto")).is_ok() {
         return Some(LengthOrAuto::Auto);
+    }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. A math function is
+    // clamped to the range rather than rejected.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(match LengthPercentageOrCalc::from_non_negative_calc(calc) {
+            LengthPercentageOrCalc::Length(length) => LengthOrAuto::Length(length),
+            LengthPercentageOrCalc::Calc(calc) => LengthOrAuto::Calc(calc),
+            LengthPercentageOrCalc::RelativeCalc(calc) => LengthOrAuto::RelativeCalc(calc),
+        });
     }
     let length = parse_length_value(input, true)?;
     (length.payload() >= 0.0).then_some(LengthOrAuto::Length(length))

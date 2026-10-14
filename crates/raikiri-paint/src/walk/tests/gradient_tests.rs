@@ -510,6 +510,7 @@ fn canvas_background_paints_a_propagated_body_gradient() {
         &cascade,
         page_box,
         None,
+        None,
         &mut warnings,
     );
     assert!(warnings.is_empty());
@@ -543,6 +544,7 @@ fn canvas_gradient_ignores_background_clip() {
             &document,
             &cascade,
             page_box,
+            None,
             None,
             &mut warnings,
         );
@@ -613,6 +615,7 @@ fn page_box_paints_its_gradient_over_its_color() {
         &document,
         &cascade,
         page_box,
+        None,
         None,
         &mut warnings,
     );
@@ -872,6 +875,7 @@ fn page_gradients_resolve_font_lengths_with_the_page_font() {
         &cascade,
         page_box,
         None,
+        None,
         &mut warnings,
     );
     let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
@@ -903,6 +907,7 @@ fn page_gradients_inherit_current_color_from_the_root() {
         &document,
         &cascade,
         page_box,
+        None,
         None,
         &mut warnings,
     );
@@ -1231,4 +1236,37 @@ fn average_colors_of_few_or_transparent_stops() {
         gradient::average_color(&[(0.0, clear), (1.0, clear)]),
         Color::from_rgba8(0, 0, 0, 0)
     );
+}
+
+#[test]
+fn mixed_calc_stops_and_radii_resolve_against_the_gradient_box() {
+    let rgba = raster_layer(
+        "font-size: 10px; background-image: linear-gradient(to right, red calc(50% - 1em), blue calc(50% - 1em))",
+        40,
+        10,
+    );
+    assert_eq!(pixel(&rgba, 40, 5, 5), RED);
+    assert_eq!(pixel(&rgba, 40, 15, 5), BLUE);
+    let tile = Rect::new(0.0, 0.0, 40.0, 20.0);
+    let center = Point::new(20.0, 10.0);
+    let radii = |style: &str| match gradient_of(&computed_for(style)) {
+        Gradient::Radial(radial) => gradient::radial_radii(&radial, center, tile),
+        other => panic!("expected radial, got {other:?}"), // cov:ignore: every style below is radial
+    };
+    // A calc radius that resolves below zero clamps to zero.
+    assert_eq!(
+        radii(
+            "font-size: 10px; background-image: radial-gradient(calc(25% + 1em) calc(100% - 25px), red, blue)"
+        ),
+        (20.0, 0.0)
+    );
+    // On a gradient line of no length only the percentages of calc stops
+    // count, so these two stops share one position.
+    let cv = computed_for(
+        "background-image: repeating-linear-gradient(to right, red calc(10% + 1px), blue calc(10% + 2px))",
+    );
+    assert!(matches!(
+        gradient::gradient_fill(&gradient_of(&cv), Rect::new(0.0, 0.0, 0.0, 100.0), cv.color),
+        Some(gradient::GradientFill::Solid(_))
+    ));
 }

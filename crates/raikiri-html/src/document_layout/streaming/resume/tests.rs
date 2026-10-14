@@ -193,7 +193,7 @@ fn paragraphs(count: usize, words: usize) -> String {
 
 #[test]
 fn plain_paragraphs_resume_like_batch() {
-    let html = format!("<!doctype html><body>{}</body>", paragraphs(60, 60));
+    let html = format!("<!doctype html><body>{}</body>", paragraphs(90, 60));
     assert_resumes_like_batch(&html);
 }
 
@@ -235,11 +235,14 @@ fn list_numbers_and_page_counters_resume_like_batch() {
 
 #[test]
 fn named_pages_sides_and_strings_resume_like_batch() {
+    // Each chapter starts a page at its top, where a layout can resume
+    // whatever the font, as a line nested in it can be cut at a page edge.
     let mut html = String::from(
         "<!doctype html><style>@page :left { margin-left: 2cm } \
          @page :right { margin-right: 2cm } @page wide { size: A4 landscape } \
          .wide { page: wide } @page { @top-center { content: string(title) } } \
-         h2 { string-set: title content() }</style><body>",
+         h2 { string-set: title content() } \
+         div + div { break-before: page }</style><body>",
     );
     for chapter in 0..6 {
         let class = if chapter % 3 == 2 { " class=wide" } else { "" };
@@ -257,9 +260,9 @@ fn named_pages_sides_and_strings_resume_like_batch() {
 fn boxes_turned_about_their_height_stream_like_batch() {
     let html = format!(
         "<!doctype html><body>{}<section style='transform: rotate(1deg)'>{}</section>{}</body>",
-        paragraphs(10, 60),
-        paragraphs(30, 60),
-        paragraphs(20, 60)
+        paragraphs(15, 60),
+        paragraphs(45, 60),
+        paragraphs(30, 60)
     );
     assert_streams_like_batch(&html);
 }
@@ -315,7 +318,10 @@ fn layouts_resume_after_a_late_stamp_is_left_out() {
     for piece in tail.as_bytes().chunks(2048) {
         stream.feed(piece).expect("feed");
     }
-    assert!(!stream.hidden_late.is_empty(), "the stamp is left out");
+    assert!(
+        !stream.progress.hidden_late.is_empty(),
+        "the stamp is left out"
+    );
     assert!(
         stream.settings.resumed.get() > before,
         "layouts after the stamp resume"
@@ -480,7 +486,12 @@ impl PageSink for Events {
 
 #[test]
 fn events_of_elements_spanning_delivered_pages_arrive_once() {
-    let mut html = String::from("<!doctype html><body>");
+    // Paragraphs nested in a section can be cut inside a line at a page
+    // edge, which no layout resumes at. A forced break gives each section a
+    // page that starts at its top, whatever the font.
+    let mut html = String::from(
+        "<!doctype html><style>section + section { break-before: page }</style><body>",
+    );
     for _ in 0..3 {
         html.push_str("<section style='bookmark-level: 1'>");
         html.push_str(&paragraphs(40, 50));
@@ -632,7 +643,10 @@ fn a_resumed_layout_reports_the_resources_of_delivered_pages_as_last_loaded() {
     // The first layout fails to load the flaky image before its page is
     // final; every later one loads it.
     stream.feed(pieces.next().expect("input")).expect("feed");
-    assert_eq!(stream.delivered, 0, "the images' page is not delivered yet");
+    assert_eq!(
+        stream.progress.delivered, 0,
+        "the images' page is not delivered yet"
+    );
     resolver
         .flaky
         .store(false, std::sync::atomic::Ordering::SeqCst);

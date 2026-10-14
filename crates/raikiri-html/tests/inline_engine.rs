@@ -155,3 +155,93 @@ fn a_cached_font_fetch_is_not_charged_to_the_budget_twice() {
         [30.0, 40.0]
     );
 }
+
+/// `lh` under `line-height: normal` is the height of a `normal` line in the
+/// first available font: Ahem's ascent and descent fill its em box.
+const NORMAL_LH: &str = r#"<html><body style="margin:0"><div id="line" style="font-family:Ahem;font-size:20px">a</div><div id="lh" style="font-family:Ahem;font-size:20px;height:1lh"></div><div id="calc" style="font-family:Ahem;font-size:20px;height:calc(2lh + 5px)"></div></body></html>"#;
+
+#[test]
+fn lh_under_a_normal_line_height_matches_a_normal_line() {
+    let resources = RenderResources::new().fonts(ahem_fonts());
+    assert_eq!(
+        box_heights(NORMAL_LH, &resources, &["line", "lh", "calc"]),
+        [20.0, 20.0, 45.0]
+    );
+}
+
+#[test]
+fn lh_under_a_normal_line_height_measures_an_at_font_face_family() {
+    let server = FontServer::default();
+    let resources = RenderResources::new().network_provider(&server);
+    let html = r#"<html><head><style>@font-face{font-family:Boxy;src:url(https://example.test/ahem.ttf)}</style></head><body style="margin:0"><div id="lh" style="font-family:Boxy;font-size:12px;height:1lh"></div></body></html>"#;
+    assert_eq!(box_height(html, &resources, "lh"), 12.0);
+}
+
+fn no_resources() -> raikiri_html::ParseOptions<'static> {
+    raikiri_html::ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    }
+}
+
+/// The computed `height` of the element with `id` in `cascade`.
+fn computed_height(
+    dom: &raikiri_dom::Document,
+    cascade: &raikiri_style::CascadeResult,
+    id: &str,
+) -> raikiri_style::ComputedLengthPercentageOrAuto {
+    use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId};
+    let index = (0..StyleDom::node_count(dom))
+        .find(|&i| {
+            StyleDom::node(dom, StyleNodeId::new(i as u64))
+                .and_then(|node| node.as_element().and_then(|e| e.id().map(|v| v == id)))
+                .unwrap_or(false)
+        })
+        .expect("the element");
+    cascade.computed[index].height
+}
+
+#[test]
+fn a_cascade_without_a_measurer_measures_lh_in_the_document_fonts() {
+    let mut parsed = raikiri_html::parse(NORMAL_LH.as_bytes(), &no_resources()).expect("parse");
+    parsed
+        .dom
+        .set_font_collection(ahem_fonts().into_collection());
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("cascade");
+    assert_eq!(
+        computed_height(&parsed.dom, &cascade, "lh"),
+        raikiri_style::ComputedLengthPercentageOrAuto::Px(20.0)
+    );
+}
+
+#[test]
+fn a_cascade_measurer_takes_precedence_over_the_document_fonts() {
+    struct Fixed;
+    impl raikiri_style::NormalLineHeight for Fixed {
+        fn normal_line_height(
+            &self,
+            _: &raikiri_style::ChFontKey,
+        ) -> Option<raikiri_style::ComputedLength> {
+            Some(raikiri_style::ComputedLength(7.0))
+        }
+    }
+    let mut parsed = raikiri_html::parse(NORMAL_LH.as_bytes(), &no_resources()).expect("parse");
+    parsed
+        .dom
+        .set_font_collection(ahem_fonts().into_collection());
+    let mut options = raikiri_style::CascadeOptions::default();
+    options.normal_line_height = Some(raikiri_style::NormalLineHeightSource::new(Fixed));
+    let cascade = raikiri_html::build_cascaded_with_options(
+        &parsed,
+        &raikiri_style::MediaContext::default(),
+        &raikiri_style::PageContextQuery::default(),
+        &[],
+        &options,
+    )
+    .expect("cascade");
+    assert_eq!(
+        computed_height(&parsed.dom, &cascade, "lh"),
+        raikiri_style::ComputedLengthPercentageOrAuto::Px(7.0)
+    );
+}

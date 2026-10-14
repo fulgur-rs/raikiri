@@ -31,10 +31,10 @@ use crate::parse::parse_with_budgets;
 use crate::{ParseOptions, UncascadedDocument, effective_document_base_url};
 use raikiri_traits::{LimitKind, RenderError, RenderLimits};
 
-use raikiri_style::{CascadeOptions, PageContextQuery};
+use raikiri_style::CascadeOptions;
 
 use crate::HtmlDocument;
-use crate::cascade::build_rule_tree_with_limits;
+use crate::cascade::{build_rule_tree_with_limits, first_page_query};
 
 /// Parse an HTML byte stream and return a fully cascaded [`HtmlDocument`].
 ///
@@ -137,16 +137,30 @@ pub fn parse_html_with_limits<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    let uncascaded = parse_with_budgets(input, options, &limits)?;
-    assemble_document(uncascaded, options, &limits)
+    parse_html_with_fonts(input, options, limits, None)
 }
 
-/// Check the DOM node cap as a defensive postcondition and run its first-page
-/// cascade.
+/// [`parse_html_with_limits`] for a document laid out with `fonts`, given
+/// to the DOM before the cascade measures `line-height: normal` in them.
+/// `None` leaves the DOM without fonts, so it measures in the installed
+/// fonts its first layout takes.
+pub(crate) fn parse_html_with_fonts<R: Read>(
+    input: R,
+    options: &ParseOptions<'_>,
+    limits: RenderLimits,
+    fonts: Option<shodo::font::FontCollection>,
+) -> Result<HtmlDocument, RenderError> {
+    let uncascaded = parse_with_budgets(input, options, &limits)?;
+    assemble_document(uncascaded, options, &limits, fonts)
+}
+
+/// Check the DOM node cap as a defensive postcondition, give the DOM `fonts`
+/// when there are some, and run its first-page cascade.
 pub(crate) fn assemble_document(
-    uncascaded: UncascadedDocument,
+    mut uncascaded: UncascadedDocument,
     options: &ParseOptions<'_>,
     limits: &RenderLimits,
+    fonts: Option<shodo::font::FontCollection>,
 ) -> Result<HtmlDocument, RenderError> {
     if let Some(limit) = limits.max_dom_nodes {
         let actual = uncascaded.dom.node_count() as u64;
@@ -158,10 +172,10 @@ pub(crate) fn assemble_document(
             });
         }
     }
+    if let Some(fonts) = fonts {
+        uncascaded.dom.set_font_collection(fonts);
+    }
     let effective_base_url = effective_document_base_url(&uncascaded, options.base_url.as_ref());
-    let mut first_page = PageContextQuery::default();
-    first_page.is_first = true;
-    first_page.is_right = true;
     let rule_tree = build_rule_tree_with_limits(&uncascaded, &[], &limits.rule_tree_limits())?;
     let media_context = raikiri_style::MediaContext::default();
     let font_faces = rule_tree.font_faces_for(&media_context);
@@ -171,7 +185,7 @@ pub(crate) fn assemble_document(
         &uncascaded.dom,
         &rule_tree,
         &media_context,
-        &first_page,
+        &first_page_query(),
         &cascade_options,
     )?;
     Ok(HtmlDocument {

@@ -492,8 +492,9 @@ fn compute_table_layout_checked(
     // Container metrics, split so collapse can substitute collapsed outer
     // borders for the table's own border widths (CSS 2.1 §17.6.2 — the table
     // border participates in conflict resolution with edge cells).
-    let pad = resolve_table_padding(doc, table_idx, inputs.parent_size);
-    let table_border = resolve_table_border(doc, table_idx, inputs.parent_size);
+    let table_style = &doc.nodes[table_idx].style;
+    let pad = resolve_table_rect(&table_style.padding, inputs.parent_size);
+    let table_border = resolve_table_rect(&table_style.border, inputs.parent_size);
 
     // Known outer dimensions (from taffy's compute_root_layout known_dimensions or style.size)
     // The table's outer size caller may have imposed via `apply_page_content_box_to_body` / block layout.
@@ -761,10 +762,11 @@ fn compute_table_layout_checked(
     // row heights are measured so cells lay out at final column widths.
     if let Some(mn) = min_w_outer {
         let target = f32_max_compat(mn - distrib_insets.width, 0.0);
-        distribute_extra_width(&mut column_widths, target);
+        distribute_extra(&mut column_widths, None, target);
     }
-    distribute_extra_width(
+    distribute_extra(
         &mut column_widths,
+        None,
         (caption_minimum - distrib_insets.width).max(0.0),
     );
 
@@ -783,7 +785,7 @@ fn compute_table_layout_checked(
     if effective_known.height.is_some() && (grid.rows.len() > 1 || specified_height.is_some()) {
         let known_h = effective_known.height.unwrap(); // cov:ignore: exercised by ignored exact table-fragmentation WPT.
         let target = f32_max_compat(known_h - distrib_insets.height, 0.0);
-        distribute_extra_height(&mut row_heights, &hidden_rows, target);
+        distribute_extra(&mut row_heights, Some(&hidden_rows), target);
     }
 
     // Extra min-height grows rows (same path as a definite height);
@@ -792,7 +794,7 @@ fn compute_table_layout_checked(
     // `min_content + overlap`, the track sum that yields `min_content`.
     if let Some(mn) = min_h_outer {
         let target = f32_max_compat(mn - distrib_insets.height, 0.0);
-        distribute_extra_height(&mut row_heights, &hidden_rows, target);
+        distribute_extra(&mut row_heights, Some(&hidden_rows), target);
     }
     if vertical_writing {
         // Vertical columns stack the same row track along the physical
@@ -801,7 +803,7 @@ fn compute_table_layout_checked(
         let columns = grid.n_cols as f32;
         let edges = padding_border_size.height + border_spacing.1 * (columns + 1.0);
         let target = (caption_inline_minimum - edges).max(0.0) / columns;
-        distribute_extra_height(&mut row_heights, &hidden_rows, target);
+        distribute_extra(&mut row_heights, Some(&hidden_rows), target);
     }
 
     // Content extents net of collapsed-line overlaps, plus the separated
@@ -1317,21 +1319,11 @@ fn collect_col_widths(
     table_idx: usize,
 ) -> Result<Vec<ColSizing>, raikiri_traits::LayoutError> {
     fn col_span(doc: &Document, node_id: usize) -> usize {
-        if let crate::node::NodeData::Element(data) = &doc
-            .ifc_layout_node(node_id)
+        doc.ifc_layout_node(node_id)
             .expect("table box layout view")
-            .data
-        {
-            for a in &data.attributes {
-                if a.namespace.is_none()
-                    && a.local.as_str() == "span"
-                    && let Ok(v) = a.value.parse::<usize>()
-                {
-                    return v.clamp(1, 1000);
-                }
-            }
-        }
-        1
+            .attribute("span")
+            .and_then(|value| value.parse::<usize>().ok())
+            .map_or(1, |v| v.clamp(1, 1000))
     }
     fn sizing_of(doc: &Document, col_id: usize) -> ColSizing {
         let st = &doc.nodes[col_id].style;
@@ -1510,32 +1502,7 @@ fn flush_pending(
         return Ok(());
     }
     // Anonymous row: borrow first cell's id as row marker (not used for layout beyond count)
-    rows.push(pending[0]);
-    let row_ix = (rows.len() - 1) as u16;
-    let mut col: u16 = 0;
-    for &cell_id in pending.iter() {
-        let col_span = get_colspan(doc, cell_id);
-        let next_col = next_table_column(col, col_span)?;
-        let row_span = get_rowspan(doc, cell_id);
-        let specified_width = doc.nodes[cell_id].style.size.width;
-        cells.push(CellPlacement {
-            node_id: cell_id,
-            row: row_ix,
-            col_start: col,
-            col_span,
-            row_span,
-            specified_width,
-            specified_min_width: doc.nodes[cell_id].style.min_size.width.into(),
-            resolved: None,
-            natural_height: 0.0,
-            baseline: 0.0,
-            row_pass: None,
-        });
-        col = next_col;
-    }
-    *n_cols = (*n_cols).max(col);
-    pending.clear();
-    Ok(())
+    push_row(doc, pending[0], pending.drain(..), rows, cells, n_cols)
 }
 
 fn collect_cells_in_row(
@@ -1545,19 +1512,33 @@ fn collect_cells_in_row(
     cells: &mut Vec<CellPlacement>,
     n_cols: &mut u16,
 ) -> Result<(), raikiri_traits::LayoutError> {
+    // Only collect cells; non-cell children are anonymous? Per spec, non-cell child of a row
+    // is wrapped in anonymous cell — for initial implementation we skip non-cells inside row.
+    let row_cells = doc.nodes[row_id]
+        .children
+        .iter()
+        .copied()
+        .filter(|&cell_id| {
+            doc.nodes[cell_id].is_in_document()
+                && doc.nodes[cell_id].display == DisplayValue::TableCell
+        });
+    push_row(doc, row_id, row_cells, rows, cells, n_cols)
+}
+
+/// Append row `row_id` and place `row_cells` in it left to right, each
+/// starting where the one before it ends.
+fn push_row(
+    doc: &Document,
+    row_id: usize,
+    row_cells: impl IntoIterator<Item = usize>,
+    rows: &mut Vec<usize>,
+    cells: &mut Vec<CellPlacement>,
+    n_cols: &mut u16,
+) -> Result<(), raikiri_traits::LayoutError> {
     rows.push(row_id);
     let row_ix = (rows.len() - 1) as u16;
     let mut col: u16 = 0;
-    for i in 0..doc.nodes[row_id].children.len() {
-        let cell_id = doc.nodes[row_id].children[i];
-        if !doc.nodes[cell_id].is_in_document() {
-            continue;
-        }
-        // Only collect cells; non-cell children are anonymous? Per spec, non-cell child of a row
-        // is wrapped in anonymous cell — for initial implementation we skip non-cells inside row.
-        if doc.nodes[cell_id].display != DisplayValue::TableCell {
-            continue;
-        }
+    for cell_id in row_cells {
         let col_span = get_colspan(doc, cell_id);
         let next_col = next_table_column(col, col_span)?;
         let row_span = get_rowspan(doc, cell_id);
@@ -1591,48 +1572,38 @@ fn collect_cells_in_row(
 /// the value must parse as a plain unsigned integer, anything else falls
 /// back to 1.
 fn get_colspan(doc: &Document, node_id: usize) -> u16 {
-    if let crate::node::NodeData::Element(data) = &doc
-        .ifc_layout_node(node_id)
+    // Parse wide (u32) so huge values (e.g. "100000", which overflows u16)
+    // clamp to 1000 instead of failing to parse and falling back to 1.
+    doc.ifc_layout_node(node_id)
         .expect("table box layout view")
-        .data
-    {
-        for a in &data.attributes {
-            if a.namespace.is_none()
-                && a.local.as_str() == "colspan"
-                && let Ok(v) = a.value.parse::<u32>()
-            {
-                // Parse wide (u32) so huge values (e.g. "100000", which
-                // overflows u16) clamp to 1000 instead of failing to parse
-                // and falling back to 1.
-                return v.clamp(1, 1000) as u16;
-            }
-        }
-    }
-    1
+        .attribute("colspan")
+        .and_then(|value| value.parse::<u32>().ok())
+        .map_or(1, |v| v.clamp(1, 1000) as u16)
 }
 
 fn get_rowspan(doc: &Document, node_id: usize) -> u16 {
-    if let crate::node::NodeData::Element(data) = &doc
-        .ifc_layout_node(node_id)
+    doc.ifc_layout_node(node_id)
         .expect("table box layout view")
-        .data
-    {
-        for a in &data.attributes {
-            if a.namespace.is_none()
-                && a.local.as_str() == "rowspan"
-                && let Ok(v) = a.value.parse::<u16>()
-            {
-                // HTML §4.9.9: rowspan=0 spans to the end of the table
-                // section. The reservation pass clamps this sentinel to
-                // the source row group before layout consumes the grid.
-                if v == 0 {
-                    return u16::MAX;
-                }
-                return v.clamp(1, 65534);
+        .attribute("rowspan")
+        .and_then(|value| {
+            let digits = value.strip_prefix('+').unwrap_or(value);
+            if digits.is_empty() {
+                return None;
             }
-        }
-    }
-    1
+            // Saturate any digit count, but still reject invalid suffixes.
+            digits.bytes().try_fold(0_u16, |span, digit| {
+                digit.is_ascii_digit().then(|| {
+                    span.saturating_mul(10)
+                        .saturating_add(u16::from(digit - b'0'))
+                })
+            })
+        })
+        .map_or(1, |v| {
+            // HTML §4.9.9: rowspan=0 spans to the end of the table section.
+            // The reservation pass clamps this sentinel to the source row
+            // group before layout consumes the grid.
+            if v == 0 { u16::MAX } else { v.min(65534) }
+        })
 }
 
 // ---------------------------------------------------------------------------
@@ -1979,55 +1950,31 @@ fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
     rows.into_iter().map(|row| row.unwrap_or(false)).collect()
 }
 
-fn distribute_extra_height(row_heights: &mut [f32], hidden_rows: &[bool], target: f32) {
-    let n = hidden_rows.iter().filter(|hidden| !**hidden).count();
+/// Grow `sizes` (row heights or column widths) until they sum to `target`,
+/// skipping the tracks `hidden` marks: each grows in proportion to its
+/// current size, or by an equal share when all are zero. Tracks are sized in
+/// pre-overlap space, so the caller passes the outer-domain target
+/// (`min_outer - distrib_insets` = `min_content + overlap`).
+fn distribute_extra(sizes: &mut [f32], hidden: Option<&[bool]>, target: f32) {
+    let is_hidden = |index: usize| hidden.and_then(|hidden| hidden.get(index)) == Some(&true);
+    let n = (0..sizes.len()).filter(|&index| !is_hidden(index)).count();
     if n == 0 {
         return;
     }
-    let current: f32 = row_heights.iter().sum();
+    let current: f32 = sizes.iter().sum();
     if current >= target {
         return;
     }
     let extra = target - current;
-    if current > 0.0 {
-        for (h, hidden) in row_heights.iter_mut().zip(hidden_rows) {
-            if !*hidden {
-                *h += extra * (*h) / current;
-            }
+    for (index, size) in sizes.iter_mut().enumerate() {
+        if is_hidden(index) {
+            continue;
         }
-    } else {
-        let share = extra / n as f32;
-        for (h, hidden) in row_heights.iter_mut().zip(hidden_rows) {
-            if !*hidden {
-                *h += share;
-            }
-        }
-    }
-}
-
-/// Extra min-width grows columns (mirrors [`distribute_extra_height`] for
-/// rows; same proportional-share rule). Tracks are sized in pre-overlap
-/// space, so the caller passes the outer-domain target
-/// (`min_outer - distrib_insets.width` = `min_content + overlap`).
-fn distribute_extra_width(column_widths: &mut [f32], target: f32) {
-    let n = column_widths.len();
-    if n == 0 {
-        return;
-    }
-    let current: f32 = column_widths.iter().sum();
-    if current >= target {
-        return;
-    }
-    let extra = target - current;
-    if current > 0.0 {
-        for w in column_widths.iter_mut() {
-            *w += extra * (*w) / current;
-        }
-    } else {
-        let share = extra / n as f32;
-        for w in column_widths.iter_mut() {
-            *w += share;
-        }
+        *size += if current > 0.0 {
+            extra * (*size) / current
+        } else {
+            extra / n as f32
+        };
     }
 }
 
@@ -2708,33 +2655,18 @@ fn resolve_length(lp: taffy::style::LengthPercentage, basis: Option<f32>) -> f32
     }
 }
 
-fn resolve_table_padding(
-    doc: &Document,
-    table_idx: usize,
+/// Resolve a table's padding or border widths (`rect`) against the width of
+/// its containing block (CSS 2.1 §8.4).
+fn resolve_table_rect(
+    rect: &Rect<taffy::style::LengthPercentage>,
     parent_size: Size<Option<f32>>,
 ) -> Rect<f32> {
-    let s = &doc.nodes[table_idx].style;
     let w_basis = parent_size.width;
     Rect {
-        left: resolve_length(s.padding.left, w_basis),
-        right: resolve_length(s.padding.right, w_basis),
-        top: resolve_length(s.padding.top, w_basis),
-        bottom: resolve_length(s.padding.bottom, w_basis),
-    }
-}
-
-fn resolve_table_border(
-    doc: &Document,
-    table_idx: usize,
-    parent_size: Size<Option<f32>>,
-) -> Rect<f32> {
-    let s = &doc.nodes[table_idx].style;
-    let w_basis = parent_size.width;
-    Rect {
-        left: resolve_length(s.border.left, w_basis),
-        right: resolve_length(s.border.right, w_basis),
-        top: resolve_length(s.border.top, w_basis),
-        bottom: resolve_length(s.border.bottom, w_basis),
+        left: resolve_length(rect.left, w_basis),
+        right: resolve_length(rect.right, w_basis),
+        top: resolve_length(rect.top, w_basis),
+        bottom: resolve_length(rect.bottom, w_basis),
     }
 }
 
@@ -2831,18 +2763,21 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         .into_iter()
         .map(|width| width.unwrap_or(0.0))
         .collect();
+    // The first row's spanning cells, as their columns and minimum width.
+    let first_row_spans: Vec<(usize, usize, f32)> = grid
+        .cells
+        .iter()
+        .filter(|cell| cell.row == 0 && cell.col_span > 1)
+        .filter_map(|cell| {
+            let start = usize::from(cell.col_start);
+            let end = (start + usize::from(cell.col_span)).min(n);
+            let minimum = resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0);
+            (start < end).then_some((start, end, minimum))
+        })
+        .collect();
     // First-row spans are disjoint. Reserve each other span's minimum
     // proportionally in its auto columns before any span draws from them.
-    for cell in &grid.cells {
-        if cell.row != 0 || cell.col_span <= 1 {
-            continue;
-        }
-        let start = usize::from(cell.col_start);
-        let end = (start + usize::from(cell.col_span)).min(n);
-        if start >= end {
-            continue; // cov:ignore: defensive range guard; native grid construction validates nonzero spans within its column count.
-        }
-        let minimum = resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0);
+    for &(start, end, minimum) in &first_row_spans {
         let fixed_sum: f32 = (start..end)
             .filter(|&c| !reclaimable[c])
             .map(|c| widths[c])
@@ -2864,16 +2799,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
             }
         }
     }
-    for cell in &grid.cells {
-        if cell.row != 0 || cell.col_span <= 1 {
-            continue;
-        }
-        let start = usize::from(cell.col_start);
-        let end = (start + usize::from(cell.col_span)).min(n);
-        if start >= end {
-            continue; // cov:ignore: defensive range guard; native grid construction validates nonzero spans within its column count.
-        }
-        let minimum = resolve_dimension(cell.specified_min_width, Some(avail)).unwrap_or(0.0);
+    for &(start, end, minimum) in &first_row_spans {
         let current: f32 = widths[start..end].iter().sum();
         if minimum > current {
             let deficit = minimum - current;

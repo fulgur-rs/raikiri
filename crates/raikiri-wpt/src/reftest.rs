@@ -4,7 +4,9 @@
 //! via raikiri and blitz (oracle), and compares pixels under a tolerance.
 //!
 //! The default viewport is 800×600 CSS px (WPT reftest test setup default).
-//! Callers may supply a custom size via [`ReftestConfig`].
+//! Print reftests are printed on 5in×3in paper with 0.5in page margins, as
+//! wptrunner prints them. Callers may supply custom sizes via
+//! [`ReftestConfig`].
 
 mod dynamic;
 mod fuzzy;
@@ -21,6 +23,14 @@ use crate::runner::{TestOutcome, Tolerance};
 pub const DEFAULT_REFTTEST_WIDTH: u32 = 800;
 /// Default reftest viewport height (CSS px).
 pub const DEFAULT_REFTTEST_HEIGHT: u32 = 600;
+/// Paper width of a WPT print reftest (CSS px): wptrunner prints on 5in×3in
+/// paper.
+pub const DEFAULT_PRINT_PAGE_WIDTH: u32 = 480;
+/// Paper height of a WPT print reftest (CSS px).
+pub const DEFAULT_PRINT_PAGE_HEIGHT: u32 = 288;
+/// wptrunner prints with 0.5in page margins. As a user-origin rule it is the
+/// fallback that any authored `@page` margin overrides.
+pub(crate) const WPT_PRINT_PAGE_MARGIN_CSS: &str = "@page { margin: 0.5in; }";
 // ── ReftestKind ────────────────────────────────────────────────────────
 
 /// Whether a reftest requires visual match or explicit mismatch.
@@ -144,6 +154,9 @@ pub(crate) struct PrintRenderResources<'a> {
     /// Fail instead of falling back to the installed fonts when the inline
     /// engine cannot get the WPT fonts.
     pub(crate) require_inline_fonts: bool,
+    /// Give every page wptrunner's print page margins unless the document
+    /// authors its own.
+    pub(crate) print_page_margin: bool,
 }
 
 fn resolve_custom_highlights(
@@ -303,6 +316,11 @@ pub struct ReftestConfig {
     pub width: u32,
     /// Viewport height.
     pub height: u32,
+    /// Paper width of a print reftest (see [`is_print_reftest`]), which
+    /// replaces `width` for both sides of such a pair.
+    pub print_page_width: u32,
+    /// Paper height of a print reftest, which replaces `height`.
+    pub print_page_height: u32,
     /// Pixel tolerance for comparison.
     pub tolerance: Tolerance,
     /// Refuse to render when the inline engine cannot get the WPT fonts.
@@ -318,10 +336,52 @@ impl Default for ReftestConfig {
         Self {
             width: DEFAULT_REFTTEST_WIDTH,
             height: DEFAULT_REFTTEST_HEIGHT,
+            print_page_width: DEFAULT_PRINT_PAGE_WIDTH,
+            print_page_height: DEFAULT_PRINT_PAGE_HEIGHT,
             tolerance: Tolerance::EXACT,
             require_inline_fonts: false,
         }
     }
+}
+
+impl ReftestConfig {
+    /// This configuration with the paper `test` renders on: the print paper
+    /// for a print reftest, the viewport otherwise.
+    pub(crate) fn for_test(self, test: &Path) -> Self {
+        if is_print_reftest(test) {
+            Self {
+                width: self.print_page_width,
+                height: self.print_page_height,
+                ..self
+            }
+        } else {
+            self
+        }
+    }
+}
+
+/// Whether WPT runs `test` as a print reftest: its file name ends in the
+/// `-print` type flag, or a directory on its path is named `print`. This is
+/// the rule of WPT's manifest (`SourceFile.name_is_print_reftest`). Only the
+/// directories below the WPT root count when `test` is inside a checkout.
+pub fn is_print_reftest(test: &Path) -> bool {
+    let type_flag = test
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.rsplit_once('-'))
+        .and_then(|(_, flag)| flag.split('.').next());
+    if type_flag == Some("print") {
+        return true;
+    }
+    let Some(dir) = test.parent() else {
+        return false;
+    };
+    let root = local_resources::wpt_root_above(dir);
+    let dir = root
+        .as_deref()
+        .and_then(|root| dir.strip_prefix(root).ok())
+        .unwrap_or(dir);
+    dir.components().any(|part| part.as_os_str() == "print")
 }
 
 // ── Link discovery ─────────────────────────────────────────────────────
@@ -1836,6 +1896,21 @@ fn viewport_rule_tree(
         };
         tree.add_stylesheet(source, origin);
     }
+    for sheet in &document.user_stylesheet_sources {
+        for part in &sheet.parts {
+            let guards: Vec<_> = part
+                .media
+                .iter()
+                .map(String::as_str)
+                .chain(sheet.media.as_deref())
+                .collect();
+            tree.add_stylesheet_with_media_conditions(
+                &part.source,
+                raikiri_style::Origin::User,
+                &guards,
+            );
+        }
+    }
     for sheet in &document.stylesheet_sources {
         for part in &sheet.parts {
             let source = expand_css_viewport_units_with_media_basis(
@@ -2420,10 +2495,63 @@ fn page_box_from_cascade(
             let mut page_box = raikiri_traits::PageBox::new();
             page_box.width = width + insets.left + insets.right + margins.left + margins.right;
             page_box.height = height + insets.top + insets.bottom + margins.top + margins.bottom;
-            page_box
+            // Layout resolves percentage padding (and, without `size`,
+            // percentage margins) against the page box this returns, so size
+            // the box against itself rather than against `base`.
+            if page_has_auto_margin(declarations) {
+                return page_box;
+            }
+            self_consistent_page_box(page, width, height).unwrap_or(page_box)
         }
         _ => base,
     }
+}
+
+/// The page box whose page area is `width`×`height` once its margins, border
+/// and padding are resolved against that same page box.
+///
+/// Each axis adds `fixed + ratio × box` around the page area, where `ratio`
+/// sums the percentages of that axis, so the box is
+/// `(area + fixed) / (1 - ratio)`. Percentages that add up to 100% or more
+/// leave no positive page area, and give `None`.
+fn self_consistent_page_box(
+    page: &raikiri_style::PageCascadeResult,
+    width: f32,
+    height: f32,
+) -> Option<raikiri_traits::PageBox> {
+    // The edge sizes are linear in the page box, so two samples give the
+    // fixed part and the ratio. Both are nonzero boxes: a border is dropped
+    // where its side has no padding or margin, which a zero box would hit.
+    const SAMPLE: f32 = 1000.0;
+    let edges = |side: f32| {
+        let mut sample = raikiri_traits::PageBox::new();
+        sample.width = side;
+        sample.height = side;
+        let margins = raikiri_dom::page_margins_for_page(page, sample);
+        let insets = raikiri_dom::page_content_insets_for_page(page, sample);
+        (
+            margins.left + margins.right + insets.left + insets.right,
+            margins.top + margins.bottom + insets.top + insets.bottom,
+        )
+    };
+    let (small_x, small_y) = edges(SAMPLE);
+    let (large_x, large_y) = edges(2.0 * SAMPLE);
+    let solve = |area: f32, small: f32, large: f32| {
+        let ratio = (large - small) / SAMPLE;
+        let fixed = small - ratio * SAMPLE;
+        let side = (area + fixed) / (1.0 - ratio);
+        (ratio < 1.0 && side.is_finite() && side > 0.0).then_some(side)
+    };
+    let mut page_box = raikiri_traits::PageBox::new();
+    page_box.width = solve(width, small_x, large_x)?;
+    page_box.height = solve(height, small_y, large_y)?;
+    // A clamped `calc()` edge is linear only piecewise: keep the solution
+    // only when the solved box really leaves the requested page area.
+    let margins = raikiri_dom::page_margins_for_page(page, page_box);
+    let insets = raikiri_dom::page_content_insets_for_page(page, page_box);
+    let area_width = insets.page_area_width(margins, page_box);
+    let area_height = insets.page_area_height(margins, page_box);
+    ((area_width - width).abs() < 0.01 && (area_height - height).abs() < 0.01).then_some(page_box)
 }
 
 /// Prepared WPT document state for JavaScript DOM bindings. The live runner owns this document and rebuilds style/layout after DOM mutations.
@@ -2724,6 +2852,7 @@ fn render_raikiri_pages_inner(
         font_base,
         InlineEngineChoice {
             require_inline_fonts: false,
+            print_page_margin: false,
         },
         None,
         None,
@@ -2779,16 +2908,19 @@ fn restore_animation_styles(
     Ok(())
 }
 
-/// The fonts of one rendering.
+/// The fonts and page setup of one rendering.
 #[derive(Clone, Copy)]
 struct InlineEngineChoice {
     require_inline_fonts: bool,
+    /// Print with wptrunner's page margins.
+    print_page_margin: bool,
 }
 
 impl InlineEngineChoice {
-    fn of(config: &ReftestConfig) -> Self {
+    fn of(config: &ReftestConfig, print: bool) -> Self {
         Self {
             require_inline_fonts: config.require_inline_fonts,
+            print_page_margin: print,
         }
     }
 }
@@ -2854,6 +2986,7 @@ fn render_raikiri_pages_inner_with_canvases(
                 .as_ref()
                 .map(|preparer| preparer as &dyn CascadeImagePreparer),
             require_inline_fonts: engine.require_inline_fonts,
+            print_page_margin: engine.print_page_margin,
             canvas_bitmaps,
             animation_styles,
             custom_highlight_ranges,
@@ -2923,8 +3056,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
     use raikiri_dom::{
         layout_pages, layout_pages_with_page_geometry,
         layout_pages_with_page_geometry_and_resolver_and_base_url,
-        layout_pages_with_resolver_and_base_url, page_content_insets_for_page, page_margins,
-        page_margins_for_page, relayout_text_for_width,
+        layout_pages_with_resolver_and_base_url, page_content_insets_for_page,
+        page_margins_for_page,
     };
     use raikiri_html::parse;
 
@@ -2934,8 +3067,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let image_pixel_source = resources.image_pixel_source;
     let base_url = resources.base_url;
     let prepare_cascade_images = resources.prepare_cascade_images;
+    let print_sheets = [WPT_PRINT_PAGE_MARGIN_CSS];
     let opts = ParseOptions {
-        extra_stylesheets: &[],
+        extra_stylesheets: if resources.print_page_margin {
+            &print_sheets
+        } else {
+            &[]
+        },
         network: resources.network,
         base_url: resources.parse_base_url.cloned(),
     };
@@ -2995,12 +3133,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // later queries on this document rerun just the `@page` cascade.  The
     // font-face rule tree was built from this same document state.
     let page_for = |base: &raikiri_style::CascadeResult, query: &PageContextQuery| {
-        let mut page = raikiri_style::cascade_page_with_media_context(
-            &font_face_tree,
-            query,
-            raikiri_style::PageInheritance::FromRoot(base.root_element_computed()),
-            &media_context,
-        );
+        let mut page = base.cascade_page_from_root(&font_face_tree, query, &media_context);
         if let Some(prepare) = prepare_cascade_images {
             prepare.prepare_page(&mut page);
         }
@@ -3098,21 +3231,20 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut page_steps = Vec::with_capacity(schedule_len);
     let mut page_widths = Vec::with_capacity(schedule_len);
     for page_index in 0..schedule_len {
-        let mut query = PageContextQuery::default();
         // An unnamed provisional page stays unnamed; only the tail beyond the
         // provisional pages continues the last page's type.
-        query.page_name = match provisional_slices.get(page_index) {
+        let page_name = match provisional_slices.get(page_index) {
             Some(slice) => slice.page_name.clone(),
             None => fallback_page_name.clone(),
-        }
-        .map(|name| Atom::from(name.as_str()));
-        query.is_first = page_index == 0;
-        query.is_left = if first_page_is_left {
-            page_index % 2 == 0
-        } else {
-            page_index % 2 == 1
         };
-        query.is_right = !query.is_left;
+        let query = page_query_for_slice(
+            &raikiri_dom::PageSlice {
+                page_index: page_index as u32,
+                content_origin_y: 0.0,
+                page_name,
+            },
+            first_page_is_left,
+        );
         let page = page_for(&first_cascade, &query);
         let page_box = page_box_or_fallback(&page, fallback_page_box);
         let margins = page_margins_for_page(&page, page_box);
@@ -3136,7 +3268,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
     // when a later page really changes its content geometry; fixed-size WPT
     // documents can keep the already-laid-out result and avoid a second full
     // parse/layout pass.
-    let (mut uncascaded, slices, mut cascade, page_tree) = if geometry_varies {
+    let (mut uncascaded, slices, mut cascade, page_tree, mut continuations) = if geometry_varies {
         let mut fresh = parse(html.as_bytes(), &opts).map_err(|e| format!("parse: {e:?}"))?;
         if let Some(styles) = animation_styles {
             restore_animation_styles(&mut fresh.dom, styles)?;
@@ -3164,7 +3296,13 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 .dom
                 .prepare_list_marker_images(&fresh_cascade, source, base_url);
         }
-        let fresh_slices = if let Some(resolver) = image_resolver {
+        // Pages of another content width are laid out again from a copy of
+        // the document as it is before any layout.
+        let widths_vary = page_widths
+            .iter()
+            .any(|width| (width - base_width).abs() > 0.001);
+        let pristine = widths_vary.then(|| fresh.dom.clone());
+        let mut fresh_slices = if let Some(resolver) = image_resolver {
             // The geometry-varying path reparses the source, so the image
             // intrinsic pre-pass must run on the fresh DOM as well.
             layout_pages_with_page_geometry_and_resolver_and_base_url(
@@ -3185,27 +3323,54 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 &page_widths,
             )? // cov:ignore: the layout API's standalone error edge is not reachable from valid reftest documents
         };
-        (fresh, fresh_slices, fresh_cascade, fresh_tree)
+        let continuations = if let Some(pristine) = &pristine {
+            continue_at_page_widths(
+                &mut fresh.dom,
+                pristine,
+                &fresh_cascade,
+                first_page_box,
+                &mut fresh_slices,
+                PageWidthContinuation {
+                    tree: &fresh_tree,
+                    media_context: &media_context,
+                    first_page_is_left,
+                    fallback_page_box,
+                    resolver: image_resolver,
+                    base_url,
+                    prepare_cascade_images,
+                },
+            )? // cov:ignore: the relayout repeats a layout and projection that already succeeded on the same document
+        } else {
+            Vec::new()
+        };
+        (
+            fresh,
+            fresh_slices,
+            fresh_cascade,
+            fresh_tree,
+            continuations,
+        )
     } else {
         (
             uncascaded,
             provisional_slices,
             first_cascade,
             font_face_tree,
+            Vec::new(),
         )
     };
     // Each page below replaces only the page context of this document's
     // element cascade.
     let page_for = |base: &raikiri_style::CascadeResult, query: &PageContextQuery| {
-        raikiri_style::cascade_page_with_media_context(
-            &page_tree,
-            query,
-            raikiri_style::PageInheritance::FromRoot(base.root_element_computed()),
-            &media_context,
-        )
+        base.cascade_page_from_root(&page_tree, query, &media_context)
     };
 
     if let Some(bitmaps) = canvas_bitmaps {
+        for continuation in &mut continuations {
+            continuation
+                .document
+                .set_canvases_in_tree_order_owned(bitmaps.clone());
+        }
         uncascaded.dom.set_canvases_in_tree_order_owned(bitmaps);
     }
 
@@ -3217,19 +3382,19 @@ pub(crate) fn render_raikiri_pages_with_resources(
     let mut pages = Vec::with_capacity(slices.len());
     let mut raster_budget = RasterBufferBudget::new();
     for slice in slices {
-        let mut query = PageContextQuery::default();
-        query.page_name = slice
-            .page_name
-            .clone()
-            .map(|name| Atom::from(name.as_str()));
-        query.is_first = slice.page_index == 0;
-        query.is_left = if first_page_is_left {
-            slice.page_index % 2 == 0
-        } else {
-            slice.page_index % 2 == 1
+        // Pages from a continuation's first page on are taken from its
+        // layout, laid out at their own content width.
+        let (document, cascade) = match continuations
+            .partition_point(|continuation| continuation.first_page <= slice.page_index)
+        {
+            0 => (&uncascaded.dom, &mut cascade),
+            slot => {
+                let continuation = &mut continuations[slot - 1];
+                (&continuation.document, &mut continuation.cascade)
+            }
         };
-        query.is_right = !query.is_left;
-        let mut page = page_for(&cascade, &query);
+        let query = page_query_for_slice(&slice, first_page_is_left);
+        let mut page = page_for(cascade, &query);
         if let Some(prepare) = prepare_cascade_images {
             prepare.prepare_page(&mut page);
         }
@@ -3241,7 +3406,7 @@ pub(crate) fn render_raikiri_pages_with_resources(
             paired_query.is_right = false;
             // Only the paired page's `counter-increment` is read, which image
             // preparation does not touch.
-            let paired = page_for(&cascade, &paired_query);
+            let paired = page_for(cascade, &paired_query);
             match paired
                 .declarations()
                 .get(&raikiri_style::property::PropertyKey::CounterIncrement)
@@ -3255,18 +3420,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
         } else {
             None
         };
+        let cascade = &*cascade;
         let page_box = page_box_or_fallback(&cascade.page, fallback_page_box);
-        if geometry_varies {
-            let page_width = page_widths
-                .get(slice.page_index as usize)
-                .copied()
-                .filter(|width| width.is_finite() && *width > 0.0)
-                .unwrap_or_else(|| {
-                    raikiri_dom::page_content_insets(&cascade, page_box)
-                        .page_area_width(page_margins(&cascade, page_box), page_box)
-                });
-            relayout_text_for_width(&mut uncascaded.dom, &cascade, page_width);
-        }
         let active_page_name = slice.page_name.clone();
         let raster_size = raster_budget.reserve_page_box(page_box)?;
         let page_width = raster_size.width();
@@ -3277,8 +3432,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 if let Some(pixel_source) = image_pixel_source {
                     paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_images_and_highlights(
                         painter,
-                        &uncascaded.dom,
-                        &cascade,
+                        document,
+                        cascade,
                         page_box,
                         slice.content_origin_y,
                         slice.page_index,
@@ -3293,8 +3448,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
                 } else {
                     paint_result = raikiri_paint::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width_and_highlights(
                         painter,
-                        &uncascaded.dom,
-                        &cascade,
+                        document,
+                        cascade,
                         page_box,
                         slice.content_origin_y,
                         slice.page_index,
@@ -3321,6 +3476,131 @@ pub(crate) fn render_raikiri_pages_with_resources(
         ));
     }
     Ok(RenderedDocument { pages })
+}
+
+/// The page context of `slice`. Page progression follows the root
+/// direction: the first page is a left page when `first_page_is_left`.
+fn page_query_for_slice(
+    slice: &raikiri_dom::PageSlice,
+    first_page_is_left: bool,
+) -> raikiri::PageContextQuery {
+    let mut query = raikiri::PageContextQuery::default();
+    query.page_name = slice.page_name.as_deref().map(raikiri::Atom::from);
+    query.is_first = slice.page_index == 0;
+    query.is_left = slice.page_index.is_multiple_of(2) == first_page_is_left;
+    query.is_right = !query.is_left;
+    query
+}
+
+/// What the relayout of later pages at their own content width needs
+/// besides the laid-out document.
+struct PageWidthContinuation<'a> {
+    tree: &'a raikiri_style::RuleTree,
+    media_context: &'a raikiri::MediaContext,
+    first_page_is_left: bool,
+    fallback_page_box: raikiri::PageBox,
+    resolver: Option<&'a dyn raikiri_traits::ReplacedResolver>,
+    base_url: Option<&'a raikiri::Url>,
+    prepare_cascade_images: Option<&'a dyn CascadeImagePreparer>,
+}
+
+/// A resolver that resolves nothing, as layout without a resolver does.
+struct NoReplacedResolver;
+
+impl raikiri_traits::ReplacedResolver for NoReplacedResolver {
+    fn resolve(
+        &self,
+        _request: raikiri_traits::ResolverRequest<'_>,
+    ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+        Ok(raikiri_traits::ResolvedIntrinsic {
+            intrinsic: raikiri_traits::IntrinsicBox::default(),
+            disposition: raikiri_traits::ResolveDisposition::Fallback {
+                reason: "no replaced-resource resolver was configured".to_owned(),
+            },
+        })
+    }
+}
+
+/// Lay the pages whose content width differs from the pages before them out
+/// again at their own width, the way `raikiri_html::layout` does, and return
+/// those layouts in page order.
+///
+/// `document` is laid out into `slices` from `pristine`, a copy taken before
+/// that layout. On return `slices` describes the final pages; pages from each
+/// continuation's first page on are taken from that continuation.
+fn continue_at_page_widths(
+    document: &mut raikiri_dom::Document,
+    pristine: &raikiri_dom::Document,
+    cascade: &raikiri_style::CascadeResult,
+    first_page_box: raikiri::PageBox,
+    slices: &mut Vec<raikiri_dom::PageSlice>,
+    context: PageWidthContinuation<'_>,
+) -> Result<Vec<raikiri_html::Continuation>, raikiri_traits::LayoutError> {
+    let page_geometries = |slices: &[raikiri_dom::PageSlice]| {
+        slices
+            .iter()
+            .map(|slice| {
+                let page = cascade.cascade_page_from_root(
+                    context.tree,
+                    &page_query_for_slice(slice, context.first_page_is_left),
+                    context.media_context,
+                );
+                let page_box = page_box_or_fallback(&page, context.fallback_page_box);
+                raikiri_dom::resolve_page_geometry(&page, page_box)
+            })
+            .collect::<Vec<_>>()
+    };
+    // The element cascade of this document already succeeded on the same
+    // input, and its limits count only that input.
+    let cascade_for_page = |slice: &raikiri_dom::PageSlice| {
+        let mut cascade = raikiri_style::cascade_with_media_context_for_page(
+            pristine,
+            context.tree,
+            context.media_context,
+            &page_query_for_slice(slice, context.first_page_is_left),
+        )
+        .expect("the element cascade of this document already succeeded");
+        if let Some(prepare) = context.prepare_cascade_images {
+            prepare.prepare_cascade(pristine, &mut cascade);
+        }
+        cascade
+    };
+    let projection = |geometries: &[raikiri_dom::ResolvedPageGeometry]| {
+        geometries
+            .iter()
+            .map(|geometry| (geometry.page_box, geometry.margins, geometry.content_insets))
+            .collect::<Vec<_>>()
+    };
+    let mut geometries = page_geometries(slices);
+    document.project_pages(cascade, first_page_box, slices, &projection(&geometries))?;
+    let continuations = raikiri_html::continue_at_page_widths(
+        &raikiri_html::ContinuationInputs {
+            pristine,
+            cascade_for_page: &cascade_for_page,
+            page_geometries: &page_geometries,
+            resolver: context.resolver.unwrap_or(&NoReplacedResolver),
+            base_url: context.base_url,
+            max_pages: None,
+            abort_check: &|| false,
+            skipped: &[],
+        },
+        document,
+        cascade,
+        slices,
+        &mut geometries,
+    )?; // cov:ignore: the relayout repeats a layout that already succeeded on the same document, with no page limit
+    if let Some(first) = continuations.first() {
+        // The first layout keeps only the pages before the first
+        // continuation.
+        let own = first.first_page as usize;
+        document.project_pages(
+            cascade,
+            first_page_box,
+            &slices[..own],
+            &projection(&geometries[..own]),
+        )?; // cov:ignore: these pages were projected once already with the same geometry
+    }
+    Ok(continuations)
 }
 
 /// Rotate a laid-out page for presentation per its `page-orientation`
@@ -3883,10 +4163,21 @@ where
     let ref_html = read_html(&pair.reference)?;
     let fuzzy = fuzzy::metadata(&test_html, pair)?;
     let selections = page_selections_for_pair(&test_html, &pair.reference);
+    // Scripts run in wptrunner's window; only the printout is on its paper.
     let test_prepared = dynamic::prepare(&test_html, &pair.test, variant_query, config)?;
     let reference_suffix = with_variant_query(&pair.reference_suffix, variant_query);
     let ref_prepared = dynamic::prepare(&ref_html, &pair.reference, &reference_suffix, config)?;
-    let ref_html = mirror_default_page_margin(&test_prepared.html, &ref_prepared.html);
+    // wptrunner prints both sides of a print reftest on its paper, with its
+    // page margins.
+    let print = is_print_reftest(&pair.test);
+    let config = config.for_test(&pair.test);
+    // A printed reference gets the print page margin on its own.
+    let ref_html = if print {
+        ref_prepared.html
+    } else {
+        mirror_default_page_margin(&test_prepared.html, &ref_prepared.html)
+    };
+    let engine = InlineEngineChoice::of(&config, print);
     let test_doc = render_raikiri_pages_inner_with_canvases(
         &test_prepared.html,
         config.width,
@@ -3897,7 +4188,7 @@ where
             None
         },
         pair.test.parent(),
-        InlineEngineChoice::of(&config),
+        engine,
         Some(&test_prepared.animation_styles),
         Some(test_prepared.canvases),
         Some(&test_prepared.custom_highlight_ranges),
@@ -3913,7 +4204,7 @@ where
             None
         },
         pair.reference.parent(),
-        InlineEngineChoice::of(&config),
+        engine,
         Some(&ref_prepared.animation_styles),
         Some(ref_prepared.canvases),
         Some(&ref_prepared.custom_highlight_ranges),
@@ -4005,6 +4296,8 @@ pub fn run_pair_with_oracle(
         path: pair.reference.clone(),
         source,
     })?;
+    // The oracle renders on the same paper as Raikiri does.
+    let config = config.for_test(&pair.test);
     let test_img = render_blitz(&test_html, config.width, config.height)?;
     let ref_img = render_blitz(&ref_html, config.width, config.height)?;
     let diff = compare_images(&test_img, &ref_img, config.tolerance);
@@ -4044,7 +4337,10 @@ pub fn run_all_pairs(pairs: &[ReftestPair], config: ReftestConfig) -> Vec<Reftes
                 pair_test_id: pair.test.display().to_string(),
                 outcome: TestOutcome::Error(format!("render error: {e}")),
                 mismatched_pixels: 0,
-                total_pixels: u64::from(config.width) * u64::from(config.height),
+                total_pixels: {
+                    let paper = config.for_test(&pair.test);
+                    u64::from(paper.width) * u64::from(paper.height)
+                },
             },
         })
         .collect()

@@ -58,17 +58,72 @@ macro_rules! css_keywords {
 /// allocating a new heap slot per node; cloning only bumps the reference count.
 ///
 /// As a defense against cascade memory DoS, `ComputedValues.content` and
-/// `.string_set` are wrapped in `Arc<Vec<..>>`. Calling
-/// `Arc::new(Vec::new())` for every node would add 2N small heap allocations
+/// `.string_set` are wrapped in `Arc`. Allocating a new empty list for every
+/// node would add 2N small heap allocations
 /// for an N-node document. `OnceLock` keeps **one empty Arc per process**,
 /// and [`empty_content_list`] / [`empty_string_set_entries`] clone it at each
 /// initial-value site (incrementing only the Arc reference count).
 ///
-/// An empty `Vec::new()` allocates no buffer, but its 24-byte `Vec` struct
-/// still exists per node. The Arc replaces it with an 8-byte pointer to shared data.
-pub(crate) fn empty_content_list() -> Arc<Vec<ContentComponent>> {
-    static EMPTY: OnceLock<Arc<Vec<ContentComponent>>> = OnceLock::new();
-    EMPTY.get_or_init(|| Arc::new(Vec::new())).clone()
+/// An empty list allocates no buffer, but its struct would still exist per
+/// node. The Arc replaces it with an 8-byte pointer to shared data.
+pub(crate) fn empty_content_list() -> Arc<ContentList> {
+    static EMPTY: OnceLock<Arc<ContentList>> = OnceLock::new();
+    EMPTY
+        .get_or_init(|| Arc::new(ContentList::default()))
+        .clone()
+}
+
+/// A parsed `content` value: its items and its alternative text
+/// (CSS Content 3 §1 <https://www.w3.org/TR/css-content-3/#content-property>).
+///
+/// The list dereferences to its items, so `.iter()`, `.len()`,
+/// `.is_empty()` and slice patterns read the items as they would a
+/// `Vec<ContentComponent>`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ContentList {
+    items: Vec<ContentComponent>,
+    alt: Option<Box<[ContentComponent]>>,
+}
+
+impl ContentList {
+    /// A list of `items` with the alternative text `alt`, the components
+    /// after `/`: strings, `counter()` / `counters()` and `attr()`.
+    pub fn new(items: Vec<ContentComponent>, alt: Option<Vec<ContentComponent>>) -> Self {
+        Self {
+            items,
+            alt: alt.map(Vec::into_boxed_slice),
+        }
+    }
+
+    /// The alternative text given after `/`, or `None` when the value has
+    /// none. Assistive technology reads it in place of the content, and an
+    /// empty alternative text leaves decorative content out of the
+    /// accessibility tree (CSS Content 3
+    /// <https://www.w3.org/TR/css-content-3/#alt>).
+    pub fn alt(&self) -> Option<&[ContentComponent]> {
+        self.alt.as_deref()
+    }
+}
+
+impl From<Vec<ContentComponent>> for ContentList {
+    fn from(items: Vec<ContentComponent>) -> Self {
+        Self { items, alt: None }
+    }
+}
+
+/// A list equals the items alone when it has no alternative text.
+impl PartialEq<Vec<ContentComponent>> for ContentList {
+    fn eq(&self, items: &Vec<ContentComponent>) -> bool {
+        self.alt.is_none() && self.items == *items
+    }
+}
+
+impl std::ops::Deref for ContentList {
+    type Target = Vec<ContentComponent>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.items
+    }
 }
 
 /// One `string-set` entry: a `(<custom-ident> name, content-list)` pair
@@ -190,7 +245,7 @@ pub(crate) fn initial_font_family() -> Arc<Vec<FontFamilyName>> {
 /// Shared Arc for the empty `text-shadow` list (`none`), following the same
 /// `OnceLock` shared-slot pattern as [`empty_content_list`] to avoid per-node
 /// allocation regressions. Representing `none` as an empty list follows
-/// `parse_content` / `parse_counter_property`
+/// `parse_content_with_alt` / `parse_counter_property`
 /// (see the [`TextShadowItem`] documentation).
 pub(crate) fn empty_text_shadow_list() -> Arc<Vec<TextShadowItem>> {
     static EMPTY: OnceLock<Arc<Vec<TextShadowItem>>> = OnceLock::new();
@@ -517,9 +572,11 @@ pub enum Length {
     /// a real font instance, see the [`crate::resolve::used_line_height_length`]
     /// documentation (the same obstacle as `cap`/`rcap`). Unlike `ex`/`ch`/`ic`,
     /// the spec gives no font-size-ratio fallback. Under our independent-
-    /// implementation policy, we do not invent one: resolution instead falls
-    /// back per property to a value equivalent to that property’s initial value
-    /// (see the `resolve_*` function docs in [`crate::resolve`]).
+    /// implementation policy, we do not invent one. A cascade given a
+    /// [`crate::resolve::NormalLineHeight`] measures `normal` in the element's
+    /// fonts; without one, resolution falls back per property to a value
+    /// equivalent to that property’s initial value (see the `resolve_*`
+    /// function docs in [`crate::resolve`]).
     ///
     /// # Self-reference (when used as the value of `line-height` itself)
     ///
@@ -1288,10 +1345,9 @@ impl<T> Sides<T> {
 /// `LengthOrAuto`, while padding uses `Length`.
 ///
 /// Field names match the spec’s flow-relative `-start` / `-end` suffixes,
-/// rather than physical names such as `top`/`right`/`bottom`/`left`.
-/// The mapping to physical sides is fixed here: Raikiri assumes
-/// writing-mode: horizontal-tb and direction: ltr. For details, see the
-/// Non-goal section in the [`PropertyValue::MarginInline`] documentation.
+/// rather than physical names such as `top`/`right`/`bottom`/`left`. The
+/// cascade maps them to physical sides; see the "Physical mapping" section
+/// of the [`PropertyValue::PaddingInline`] documentation.
 ///
 /// The `Eq` derive conditionally propagates `T: Eq`, as in [`Sides<T>`].
 /// Both `StartEnd<Length>` and `StartEnd<LengthOrAuto>` contain f32 values,
@@ -2681,6 +2737,10 @@ pub enum LineHeight {
     /// `24px` → `Length(Length::Px(24.0))`; `150%` → `Length(Length::Percent(150.0))`.
     /// Per spec §5.1, `Length::Percent` is relative to the element's own font size.
     Length(Length),
+    /// A mixed-unit `calc()`, such as `calc(150% + 2px)`, whose percentage
+    /// and font-relative terms are absolutized against the element's own font
+    /// size at computed-value time and clamped to the `[0,∞]` range.
+    Calc(RelativeCalcLengthPercentage),
 }
 
 /// The parsed result of `<counter-style>`.
@@ -3015,7 +3075,7 @@ pub enum ContentComponent {
     /// [`SmolStr`] stores up to 22 bytes inline; longer values use an internal
     /// `Arc<str>`, making a clone an O(1) bump. This is a secondary defense
     /// against the direct DoS vector `content: "<large>"`; the primary defense
-    /// is the [`Arc<Vec<..>>`] wrapper on the outer [`PropertyValue::Content`].
+    /// is the [`Arc<ContentList>`] wrapper on the outer [`PropertyValue::Content`].
     ///
     /// **For consumers**:
     /// The previous payload type was `String`. SmolStr provides
@@ -3157,14 +3217,14 @@ pub enum ContentComponent {
     /// Specification verbatim: "The element's descendants". Resolving whether
     /// pseudo-elements are generated and the consumption order (do nothing if
     /// already used by another pseudo-element) is outside this crate's
-    /// static-side scope. As with `normal`/`none` in the parse_content
-    /// documentation, downstream consumers decide whether to generate content.
+    /// static-side scope. As with `normal`/`none` in the
+    /// [`parse_content_with_alt`] documentation, downstream consumers decide whether to generate content.
     ///
     /// **Asymmetry with `normal` (intentional)**: The specification states
     /// verbatim (§2.3) that "the initial
     /// value of content is `normal` and `normal` computes to `contents` on an
     /// element". However,
-    /// [`parse_content`] stores `normal` as an empty `Vec`; expanding `normal`
+    /// [`parse_content_with_alt`] stores `normal` as an empty `Vec`; expanding `normal`
     /// to `contents` at computed-value time is outside this crate's static-side
     /// (specified-value layer) scope. In contrast, explicit `content: none` is
     /// retained as a [`ContentComponent::None`] sentinel so pseudo-element
@@ -3820,6 +3880,9 @@ pub struct PlaceContentShorthand {
 pub enum GridTrackBreadth {
     /// `<length-percentage [0,∞]>`.
     Length(Length),
+    /// A mixed-unit `calc()` `<length-percentage [0,∞]>` that keeps its
+    /// percentage until used-value time.
+    Calc(LengthPercentageOrCalc),
     /// `<flex [0,∞]>` — the `fr` unit (§7.2.4). Authored non-negative number
     /// (`1fr` → `Flex(1.0)`).
     Flex(f32),
@@ -3851,6 +3914,9 @@ pub enum GridInflexibleBreadth {
     /// `<fixed-breadth>` (see the "fixed-size constraint" section of the
     /// [`GridTrackSize`] doc).
     Length(Length),
+    /// A mixed-unit `calc()` `<length-percentage [0,∞]>` that keeps its
+    /// percentage until used-value time. It is also a `<fixed-breadth>`.
+    Calc(LengthPercentageOrCalc),
     /// `min-content`.
     MinContent,
     /// `max-content`.
@@ -4032,7 +4098,7 @@ pub struct GridTrackList {
 ///
 /// Wrapping the list in `Arc` follows the memory-DoS mitigation described
 /// in the [`PropertyValue`] docs, under "cascade memory DoS countermeasures".
-/// Like the [`ContentComponent`] list's `Content(Arc<Vec<..>>)`, a track
+/// Like the [`ContentComponent`] list's `Content(Arc<ContentList>)`, a track
 /// list is a heap payload that may contain arbitrarily many `repeat()` calls
 /// and may be cloned whenever a cascade winner is selected.
 #[non_exhaustive]
@@ -7451,6 +7517,12 @@ impl<T: Copy> From<T> for CornerRadius<T> {
     }
 }
 
+impl From<Length> for CornerRadius<LengthPercentageOrCalc> {
+    fn from(value: Length) -> Self {
+        Self::circular(value.into())
+    }
+}
+
 /// Four physical corners of a `border-radius` shorthand.
 ///
 /// This is the shorthand from CSS Backgrounds and Borders Level 3 §4.1
@@ -7463,37 +7535,40 @@ impl<T: Copy> From<T> for CornerRadius<T> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BorderRadius {
     /// top-left corner radius.
-    pub top_left: CornerRadius<Length>,
+    pub top_left: CornerRadius<LengthPercentageOrCalc>,
     /// top-right corner radius.
-    pub top_right: CornerRadius<Length>,
+    pub top_right: CornerRadius<LengthPercentageOrCalc>,
     /// bottom-right corner radius.
-    pub bottom_right: CornerRadius<Length>,
+    pub bottom_right: CornerRadius<LengthPercentageOrCalc>,
     /// bottom-left corner radius.
-    pub bottom_left: CornerRadius<Length>,
+    pub bottom_left: CornerRadius<LengthPercentageOrCalc>,
 }
 
 impl BorderRadius {
     /// Expand four horizontal and four vertical radii in clockwise order.
-    pub const fn elliptical(horizontal: [Length; 4], vertical: [Length; 4]) -> Self {
+    pub fn elliptical<T: Into<LengthPercentageOrCalc>>(
+        horizontal: [T; 4],
+        vertical: [T; 4],
+    ) -> Self {
+        let [h0, h1, h2, h3] = horizontal.map(Into::into);
+        let [v0, v1, v2, v3] = vertical.map(Into::into);
         Self {
-            top_left: CornerRadius::new(horizontal[0], vertical[0]),
-            top_right: CornerRadius::new(horizontal[1], vertical[1]),
-            bottom_right: CornerRadius::new(horizontal[2], vertical[2]),
-            bottom_left: CornerRadius::new(horizontal[3], vertical[3]),
+            top_left: CornerRadius::new(h0, v0),
+            top_right: CornerRadius::new(h1, v1),
+            bottom_right: CornerRadius::new(h2, v2),
+            bottom_left: CornerRadius::new(h3, v3),
         }
     }
 
     /// Expand four scalar corner values, using each value on both axes.
-    pub const fn corners(
-        top_left: Length,
-        top_right: Length,
-        bottom_right: Length,
-        bottom_left: Length,
+    pub fn corners<T: Into<LengthPercentageOrCalc>>(
+        top_left: T,
+        top_right: T,
+        bottom_right: T,
+        bottom_left: T,
     ) -> Self {
-        Self::elliptical(
-            [top_left, top_right, bottom_right, bottom_left],
-            [top_left, top_right, bottom_right, bottom_left],
-        )
+        let values = [top_left, top_right, bottom_right, bottom_left].map(Into::into);
+        Self::elliptical(values, values)
     }
 }
 
@@ -7624,6 +7699,12 @@ pub struct Outline {
 /// `right`/`bottom`, it is folded into `Start`. `End` occurs only with
 /// non-percentage offsets (such as the horizontal component of
 /// `right 10px top`) that would require an equivalent `calc()` expression.
+///
+/// A mixed-unit `calc()` offset is always measured from the start edge
+/// ([`Self::Calc`] / [`Self::RelativeCalc`]): one authored after `right` or
+/// `bottom` is folded when parsed, so `right calc(20% + 10px)` is stored as
+/// `calc(80% - 10px)`. Positions accept negative values, so no offset is
+/// clamped.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum CssPositionOffset {
@@ -7632,6 +7713,24 @@ pub enum CssPositionOffset {
     /// Offset from the end edge (horizontal: `right`, vertical: `bottom`) —
     /// see "Why two variants?" in the type docs above.
     End(Length),
+    /// A percentage with an absolute-length offset, measured from the start
+    /// edge.
+    Calc(CalcLengthPercentage),
+    /// A `calc()` with font-relative or viewport terms, measured from the
+    /// start edge and absolutized at computed-value time.
+    RelativeCalc(RelativeCalcLengthPercentage),
+}
+
+impl CssPositionOffset {
+    /// The start-edge offset of a mixed-unit `calc()`, folded like
+    /// [`LengthOrAuto::from_relative_calc`].
+    pub(crate) fn from_relative_calc(value: RelativeCalcLengthPercentage) -> Self {
+        match LengthPercentageOrCalc::from_relative_calc(value) {
+            LengthPercentageOrCalc::Length(length) => Self::Start(length),
+            LengthPercentageOrCalc::Calc(calc) => Self::Calc(calc),
+            LengthPercentageOrCalc::RelativeCalc(calc) => Self::RelativeCalc(calc),
+        }
+    }
 }
 
 /// The `<position>` value type (CSS Backgrounds and Borders 3 §2.6;
@@ -7821,7 +7920,7 @@ pub struct LinearGradient {
     pub interpolation: GradientColorInterpolation,
     /// Color stop list. Contains at least 2 stops (see the scope-carving
     /// section of [`BackgroundImage`] docs). `Arc` follows the same cheap-clone
-    /// pattern as other comma-separated list payloads (`Content(Arc<Vec<..>>)` etc.).
+    /// pattern as other comma-separated list payloads (`Content(Arc<ContentList>)` etc.).
     pub stops: Arc<Vec<GradientColorStop>>,
 }
 
@@ -7933,7 +8032,9 @@ css_keywords!(RadialShape {
 /// The parser enforces the non-negative constraint (`[0,∞]`) on `Circle` and
 /// `Ellipse` variants. The type does not encode this constraint, following
 /// the convention for other non-negative contexts of [`Length`], such as
-/// `border-width`.
+/// `border-width`. A mixed-unit `calc()` radius is kept as
+/// [`LengthPercentageOrCalc::Calc`] or [`LengthPercentageOrCalc::RelativeCalc`]
+/// and clamped to zero once its percentage basis is known.
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RadialSize {
@@ -7942,10 +8043,10 @@ pub enum RadialSize {
     Extent(RadialExtent),
     /// Explicit `<length [0,∞]>` — usable only with [`RadialShape::Circle`]
     /// (enforced by the parser).
-    Circle(Length),
+    Circle(LengthPercentageOrCalc),
     /// Explicit `<length-percentage [0,∞]>{2}` (horizontal and vertical radii) —
     /// usable only with [`RadialShape::Ellipse`] (enforced by the parser).
-    Ellipse(Length, Length),
+    Ellipse(LengthPercentageOrCalc, LengthPercentageOrCalc),
 }
 
 /// Keyword for [`RadialSize::Extent`].
@@ -8042,8 +8143,9 @@ pub struct GradientColorStop {
     /// Position of the stop (`<length-percentage>`). If omitted, fixup
     /// determines it automatically (CSS Images 3 §3.4.3 "Color Stop \"Fixup\"").
     /// That decision requires the length of the gradient line, so it belongs
-    /// to the used-value layer (paint); this crate retains `None`.
-    pub position: Option<Length>,
+    /// to the used-value layer (paint); this crate retains `None`. A
+    /// mixed-unit `calc()` keeps its percentage for the same reason.
+    pub position: Option<LengthPercentageOrCalc>,
 }
 
 /// `<angular-color-stop>` — the conic-gradient counterpart to
@@ -9123,15 +9225,18 @@ pub type MaskImage = BackgroundImage;
 /// `filter`'s simple "as specified" (which needs no absolutization), discussed
 /// in the "Range restriction" section of the [`FilterFunction`] docs,
 /// `transform` must absolutize `<length>` payloads under the spec: here,
-/// the non-percentage part of the `Length` carried by [`Self::Translate`]/
-/// [`Self::TranslateX`]/[`Self::TranslateY`].
+/// the non-percentage part of the [`LengthPercentageOrCalc`] carried by
+/// [`Self::Translate`]/[`Self::TranslateX`]/[`Self::TranslateY`]. A mixed
+/// `calc()` there keeps its percentage, which resolves against the
+/// transformed box at used-value time.
 ///
 /// On the element path, [`crate::resolve::ComputedTransformFunction`]/
 /// [`crate::resolve::resolve_transform_function`] implements this distinction;
 /// on the `page` path, phase 3 of [`crate::page::cascade_page`] does so through
 /// the `Transform` arm of `absolutize_in_page_context`. They absolutize only
 /// the length part of `<length-percentage>` against font-size/root-font-size,
-/// leaving the percentage part symbolic. This is the same treatment that
+/// leaving the percentage part symbolic, as
+/// [`crate::resolve::ComputedLengthPercentageOrCalc`]. This is the same treatment that
 /// [`crate::resolve::resolve_css_position`]/
 /// [`crate::resolve::resolve_length_percentage`] applies to
 /// `background-position`/`object-position`. The six `<number>` slots in
@@ -9147,11 +9252,11 @@ pub enum TransformFunction {
     Matrix([f32; 6]),
     /// `translate(<length-percentage>, <length-percentage>?)` — the second
     /// argument defaults to `0` (see the [`parse_translate_args`] docs).
-    Translate(Length, Length),
+    Translate(LengthPercentageOrCalc, LengthPercentageOrCalc),
     /// `translateX(<length-percentage>)`.
-    TranslateX(Length),
+    TranslateX(LengthPercentageOrCalc),
     /// `translateY(<length-percentage>)`.
-    TranslateY(Length),
+    TranslateY(LengthPercentageOrCalc),
     /// `scale(<number>, <number>?)` — when omitted, the second argument copies
     /// the first (see the [`parse_scale_args`] docs).
     Scale(f32, f32),
@@ -9304,7 +9409,9 @@ pub enum FilterFunction {
 /// fulgur consumers need to migrate the following:
 ///
 /// - [`Content`](PropertyValue::Content): `Content(Vec<ContentComponent>)` →
-///   `Content(Arc<Vec<ContentComponent>>)`
+///   `Content(Arc<Vec<ContentComponent>>)`, and later `Content(Arc<ContentList>)`
+///   to keep the alternative text; build one with
+///   `Arc::new(ContentList::from(vec![...]))` or [`ContentList::new`]
 /// - [`StringSet`](PropertyValue::StringSet): wrap the outer payload `Vec<..>` in `Arc<Vec<..>>`
 ///
 /// The same cascade-memory DoS mitigation was extended to counter-*. There was
@@ -9325,7 +9432,8 @@ pub enum FilterFunction {
 /// `PropertyValue::Content(components) => components.iter()` still works
 /// (`&Arc<Vec<T>>` autoderefs to `&[T]`). Consumers that **construct** payloads,
 /// however, must change `PropertyValue::Content(vec![...])` to
-/// `PropertyValue::Content(Arc::new(vec![...]))`.
+/// `PropertyValue::Content(Arc::new(ContentList::from(vec![...])))`;
+/// [`ContentList`] dereferences to its items like the `Vec` did.
 /// The payload of `text-indent` ([`TextIndentValue`]).
 ///
 /// It preserves all components of the CSS Text 3 §8.1 grammar
@@ -9441,6 +9549,13 @@ pub enum PropertyValue {
     /// once `font-family` is known. Page contexts resolve it with the default
     /// 16px `medium` in [`crate::cascade::resolve_against_inherited`].
     FontSizeKeyword(AbsoluteFontSize),
+    /// `font-size: calc()` with terms that cannot be combined before
+    /// computed-value time, such as `calc(50% + 2px)` — part of the same
+    /// `font-size` property as [`Self::FontSize`]. Its percentage and
+    /// font-relative terms resolve against the parent's font size (CSS Fonts 4
+    /// §2.5 "Percentages: refer to parent element's font size") when the
+    /// font size is computed, clamped to the `[0,∞]` range.
+    FontSizeCalc(RelativeCalcLengthPercentage),
     /// `font-weight: <font-weight-absolute> | bolder | lighter` — inherited,
     /// initial: `Absolute(400.0)`. CSS Fonts 4 §2.2
     /// <https://www.w3.org/TR/css-fonts-4/#font-weight-prop>.
@@ -9527,7 +9642,7 @@ pub enum PropertyValue {
     /// (A downstream layer decides whether to generate pseudo-elements.) CSS Content 3 §1
     /// <https://www.w3.org/TR/css-content-3/#content-property>.
     ///
-    /// The [`Arc<Vec<..>>`] wrapper makes cloning a cascade winner, cloning an
+    /// The [`Arc<ContentList>`] wrapper makes cloning a cascade winner, cloning an
     /// inheritance-walk stack entry, and writing each node **shallow (only an Arc
     /// reference-count increment)**. Sharing one heap slot prevents the O(N × M)
     /// memory blow-up from `* { content: "<large>" }` across N elements (a
@@ -9536,11 +9651,11 @@ pub enum PropertyValue {
     /// **For consumers:**
     /// Consumers that **read** payloads through pattern matching can continue to
     /// use `PropertyValue::Content(components) =>
-    /// components.iter().for_each(..)` unchanged, thanks to the `Arc<Vec<T>>` deref
-    /// chain (Vec → slice). Only consumers that **construct** payloads must change
-    /// to `PropertyValue::Content(Arc::new(vec![..]))`.
+    /// components.iter().for_each(..)` unchanged, thanks to the deref chain
+    /// `Arc` → [`ContentList`] → `Vec` → slice. Only consumers that **construct**
+    /// payloads must change to `PropertyValue::Content(Arc::new(ContentList::from(vec![..])))`.
     /// See also the enum-level `#[non_exhaustive]` semantics documentation.
-    Content(Arc<Vec<ContentComponent>>),
+    Content(Arc<ContentList>),
     /// `string-set: none | [ <custom-ident> <content-list> ]#` — non-inherited.
     /// The spec's initial value is `none`, represented here by an empty list. Each
     /// entry is a `(name, content-list)` pair.
@@ -9549,7 +9664,8 @@ pub enum PropertyValue {
     /// Name resolution and runtime `string()` references belong to the downstream
     /// layer (raikiri-dom).
     ///
-    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as [`Self::Content`]: it
+    /// The [`Arc<Vec<..>>`] wrapper has the same rationale as the
+    /// [`Arc<ContentList>`] of [`Self::Content`]: it
     /// prevents the same kind of DoS along the `* { string-set: name "<large>" }`
     /// path across N elements.
     ///
@@ -9672,72 +9788,33 @@ pub enum PropertyValue {
     /// `padding-inline-end` (if the second is omitted, copy the first via
     /// [`StartEnd::both`]).
     ///
-    /// # Physical mapping (Non-goal: flow-relative mapping based on writing-mode / direction)
+    /// # Physical mapping
     ///
-    /// The spec determines which physical side (`padding-top`/`padding-right`/
-    /// `padding-bottom`/`padding-left`) corresponds to
-    /// `padding-inline-start`/`padding-inline-end` (and
-    /// `padding-block-start`/`padding-block-end`) from the element's **own computed
-    /// `writing-mode` / `direction` / `text-orientation`** (CSS Logical Properties
-    /// and Values 1 §4, opening section). Raikiri cuts off this dependency in two
-    /// ways and always maps to a fixed physical side. Note that these two cases
-    /// are **asymmetric**:
-    ///
-    /// - **Block axis** (via [`PaddingBlock`](Self::PaddingBlock),
-    ///   `padding-block-start`/`-end` → `padding-top`/`padding-bottom`):
-    ///   Raikiri does not implement a vertical writing rendering pipeline, so the
-    ///   renderer-facing writing-mode fallback is always [`WritingMode::HorizontalTb`]
-    ///   (see the Non-goal section in [`resolve_writing_mode`]). Under
-    ///   `horizontal-tb`, the block axis is always vertical (block-start = top),
-    ///   and `direction` never affects its mapping (the spec likewise always maps
-    ///   block-start to top under `horizontal-tb` for any `direction`). This case is
-    ///   therefore **exact, not an approximation**: within Raikiri's scope (the
-    ///   renderer-facing writing mode is always `horizontal-tb`), it fully matches
-    ///   the spec.
-    /// - **Inline axis** (this variant / `padding-inline-start`/`-end` →
-    ///   `padding-left`/`padding-right`): this also **assumes `direction: ltr`**.
-    ///   The `direction` property itself is implemented in this crate
-    ///   (see [`PropertyValue::Direction`]), but the mapping **does not consult it**.
-    ///   As the section below, "Why the eight longhands have no dedicated variant",
-    ///   explains, this PR chooses a fixed mapping at parse time, before the cascade
-    ///   winner is known. Once the winner is known, the computed `direction` is
-    ///   available in this crate: [`resolve_text_align_match_parent`] already
-    ///   performs similar post-cascade resolution from `SpecifiedValues::finalize`.
-    ///   Direction-aware resolution is intentionally deferred beyond this scope;
-    ///   it is not inherently impossible in this architecture. **This is an
-    ///   approximation that disagrees with the spec for elements with
-    ///   `direction: rtl`**: `padding-inline-start` should then map to
-    ///   `padding-right`, but Raikiri always maps it to `padding-left`.
-    ///
-    /// This asymmetry (exact block axis, approximate inline axis) is one level more
-    /// complex than the physical x/y mapping for `overflow-inline`/`overflow-block`
-    /// (the two components of the `overflow` shorthand) explained in the Non-goal
-    /// section of [`OverflowValue`]. Each overflow inline/block axis has a single
-    /// value (the `overflow-x`/`overflow-y` pair), with no `start`/`end` distinction,
-    /// so `direction` did not matter there. This property has two sides, `start` and
-    /// `end`, on each axis, making an additional direction-dependent approximation
-    /// necessary on the inline axis alone.
+    /// The spec maps `padding-inline-start`/`-end` and
+    /// `padding-block-start`/`-end` to physical sides through the element's own
+    /// computed `writing-mode` and `direction` (CSS Logical Properties and
+    /// Values 1 §4, opening section). The parser cannot know them, so it stores
+    /// each flow-relative longhand under the physical side it maps to in
+    /// `horizontal-tb` with `direction: ltr` (`padding-inline-start` →
+    /// [`Self::PaddingLeft`], `padding-block-start` → [`Self::PaddingTop`], and
+    /// so on) and tags the declaration with its flow-relative side. The
+    /// cascade then moves a tagged declaration to the side the element's own
+    /// writing mode and direction map it to, before picking winners, so it
+    /// competes with the physical longhand of that side by cascade order
+    /// ("corresponding flow-relative and physical properties" share one
+    /// computed value). For elements the writing mode is the renderer-facing
+    /// one, which stays `horizontal-tb` while block layout does not lay
+    /// blocks out along a horizontal block axis ([`resolve_writing_mode`]), so
+    /// only `direction` moves them for now. The `@page` cascade maps with the
+    /// page context's specified writing mode and direction. See
+    /// [`mod@crate::logical`] for the details.
     ///
     /// # Why the 8 longhands have no dedicated `PropertyValue` variants
     ///
     /// These are `padding-inline-start`/`-end`, `padding-block-start`/`-end`,
-    /// and the corresponding four margin longhands.
-    ///
-    /// The fixed mapping above does not depend on any cascade-time state (such as
-    /// an inherited computed `direction` or a `direction` winner on the same node):
-    /// it is already settled at parse time. Consequently,
-    /// `padding-inline-start: <value>` produces exactly the same `PropertyValue`
-    /// as [`Self::PaddingLeft`], and `padding-block-start: <value>` produces exactly
-    /// the same `PropertyValue` as [`Self::PaddingTop`] (see the relevant arms of
-    /// `parse_value` and `property_key_for_name`).
-    /// Following the existing `word-wrap`/`overflow-wrap` legacy alias
-    /// pattern (folding names with the same grammar into the same
-    /// `PropertyValue`/[`PropertyKey`]; see the `"overflow-wrap" | "word-wrap"`
-    /// arm of `parse_value`), no separate variant is needed. Cascade winner
-    /// selection likewise treats them as competing for the same physical
-    /// property, matching the spec's actual cascade behavior (CSS Logical
-    /// Properties and Values 1 §4: "corresponding flow-relative and physical
-    /// properties are paired").
+    /// and the corresponding four margin longhands. Their values have the
+    /// grammar of the physical longhands, so they reuse those variants, and the
+    /// flow-relative side travels next to the value on the declaration instead.
     ///
     /// # This variant is not observed during element cascade
     ///
@@ -9751,9 +9828,8 @@ pub enum PropertyValue {
     PaddingInline(StartEnd<LengthPercentageOrCalc>),
     /// `padding-block: <'padding-top'>{1,2}` shorthand — the same grammar,
     /// expansion, and physical-mapping rationale as [`Self::PaddingInline`]
-    /// (the [`Self::PaddingInline`] docs are canonical), but for the block axis
-    /// (`padding-block-start`/`-end` → `padding-top`/`padding-bottom`: exact
-    /// mapping, not an approximation). CSS Logical Properties and Values 1 §4.4
+    /// (the [`Self::PaddingInline`] docs are canonical), but for the block
+    /// axis. CSS Logical Properties and Values 1 §4.4
     /// <https://www.w3.org/TR/css-logical-1/#propdef-padding-block>.
     PaddingBlock(StartEnd<LengthPercentageOrCalc>),
     /// `margin-top: <length-percentage> | auto` — non-inherited, initial: 0
@@ -9809,17 +9885,11 @@ pub enum PropertyValue {
     /// The [`Self::PaddingInline`] docs provide the canonical grammar,
     /// expansion, and physical-mapping rationale. The only difference from
     /// padding is that the payload is `<length-percentage> | auto`, as with
-    /// [`Self::Margin`] (`auto` passes through [`parse_margin_side`]). The
-    /// inline-axis mapping (this variant and `margin-inline-start`/`-end` →
-    /// `margin-left`/`margin-right`) assumes `direction: ltr`, as explained
-    /// in the "asymmetry" section of [`Self::PaddingInline`]. This is an
-    /// approximation that disagrees with the spec under `direction: rtl`.
+    /// [`Self::Margin`] (`auto` passes through [`parse_margin_side`]).
     MarginInline(StartEnd<LengthOrAuto>),
     /// `margin-block: <'margin-top'>{1,2}` shorthand — the same grammar,
     /// expansion, and physical-mapping rationale as [`Self::MarginInline`],
-    /// but for the block axis (`margin-block-start`/`-end` →
-    /// `margin-top`/`margin-bottom`: exact mapping, not an approximation;
-    /// see the "asymmetry" section of [`Self::PaddingInline`]).
+    /// but for the block axis.
     /// CSS Logical Properties and Values 1 §4.2
     /// <https://www.w3.org/TR/css-logical-1/#propdef-margin-block>.
     MarginBlock(StartEnd<LengthOrAuto>),
@@ -10481,17 +10551,19 @@ pub enum PropertyValue {
     /// `border-radius` — non-inherited. Expands the four-corner
     /// `<length-percentage>` shorthand into [`BorderRadius`]. Percentages are
     /// retained independently on both axes through computed-value processing.
-    BorderRadius(BorderRadius),
+    /// Boxed because four corners of mixed-unit `calc()` values outgrow the
+    /// size bound on this enum.
+    BorderRadius(Box<BorderRadius>),
     /// `border-radius: inherit` — resolved from the parent computed corners.
     BorderRadiusInherit,
     /// `border-top-left-radius` with one or two `<length-percentage>` values.
-    BorderRadiusTopLeft(CornerRadius<Length>),
+    BorderRadiusTopLeft(CornerRadius<LengthPercentageOrCalc>),
     /// `border-top-right-radius` with one or two `<length-percentage>` values.
-    BorderRadiusTopRight(CornerRadius<Length>),
+    BorderRadiusTopRight(CornerRadius<LengthPercentageOrCalc>),
     /// `border-bottom-right-radius` with one or two `<length-percentage>` values.
-    BorderRadiusBottomRight(CornerRadius<Length>),
+    BorderRadiusBottomRight(CornerRadius<LengthPercentageOrCalc>),
     /// `border-bottom-left-radius` with one or two `<length-percentage>` values.
-    BorderRadiusBottomLeft(CornerRadius<Length>),
+    BorderRadiusBottomLeft(CornerRadius<LengthPercentageOrCalc>),
     /// `box-shadow: none | <shadow>#` — non-inherited. Retains multiple entries.
     /// Each entry retains `inset` and omitted colors.
     BoxShadow(Arc<Vec<BoxShadowItem>>),
@@ -11627,9 +11699,9 @@ impl PropertyValue {
             // Map them to the same `PropertyKey` so cascade winner selection
             // correctly makes `font-size: 12px` and `font-size: larger` compete.
             // Separate keys would let both win, which the spec does not allow.
-            PropertyValue::FontSizeRelative(_) | PropertyValue::FontSizeKeyword(_) => {
-                PropertyKey::FontSize
-            }
+            PropertyValue::FontSizeRelative(_)
+            | PropertyValue::FontSizeKeyword(_)
+            | PropertyValue::FontSizeCalc(_) => PropertyKey::FontSize,
             PropertyValue::FontWeight(_) => PropertyKey::FontWeight,
             PropertyValue::LineHeight(_) => PropertyKey::LineHeight,
             PropertyValue::Display(_) => PropertyKey::Display,
@@ -12732,9 +12804,10 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "padding-left" => PropertyKey::PaddingLeft,
         "padding" => PropertyKey::Padding,
         // CSS Logical Properties and Values 1 §4.4 padding-inline-start/-end /
-        // padding-block-start/-end — physically fixed-mapped onto the
-        // matching padding-{left,right,top,bottom} key (`PropertyValue::PaddingInline`
-        // doc's "Why the 8 longhands have no dedicated `PropertyValue` variants" section).
+        // padding-block-start/-end — keyed by the padding-{left,right,top,bottom}
+        // side they map to in horizontal-tb ltr; the cascade moves them by the
+        // element's writing mode (`PropertyValue::PaddingInline` doc's
+        // "Physical mapping" section).
         "padding-inline-start" => PropertyKey::PaddingLeft,
         "padding-inline-end" => PropertyKey::PaddingRight,
         "padding-block-start" => PropertyKey::PaddingTop,
@@ -12747,8 +12820,8 @@ pub(crate) fn property_key_for_name(name: &str) -> Option<PropertyKey> {
         "margin-left" => PropertyKey::MarginLeft,
         "margin" => PropertyKey::Margin,
         // CSS Logical Properties and Values 1 §4.2 margin-inline-start/-end /
-        // margin-block-start/-end — same physically fixed-mapped pattern as
-        // padding-inline-*/padding-block-* above.
+        // margin-block-start/-end — same pattern as padding-inline-*/
+        // padding-block-* above.
         "margin-inline-start" => PropertyKey::MarginLeft,
         "margin-inline-end" => PropertyKey::MarginRight,
         "margin-block-start" => PropertyKey::MarginTop,

@@ -43,7 +43,14 @@ pub const MAX_GENERATED_IMAGES: usize = 1 << IMAGE_INDEX_BITS;
 const LETTER_GROUP_BITS: u32 = 8;
 
 /// The number of opacity groups one `::first-letter` can form in its
-/// paragraph; fragments of later groups share the last one.
+/// paragraph.
+///
+/// A fragment past the limit shares an earlier group inside the same group
+/// around it, or has none of its own, so its opacity is approximated and
+/// [`crate::Document::paint_order_approximations`] reports the paragraph.
+/// Every bit added to the limit halves the elements whose groups can be
+/// named: with 8 bits, ids reach elements below 2^21 on 32-bit targets, and
+/// with 16 bits only below 2^13.
 pub const MAX_LETTER_GROUPS: usize = 1 << LETTER_GROUP_BITS;
 
 /// The node id the inline engine gives the `pseudo` of `element`.
@@ -246,18 +253,12 @@ pub fn content_images_are_placed(
     {
         return false;
     }
-    let mut current = Some(element);
-    while let Some(id) = current {
-        if cascade
+    !document.inclusive_ancestors(element).any(|id| {
+        cascade
             .computed
             .get(id)
             .is_some_and(|cv| cv.display == DisplayValue::None)
-        {
-            return false;
-        }
-        current = document.parent_of(id);
-    }
-    true
+    })
 }
 
 /// One piece of the content of a `::before` or `::after`, in order: a run
@@ -341,6 +342,35 @@ pub fn generated_text<'a>(
         &cascade.counter_styles,
     )?;
     Some((computed, content))
+}
+
+/// The alternative text of the `content` of the `::before`, `::after` or
+/// `::marker` of `element`, the components after `/` (CSS Content 3
+/// <https://www.w3.org/TR/css-content-3/#alt>), with `attr()` and the
+/// counters resolved as in [`generated_text`]. `None` when the value gives
+/// no alternative text; an empty string marks decorative content.
+pub fn generated_alt_text(
+    document: &Document,
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+    snapshots: &[CounterSnapshot],
+) -> Option<String> {
+    let computed = cascade
+        .pseudo
+        .get(&(StyleNodeId::new(element as u64), pseudo))?;
+    let alt = computed.content.alt()?;
+    let base = snapshots.get(element).unwrap_or(&EMPTY_COUNTER_SNAPSHOT);
+    let counters = CounterSnapshotView::new(base, Some(computed));
+    content_components_to_text_with_quotes(
+        document,
+        element,
+        alt,
+        &computed.quotes,
+        computed.quotes_auto,
+        &counters,
+        &cascade.counter_styles,
+    )
 }
 
 static EMPTY_COUNTER_SNAPSHOT: std::sync::LazyLock<CounterSnapshot> =

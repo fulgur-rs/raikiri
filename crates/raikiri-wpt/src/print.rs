@@ -74,6 +74,7 @@ pub fn render_print_url(
             animation_styles: None,
             custom_highlight_ranges: None,
             require_inline_fonts: false,
+            print_page_margin: true,
         },
     )
     .map_err(PrintRenderError::from_render_error)

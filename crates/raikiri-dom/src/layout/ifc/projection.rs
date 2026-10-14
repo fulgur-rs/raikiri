@@ -47,11 +47,28 @@ pub(crate) const REPLACED_BOX_TAGS: &[&str] = &[
     "textarea", "math",
 ];
 
-/// A built paragraph together with the block's line options.
+/// A paragraph's projection: the paragraph `P` together with the block's
+/// line options and the boxes around it.
 #[derive(Debug)]
-pub(crate) struct ProjectedIfc {
-    /// The shaped paragraph.
-    pub(crate) paragraph: Paragraph,
+pub(crate) struct Projected<P> {
+    /// The paragraph: shaped in a [`ProjectedIfc`], not yet in a
+    /// [`ProjectedBuilder`].
+    pub(crate) paragraph: P,
+    /// Everything of the projection besides the paragraph.
+    pub(crate) meta: ProjectedMeta,
+}
+
+/// A built paragraph together with the block's line options.
+pub(crate) type ProjectedIfc = Projected<Paragraph>;
+
+/// Everything of a paragraph's projection except the shaping. The builder
+/// holds the text and styles as owned data and is `Send`, so the shaping can
+/// run on another thread while the document stays where it is.
+pub(crate) type ProjectedBuilder = Projected<ParagraphBuilder>;
+
+/// The part of a [`Projected`] paragraph that the shaping does not change.
+#[derive(Debug)]
+pub(crate) struct ProjectedMeta {
     /// Writing mode used to shape the paragraph.
     pub(crate) writing_mode: WritingMode,
     /// Line options of the block root.
@@ -605,58 +622,6 @@ enum Step {
     Close,
 }
 
-/// Everything of a paragraph's projection except the shaping. The builder
-/// holds the text and styles as owned data and is `Send`, so the shaping can
-/// run on another thread while the document stays where it is.
-pub(crate) struct ProjectedBuilder {
-    /// The paragraph's content, not shaped yet.
-    pub(crate) builder: ParagraphBuilder,
-    /// Writing mode used to shape the paragraph.
-    pub(crate) writing_mode: WritingMode,
-    /// Line options of the block root.
-    pub(crate) options: LineOptions,
-    /// The block's raw `text-indent`, to be resolved against its width.
-    pub(crate) indent: ComputedTextIndent,
-    /// Children laid out as boxes of their own, in document order.
-    pub(crate) boxes: Vec<IfcBox>,
-    /// Fixed-size image marker inserted ahead of the root's ordinary content.
-    pub(crate) marker_atomic: Option<(NodeId, shodo::AtomicSize)>,
-    /// Fixed-size images of `::before` and `::after` content.
-    pub(crate) generated_atomics: Vec<(NodeId, shodo::AtomicSize)>,
-    /// Block-level `::before` and `::after` boxes, in document order.
-    pub(crate) generated_blocks: Vec<GeneratedBlock>,
-    /// The root's `direction` is `rtl`: its lines start at the right edge.
-    pub(crate) rtl: bool,
-    /// Paint offsets of the relatively positioned inline elements, by DOM
-    /// node id.
-    pub(crate) offsets: Vec<(usize, (f32, f32))>,
-    /// The insets of the elements in `offsets` whose offset depends on the
-    /// root's size, by index in `offsets`; their offset there is that of a
-    /// zero width and a height that is not definite.
-    pub(crate) percent_insets: Vec<(usize, style::InlineRelativeInsets)>,
-    /// `<br>` elements with a physical `clear`: the line after each starts
-    /// below the floats it clears.
-    pub(crate) cleared_breaks: Vec<(usize, taffy::Clear)>,
-    /// The root is a fixed box: its containing block is the page area.
-    pub(crate) fixed: bool,
-    /// The root's lines end in an ellipsis where they overflow it.
-    pub(crate) ellipsis: bool,
-    /// The root's text does not wrap (`text-wrap-mode: nowrap`). It decides
-    /// for lines without recorded content.
-    pub(crate) nowrap: bool,
-    /// Whether each text source (a DOM text node or a generated
-    /// pseudo-element), atomic inline or inline box of the paragraph, by node
-    /// id, sits in content that does not wrap (`text-wrap-mode: nowrap`). A
-    /// line made only of such content stays beside floats even when it
-    /// overflows the space there.
-    pub(crate) text_nowrap: Arc<HashMap<u64, bool>>,
-    pub(crate) letter_styles: Vec<LetterStyle>,
-    /// The opacity of the translucent `::first-line` boxes around the
-    /// paragraph's first line, multiplied (see
-    /// [`crate::paint_rules::first_line_opacity_layer`]).
-    pub(crate) first_line_opacity: Option<f32>,
-}
-
 impl ProjectedBuilder {
     /// Shape the paragraph.
     ///
@@ -667,26 +632,10 @@ impl ProjectedBuilder {
         cx: &mut LayoutContext,
         fonts: &FontCollection,
     ) -> Result<ProjectedIfc, IfcError> {
-        let paragraph = self.builder.build(cx, fonts).map_err(IfcError::Limit)?;
-        Ok(ProjectedIfc {
+        let paragraph = self.paragraph.build(cx, fonts).map_err(IfcError::Limit)?;
+        Ok(Projected {
             paragraph,
-            writing_mode: self.writing_mode,
-            options: self.options,
-            indent: self.indent,
-            boxes: self.boxes,
-            marker_atomic: self.marker_atomic,
-            generated_atomics: self.generated_atomics,
-            generated_blocks: self.generated_blocks,
-            rtl: self.rtl,
-            offsets: self.offsets,
-            percent_insets: self.percent_insets,
-            cleared_breaks: self.cleared_breaks,
-            fixed: self.fixed,
-            ellipsis: self.ellipsis,
-            nowrap: self.nowrap,
-            text_nowrap: self.text_nowrap,
-            letter_styles: self.letter_styles,
-            first_line_opacity: self.first_line_opacity,
+            meta: self.meta,
         })
     }
 }
@@ -771,30 +720,32 @@ pub(crate) fn project_ifc_text_builder(
     if let Some(error) = builder.error() {
         return Err(IfcError::Limit(error));
     }
-    Ok(ProjectedBuilder {
-        builder,
-        writing_mode,
-        options,
-        indent,
-        boxes: Vec::new(),
-        marker_atomic: None,
-        generated_atomics: Vec::new(),
-        generated_blocks: Vec::new(),
-        rtl: cv.direction == Direction::Rtl,
-        offsets: Vec::new(),
-        percent_insets: Vec::new(),
-        cleared_breaks,
-        fixed: false,
-        // An anonymous flex or grid item has no overflow of its own.
-        ellipsis: false,
-        nowrap: cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-        text_nowrap: Arc::new(HashMap::from([(
-            text as u64,
-            cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-        )])),
-        letter_styles: Vec::new(),
-        // An anonymous item has no first formatted line of an element.
-        first_line_opacity: None,
+    Ok(Projected {
+        paragraph: builder,
+        meta: ProjectedMeta {
+            writing_mode,
+            options,
+            indent,
+            boxes: Vec::new(),
+            marker_atomic: None,
+            generated_atomics: Vec::new(),
+            generated_blocks: Vec::new(),
+            rtl: cv.direction == Direction::Rtl,
+            offsets: Vec::new(),
+            percent_insets: Vec::new(),
+            cleared_breaks,
+            fixed: false,
+            // An anonymous flex or grid item has no overflow of its own.
+            ellipsis: false,
+            nowrap: cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+            text_nowrap: Arc::new(HashMap::from([(
+                text as u64,
+                cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+            )])),
+            letter_styles: Vec::new(),
+            // An anonymous item has no first formatted line of an element.
+            first_line_opacity: None,
+        },
     })
 }
 
@@ -1290,38 +1241,40 @@ fn project_children_builder(
             &mut generated_images,
         )?;
     }
-    Ok(ProjectedBuilder {
-        builder,
-        writing_mode,
-        options,
-        indent,
-        boxes,
-        marker_atomic,
-        generated_atomics: generated_images.atomics,
-        generated_blocks: generated_images.blocks,
-        rtl: root_cv.direction == Direction::Rtl,
-        percent_insets: {
-            // The generated boxes' offsets follow the elements'.
-            let first = offsets.len();
-            percent_insets.extend(
-                generated_images
-                    .percent_insets
-                    .into_iter()
-                    .map(|(index, insets)| (first + index, insets)),
-            );
-            percent_insets
+    Ok(Projected {
+        paragraph: builder,
+        meta: ProjectedMeta {
+            writing_mode,
+            options,
+            indent,
+            boxes,
+            marker_atomic,
+            generated_atomics: generated_images.atomics,
+            generated_blocks: generated_images.blocks,
+            rtl: root_cv.direction == Direction::Rtl,
+            percent_insets: {
+                // The generated boxes' offsets follow the elements'.
+                let first = offsets.len();
+                percent_insets.extend(
+                    generated_images
+                        .percent_insets
+                        .into_iter()
+                        .map(|(index, insets)| (first + index, insets)),
+                );
+                percent_insets
+            },
+            offsets: {
+                offsets.extend(generated_images.offsets);
+                offsets
+            },
+            cleared_breaks,
+            fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
+            ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
+            nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
+            text_nowrap: Arc::new(text_nowrap),
+            letter_styles: first_letter.styles,
+            first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
         },
-        offsets: {
-            offsets.extend(generated_images.offsets);
-            offsets
-        },
-        cleared_breaks,
-        fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
-        ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
-        nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
-        text_nowrap: Arc::new(text_nowrap),
-        letter_styles: first_letter.styles,
-        first_line_opacity: first_line_opacity(doc, cascade, root, &counters.predecessors),
     })
 }
 

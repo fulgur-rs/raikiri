@@ -54,6 +54,14 @@ pub(crate) struct TableObjects {
     pub(crate) materialized_parts: HashSet<usize>,
 }
 
+impl TableObjects {
+    /// Whether a table lays out the children of `owner` as its rows or
+    /// cells: `owner` is a table or one of its row groups or rows.
+    pub(crate) fn lays_out_children(&self, owner: usize) -> bool {
+        self.content_by_owner.contains_key(&owner)
+    }
+}
+
 fn whitespace(doc: &Document, content: Content) -> bool {
     let Content::Node(id) = content else {
         return false;
@@ -398,6 +406,15 @@ impl Document {
                 .get(key.checked_sub(self.table_objects.arena_len)?)
                 .map(|cell| &cell.node)
         })
+    }
+
+    /// The layout key of the anonymous cell that wraps the source box `id`,
+    /// if table fixup wrapped it in one.
+    pub(crate) fn anonymous_cell_of(&self, id: usize) -> Option<usize> {
+        self.table_objects
+            .cell_by_content
+            .get(&Content::Node(id))
+            .map(|&index| self.table_objects.arena_len + index)
     }
 
     pub(crate) fn table_layout_node_mut(&mut self, key: usize) -> &mut Node {

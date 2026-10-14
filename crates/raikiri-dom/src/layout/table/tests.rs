@@ -8,6 +8,7 @@ use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
 mod cell_index_tests;
+mod rowspan_tests;
 
 fn append_grid_part(
     doc: &mut Document,
@@ -2141,35 +2142,52 @@ fn distribute_columns_min_floor_holds_when_shrink_budget_is_zero() {
 }
 
 // -----------------------------------------------------------------
-// distribute_extra_width — pure min-width grower for resolved columns.
+// distribute_extra — pure grower for resolved columns and rows.
 // -----------------------------------------------------------------
 
 #[test]
-fn distribute_extra_width_grows_columns_proportionally_to_current_width() {
+fn distribute_extra_grows_columns_proportionally_to_current_width() {
     let mut widths = [10.0, 30.0];
-    super::distribute_extra_width(&mut widths, 80.0);
+    super::distribute_extra(&mut widths, None, 80.0);
     assert_eq!(widths, [20.0, 60.0]);
 }
 
 #[test]
-fn distribute_extra_width_splits_equally_when_all_columns_are_zero() {
+fn distribute_extra_splits_equally_when_all_columns_are_zero() {
     let mut widths = [0.0, 0.0, 0.0];
-    super::distribute_extra_width(&mut widths, 30.0);
+    super::distribute_extra(&mut widths, None, 30.0);
     assert_eq!(widths, [10.0, 10.0, 10.0]);
 }
 
 #[test]
-fn distribute_extra_width_is_noop_when_current_already_meets_target() {
+fn distribute_extra_is_noop_when_current_already_meets_target() {
     let mut widths = [50.0, 50.0]; // sum 100.0, above the 80.0 target
-    super::distribute_extra_width(&mut widths, 80.0);
+    super::distribute_extra(&mut widths, None, 80.0);
     assert_eq!(widths, [50.0, 50.0]);
 }
 
 #[test]
-fn distribute_extra_width_is_noop_on_empty_slice() {
+fn distribute_extra_is_noop_on_empty_slice() {
     let mut widths: [f32; 0] = [];
-    super::distribute_extra_width(&mut widths, 30.0);
+    super::distribute_extra(&mut widths, None, 30.0);
     assert!(widths.is_empty());
+}
+
+#[test]
+fn distribute_extra_skips_hidden_tracks() {
+    let mut heights = [10.0, 0.0, 30.0];
+    super::distribute_extra(&mut heights, Some(&[false, true, false]), 80.0);
+    assert_eq!(heights, [20.0, 0.0, 60.0]);
+    let mut heights = [0.0, 0.0, 0.0];
+    super::distribute_extra(&mut heights, Some(&[true, false, false]), 30.0);
+    assert_eq!(heights, [0.0, 15.0, 15.0]);
+}
+
+#[test]
+fn distribute_extra_is_noop_when_every_track_is_hidden() {
+    let mut heights = [0.0, 0.0];
+    super::distribute_extra(&mut heights, Some(&[true, true]), 30.0);
+    assert_eq!(heights, [0.0, 0.0]);
 }
 
 // -----------------------------------------------------------------
