@@ -653,10 +653,6 @@ fn page_area_size(page: &PageCascadeResult, defaults: &PageDefaults) -> (f32, f3
     (content_box.width, content_box.height)
 }
 
-fn content_width_for_geometry(geometry: ResolvedPageGeometry) -> f32 {
-    geometry.content_box.width
-}
-
 #[derive(Debug, Clone, PartialEq)]
 struct PageGeometrySchedule {
     page_steps: Vec<f32>,
@@ -675,17 +671,10 @@ fn page_geometry_schedule(
             .collect(),
         page_widths: page_geometries
             .iter()
-            .map(|geometry| content_width_for_geometry(*geometry))
+            .map(|geometry| geometry.content_box.width)
             .collect(),
         page_names: slices.iter().map(|slice| slice.page_name.clone()).collect(),
     }
-}
-
-fn geometry_differs(left: ResolvedPageGeometry, right: ResolvedPageGeometry) -> bool {
-    left.page_box != right.page_box
-        || left.margins != right.margins
-        || left.content_insets != right.content_insets
-        || left.content_box != right.content_box
 }
 
 fn map_initial_page_context_error(error: InitialPageContextError) -> RenderError {
@@ -1086,7 +1075,7 @@ pub(crate) fn run_pipeline(
             };
             let geometry_varies = page_geometries
                 .iter()
-                .any(|geometry| geometry_differs(*geometry, first_geometry));
+                .any(|geometry| *geometry != first_geometry);
             let schedule_must_be_applied = std::mem::take(&mut schedule_changed);
             if !geometry_varies && !pagination_truncated && !schedule_must_be_applied {
                 break;

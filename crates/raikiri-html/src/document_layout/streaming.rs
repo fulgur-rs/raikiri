@@ -601,28 +601,28 @@ impl Settings<'_, '_> {
         resume: Option<&ResumePoint>,
     ) -> Result<Option<(DocumentLayout, Vec<ConsumerPropertyEvent>)>, RenderError> {
         if let Some(resume) = resume
-            && let Some(laid_out) = self.try_layout(document, Some(resume))?
+            && let Some((status, events)) = self.try_layout(document, Some(resume))?
         {
             self.last_resumed.set(true);
             #[cfg(test)]
             self.resumed.set(self.resumed.get() + 1);
-            return Ok(laid_out);
+            return Ok(completed(status, events));
         }
         self.last_resumed.set(false);
-        Ok(self
+        let (status, events) = self
             .try_layout(document, None)?
-            .expect("a layout without a resume point always runs"))
+            .expect("a layout without a resume point always runs");
+        Ok(completed(status, events))
     }
 
-    /// One layout of `document`, resuming at `resume` when given. The outer
-    /// `None` means it could not resume there, the inner one that the abort
-    /// signal fired.
-    #[allow(clippy::type_complexity)]
+    /// One layout of `document` with the consumer property events it
+    /// collected, resuming at `resume` when given. `None` means it could not
+    /// resume there.
     fn try_layout(
         &self,
         document: &HtmlDocument,
         resume: Option<&ResumePoint>,
-    ) -> Result<Option<Option<(DocumentLayout, Vec<ConsumerPropertyEvent>)>>, RenderError> {
+    ) -> Result<Option<(LayoutStatus, Vec<ConsumerPropertyEvent>)>, RenderError> {
         let mut events = Vec::new();
         let mut collect = |event| {
             events.push(event);
@@ -642,10 +642,19 @@ impl Settings<'_, '_> {
             layout_options,
             resume,
         )?;
-        Ok(status.map(|status| match status {
-            LayoutStatus::Completed(laid_out) => Some((laid_out, events)),
-            LayoutStatus::Aborted => None,
-        }))
+        Ok(status.map(|status| (status, events)))
+    }
+}
+
+/// The layout of a completed run with its events; `None` when the abort
+/// signal fired.
+fn completed(
+    status: LayoutStatus,
+    events: Vec<ConsumerPropertyEvent>,
+) -> Option<(DocumentLayout, Vec<ConsumerPropertyEvent>)> {
+    match status {
+        LayoutStatus::Completed(laid_out) => Some((laid_out, events)),
+        LayoutStatus::Aborted => None,
     }
 }
 

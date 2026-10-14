@@ -1146,7 +1146,11 @@ impl<'a> RenderResources<'a> {
             else {
                 return;
             };
-            let _ = self.decode_and_cache_bytes(url, bytes, Some(content_type), warnings, signal);
+            if let Some(warning) =
+                self.decode_and_cache_bytes(url, bytes, Some(content_type), signal)
+            {
+                push_resource_warning(warnings, warning);
+            }
             return;
         }
         let (entry, is_owner) = self.join_background_inflight(&url);
@@ -1156,23 +1160,25 @@ impl<'a> RenderResources<'a> {
             }
             return;
         }
-        let warning = self.fetch_and_decode_network_owned(url.clone(), warnings, signal);
+        let warning = self.fetch_and_decode_network_owned(url.clone(), signal);
+        if let Some(warning) = &warning {
+            push_resource_warning(warnings, warning.clone());
+        }
         self.finish_background_inflight(&url, &entry, warning);
     }
 
+    /// Fetch and decode one network background image, returning the warning
+    /// that explains a skipped image; the caller reports it.
     fn fetch_and_decode_network_owned(
         &self,
         url: Url,
-        warnings: &SharedRenderWarnings,
         signal: Option<&AbortSignal>,
     ) -> Option<RenderWarning> {
         if signal.is_some_and(|signal| signal.is_aborted()) {
-            let warning = self.abort_warning(&url);
-            push_resource_warning(warnings, warning.clone());
-            return Some(warning);
+            return Some(self.abort_warning(&url));
         }
         let Some(network) = self.network_adapter() else {
-            let warning = RenderWarning {
+            return Some(RenderWarning {
                 kind: WarningKind::NetworkFallback {
                     url: redacted_url(&url),
                 },
@@ -1180,65 +1186,50 @@ impl<'a> RenderResources<'a> {
                 details:
                     "CSS background image was skipped because no network provider is configured"
                         .into(),
-            };
-            push_resource_warning(warnings, warning.clone());
-            return Some(warning);
+            });
         };
         let fetched = match network.fetch(get_request(url.clone(), ResourceKind::Image, signal)) {
             Ok(fetched) => fetched,
             Err(NetworkError::PolicyViolation(violation)) => {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: policy_violation_warning_kind(&violation, ResourceKind::Image),
                     node_id: None,
                     details: "CSS background image was denied by the resource policy".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
             Err(NetworkError::Aborted) => {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: WarningKind::NetworkFallback {
                         url: redacted_url(&url),
                     },
                     node_id: None,
                     details: "CSS background image fetch was aborted; the image was skipped".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
             Err(_) => {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: WarningKind::NetworkFallback {
                         url: redacted_url(&url),
                     },
                     node_id: None,
                     details: "CSS background image fetch failed; the image was skipped".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
         };
-        self.decode_and_cache_bytes(
-            url,
-            fetched.bytes.to_vec(),
-            fetched.content_type,
-            warnings,
-            signal,
-        )
+        self.decode_and_cache_bytes(url, fetched.bytes.to_vec(), fetched.content_type, signal)
     }
 
+    /// Decode and cache one background image, returning the warning that
+    /// explains a skipped image; the caller reports it.
     fn decode_and_cache_bytes(
         &self,
         url: Url,
         bytes: Vec<u8>,
         content_type: Option<String>,
-        warnings: &SharedRenderWarnings,
         signal: Option<&AbortSignal>,
     ) -> Option<RenderWarning> {
         if signal.is_some_and(|signal| signal.is_aborted()) {
-            let warning = self.abort_warning(&url);
-            push_resource_warning(warnings, warning.clone());
-            return Some(warning);
+            return Some(self.abort_warning(&url));
         }
         let is_svg = content_type.as_deref().is_some_and(|content_type| {
             mime_essence(content_type).eq_ignore_ascii_case("image/svg+xml")
@@ -1247,7 +1238,7 @@ impl<'a> RenderResources<'a> {
         let _permit = self.acquire_decode_permit();
         if is_svg {
             if bytes.len() > MAX_SVG_IMAGE_BYTES {
-                let warning = RenderWarning {
+                return Some(RenderWarning {
                     kind: WarningKind::ResourceLimitExceeded {
                         kind: ResourceKind::Image,
                         limit: MAX_SVG_IMAGE_BYTES as u64,
@@ -1255,22 +1246,18 @@ impl<'a> RenderResources<'a> {
                     },
                     node_id: None,
                     details: "SVG background image exceeded its input byte limit".into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                return Some(warning);
+                });
             }
             match SvgDocument::parse(&bytes) {
                 Ok(document) => {
                     if self.decode_timed_out(start.elapsed()) {
-                        let warning = self.timeout_warning(&url);
-                        push_resource_warning(warnings, warning.clone());
-                        return Some(warning);
+                        return Some(self.timeout_warning(&url));
                     }
                     self.cache_image_source(url, CachedBackgroundSource::Svg(Arc::new(document)));
                     return None;
                 }
                 Err(_) => {
-                    let warning = RenderWarning {
+                    return Some(RenderWarning {
                         kind: WarningKind::ResourceFallback {
                             kind: ResourceKind::Image,
                             url: Some(redacted_url(&url)),
@@ -1278,9 +1265,7 @@ impl<'a> RenderResources<'a> {
                         node_id: None,
                         details: "CSS background SVG could not be parsed; the image was skipped"
                             .into(),
-                    };
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    });
                 }
             }
         }
@@ -1290,9 +1275,7 @@ impl<'a> RenderResources<'a> {
         match decode_background_raster(&bytes, output_limit) {
             Ok(image) => {
                 if self.decode_timed_out(start.elapsed()) {
-                    let warning = self.timeout_warning(&url);
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    return Some(self.timeout_warning(&url));
                 }
                 let width = image.width as f32;
                 let height = image.height as f32;
@@ -1303,7 +1286,7 @@ impl<'a> RenderResources<'a> {
                     ImageRasterSize { width, height },
                     image,
                 ) {
-                    let warning = RenderWarning {
+                    return Some(RenderWarning {
                         kind: WarningKind::ResourceLimitExceeded {
                             kind: ResourceKind::Image,
                             limit,
@@ -1312,14 +1295,12 @@ impl<'a> RenderResources<'a> {
                         node_id: None,
                         details: "decoded CSS background image exceeded its cache byte limit"
                             .into(),
-                    };
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    });
                 }
                 None
             }
             Err(BackgroundImageDecodeError::DecodedTooLarge { limit, actual }) => {
-                let warning = RenderWarning {
+                Some(RenderWarning {
                     kind: WarningKind::ResourceLimitExceeded {
                         kind: ResourceKind::Image,
                         limit,
@@ -1329,17 +1310,13 @@ impl<'a> RenderResources<'a> {
                     details:
                         "decoded CSS background image exceeded its per-image or cache byte limit"
                             .into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                Some(warning)
+                })
             }
             Err(BackgroundImageDecodeError::Decode) => {
                 if self.decode_timed_out(start.elapsed()) {
-                    let warning = self.timeout_warning(&url);
-                    push_resource_warning(warnings, warning.clone());
-                    return Some(warning);
+                    return Some(self.timeout_warning(&url));
                 }
-                let warning = RenderWarning {
+                Some(RenderWarning {
                     kind: WarningKind::ResourceFallback {
                         kind: ResourceKind::Image,
                         url: Some(redacted_url(&url)),
@@ -1347,9 +1324,7 @@ impl<'a> RenderResources<'a> {
                     node_id: None,
                     details: "CSS background image could not be decoded; the image was skipped"
                         .into(),
-                };
-                push_resource_warning(warnings, warning.clone());
-                Some(warning)
+                })
             }
         }
     }

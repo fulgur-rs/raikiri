@@ -211,26 +211,10 @@ impl<'a> Page<'a> {
             &computed.object_position,
         )?;
         let rect = PaintRect::new(x as f32, y as f32, width as f32, height as f32);
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-        {
+        if !is_finite_rect(&rect) {
             return None;
         }
-        let pixels = source.get_decoded_at_size(
-            &url,
-            raikiri_traits::ImageRasterSize {
-                width: rect.width,
-                height: rect.height,
-            },
-            None,
-        )?;
-        let bytes = (pixels.width as usize)
-            .checked_mul(pixels.height as usize)?
-            .checked_mul(4)?;
-        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
-            return None;
-        }
+        let pixels = checked_pixels(source, &url, raster_size(&rect))?;
         Some(RasterImage {
             node: fragment.node(),
             url,
@@ -252,28 +236,10 @@ impl<'a> Page<'a> {
         source: &dyn raikiri_traits::ImagePixelSource,
     ) -> Option<RasterImage> {
         let (url, rect) = self.document.page_marker_image(self.index(), owner)?;
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-            || rect.width <= 0.0
-            || rect.height <= 0.0
-        {
+        if !is_drawable_rect(&rect) {
             return None;
         }
-        let pixels = source.get_decoded_at_size(
-            url,
-            raikiri_traits::ImageRasterSize {
-                width: rect.width,
-                height: rect.height,
-            },
-            None,
-        )?;
-        let bytes = (pixels.width as usize)
-            .checked_mul(pixels.height as usize)?
-            .checked_mul(4)?;
-        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
-            return None;
-        }
+        let pixels = checked_pixels(source, url, raster_size(&rect))?;
         let element = usize::try_from(owner.0).ok()?;
         let clip_owner =
             if raikiri_dom::generated_content::inside_marker_in_flow(self.cascade, element)
@@ -373,12 +339,7 @@ impl<'a> Page<'a> {
             object.width,
             object.height,
         );
-        if ![rect.x, rect.y, rect.width, rect.height]
-            .into_iter()
-            .all(f32::is_finite)
-            || rect.width <= 0.0
-            || rect.height <= 0.0
-        {
+        if !is_drawable_rect(&rect) {
             return None;
         }
         // The size layout prepared the pixels at, which stays bounded when
@@ -388,17 +349,8 @@ impl<'a> Page<'a> {
                 self.document
                     .content_image_raster_size(owner, pseudo, image.index)
             })
-            .unwrap_or(raikiri_traits::ImageRasterSize {
-                width: rect.width,
-                height: rect.height,
-            });
-        let pixels = source.get_decoded_at_size(url, raster, None)?;
-        let bytes = (pixels.width as usize)
-            .checked_mul(pixels.height as usize)?
-            .checked_mul(4)?;
-        if pixels.width == 0 || pixels.height == 0 || pixels.rgba.len() != bytes {
-            return None;
-        }
+            .unwrap_or_else(|| raster_size(&rect));
+        let pixels = checked_pixels(source, url, raster)?;
         Some(RasterImage {
             node: image.owner,
             url: url.clone(),
@@ -951,6 +903,40 @@ impl<'a> Page<'a> {
             .pop()
             .flatten()
     }
+}
+
+/// Whether every coordinate of `rect` is finite.
+fn is_finite_rect(rect: &PaintRect) -> bool {
+    [rect.x, rect.y, rect.width, rect.height]
+        .into_iter()
+        .all(f32::is_finite)
+}
+
+/// Whether `rect` is finite and has a positive area.
+fn is_drawable_rect(rect: &PaintRect) -> bool {
+    is_finite_rect(rect) && rect.width > 0.0 && rect.height > 0.0
+}
+
+/// The raster size that paints an image at `rect`.
+fn raster_size(rect: &PaintRect) -> raikiri_traits::ImageRasterSize {
+    raikiri_traits::ImageRasterSize {
+        width: rect.width,
+        height: rect.height,
+    }
+}
+
+/// The cached pixels of `url` at `size`, when they are non-empty and their
+/// RGBA buffer matches their dimensions.
+fn checked_pixels(
+    source: &dyn raikiri_traits::ImagePixelSource,
+    url: &url::Url,
+    size: raikiri_traits::ImageRasterSize,
+) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+    let pixels = source.get_decoded_at_size(url, size, None)?;
+    let bytes = (pixels.width as usize)
+        .checked_mul(pixels.height as usize)?
+        .checked_mul(4)?;
+    (pixels.width != 0 && pixels.height != 0 && pixels.rgba.len() == bytes).then_some(pixels)
 }
 
 fn svg_font_family(style: &ComputedValues) -> String {
