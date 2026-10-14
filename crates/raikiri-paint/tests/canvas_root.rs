@@ -157,3 +157,22 @@ fn page_area_clips_stay_put_under_the_root_transform() {
     assert_eq!(pixel(&pages[0], 30, 25), GREEN);
     assert_eq!(pixel(&pages[0], 70, 25), WHITE);
 }
+
+#[test]
+fn page_area_text_clips_stay_put_under_the_root_transform() {
+    // Text clipped to a page area half as wide as the page keeps that clip
+    // in page coordinates when the root moves it.
+    let pages = pages(
+        "MMMMMMMM",
+        "@page { margin: 0 30px } html { transform: translateX(-30px) } \
+         body { display: flex; font-size: 20px; line-height: 20px }",
+    );
+    let page = &pages[0];
+    for y in 0..20 {
+        for x in 0..30 {
+            assert_eq!(pixel(page, x, y), WHITE, "ink in the margin at ({x}, {y})");
+        }
+    }
+    let inked = (0..20).any(|y| (30..70).any(|x| pixel(page, x, y) != WHITE));
+    assert!(inked, "the text paints in the page area");
+}
