@@ -1115,18 +1115,26 @@ pub(crate) fn is_floating_box_for_pagination(
     node_id: usize,
 ) -> bool {
     let computed = &cascade.computed[node_id];
-    !matches!(computed.float, FloatValue::None)
-        && !matches!(
-            computed.display,
-            DisplayValue::None | DisplayValue::Contents
-        )
-        && (matches!(computed.float, FloatValue::Footnote)
-            || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
-                matches!(
-                    cascade.computed[parent].display,
-                    DisplayValue::Flex | DisplayValue::InlineFlex
-                )
-            }))
+    // Layout floats only the physical sides; a logical `inline-start` or
+    // `inline-end` box stays in normal flow there.
+    matches!(
+        computed.float,
+        FloatValue::Left | FloatValue::Right | FloatValue::Footnote
+    ) && !matches!(
+        computed.display,
+        DisplayValue::None | DisplayValue::Contents
+    ) && (matches!(computed.float, FloatValue::Footnote)
+        || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
+            // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
+            // Grid 1 §6.1).
+            matches!(
+                cascade.computed[parent].display,
+                DisplayValue::Flex
+                    | DisplayValue::InlineFlex
+                    | DisplayValue::Grid
+                    | DisplayValue::InlineGrid
+            )
+        }))
 }
 
 /// Last in-flow effective item in the flex container's visual page order.

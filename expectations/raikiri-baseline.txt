@@ -483,6 +483,7 @@ css/css-page/margin-boxes/background-001-print.html
 # --- css-lists marker foundation (exact static reftest, 800x600) ---
 css/css-display/display-flow-root-002.html
 # --- css-inline minimal line-box foundation (exact static reftest, 800x600) ---
+css/CSS2/inline-svg-intrinsic-size-100-percent-1.html
 css/CSS2/linebox/vertical-align-top-bottom-padding.html
 # --- css-inline image-loaded vertical-align length (exact, 800x600, shodo 0.0.23) ---
 css/CSS2/linebox/vertical-align-007.xht
@@ -521,6 +522,8 @@ css/css-rhythm/parsing/block-step-round-invalid.html
 css/css-rhythm/parsing/block-step-size-invalid.html
 css/css-scroll-anchoring/parsing/overflow-anchor-invalid.html
 css/css-size-adjust/parsing/text-size-adjust-invalid.html
+css/css-sizing/image-percentage-max-height-in-anonymous-block.html
+css/css-sizing/intrinsic-percent-replaced-018.html
 css/css-sizing/parsing/box-sizing-invalid.html
 css/css-sizing/parsing/box-sizing-valid.html
 css/css-sizing/parsing/height-invalid.html
@@ -894,6 +897,8 @@ css/css-flexbox/flexbox-align-self-horiz-005.xhtml
 css/css-flexbox/flexbox-baseline-nested-001.html
 css/css-flexbox/flexbox-flex-wrap-default.htm
 css/css-flexbox/flexbox-flex-wrap-nowrap.htm
+css/css-flexbox/percentage-descendant-of-anonymous-flex-item.html
+css/css-flexbox/percentage-heights-020.html
 css/css-flexbox/table-item-flex-percentage-width.html
 css/css-flexbox/flexbox-overflow-horiz-002.html
 css/css-flexbox/flexbox-overflow-horiz-003.html
@@ -1340,6 +1345,7 @@ css/css-borders/border-radius-currentcolor.html
 css/css-borders/borders-on-sub-unit-sized-elements.html
 css/css-transforms/change-transform-origin-property.html
 css/css-transforms/css-skew-002.html
+css/css-transforms/preserve3d-button.html
 css/css-transforms/transform-origin-003.html
 css/css-transforms/transform-origin-004.html
 css/css-transforms/transform-origin-005.html
@@ -1606,6 +1612,18 @@ css/mediaqueries/relative-units-001.html
 css/mediaqueries/relative-units-002.html
 css/mediaqueries/relative-units-003.html
 css/mediaqueries/relative-units-004.html
+# --- CSS2 pagination break-inside: avoid PASS-only (+11) ---
+css/CSS2/pagination/block-page-break-inside-avoid-12-print.html
+css/CSS2/pagination/block-page-break-inside-avoid-13-print.html
+css/CSS2/pagination/block-page-break-inside-avoid-4-print.html
+css/CSS2/pagination/block-page-break-inside-avoid-7-print.html
+css/CSS2/pagination/block-page-break-inside-avoid-8-print.html
+css/CSS2/pagination/float-page-break-inside-avoid-7-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-1-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-5-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-7-print.html
 # --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
 css/CSS2/positioning/position-relative-004.xht
 css/CSS2/positioning/position-relative-005.xht

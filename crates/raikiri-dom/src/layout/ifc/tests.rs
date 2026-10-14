@@ -11,7 +11,9 @@ use crate::Document;
 use crate::fonts::{FontFaceLoader, build_inline_document_fonts};
 use crate::layout::layout_single_page;
 use crate::layout::test_support::with_ahem;
-use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts, page_box_800x600};
+use crate::layout::test_support::{
+    ahem_paragraph, ahem_paragraph_with, ifc_ahem_fonts, page_box_800x600,
+};
 use raikiri_style::FontFaceRegistry;
 
 const CANVAS_TEST: &[u8] = include_bytes!(concat!(
@@ -606,4 +608,117 @@ fn a_stretched_vertical_paragraph_is_still_measured_for_intrinsic_widths() {
         ahem_paragraph("AAAA BBBB", "writing-mode:vertical-rl;height:60px");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert!(intrinsic_measurements(&doc) > 0);
+}
+
+#[test]
+fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
+    // CSS 2.1 §10.5: a percentage height resolves against the containing
+    // block's height when that height does not depend on content, and
+    // behaves as `auto` otherwise. The paragraph is that containing block
+    // for its floats, atomic inlines and block children.
+    let cases = [
+        ("float:left;width:10px;height:50%", 50.0),
+        ("display:inline-block;width:10px;height:50%", 50.0),
+        ("display:block;height:25%", 25.0),
+    ];
+    for (child_css, expected) in cases {
+        for (root_css, height) in [
+            ("height:100px", expected),
+            // A border-box height leaves the padding out of the basis.
+            ("box-sizing:border-box;height:120px;padding:10px", expected),
+            // `max-height` clamps the basis too.
+            ("height:200px;max-height:100px", expected),
+            // A horizontal scrollbar's gutter, when there is one, leaves the
+            // basis too.
+            ("height:100px;overflow-x:scroll", expected),
+            // The basis is the physical height in a vertical writing mode
+            // too.
+            ("writing-mode:vertical-rl;height:100px", expected),
+            ("", 10.0),
+            // The body fills the 600px page, so half of it is definite too.
+            ("height:50%", expected * 3.0),
+        ] {
+            let mut child = None;
+            let (mut doc, cascade, _root) = ahem_paragraph_with(root_css, |doc, root| {
+                doc.append_text(root, "AA");
+                let id =
+                    doc.append_element(Some(root), "div", taffy::Style::default(), Some(child_css));
+                doc.append_text(id, "B");
+                child = Some(id);
+            });
+            layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+            let child = child.expect("child appended");
+            assert_eq!(
+                doc.nodes[child].unrounded_layout.size.height, height,
+                "{child_css} in a paragraph with {root_css:?}"
+            );
+        }
+    }
+}
+
+/// An inline-block paragraph with `height:100px;{max_css}` inside an
+/// auto-height wrapper, holding a `height:50%` float. Returns the
+/// paragraph's and the float's heights.
+fn inline_block_paragraph_in_an_auto_wrapper(max_css: &str) -> (f32, f32) {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let root = doc.append_element(
+        Some(wrapper),
+        "div",
+        taffy::Style::default(),
+        Some(&format!(
+            "display:inline-block;width:100px;font-family:Ahem;font-size:10px;line-height:10px;height:100px;{max_css}"
+        )),
+    );
+    doc.append_text(root, "AA");
+    let child = doc.append_element(
+        Some(root),
+        "div",
+        taffy::Style::default(),
+        Some("float:left;width:10px;height:50%"),
+    );
+    doc.append_text(child, "B");
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    (
+        doc.nodes[root].unrounded_layout.size.height,
+        doc.nodes[child].unrounded_layout.size.height,
+    )
+}
+
+#[test]
+fn a_percentage_max_height_against_an_indefinite_block_leaves_the_basis_alone() {
+    // CSS 2.1 §10.7: the paragraph's percentage `max-height` cannot resolve
+    // inside an auto-height wrapper, so it neither clamps the paragraph nor
+    // the basis of its children's percentage heights. A length bound still
+    // clamps both.
+    assert_eq!(
+        inline_block_paragraph_in_an_auto_wrapper("max-height:50%"),
+        (100.0, 50.0)
+    );
+    assert_eq!(
+        inline_block_paragraph_in_an_auto_wrapper("max-height:60px"),
+        (60.0, 30.0)
+    );
 }
