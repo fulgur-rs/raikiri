@@ -227,8 +227,6 @@ impl IfcLines {
         self.shifts.of(index)
     }
 
-    /// The block offset of line `index` from the content-box top, with the
-    /// pagination shift.
     /// The block offset of the end of the paragraph's content from its
     /// content-box top: its laid-out height, moved as its last line was.
     pub(crate) fn shifted_height(&self) -> f32 {
@@ -240,6 +238,8 @@ impl IfcLines {
                 .map_or(0.0, |last| self.shift_of(last))
     }
 
+    /// The block offset of line `index` from the content-box top, with the
+    /// pagination shift.
     pub(crate) fn line_top(&self, index: usize) -> f32 {
         self.lines
             .get(index)

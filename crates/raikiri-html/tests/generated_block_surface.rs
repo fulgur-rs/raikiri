@@ -255,3 +255,39 @@ fn block_before_split_across_columns_keeps_its_bottom_edge() {
     );
     assert!(runs(&document).iter().any(|(_, text, _)| text == "A"));
 }
+
+#[test]
+fn auto_margins_centre_a_block_before_with_a_definite_width() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'X';display:block;width:20px;margin:0 auto}",
+    );
+    assert_eq!(runs(&document)[0], (0, "X".to_owned(), (40.0, 16.0)));
+}
+
+#[test]
+fn a_right_to_left_block_before_with_a_definite_width_sits_at_the_right() {
+    let document = lay_out(
+        "<div dir=rtl>A</div>",
+        "div::before{content:'X';display:block;width:40px}",
+    );
+    assert_eq!(runs(&document)[0], (0, "X".to_owned(), (80.0, 16.0)));
+}
+
+#[test]
+fn a_definite_width_block_before_widens_a_shrink_to_fit_box() {
+    let document = lay_out(
+        "<span style='float:left'>A</span>",
+        "span::before{content:'';display:block;width:60px;padding-left:10px}",
+    );
+    assert_eq!(boxes(&document, "span")[0].2, 70.0);
+}
+
+#[test]
+fn multicol_with_a_leading_block_before_keeps_its_height() {
+    let document = lay_out(
+        "<div>A</div><p>B</p>",
+        "div{columns:2;column-gap:0}div::before{content:'';display:block;height:20px}",
+    );
+    assert_eq!(boxes(&document, "div")[0].3, 40.0);
+}

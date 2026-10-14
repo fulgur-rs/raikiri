@@ -1099,7 +1099,7 @@ fn measure_ifc_root(
     };
     // Take the engine state only around the calls into the engine: laying
     // out another node in between may need the state for that node.
-    let has_boxes = !probe.boxes.is_empty();
+    let has_boxes = !probe.boxes.is_empty() || !probe.generated_blocks.is_empty();
     let vertical = writing_mode != shodo::geometry::WritingMode::HorizontalTb;
     let inline_available = if vertical {
         available.height

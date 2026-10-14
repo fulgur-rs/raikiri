@@ -128,14 +128,38 @@ impl GeneratedBlock {
     }
 
     /// The physical left and right insets of the box's lines from the
-    /// paragraph's content box `width` wide: margin, border and padding,
-    /// with the room a narrower definite width leaves on the right
-    /// (CSS 2.1 10.3.3).
-    fn inline_insets(&self, width: f32, margins: &Sides<f32>, edges: &Sides<f32>) -> (f32, f32) {
-        let left = margins.left + edges.left;
-        let right = margins.right + edges.right;
+    /// paragraph's content box `width` wide: margin, border and padding.
+    /// With a definite width, the margins take the room the box leaves
+    /// (CSS 2.1 10.3.3): `auto` margins share it, else the end-side margin
+    /// takes it, the left one in a right-to-left paragraph.
+    fn inline_insets(&self, width: f32, rtl: bool, edges: &Sides<f32>) -> (f32, f32) {
+        let mut left = length_or_auto(self.margin.left, Some(width));
+        let mut right = length_or_auto(self.margin.right, Some(width));
+        let insets = |left: f32, right: f32| (left + edges.left, right + edges.right);
+        let Some(content) = self.content_width(Some(width), edges) else {
+            return insets(left.unwrap_or(0.0), right.unwrap_or(0.0));
+        };
+        let free = width - content - edges.left - edges.right;
+        // An over-constrained box takes its `auto` margins as zero.
+        if left.unwrap_or(0.0) + right.unwrap_or(0.0) > free {
+            left = left.or(Some(0.0));
+            right = right.or(Some(0.0));
+        }
+        let (left, right) = match (left, right) {
+            (None, None) => (free / 2.0, free / 2.0),
+            (None, Some(right)) => (free - right, right),
+            (Some(left), None) => (left, free - left),
+            (Some(_), Some(right)) if rtl => (free - right, right),
+            (Some(left), Some(_)) => (left, free - left),
+        };
+        insets(left, right)
+    }
+
+    /// The definite content-box width of the box, clamped by its minimum and
+    /// maximum; `None` for an `auto` width or a percentage without `basis`.
+    fn content_width(&self, basis: Option<f32>, edges: &Sides<f32>) -> Option<f32> {
         let content_box = |value| {
-            length_or_auto(value, Some(width)).map(|size: f32| {
+            length_or_auto(value, basis).map(|size: f32| {
                 if self.border_box {
                     (size - edges.left - edges.right).max(0.0)
                 } else {
@@ -143,27 +167,38 @@ impl GeneratedBlock {
                 }
             })
         };
-        let Some(mut content) = content_box(self.width) else {
-            return (left, right);
-        };
+        let mut content = content_box(self.width)?;
         if let Some(max) = content_box(self.max_width) {
             content = content.min(max);
         }
         if let Some(min) = content_box(self.min_width) {
             content = content.max(min);
         }
-        (left, (width - left - content.max(0.0)).max(right))
+        Some(content.max(0.0))
+    }
+
+    /// The margin-box width of a box with a definite width, for the
+    /// intrinsic widths of its paragraph. Percentages count as zero, as the
+    /// width they resolve against is not known yet. The lines of an
+    /// `auto`-width box are measured with the paragraph's own lines.
+    pub(crate) fn intrinsic_width(&self) -> Option<f32> {
+        let edges = self.edges(0.0);
+        let content = self.content_width(None, &edges)?;
+        let margins = self.margins(0.0);
+        Some((content + edges.left + edges.right + margins.left + margins.right).max(0.0))
     }
 }
 
 /// A length, or a percentage of `basis` when there is one; `None` for `auto`
-/// and the other keywords, and for a percentage without a basis.
+/// and the other keywords, for a percentage without a basis, and for a value
+/// that is not finite.
 fn length_or_auto(value: ComputedLengthPercentageOrAuto, basis: Option<f32>) -> Option<f32> {
-    match value {
-        ComputedLengthPercentageOrAuto::Px(px) => Some(px),
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis.map(|b| b * percent / 100.0),
-        ComputedLengthPercentageOrAuto::Calc(calc) => {
-            basis.map(|b| calc.px + b * calc.percent / 100.0)
+    match (value, basis) {
+        (ComputedLengthPercentageOrAuto::Px(_), None) => {
+            crate::layout::page::used_computed_length_percentage_or_auto(value, 0.0)
+        }
+        (_, Some(basis)) => {
+            crate::layout::page::used_computed_length_percentage_or_auto(value, basis)
         }
         _ => None,
     }
@@ -176,24 +211,38 @@ pub(crate) enum Token<'a> {
     End(&'a GeneratedBlock),
 }
 
-/// The token of `blocks` with the id `node`, if any.
-pub(crate) fn token(blocks: &[GeneratedBlock], node: u64) -> Option<Token<'_>> {
-    blocks.iter().find_map(|block| {
+/// The token of `blocks` with the id `node`, if any, with the index of its
+/// block. The tokens come in document order, so the block at `hint` is
+/// looked at first.
+pub(crate) fn token(
+    blocks: &[GeneratedBlock],
+    node: u64,
+    hint: usize,
+) -> Option<(usize, Token<'_>)> {
+    fn matching(index: usize, block: &GeneratedBlock, node: u64) -> Option<(usize, Token<'_>)> {
         if block.start == node {
-            Some(Token::Start(block))
+            Some((index, Token::Start(block)))
         } else if block.end == node {
-            Some(Token::End(block))
+            Some((index, Token::End(block)))
         } else {
             None
         }
-    })
+    }
+    blocks
+        .get(hint)
+        .and_then(|block| matching(hint, block, node))
+        .or_else(|| {
+            blocks
+                .iter()
+                .enumerate()
+                .find_map(|(index, block)| matching(index, block, node))
+        })
 }
 
 /// A generated block whose start token was placed and whose end token was
 /// not, in the line loop.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OpenBlock {
-    end: u64,
     /// The number of lines laid out before the box.
     lines_before: usize,
     /// The block offset of the box's content box from the paragraph's
@@ -206,11 +255,26 @@ pub(crate) struct OpenBlock {
     /// The box starts the paragraph: nothing is above it.
     starts_paragraph: bool,
     has_clearance: bool,
+    /// The box started in an earlier fragmentainer: this fragment's height
+    /// is that of its content.
+    continued: bool,
     /// The physical left and right insets of the box's lines.
     pub(crate) inline: (f32, f32),
 }
 
 impl OpenBlock {
+    /// The box as it goes on at the top of the next fragmentainer.
+    pub(crate) fn continued(self) -> Self {
+        Self {
+            lines_before: 0,
+            content_top: Some(0.0),
+            starts_paragraph: false,
+            has_clearance: false,
+            continued: true,
+            ..self
+        }
+    }
+
     /// The line space `space` of a line of the box, set in by the box's
     /// inline-side edges from the paragraph's content box `width` wide.
     pub(crate) fn narrow(
@@ -243,6 +307,8 @@ pub(crate) struct Flow<'a, 'b> {
     pub(crate) definite_height: Option<f32>,
     /// Nothing is placed in the paragraph yet.
     pub(crate) at_start: bool,
+    /// The paragraph's lines start at the right.
+    pub(crate) rtl: bool,
 }
 
 /// Place the top of `block` at its start token: its top margin with the
@@ -275,39 +341,35 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         None => *flow.pending = top_set,
     }
     OpenBlock {
-        end: block.end,
         lines_before: flow.lines.len(),
         content_top,
         top_set,
         starts_paragraph: flow.at_start,
         has_clearance: clearance.is_some(),
-        inline: block.inline_insets(flow.width, &margins, &edges),
+        continued: false,
+        inline: block.inline_insets(flow.width, flow.rtl, &edges),
     }
 }
 
 /// Place the bottom of `block` at its end token: the box's height, from its
 /// lines unless it has one of its own, and its bottom padding, border and
-/// margin. `open` is the state of its start token, when the start token was
-/// placed by this run of the loop.
-pub(crate) fn close(block: &GeneratedBlock, open: Option<OpenBlock>, flow: Flow<'_, '_>) {
+/// margin. `open` is the state its start token left.
+pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>) {
     let margins = block.margins(flow.width);
     let edges = block.edges(flow.width);
-    let Some(open) = open.filter(|open| open.end == block.end) else {
-        // The start token is in an earlier fragmentainer: the box goes on
-        // from this one's top.
-        *flow.y += flow.pending.resolve() + edges.bottom;
-        *flow.pending = CollapsibleMarginSet::from_margin(margins.bottom);
-        return;
-    };
     let first_line = flow.lines.get(open.lines_before);
     let content_top = open
         .content_top
         .or_else(|| first_line.map(|line| line.block_offset()));
-    let content = match (content_top, first_line) {
-        (Some(top), Some(_)) => (*flow.y - top).max(0.0),
+    let content = match content_top {
+        Some(top) if first_line.is_some() => (*flow.y - top).max(0.0),
         _ => 0.0,
     };
-    let height = block.used_height(content, edges.top + edges.bottom, flow.definite_height);
+    let height = if open.continued {
+        content
+    } else {
+        block.used_height(content, edges.top + edges.bottom, flow.definite_height)
+    };
     let Some(top) = content_top.or_else(|| {
         // An empty box whose margins collapse through it (CSS 2.1 8.3.1)
         // adds them to the margins above it.

@@ -59,6 +59,8 @@ struct RunBoxesOutcome {
     lines: IfcLines,
     continuation: Option<BreakToken>,
     atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
+    /// The generated block still open where the segment stopped.
+    open_block: Option<generated_blocks::OpenBlock>,
 }
 
 struct FragmentedFloatOutput<'a> {
@@ -209,6 +211,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         .saturating_add(context.column_count)
         .clamp(1, MAX_IFC_FRAGMENTAINERS);
     let mut source_float_placements = Vec::new();
+    // A generated block that a column ends inside goes on in the next.
+    let mut carried_block = None;
     for offset in 0..column_budget {
         let column = context.column_index.saturating_add(offset);
         let has_next = offset + 1 < column_budget;
@@ -258,7 +262,11 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             segment_height,
             Some(column),
             has_next,
+            carried_block,
         );
+        carried_block = outcome
+            .open_block
+            .map(generated_blocks::OpenBlock::continued);
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
@@ -440,6 +448,7 @@ fn run_boxes(
         None,
         None,
         false,
+        None,
     );
     if perform {
         truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
@@ -470,6 +479,7 @@ fn run_boxes_segment(
     fragmentainer_height: Option<f32>,
     fragmentainer: Option<usize>,
     has_next_fragmentainer: bool,
+    mut open_block: Option<generated_blocks::OpenBlock>,
 ) -> RunBoxesOutcome {
     let FlowGeometry {
         width,
@@ -516,9 +526,10 @@ fn run_boxes_segment(
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut continuation = None;
-    // The block-level `::before` or `::after` whose lines are being laid
-    // out: its start token was met and its end token was not.
-    let mut open_block: Option<generated_blocks::OpenBlock> = None;
+    // `open_block` is the block-level `::before` or `::after` whose lines
+    // are being laid out: its start token was met and its end token was not.
+    // The tokens come in document order; the cursor is the block of the next.
+    let mut block_cursor = 0;
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
 
     loop {
@@ -774,7 +785,10 @@ fn run_boxes_segment(
                         },
                     ));
                 }
-                if let Some(edge) = generated_blocks::token(&root.generated_blocks, node.0) {
+                if let Some((index, edge)) =
+                    generated_blocks::token(&root.generated_blocks, node.0, block_cursor)
+                {
+                    block_cursor = index;
                     // A generated block is laid out along a horizontal
                     // root's block axis only; a vertical root breaks its
                     // lines at the tokens.
@@ -794,13 +808,17 @@ fn run_boxes_segment(
                             top_edge,
                             definite_height: geometry.definite_height,
                             at_start,
+                            rtl: root.rtl,
                         };
                         match edge {
                             generated_blocks::Token::Start(block) => {
                                 open_block = Some(generated_blocks::open(block, flow));
                             }
                             generated_blocks::Token::End(block) => {
-                                generated_blocks::close(block, open_block.take(), flow);
+                                block_cursor += 1;
+                                if let Some(open) = open_block.take() {
+                                    generated_blocks::close(block, open, flow);
+                                }
                             }
                         }
                     }
@@ -918,6 +936,7 @@ fn run_boxes_segment(
         },
         continuation,
         atomic_outputs: atomics.outputs,
+        open_block,
     }
 }
 
@@ -2071,6 +2090,14 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
         blocks: (0.0, 0.0),
     };
     if let Some(root) = tree.nodes[idx].ifc.as_ref() {
+        for width in root
+            .generated_blocks
+            .iter()
+            .filter_map(generated_blocks::GeneratedBlock::intrinsic_width)
+        {
+            intrinsics.blocks.0 = intrinsics.blocks.0.max(width);
+            intrinsics.blocks.1 = intrinsics.blocks.1.max(width);
+        }
         for &(id, size) in root.marker_atomic.iter().chain(&root.generated_atomics) {
             intrinsics.engine.insert_atomic(
                 id,

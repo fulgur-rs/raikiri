@@ -61,22 +61,58 @@ fn the_used_height_is_clamped_by_min_and_max() {
     assert_eq!(block("height: 50%").used_height(3.0, 0.0, None), 3.0);
 }
 
+fn insets(css: &str, rtl: bool) -> (f32, f32) {
+    let block = block(css);
+    block.inline_insets(100.0, rtl, &block.edges(100.0))
+}
+
 #[test]
-fn a_definite_width_sets_the_right_inset() {
-    let auto = block("margin: 0 4px 0 3px; padding: 0 2px 0 1px");
-    let margins = auto.margins(100.0);
-    let edges = auto.edges(100.0);
-    assert_eq!(auto.inline_insets(100.0, &margins, &edges), (4.0, 6.0));
-    let sized = block("width: 50px; min-width: 60px; max-width: 55px; padding-left: 10px");
-    let margins = sized.margins(100.0);
-    let edges = sized.edges(100.0);
-    assert_eq!(sized.inline_insets(100.0, &margins, &edges), (10.0, 30.0));
-    let border_box = block("box-sizing: border-box; width: 50%; padding: 0 5px");
-    let margins = border_box.margins(100.0);
-    let edges = border_box.edges(100.0);
+fn an_auto_width_is_set_in_by_margins_border_and_padding() {
     assert_eq!(
-        border_box.inline_insets(100.0, &margins, &edges),
+        insets("margin: 0 4px 0 3px; padding: 0 2px 0 1px", false),
+        (4.0, 6.0)
+    );
+    assert_eq!(insets("margin: 0 auto", false), (0.0, 0.0));
+}
+
+#[test]
+fn a_definite_width_leaves_its_room_to_the_end_margin() {
+    assert_eq!(
+        insets(
+            "width: 50px; min-width: 60px; max-width: 55px; padding-left: 10px",
+            false
+        ),
+        (10.0, 30.0)
+    );
+    assert_eq!(
+        insets("box-sizing: border-box; width: 50%; padding: 0 5px", false),
         (5.0, 55.0)
+    );
+    assert_eq!(insets("width: 50px; margin-left: 10px", true), (50.0, 0.0));
+}
+
+#[test]
+fn auto_margins_share_the_room_a_definite_width_leaves() {
+    assert_eq!(insets("width: 40px; margin: 0 auto", false), (30.0, 30.0));
+    assert_eq!(
+        insets("width: 40px; margin: 0 10px 0 auto", false),
+        (50.0, 10.0)
+    );
+    assert_eq!(
+        insets("width: 40px; margin: 0 auto 0 10px", false),
+        (10.0, 50.0)
+    );
+    // Over-constrained, the auto margins are zero and the end margin gives.
+    assert_eq!(insets("width: 120px; margin: 0 auto", false), (0.0, -20.0));
+}
+
+#[test]
+fn only_a_definite_width_counts_for_intrinsic_widths() {
+    assert_eq!(block("").intrinsic_width(), None);
+    assert_eq!(block("width: 50%").intrinsic_width(), None);
+    assert_eq!(
+        block("width: 40px; padding: 0 5px; margin: 0 3px 0 auto").intrinsic_width(),
+        Some(53.0)
     );
 }
 
