@@ -1672,7 +1672,16 @@ pub(crate) fn cascade_page_with_normal_line_height(
             _ => CssColor::TRANSPARENT,
         },
         font_size,
-        direction: flow.direction,
+        // The computed direction, not the used one: `text-orientation:
+        // upright` forces `ltr` only for the page's own vertical flow, and the
+        // horizontal margin boxes inherit the computed value.
+        direction: match resolved
+            .get(&PropertyKey::Direction)
+            .map(ResolvedAgainstInherited::as_property_value)
+        {
+            Some(PropertyValue::Direction(direction)) => *direction,
+            _ => inherited.direction,
+        },
         line_height: own_line_height,
         custom_properties,
     };

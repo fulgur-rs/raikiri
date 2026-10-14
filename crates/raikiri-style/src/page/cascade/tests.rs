@@ -7720,3 +7720,22 @@ fn page_upright_text_orientation_maps_inline_sides_as_ltr() {
         bottom
     );
 }
+
+/// Margin boxes inherit the page context's computed `direction`, not the
+/// `ltr` that upright text forces on the page's own vertical flow.
+#[test]
+fn margin_box_inherits_the_page_computed_direction_under_upright_text() {
+    let margin = page(
+        "@page { writing-mode: vertical-rl; text-orientation: upright; direction: rtl; \
+         @top-left { content: 'X'; margin-inline-start: 1px } }",
+        &ComputedValues::initial(),
+    )
+    .cascade_margin_box(PageMarginBoxSlot::TopLeft)
+    .unwrap();
+    assert!(
+        margin
+            .declarations
+            .iter()
+            .any(|declaration| declaration.value == PropertyValue::MarginRight(px_margin(1.0)))
+    );
+}
