@@ -315,6 +315,14 @@ class CollectMovedAddedLinesGitTests(unittest.TestCase):
             "GIT_AUTHOR_EMAIL": "t@example.com",
             "GIT_COMMITTER_NAME": "t",
             "GIT_COMMITTER_EMAIL": "t@example.com",
+            # `git commit` may spawn detached auto-maintenance that keeps
+            # writing under `.git/objects/pack` while TemporaryDirectory is
+            # removing the repo, which fails cleanup with ENOTEMPTY.
+            "GIT_CONFIG_COUNT": "2",
+            "GIT_CONFIG_KEY_0": "maintenance.auto",
+            "GIT_CONFIG_VALUE_0": "false",
+            "GIT_CONFIG_KEY_1": "gc.auto",
+            "GIT_CONFIG_VALUE_1": "0",
         }
         return subprocess.run(
             ["git", "-C", repo, *args], check=True, capture_output=True, text=True, env=env
