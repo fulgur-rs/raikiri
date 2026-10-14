@@ -109,6 +109,13 @@ jobs:
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
+        with:
+          # The cache key does not cover `[profile]` changes in Cargo.toml.
+          # On a full key match rust-cache skips saving, so a stale cache
+          # built under the old profile would be restored forever. Bump this
+          # prefix (in both jobs) whenever a profile change alters how
+          # dependencies are built.
+          prefix-key: v1-rust
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -194,6 +201,9 @@ jobs:
 
       - name: Cache cargo registry + target
         uses: Swatinem/rust-cache@v2
+        with:
+          # Keep in sync with the `ci` job's prefix-key.
+          prefix-key: v1-rust
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@cargo-llvm-cov
