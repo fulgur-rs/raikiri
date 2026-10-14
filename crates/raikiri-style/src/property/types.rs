@@ -9158,15 +9158,18 @@ pub type MaskImage = BackgroundImage;
 /// `filter`'s simple "as specified" (which needs no absolutization), discussed
 /// in the "Range restriction" section of the [`FilterFunction`] docs,
 /// `transform` must absolutize `<length>` payloads under the spec: here,
-/// the non-percentage part of the `Length` carried by [`Self::Translate`]/
-/// [`Self::TranslateX`]/[`Self::TranslateY`].
+/// the non-percentage part of the [`LengthPercentageOrCalc`] carried by
+/// [`Self::Translate`]/[`Self::TranslateX`]/[`Self::TranslateY`]. A mixed
+/// `calc()` there keeps its percentage, which resolves against the
+/// transformed box at used-value time.
 ///
 /// On the element path, [`crate::resolve::ComputedTransformFunction`]/
 /// [`crate::resolve::resolve_transform_function`] implements this distinction;
 /// on the `page` path, phase 3 of [`crate::page::cascade_page`] does so through
 /// the `Transform` arm of `absolutize_in_page_context`. They absolutize only
 /// the length part of `<length-percentage>` against font-size/root-font-size,
-/// leaving the percentage part symbolic. This is the same treatment that
+/// leaving the percentage part symbolic, as
+/// [`crate::resolve::ComputedLengthPercentageOrCalc`]. This is the same treatment that
 /// [`crate::resolve::resolve_css_position`]/
 /// [`crate::resolve::resolve_length_percentage`] applies to
 /// `background-position`/`object-position`. The six `<number>` slots in
@@ -9182,11 +9185,11 @@ pub enum TransformFunction {
     Matrix([f32; 6]),
     /// `translate(<length-percentage>, <length-percentage>?)` — the second
     /// argument defaults to `0` (see the [`parse_translate_args`] docs).
-    Translate(Length, Length),
+    Translate(LengthPercentageOrCalc, LengthPercentageOrCalc),
     /// `translateX(<length-percentage>)`.
-    TranslateX(Length),
+    TranslateX(LengthPercentageOrCalc),
     /// `translateY(<length-percentage>)`.
-    TranslateY(Length),
+    TranslateY(LengthPercentageOrCalc),
     /// `scale(<number>, <number>?)` — when omitted, the second argument copies
     /// the first (see the [`parse_scale_args`] docs).
     Scale(f32, f32),

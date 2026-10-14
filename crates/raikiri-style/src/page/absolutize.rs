@@ -26,8 +26,9 @@ use crate::resolve::{
     resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
     resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
-    resolve_length_percentage_or_normal, resolve_letter_spacing, resolve_line_height,
-    resolve_margin_length_or_auto, resolve_non_negative_length_percentage_or_calc, resolve_outline,
+    resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
+    resolve_line_height, resolve_margin_length_or_auto,
+    resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_indent_calc,
     resolve_text_shadow_item, resolve_vertical_align, resolve_word_spacing,
 };
@@ -55,6 +56,16 @@ impl PageLengthBasis<'_> {
     /// mapping as [`Self::lp`], with a calc kept as one.
     fn lpc(self, specified: LengthPercentageOrCalc) -> LengthPercentageOrCalc {
         lift_length_percentage_or_calc(resolve_non_negative_length_percentage_or_calc(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            self.ctx,
+        ))
+    }
+    /// `<length-percentage>` that may be a mixed `calc()` and may be
+    /// negative — same mapping as [`Self::lpc`] without its clamp.
+    fn signed_lpc(self, specified: LengthPercentageOrCalc) -> LengthPercentageOrCalc {
+        lift_length_percentage_or_calc(resolve_length_percentage_or_calc(
             specified,
             self.font_size,
             self.own_line_height,
@@ -351,10 +362,10 @@ impl PageLengthBasis<'_> {
         match specified {
             TransformFunction::Matrix(m) => TransformFunction::Matrix(m),
             TransformFunction::Translate(tx, ty) => {
-                TransformFunction::Translate(self.lp(tx), self.lp(ty))
+                TransformFunction::Translate(self.signed_lpc(tx), self.signed_lpc(ty))
             }
-            TransformFunction::TranslateX(v) => TransformFunction::TranslateX(self.lp(v)),
-            TransformFunction::TranslateY(v) => TransformFunction::TranslateY(self.lp(v)),
+            TransformFunction::TranslateX(v) => TransformFunction::TranslateX(self.signed_lpc(v)),
+            TransformFunction::TranslateY(v) => TransformFunction::TranslateY(self.signed_lpc(v)),
             TransformFunction::Scale(x, y) => TransformFunction::Scale(x, y),
             TransformFunction::ScaleX(v) => TransformFunction::ScaleX(v),
             TransformFunction::ScaleY(v) => TransformFunction::ScaleY(v),

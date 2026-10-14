@@ -8,9 +8,7 @@ use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextShadowColor,
 };
-use raikiri_style::resolve::{
-    ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedTransformFunction,
-};
+use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
 use raikiri_traits::{NodeId, NodeKind, PaintTransform};
 use shodo::geometry::WritingMode;
@@ -663,23 +661,20 @@ pub(super) fn box_paint_shift(
     let size = node.unrounded_layout.size;
     // A fragment's percentages resolve against that fragment, which the
     // runs of a paragraph do not know.
-    let resolve = |value, basis: f32| match value {
-        ComputedLengthPercentage::Px(px) => Ok(px),
-        ComputedLengthPercentage::Percent(_) if fragmented => {
-            Err(TextRunOmission::FragmentedTransform)
-        }
-        ComputedLengthPercentage::Percent(percent) => Ok(basis * percent / 100.0),
-    };
+    if fragmented
+        && cv
+            .transform
+            .iter()
+            .any(|function| function.translates_by_percent())
+    {
+        return Err(TextRunOmission::FragmentedTransform);
+    }
     for function in cv.transform.iter() {
-        match *function {
-            ComputedTransformFunction::Translate(x, y) => {
-                dx += resolve(x, size.width)?;
-                dy += resolve(y, size.height)?;
-            }
-            ComputedTransformFunction::TranslateX(x) => dx += resolve(x, size.width)?,
-            ComputedTransformFunction::TranslateY(y) => dy += resolve(y, size.height)?,
-            _ => {} // cov:ignore: a list that only translates has no other function
-        }
+        let (x, y) = function
+            .translation(f64::from(size.width), f64::from(size.height))
+            .unwrap_or_default();
+        dx += x as f32;
+        dy += y as f32;
     }
     Ok(BoxShift {
         offset: (dx, dy),
