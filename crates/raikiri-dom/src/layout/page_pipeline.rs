@@ -3414,6 +3414,40 @@ pub fn layout_pages_with_page_geometry_and_control(
         y
     }
 
+    /// The outermost box whose top edge is that of `block`, which starts its
+    /// ancestors: each of them up to it has no top border or padding and begins
+    /// where its child does. Moving that box moves `block` without leaving the
+    /// ancestors' empty starts behind on the earlier page.
+    fn first_box_ancestor_at_top(
+        document: &Document,
+        cascade: &CascadeResult,
+        block: usize,
+        body_id: usize,
+        parent_of: &[Option<usize>],
+    ) -> usize {
+        let top = |id: usize| current_abs_y(document, id, parent_of);
+        let block_top = top(block);
+        let mut moved = block;
+        let mut child = block;
+        while let Some(parent) = document.layout_parent_of(child)
+            && parent != body_id
+        {
+            child = parent;
+            if cascade.computed[parent].display == DisplayValue::Contents {
+                continue;
+            }
+            let layout = &document.nodes[parent].unrounded_layout;
+            if layout.border.top != 0.0
+                || layout.padding.top != 0.0
+                || (top(parent) - block_top).abs() > 0.01
+            {
+                break;
+            }
+            moved = parent;
+        }
+        moved
+    }
+
     fn has_explicit_positioned_block_ancestor(
         document: &Document,
         cascade: &CascadeResult,
@@ -4566,9 +4600,9 @@ pub fn layout_pages_with_page_geometry_and_control(
     let mut last_named_was_zero_height = false;
     let mut last_named_had_display_none_descendant = false;
     let mut saw_child = false;
-    // Direct fixed-height blocks are the only class-A boxes for which this
-    // minimal paginator can safely move a leading line as a unit. Track the
-    // first text child so a block is not reflowed repeatedly for later lines.
+    // Paragraph blocks whose leading line or whose orphans and widows move
+    // them as a unit to the next page. Track the first text child so a block
+    // is not reflowed repeatedly for later lines.
     let mut checked_block_text = HashSet::new();
     let mut checked_orphans_widows = HashSet::new();
     // Footnotes are collected in source order and stacked upward from the
@@ -4934,28 +4968,51 @@ pub fn layout_pages_with_page_geometry_and_control(
             // is laid out from the paragraph's root, as a direct child is.
             // A block nested in plain block flow is moved the same way; its
             // ancestors then grow to hold it.
-            let line_block_parent = parent_of[node_id].filter(|_| !uses_positioned_coordinates);
-            let line_block_parent = line_block_parent.and_then(|parent_id| {
-                let layout_parent = document.layout_parent_of(parent_id)?;
-                if layout_parent == body_id {
-                    return Some((parent_id, false));
-                }
-                (!candidate.is_float_descendant
-                    && !candidate.is_out_of_flow_descendant
-                    && is_block_flow_paragraph(document, cascade, parent_id, body_id))
-                .then_some((parent_id, true))
-            });
+            let line_block_parent = parent_of[node_id]
+                .filter(|parent_id| {
+                    !uses_positioned_coordinates
+                        && !(checked_block_text.contains(parent_id)
+                            && checked_orphans_widows.contains(parent_id))
+                })
+                .and_then(|parent_id| {
+                    if document.layout_parent_of(parent_id)? == body_id {
+                        Some((parent_id, false))
+                    } else {
+                        (!candidate.is_float_descendant
+                            && !candidate.is_out_of_flow_descendant
+                            && is_block_flow_paragraph(document, cascade, parent_id, body_id))
+                        .then_some((parent_id, true))
+                    }
+                });
+            // Moves the block, which sits at `from_y`, so that its flow
+            // position starts at `target_y`, and returns how far it moved.
+            // Its relative offsets move along with it. A nested block that
+            // begins its ancestors, with no border or padding between them,
+            // takes the ancestors along rather than leaving them empty on
+            // this page; the ancestors above them grow to hold the move.
             let mut move_line_block = |document: &mut Document,
                                        block_id: usize,
                                        nested: bool,
                                        from_y: f32,
-                                       delta: f32| {
-                materialize_y(document, block_id, from_y + delta, &parent_of);
+                                       target_y: f32| {
+                let relative =
+                    accumulated_relative_offset_y(document, cascade, body_id, &parent_of, block_id);
+                let delta = target_y + relative - from_y;
+                if !delta.is_finite() || delta <= 0.0 {
+                    return 0.0;
+                }
+                let moved = if nested {
+                    first_box_ancestor_at_top(document, cascade, block_id, body_id, &parent_of)
+                } else {
+                    block_id
+                };
+                let moved_y = current_abs_y(document, moved, &parent_of) + delta;
+                materialize_y(document, moved, moved_y, &parent_of);
                 if nested {
                     grow_ancestors_for_shift(
                         document,
                         cascade,
-                        block_id,
+                        moved,
                         delta,
                         body_id,
                         &parent_of,
@@ -4964,6 +5021,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                         page_before_candidate,
                     );
                 }
+                delta
             };
             if let Some((block_id, nested)) = line_block_parent
                 && checked_block_text.insert(block_id)
@@ -4990,12 +5048,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let target_page = current_page.saturating_add(1).max(natural_page);
                     check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
-                    let delta = target_y - block_effective_y;
-                    if delta.is_finite() && delta > 0.0 {
-                        move_line_block(document, block_id, nested, block_effective_y, delta);
-                        flow_shift += delta;
-                        effective_y += delta;
-                    }
+                    let delta =
+                        move_line_block(document, block_id, nested, block_effective_y, target_y);
+                    flow_shift += delta;
+                    effective_y += delta;
                 }
             }
             // `orphans` and `widows` constrain breaks between line boxes, not
@@ -5036,12 +5092,15 @@ pub fn layout_pages_with_page_geometry_and_control(
                     let block_effective_y = effective_y - (raw_y - block_raw_y);
                     let target_page = current_page.saturating_add(1);
                     check_candidate_page!('candidate_loop, target_page);
-                    let delta = page_origin(target_page) - block_effective_y;
-                    if delta.is_finite() && delta > 0.0 {
-                        move_line_block(document, block_id, nested, block_effective_y, delta);
-                        flow_shift += delta;
-                        effective_y += delta;
-                    }
+                    let delta = move_line_block(
+                        document,
+                        block_id,
+                        nested,
+                        block_effective_y,
+                        page_origin(target_page),
+                    );
+                    flow_shift += delta;
+                    effective_y += delta;
                 }
             }
             if let Some((ifc_root, offset)) = ifc_root {
@@ -6524,8 +6583,9 @@ fn grow_ancestors_for_shift(
 
 /// Whether `block` is a block-level box laid out in plain block flow up to
 /// the body: every box from it to the body stacks its children in block
-/// order and none is floated or absolutely positioned, so moving `block`
-/// down moves the boxes after it and grows its ancestors.
+/// order, none is floated or absolutely positioned, and every ancestor's
+/// height follows its content, so moving `block` down moves the boxes after
+/// it and grows its ancestors to hold it.
 fn is_block_flow_paragraph(
     document: &Document,
     cascade: &CascadeResult,
@@ -6540,10 +6600,9 @@ fn is_block_flow_paragraph(
     }
     let mut child = block;
     while let Some(parent) = document.layout_parent_of(child) {
-        let computed = &cascade.computed[child];
         if is_floating_box_for_pagination(document, cascade, child)
             || matches!(
-                computed.position,
+                cascade.computed[child].position,
                 PositionValue::Absolute | PositionValue::Fixed
             )
         {
@@ -6552,8 +6611,16 @@ fn is_block_flow_paragraph(
         if parent == body_id {
             return true;
         }
-        if !moves_later_siblings(document, cascade, parent) {
-            return false;
+        // A `display: contents` element has no box; its parent lays the
+        // child out.
+        if cascade.computed[parent].display != DisplayValue::Contents {
+            let style = &document.nodes[parent].style;
+            if !moves_later_siblings(document, cascade, parent)
+                || !style.size.height.is_auto()
+                || !style.max_size.height.is_auto()
+            {
+                return false;
+            }
         }
         child = parent;
     }

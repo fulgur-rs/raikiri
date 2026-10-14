@@ -2987,15 +2987,14 @@ fn page_local_footnote_keeps_its_text_attached_inside_flex() {
 
 /// `html > body > (spacer, [section >] root, after)`: a spacer, then an
 /// Ahem paragraph ("aaaa bbbb cccc", width 40, line height 10) either
-/// directly in the body or wrapped in a section, then a 5px block. Returns
-/// the page count, the text's fragments, the section's border box height
-/// (the root's when not nested) and the top of the block after.
+/// directly in the body (`section` is `None`) or in a section with that
+/// style, then a 5px block.
 fn paragraph_after_a_spacer(
-    nested: bool,
+    section: Option<&str>,
     spacer_height: f32,
     root_css: &str,
     page_height: f32,
-) -> (usize, Vec<(u32, Option<PageFragmentLineRange>)>, f32, f32) {
+) -> MovedParagraph {
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -3007,15 +3006,12 @@ fn paragraph_after_a_spacer(
         Style::default(),
         Some(spacer_css.as_str()),
     );
-    let parent = if nested {
-        doc.append_element(
-            Some(body),
-            "section",
-            Style::default(),
-            Some("display:block"),
-        )
-    } else {
-        body
+    let parent = match section {
+        Some(css) => {
+            let css = format!("display:block;{css}");
+            doc.append_element(Some(body), "section", Style::default(), Some(css.as_str()))
+        }
+        None => body,
     };
     let style = format!(
         "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;{root_css}"
@@ -3037,15 +3033,29 @@ fn paragraph_after_a_spacer(
     page.height = page_height;
     let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
     assert!(doc.nodes[root].is_ifc_root());
-    let fragments = text_fragments(&doc, &cascade, page, &slices, text);
-    let holder = if nested { parent } else { root };
-    let holder_height = absolute_rect(&doc, holder).3;
-    (
-        slices.len(),
-        fragments,
-        holder_height,
-        absolute_rect(&doc, after).1,
-    )
+    let (_, section_y, _, section_height) = absolute_rect(&doc, parent);
+    MovedParagraph {
+        pages: slices.len(),
+        fragments: text_fragments(&doc, &cascade, page, &slices, text),
+        section: (section_y, section_height),
+        after_top: absolute_rect(&doc, after).1,
+    }
+}
+
+/// What [`paragraph_after_a_spacer`] laid out.
+struct MovedParagraph {
+    pages: usize,
+    /// The text's fragments.
+    fragments: Vec<(u32, Option<PageFragmentLineRange>)>,
+    /// The top and height of the section's border box.
+    section: (f32, f32),
+    /// The top of the block after the paragraph.
+    after_top: f32,
+}
+
+/// The paragraph's three lines, all on page 1.
+fn whole_on_page_1() -> Vec<(u32, Option<PageFragmentLineRange>)> {
+    vec![(1, Some(PageFragmentLineRange::new(0, 3)))]
 }
 
 #[test]
@@ -3053,40 +3063,79 @@ fn a_nested_paragraph_that_would_leave_a_widow_moves_to_the_next_page() {
     // Lines at 15, 25 and 35 on a 40px page: the last line would be a
     // widow, so the whole paragraph starts page 1 (y 40), as it does when
     // it is a direct child of the body.
-    for nested in [false, true] {
-        let (pages, fragments, _, after_top) =
-            paragraph_after_a_spacer(nested, 15.0, "orphans:2;widows:2", 40.0);
-        assert_eq!(pages, 2, "nested={nested}");
+    for section in [None, Some("")] {
+        let laid_out = paragraph_after_a_spacer(section, 15.0, "orphans:2;widows:2", 40.0);
+        assert_eq!(laid_out.pages, 2, "{section:?}");
+        assert_eq!(laid_out.fragments, whole_on_page_1(), "{section:?}");
         assert_eq!(
-            fragments,
-            [(1, Some(PageFragmentLineRange::new(0, 3)))],
-            "nested={nested}"
+            laid_out.after_top, 70.0,
+            "{section:?}: the flow after follows"
         );
-        assert_eq!(after_top, 70.0, "nested={nested}: the flow after follows");
     }
 }
 
 #[test]
-fn the_section_around_a_moved_paragraph_grows_to_hold_it() {
-    // The section starts at 15 and its paragraph moves to 40, so it ends at
-    // 70: 55px tall.
-    let (_, _, section_height, _) =
-        paragraph_after_a_spacer(true, 15.0, "orphans:2;widows:2", 40.0);
-    assert_eq!(section_height, 55.0);
+fn a_section_that_a_moved_paragraph_begins_moves_with_it() {
+    // Nothing of the section precedes the paragraph, so the section starts
+    // page 1 with it rather than leaving an empty start on page 0.
+    let laid_out = paragraph_after_a_spacer(Some(""), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.section, (40.0, 30.0));
+}
+
+#[test]
+fn a_padded_section_grows_to_hold_its_moved_paragraph() {
+    // The section starts at 15 and its padding stays there; the paragraph
+    // moves from 17 to 40, so the section ends at 70.
+    let laid_out =
+        paragraph_after_a_spacer(Some("padding-top:2px"), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section, (15.0, 55.0));
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_relatively_offset_section_moves_by_its_flow_position() {
+    // The section's flow position moves to the page start at 40; its offset
+    // still paints it 3px lower, and the flow after it is not overlapped.
+    let laid_out = paragraph_after_a_spacer(
+        Some("position:relative;top:3px"),
+        15.0,
+        "orphans:2;widows:2",
+        40.0,
+    );
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.section.0, 43.0);
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_paragraph_in_a_display_contents_wrapper_moves() {
+    let laid_out =
+        paragraph_after_a_spacer(Some("display:contents"), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.fragments, whole_on_page_1());
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
+fn a_paragraph_in_a_fixed_height_section_is_not_moved_out_of_it() {
+    // The section ends at 45, so moving the paragraph to 40 would push its
+    // lines past that end: it stays split inside the section.
+    let laid_out = paragraph_after_a_spacer(Some("height:30px"), 15.0, "orphans:2;widows:2", 40.0);
+    assert_eq!(laid_out.fragments[0].0, 0);
+    assert_eq!(laid_out.section, (15.0, 30.0));
 }
 
 #[test]
 fn a_nested_paragraph_split_within_its_line_constraints_stays() {
-    for nested in [false, true] {
-        let (_, fragments, _, _) =
-            paragraph_after_a_spacer(nested, 15.0, "orphans:1;widows:1", 40.0);
+    for section in [None, Some("")] {
+        let laid_out = paragraph_after_a_spacer(section, 15.0, "orphans:1;widows:1", 40.0);
         assert_eq!(
-            fragments,
+            laid_out.fragments,
             [
                 (0, Some(PageFragmentLineRange::new(0, 2))),
                 (1, Some(PageFragmentLineRange::new(2, 3))),
             ],
-            "nested={nested}"
+            "{section:?}"
         );
     }
 }
@@ -3095,13 +3144,9 @@ fn a_nested_paragraph_split_within_its_line_constraints_stays() {
 fn a_nested_fixed_height_paragraph_whose_first_line_overflows_moves() {
     // The 30px paragraph at y 10 ends at 40 on a 35px page: it moves to
     // page 1 as a unit, nested or not.
-    for nested in [false, true] {
-        let (_, fragments, _, _) =
-            paragraph_after_a_spacer(nested, 10.0, "height:30px;orphans:1;widows:1", 35.0);
-        assert_eq!(
-            fragments,
-            [(1, Some(PageFragmentLineRange::new(0, 3)))],
-            "nested={nested}"
-        );
+    for section in [None, Some("")] {
+        let laid_out =
+            paragraph_after_a_spacer(section, 10.0, "height:30px;orphans:1;widows:1", 35.0);
+        assert_eq!(laid_out.fragments, whole_on_page_1(), "{section:?}");
     }
 }
