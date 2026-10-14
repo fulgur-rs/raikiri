@@ -3433,25 +3433,31 @@ pub fn layout_pages_with_page_geometry_and_control(
             && parent != body_id
         {
             // Content before `child`, such as a float beside the paragraph,
-            // already sits on this page; moving the ancestor would take it
-            // along.
-            let renders_before = document.nodes[parent]
-                .layout_children()
-                .iter()
-                .take_while(|&&sibling| sibling != child)
-                .any(|&sibling| {
-                    let node = &document.nodes[sibling];
-                    match node.kind() {
-                        NodeKind::Element => {
-                            node.is_in_document()
-                                && !node.is_non_rendered_html_element()
-                                && cascade.computed[sibling].display != DisplayValue::None
-                        }
-                        _ => node
-                            .text_content()
-                            .is_some_and(|text| !text.trim().is_empty()),
+            // already sits on this page, and so may a later absolutely
+            // positioned box placed against the ancestor; moving the ancestor
+            // would take either along.
+            let siblings = document.nodes[parent].layout_children();
+            let child_index = siblings.iter().position(|&sibling| sibling == child);
+            let renders_before = siblings.iter().enumerate().any(|(index, &sibling)| {
+                let node = &document.nodes[sibling];
+                let renders = match node.kind() {
+                    NodeKind::Element => {
+                        node.is_in_document()
+                            && !node.is_non_rendered_html_element()
+                            && cascade.computed[sibling].display != DisplayValue::None
                     }
-                });
+                    _ => node
+                        .text_content()
+                        .is_some_and(|text| !text.trim().is_empty()),
+                };
+                renders
+                    && (child_index.is_none_or(|child_index| index < child_index)
+                        || node.kind() == NodeKind::Element
+                            && matches!(
+                                cascade.computed[sibling].position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            ))
+            });
             if renders_before {
                 break;
             }

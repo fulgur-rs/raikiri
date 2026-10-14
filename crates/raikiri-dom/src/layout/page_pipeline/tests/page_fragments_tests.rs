@@ -3276,3 +3276,57 @@ fn a_block_outside_the_laid_out_root_is_not_a_block_flow_paragraph() {
         &doc, &cascade, paragraph, aside
     ));
 }
+
+#[test]
+fn a_nested_paragraph_moved_for_a_widow_leaves_a_later_positioned_box_behind() {
+    // `body > (spacer, section[relative] > (paragraph, abs[top:0]))`: the
+    // positioned box is placed at the section's top on page 0. The
+    // paragraph moves to page 1 for its widow; the section, and the box
+    // placed against it, stay where they are.
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;position:relative"),
+    );
+    let root = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
+             orphans:2;widows:2",
+        ),
+    );
+    let text = doc.append_text(root, "aaaa bbbb cccc");
+    let positioned = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;top:0;width:5px;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        whole_on_page_1()
+    );
+    assert_eq!(absolute_rect(&doc, section).1, 15.0);
+    assert_eq!(absolute_rect(&doc, positioned).1, 15.0);
+}
