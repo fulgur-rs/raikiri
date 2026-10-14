@@ -2735,11 +2735,14 @@ pub(crate) fn paint_document_impl(
                             | DisplayValue::InlineGrid
                             | DisplayValue::InlineTable
                     ) {
-                    position_offset_px(cv)
+                    raikiri_dom::used_relative_offset(document, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
                     // the existing X location already includes its inset.
-                    (0.0, position_offset_px(cv).1)
+                    (
+                        0.0,
+                        raikiri_dom::used_relative_offset(document, cv, node_id).1,
+                    )
                 } else {
                     (0.0, 0.0)
                 };
@@ -7031,47 +7034,6 @@ fn fixed_position_px(
         None => content_origin_y,
     };
     Some((x, y))
-}
-
-pub(crate) fn position_offset_px(cv: &raikiri_style::ComputedValues) -> (f32, f32) {
-    // Only position:relative contributes paint offset. static/absolute/fixed/sticky produce no shift here.
-    // Inset properties are <length-percentage> | auto. Percentages are resolved to px earlier (or auto -> 0).
-    // For relative, left vs right: if left != auto, dx = left, else if right != auto, dx = -right, else 0.
-    // Similarly top vs bottom for dy.
-    if !matches!(
-        cv.position,
-        raikiri_style::property::PositionValue::Relative
-    ) {
-        return (0.0, 0.0);
-    }
-    let to_px = |v: raikiri_style::resolve::ComputedLengthPercentageOrAuto| -> Option<f32> {
-        match v {
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Auto => None,
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Px(px) => Some(px),
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Percent(_) => None,
-            raikiri_style::resolve::ComputedLengthPercentageOrAuto::Calc(_)
-            | raikiri_style::resolve::ComputedLengthPercentageOrAuto::MinContent => None, // cov:ignore: only the width / inline-size parser produces min-content
-        }
-    };
-    let left = to_px(cv.left);
-    let right = to_px(cv.right);
-    let top = to_px(cv.top);
-    let bottom = to_px(cv.bottom);
-    let dx = if let Some(l) = left {
-        l
-    } else if let Some(r) = right {
-        -r
-    } else {
-        0.0
-    };
-    let dy = if let Some(t) = top {
-        t
-    } else if let Some(b) = bottom {
-        -b
-    } else {
-        0.0
-    };
-    (dx, dy)
 }
 
 fn vertical_align_shift_px(

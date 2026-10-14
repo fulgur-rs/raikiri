@@ -62,6 +62,7 @@ pub(crate) mod ifc;
 pub(crate) mod multicol;
 mod page;
 mod page_pipeline;
+mod relative;
 pub(crate) mod sanitize;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -121,6 +122,9 @@ pub use page_pipeline::{
     layout_single_page, layout_single_page_with_resolver,
     layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
 };
+pub(crate) use relative::used_relative_insets;
+#[doc(hidden)]
+pub use relative::used_relative_offset;
 
 pub(crate) use page_pipeline::{
     line_center_on_page, page_fragment_events_from_pages, project_slices_with_control,

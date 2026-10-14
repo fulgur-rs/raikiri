@@ -192,15 +192,8 @@ fn layout_relative_offset_y(
     }
     // Percentages resolve against the containing block's height when it
     // is definite, and otherwise act as `auto` (CSS 2.1 §9.3.2).
-    let basis =
-        box_parent(document, node_id).and_then(|parent| definite_content_height(document, parent));
-    let resolve = |value: ComputedLengthPercentageOrAuto| match (value, basis) {
-        (ComputedLengthPercentageOrAuto::Px(px), _) => Some(px),
-        (value, Some(basis)) => used_computed_length_percentage_or_auto(value, basis),
-        (_, None) => None,
-    };
-    resolve(computed.top)
-        .or_else(|| resolve(computed.bottom).map(|bottom| -bottom))
+    super::relative::used_relative_insets(document, computed, node_id)
+        .1
         .unwrap_or(0.0)
 }
 
@@ -223,7 +216,7 @@ fn accumulated_relative_offset_y(
 /// The block offset of a relatively positioned box that layout leaves to
 /// the painter: that of the body, of floats and of table parts, and of boxes
 /// placed by manual column placement. The painter takes `top` over
-/// `-bottom`, where an inset that is not a length counts as `auto`.
+/// `-bottom`, resolved as [`super::relative::used_relative_offset`] does.
 fn painted_relative_offset_y(
     document: &Document,
     cascade: &CascadeResult,
@@ -233,12 +226,7 @@ fn painted_relative_offset_y(
     if !relative_offset_is_painted(document, cascade, body_id, node_id) {
         return 0.0;
     }
-    let computed = &cascade.computed[node_id];
-    match (computed.top, computed.bottom) {
-        (ComputedLengthPercentageOrAuto::Px(top), _) => top,
-        (_, ComputedLengthPercentageOrAuto::Px(bottom)) => -bottom,
-        _ => 0.0,
-    }
+    super::relative::used_relative_offset(document, &cascade.computed[node_id], node_id).1
 }
 
 /// Whether layout leaves the relative offset of `node_id` to the painter.
@@ -6075,7 +6063,7 @@ fn grown_auto_height(
 /// The content-box height of `block` when it is definite: a length, or a
 /// percentage of a definite containing block, the initial containing block
 /// being definite (CSS 2.1 §10.5).
-fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
+pub(super) fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
     let node = &document.nodes[block];
     let raw = node.style.size.height.into_raw();
     let definite = if raw.is_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
@@ -6098,7 +6086,7 @@ fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
 
 /// The nearest ancestor of `node_id` that generates a box: `display:
 /// contents` elements are skipped.
-fn box_parent(document: &Document, node_id: usize) -> Option<usize> {
+pub(super) fn box_parent(document: &Document, node_id: usize) -> Option<usize> {
     let mut parent = document.parent_of(node_id)?;
     while document.nodes[parent].display == DisplayValue::Contents {
         parent = document.parent_of(parent)?;
