@@ -4594,3 +4594,11 @@ css/css-values/viewport-page-print.html
 # --- later pages of another content width laid out again (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
 # Pass once the harness relays pages of another width out from the document; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-004-print.html
+
+# --- scripts that clone nodes and edit character data (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once cloneNode, importNode, the CharacterData edit methods, and splitText run; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flex-item-contains-size-layout-001.html
+css/css-pseudo/first-letter-punctuation-dynamic.html
+css/css-pseudo/marker-content-022.html
+css/css-tables/border-collapse-dynamic-col-001.html
+css/cssom/stylesheet-replacedata-dynamic.html

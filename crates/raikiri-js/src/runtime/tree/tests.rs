@@ -126,6 +126,129 @@ fn character_data_members() {
 }
 
 #[test]
+fn character_data_edits_count_utf16_code_units() {
+    let mut rt = rt();
+    rt.evaluate("var t = document.createTextNode('a\u{1F600}bc');")
+        .unwrap();
+    ok(&mut rt, "t.length === 5 && t.substringData(3, 99) === 'bc'");
+    rt.evaluate("t.insertData(1, '-'); t.replaceData(4, 1, 'B'); t.deleteData(5, 9);")
+        .unwrap();
+    ok(&mut rt, "t.data === 'a-\u{1F600}B'");
+    rt.evaluate("t.insertData(t.length, '!'); t.replaceData(0, 0, '<');")
+        .unwrap();
+    ok(&mut rt, "t.data === '<a-\u{1F600}B!'");
+    ok(
+        &mut rt,
+        "['substringData(8, 0)', 'insertData(8, \"x\")', 'deleteData(8, 0)', 'replaceData(8, 0, \"x\")'].every(function (call) { \
+           try { eval('t.' + call); return false; } catch (e) { return e instanceof DOMException && e.name === 'IndexSizeError'; } \
+         }) && t.data === '<a-\u{1F600}B!'",
+    );
+    ok(
+        &mut rt,
+        "['substringData(0)', 'insertData(0)', 'replaceData(0, 1)', 'appendData()'].every(function (call) { \
+           try { eval('t.' + call); return false; } catch (e) { return e instanceof TypeError; } \
+         }) && t.data === '<a-\u{1F600}B!'",
+    );
+    // A range that splits a surrogate pair reads back the exact half; data
+    // cannot store an unpaired surrogate, so one written in becomes U+FFFD.
+    ok(
+        &mut rt,
+        "t.substringData(3, 1).charCodeAt(0) === 0xD83D && t.substringData(4, 1).charCodeAt(0) === 0xDE00",
+    );
+    rt.evaluate("var u = document.createTextNode('a'); u.appendData('\\uD83D'); u.insertData(0, '\\uDE00');")
+        .unwrap();
+    ok(&mut rt, "u.data === '\\uFFFDa\\uFFFD' && u.length === 3");
+}
+
+#[test]
+fn split_text_moves_the_tail_into_a_following_sibling() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var b = document.body; var t = document.createTextNode('hello'); var e = document.createElement('e'); \
+         b.append(t, e); var tail = t.splitText(2);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "tail instanceof Text && t.data === 'he' && tail.data === 'llo' && t.nextSibling === tail && tail.nextSibling === e",
+    );
+    ok(
+        &mut rt,
+        "var d = document.createTextNode('xy'); var r = d.splitText(2); r.data === '' && r.parentNode === null && d.data === 'xy'",
+    );
+    ok(
+        &mut rt,
+        "try { t.splitText(3); false } catch (e) { e.name === 'IndexSizeError' && t.data === 'he' }",
+    );
+    ok(
+        &mut rt,
+        "!('splitText' in document.createComment('c')) && \
+         (function () { try { Text.prototype.splitText.call(document.createComment('c'), 0); return false; } catch (e) { return e instanceof TypeError; } })()",
+    );
+}
+
+#[test]
+fn clone_node_copies_attributes_and_optionally_the_subtree() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var s = document.createElement('section'); s.setAttribute('id', 'a'); s.setAttribute('style', 'color: red'); \
+         s.append('text', document.createElement('i'), document.createComment('c')); \
+         document.body.appendChild(s); var shallow = s.cloneNode(); var deep = s.cloneNode(true);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "shallow !== s && shallow.parentNode === null && !shallow.hasChildNodes() && shallow.localName === 'section' && \
+         shallow.getAttribute('id') === 'a' && shallow.getAttribute('style') === 'color: red'",
+    );
+    ok(
+        &mut rt,
+        "deep.childNodes.length === 3 && deep.firstChild.data === 'text' && deep.firstChild !== s.firstChild && \
+         deep.childNodes[1].localName === 'i' && deep.lastChild.nodeType === 8 && deep.lastChild.data === 'c'",
+    );
+    ok(
+        &mut rt,
+        "var t = document.createTextNode('x').cloneNode(); t instanceof Text && t.data === 'x'",
+    );
+    ok(
+        &mut rt,
+        "var f = document.createDocumentFragment(); f.append('a', 'b'); var g = f.cloneNode(true); \
+         g instanceof DocumentFragment && g.childNodes.length === 2 && f.childNodes.length === 2",
+    );
+    ok(
+        &mut rt,
+        "try { document.cloneNode(); false } catch (e) { e instanceof DOMException && e.name === 'NotSupportedError' }",
+    );
+}
+
+#[test]
+fn import_node_clones_with_a_boolean_or_options() {
+    let mut rt = rt();
+    rt.evaluate("var p = document.createElement('p'); p.append('a');")
+        .unwrap();
+    ok(
+        &mut rt,
+        "document.importNode(p).childNodes.length === 0 && document.importNode(p, true).childNodes.length === 1",
+    );
+    ok(
+        &mut rt,
+        "document.importNode(p, {}).childNodes.length === 1 && document.importNode(p, { selfOnly: true }).childNodes.length === 0",
+    );
+    ok(
+        &mut rt,
+        "document.importNode(p, null).childNodes.length === 1 && document.importNode(p, undefined).childNodes.length === 0",
+    );
+    ok(
+        &mut rt,
+        "try { document.importNode(document); false } catch (e) { e.name === 'NotSupportedError' }",
+    );
+    ok(
+        &mut rt,
+        "try { document.importNode('p'); false } catch (e) { e instanceof TypeError }",
+    );
+}
+
+#[test]
 fn child_node_mixin_and_text_content_setters() {
     let mut rt = rt();
     rt.evaluate("var b = document.body; var m = document.createElement('m'); b.appendChild(m); m.before('pre', document.createElement('i')); m.after('post'); m.replaceWith(document.createElement('n'));").unwrap();
