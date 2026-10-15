@@ -17,6 +17,13 @@ fn fixture(display: &str, children: &[&str]) -> (Document, CascadeResult, usize,
         .map(|css| doc.append_element(Some(parent), "div", Style::default(), Some(*css)))
         .collect();
     let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    // The pass runs after layout has classified every box; this fixture
+    // skips layout, so classify the parent the way the bridge would.
+    doc.nodes[parent].formatting_context = if cascade.computed[parent].display.is_grid_container() {
+        crate::node::FormattingContext::Grid
+    } else {
+        crate::node::FormattingContext::Block
+    };
     doc.nodes[parent].style.padding = taffy::Rect {
         left: taffy::LengthPercentage::length(5.0),
         right: taffy::LengthPercentage::length(5.0),
