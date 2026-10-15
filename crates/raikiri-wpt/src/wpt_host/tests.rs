@@ -327,6 +327,25 @@ fn cssom_view_metrics_follow_the_css_box_model() {
     );
 }
 
+/// An absolutely positioned inline or ruby element is blockified (CSS
+/// Display 3 §2.7), so it has client metrics although its computed display
+/// is inline-level.
+#[test]
+fn blockified_inline_boxes_have_client_metrics() {
+    let (_dir, mut rt) = runtime(
+        "<span id=s style='position:absolute; width:40px; height:20px; border:2px solid'>x</span>\
+         <ruby id=r style='position:absolute; width:30px; height:10px; border:1px solid'>a</ruby>",
+    );
+    for (src, expected) in [
+        ("document.getElementById('s').clientWidth", 40.0),
+        ("document.getElementById('s').clientTop", 2.0),
+        ("document.getElementById('r').clientWidth", 30.0),
+        ("document.getElementById('r').clientHeight", 10.0),
+    ] {
+        assert_eq!(num(&mut rt, src), expected, "{src}");
+    }
+}
+
 /// An unstyled block sits at the UA body margin.
 ///
 /// This is the `data-offset-x=8` shape that WPT check-layout fixtures pin:

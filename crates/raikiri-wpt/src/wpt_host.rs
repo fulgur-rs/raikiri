@@ -406,7 +406,11 @@ impl DocumentHost for WptDocumentHost {
             scroll_width,
             scroll_height,
             position: computed.map_or(PositionKind::Static, |c| position_kind(&c.position)),
-            is_inline: computed.is_some_and(|c| c.display.is_inline_flow()),
+            // An inline-level element that is blockified, as an absolutely
+            // positioned one is, generates a block box.
+            is_inline: computed.is_some_and(|c| {
+                raikiri_dom::generates_inline_box(&self.setup.uncascaded.dom, node, c)
+            }),
         }))
     }
 
