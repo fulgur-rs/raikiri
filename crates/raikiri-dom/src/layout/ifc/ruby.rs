@@ -871,9 +871,14 @@ impl Content<'_, '_> {
             for level in &segment.levels {
                 levels.push(self.level(ruby, level, &spaces, id)?);
             }
-            // Automatic and whole-segment spans always validate.
-            if let Ok(value) = shodo::Ruby::new(bases, levels) {
-                builder.push_ruby(NodeId(id as u64), &container, value);
+            // Automatic and whole-segment spans always validate, so only the
+            // caller's item budget can reject the segment.
+            match shodo::Ruby::with_limits(bases, levels, self.limits) {
+                Ok(value) => {
+                    builder.push_ruby(NodeId(id as u64), &container, value);
+                }
+                Err(shodo::RubyError::Limit(error)) => return Err(IfcError::Limit(error)),
+                Err(_) => {}
             }
         }
         for &(_, id) in anchors {

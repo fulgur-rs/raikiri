@@ -1149,3 +1149,39 @@ fn rubies_that_lay_out_their_own_content_keep_their_annotations_over_the_bases()
         assert!(annotation.2 < base.2, "{extra}: {runs:?}");
     }
 }
+
+#[test]
+fn ruby_segments_are_kept_or_report_the_item_budget() {
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aa");
+        rb(doc, container, "bb");
+        rt(doc, container, "x");
+        rt(doc, container, "y");
+    });
+    let fonts = crate::layout::ifc::test_support::ahem_fonts();
+    for max_items in (0..64).map(Some).chain([None]) {
+        let limits = Limits {
+            max_items,
+            ..Limits::default()
+        };
+        match crate::layout::ifc::projection::project_ifc(
+            &fixture.doc,
+            &fixture.cascade,
+            fixture.root,
+            &mut shodo::LayoutContext::new(),
+            &fonts,
+            &limits,
+        ) {
+            Ok(projected) => {
+                let text = projected.paragraph.text();
+                assert!(
+                    text.contains("aa") && text.contains("bb"),
+                    "{max_items:?}: {text:?}"
+                );
+            }
+            Err(IfcError::Limit(_)) => {}
+            Err(error) => panic!("{max_items:?}: {error}"),
+        }
+    }
+}
