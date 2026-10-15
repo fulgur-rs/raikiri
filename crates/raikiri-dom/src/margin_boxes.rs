@@ -602,24 +602,23 @@ fn ch_length_px(
     Some(finite_or_zero(used.px + basis * used.percent / 100.0))
 }
 
-/// The used px of a non-negative box length against `basis`; `None` for
-/// `auto`.
+/// The used px of a box length against `basis`; `None` for `auto` and the
+/// intrinsic sizing keywords, which size the box to its content.
 fn length_or_auto_px(
     document: &Document,
     value: ComputedLengthPercentageOrAuto,
     ch: Option<&ChLengthProvenance>,
     basis: f32,
 ) -> Option<f32> {
-    if matches!(value, ComputedLengthPercentageOrAuto::Auto) {
-        return None;
-    }
-    let px = ch_length_px(document, ch, basis).unwrap_or(match value {
+    let px = match value {
         ComputedLengthPercentageOrAuto::Px(px) => px,
         ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
         ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
-        _ => 0.0,
-    });
-    Some(finite_or_zero(px).max(0.0))
+        _ => return None,
+    };
+    Some(finite_or_zero(
+        ch_length_px(document, ch, basis).unwrap_or(px),
+    ))
 }
 
 /// The used `text-shadow` of a margin box. `currentcolor` is the box's own
@@ -974,20 +973,25 @@ fn resolved_margin_content(
     (text, deferred)
 }
 
-#[allow(clippy::too_many_arguments)] // the content reads the page, the rule and its style
 fn margin_box_content(
     document: &Document,
     cascade: &CascadeResult,
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
     style: &ComputedValues,
-    components: &[ContentComponent],
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
 ) -> (String, Vec<DeferredSlot>) {
     let quotes = margin_box_quotes(style);
     let (text, deferred) = resolved_margin_content(
-        components, document, cascade, page, rule, context, &quotes, values,
+        &style.content,
+        document,
+        cascade,
+        page,
+        rule,
+        context,
+        &quotes,
+        values,
     );
     let registry = (!deferred.is_empty()).then(|| {
         Arc::new(fallback_chains(
@@ -1068,7 +1072,7 @@ fn margin_box_spec(
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
 ) -> Option<MarginBoxSpec> {
-    let style = cascade.margin_box_style(page, rule.slot)?;
+    let style = cascade.margin_box_style(page, rule);
     let components: &[ContentComponent] = &style.content;
     // `content: none` / `normal` suppress the margin box itself, including
     // its background. The explicit `none` sentinel and the initial empty
@@ -1087,14 +1091,16 @@ fn margin_box_spec(
                 if url.ends_with("/green.png") || url == "green.png"
         )
     });
-    let (content, deferred) = margin_box_content(
-        document, cascade, page, rule, &style, components, context, values,
-    );
-    let font_size = style.font_size.px();
+    let (content, deferred) =
+        margin_box_content(document, cascade, page, rule, &style, context, values);
+    // A zero size still shapes, at a size too small to see.
+    let font_size = style.font_size.px().max(0.1);
     let text_color = style.color;
     // Margins and paddings resolve as the edge layout has always taken
     // them: vertical margins against the strip height, everything else
     // against its width.
+    // Margins may be negative; `auto` margins are distributed by the edge
+    // layout.
     let margin_px = |value, ch: &Option<ChLengthProvenance>, basis| {
         length_or_auto_px(document, value, ch.as_ref(), basis).unwrap_or(0.0)
     };
@@ -1128,13 +1134,15 @@ fn margin_box_spec(
         .iter()
         .any(|layer| layer.url.ends_with("/green.png") || layer.url == "green.png");
     let border = margin_box_borders(&style);
-    let width = length_or_auto_px(document, style.width, style.width_ch.as_ref(), width_basis);
+    let width = length_or_auto_px(document, style.width, style.width_ch.as_ref(), width_basis)
+        .map(|width| width.max(0.0));
     let height = length_or_auto_px(
         document,
         style.height,
         style.height_ch.as_ref(),
         height_basis,
-    );
+    )
+    .map(|height| height.max(0.0));
     let alignment = match style.text_align {
         TextAlign::Right => StandaloneAlign::Right,
         TextAlign::End => StandaloneAlign::End,

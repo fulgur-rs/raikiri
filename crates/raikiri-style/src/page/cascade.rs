@@ -333,7 +333,22 @@ impl PageMarginBoxCascadeResult {
             .into_values()
             .map(|(_, index)| candidates[index])
             .collect();
-        winners.sort_unstable_by_key(|(rule_index, decl_index, _, _)| (*rule_index, *decl_index));
+        // In cascade order, so that a winning longhand applied after an
+        // overlapping shorthand overrides it only when it takes precedence.
+        winners.sort_unstable_by_key(|&(rule_index, decl_index, rule, decl)| {
+            let layer = crate::layer::LayerPosition {
+                attached: false,
+                rank: rule.layer_order,
+            };
+            (
+                cascade_rank(rule.origin, decl.important),
+                layer.priority(decl.important),
+                rule.specificity,
+                rule.source_order,
+                rule_index,
+                decl_index,
+            )
+        });
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
@@ -837,39 +852,31 @@ impl PageCascadeResult {
         )
     }
 
-    /// The page context's computed values (CSS Paged Media 3 §6): the
-    /// inheritance parent of its margin boxes. `None` for a result not built
-    /// by the page cascade.
-    pub fn computed(&self) -> Option<&ComputedValues> {
-        self.page_style.as_deref().map(|style| &style.computed)
-    }
-
-    /// The computed values of a margin box: the winning declarations of
-    /// [`Self::cascade_margin_box`] computed over the page context, which is
-    /// the margin context's inheritance parent (CSS Paged Media 3 §6).
-    /// Returns `None` when no rule targets the slot.
+    /// The computed values of a margin box whose cascaded rule, from
+    /// [`Self::cascade_margin_box`], is `rule`: its winning declarations
+    /// computed over the page context, which is the margin context's
+    /// inheritance parent (CSS Paged Media 3 §6).
     ///
     /// `normal_line_height` measures `line-height: normal` for the `lh`
     /// unit; see [`crate::CascadeResult::margin_box_style`].
     pub fn margin_box_style(
         &self,
-        slot: PageMarginBoxSlot,
+        rule: &PageMarginBoxCascadeResult,
         normal_line_height: Option<&dyn NormalLineHeight>,
-    ) -> Option<ComputedValues> {
-        let rule = self.cascade_margin_box(slot)?;
+    ) -> ComputedValues {
         static INITIAL_PAGE_STYLE: LazyLock<PageStyle> = LazyLock::new(|| PageStyle {
             computed: ComputedValues::initial(),
             context: ResolveContext::new(ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)),
         });
         let page = self.page_style.as_deref().unwrap_or(&INITIAL_PAGE_STYLE);
-        Some(computed_over(
+        computed_over(
             &page.computed,
             rule.declarations
-                .into_iter()
-                .map(|declaration| declaration.value),
+                .iter()
+                .map(|declaration| declaration.value.clone()),
             &page.context,
             normal_line_height,
-        ))
+        )
     }
 
     /// Matching parsed margin-box declarations, in source order.
@@ -1605,6 +1612,18 @@ pub(crate) fn cascade_page_with_normal_line_height(
             )
         })
         .collect();
+    // The winners in cascade order, for applying overlapping shorthands and
+    // longhands to the page context's computed values.
+    let mut cascade_order: Vec<_> = best
+        .iter()
+        .map(|(&key, winner)| {
+            (
+                (winner.0, winner.1, winner.2, winner.3, winner_indices[&key]),
+                key,
+            )
+        })
+        .collect();
+    cascade_order.sort_unstable_by_key(|&(precedence, _)| precedence);
     let mut resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
         .filter_map(|(k, (_, _, _, _, value))| {
@@ -1797,15 +1816,20 @@ pub(crate) fn cascade_page_with_normal_line_height(
             )
         })
         .collect();
-    let page_style = PageStyle {
-        computed: computed_over(
-            inherited,
-            declarations.values().cloned(),
-            &ctx,
-            normal_line_height,
-        ),
-        context: ctx,
-    };
+    // Only margin boxes inherit from the page context's computed values.
+    let page_style = (!margin_boxes.is_empty()).then(|| {
+        Arc::new(PageStyle {
+            computed: computed_over(
+                inherited,
+                cascade_order
+                    .iter()
+                    .filter_map(|(_, key)| declarations.get(key).cloned()),
+                &ctx,
+                normal_line_height,
+            ),
+            context: ctx,
+        })
+    });
     PageCascadeResult {
         declarations,
         size: size_best
@@ -1816,7 +1840,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
         page_orientation: rotation_best.map(|candidate| candidate.5),
         margin_boxes,
         margin_box_inheritance,
-        page_style: Some(Arc::new(page_style)),
+        page_style,
     }
 }
 

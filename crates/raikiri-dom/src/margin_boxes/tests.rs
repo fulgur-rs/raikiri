@@ -83,9 +83,11 @@ fn margin_box_font_uses_root_computed_family() {
     document.append_text(style, "@page { @top-left { content: 'x'; } }");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
-    let style = cascade
-        .margin_box_style(&cascade.page, PageMarginBoxSlot::TopLeft)
+    let rule = cascade
+        .page
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
         .expect("the @page fixture has a margin box");
+    let style = cascade.margin_box_style(&cascade.page, &rule);
 
     assert_eq!(style.font_size.px(), 16.0);
     assert_eq!(
@@ -147,9 +149,11 @@ fn margin_box_font_size_resolves_keywords_and_calc() {
         document.append_text(style, css);
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
-        let style = cascade
-            .margin_box_style(&cascade.page, PageMarginBoxSlot::TopLeft)
+        let rule = cascade
+            .page
+            .cascade_margin_box(PageMarginBoxSlot::TopLeft)
             .expect("the @page fixture has a margin box");
+        let style = cascade.margin_box_style(&cascade.page, &rule);
         assert_eq!(style.font_size.px(), expected, "{css}");
     }
 }

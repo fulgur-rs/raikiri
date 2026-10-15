@@ -191,9 +191,9 @@ fn box_lengths_resolve_against_their_basis() {
         px(ComputedLengthPercentageOrAuto::Percent(50.0)),
         Some(100.0)
     );
-    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(-5.0)), Some(0.0));
+    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(-5.0)), Some(-5.0));
     assert_eq!(px(ComputedLengthPercentageOrAuto::Px(f32::NAN)), Some(0.0));
-    assert_eq!(px(ComputedLengthPercentageOrAuto::MinContent), Some(0.0));
+    assert_eq!(px(ComputedLengthPercentageOrAuto::MinContent), None);
     let calc = |px, percent| {
         ComputedLengthPercentageOrAuto::Calc(raikiri_style::property::CalcLengthPercentage {
             px,
@@ -202,7 +202,29 @@ fn box_lengths_resolve_against_their_basis() {
     };
     assert_eq!(px(calc(10.0, 10.0)), Some(30.0));
     assert_eq!(px(calc(f32::NAN, f32::NAN)), Some(0.0));
-    assert_eq!(px(calc(-50.0, 0.0)), Some(0.0));
+    assert_eq!(px(calc(-50.0, 0.0)), Some(-50.0));
+}
+
+#[test]
+fn margin_box_margins_may_be_negative_and_zero_fonts_stay_tiny() {
+    let x = |declarations: &str| {
+        let boxes = boxes_for(&format!(
+            "@page {{ margin: 40px; @top-left {{ content: 'a'; {AHEM} width: 30px; \
+               {declarations} }} }}"
+        ));
+        let [head] = boxes.as_slice() else {
+            panic!("one box: {boxes:?}");
+        };
+        (
+            head.rect.x,
+            head.text.as_ref().map(|text| text.shaped().width()),
+        )
+    };
+    let (origin, width) = x("");
+    assert_eq!(x("margin-left: -6px").0, origin - 6.0);
+    assert_eq!(width, Some(10.0));
+    let (_, tiny) = x("font-size: 0");
+    assert!(tiny.is_some_and(|width| width < 1.0), "{tiny:?}");
 }
 
 #[test]
