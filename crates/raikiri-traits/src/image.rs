@@ -101,10 +101,11 @@ const PNG_SIGNATURE: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 /// Browsers draw PNGs whose chunk CRCs are wrong (Chromium sets libpng's
 /// `PNG_CRC_QUIET_USE` for both critical and ancillary chunks), while the
 /// `png` crate rejects them. Rewriting the CRCs before decoding gives the
-/// browser behavior without changing anything else: the zlib Adler-32 check
-/// and every structural check still apply. Bytes that are not a PNG, or that
-/// need no change, are returned borrowed. A truncated trailing chunk is left
-/// as is for the decoder to report.
+/// browser behavior without changing anything else: every structural and
+/// zlib stream check still applies. The zlib Adler-32 trailer is not a
+/// safeguard here, because the `png` crate skips it by default. Bytes that
+/// are not a PNG, or that need no change, are returned borrowed. A truncated
+/// trailing chunk is left as is for the decoder to report.
 #[must_use]
 pub fn png_with_repaired_crcs(bytes: &[u8]) -> Cow<'_, [u8]> {
     if !bytes.starts_with(PNG_SIGNATURE) {
