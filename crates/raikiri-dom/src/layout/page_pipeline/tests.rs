@@ -15206,3 +15206,61 @@ fn a_margin_after_a_zero_height_forced_break_box_with_a_multicol_before_box_is_t
         100.0
     );
 }
+
+#[test]
+fn a_margin_after_a_forced_break_box_with_a_cleared_empty_child_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:10px;height:10px"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;clear:both"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The cleared child's clearance keeps margins from collapsing through
+    // the forced-break box (CSS 2 §8.3.1).
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
