@@ -2776,7 +2776,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 && node.is_in_document()
                 && !node.is_non_rendered_html_element()
                 && (cascade.computed[child].display == DisplayValue::Contents
-                    || cascade.computed[child].display == DisplayValue::Inline
+                    || cascade.computed[child].display.is_inline_flow()
                         && in_flow(document, child)
                         && !is_float(document, child)
                         && !is_monolithic_for_pagination(document, cascade, child))
@@ -2785,9 +2785,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 // break properties do not apply, but pagination still breaks
                 // at the blocks inside it. One without children still makes
                 // a line of its own.
-                if node.children.is_empty()
-                    && cascade.computed[child].display == DisplayValue::Inline
-                {
+                if node.children.is_empty() && cascade.computed[child].display.is_inline_flow() {
                     boxes.push(None);
                 }
                 pending.extend(node.children.iter().rev().map(|&child| Some(child)));
@@ -5667,7 +5665,7 @@ fn paginate_flow(
             computed.break_inside,
             raikiri_style::property::BreakInside::Avoid
                 | raikiri_style::property::BreakInside::AvoidPage
-        ) && (computed.display != DisplayValue::Inline
+        ) && (!computed.display.is_inline_flow()
             || page_applies_to_box(document, cascade, node_id))
             // A box already at the top of its page would break inside on
             // any page, so moving it would only leave a blank page.
@@ -6160,7 +6158,7 @@ fn paginate_flow(
             // inline origin before painting the next slice.
             if page_transition
                 && candidate.is_direct_body_element
-                && matches!(computed.display, DisplayValue::Inline)
+                && computed.display.is_inline_flow()
             {
                 document.nodes[node_id].unrounded_layout.location.x = 0.0;
             }
@@ -7201,10 +7199,12 @@ fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) ->
                 .display
                 .is_flex_or_grid_container()
         });
-    item || !matches!(
-        computed.display,
-        DisplayValue::Block | DisplayValue::ListItem | DisplayValue::Inline
-    ) || matches!(computed.float, FloatValue::Left | FloatValue::Right)
+    item || !(computed.display.is_inline_flow()
+        || matches!(
+            computed.display,
+            DisplayValue::Block | DisplayValue::ListItem
+        ))
+        || matches!(computed.float, FloatValue::Left | FloatValue::Right)
         || matches!(style.position, taffy::Position::Absolute)
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container()

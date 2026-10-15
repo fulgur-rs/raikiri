@@ -17,6 +17,7 @@ pub(crate) mod positioned_runs;
 pub(crate) mod projection;
 pub(crate) mod records;
 pub(crate) mod root;
+mod ruby;
 pub(crate) mod standalone;
 pub(crate) mod style;
 pub(crate) mod text_lines;

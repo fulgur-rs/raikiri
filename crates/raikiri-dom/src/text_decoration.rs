@@ -471,6 +471,53 @@ fn context_for_text(
     })
 }
 
+/// The decoration context of the text node `text_node` in a ruby annotation.
+///
+/// Decorations of a ruby container and its ancestors are not propagated to
+/// its annotations (CSS Text Decoration 3 §2, CSS Ruby 1 §4.4), so the
+/// context folds only the elements below the ruby container whose annotation
+/// holds the text. A ruby nested in that annotation passes its decorations
+/// to its own base like any other ruby container. Each element's decoration
+/// sits at that element's baseline, `shifts` below the annotation line's.
+fn annotation_context(
+    document: &Document,
+    cascade: &CascadeResult,
+    text_node: usize,
+    shifts: &HashMap<usize, f32>,
+) -> DecorationContext {
+    let mut chain = Vec::new();
+    let mut in_annotation = false;
+    let mut current = document.parent_of(text_node);
+    while let Some(id) = current {
+        let Some(cv) = computed_for_id(cascade, id) else {
+            break; // cov:ignore: annotation runs are positioned only for cascaded text.
+        };
+        if cv.display.is_ruby_container() {
+            if in_annotation {
+                break;
+            }
+        } else if matches!(
+            cv.display,
+            DisplayValue::RubyText | DisplayValue::RubyTextContainer
+        ) {
+            in_annotation = true;
+        }
+        chain.push((id, cv));
+        current = document.parent_of(id);
+    }
+    chain
+        .iter()
+        .rev()
+        .fold(DecorationContext::default(), |context, &(id, cv)| {
+            decorations_for_element(
+                &context,
+                NodeId::new(id as u64),
+                cv,
+                shifts.get(&id).copied().unwrap_or(0.0),
+            )
+        })
+}
+
 /// How far each inline element's baseline lies below the line's baseline, on
 /// this line. An element with no fragment on the line is not in the map.
 ///
@@ -517,24 +564,55 @@ pub fn positioned_line_decorations(
             )
         })
         .collect();
+    // Ruby annotations lie outside the line's content; only the line's own
+    // runs are clipped to it.
     let content = f64::from(line.line.inline_size() + line.line.hang_start());
+    let in_line = || {
+        bounds
+            .iter()
+            .zip(&line.runs)
+            .filter(|(_, run)| run.annotation.is_none())
+            .map(|(bound, _)| *bound)
+    };
     if line.line.used_direction() == shodo::geometry::Direction::Rtl {
-        let right = bounds.iter().map(|b| b.1).fold(f64::NEG_INFINITY, f64::max);
-        for bound in &mut bounds {
+        let right = in_line().map(|b| b.1).fold(f64::NEG_INFINITY, f64::max);
+        for (bound, _) in bounds
+            .iter_mut()
+            .zip(&line.runs)
+            .filter(|(_, run)| run.annotation.is_none())
+        {
             bound.0 = bound.0.max(right - content);
         }
     } else {
-        let left = bounds.iter().map(|b| b.0).fold(f64::INFINITY, f64::min);
-        for bound in &mut bounds {
+        let left = in_line().map(|b| b.0).fold(f64::INFINITY, f64::min);
+        for (bound, _) in bounds
+            .iter_mut()
+            .zip(&line.runs)
+            .filter(|(_, run)| run.annotation.is_none())
+        {
             bound.1 = bound.1.min(left + content);
         }
     }
     let baseline = f64::from(origin.1)
         + f64::from(line.line.block_offset())
         + f64::from(line.line.baseline(BaselineKind::Alphabetic));
+    let annotation_lines: HashMap<usize, &shodo::Line> = line
+        .runs
+        .iter()
+        .filter_map(|run| Some((run.owner, run.annotation?.line)))
+        .collect();
     let contexts = contexts_for_text_owners(
-        line.runs.iter().map(|run| (run.style_owner, run.owner)),
-        |(style_owner, owner)| {
+        line.runs
+            .iter()
+            .map(|run| (run.style_owner, run.owner, run.annotation.is_some())),
+        |(style_owner, owner, annotation)| {
+            if annotation {
+                let shifts = annotation_lines
+                    .get(&owner)
+                    .map(|line| baseline_shifts(document, line))
+                    .unwrap_or_default();
+                return annotation_context(document, cascade, owner, &shifts);
+            }
             let context = context_for_text(document, cascade, root, owner, base, &shifts);
             if style_owner == owner {
                 return context;
@@ -565,14 +643,29 @@ pub fn positioned_line_decorations(
         .runs
         .iter()
         .zip(bounds)
-        .map(|(run, (x0, x1))| DecorationGeometry {
-            x0: x0 + f64::from(run.offset.0),
-            x1: x1 + f64::from(run.offset.0),
-            abs_y: baseline,
-            line_top: 0.0,
-            baseline: Some(baseline + f64::from(run.offset.1)),
-            pattern_origin_x: None,
-            pattern_end_x: None,
+        .map(|(run, (x0, x1))| {
+            // A turned annotation draws no decorations and so does not
+            // extend the lines of the boxes it belongs to.
+            let (x0, x1) = if run.annotation.is_some_and(|annotation| annotation.turned) {
+                (f64::NAN, f64::NAN)
+            } else {
+                (x0, x1)
+            };
+            // An annotation's decorations sit at its own line's baseline, not
+            // at the shifted baseline of the run.
+            let baseline = run.annotation.map_or(baseline, |annotation| {
+                let shift = run.run.baseline() - annotation.line.baseline(BaselineKind::Alphabetic);
+                f64::from(origin.1) + f64::from(annotation.baseline - shift)
+            });
+            DecorationGeometry {
+                x0: x0 + f64::from(run.offset.0),
+                x1: x1 + f64::from(run.offset.0),
+                abs_y: baseline,
+                line_top: 0.0,
+                baseline: Some(baseline + f64::from(run.offset.1)),
+                pattern_origin_x: None,
+                pattern_end_x: None,
+            }
         })
         .collect();
     // Insets belong to the decorating line, before font/color run slicing.
@@ -596,6 +689,9 @@ pub fn positioned_line_decorations(
         .zip(geometries)
         .map(|(context, geometry)| {
             let mut lines = Vec::new();
+            if !geometry.x0.is_finite() {
+                return lines;
+            }
             for spec in context.iter() {
                 let Some(&(left, right)) = extents.get(&spec.origin) else {
                     continue;

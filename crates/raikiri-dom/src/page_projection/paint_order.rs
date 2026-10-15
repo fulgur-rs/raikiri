@@ -440,7 +440,7 @@ impl Document {
             }
             // Anything but an inline element or a `display: contents` one is
             // a block boundary: the walk has left the paragraph.
-            if !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+            if !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents) {
                 return None;
             }
         }
@@ -2295,7 +2295,7 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
 /// Whether an element inside a paragraph composites its fragments on the
 /// paragraph's lines as one opacity group.
 fn is_inline_opacity_group(cv: &raikiri_style::ComputedValues) -> bool {
-    cv.display == DisplayValue::Inline && paint_rules::opacity_layer(cv).is_some()
+    cv.display.is_inline_flow() && paint_rules::opacity_layer(cv).is_some()
 }
 
 #[cfg(test)]

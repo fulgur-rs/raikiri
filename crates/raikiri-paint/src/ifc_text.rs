@@ -50,6 +50,14 @@ struct RunDraw<'a> {
     /// The box the run's text belongs to: a typographic pseudo's box, or
     /// the parent element of a text node.
     paint_box: usize,
+    /// The baseline of a ruby annotation's run, which lies outside the
+    /// line's own runs; `None` for a run of the line.
+    annotation_baseline: Option<f32>,
+    /// The run's glyph axes in the paragraph's logical coordinates.
+    glyph_transform: shodo::GlyphTransform,
+    /// A ruby annotation run across the paragraph's inline axis, which draws
+    /// no emphasis marks.
+    turned: bool,
 }
 
 /// Draw the glyph runs of an ifc root.
@@ -474,6 +482,10 @@ pub(crate) fn hold_ifc_lines<'a>(
                 .or_else(|| paint.element_group(paragraph, paint_box));
             runs.push(RunDraw {
                 run,
+                glyph_transform: positioned_run.glyph_transform(),
+                turned: positioned_run
+                    .annotation
+                    .is_some_and(|annotation| annotation.turned),
                 style: cv,
                 color: css_color_to_peniko(cv.color),
                 glyphs,
@@ -481,6 +493,9 @@ pub(crate) fn hold_ifc_lines<'a>(
                 offset,
                 group,
                 paint_box,
+                annotation_baseline: positioned_run
+                    .annotation
+                    .map(|annotation| annotation.baseline),
             });
         }
         // Consecutive runs of one box paint in phases: every shadow, then
@@ -508,7 +523,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                         let coords = normalized_coords(&draw.run);
                         let glyph_transform = physical_glyph_transform(
                             &converter,
-                            draw.run.glyph_transform(),
+                            draw.glyph_transform,
                             draw.run.skew(),
                         );
                         draw_shadow(
@@ -552,11 +567,8 @@ pub(crate) fn hold_ifc_lines<'a>(
                 let owner_style = draw.style;
                 let font_size = draw.run.font_size();
                 let coords = normalized_coords(&draw.run);
-                let glyph_transform = physical_glyph_transform(
-                    &converter,
-                    draw.run.glyph_transform(),
-                    draw.run.skew(),
-                );
+                let glyph_transform =
+                    physical_glyph_transform(&converter, draw.glyph_transform, draw.run.skew());
                 let run_transform = run_transform(transform, draw);
                 let scene = paint.target(draw.group);
                 scene.draw_glyphs(
@@ -574,7 +586,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 );
                 // Emphasis marks sit over or under their characters; vertical
                 // runs need rotated placement, which is not drawn yet.
-                if !vertical {
+                if !vertical && !draw.turned {
                     crate::emphasis::draw_marks(
                         scene,
                         document,
@@ -816,7 +828,12 @@ struct ShadowRun<'a, 'b> {
 fn emphasis_origin(position: IfcPosition, block_offset: f32, draw: &RunDraw<'_>) -> (f32, f32) {
     (
         position.x + draw.offset.0,
-        position.y + position.shift_y + draw.offset.1 + block_offset + draw.run.baseline(),
+        position.y
+            + position.shift_y
+            + draw.offset.1
+            + draw
+                .annotation_baseline
+                .unwrap_or(block_offset + draw.run.baseline()),
     )
 }
 

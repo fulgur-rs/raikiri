@@ -13,7 +13,6 @@ use std::any::Any;
 use std::path::{Component, Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
-use raikiri_style::property::DisplayValue;
 
 use crate::reftest::{
     LiveWptSetup, live_wpt_stylesheets_in_subtree, parse_wpt_inner_html_fragment,
@@ -434,7 +433,11 @@ impl DocumentHost for WptDocumentHost {
             scroll_width,
             scroll_height,
             position: computed.map_or(PositionKind::Static, |c| position_kind(&c.position)),
-            is_inline: computed.is_some_and(|c| c.display == DisplayValue::Inline),
+            // An inline-level element that is blockified, as an absolutely
+            // positioned one is, generates a block box.
+            is_inline: computed.is_some_and(|c| {
+                raikiri_dom::generates_inline_box(&self.setup.uncascaded.dom, node, c)
+            }),
         }))
     }
 

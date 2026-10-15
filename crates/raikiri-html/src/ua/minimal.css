@@ -439,6 +439,28 @@ listing, plaintext, pre, xmp { font-family: monospace; white-space: pre; }
  * insert ideograph/alpha gaps inside code and preformatted text. */
 pre, code, kbd, samp, tt, listing, xmp, plaintext { text-autospace: no-autospace; }
 
+/* HTML Living Standard §15.3.4 "Phrasing content" gives ruby its display
+ * types: `ruby { display: ruby; }` and `rt { display: ruby-text; }`. The
+ * other ruby elements and the annotation text styles follow the sample HTML
+ * style sheet of CSS Ruby 1 (Appendix A): annotations are set at half size
+ * on solid lines, without wrapping or emphasis marks of their own. `rp` is
+ * not rendered (see `Node::is_non_rendered_html_element`). */
+ruby { display: ruby; }
+rb { display: ruby-base; }
+rbc { display: ruby-base-container; }
+rt { display: ruby-text; }
+rtc { display: ruby-text-container; }
+rtc, rt {
+  font-variant-east-asian: ruby;
+  text-emphasis: none;
+  white-space: nowrap;
+  line-height: 1;
+  font-size: 50%;
+}
+/* `rtc, :not(rtc) > rt { font-size: 50%; }` in CSS Ruby 1: an annotation
+ * inside a container is not halved twice. */
+rtc > rt { font-size: 100%; }
+
 /* HTML Living Standard §15.3.4 "The display property": <img> is a
  * replaced element whose UA default is `inline-block` (CSS 2.1 Appendix D
  * lists replaced elements as inline-level by default; `inline-block`

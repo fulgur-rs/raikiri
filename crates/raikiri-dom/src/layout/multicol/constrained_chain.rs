@@ -238,7 +238,10 @@ pub(super) fn layout(
             let (left, width) = match fragment {
                 shodo::Fragment::GlyphRun(run) => (run.inline_start(), run.inline_size()),
                 shodo::Fragment::InlineBox(box_) => (box_.rect.inline_start, box_.rect.inline_size),
-                _ => continue, // cov:ignore: guards exclude atomic/out-of-flow boxes; the IFC builder does not emit ruby annotations
+                // A ruby's annotations stay within the extent of its base
+                // runs and inline box, which shodo widens to hold them.
+                shodo::Fragment::RubyAnnotation(_) => continue,
+                _ => continue, // cov:ignore: guards exclude atomic/out-of-flow boxes
             };
             clip_left = clip_left.min(inline_origin + left);
             clip_right = clip_right.max(inline_origin + left + width);
