@@ -132,7 +132,7 @@ impl IndexedSource for DomRectListSource {
         Ok(self.length)
     }
 
-    // cov:ignore: every read goes through `retained_item`.
+    /// A list holds nothing besides its retained rects.
     fn item(&self, _: usize, _: &mut Context) -> JsResult<Option<JsValue>> {
         Ok(None)
     }
@@ -141,9 +141,12 @@ impl IndexedSource for DomRectListSource {
         &self,
         index: usize,
         retained: &[JsObject],
-        _: &mut Context,
+        context: &mut Context,
     ) -> JsResult<Option<JsValue>> {
-        Ok(retained.get(index).cloned().map(JsValue::from))
+        match retained.get(index) {
+            Some(rect) => Ok(Some(rect.clone().into())),
+            None => self.item(index, context),
+        }
     }
 }
 
