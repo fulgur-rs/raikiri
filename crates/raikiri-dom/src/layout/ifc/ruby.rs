@@ -154,7 +154,8 @@ struct Planner<'a> {
     depth: usize,
     segments: Vec<Segment>,
     current: Segment,
-    /// The current segment has annotations: base content starts the next one.
+    /// The current segment has annotations or a base container: base content
+    /// starts the next one.
     annotated: bool,
     /// Base-level children not yet closed into an anonymous base.
     pending: Vec<usize>,
@@ -370,6 +371,11 @@ impl Planner<'_> {
     fn push_base_container(&mut self, container: usize) -> Option<()> {
         self.close_pending();
         self.base_containers.push(container);
+        // A base container is the whole base level of its segment (CSS Ruby
+        // 1 §2.3.1): bases before it end their segment, and so does it.
+        if !self.current.bases.is_empty() {
+            self.annotated = true;
+        }
         self.start_base();
         self.pending_owner = container;
         for base in flattened_children(self.doc, self.cascade, container) {
@@ -394,6 +400,7 @@ impl Planner<'_> {
             }
         }
         self.close_pending();
+        self.annotated = true;
         Some(())
     }
 

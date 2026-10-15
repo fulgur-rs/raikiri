@@ -167,6 +167,21 @@ fn base_containers_add_their_bases() {
 }
 
 #[test]
+fn base_containers_are_segments_of_their_own() {
+    let plan = plan_of(|doc, ruby| {
+        rb(doc, ruby, "a");
+        let first = element(doc, ruby, "rbc", "display:ruby-base-container");
+        rb(doc, first, "b");
+        let second = element(doc, ruby, "rbc", "display:ruby-base-container");
+        rb(doc, second, "c");
+        let level = element(doc, ruby, "rtc", "display:ruby-text-container");
+        rt(doc, level, "x");
+        rb(doc, ruby, "d");
+    });
+    assert_eq!(plan, ["|rb(a)|", "|rb(b)|", "|rb(c)|rtc[rt(x)]", "|rb(d)|"]);
+}
+
+#[test]
 fn inline_content_nested_rubies_and_floats_stay_plain() {
     let mut container = 0;
     let mut float = 0;
