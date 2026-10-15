@@ -1,0 +1,635 @@
+//! Collection of the page candidates of a laid-out flow: the boxes and
+//! texts pagination may move to a later page, in source order.
+
+use super::{
+    BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue, FloatValue,
+    FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl, PositionValue,
+    TextLineIndex, box_parent, clears_float_side, has_bounded_clipping_ancestor,
+    has_side_by_side_ancestor, is_block_level_flow_box, is_floating_box_for_pagination,
+    is_monolithic_for_pagination, page_applies_to_box, page_break_is_forced,
+    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
+    propagated_start_page_name, selected_page_name,
+};
+
+#[derive(Clone)]
+pub(super) struct PageCandidate {
+    pub(super) node_id: usize,
+    pub(super) raw_y: f32,
+    pub(super) height: f32,
+    pub(super) is_text: bool,
+    pub(super) is_rendered_leaf: bool,
+    pub(super) is_direct_body_element: bool,
+    pub(super) is_table_row: bool,
+    pub(super) is_flex_item: bool,
+    pub(super) is_grid_item: bool,
+    pub(super) is_named: bool,
+    pub(super) is_float_descendant: bool,
+    pub(super) is_out_of_flow_descendant: bool,
+    /// Page type inherited from the nearest containing class-A box.
+    /// `None` is the anonymous page type, not an unknown value.
+    pub(super) page_name: Option<String>,
+    /// Column-flex descendants compare names within their containing flow.
+    pub(super) named_flex_context: Option<usize>,
+    /// Whether the candidate takes part in page-name transitions. Floats
+    /// and out-of-flow subtrees are parallel flows whose names are
+    /// ignored, except for a named box inside an absolutely positioned
+    /// box left at its static position, which keeps its name in the page
+    /// flow.
+    pub(super) page_name_in_flow: bool,
+    pub(super) deferred_named_break_after: bool,
+    /// For a text node of an ifc paragraph: the paragraph root and the
+    /// text's offset below the root's border-box top. The root's lines
+    /// are painted from the root, so the text moves by moving the root.
+    pub(super) ifc_root: Option<(usize, f32)>,
+}
+
+/// Whether `node_id` or an ancestor is a fixed box, or an absolutely
+/// positioned box with a non-auto block-start or block-end inset, which
+/// moves it away from its static position in the page flow. A fixed box
+/// repeats on every page, so it never joins the page flow.
+fn in_inset_out_of_flow_subtree(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut current = Some(node_id);
+    while let Some(id) = current {
+        if document.nodes[id].kind() == NodeKind::Element {
+            match cascade.computed[id].position {
+                PositionValue::Fixed => return true,
+                PositionValue::Absolute => {
+                    let inset = &document.nodes[id].style.inset;
+                    if !inset.top.is_auto() || !inset.bottom.is_auto() {
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        current = document.parent_of(id);
+    }
+    false
+}
+
+fn has_nested_named_page_descendant(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    depth: u32,
+) -> bool {
+    let mut pending: Vec<_> = document
+        .get_node(node_id)
+        .into_iter()
+        .flat_map(|node| node.children.iter().rev().copied())
+        .map(|child_id| (child_id, depth.saturating_add(1)))
+        .collect();
+    while let Some((current_id, current_depth)) = pending.pop() {
+        let node = &document.nodes[current_id];
+        let computed = &cascade.computed[current_id];
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || computed.display == DisplayValue::None
+            || matches!(
+                computed.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+            || is_floating_box_for_pagination(document, cascade, current_id)
+        {
+            continue;
+        }
+        if current_depth >= 2
+            && page_applies_to_box(document, cascade, current_id)
+            && selected_page_name(cascade, current_id).is_some()
+        {
+            return true;
+        }
+        // Names inside a monolithic box have no effect on pagination.
+        if is_monolithic_for_pagination(document, cascade, current_id) {
+            continue;
+        }
+        if let Some(node) = document.get_node(current_id) {
+            pending.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .copied()
+                    .map(|child_id| (child_id, current_depth.saturating_add(1))),
+            );
+        } // cov:ignore: document-owned child links are valid by construction.
+    }
+    false
+}
+
+/// A named box containing a hidden subtree still establishes an explicit
+/// page boundary. Keep that boundary distinct from the zero-height named
+/// runs that are otherwise coalesced at one source coordinate.
+pub(super) fn has_display_none_descendant(document: &Document, node_id: usize) -> bool {
+    let mut pending: Vec<_> = document
+        .get_node(node_id)
+        .into_iter()
+        .flat_map(|node| node.children.iter().rev().copied())
+        .collect();
+    while let Some(current_id) = pending.pop() {
+        let Some(node) = document.get_node(current_id) else {
+            continue; // cov:ignore: document-owned child links are valid by construction.
+        };
+        if node.is_display_none() {
+            return true;
+        }
+        pending.extend(node.children.iter().rev().copied());
+    }
+    false
+}
+
+/// The state a node inherits from its ancestors while its page
+/// candidates are collected.
+#[derive(Clone)]
+struct CandidateFrame {
+    /// The source-coordinate y the node's layout location is relative to:
+    /// its layout parent's border-box y, or the paragraph root's for a node
+    /// inside a paragraph laid out by the inline engine.
+    parent_abs_y: f32,
+    direct_body_child: bool,
+    parent_height: f32,
+    inherited_page_name: Option<String>,
+    inside_table: bool,
+    flex_column_parent: bool,
+    grid_single_column_parent: bool,
+    inside_flex: bool,
+    named_flex_context: Option<usize>,
+    inside_float: bool,
+    inside_out_of_flow: bool,
+}
+
+impl CandidateFrame {
+    /// The frame of the body: the root of candidate collection.
+    fn root(parent_abs_y: f32) -> Self {
+        Self {
+            parent_abs_y,
+            direct_body_child: false,
+            parent_height: 0.0,
+            inherited_page_name: None,
+            inside_table: false,
+            flex_column_parent: false,
+            grid_single_column_parent: false,
+            inside_flex: false,
+            named_flex_context: None,
+            inside_float: false,
+            inside_out_of_flow: false,
+        }
+    }
+}
+
+/// Collects the page candidates of a laid-out subtree. Page membership is
+/// decided from source coordinates before local page offsets, so the
+/// recursion carries each node's inherited state in a [`CandidateFrame`].
+pub(super) struct CandidateCollector<'a, 'c> {
+    document: &'a Document,
+    cascade: &'a CascadeResult,
+    body_id: usize,
+    page_step: f32,
+    out: &'a mut Vec<PageCandidate>,
+    text_lines: &'a mut TextLineIndex,
+    control: &'a PageLayoutControl<'c>,
+}
+
+impl<'a, 'c> CandidateCollector<'a, 'c> {
+    pub(super) fn new(
+        document: &'a Document,
+        cascade: &'a CascadeResult,
+        body_id: usize,
+        page_step: f32,
+        out: &'a mut Vec<PageCandidate>,
+        text_lines: &'a mut TextLineIndex,
+        control: &'a PageLayoutControl<'c>,
+    ) -> Self {
+        Self {
+            document,
+            cascade,
+            body_id,
+            page_step,
+            out,
+            text_lines,
+            control,
+        }
+    }
+
+    /// Collect the page candidates of the flow under the body into `out`,
+    /// in source order. `root_flow_offset` is where the body's border box
+    /// starts in the page flow.
+    pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
+        self.collect(self.body_id, CandidateFrame::root(root_flow_offset))
+    }
+
+    #[inline(never)]
+    fn collect(&mut self, node_id: usize, frame: CandidateFrame) -> Result<(), LayoutError> {
+        stacker::maybe_grow(128 * 1024, 1024 * 1024, || {
+            self.collect_inner(node_id, frame)
+        })
+    }
+
+    #[inline(never)]
+    fn collect_inner(&mut self, node_id: usize, frame: CandidateFrame) -> Result<(), LayoutError> {
+        let Self {
+            document,
+            cascade,
+            body_id,
+            page_step,
+            control,
+            ..
+        } = *self;
+        let CandidateFrame {
+            parent_abs_y,
+            direct_body_child,
+            parent_height,
+            inside_table,
+            flex_column_parent,
+            grid_single_column_parent,
+            inside_flex,
+            named_flex_context,
+            inside_float,
+            inside_out_of_flow,
+            ..
+        } = frame;
+        control.check_aborted()?;
+        let Some(node) = document.get_node(node_id) else {
+            return Ok(()); // cov:ignore: traversal IDs come from this document's valid child graph.
+        };
+        if !node.is_in_document() || node.is_non_rendered_html_element() {
+            return Ok(());
+        }
+        match node.kind() {
+            NodeKind::Text => {
+                if (direct_body_child || parent_height > 0.0)
+                    && matches!(
+                        &node.data,
+                        crate::node::NodeData::Text(text) if !text.text_content.trim().is_empty()
+                    )
+                {
+                    // A text node of an ifc paragraph has no layout of its own:
+                    // it stands for the lines it owns, measured from the root's
+                    // content box. The inline elements between the root and
+                    // the text pass the root's border-box y down unchanged, so
+                    // `parent_abs_y` is the root's. A text node that is a root
+                    // itself (an anonymous flex or grid item) has a box of its
+                    // own, located like any other.
+                    self.text_lines
+                        .prepare_for(document, node_id, || control.check_aborted())?;
+                    let (raw_y, height, ifc_root) = match self.text_lines.get(node_id) {
+                        Some(owned) if owned.root != node_id => {
+                            let root_layout = document
+                                .ifc_layout_node(owned.root)
+                                .expect("owned text lines require an IFC layout view")
+                                .unrounded_layout;
+                            let root_y = if document.is_anonymous_cell(owned.root) {
+                                root_layout.location.y
+                            } else {
+                                0.0
+                            };
+                            let positioned = positioned_owned_text_line_bounds(document, owned)
+                                .expect(
+                                    "ifc_text_lines returns Some only when root line records exist",
+                                );
+                            let first_top = positioned.first().map_or(0.0, |line| line.0);
+                            let last_bottom = positioned
+                                .iter()
+                                .map(|line| line.1)
+                                .fold(f32::NEG_INFINITY, f32::max);
+                            let offset =
+                                root_layout.border.top + root_layout.padding.top + first_top;
+                            (
+                                parent_abs_y + root_y + offset,
+                                (last_bottom - first_top).max(0.0),
+                                Some((owned.root, offset)),
+                            )
+                        }
+                        _ => (
+                            parent_abs_y + node.unrounded_layout.location.y,
+                            node.unrounded_layout.size.height.max(0.0),
+                            None,
+                        ),
+                    };
+                    self.out.push(PageCandidate {
+                        node_id,
+                        raw_y,
+                        height,
+                        is_text: true,
+                        is_rendered_leaf: false,
+                        is_direct_body_element: false,
+                        is_table_row: false,
+                        is_flex_item: false,
+                        is_grid_item: false,
+                        is_named: false,
+                        is_float_descendant: inside_float,
+                        is_out_of_flow_descendant: inside_out_of_flow,
+                        page_name: frame.inherited_page_name,
+                        named_flex_context,
+                        page_name_in_flow: !inside_float && !inside_out_of_flow,
+                        deferred_named_break_after: false,
+                        ifc_root,
+                    });
+                }
+            }
+            NodeKind::Element => {
+                if node.is_display_none() {
+                    return Ok(());
+                }
+                // An element inside a paragraph laid out by the inline engine
+                // moves with the paragraph's lines; breaking at it on its own
+                // would leave the lines where they are. Its text stands for
+                // lines of the root and the boxes inside it are located from
+                // the root, like the root's own children, so both are
+                // collected as if they were. The flag is set only when the
+                // inline engine is switched on.
+                if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
+                    let rendered_children = node.children.iter().copied().filter(|&child_id| {
+                        let kind = document.nodes[child_id].kind();
+                        matches!(kind, NodeKind::Element | NodeKind::Text) // cov:ignore: children of an inline-engine element are elements or text.
+                    });
+                    for child_id in rendered_children {
+                        self.collect(child_id, frame.clone())?;
+                    }
+                    return Ok(());
+                }
+                let raw_y = parent_abs_y + node.unrounded_layout.location.y;
+                let computed = &cascade.computed[node_id];
+                // A floated box does not establish a page transition merely
+                // because it carries an inherited/explicit `page` value.  In
+                // particular, CSS Page 3 keeps a float in the preceding
+                // fragmentainer in the page-name-float cases.
+                let is_float = is_floating_box_for_pagination(document, cascade, node_id);
+                let float_subtree = inside_float || is_float;
+                let out_of_flow_subtree = inside_out_of_flow
+                    || matches!(
+                        computed.position,
+                        PositionValue::Absolute | PositionValue::Fixed
+                    );
+                // An absolutely positioned box left at its static position
+                // still lays its in-flow descendants out where the page flow
+                // puts them, so their page names take part in pagination.
+                let inset_out_of_flow_subtree =
+                    out_of_flow_subtree && in_inset_out_of_flow_subtree(document, cascade, node_id);
+                let explicit_page_name = selected_page_name(cascade, node_id);
+                // CSS Page 3 §4.1: `page` applies to boxes that create class A
+                // break points, which are block-level. An inline-level box,
+                // such as a replaced element in a line or an inline-block,
+                // takes the page type of its containing block; it is a
+                // candidate carrying that inherited name instead.
+                let inline_level = !page_applies_to_box(document, cascade, node_id);
+                // The `page` property on an out-of-flow box does not open a
+                // normal-flow page boundary. Keep its inherited page context,
+                // but do not use its explicit name to split pagination.
+                let parent_box = box_parent(document, cascade, node_id, BoxParentScope::Document);
+                let is_direct_flex_item = parent_box.is_some_and(|parent| {
+                    document.nodes[parent].formatting_context == FormattingContext::Flex
+                });
+                let own_page_name = if !inline_level
+                    && !float_subtree
+                    && (!inside_flex || named_flex_context.is_some())
+                    && !is_direct_flex_item
+                    && !inset_out_of_flow_subtree
+                    && !matches!(
+                        computed.position,
+                        PositionValue::Absolute | PositionValue::Fixed
+                    ) {
+                    explicit_page_name.clone()
+                } else {
+                    None
+                };
+                let (has_propagated_page_name, propagated_page_name) = propagated_start_page_name(
+                    document,
+                    cascade,
+                    node_id,
+                    frame.inherited_page_name.as_deref(),
+                );
+                let is_flex = document.nodes[node_id].formatting_context == FormattingContext::Flex;
+                let column_flex = is_flex
+                    && matches!(
+                        computed.flex_direction,
+                        FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+                    );
+                let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
+                    && !column_flex
+                    && has_nested_named_page_descendant(document, cascade, node_id, 0);
+                // The items of a row flex container sit side by side rather
+                // than as class A siblings, so their names do not become the
+                // container's start page value.
+                let row_flex = is_flex && !column_flex;
+                let flex_names_stay_on_items = column_flex
+                    || (row_flex && !deferred_named_break_after)
+                    || (named_flex_context.is_some() && !deferred_named_break_after);
+                let page_name = if has_propagated_page_name && !flex_names_stay_on_items {
+                    propagated_page_name
+                } else {
+                    own_page_name.clone().or(frame.inherited_page_name.clone())
+                };
+                let child_page_name = own_page_name.clone().or(frame.inherited_page_name);
+                let is_body = node_id == body_id;
+                let participates_in_flow = matches!(
+                    computed.position,
+                    PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
+                );
+                let is_tall_direct_absolute = direct_body_child
+                    && matches!(computed.position, PositionValue::Absolute)
+                    && node.unrounded_layout.size.height > page_step;
+                let table_row_candidate = inside_table
+                    && matches!(computed.display, DisplayValue::TableRow)
+                    && !inside_float
+                    && !inside_flex;
+                let flex_item_candidate =
+                    flex_column_parent && !inside_float && !out_of_flow_subtree;
+                let grid_item_candidate =
+                    grid_single_column_parent && !inside_float && !out_of_flow_subtree;
+                // The table engine stores row geometry on its cells rather
+                // than on the anonymous row box. Derive the row border box
+                // from those direct cells so pagination can keep the row
+                // together without changing table sizing.
+                let (candidate_raw_y, candidate_height) = if table_row_candidate {
+                    let mut row_top = f32::INFINITY;
+                    let mut row_bottom = f32::NEG_INFINITY;
+                    for &child_id in &node.children {
+                        let Some(child) = document.get_node(child_id) else {
+                            continue; // cov:ignore: document-owned child links are valid by construction.
+                        };
+                        let child_top = child.unrounded_layout.location.y;
+                        row_top = row_top.min(child_top);
+                        row_bottom = row_bottom.max(child_top + child.unrounded_layout.size.height);
+                    }
+                    if row_top.is_finite() && row_bottom.is_finite() && row_bottom > row_top {
+                        (raw_y + row_top, row_bottom - row_top)
+                    } else {
+                        (raw_y, node.unrounded_layout.size.height.max(0.0))
+                    }
+                } else {
+                    (raw_y, node.unrounded_layout.size.height.max(0.0))
+                };
+                // Non-text content can establish the anonymous page before
+                // a later named descendant, even within the first flex item.
+                // Container geometry alone does not establish that context.
+                let is_rendered_leaf = named_flex_context.is_some()
+                    && computed.display != DisplayValue::Contents
+                    && !float_subtree
+                    && !out_of_flow_subtree
+                    && candidate_height > 0.0
+                    && !node.children.iter().any(|&child| {
+                        let child_node = &document.nodes[child];
+                        if child_node.is_display_none()
+                            || child_node.is_non_rendered_html_element()
+                            || matches!(
+                                cascade.computed[child].position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                            || is_floating_box_for_pagination(document, cascade, child)
+                        {
+                            return false;
+                        }
+                        match &child_node.data {
+                            crate::node::NodeData::Text(text) => {
+                                !text.text_content.trim().is_empty()
+                            }
+                            crate::node::NodeData::Element(_) => {
+                                child_node.unrounded_layout.size.height > 0.0
+                            }
+                            _ => false,
+                        }
+                    });
+                // `break-inside: avoid` applies to block-level boxes at any
+                // depth (CSS Fragmentation 3 §3.2), not only to the body's
+                // children. A nested avoiding block is a candidate so the
+                // pass can move it to the next page intact; its descendants
+                // follow it. Tables and flex containers keep their own
+                // item-level candidates.
+                let nested_avoid_candidate = participates_in_flow
+                    && !direct_body_child
+                    && !inline_level
+                    && !inside_table
+                    && !inside_flex
+                    && !out_of_flow_subtree
+                    && is_block_level_flow_box(computed.display)
+                    && matches!(
+                        computed.break_inside,
+                        raikiri_style::property::BreakInside::Avoid
+                            | raikiri_style::property::BreakInside::AvoidPage
+                    )
+                    // Grid items in other tracks do not follow a moved item
+                    // in block flow, so grid content keeps its own handling.
+                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id)
+                    // A clipping ancestor of bounded height keeps its clip
+                    // where it is, so moving the box would only hide it.
+                    && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
+                // A nested float follows an earlier float that moved in its
+                // formatting context (CSS 2.1 §9.5.1), and a nested block
+                // that clears one stays below it (§9.5.2), so both are
+                // candidates like the body's children.
+                let nested_float_candidate = (is_float
+                    || (!inline_level
+                        && is_block_level_flow_box(computed.display)
+                        && [FloatValue::Left, FloatValue::Right]
+                            .into_iter()
+                            .any(|side| clears_float_side(computed.clear, side))))
+                    && participates_in_flow
+                    && !direct_body_child
+                    && !inside_table
+                    && !inside_flex
+                    && !out_of_flow_subtree
+                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id)
+                    // A clipping ancestor of bounded height keeps its clip
+                    // where it is, so moving the box would only hide it.
+                    && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
+                let is_break_candidate = !is_body
+                    && computed.display != DisplayValue::Contents
+                    && !inside_float
+                    && ((participates_in_flow
+                        && direct_body_child
+                        && (explicit_page_name.is_none() || inline_level))
+                        || nested_avoid_candidate
+                        || nested_float_candidate
+                        || is_tall_direct_absolute
+                        || table_row_candidate
+                        || flex_item_candidate
+                        || is_rendered_leaf
+                        || grid_item_candidate
+                        || deferred_named_break_after
+                        || own_page_name.is_some()
+                        || page_break_is_forced(document, node_id, computed.break_before)
+                        || page_break_is_forced(document, node_id, computed.break_after));
+                if is_break_candidate {
+                    self.out.push(PageCandidate {
+                        node_id,
+                        raw_y: candidate_raw_y,
+                        height: candidate_height,
+                        is_text: false,
+                        is_rendered_leaf,
+                        is_direct_body_element: direct_body_child,
+                        is_table_row: table_row_candidate,
+                        is_flex_item: flex_item_candidate,
+                        is_grid_item: grid_item_candidate,
+                        is_named: own_page_name.is_some(),
+                        is_float_descendant: inside_float,
+                        is_out_of_flow_descendant: out_of_flow_subtree,
+                        page_name: page_name.clone(),
+                        named_flex_context,
+                        page_name_in_flow: !inside_float
+                            && (!out_of_flow_subtree || own_page_name.is_some()),
+                        deferred_named_break_after,
+                        ifc_root: None,
+                    });
+                }
+                // An atomic inline-level box or an orthogonal flow is
+                // monolithic: like a float, its content offers no class A
+                // break points and its page names do not open pages. A
+                // blockified flex or grid item is no longer atomic.
+                let monolithic =
+                    !is_body && is_monolithic_for_pagination(document, cascade, node_id);
+                let child_order = pagination_child_order(document, cascade, node_id);
+                for child_id in child_order {
+                    let child_parent_y =
+                        pagination_child_parent_y(document, node_id, child_id, raw_y);
+                    self.collect(
+                        child_id,
+                        CandidateFrame {
+                            parent_abs_y: child_parent_y,
+                            direct_body_child: box_parent(
+                                document,
+                                cascade,
+                                child_id,
+                                BoxParentScope::Document,
+                            ) == Some(body_id),
+                            parent_height: node.unrounded_layout.size.height.max(0.0),
+                            inherited_page_name: child_page_name.clone(),
+                            inside_table: inside_table
+                                || matches!(
+                                    computed.display,
+                                    DisplayValue::Table
+                                        | DisplayValue::InlineTable
+                                        | DisplayValue::TableRowGroup
+                                        | DisplayValue::TableHeaderGroup
+                                        | DisplayValue::TableFooterGroup
+                                        | DisplayValue::TableRow
+                                ),
+                            flex_column_parent: column_flex
+                                || (computed.display == DisplayValue::Contents
+                                    && flex_column_parent),
+                            grid_single_column_parent: document.nodes[node_id].formatting_context
+                                == FormattingContext::Grid
+                                && document.nodes[node_id].grid_column_count == 1,
+                            inside_flex: inside_flex
+                                || matches!(computed.display, DisplayValue::Flex),
+                            named_flex_context: if column_flex {
+                                Some(node_id)
+                            } else if is_flex {
+                                None
+                            } else {
+                                named_flex_context
+                            },
+                            inside_float: float_subtree || monolithic,
+                            inside_out_of_flow: out_of_flow_subtree,
+                        },
+                    )?;
+                }
+            }
+            _ => {} // cov:ignore: non-rendered node kinds are filtered by the document invariant.
+        }
+        Ok(())
+    }
+}
