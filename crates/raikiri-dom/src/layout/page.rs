@@ -615,8 +615,8 @@ pub fn page_margins_for_page(
 }
 
 /// Resolve the first page-context scan's child order from cascaded styles.
-/// This runs before the first Taffy layout, so it can use order-modified source
-/// order for flex items and grid items with auto row start/end and column
+/// This runs before the first Taffy layout, so it can use table section order,
+/// order-modified source order for flex items, and grid items with auto row start/end and column
 /// placement at auto or line 1, but not Taffy's resolved grid row details.
 fn initial_page_child_order(
     document: &Document,
@@ -628,6 +628,12 @@ fn initial_page_child_order(
     let is_flex = parent_style.display.is_flex_container();
     if is_flex {
         return flex_pagination_child_order(document, cascade, parent_id);
+    }
+    if matches!(
+        parent_style.display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        return table_pagination_child_order(document, cascade, parent_id);
     }
     let is_auto_row_grid = parent_style.display.is_grid_container()
         && children
@@ -1221,6 +1227,12 @@ pub(crate) fn pagination_child_order(
     if computed.display.is_flex_container() {
         return flex_pagination_child_order(document, cascade, parent_id);
     }
+    if matches!(
+        computed.display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        return table_pagination_child_order(document, cascade, parent_id);
+    }
     let is_single_column_grid =
         computed.display.is_grid_container() && document.nodes[parent_id].grid_column_count == 1;
     if !is_single_column_grid {
@@ -1256,6 +1268,82 @@ pub(crate) fn pagination_child_order(
             }
         }
     }
+    children
+}
+
+/// A table's children in the order the table lays them out: a caption above
+/// the grid, the first header group, the other groups and rows in source
+/// order, the first footer group, then a caption below the grid (CSS 2.1
+/// §17.4 and §17.5). Other captions, columns and column groups are left out.
+fn table_pagination_child_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    table: usize,
+) -> Vec<usize> {
+    // Table layout lays out the children of `display: contents` wrappers as
+    // the table's own children before it picks the header and footer.
+    let mut pending: Vec<_> = document.nodes[table]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut children = Vec::new();
+    while let Some(child) = pending.pop() {
+        let node = &document.nodes[child];
+        // Table layout drops these without a box, as it does for any
+        // non-rendered element whatever its `display`.
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || node.display == DisplayValue::None
+            || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
+        {
+            continue;
+        }
+        if cascade.computed[child].display == DisplayValue::Contents {
+            pending.extend(node.children.iter().rev().copied());
+        } else {
+            children.push(child);
+        }
+    }
+    let first = |display: DisplayValue| {
+        children
+            .iter()
+            .copied()
+            .find(|&id| cascade.computed[id].display == display)
+    };
+    let header = first(DisplayValue::TableHeaderGroup);
+    let footer = first(DisplayValue::TableFooterGroup);
+    // Table layout renders only the first caption among the table's own
+    // children, so other captions, including ones inside `display: contents`
+    // wrappers, have no box to paginate or to take a page name from.
+    let caption = document.nodes[table]
+        .children
+        .iter()
+        .copied()
+        .find(|&id| cascade.computed[id].display == DisplayValue::TableCaption);
+    // Columns and column groups only size the grid and generate no box.
+    children.retain(|&id| match cascade.computed[id].display {
+        DisplayValue::TableCaption => Some(id) == caption,
+        DisplayValue::TableColumn | DisplayValue::TableColumnGroup => false,
+        _ => true,
+    });
+    children.sort_by_key(|&id| {
+        let computed = &cascade.computed[id];
+        if computed.display == DisplayValue::TableCaption {
+            if computed.caption_side == raikiri_style::property::CaptionSideValue::Top {
+                0u8
+            } else {
+                4
+            }
+        } else if Some(id) == header {
+            1
+        } else if Some(id) == footer {
+            3
+        } else {
+            2
+        }
+    });
     children
 }
 
