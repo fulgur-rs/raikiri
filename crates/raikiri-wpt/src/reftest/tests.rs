@@ -2359,7 +2359,7 @@ fn ignored_page_size_does_not_rescale_later_viewport_size() {
 #[test]
 fn page_context_unit_expansion_preserves_other_css_tokens() {
     let source = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:50vw 50vh!important; width:100vw; content:'size:50vw'; @top-left{size:50vw}}}.box{size:50vw;width:100vw}"#;
-    let expected = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:240.000015px 144.000000px!important; width:480.000031px; content:'size:50vw'; @top-left{size:240.000015px}}}.box{size:50vw;width:100vw}"#;
+    let expected = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:240.000000px 144.000000px!important; width:480.000000px; content:'size:50vw'; @top-left{size:240.000000px}}}.box{size:50vw;width:100vw}"#;
     assert_eq!(resolve_page_context_viewport_units(source), expected);
     let deep = format!(
         "{}@page{{size:50vw}}{}",
