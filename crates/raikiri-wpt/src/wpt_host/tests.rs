@@ -261,6 +261,69 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
     assert_eq!(host.box_geometry(hidden).unwrap(), None);
 }
 
+/// Elements layout never renders, such as HTML `script`, elements HTML's
+/// `hidden` rendering rules hide, and SVG `defs` and `title` with their
+/// descendants, are not being rendered even though no stylesheet gives them
+/// `display: none`.
+#[test]
+fn non_rendered_html_elements_are_not_being_rendered() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=shown>x</div><script id=code tabindex=0></script>\
+         <svg><rect id=drawn width=5 height=5 /><defs><rect id=template tabindex=0 /></defs>\
+         <title id=label>t</title></svg><button id=gone hidden></button>\
+         <div id=found hidden=UNTIL-FOUND>y</div><input id=field type=HIDDEN tabindex=0>\
+         <embed id=plugin hidden>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let shown = find_by_id(host.document(), "shown");
+    let code = find_by_id(host.document(), "code");
+    let [drawn, template, label, gone, found, field, plugin] = [
+        "drawn", "template", "label", "gone", "found", "field", "plugin",
+    ]
+    .map(|id| find_by_id(host.document(), id));
+    host.flush().unwrap();
+    assert!(host.is_being_rendered(shown).unwrap());
+    assert!(!host.is_being_rendered(code).unwrap());
+    assert!(host.is_being_rendered(drawn).unwrap());
+    assert!(!host.is_being_rendered(template).unwrap());
+    assert!(!host.is_being_rendered(label).unwrap());
+    assert!(!host.is_being_rendered(gone).unwrap());
+    assert!(host.is_being_rendered(found).unwrap());
+    assert!(!host.is_being_rendered(field).unwrap());
+    assert!(host.is_being_rendered(plugin).unwrap());
+}
+
+/// Visibility is the element's own computed value, so a visible descendant
+/// of a hidden element is visible again.
+#[test]
+fn visibility_reads_the_computed_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=shown>x</div><div id=veiled style='visibility:hidden'>\
+         <span id=restored style='visibility:visible'>y</span></div>\
+         <div id=folded style='visibility:collapse'></div>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let [shown, veiled, restored, folded] =
+        ["shown", "veiled", "restored", "folded"].map(|id| find_by_id(host.document(), id));
+    host.flush().unwrap();
+    assert!(host.is_visible(shown).unwrap());
+    assert!(!host.is_visible(veiled).unwrap());
+    assert!(host.is_visible(restored).unwrap());
+    assert!(!host.is_visible(folded).unwrap());
+}
+
 /// CSSOM View metrics over a real layout, checked against CSS 2.1 box-model
 /// arithmetic:
 ///
@@ -1111,4 +1174,20 @@ fn flush_resolves_against_a_base_element_added_after_the_parse() {
         .unwrap();
     host.flush().unwrap();
     assert_eq!(host.setup.document_base_url, Some(page));
+}
+
+#[test]
+fn an_overflowing_scroll_container_takes_focus() {
+    let (_dir, mut rt) = runtime(
+        "<div id=scroller style='overflow:auto;height:50px'><div style='height:200px'></div></div>\
+         <div id=clipped style='overflow:hidden;height:50px'><div style='height:200px'></div></div>\
+         <div id=short style='overflow:scroll;height:50px'></div>",
+    );
+    let focused = text(
+        &mut rt,
+        "['clipped', 'short', 'scroller'].map(function (id) {\
+           document.getElementById(id).focus(); return document.activeElement.id;\
+         }).join()",
+    );
+    assert_eq!(focused, ",,scroller");
 }

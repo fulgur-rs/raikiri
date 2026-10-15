@@ -13,7 +13,8 @@ use raikiri_dom::NodeKind;
 use super::webidl::{dom_string, with_state};
 
 pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
-const SVG_NS: &str = "http://www.w3.org/2000/svg";
+pub(crate) const SVG_NS: &str = "http://www.w3.org/2000/svg";
+pub(crate) const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 
 /// Native data of every node wrapper. The index is never exposed to scripts.
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -44,7 +45,9 @@ pub(crate) struct Protos {
     pub html_canvas_element: JsObject,
     pub html_image_element: JsObject,
     pub html_style_element: JsObject,
+    pub svg_element: JsObject,
     pub svg_style_element: JsObject,
+    pub mathml_element: JsObject,
     pub canvas_rendering_context_2d: JsObject,
     pub character_data: JsObject,
     pub text: JsObject,
@@ -67,6 +70,8 @@ pub(crate) struct Protos {
     pub event: JsObject,
     pub custom_event: JsObject,
     pub error_event: JsObject,
+    pub ui_event: JsObject,
+    pub focus_event: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -381,6 +386,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &query::NON_ELEMENT_PARENT_NODE_MEMBERS,
         &query::PARENT_NODE_QUERY_MEMBERS,
         &query::DOCUMENT_QUERY_MEMBERS,
+        &super::focus::DOCUMENT_FOCUS_MEMBERS,
+        &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
     ];
     let document = derived(context, "Document", &node_i, &document_members)?;
     let fragment_members = [
@@ -394,6 +401,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &query::HTML_ELEMENT_QUERY_MEMBERS,
         &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
         &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
+        &super::focus::HTML_ELEMENT_FOCUS_MEMBERS,
     ];
     let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
     let canvas_members = [&canvas::HTML_CANVAS_ELEMENT_MEMBERS];
@@ -409,9 +417,23 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &html_element,
         &style_element_members,
     )?;
-    // SVG 2 `SVGStyleElement` also includes `LinkStyle`; there is no
-    // `SVGElement` interface here, so it derives from `Element`.
-    let svg_style_element = derived(context, "SVGStyleElement", &element, &style_element_members)?;
+    // `SVGElement` and `MathMLElement` carry the event handler and focus
+    // members they share with `HTMLElement` (`GlobalEventHandlers`,
+    // `HTMLOrSVGOrMathMLElement`).
+    let shared_element_members = [
+        &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
+        &super::focus::HTML_ELEMENT_FOCUS_MEMBERS,
+    ];
+    let svg_element = derived(context, "SVGElement", &element, &shared_element_members)?;
+    let mathml_element = derived(context, "MathMLElement", &element, &shared_element_members)?;
+    // SVG 2 `SVGStyleElement` also includes `LinkStyle`.
+    let svg_style_result = derived(
+        context,
+        "SVGStyleElement",
+        &svg_element,
+        &style_element_members,
+    );
+    let svg_style_element = svg_style_result?;
     let canvas_2d_members = [&canvas::CANVAS_RENDERING_CONTEXT_2D_MEMBERS];
     let canvas_2d_result = interface(
         context,
@@ -473,6 +495,26 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         1,
     );
     let error_event = error_event_result?;
+    let ui_event_result = interface(
+        context,
+        "UIEvent",
+        Some(&event.prototype),
+        Some(&event.constructor),
+        &[&dispatch::UI_EVENT_MEMBERS],
+        dispatch::ui_event_constructor,
+        1,
+    );
+    let ui_event = ui_event_result?;
+    let focus_event_result = interface(
+        context,
+        "FocusEvent",
+        Some(&ui_event.prototype),
+        Some(&ui_event.constructor),
+        &[&dispatch::FOCUS_EVENT_MEMBERS],
+        dispatch::focus_event_constructor,
+        1,
+    );
+    let focus_event = focus_event_result?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function with a real
     // constructor operation.
@@ -623,7 +665,9 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         html_canvas_element: html_canvas_element.prototype,
         html_image_element: html_image_element.prototype,
         html_style_element: html_style_element.prototype,
+        svg_element: svg_element.prototype,
         svg_style_element: svg_style_element.prototype,
+        mathml_element: mathml_element.prototype,
         canvas_rendering_context_2d: canvas_2d.prototype,
         character_data: character_data.prototype,
         text: text.prototype,
@@ -646,6 +690,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         event: event.prototype,
         custom_event: custom_event.prototype,
         error_event: error_event.prototype,
+        ui_event: ui_event.prototype,
+        focus_event: focus_event.prototype,
     });
 
     let global = context.global_object();
@@ -691,7 +737,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html, canvas, image, style, svg_style) = with_state(context, |s| {
+    let (kind, html, svg, mathml, canvas, image, style, svg_style) = with_state(context, |s| {
         let doc = s.host.document();
         let node = doc.get_node(index);
         let kind = node.map(|n| n.kind());
@@ -700,8 +746,19 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         let canvas = doc.is_canvas_element(index);
         let image = super::image::is_html_image(doc, index);
         let is_style = node.and_then(|n| n.tag_name()) == Some("style");
-        let svg_style = is_style && namespace == Some(SVG_NS);
-        (kind, html, canvas, image, html && is_style, svg_style)
+        let svg = namespace == Some(SVG_NS);
+        let svg_style = is_style && svg;
+        let mathml = namespace == Some(MATHML_NS);
+        (
+            kind,
+            html,
+            svg,
+            mathml,
+            canvas,
+            image,
+            html && is_style,
+            svg_style,
+        )
     })?;
     let p = protos(context);
     Ok(match kind {
@@ -710,6 +767,8 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         Some(NodeKind::Element) if style => p.html_style_element.clone(),
         Some(NodeKind::Element) if svg_style => p.svg_style_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),
+        Some(NodeKind::Element) if svg => p.svg_element.clone(),
+        Some(NodeKind::Element) if mathml => p.mathml_element.clone(),
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),
         Some(NodeKind::Comment) => p.comment.clone(),

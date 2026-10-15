@@ -441,6 +441,48 @@ impl DocumentHost for WptDocumentHost {
         }))
     }
 
+    /// Being rendered here means no inclusive ancestor computes to
+    /// `display: none`, is an HTML element layout never renders, such as
+    /// `script`, whatever its computed display, is hidden by HTML's
+    /// rendering rules for `hidden` (which the bundled UA stylesheet does
+    /// not carry), or is an SVG never-rendered element such as `defs`. A
+    /// box placed off every page still counts, which the page-scene
+    /// geometry behind [`Self::box_geometry`] cannot tell apart.
+    fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
+        let Some(styles) = self.computed_styles.as_ref() else {
+            // cov:ignore: the runtime flushes before asking.
+            return Err(HostError("rendering read before flush".into()));
+        };
+        let document = &self.setup.uncascaded.dom;
+        let mut current = Some(node);
+        while let Some(index) = current {
+            let hidden = styles
+                .get(index)
+                .is_some_and(|style| style.display == raikiri_style::DisplayValue::None);
+            if hidden
+                || document
+                    .get_node(index)
+                    .is_some_and(|node| node.is_non_rendered_html_element())
+                || is_never_rendered_svg_element(document, index)
+                || is_hidden_html_element(document, index)
+            {
+                return Ok(false);
+            }
+            current = document.parent_of(index);
+        }
+        Ok(true)
+    }
+
+    fn is_visible(&mut self, node: usize) -> Result<bool, HostError> {
+        let Some(styles) = self.computed_styles.as_ref() else {
+            // cov:ignore: the runtime flushes before asking.
+            return Err(HostError("rendering read before flush".into()));
+        };
+        Ok(styles
+            .get(node)
+            .is_none_or(|style| style.visibility == raikiri_style::property::Visibility::Visible))
+    }
+
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         let Some(property) = raikiri_style::ComputedProperty::from_name(property) else {
             return Ok(None);
@@ -588,6 +630,52 @@ fn compute_scroll_content_extents(
 /// (`position: running(...)`, taken out of the flow into a page margin box),
 /// and any value this crate does not know yet (the enum is
 /// `#[non_exhaustive]`) all read as `static`.
+/// Whether `index` is one of SVG's never-rendered elements, which with
+/// their descendants are not rendered even when no style hides them.
+///
+/// Spec: <https://svgwg.org/svg2-draft/render.html#TermNeverRenderedElement>
+fn is_never_rendered_svg_element(document: &raikiri_dom::Document, index: usize) -> bool {
+    document.element_namespace_uri(index) == Some("http://www.w3.org/2000/svg")
+        && document
+            .get_node(index)
+            .and_then(|node| node.tag_name())
+            .is_some_and(|tag| {
+                matches!(
+                    tag,
+                    "clipPath"
+                        | "defs"
+                        | "desc"
+                        | "linearGradient"
+                        | "marker"
+                        | "mask"
+                        | "metadata"
+                        | "pattern"
+                        | "radialGradient"
+                        | "script"
+                        | "style"
+                        | "symbol"
+                        | "title"
+                )
+            })
+}
+
+/// Whether `index` is an HTML element the HTML rendering rules hide: one
+/// with a `hidden` attribute not in the until-found state (except `embed`),
+/// or an `input` in the Hidden state.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>
+fn is_hidden_html_element(document: &raikiri_dom::Document, index: usize) -> bool {
+    if document.element_namespace_uri(index) != Some("http://www.w3.org/1999/xhtml") {
+        return false;
+    }
+    let tag = document.get_node(index).and_then(|node| node.tag_name());
+    let attr = |name| document.element_attribute(index, name);
+    let hidden = attr("hidden").is_some_and(|value| !value.eq_ignore_ascii_case("until-found"));
+    (hidden && tag != Some("embed"))
+        || (tag == Some("input")
+            && attr("type").is_some_and(|ty| ty.eq_ignore_ascii_case("hidden")))
+}
+
 fn position_kind(value: &raikiri_style::property::PositionValue) -> PositionKind {
     use raikiri_style::property::PositionValue as P;
     match value {

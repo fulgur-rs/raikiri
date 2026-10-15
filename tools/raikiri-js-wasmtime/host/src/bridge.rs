@@ -83,6 +83,10 @@ impl Bridge {
                 .map_err(|e| e.to_string()),
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::LoadImage(url) => self.load_image(&url),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::Visible(n) => self.is_visible(n),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::Rendered(n) => self.is_being_rendered(n),
         }
     }
     // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
@@ -90,6 +94,26 @@ impl Bridge {
         self.host
             .load_image(url)
             .map(|()| HostValue::Unit)
+            .map_err(|e| e.to_string())
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+    fn is_being_rendered(&mut self, node: usize) -> Result<HostValue, String> {
+        if node >= self.host.document().node_count() {
+            return Err("rendered node bounds".into());
+        }
+        self.host
+            .is_being_rendered(node)
+            .map(HostValue::Flag)
+            .map_err(|e| e.to_string())
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+    fn is_visible(&mut self, node: usize) -> Result<HostValue, String> {
+        if node >= self.host.document().node_count() {
+            return Err("visible node bounds".into());
+        }
+        self.host
+            .is_visible(node)
+            .map(HostValue::Flag)
             .map_err(|e| e.to_string())
     }
     pub fn take_response(&mut self, capacity: usize) -> Result<Vec<u8>, String> {

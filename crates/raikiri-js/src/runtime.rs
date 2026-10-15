@@ -19,6 +19,7 @@ pub(crate) mod dispatch;
 pub(crate) mod document;
 pub(crate) mod event_loop;
 pub(crate) mod events;
+pub(crate) mod focus;
 pub(crate) mod geometry;
 pub mod host;
 pub(crate) mod image;

@@ -18,6 +18,8 @@ pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
     let images = with_state(context, |s| {
         s.dirty = true;
         s.generation = s.generation.wrapping_add(1);
+        // A focused element that left the document loses focus for good.
+        s.host.document_mut().fix_up_focus();
         !s.inert_images.is_empty() || !s.active_images.is_empty()
     })?;
     // Every tree mutation marks the document dirty, so this is where an

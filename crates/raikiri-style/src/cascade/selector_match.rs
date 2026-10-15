@@ -523,6 +523,18 @@ pub(crate) fn compound_matches<D: StyleDom, E: StyleElement>(
             Component::NonTSPseudoClass(pseudo) => match pseudo {
                 crate::PseudoClass::Link | crate::PseudoClass::AnyLink => elem.is_link(),
                 crate::PseudoClass::Visited => false,
+                crate::PseudoClass::Focus => dom.focused_element() == Some(elem_id),
+                crate::PseudoClass::FocusVisible => dom.focus_visible_element() == Some(elem_id),
+                crate::PseudoClass::FocusWithin => {
+                    let mut current = dom.focused_element();
+                    while let Some(id) = current {
+                        if id == elem_id {
+                            break;
+                        }
+                        current = dom.parent_id(id);
+                    }
+                    current.is_some()
+                }
                 // Both resolve an inherited property of the element, memoized
                 // per element for the lifetime of `ctx.caches`.
                 crate::PseudoClass::Lang(ranges) => lang_pseudo_matches(

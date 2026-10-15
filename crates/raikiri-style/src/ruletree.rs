@@ -3189,7 +3189,10 @@ fn is_supported_selector_with_relative_anchor(
                 | PseudoClass::Dir(_)
                 | PseudoClass::Link
                 | PseudoClass::AnyLink
-                | PseudoClass::Visited,
+                | PseudoClass::Visited
+                | PseudoClass::Focus
+                | PseudoClass::FocusWithin
+                | PseudoClass::FocusVisible,
             ) => true,
             Component::Combinator(Combinator::PseudoElement) => allow_nth,
             Component::PseudoElement(
