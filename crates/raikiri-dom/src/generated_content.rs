@@ -580,6 +580,20 @@ pub fn format_counters_component<C: CounterSnapshotLookup + ?Sized>(
     }
 }
 
+/// The `quotes: auto` fallback glyph for one nesting depth: open quotes
+/// use outer marks at depth zero and inner marks below, and likewise for
+/// close quotes. Shared by normal content and list markers so the two stay
+/// in agreement.
+fn fallback_quote(depth: usize, open: bool) -> &'static str {
+    if open {
+        if depth == 0 { "“" } else { "‘" }
+    } else if depth == 0 {
+        "”"
+    } else {
+        "’"
+    }
+}
+
 /// The text of a `content` value: literals, attributes of `node_id`,
 /// counters and quotes; other components (images) contribute nothing.
 /// `None` for an empty value.
@@ -672,10 +686,7 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
                     if let Some((open, _)) = quotes.get(depth) {
                         text.push_str(open.as_ref());
                     } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(match depth {
-                            0 => "“",
-                            _ => "‘",
-                        });
+                        text.push_str(fallback_quote(depth, true));
                     }
                     depth = depth.saturating_add(1);
                 }
@@ -684,10 +695,7 @@ fn content_components_visit<T: AsRef<str>, C: CounterSnapshotLookup + ?Sized>(
                     if let Some((_, close)) = quotes.get(depth) {
                         text.push_str(close.as_ref());
                     } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(match depth {
-                            0 => "”",
-                            _ => "’",
-                        });
+                        text.push_str(fallback_quote(depth, false));
                     }
                 }
                 QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),
