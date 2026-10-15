@@ -6412,30 +6412,83 @@ fn a_page_along_the_x_axis_paints_only_the_lines_it_holds() {
 }
 
 #[test]
+fn a_page_along_the_x_axis_repeats_the_lines_of_fixed_boxes() {
+    // A fixed box repeats on every page, so its line paints on the second
+    // page too, even from the page's margin where no flow line belongs.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='position:fixed;top:0;left:-15px;font:10px/10px Ahem;color:green;width:10px;height:10px'>a</div>\
+         <div style='width:60px;height:10px'></div>\
+         <div style='width:60px;height:10px'></div></body></html>",
+        square_page(100.0),
+        1,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(10, 5), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_leaves_anonymous_cell_borders_beside_its_page_area_out() {
+    // A sideways table straddles the page's left margin. The anonymous
+    // cell around its text lies wholly in the margin, beside the page area,
+    // so the row's red border it carries stays off the page.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:40px;height:10px'></div>\
+         <div style='writing-mode:horizontal-tb;display:table;border-collapse:collapse;\
+         font:10px/10px Ahem;color:green'><div style='display:table-row;border:4px solid red'>a\
+         <div style='display:table-cell;width:20px;height:10px'></div></div></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(5, 5), &[255, 255, 255, 255]);
+}
+
+fn flow_band(right_to_left: bool, root_transform: Affine) -> super::FlowBand {
+    super::FlowBand {
+        left: 20.0,
+        right: 80.0,
+        right_to_left,
+        root_transform,
+    }
+}
+
+#[test]
 fn flow_band_membership_handles_empty_and_unbounded_boxes() {
-    let band = (20.0, 80.0);
+    let band = flow_band(true, Affine::IDENTITY);
     // An empty box belongs to the page whose page area holds it, edges
     // included.
-    assert!(super::box_intersects_flow_band(
-        Affine::IDENTITY,
-        (20.0, 0.0, 0.0, 10.0),
-        band
-    ));
-    assert!(!super::box_intersects_flow_band(
-        Affine::IDENTITY,
-        (10.0, 0.0, 0.0, 10.0),
-        band
-    ));
+    assert!(band.holds_box(Affine::IDENTITY, (20.0, 0.0, 0.0, 10.0)));
+    assert!(!band.holds_box(Affine::IDENTITY, (10.0, 0.0, 0.0, 10.0)));
     // A box without finite edges belongs to no page.
-    assert!(!super::box_intersects_flow_band(
-        Affine::IDENTITY,
-        (f32::INFINITY, 0.0, 10.0, 10.0),
-        band
-    ));
+    assert!(!band.holds_box(Affine::IDENTITY, (f32::INFINITY, 0.0, 10.0, 10.0)));
     // A box that ends at the page area's edge belongs to the page beside it.
-    assert!(!super::box_intersects_flow_band(
-        Affine::IDENTITY,
-        (-40.0, 0.0, 60.0, 10.0),
-        band
-    ));
+    assert!(!band.holds_box(Affine::IDENTITY, (-40.0, 0.0, 60.0, 10.0)));
+}
+
+#[test]
+fn flow_band_membership_applies_the_root_transform() {
+    // The root element's transform moves its boxes and lines onto the page.
+    let band = flow_band(true, Affine::translate((50.0, 0.0)));
+    assert!(band.holds_box(Affine::IDENTITY, (-20.0, 0.0, 10.0, 10.0)));
+    assert!(!band.holds_box(Affine::IDENTITY, (40.0, 0.0, 10.0, 10.0)));
+    assert!(band.holds_line_center(Affine::IDENTITY, kurbo::Point::new(-20.0, 5.0)));
+    assert!(!band.holds_line_center(Affine::IDENTITY, kurbo::Point::new(40.0, 5.0)));
+    assert!(!band.holds_line_center(Affine::IDENTITY, kurbo::Point::new(f64::NAN, 5.0)));
+}
+
+#[test]
+fn a_line_centered_on_a_page_boundary_belongs_to_the_page_starting_there() {
+    // Right to left, a page starts at its right edge and ends at its left
+    // edge, so it holds the line centered on its right edge only.
+    let rl = flow_band(true, Affine::IDENTITY);
+    assert!(rl.holds_line_center(Affine::IDENTITY, kurbo::Point::new(80.0, 5.0)));
+    assert!(!rl.holds_line_center(Affine::IDENTITY, kurbo::Point::new(20.0, 5.0)));
+    // Left to right, a page starts at its left edge.
+    let lr = flow_band(false, Affine::IDENTITY);
+    assert!(lr.holds_line_center(Affine::IDENTITY, kurbo::Point::new(20.0, 5.0)));
+    assert!(!lr.holds_line_center(Affine::IDENTITY, kurbo::Point::new(80.0, 5.0)));
 }

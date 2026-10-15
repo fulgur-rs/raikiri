@@ -81,7 +81,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     warnings: &mut Vec<raikiri_traits::RenderWarning>,
     page_box: raikiri_traits::PageBox,
-    flow_band: Option<(f32, f32)>,
+    flow_band: Option<crate::walk::FlowBand>,
     paint_transform: Affine,
 ) {
     if let Some(lines) = hold_ifc_lines(
@@ -208,7 +208,7 @@ pub(crate) fn hold_ifc_lines<'a>(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     warnings: &mut Vec<raikiri_traits::RenderWarning>,
     page_box: raikiri_traits::PageBox,
-    flow_band: Option<(f32, f32)>,
+    flow_band: Option<crate::walk::FlowBand>,
     paint_transform: Affine,
 ) -> Option<HeldLines<'a>> {
     let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
@@ -662,14 +662,13 @@ pub(crate) fn draw_ifc_lines(
     );
 }
 
-/// Whether a page that follows the x axis, with its page area from `band.0`
-/// to `band.1` along x in page coordinates, owns `line`: the page holding the
-/// line's center along x, as layout assigns lines to these pages.
+/// Whether the page of `band` owns `line`, by the line's center, as layout
+/// assigns lines to the pages that follow the x axis.
 fn line_on_flow_band(
     line: &raikiri_dom::PositionedLine<'_>,
     position: IfcPosition,
     paint_transform: Affine,
-    band: (f32, f32),
+    band: crate::walk::FlowBand,
 ) -> bool {
     let rect = line.converter.rect(shodo::geometry::LogicalRect {
         inline_start: 0.0,
@@ -677,12 +676,13 @@ fn line_on_flow_band(
         inline_size: line.line.inline_size(),
         block_size: line.line.block_size(),
     });
-    let center = paint_transform
-        * kurbo::Point::new(
+    band.holds_line_center(
+        paint_transform,
+        kurbo::Point::new(
             f64::from(position.x + rect.x + rect.width / 2.0),
             f64::from(position.y + position.shift_y + rect.y + rect.height / 2.0),
-        );
-    center.x >= f64::from(band.0) && center.x < f64::from(band.1)
+        ),
+    )
 }
 
 fn physical_glyph_transform(

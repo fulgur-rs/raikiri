@@ -1794,28 +1794,64 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
 /// rounding, stays on the page beside it.
 const FLOW_BAND_TOLERANCE: f64 = 0.01;
 
-/// Whether the rectangle at `x, y` of `width` and `height`, painted under
-/// `transform`, reaches across the page area from `band.0` to `band.1` along
-/// x, in page coordinates.
-fn box_intersects_flow_band(
-    transform: Affine,
-    (x, y, width, height): (f32, f32, f32, f32),
-    band: (f32, f32),
-) -> bool {
-    let rect = transform.transform_rect_bbox(Rect::new(
-        f64::from(x),
-        f64::from(y),
-        f64::from(x + width),
-        f64::from(y + height),
-    ));
-    let (left, right) = (f64::from(band.0), f64::from(band.1));
-    if !rect.x0.is_finite() || !rect.x1.is_finite() {
-        return false;
+/// How far toward its start a page's slice of the flow reaches to own a
+/// line, as layout assigns lines to pages.
+const LINE_OWNERSHIP_BIAS: f64 = 0.001;
+
+/// The page area of a page that follows the x axis, from `left` to `right`
+/// in page coordinates: the page holds the boxes that reach across it and
+/// the lines whose center lies in it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FlowBand {
+    pub(crate) left: f32,
+    pub(crate) right: f32,
+    /// The flow, and so its pages, run from right to left.
+    pub(crate) right_to_left: bool,
+    /// The root element's transform, which maps the walker's coordinates to
+    /// page coordinates.
+    pub(crate) root_transform: Affine,
+}
+
+impl FlowBand {
+    /// Whether the rectangle at `x, y` of `width` and `height`, painted
+    /// under `transform` inside the root element, reaches across the band.
+    pub(crate) fn holds_box(
+        self,
+        transform: Affine,
+        (x, y, width, height): (f32, f32, f32, f32),
+    ) -> bool {
+        let rect = (self.root_transform * transform).transform_rect_bbox(Rect::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(x + width),
+            f64::from(y + height),
+        ));
+        let (left, right) = (f64::from(self.left), f64::from(self.right));
+        if !rect.x0.is_finite() || !rect.x1.is_finite() {
+            return false;
+        }
+        if rect.width() <= 0.0 {
+            return rect.x0 >= left && rect.x0 <= right;
+        }
+        rect.x0 < right - FLOW_BAND_TOLERANCE && rect.x1 > left + FLOW_BAND_TOLERANCE
     }
-    if rect.width() <= 0.0 {
-        return rect.x0 >= left && rect.x0 <= right;
+
+    /// Whether the page owns a line whose center, painted under `transform`
+    /// inside the root element, lies at `center`: the page whose slice of
+    /// the flow holds the center, a center on the edge between two pages
+    /// going to the page whose slice starts there.
+    pub(crate) fn holds_line_center(self, transform: Affine, center: kurbo::Point) -> bool {
+        let x = (self.root_transform * transform * center).x;
+        let (left, right) = (f64::from(self.left), f64::from(self.right));
+        if !x.is_finite() {
+            return false;
+        }
+        if self.right_to_left {
+            x > left + LINE_OWNERSHIP_BIAS && x <= right + LINE_OWNERSHIP_BIAS
+        } else {
+            x >= left - LINE_OWNERSHIP_BIAS && x < right - LINE_OWNERSHIP_BIAS
+        }
     }
-    rect.x0 < right - FLOW_BAND_TOLERANCE && rect.x1 > left + FLOW_BAND_TOLERANCE
 }
 
 /// Walk the Document arena iteratively in DFS order, starting from body.
@@ -2230,9 +2266,14 @@ pub(crate) fn paint_document_impl(
     // A page that follows the x axis holds the boxes and lines that lie
     // across its page area, as pages along y hold those across their page
     // height; nothing else of the flow beside it is painted.
-    let flow_band = pages_follow_x_axis.map(|_| {
+    let flow_band = pages_follow_x_axis.map(|right_to_left| {
         let left = margins.left + insets.left;
-        (left, left + content_width)
+        FlowBand {
+            left,
+            right: left + content_width,
+            right_to_left,
+            root_transform,
+        }
     });
     let mut capture_scene = crate::capture::CaptureScene::new(scene);
     let mut transformed_scene = crate::transform::TransformScene {
@@ -2441,7 +2482,20 @@ pub(crate) fn paint_document_impl(
                     scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 let owner = document.ifc_source_owner(key);
+                let cell_on_band = inside_fixed
+                    || flow_band.is_none_or(|band| {
+                        band.holds_box(
+                            scene.transform,
+                            (
+                                x + page_offset_x + transform_x,
+                                y + page_offset_y + transform_y,
+                                layout.size.width,
+                                layout.size.height,
+                            ),
+                        )
+                    });
                 if cascade.computed[owner].visibility != Visibility::Hidden
+                    && cell_on_band
                     && let Some(border) = cell.collapsed_border()
                 {
                     paint_element_border(
@@ -2481,7 +2535,7 @@ pub(crate) fn paint_document_impl(
                     pixel_source,
                     warnings,
                     page_box,
-                    flow_band,
+                    flow_band.filter(|_| !inside_fixed),
                     paint_transform,
                 );
                 if clip.is_some() {
@@ -2618,7 +2672,7 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
-                        flow_band,
+                        flow_band.filter(|_| !inside_fixed),
                         paint_transform,
                     );
                     match lines {
@@ -2653,7 +2707,7 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
-                        flow_band,
+                        flow_band.filter(|_| !inside_fixed),
                         paint_transform,
                     );
                 }
@@ -3116,10 +3170,9 @@ pub(crate) fn paint_document_impl(
                                     page_top,
                                     page_bottom,
                                 ) && flow_band.is_none_or(|band| {
-                                    box_intersects_flow_band(
+                                    band.holds_box(
                                         scene.transform,
                                         (paint_x, paint_y, layout.size.width, layout.size.height),
-                                        band,
                                     )
                                 })))));
                 // An absolutely positioned containing block can own a child
@@ -4337,7 +4390,7 @@ pub(crate) fn paint_document_impl(
                             pixel_source,
                             warnings,
                             page_box,
-                            flow_band,
+                            flow_band.filter(|_| !inside_fixed),
                             paint_transform,
                         );
                     }
