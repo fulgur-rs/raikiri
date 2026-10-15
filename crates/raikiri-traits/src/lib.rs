@@ -51,9 +51,7 @@ pub use error::{
     RenderError, RenderSummary, RenderWarning, TargetDiscrepancy, TargetKind, TargetSlotId,
     UnresolvedReason, UnresolvedTarget, WarningKind,
 };
-pub use image::{
-    DecodedImage, ImageIntrinsicSize, ImagePixelSource, ImageRasterSize, png_with_repaired_crcs,
-};
+pub use image::{DecodedImage, ImageIntrinsicSize, ImagePixelSource, ImageRasterSize};
 pub use io::{OversizePhase, RejectReason, read_bounded_regular_file};
 pub use net::{
     AbortController, AbortSignal, Body, FetchOutcome, FetchedResource, HeaderMap,

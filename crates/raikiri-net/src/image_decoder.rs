@@ -3,7 +3,8 @@
 use std::io::Cursor;
 
 use image::{DynamicImage, ImageDecoder as _, ImageReader, Limits};
-use raikiri_traits::{DecodedImage, png_with_repaired_crcs};
+use raikiri_traits::DecodedImage;
+use raikiri_traits::image::png_with_repaired_crcs;
 
 /// Decodes supported raster bytes into the shared straight RGBA8 contract.
 ///

@@ -4,9 +4,9 @@ use std::io::Cursor;
 
 use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use raikiri_svg::SvgDocument;
+use raikiri_traits::image::png_with_repaired_crcs;
 use raikiri_traits::{
     DecodedImage, ImageIntrinsicSize, ImageRasterSize, RenderWarning, ResourceKind, WarningKind,
-    png_with_repaired_crcs,
 };
 use url::Url;
 

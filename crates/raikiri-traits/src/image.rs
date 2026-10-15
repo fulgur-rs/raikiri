@@ -114,9 +114,7 @@ pub fn png_with_repaired_crcs(bytes: &[u8]) -> Cow<'_, [u8]> {
     let mut at = PNG_SIGNATURE.len();
     while let Some(header) = bytes.get(at..at + 8) {
         let length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
-        let Some(crc_at) = (at + 8).checked_add(length) else {
-            break;
-        };
+        let crc_at = (at + 8).saturating_add(length);
         let Some(stored) = crc_at.checked_add(4).and_then(|end| bytes.get(crc_at..end)) else {
             break;
         };
