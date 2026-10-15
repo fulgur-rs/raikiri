@@ -357,14 +357,11 @@ fn set_attribute_ns(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
         if !local.bytes().any(|byte| byte.is_ascii_uppercase()) {
             // Without an uppercase letter, the exact name is the one
             // `setAttribute` stores, along with its side effects.
-            write_attribute(context, index, &local, &value)?;
-            super::dispatch::sync_event_handler_for_attribute(
-                context,
-                index,
-                &local,
-                Some(&value),
-            )?;
-            return Ok(JsValue::undefined());
+            let args = [
+                JsValue::from(JsString::from(local)),
+                JsValue::from(JsString::from(value)),
+            ];
+            return set_attribute(this, &args, context);
         }
         with_state(context, |s| {
             let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
@@ -467,11 +464,7 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 /// `class` attribute.
 fn set_class_list(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let list = class_list(this, &[], context)?;
-    let value = args.first().cloned().unwrap_or_default();
-    if let Some(list) = list.as_object() {
-        list.set(JsString::from("value"), value, true, context)?;
-    }
-    Ok(JsValue::undefined())
+    super::token_list::set_token_list_value(&list, args, context)
 }
 
 /// `Element.namespaceURI` (DOM §4.9): `null` for an element created with a

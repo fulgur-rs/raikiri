@@ -70,12 +70,13 @@ fn url_constructor(
     let new_target = new_target
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("URL constructor requires 'new'"))?;
+    // cov:ignore: `URL.prototype` is a non-writable object, so this never fails.
     let prototype = new_target
         .get(js_string!("prototype"), context)?
         .as_object()
         .ok_or_else(|| {
             JsNativeError::typ().with_message("constructor prototype is not an object")
-        })?; // cov:ignore: `URL.prototype` is a non-writable object.
+        })?;
     let url = parse_args(args, context)?
         .ok_or_else(|| JsNativeError::typ().with_message("Invalid URL"))?;
     let search_params = super::url_search_params::params_object(

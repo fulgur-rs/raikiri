@@ -291,7 +291,7 @@ fn token_list_value(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsR
 /// otherwise stringify it to the literal `"null"`); anything else --
 /// including a missing argument or an explicit `undefined` -- still runs
 /// `ToString` as usual.
-fn set_token_list_value(
+pub(crate) fn set_token_list_value(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
