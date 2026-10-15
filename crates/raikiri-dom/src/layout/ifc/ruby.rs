@@ -87,6 +87,9 @@ pub(super) struct Plan {
     /// anchored after that segment; an index past the last segment anchors
     /// it at the end of the container.
     out_of_flow: Vec<(usize, usize)>,
+    /// The `ruby-base-container` boxes of the container. They have no box in
+    /// the paragraph, but their relative offsets move their bases.
+    base_containers: Vec<usize>,
 }
 
 /// The paragraph data a ruby container adds to, besides the builder.
@@ -164,6 +167,8 @@ struct Planner<'a> {
     out_of_flow: Vec<(usize, usize)>,
     /// Floats and absolutely positioned boxes found in the content of the
     /// child being added, anchored once it is in the current segment.
+    /// The `ruby-base-container` children, in order.
+    base_containers: Vec<usize>,
     found: Vec<usize>,
 }
 
@@ -364,6 +369,7 @@ impl Planner<'_> {
     /// Add the bases of the `ruby-base-container` `container`.
     fn push_base_container(&mut self, container: usize) -> Option<()> {
         self.close_pending();
+        self.base_containers.push(container);
         self.start_base();
         self.pending_owner = container;
         for base in flattened_children(self.doc, self.cascade, container) {
@@ -523,6 +529,7 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
         between: Vec::new(),
         gap: Vec::new(),
         out_of_flow: Vec::new(),
+        base_containers: Vec::new(),
         found: Vec::new(),
     };
     for &child in &doc.nodes[ruby].children {
@@ -537,6 +544,7 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
     Some(Plan {
         segments,
         out_of_flow: planner.out_of_flow,
+        base_containers: planner.base_containers,
     })
 }
 
@@ -681,7 +689,7 @@ impl Content<'_, '_> {
                 && let Some(plan) = plan(self.doc, self.cascade, id)
             {
                 // The outer ruby container anchors what this one sets aside.
-                self.ruby(builder, id, &plan.segments, &[], false, letter)?;
+                self.ruby(builder, id, &plan, false, false, letter)?;
                 continue;
             }
             if cv.display == DisplayValue::Contents {
@@ -788,8 +796,9 @@ impl Content<'_, '_> {
         }
     }
 
-    /// Push the ruby container `ruby`, grouped into `segments`, with the
-    /// boxes it sets aside anchored as `out_of_flow` says.
+    /// Push the ruby container `ruby`, grouped into segments as `plan` says,
+    /// with the boxes it sets aside anchored as the plan says when `anchor`
+    /// is set; otherwise an outer container anchors them.
     ///
     /// shodo gives every segment a container box of its own, without edges.
     /// The container's edges go on one inline box around all the segments,
@@ -802,17 +811,24 @@ impl Content<'_, '_> {
         &mut self,
         builder: &mut ParagraphBuilder,
         ruby: usize,
-        segments: &[Segment],
-        out_of_flow: &[(usize, usize)],
+        plan: &Plan,
+        anchor: bool,
         root: bool,
         letter: Letter,
     ) -> Result<(), IfcError> {
+        let (segments, out_of_flow) = (
+            &plan.segments,
+            if anchor { &plan.out_of_flow[..] } else { &[] },
+        );
         let cv = &self.cascade.computed[ruby];
         let container = styled(self.doc, self.cascade, cv, ruby, self.fonts)?;
         if !root {
             let edges = style::inline_edges(cv, ruby, self.fonts)?;
             self.record_element(ruby);
             builder.open_inline(NodeId(ruby as u64), &container, edges);
+        }
+        for &container in &plan.base_containers {
+            self.record_element(container);
         }
         let mut anchors = out_of_flow.iter().peekable();
         for (index, segment) in segments.iter().enumerate() {
@@ -1059,14 +1075,7 @@ pub(super) fn push(
         limits,
         sink,
     }
-    .ruby(
-        builder,
-        ruby,
-        &plan.segments,
-        &plan.out_of_flow,
-        root,
-        Letter::Base,
-    )
+    .ruby(builder, ruby, plan, true, root, Letter::Base)
 }
 
 #[cfg(test)]

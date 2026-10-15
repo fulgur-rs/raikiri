@@ -1256,3 +1256,38 @@ fn plaintext_annotations_take_their_base_direction_from_their_text() {
     // right-to-left and the text after it sits to its left.
     assert!(x(ids.1) < x(ids.0), "{runs:?}");
 }
+
+#[test]
+fn relatively_positioned_base_containers_move_their_bases() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let bases = element(
+            doc,
+            container,
+            "rbc",
+            "display:ruby-base-container;position:relative;left:20px",
+        );
+        let base = rb(doc, bases, "a");
+        let annotations = element(doc, container, "rtc", "display:ruby-text-container");
+        let annotation = rt(doc, annotations, "x");
+        ids = (
+            doc.nodes[base].children[0],
+            doc.nodes[annotation].children[0],
+        );
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = PositionedLines::new(&doc, &cascade, root, None).expect("lines");
+    let offsets: Vec<_> = lines
+        .lines()
+        .flat_map(|line| {
+            line.runs
+                .iter()
+                .map(|run| (run.owner, run.offset))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(offsets.contains(&(ids.0, (20.0, 0.0))), "{offsets:?}");
+    assert!(offsets.contains(&(ids.1, (0.0, 0.0))), "{offsets:?}");
+}
