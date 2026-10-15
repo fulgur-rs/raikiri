@@ -1151,7 +1151,7 @@ fn image_pixels_decodes_the_images_load_image_accepts() {
     let mut host = host_at(&root.join("css/page"), &root);
     let image = host.image_pixels(GREEN_PNG).expect("decoded pixels");
     assert_eq!((image.width, image.height), (1, 1));
-    assert_eq!(image.rgba[1], 255, "the pixel is green: {:?}", image.rgba);
+    assert_eq!(image.rgba, [0, 128, 0, 255], "the pixel is CSS green");
     assert!(
         host.image_pixels(&file_url(&root.join("css/page/broken.png")))
             .is_none()
