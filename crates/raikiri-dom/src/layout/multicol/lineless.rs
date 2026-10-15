@@ -415,28 +415,12 @@ pub(super) fn layout(
         tree.nodes[child].cache.clear();
         let output = tree.compute_child_layout(
             TaffyNodeId::from(child),
-            LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: RequestedAxis::Both,
-                known_dimensions: Size {
-                    width: column_child_known_width(tree, child, context.column_width),
-                    height: None,
-                },
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: false,
-                },
-                parent_size: Size {
-                    width: Some(context.column_width),
-                    height: definite_height,
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(context.column_width),
-                    height: AvailableSpace::MaxContent,
-                },
-                vertical_margins_are_collapsible: TaffyLine::FALSE,
-            },
+            super::column_child_input(
+                super::column_child_known_width(tree, child, context.column_width),
+                context.column_width,
+                definite_height,
+                AvailableSpace::MaxContent,
+            ),
         );
         sizes.push(output.size);
     }

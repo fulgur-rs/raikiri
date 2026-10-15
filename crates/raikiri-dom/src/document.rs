@@ -1062,6 +1062,20 @@ impl Document {
         std::iter::successors(self.parent_of(node), move |&id| self.parent_of(id))
     }
 
+    /// Iterate over `root` and its descendants in tree order (preorder),
+    /// following `children` edges. `root` is always yielded first, even when
+    /// it is out of range.
+    pub fn preorder(&self, root: usize) -> impl Iterator<Item = usize> + '_ {
+        let mut pending = vec![root];
+        std::iter::from_fn(move || {
+            let id = pending.pop()?;
+            if let Some(node) = self.get_node(id) {
+                pending.extend(node.children.iter().rev().copied());
+            }
+            Some(id)
+        })
+    }
+
     /// Iterate over `node` and then its ancestors, nearest first. `node` is
     /// always yielded first, even when it is out of range; the walk then
     /// follows [`Self::ancestors`].
@@ -2616,21 +2630,10 @@ impl Document {
     /// Arena ids of the HTML `<canvas>` elements under the root, in tree
     /// order.
     fn canvas_ids_in_tree_order(&self) -> Vec<usize> {
-        let mut ids = Vec::new();
-        let mut stack: Vec<usize> = self
-            .nodes
-            .get(self.root_index())
-            .map(|root| root.children.iter().rev().copied().collect())
-            .unwrap_or_default();
-        while let Some(index) = stack.pop() {
-            if self.is_canvas_element(index) {
-                ids.push(index);
-            }
-            if let Some(node) = self.nodes.get(index) {
-                stack.extend(node.children.iter().rev().copied());
-            }
-        }
-        ids
+        self.preorder(self.root_index())
+            .skip(1)
+            .filter(|&index| self.is_canvas_element(index))
+            .collect()
     }
 
     /// Clone materialized canvas bitmaps in tree order.

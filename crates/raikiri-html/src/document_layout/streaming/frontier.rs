@@ -98,7 +98,7 @@ pub(crate) fn stable_frontier(
         return Frontier::At(root);
     }
     let mut position = vec![usize::MAX; document.node_count()];
-    for (index, id) in preorder(document).into_iter().enumerate() {
+    for (index, id) in document.preorder(document.root_index()).enumerate() {
         position[id] = index;
     }
 
@@ -218,7 +218,7 @@ pub(crate) fn final_page_count(
     held: &[usize],
     laid_out: &DocumentLayout,
 ) -> u32 {
-    let order = preorder(document);
+    let order: Vec<usize> = document.preorder(document.root_index()).collect();
     let Some(&last) = order.last() else {
         return 0;
     };
@@ -255,18 +255,6 @@ pub(crate) fn final_page_count(
 }
 
 /// Every node reachable from the document root, in tree order.
-fn preorder(document: &Document) -> Vec<usize> {
-    let mut order = Vec::new();
-    let mut stack = vec![document.root_index()];
-    while let Some(id) = stack.pop() {
-        order.push(id);
-        if let Some(node) = document.get_node(id) {
-            stack.extend(node.children.iter().rev().copied());
-        }
-    }
-    order
-}
-
 fn computed(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
     cascade.computed.get(id)
 }
