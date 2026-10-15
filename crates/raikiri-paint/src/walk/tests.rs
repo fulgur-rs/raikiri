@@ -6465,6 +6465,42 @@ fn a_page_along_the_x_axis_keeps_the_body_padding_strip_out_of_its_margins() {
     assert_eq!(pixel(90, 5), &[255, 255, 255, 255]);
 }
 
+#[test]
+fn a_page_along_the_x_axis_leaves_the_grid_of_a_table_beside_it_out_of_its_margin() {
+    // The table's caption reaches into the page area, but its grid, with
+    // the red border, lies wholly in the page's left margin.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:50px;height:10px'></div>\
+         <table style='border-collapse:collapse;border:4px solid red;font:10px/10px Ahem'>\
+         <caption style='width:10px;color:green'>a</caption>\
+         <tr><td style='width:12px;height:20px;padding:0'></td></tr></table></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(22, 9), &[0, 128, 0, 255]);
+    assert_eq!(pixel(5, 1), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_keeps_the_lines_of_a_sideways_paragraph_together() {
+    // The horizontal paragraph is centered on the page area, so its short
+    // line goes with it into the page's left margin.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:30px;height:10px'></div>\
+         <div style='writing-mode:horizontal-tb;width:40px;font:10px/10px Ahem;color:green'>a</div>\
+         </body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(15, 5), &[0, 128, 0, 255]);
+}
+
 fn flow_band(right_to_left: bool, root_transform: Affine) -> super::FlowBand {
     super::FlowBand {
         left: 20.0,

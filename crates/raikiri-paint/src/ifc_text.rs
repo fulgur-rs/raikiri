@@ -217,6 +217,12 @@ pub(crate) fn hold_ifc_lines<'a>(
     let base = position;
     let size = positioned.size;
     let vertical = writing_mode != WritingMode::HorizontalTb;
+    // Pages along x never cut a paragraph whose lines stack along y: each
+    // of its lines goes with the paragraph's content box.
+    let paragraph_center_x = (!vertical)
+        .then(|| document.ifc_layout_node(root_id))
+        .flatten()
+        .map(|node| base.x + node.unrounded_layout.content_box_width() / 2.0);
     let pieces = document
         .ifc_layout_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
@@ -291,7 +297,13 @@ pub(crate) fn hold_ifc_lines<'a>(
             shift_y: base.shift_y,
         };
         if let Some(band) = flow_band
-            && !line_on_flow_band(&positioned_line, position, paint_transform, band)
+            && !line_on_flow_band(
+                &positioned_line,
+                position,
+                paragraph_center_x,
+                paint_transform,
+                band,
+            )
         {
             continue;
         }
@@ -663,10 +675,13 @@ pub(crate) fn draw_ifc_lines(
 }
 
 /// Whether the page of `band` owns `line`, by the line's center, as layout
-/// assigns lines to the pages that follow the x axis.
+/// assigns lines to the pages that follow the x axis. A line of a paragraph
+/// whose lines stack along y is centered at `paragraph_center_x` instead,
+/// the center of its paragraph's content box.
 fn line_on_flow_band(
     line: &raikiri_dom::PositionedLine<'_>,
     position: IfcPosition,
+    paragraph_center_x: Option<f32>,
     paint_transform: Affine,
     band: crate::walk::FlowBand,
 ) -> bool {
@@ -679,7 +694,7 @@ fn line_on_flow_band(
     band.holds_line_center(
         paint_transform,
         kurbo::Point::new(
-            f64::from(position.x + rect.x + rect.width / 2.0),
+            f64::from(paragraph_center_x.unwrap_or(position.x + rect.x + rect.width / 2.0)),
             f64::from(position.y + position.shift_y + rect.y + rect.height / 2.0),
         ),
     )

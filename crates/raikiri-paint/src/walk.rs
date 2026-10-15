@@ -3185,10 +3185,20 @@ pub(crate) fn paint_document_impl(
                                     page_top,
                                     page_bottom,
                                 ) && flow_band.is_none_or(|band| {
-                                    band.holds_box(
-                                        scene.transform,
+                                    // A table paints its own box around its
+                                    // grid, without its captions.
+                                    let own_box = node.table_grid_box().map_or(
                                         (paint_x, paint_y, layout.size.width, layout.size.height),
-                                    )
+                                        |grid| {
+                                            (
+                                                paint_x + grid.x,
+                                                paint_y + grid.y,
+                                                grid.width,
+                                                grid.height,
+                                            )
+                                        },
+                                    );
+                                    band.holds_box(scene.transform, own_box)
                                 })))));
                 // An absolutely positioned containing block can own a child
                 // fragment on a later page even when its first layout box ends
