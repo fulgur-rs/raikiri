@@ -593,24 +593,24 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
         return Ok(JsValue::undefined());
     };
     let (image_w, image_h) = (f64::from(pixels.width), f64::from(pixels.height));
-    let [sx, sy, sw, sh, dx, dy, dw, dh] = match numbers[..] {
-        [dx, dy] => [0.0, 0.0, image_w, image_h, dx, dy, image_w, image_h],
-        [dx, dy, dw, dh] => [0.0, 0.0, image_w, image_h, dx, dy, dw, dh],
-        [sx, sy, sw, sh, dx, dy, dw, dh] => [sx, sy, sw, sh, dx, dy, dw, dh],
-        // cov:ignore: the arity check above admits only 2, 4 or 8 numbers.
-        _ => return Ok(JsValue::undefined()),
+    // The 3- and 5-argument forms draw the whole image, and the 3-argument
+    // form draws it at its natural size.
+    let full = [0.0, 0.0, image_w, image_h];
+    let n = &numbers;
+    let (source_rect, destination_rect) = match count {
+        9 => ([n[0], n[1], n[2], n[3]], [n[4], n[5], n[6], n[7]]),
+        5 => (full, [n[0], n[1], n[2], n[3]]),
+        _ => (full, [n[0], n[1], image_w, image_h]),
     };
+    let [sx, sy, sw, sh] = source_rect;
+    let [dx, dy, dw, dh] = destination_rect;
     let (sx, sy, sw, sh) = normalized(sx, sy, sw, sh);
     let (dx, dy, dw, dh) = normalized(dx, dy, dw, dh);
     if sw == 0.0 || sh == 0.0 || dw == 0.0 || dh == 0.0 {
         return Ok(JsValue::undefined());
     }
-    let Some((canvas_w, canvas_h)) =
-        with_state(context, |s| s.host.document().canvas_size(canvas))?
-    else {
-        // cov:ignore: a 2d context only exists for a canvas element.
-        return Ok(JsValue::undefined());
-    };
+    let (canvas_w, canvas_h) = with_state(context, |s| s.host.document().canvas_size(canvas))?
+        .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
     // The destination pixels the rectangle touches, clipped to the bitmap
     // so every coordinate fits an `i32`.
     let left = dx.floor().max(0.0);
