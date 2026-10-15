@@ -8234,12 +8234,34 @@ pub struct GradientColorInterpolation {
 /// the `currentcolor` keyword from a resolved `<color>` (same shape as
 /// [`TextShadowColor`], but a separate type for gradient stops).
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GradientStopColor {
     /// `currentcolor` keyword. Used-value resolution belongs to the paint layer.
     CurrentColor,
     /// Resolved `<color>` value.
     Resolved(CssColor),
+    /// A `<color>` outside the sRGB gamut, kept in the space it was given
+    /// in. Gradients interpolate it before any gamut mapping (CSS Color 4
+    /// §12 "Color Interpolation"), so clipping it to [`CssColor`] first
+    /// would change the colors between the stops.
+    Unbounded(UnboundedColor),
+}
+
+/// A color kept with its coordinates in the space it was specified in,
+/// without the 8-bit sRGB gamut bound of [`CssColor`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UnboundedColor {
+    /// Space of `components`: `Srgb`, `SrgbLinear`, `Lab`, `Lch`, `Oklab`
+    /// or `Oklch`.
+    pub space: MixColorSpace,
+    /// Coordinates in CSS units: 0-1 RGB channels, Lab lightness 0-100,
+    /// Oklab lightness 0-1, and hue in degrees.
+    pub components: [f32; 3],
+    /// Alpha from 0 to 1.
+    pub alpha: f32,
+    /// The color clipped to sRGB, for consumers that need one 8-bit color.
+    pub srgb: CssColor,
 }
 
 /// Entry in the color-stop list of `<linear-color-stop>` /
