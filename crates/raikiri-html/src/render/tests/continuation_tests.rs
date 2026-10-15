@@ -35,6 +35,35 @@ fn run(html: &str) -> PipelineOutput {
     }
 }
 
+/// Lay out `html` with at most `max_pages` document pages.
+fn run_with_page_limit(html: &str, max_pages: u32) -> PipelineOutput {
+    let resources = RenderResources::new().fonts(super::ahem_fonts());
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(max_pages))
+                .build(),
+        )
+        .build();
+    match run_pipeline(
+        &parse(html),
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+            resume: None,
+        },
+    )
+    .expect("layout")
+    {
+        PipelineRun::Completed(out) => *out,
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("completed layout"),
+    }
+}
+
 fn parse(html: &str) -> HtmlDocument {
     crate::parse_html_with_resources(html.as_bytes(), &RenderResources::new()).expect("parse")
 }
@@ -330,31 +359,7 @@ fn a_named_page_after_a_tall_first_page_is_laid_out_at_its_own_width_within_the_
         body { margin: 0 } div { font: 10px/10px Ahem }\
         </style><div style='height:2100000px'></div>\
         <div style='page:wide'>second</div>";
-    let resources = RenderResources::new().fonts(super::ahem_fonts());
-    let config = LayoutConfig::builder()
-        .limits(
-            raikiri_traits::RenderLimits::builder()
-                .max_document_pages(Some(2))
-                .build(),
-        )
-        .build();
-    let out = match run_pipeline(
-        &parse(html),
-        PageDefaults::default(),
-        &config,
-        PipelineInputs {
-            resources: Some(&resources),
-            consumer_properties: &[],
-            property_observer: None,
-            preload_background_images: false,
-            resume: None,
-        },
-    )
-    .expect("layout")
-    {
-        PipelineRun::Completed(out) => *out,
-        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("completed layout"),
-    };
+    let out = run_with_page_limit(html, 2);
     assert_eq!(out.slices.len(), 2);
     assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
     assert_eq!(out.continuations.len(), 1);
@@ -363,23 +368,42 @@ fn a_named_page_after_a_tall_first_page_is_laid_out_at_its_own_width_within_the_
     assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
 }
 
-#[test]
-fn a_named_page_after_content_that_grows_past_the_measuring_page_is_laid_out_at_its_own_width() {
-    // The paragraph before the narrow named page takes one line on the
-    // wide first page and fifteen at the named page's width, so in the
-    // relayout it grows past the room of the measuring page and the
-    // measurement finds the page start on a later measuring page.
-    let out = run(&format!(
+/// A paragraph of `count` words that takes one or two lines on the wide
+/// first page and a line for every four words at the narrow named page's
+/// width, followed by a box on the named page.
+fn growing_paragraph(count: usize) -> String {
+    format!(
         "<style>\
         @page {{ size: 4000px 300000px; margin: 0 }}\
         @page narrow {{ size: 200px 200px }}\
         body {{ margin: 0 }} p, div {{ margin: 0; font: 10px/10px Ahem }}\
         </style><p style='line-height:100000px'>{}</p>\
         <div style='page:narrow'>second</div>",
-        words(60).join(" ")
-    ));
+        words(count).join(" ")
+    )
+}
+
+#[test]
+fn a_named_page_after_content_that_grows_past_the_measuring_page_is_laid_out_at_its_own_width() {
+    // In the relayout the paragraph grows past the room of the measuring
+    // page, so the measurement finds the page start on a later measuring
+    // page.
+    let out = run(&growing_paragraph(60));
     assert_eq!(out.slices.len(), 2);
     assert_eq!(out.slices[1].page_name.as_deref(), Some("narrow"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_widths(&out, 1), vec![200.0]);
+    assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
+}
+
+#[test]
+fn content_that_grows_past_more_measuring_pages_than_the_page_limit_is_measured_again() {
+    // The paragraph grows past more measuring pages than the document's
+    // two-page limit, so the measurement stops before the page start and is
+    // repeated on a taller page.
+    let out = run_with_page_limit(&growing_paragraph(120), 2);
+    assert_eq!(out.slices.len(), 2);
     assert_eq!(out.continuations.len(), 1);
     assert_eq!(out.continuations[0].first_page, 1);
     assert_eq!(div_widths(&out, 1), vec![200.0]);

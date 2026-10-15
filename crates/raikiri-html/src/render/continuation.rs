@@ -64,6 +64,9 @@ const POSITION_TOLERANCE: f32 = 0.5;
 const MEASURE_HEIGHT: f32 = 1.0e6;
 /// Relayouts of one continuation before its page schedule must be stable.
 const MAX_SCHEDULE_PASSES: usize = 3;
+/// Measurements of one continuation before it gives up finding its page
+/// start within the document's page limit.
+const MAX_MEASURE_PASSES: usize = 8;
 
 /// The pages of one layout, with its document and cascade.
 struct Segment<'d> {
@@ -269,46 +272,59 @@ fn relayout_from(
     // as in the later layout.
     document.set_clearance_page_values(Some(page_values.clone()));
     // The measuring page holds everything the earlier layout placed before
-    // the token, with room to spare, so the measurement does not need more
-    // pages than the document's page limit allows to reach the token.
-    let measure_height = slices[page].content_origin_y + start.offset + MEASURE_HEIGHT;
+    // the token, with room to spare. Content that grows at this width can
+    // still run past it, onto more measuring pages than the document's page
+    // limit allows; the measurement then stops before the token and is
+    // repeated on a page that holds everything it laid out, twice over.
+    let mut measure_height = slices[page].content_origin_y + start.offset + MEASURE_HEIGHT;
     let measure_control = PageLayoutControl::for_geometry_discovery(inputs.max_pages)
         .with_abort_check(inputs.abort_check);
-    let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
-        &mut document,
-        &cascade,
-        geometry.page_box,
-        &[measure_height],
-        &[],
-        inputs.resolver,
-        inputs.base_url,
-        &measure_control,
-    )?; // cov:ignore: only a cancellation landing in this pass fails it; the first layout already met the same work limits
-    let mut measure_box = geometry.page_box;
-    measure_box.height = measure_height + geometry.page_box.height;
-    let measure_geometries: Vec<_> = measured
-        .iter()
-        .map(|_| (measure_box, geometry.margins, geometry.content_insets))
-        .collect();
-    document.project_pages_with_control(
-        &cascade,
-        measure_box,
-        &measured,
-        &measure_geometries,
-        &measure_control,
-    )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
+    let mut token_y = None;
+    for _ in 0..MAX_MEASURE_PASSES {
+        let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
+            &mut document,
+            &cascade,
+            geometry.page_box,
+            &[measure_height],
+            &[],
+            inputs.resolver,
+            inputs.base_url,
+            &measure_control,
+        )?; // cov:ignore: only a cancellation landing in this pass fails it; the first layout already met the same work limits
+        let mut measure_box = geometry.page_box;
+        measure_box.height = measure_height + geometry.page_box.height;
+        let measure_geometries: Vec<_> = measured
+            .iter()
+            .map(|_| (measure_box, geometry.margins, geometry.content_insets))
+            .collect();
+        document.project_pages_with_control(
+            &cascade,
+            measure_box,
+            &measured,
+            &measure_geometries,
+            &measure_control,
+        )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
+        // Content taller than one measuring page runs onto the next, so the
+        // token's offset counts from the first measuring page.
+        let first_origin = measured.first().map_or(0.0, |slice| slice.content_origin_y);
+        token_y = measured.iter().find_map(|slice| {
+            document
+                .page_token_offset(slice.page_index, start.token)
+                .map(|offset| slice.content_origin_y - first_origin + offset)
+        });
+        let Some(last) = measured.last() else {
+            break; // cov:ignore: defensive; a measurement lays out at least one page
+        };
+        if token_y.is_some() || !measure_control.page_limit_reached() {
+            break;
+        }
+        measure_height = 2.0 * (last.content_origin_y - first_origin + measure_height);
+    }
     document.set_clearance_page_values(None);
     cascade.page_values = page_values;
     // The token was found on the earlier layout's page, and the copy lays out
-    // the same source before it, so one of the measuring pages holds it. Its
-    // offset counts from the first measuring page, as content taller than
-    // one measuring page runs onto the next.
-    let first_origin = measured.first().map_or(0.0, |slice| slice.content_origin_y);
-    let Some(token_y) = measured.iter().find_map(|slice| {
-        document
-            .page_token_offset(slice.page_index, start.token)
-            .map(|offset| slice.content_origin_y - first_origin + offset)
-    }) else {
+    // the same source before it, so one of the measuring pages holds it.
+    let Some(token_y) = token_y else {
         return Ok(None); // cov:ignore: defensive; the copy lays out the same source before the token
     };
     // The copy's first page ends where the resumed page begins, so that the
