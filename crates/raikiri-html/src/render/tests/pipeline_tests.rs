@@ -2109,6 +2109,7 @@ fn pipeline_places_a_float_in_an_inline_in_its_paragraph() {
     for float in [
         "<span style='float:left;width:10px;height:80px'></span>",
         "<span><span style='float:left;width:10px;height:80px'></span></span>",
+        "<span style='display:contents'><span style='float:left;width:10px;height:80px'></span></span>",
     ] {
         let doc = parse(&format!(
             "<style>@page{{size:250px 250px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:60px;line-height:50px}}</style>\
