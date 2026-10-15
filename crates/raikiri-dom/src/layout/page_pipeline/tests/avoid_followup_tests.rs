@@ -171,6 +171,36 @@ fn a_scroll_container_grows_around_a_moved_float() {
 }
 
 #[test]
+fn a_moved_float_grows_an_indefinite_percentage_context_but_not_a_fixed_one() {
+    // CSS 2.1 §10.5: a percentage against an auto-height containing block
+    // behaves as auto, so pagination must grow it around the moved float.
+    for (height, expected_height) in [("50%", 100.0), ("60px", 60.0)] {
+        let mut root = 0;
+        let mut float = 0;
+        let mut following = 0;
+        let (doc, _) = paged_body(|doc, body| {
+            block(doc, body, "display:block;height:60px");
+            let wrapper = block(doc, body, "display:block");
+            let contents = block(doc, wrapper, "display:contents;height:200px");
+            root = block(doc, contents, &format!("display:flow-root;height:{height}"));
+            float = block(
+                doc,
+                root,
+                "float:left;width:40px;height:60px;break-inside:avoid",
+            );
+            following = block(doc, body, "display:block;height:10px");
+        });
+        assert_eq!(page_flow_y(&doc, root), 60.0);
+        assert_eq!(page_flow_y(&doc, float), 100.0);
+        assert_eq!(
+            doc.nodes[root].unrounded_layout.size.height,
+            expected_height
+        );
+        assert_eq!(page_flow_y(&doc, following), 60.0 + expected_height);
+    }
+}
+
+#[test]
 fn a_hanging_float_two_blocks_down_still_takes_up_the_move() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
@@ -322,9 +352,10 @@ fn grid_items_sharing_a_row_do_not_stack() {
         );
         grids.extend([stacked, shared, spanning]);
     });
+    let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
     let stacks: Vec<bool> = grids
         .iter()
-        .map(|&id| grid_stacks_items(&doc, id))
+        .map(|&id| grid_stacks_items(&doc, &cascade, id))
         .collect();
     assert_eq!(stacks, vec![true, false, false]);
 }

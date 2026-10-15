@@ -1837,7 +1837,7 @@ fn bridge_grid_maps_grid_auto_flow_keywords() {
         cv.grid_auto_flow = flow;
         let mut style = Style::default();
         let mut diag = Vec::new();
-        bridge_grid(&mut style, &cv, &mut diag);
+        bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
         // cov:ignore: panic-message literal only executed on assertion
         // failure, which doesn't happen while this test passes.
         assert_eq!(style.grid_auto_flow, expected, "grid-auto-flow: {flow:?}");
@@ -1882,7 +1882,7 @@ fn bridge_grid_maps_grid_row_and_grid_column_from_the_4_longhands() {
     cv.grid_column_end = GridLineValue::Auto;
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_row,
         TaffyLine {
@@ -1924,7 +1924,7 @@ fn bridge_grid_maps_track_list_with_repeat_minmax_fr_and_named_lines() {
         }));
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
 
     assert_eq!(style.grid_template_columns.len(), 2);
     assert_eq!(
@@ -1969,7 +1969,7 @@ fn bridge_grid_maps_grid_template_areas() {
         }));
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_template_areas,
         Some(taffy::style::GridTemplateAreas {
@@ -1997,7 +1997,7 @@ fn bridge_grid_maps_grid_auto_columns_and_rows_track_sizes() {
     )]);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_auto_columns,
         vec![TrackSizingFunction {
@@ -2031,7 +2031,7 @@ fn bridge_grid_maps_grid_auto_columns_percent_and_max_content_breadth() {
     )]);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_auto_columns,
         vec![TrackSizingFunction {
@@ -2061,7 +2061,7 @@ fn bridge_grid_maps_grid_auto_columns_fit_content() {
     ]);
     let mut style = Style::default();
     let mut diag = Vec::new();
-    bridge_grid(&mut style, &cv, &mut diag);
+    bridge_grid(&mut style, &cv, &mut Vec::new(), &mut diag);
     assert_eq!(
         style.grid_auto_columns,
         vec![
@@ -2355,4 +2355,83 @@ fn a_multicol_container_establishes_a_block_formatting_context() {
     assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 0.0);
     assert_eq!(doc.nodes[child].unrounded_layout.location.y, 15.0);
     assert_eq!(doc.nodes[multicol].unrounded_layout.size.height, 35.0);
+}
+
+#[test]
+fn bridged_writing_modes_follow_live_parents_and_refresh_before_consumers() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("display:block"));
+    let early = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let text = doc.append_text(early, "x");
+    let late = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:sideways-rl"),
+    );
+    let horizontal = doc.append_element(
+        Some(late),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    let template = doc.append_element(Some(late), "template", Style::default(), None::<&str>);
+    let fragment = doc.allocate_template_fragment_root(template);
+    let inert = doc.append_text(fragment, "inert");
+    doc.detach_from_parent(early);
+    doc.attach_child(late, early);
+    doc.mark_in_document_flags();
+    let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    apply_computed_to_style(&mut doc, &cr).unwrap();
+    assert_eq!(doc.nodes[early].used_writing_mode, WritingMode::SidewaysRl);
+    assert_eq!(doc.nodes[text].used_writing_mode, WritingMode::SidewaysRl);
+    assert_eq!(
+        doc.nodes[horizontal].used_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert!(doc.nodes[horizontal].under_vertical_writing);
+    assert_eq!(
+        doc.nodes[fragment].used_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert!(!doc.nodes[inert].under_vertical_writing);
+    // Reusing declarations after reparenting must follow the live DOM,
+    // as the previous nearest-authored ancestor walk did.
+    doc.detach_from_parent(early);
+    doc.attach_child(body, early);
+    apply_computed_to_style(&mut doc, &cr).unwrap();
+    assert_eq!(
+        doc.nodes[early].used_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert!(!doc.nodes[text].under_vertical_writing);
+    for mode in [
+        "horizontal-tb",
+        "vertical-rl",
+        "vertical-lr",
+        "sideways-rl",
+        "sideways-lr",
+        "horizontal-tb",
+    ] {
+        doc.set_element_inline_style(
+            late,
+            Some(format!("display:block;writing-mode:{mode}").into()),
+        );
+        let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        apply_computed_to_style(&mut doc, &cr).unwrap();
+        for id in 0..doc.nodes.len() {
+            let expected = doc
+                .inclusive_ancestors(id)
+                .find_map(|id| doc.nodes[id].authored_writing_mode)
+                .unwrap_or(WritingMode::HorizontalTb);
+            let under = doc.inclusive_ancestors(id).any(|id| {
+                doc.nodes[id]
+                    .authored_writing_mode
+                    .is_some_and(WritingMode::is_vertical)
+            });
+            assert_eq!(doc.nodes[id].used_writing_mode, expected);
+            assert_eq!(doc.nodes[id].under_vertical_writing, under);
+        }
+    }
 }

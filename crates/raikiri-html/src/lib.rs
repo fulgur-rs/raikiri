@@ -17,6 +17,7 @@ mod css_urls;
 mod document;
 mod document_layout;
 mod document_parse;
+mod fetch;
 mod font_collection;
 mod import;
 mod input;

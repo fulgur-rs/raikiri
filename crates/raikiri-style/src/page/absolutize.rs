@@ -385,6 +385,9 @@ fn grid_track_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridTrackBre
     match b {
         ComputedGridTrackBreadth::Px(v) => GridTrackBreadth::Length(Length::Px(v)),
         ComputedGridTrackBreadth::Percent(p) => GridTrackBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridTrackBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
         ComputedGridTrackBreadth::Flex(f) => GridTrackBreadth::Flex(f),
         ComputedGridTrackBreadth::MinContent => GridTrackBreadth::MinContent,
         ComputedGridTrackBreadth::MaxContent => GridTrackBreadth::MaxContent,
@@ -402,6 +405,9 @@ fn grid_inflexible_breadth_from_computed(b: ComputedGridTrackBreadth) -> GridInf
     match b {
         ComputedGridTrackBreadth::Px(v) => GridInflexibleBreadth::Length(Length::Px(v)),
         ComputedGridTrackBreadth::Percent(p) => GridInflexibleBreadth::Length(Length::Percent(p)),
+        ComputedGridTrackBreadth::Calc(calc) => {
+            GridInflexibleBreadth::Calc(LengthPercentageOrCalc::Calc(calc))
+        }
         ComputedGridTrackBreadth::MinContent => GridInflexibleBreadth::MinContent,
         ComputedGridTrackBreadth::MaxContent => GridInflexibleBreadth::MaxContent,
         // cov:ignore: unreachable per this fn's doc; kept for match
@@ -707,12 +713,12 @@ pub(super) fn absolutize_in_page_context(
             crate::resolve::resolve_background_image(img, font_size, own_line_height, ctx),
         ),
         PropertyValue::BorderImageWidth(sides) => {
-            PropertyValue::BorderImageWidth(sides.map(|side| match side {
+            PropertyValue::BorderImageWidth(Box::new(sides.map(|side| match side {
                 BorderImageWidthSide::LengthPercentage(length) => {
                     BorderImageWidthSide::LengthPercentage(basis.lpc(length))
                 }
                 other => other,
-            }))
+            })))
         }
         PropertyValue::BorderImageOutset(sides) => {
             PropertyValue::BorderImageOutset(sides.map(|side| match side {
@@ -771,7 +777,9 @@ pub(super) fn absolutize_in_page_context(
         // Shorthand fall-throughs: unreachable through `cascade_page` (shorthands are
         // expanded first) but kept as real arms, not `unreachable!`, so the cascade
         // stays panic-free for direct callers.
-        PropertyValue::Padding(sides) => PropertyValue::Padding(sides.map(|l| basis.lpc(l))),
+        PropertyValue::Padding(sides) => {
+            PropertyValue::Padding(Box::new(sides.map(|l| basis.lpc(l))))
+        }
         PropertyValue::PaddingInline(pair) => {
             PropertyValue::PaddingInline(pair.map(|l| basis.lpc(l)))
         }
@@ -790,7 +798,9 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::MarginBottomInherit
         | PropertyValue::MarginLeftInherit
         | PropertyValue::MarginInherit) => v,
-        PropertyValue::Margin(sides) => PropertyValue::Margin(sides.map(|l| basis.margin_lpa(l))),
+        PropertyValue::Margin(sides) => {
+            PropertyValue::Margin(Box::new(sides.map(|l| basis.margin_lpa(l))))
+        }
         PropertyValue::MarginInline(pair) => {
             PropertyValue::MarginInline(pair.map(|l| basis.margin_lpa(l)))
         }
@@ -960,7 +970,7 @@ pub(super) fn absolutize_in_page_context(
                 ..shorthand
             })
         }
-        PropertyValue::Font(shorthand) => PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(shorthand) => PropertyValue::Font(Box::new(FontShorthand {
             size: match shorthand.size {
                 FontShorthandSize::Absolute(length) => FontShorthandSize::Absolute(Length::Px(
                     resolve_length(length, font_size, own_line_height, ctx).px(),
@@ -987,8 +997,8 @@ pub(super) fn absolutize_in_page_context(
                 ctx.root_line_height,
                 ctx,
             )),
-            ..shorthand
-        }),
+            ..*shorthand
+        })),
         // ── object-position ──────────────────────────────────────────────
         PropertyValue::ObjectPosition(v) => PropertyValue::ObjectPosition(basis.css_position(v)),
         PropertyValue::TransformOrigin(position, z) => PropertyValue::TransformOrigin(

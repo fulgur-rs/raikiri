@@ -603,6 +603,14 @@ fn parse_track_breadth(input: &mut Parser<'_, '_>) -> Option<GridTrackBreadth> {
     if let Ok(flex) = input.try_parse(parse_grid_flex_res) {
         return Some(GridTrackBreadth::Flex(flex));
     }
+    // A mixed-unit `calc()` reaches this parser only after substitution or
+    // simplification failed to fold it to one dimension. A math function is
+    // clamped to the range rather than rejected.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(GridTrackBreadth::Calc(
+            LengthPercentageOrCalc::from_non_negative_calc(calc),
+        ));
+    }
     let length = input
         .try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(())))
         .ok()?;
@@ -628,6 +636,12 @@ fn parse_inflexible_breadth(input: &mut Parser<'_, '_>) -> Option<GridInflexible
         .is_ok()
     {
         return Some(GridInflexibleBreadth::MaxContent);
+    }
+    // See the `calc()` note in `parse_track_breadth`.
+    if let Some(calc) = crate::cascade::parse_relative_calc_function(input) {
+        return Some(GridInflexibleBreadth::Calc(
+            LengthPercentageOrCalc::from_non_negative_calc(calc),
+        ));
     }
     let length = input
         .try_parse(|i| parse_length_value(i, true).ok_or_else(|| i.new_custom_error::<(), ()>(())))
@@ -685,13 +699,14 @@ fn parse_track_size(input: &mut Parser<'_, '_>) -> Option<GridTrackSize> {
 /// Checks whether [`GridTrackBreadth`] is a `<fixed-breadth>` (only a
 /// `<length-percentage>`); used by [`grid_track_size_is_fixed`].
 fn grid_track_breadth_is_fixed(b: &GridTrackBreadth) -> bool {
-    matches!(b, GridTrackBreadth::Length(_))
+    matches!(b, GridTrackBreadth::Length(_) | GridTrackBreadth::Calc(_))
 }
 
 /// Checks whether [`GridInflexibleBreadth`] is a `<fixed-breadth>`;
 /// used by [`grid_track_size_is_fixed`].
 fn grid_inflexible_breadth_is_fixed(b: &GridInflexibleBreadth) -> bool {
-    matches!(b, GridInflexibleBreadth::Length(_))
+    use GridInflexibleBreadth::{Calc, Length};
+    matches!(b, Length(_) | Calc(_))
 }
 
 /// Checks whether [`GridTrackSize`] satisfies the `<fixed-size>` constraint

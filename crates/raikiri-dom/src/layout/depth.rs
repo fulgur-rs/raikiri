@@ -18,7 +18,7 @@ pub const MAX_LAYOUT_DEPTH: usize = 256;
 /// controlled nesting. It follows document-tree children regardless of
 /// computed display; detached template contents are outside the layout tree.
 pub fn validate_layout_depth(document: &Document) -> Result<(), LayoutError> {
-    let Some(body_id) = find_body_in_document_tree(document) else {
+    let Some(body_id) = super::find_body(document) else {
         return Ok(());
     };
 
@@ -47,16 +47,4 @@ pub fn validate_layout_depth(document: &Document) -> Result<(), LayoutError> {
         }
     }
     Ok(())
-}
-
-fn find_body_in_document_tree(document: &Document) -> Option<usize> {
-    let mut pending = vec![document.root];
-    while let Some(node_id) = pending.pop() {
-        let node = document.nodes.get(node_id)?;
-        if node.kind() == NodeKind::Element && super::page::is_body_element(document, node_id) {
-            return Some(node_id);
-        }
-        pending.extend(node.children.iter().rev().copied());
-    }
-    None
 }

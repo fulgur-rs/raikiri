@@ -192,24 +192,23 @@ pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
 /// `<body>` (or `<frameset>`, see [`is_body_element`]) element.
 ///
 /// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack
-/// overflows in deeply nested DOMs. Return `None` for a fragment parse (no `<body>`);
-/// the caller promotes this to `LayoutError::Internal`.
+/// overflows in deeply nested DOMs. Return `None` for a fragment parse (no
+/// `<body>`); layout promotes this to `LayoutError::Internal`, the depth
+/// check has nothing to measure, and paint has no root.
 ///
-/// Skip subtrees whose root is `!is_in_document()`
-/// (such as a detached `<template>` contents fragment). A `<body>` within an
-/// inert subtree must not be selected as the actual body. For example, if real
-/// `<body>` follows `<template><body>ghost</body></template>` in the HTML
-/// (the ghost lives in the template's detached contents fragment), choosing
-/// the ghost body would run the subsequent layout / paint on an inert subtree.
-///
+/// The walk follows `children` from the document root, so it never enters a
+/// `<template>` element's contents: those live under a detached fragment
+/// root, not among the element's children. A `<body>` there is inert and must
+/// not be selected; for example, if the real `<body>` follows
+/// `<template><body>ghost</body></template>`, choosing the ghost would run
+/// layout and paint on an inert subtree. Reachability decides this rather
+/// than the `IS_IN_DOCUMENT` bit, so the answer does not depend on whether
+/// [`Document::mark_in_document_flags`] ran after the last tree mutation:
+/// the depth check runs before layout refreshes the bits.
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
-        if !node.is_in_document() {
-            // inert subtree — do not select a body inside it.
-            continue;
-        }
         if node.kind() == NodeKind::Element && is_body_element(doc, node_idx) {
             return Some(node_idx);
         }
@@ -248,30 +247,14 @@ pub(crate) fn apply_page_content_box_to_body(
 /// shrink-to-fit path applies. Keep float (§10.3.5) and line-break handling
 /// out of this module.
 pub(crate) fn used_style_length_percentage(value: LengthPercentage, basis: f32) -> Option<f32> {
-    let raw = value.into_raw();
-    let resolved = match raw.tag() {
-        CompactLength::LENGTH_TAG => raw.value(),
-        CompactLength::PERCENT_TAG => raw.value() * basis,
-        // Calc handles in a document style point into its calc arena.
-        _ if raw.is_calc() => crate::taffy_impl::resolve_calc(raw.calc_value(), basis),
-        _ => return None,
-    };
-    resolved.is_finite().then_some(resolved)
+    super::resolve_length_percentage(value, Some(basis)).filter(|value| value.is_finite())
 }
 
 pub(crate) fn used_style_length_percentage_auto(
     value: LengthPercentageAuto,
     basis: f32,
 ) -> Option<f32> {
-    let raw = value.into_raw();
-    let resolved = match raw.tag() {
-        CompactLength::LENGTH_TAG => raw.value(),
-        CompactLength::PERCENT_TAG => raw.value() * basis,
-        // Calc handles in a document style point into its calc arena.
-        _ if raw.is_calc() => crate::taffy_impl::resolve_calc(raw.calc_value(), basis),
-        _ => return None,
-    };
-    resolved.is_finite().then_some(resolved)
+    super::resolve_length_percentage_auto(value, Some(basis)).filter(|value| value.is_finite())
 }
 
 pub(crate) fn used_computed_length_percentage_or_auto(
@@ -499,14 +482,13 @@ pub fn page_content_insets_for_page(
 fn page_margin_value(
     declarations: &std::collections::HashMap<PropertyKey, PropertyValue>,
     side: PropertyKey,
-    shorthand: Option<LengthOrAuto>,
 ) -> Option<LengthOrAuto> {
     match (side, declarations.get(&side)) {
         (PropertyKey::MarginTop, Some(PropertyValue::MarginTop(value)))
         | (PropertyKey::MarginRight, Some(PropertyValue::MarginRight(value)))
         | (PropertyKey::MarginBottom, Some(PropertyValue::MarginBottom(value)))
         | (PropertyKey::MarginLeft, Some(PropertyValue::MarginLeft(value))) => Some(*value),
-        _ => shorthand,
+        _ => None,
     }
 }
 
@@ -564,30 +546,12 @@ pub fn page_margins_for_page(
     } else {
         page_box
     };
-    let shorthand = match declarations.get(&PropertyKey::Margin) {
-        Some(PropertyValue::Margin(sides)) => Some(*sides),
-        _ => None,
-    };
-    let top_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginTop,
-        shorthand.map(|s| s.top),
-    );
-    let right_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginRight,
-        shorthand.map(|s| s.right),
-    );
-    let bottom_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginBottom,
-        shorthand.map(|s| s.bottom),
-    );
-    let left_value = page_margin_value(
-        declarations,
-        PropertyKey::MarginLeft,
-        shorthand.map(|s| s.left),
-    );
+    // Page rules expand the `margin` shorthand into its longhands when
+    // parsed, so only the longhands are read here.
+    let top_value = page_margin_value(declarations, PropertyKey::MarginTop);
+    let right_value = page_margin_value(declarations, PropertyKey::MarginRight);
+    let bottom_value = page_margin_value(declarations, PropertyKey::MarginBottom);
+    let left_value = page_margin_value(declarations, PropertyKey::MarginLeft);
     let mut margins = PageMargins {
         top: top_value.map_or(0.0, |value| page_margin_length(value, margin_basis.height)),
         right: right_value.map_or(0.0, |value| page_margin_length(value, margin_basis.width)),
@@ -661,37 +625,32 @@ fn initial_page_child_order(
 ) -> Vec<usize> {
     let children = document.nodes[parent_id].children.clone();
     let parent_style = &cascade.computed[parent_id];
-    let is_flex = matches!(
-        parent_style.display,
-        DisplayValue::Flex | DisplayValue::InlineFlex
-    );
+    let is_flex = parent_style.display.is_flex_container();
     if is_flex {
         return flex_pagination_child_order(document, cascade, parent_id);
     }
-    let is_auto_row_grid = matches!(
-        parent_style.display,
-        DisplayValue::Grid | DisplayValue::InlineGrid
-    ) && children
-        .iter()
-        .copied()
-        .filter(|&child_id| {
-            !matches!(
-                cascade.computed[child_id].position,
-                PositionValue::Absolute | PositionValue::Fixed
-            ) && cascade.computed[child_id].display != DisplayValue::None
-        })
-        .all(|child_id| {
-            matches!(
-                &cascade.computed[child_id].grid_row_start,
-                GridLineValue::Auto
-            ) && matches!(
-                &cascade.computed[child_id].grid_row_end,
-                GridLineValue::Auto
-            ) && matches!(
-                &cascade.computed[child_id].grid_column_start,
-                GridLineValue::Auto | GridLineValue::Line(1)
-            )
-        });
+    let is_auto_row_grid = parent_style.display.is_grid_container()
+        && children
+            .iter()
+            .copied()
+            .filter(|&child_id| {
+                !matches!(
+                    cascade.computed[child_id].position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                ) && cascade.computed[child_id].display != DisplayValue::None
+            })
+            .all(|child_id| {
+                matches!(
+                    &cascade.computed[child_id].grid_row_start,
+                    GridLineValue::Auto
+                ) && matches!(
+                    &cascade.computed[child_id].grid_row_end,
+                    GridLineValue::Auto
+                ) && matches!(
+                    &cascade.computed[child_id].grid_column_start,
+                    GridLineValue::Auto | GridLineValue::Line(1)
+                )
+            });
     if !is_auto_row_grid {
         return children;
     }
@@ -955,15 +914,11 @@ pub fn resolve_initial_page_context(
         .page_values
         .iter()
         .any(|page_value| matches!(page_value, raikiri_style::property::PageValue::Named(_)));
-    let has_flex_or_grid = context.cascade.computed.iter().any(|computed| {
-        matches!(
-            computed.display,
-            DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-        )
-    });
+    let has_flex_or_grid = context
+        .cascade
+        .computed
+        .iter()
+        .any(|computed| computed.display.is_flex_or_grid_container());
     if !has_named_page || !has_flex_or_grid {
         return Ok(context);
     }
@@ -1168,21 +1123,6 @@ fn flex_pagination_child_order(
     children
 }
 
-/// Nearest ancestor box, skipping elements that do not generate a box.
-pub(crate) fn pagination_box_parent(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-) -> Option<usize> {
-    let mut parent = document.parent_of(node_id);
-    while let Some(id) = parent
-        && cascade.computed[id].display == DisplayValue::Contents
-    {
-        parent = document.parent_of(id);
-    }
-    parent
-}
-
 /// Whether a float declaration creates a floating box in pagination.
 /// Ordinary floats on flex items remain in normal flow. Footnotes retain
 /// their existing page-local placement; Contents elements generate no box.
@@ -1201,17 +1141,13 @@ pub(crate) fn is_floating_box_for_pagination(
         computed.display,
         DisplayValue::None | DisplayValue::Contents
     ) && (matches!(computed.float, FloatValue::Footnote)
-        || !pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
-            // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
-            // Grid 1 §6.1).
-            matches!(
-                cascade.computed[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        }))
+        || !box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
+            |parent| {
+                // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
+                // Grid 1 §6.1).
+                cascade.computed[parent].display.is_flex_or_grid_container()
+            },
+        ))
 }
 
 /// Last in-flow effective item in the flex container's visual page order.
@@ -1282,21 +1218,13 @@ pub(crate) fn pagination_child_order(
     parent_id: usize,
 ) -> Vec<usize> {
     let computed = &cascade.computed[parent_id];
-    if matches!(
-        computed.display,
-        DisplayValue::Flex | DisplayValue::InlineFlex
-    ) {
+    if computed.display.is_flex_container() {
         return flex_pagination_child_order(document, cascade, parent_id);
     }
-    let is_single_column_grid = matches!(
-        computed.display,
-        DisplayValue::Grid | DisplayValue::InlineGrid
-    ) && document.nodes[parent_id].grid_column_count == 1;
+    let is_single_column_grid =
+        computed.display.is_grid_container() && document.nodes[parent_id].grid_column_count == 1;
     if !is_single_column_grid {
-        if matches!(
-            computed.display,
-            DisplayValue::Grid | DisplayValue::InlineGrid
-        ) {
+        if computed.display.is_grid_container() {
             // Multi-column pagination is not implemented, but named-page
             // propagation and candidate traversal must retain Grid's
             // order-modified child sequence.
@@ -1342,30 +1270,19 @@ pub(crate) fn page_applies_to_box(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let blockified = pagination_box_parent(document, cascade, node_id).is_some_and(|parent| {
-        cascade.computed.get(parent).is_some_and(|parent| {
-            matches!(
-                parent.display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        })
-    });
+    let blockified =
+        box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent| {
+            cascade
+                .computed
+                .get(parent)
+                .is_some_and(|parent| parent.display.is_flex_or_grid_container())
+        });
     blockified
         || matches!(
             cascade.computed[node_id].position,
             PositionValue::Absolute | PositionValue::Fixed
         )
-        || !matches!(
-            cascade.computed[node_id].display,
-            DisplayValue::Inline
-                | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        )
+        || !cascade.computed[node_id].display.is_inline_level()
 }
 
 /// Whether `node_id` is an absolutely positioned box whose block-start and
@@ -1397,18 +1314,15 @@ pub(crate) fn is_monolithic_for_pagination(
         .flags
         .contains(crate::node::NodeFlags::IS_INLINE_SVG_ROOT)
         || node.tag_name().is_some_and(|tag| {
-            let tag = tag.to_ascii_lowercase();
-            ATOMIC_TAGS.contains(&tag.as_str()) || REPLACED_BOX_TAGS.contains(&tag.as_str())
+            // Programmatically created DOM nodes can retain mixed-case tags.
+            ATOMIC_TAGS
+                .iter()
+                .chain(REPLACED_BOX_TAGS)
+                .any(|replaced_tag| tag.eq_ignore_ascii_case(replaced_tag))
         });
     replaced
         || (!page_applies_to_box(document, cascade, node_id)
-            && matches!(
-                cascade.computed[node_id].display,
-                DisplayValue::InlineBlock
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::InlineGrid
-                    | DisplayValue::InlineTable
-            ))
+            && cascade.computed[node_id].display.is_atomic_inline_level())
         || establishes_orthogonal_flow(document, cascade, node_id)
 }
 
@@ -1423,12 +1337,11 @@ pub(crate) fn establishes_orthogonal_flow(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    use raikiri_style::property::WritingMode;
     let vertical = |id: usize| {
         cascade
             .computed
             .get(id)
-            .is_some_and(|computed| computed.cssom_writing_mode != WritingMode::HorizontalTb)
+            .is_some_and(|computed| computed.cssom_writing_mode.is_vertical())
     };
     if cascade
         .computed
@@ -1437,7 +1350,7 @@ pub(crate) fn establishes_orthogonal_flow(
     {
         return false;
     }
-    pagination_box_parent(document, cascade, node_id)
+    box_parent(document, cascade, node_id, BoxParentScope::Document)
         .filter(|&parent| document.nodes[parent].kind() == NodeKind::Element)
         .is_some_and(|parent| vertical(parent) != vertical(node_id))
 }

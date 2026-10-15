@@ -17,7 +17,8 @@
 use raikiri_traits::{ReplacedResolver, ResolverError, ResolverRequest};
 use url::Url;
 
-use crate::document::Document;
+use crate::document::{DEFAULT_CANVAS_SIZE, Document};
+use crate::image_geometry::DEFAULT_OBJECT_SIZE;
 use crate::node::NodeData;
 
 /// Walks every element in `document`'s arena, resolves `<img src="...">`
@@ -222,8 +223,8 @@ fn default_svg_object_size(
     height: Option<f32>,
     ratio: Option<f32>,
 ) -> (f32, f32) {
-    const DEFAULT_WIDTH: f32 = 300.0;
-    const DEFAULT_HEIGHT: f32 = 150.0;
+    const DEFAULT_WIDTH: f32 = DEFAULT_OBJECT_SIZE.0;
+    const DEFAULT_HEIGHT: f32 = DEFAULT_OBJECT_SIZE.1;
     match (width, height, ratio) {
         (Some(width), Some(height), _) => (width, height),
         (Some(width), None, Some(ratio)) => (width, width / ratio),
@@ -266,35 +267,16 @@ pub(crate) fn resolve_canvas_intrinsic_sizes(document: &mut Document) {
         if !is_html {
             continue;
         }
-        let attr = |name: &str| element.attribute(name);
-        // Reuse the Document parser so content-attribute handling stays in
-        // one place; inline the non-negative-integer fallback here to avoid
-        // borrowing the document while iterating its nodes mutably.
-        let parse_dim = |value: Option<&str>, default: f32| -> f32 {
-            let Some(value) = value else {
-                return default;
-            };
-            let trimmed =
-                value.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\x0C' | '\r'));
-            let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
-            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-                return default;
-            }
-            let digits = digits.trim_start_matches('0');
-            if digits.is_empty() {
-                return 0.0;
-            }
-            if digits.len() > 10 {
-                return u32::MAX as f32;
-            }
-            digits
-                .parse::<u64>()
-                .ok()
-                .map(|v| (v.min(u64::from(u32::MAX))) as f32)
-                .unwrap_or(default)
+        // The parser is an associated function, so calling it does not
+        // borrow the document while its nodes are iterated mutably.
+        let parse_dim = |name: &str, default: u32| -> f32 {
+            element
+                .attribute(name)
+                .and_then(Document::parse_canvas_dimension)
+                .unwrap_or(default) as f32
         };
-        let width = parse_dim(attr("width"), 300.0);
-        let height = parse_dim(attr("height"), 150.0);
+        let width = parse_dim("width", DEFAULT_CANVAS_SIZE.0);
+        let height = parse_dim("height", DEFAULT_CANVAS_SIZE.1);
         let ratio = if width > 0.0 && height > 0.0 {
             let ratio = width / height;
             (ratio.is_finite() && ratio > 0.0).then_some(ratio)

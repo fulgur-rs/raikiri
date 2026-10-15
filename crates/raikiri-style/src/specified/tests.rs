@@ -86,6 +86,45 @@ fn box_ch_provenance_keeps_authored_factor_and_font() {
 }
 
 #[test]
+fn box_calc_ch_provenance_keeps_the_rest_of_the_sum() {
+    let calc = |source| {
+        crate::cascade::parse_relative_calc_length_percentage(source).expect("relative calc")
+    };
+    let mut specified = SpecifiedValues::initial();
+    specified.width = LengthOrAuto::RelativeCalc(calc("calc(20ch + 10px)"));
+    specified.padding = Sides::all(LengthPercentageOrCalc::RelativeCalc(calc(
+        "calc(10% + 1ch)",
+    )));
+    specified.margin = Sides::all(LengthOrAuto::RelativeCalc(calc("calc(2ch - 1em)")));
+    let computed = specified.finalize(&ComputedValues::initial(), &CTX);
+
+    let parts = |provenance: &Option<ChLengthProvenance>| {
+        provenance
+            .as_ref()
+            .map(|value| (value.factor, value.offset, value.percent))
+    };
+    assert_eq!(parts(&computed.width_ch), Some((20.0, 10.0, 0.0)));
+    assert_eq!(parts(&computed.padding_ch.top), Some((1.0, 0.0, 10.0)));
+    assert_eq!(parts(&computed.margin_ch.left), Some((2.0, -16.0, 0.0)));
+    assert_eq!(
+        computed.width_ch.as_ref().map(|value| value.font.size),
+        Some(computed.font_size)
+    );
+    // Until layout measures the font, `ch` keeps the `0.5em` fallback.
+    assert_eq!(computed.width, ComputedLengthPercentageOrAuto::Px(170.0));
+    assert_eq!(
+        computed
+            .width_ch
+            .as_ref()
+            .map(|value| value.with_advance(9.0)),
+        Some(crate::property::CalcLengthPercentage {
+            percent: 0.0,
+            px: 190.0,
+        })
+    );
+}
+
+#[test]
 fn min_max_ch_provenance_tracks_the_declaring_font_and_logical_axis() {
     for mode in [
         WritingMode::HorizontalTb,

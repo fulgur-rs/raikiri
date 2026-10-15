@@ -90,6 +90,58 @@ fn tree_walker_current_node_setter_moves_the_walker() {
 }
 
 #[test]
+fn tree_walker_current_node_setter_accepts_nodes_outside_the_root() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var root = document.createElement('div'); \
+         var inside = document.createTextNode('A'); root.appendChild(inside); \
+         var outside = document.createElement('p'); \
+         var before = document.createTextNode('B'); outside.appendChild(before); \
+         var after = document.createTextNode('C'); \
+         document.body.append(outside, root, after); \
+         var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
+         walker.currentNode = outside; \
+         walker.currentNode === outside \
+         && walker.nextNode() === before && walker.nextNode() === inside \
+         && walker.nextNode() === null && walker.currentNode === inside",
+    );
+}
+
+#[test]
+fn tree_walker_next_node_from_outside_the_root_walks_to_the_document_end() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var root = document.createElement('div'); \
+         var first = document.createTextNode('A'); \
+         var second = document.createTextNode('B'); \
+         document.body.append(root, first, second); \
+         var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
+         walker.currentNode = first; \
+         walker.nextNode() === second && walker.nextNode() === null \
+         && walker.currentNode === second",
+    );
+}
+
+#[test]
+fn tree_walker_next_node_from_an_ancestor_or_a_detached_node() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var root = document.createElement('div'); \
+         var inside = document.createTextNode('A'); root.appendChild(inside); \
+         document.body.append(root); \
+         var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); \
+         walker.currentNode = document.body; \
+         var fromAncestor = walker.nextNode() === inside && walker.nextNode() === null; \
+         var detached = document.createTextNode('x'); \
+         walker.currentNode = detached; \
+         fromAncestor && walker.nextNode() === null && walker.currentNode === detached",
+    );
+}
+
+#[test]
 fn range_set_start_and_end_use_utf16_offsets_and_highlights_store_ranges() {
     let mut rt = rt();
     ok(

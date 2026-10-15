@@ -380,9 +380,9 @@ impl RunningTemplate {
 /// Inherited values retain the ancestor's key, so a descendant with a different
 /// font does not re-measure the inherited value against the wrong glyph
 /// advance. Non-inherited box values use the declaring node's own key. The
-/// key currently covers family, size, weight, and style; variation axes and
-/// vertical text orientation remain outside this layout's horizontal metric
-/// scope.
+/// key currently covers family, size, weight, style, and optical sizing;
+/// explicit variation axes and vertical text orientation remain outside this
+/// layout's horizontal metric scope.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChFontKey {
     /// Font family list used by the shaping resolver.
@@ -393,6 +393,9 @@ pub struct ChFontKey {
     pub weight: f32,
     /// Computed font style.
     pub style: FontStyle,
+    /// Computed `font-optical-sizing`, which selects the `opsz` instance a
+    /// variable font's metrics are read at.
+    pub optical_sizing: FontOpticalSizing,
 }
 
 /// Physical preferred sizes of a `vertical-rl` / `vertical-lr` box whose
@@ -412,6 +415,10 @@ pub struct VerticalLogicalSize {
 
 /// Authored `ch` provenance retained until the layout sink can probe the
 /// declaring font's U+0030 advance.
+///
+/// A `calc()` that mixes `ch` with other terms also records the rest of the
+/// sum, so the used value is `factor * advance + offset` plus `percent` of
+/// the property's percentage basis.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChLengthProvenance {
     /// Authored multiplier, for example `2` in `width: 2ch`.
@@ -419,6 +426,22 @@ pub struct ChLengthProvenance {
     /// Font matching data from the declaring node for this value; inherited
     /// values keep the ancestor's key.
     pub font: ChFontKey,
+    /// The absolute part of a `calc()` sum in CSS px, for example `10` in
+    /// `calc(2ch + 10px)`; zero for a plain `Nch` length.
+    pub offset: f32,
+    /// The percentage coefficient of a `calc()` sum (`100%` is `100.0`);
+    /// zero for a plain `Nch` length.
+    pub percent: f32,
+}
+
+impl ChLengthProvenance {
+    /// The used value once the declaring font's `0` advance is known.
+    pub fn with_advance(&self, advance: f32) -> crate::property::CalcLengthPercentage {
+        crate::property::CalcLengthPercentage {
+            percent: self.percent,
+            px: self.factor * advance + self.offset,
+        }
+    }
 }
 
 /// The most background layers a renderer paints for one box, top first.

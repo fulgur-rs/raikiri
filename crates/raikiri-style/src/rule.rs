@@ -707,9 +707,9 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
                 }));
             }
         }
-        PropertyValue::Margin(sides) => expand_margin(sides, push_longhand),
+        PropertyValue::Margin(ref sides) => expand_margin(**sides, push_longhand),
         PropertyValue::MarginInherit => expand_margin_inherit(push_longhand),
-        PropertyValue::Padding(sides) => expand_padding(sides, push_longhand),
+        PropertyValue::Padding(ref sides) => expand_padding(**sides, push_longhand),
         PropertyValue::MarginInline(pair) => {
             expand_margin_inline(pair, logical_longhand(d.important, &mut push, LogicalAxis::Inline))
         }
@@ -1230,7 +1230,7 @@ pub(crate) fn expand_border_image(
 ) {
     push(PropertyValue::BorderImageSource(shorthand.source.clone()));
     push(PropertyValue::BorderImageSlice(shorthand.slice));
-    push(PropertyValue::BorderImageWidth(shorthand.width));
+    push(PropertyValue::BorderImageWidth(Box::new(shorthand.width)));
     push(PropertyValue::BorderImageOutset(shorthand.outset));
     push(PropertyValue::BorderImageRepeat(shorthand.repeat));
 }

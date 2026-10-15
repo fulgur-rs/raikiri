@@ -417,6 +417,10 @@ impl DomRuntime {
     /// [`RuntimeError::Aborted`], which script cannot catch; after that the
     /// runtime refuses to evaluate anything else.
     pub fn evaluate(&mut self, source: &str) -> Result<JsValue, RuntimeError> {
+        event_loop::with_engine_stack(|| self.evaluate_on_current_stack(source))
+    }
+
+    fn evaluate_on_current_stack(&mut self, source: &str) -> Result<JsValue, RuntimeError> {
         if let Some(reason) = event_loop::aborted(&mut self.context) {
             return Err(RuntimeError::Aborted(reason));
         }
@@ -518,7 +522,7 @@ impl DomRuntime {
     /// stack in Boa's parser, and there is no heap bound (see [`Limits`]).
     /// Untrusted content needs an external watchdog as well.
     pub fn run_until_idle(&mut self) -> Result<(), Abort> {
-        event_loop::run_until_idle(&mut self.context)
+        event_loop::with_engine_stack(|| event_loop::run_until_idle(&mut self.context))
     }
 
     /// Run the document end to end (HTML's script processing model,
@@ -540,7 +544,7 @@ impl DomRuntime {
         if let Some(report) = &self.report {
             return report.clone();
         }
-        let report = scripts::run(self);
+        let report = event_loop::with_engine_stack(|| scripts::run(self));
         self.report = Some(report.clone());
         report
     }
@@ -613,6 +617,10 @@ impl DomRuntime {
     /// [`DomRuntime::evaluate`]) stays parked in the runtime state and
     /// surfaces as [`RuntimeError::Host`] on the next [`DomRuntime::evaluate`]
     /// call, the same as a failure recorded while a script ran.
+    ///
+    /// Script run by driving Boa directly through this context does not get
+    /// the native stack budget the runtime's own entry points guarantee, so
+    /// it is bounded by the calling thread's stack.
     ///
     /// To pass a native Rust callback into evaluated code, prefer
     /// [`DomRuntime::evaluate_with_callback`] or

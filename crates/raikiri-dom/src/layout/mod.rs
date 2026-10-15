@@ -48,14 +48,34 @@ use taffy::{
 pub(crate) mod table;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {
-    let raw = value.into_raw();
-    (raw.tag() == CompactLength::LENGTH_TAG)
-        .then_some(raw.value())
-        .filter(|value| value.is_finite())
+    resolve_dimension(value, None).filter(|value| value.is_finite())
+}
+
+/// The used width a measured `ch` width was given before Taffy: a length, or
+/// a calc() sum whose percentage resolves against `parent_width`.
+fn measured_ch_width(
+    doc: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    parent_width: f32,
+) -> Option<f32> {
+    cascade.computed[id].width_ch.as_ref()?;
+    let width = doc.nodes[id].style.size.width;
+    let raw = width.into_raw();
+    if raw.is_calc() {
+        Some(crate::taffy_impl::resolve_calc(
+            raw.calc_value(),
+            parent_width,
+        ))
+    } else {
+        style_dimension_length(width)
+    }
 }
 
 mod body_block_margins;
+mod box_tree;
 mod bridge;
+mod compact_length;
 mod depth;
 mod fixed;
 pub(crate) mod ifc;
@@ -69,6 +89,10 @@ pub(crate) mod sanitize;
 pub(crate) mod test_support;
 
 use body_block_margins::*;
+pub(crate) use box_tree::{BoxParentScope, box_parent};
+pub(crate) use compact_length::{
+    resolve_dimension, resolve_length_percentage, resolve_length_percentage_auto,
+};
 use fixed::place_fixed_boxes_in_page_area;
 use multicol::*;
 pub(crate) use page::used_style_length_percentage;
@@ -90,6 +114,7 @@ pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 
+pub use fixed::{establishes_fixed_containing_block, is_transformable};
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
@@ -123,6 +148,7 @@ pub use page_pipeline::{
     layout_single_page, layout_single_page_with_resolver,
     layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
 };
+pub use relative::placed_without_relative_offset;
 #[doc(hidden)]
 pub use relative::used_relative_offset;
 pub(crate) use relative::{Precedence, used_relative_insets};

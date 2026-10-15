@@ -60,7 +60,7 @@ taffy = { version = "0.14", default-features = false, features = [
 
 # ── Text (shodo) ───────────────────────────────────────────────────────
 # Exact pin: the 0.0.x line may change its public API in any release.
-shodo  = { version = "=0.0.28", default-features = false, features = ["system-fonts"] }
+shodo  = { version = "=0.0.30", default-features = false, features = ["system-fonts"] }
 skrifa = "0.44"
 
 # ── Rendering (anyrender + peniko + kurbo) ─────────────────────────────
@@ -225,15 +225,10 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 # Omit debug information for non-workspace dependencies.
 debug = false
-
-# Tokenizing a maximum-size HTML input spends nearly all of its time in these
-# crates' unoptimized buffer handling; optimize them so input-cap tests stay
-# fast. Dependencies rebuild only when their versions change.
-[profile.dev.package.html5ever]
-opt-level = 2
-
-[profile.dev.package.markup5ever]
-opt-level = 2
-
-[profile.dev.package.tendril]
+# Optimize non-workspace dependencies. Layout and streaming tests spend most
+# of their time in unoptimized dependency code (font shaping, styling, and the
+# HTML tokenizer's buffer handling on maximum-size inputs), so debug test runs
+# are many times slower without it. Workspace crates stay at opt-level 0, so
+# incremental rebuilds are unaffected; dependencies rebuild only when their
+# versions change.
 opt-level = 2

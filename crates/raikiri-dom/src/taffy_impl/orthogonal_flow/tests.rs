@@ -192,3 +192,51 @@ fn right_float_stays_inside_a_vertical_block() {
     assert_eq!(container, (8.0, 8.0, 50.0, 50.0));
     assert_eq!(float, (38.0, 38.0, 20.0, 20.0));
 }
+
+#[test]
+fn sideways_blocks_use_the_content_width_under_a_horizontal_parent() {
+    // A 50px square block gives a 50px max-content block size in either
+    // sideways mode; the horizontal parent must not stretch it to 784px.
+    for mode in ["sideways-rl", "sideways-lr"] {
+        assert_eq!(
+            rect_of(&format!("display:block;writing-mode:{mode}"), false),
+            (8.0, 8.0, 50.0, 50.0)
+        );
+    }
+}
+
+#[test]
+fn sideways_percentage_padding_uses_the_containing_block_inline_extent() {
+    // CSS Writing Modes 4 section 7.2: 10% of the 200px inline extent
+    // is 20px, even while sideways glyph shaping retains its fallback.
+    for mode in ["sideways-rl", "sideways-lr"] {
+        let mut doc = Document::new();
+        let body = doc.append_element(
+            Some(0),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(format!(
+                "display:block;position:relative;writing-mode:{mode};width:100px;height:200px;font:10px Ahem"
+            )),
+        );
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:absolute;left:0;top:0;width:auto;height:10px;padding-left:10%"),
+        );
+        doc.append_text(child, "x");
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+        assert!(!doc.nodes[parent].is_ifc_root());
+        assert!(doc.nodes[child].is_ifc_root());
+        assert_eq!(doc.nodes[child].unrounded_layout.size.width, 30.0);
+    }
+}

@@ -383,6 +383,34 @@ fn limits_inside_callbacks_abort_the_loop() {
     }
 }
 
+/// Deeply nested source parses even on a thread whose own stack is far
+/// smaller than Boa's recursive-descent parser needs for it: as a classic
+/// script, as a string timer, and through `eval` in a function timer and a
+/// promise reaction.
+#[test]
+fn deeply_nested_source_does_not_overflow_a_small_thread_stack() {
+    const DEPTH: usize = 40;
+    let nested = format!("{}1{}", "[".repeat(DEPTH), "]".repeat(DEPTH));
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(move || {
+            let mut rt = rt();
+            ok(&mut rt, &format!("Array.isArray({nested})"));
+            rt.evaluate(&format!(
+                "var src = '{nested}'; var results = [];
+                 Promise.resolve().then(() => results.push(Array.isArray(eval(src))));
+                 setTimeout(() => results.push(Array.isArray(eval(src))), 0);
+                 setTimeout('results.push(Array.isArray({nested}))', 0);"
+            ))
+            .unwrap();
+            rt.run_until_idle().unwrap();
+            ok(&mut rt, "results.length === 3 && results.every(r => r)");
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
 #[test]
 fn realm_limits_are_applied() {
     let mut rt = runtime_with(Limits {

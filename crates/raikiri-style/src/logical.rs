@@ -61,7 +61,7 @@ impl FlowMapping {
 
     /// Whether the inline axis is vertical.
     pub(crate) fn is_vertical(self) -> bool {
-        self.writing_mode != WritingMode::HorizontalTb
+        self.writing_mode.is_vertical()
     }
 
     /// The physical side `side` maps to (CSS Writing Modes 4 §6.4).

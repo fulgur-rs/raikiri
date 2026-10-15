@@ -11,15 +11,15 @@ use html5ever::tendril::{TendrilSink, fmt::UTF8};
 use html5ever::tree_builder::TreeSink;
 use markup5ever::{LocalName, Namespace};
 use raikiri_traits::{
-    Body, LimitKind, Method, NetworkError, ParseError, RenderLimits, RenderWarning, Request,
-    ResourceKind, StylesheetKind, ViolationType, WarningKind,
+    LimitKind, NetworkError, ParseError, RenderLimits, RenderWarning, ResourceKind, StylesheetKind,
+    WarningKind,
 };
 use url::Url;
 
-use crate::import::{
-    ImportBudget, expand_stylesheet_imports_with_budget, network_error_summary, redacted_url,
-    sanitize_policy_violation,
+use crate::fetch::{
+    get_request, network_error_summary, policy_violation_warning_kind, redacted_url, resolve_url,
 };
+use crate::import::{ImportBudget, expand_stylesheet_imports_with_budget};
 use crate::input::Utf8Feed;
 use crate::sink::RaikiriTreeSink;
 use crate::types::{ParseOptions, StylesheetSource, UncascadedDocument};
@@ -330,17 +330,11 @@ fn fetch_external_stylesheets(
                     continue;
                 };
 
-                let request = Request {
-                    url: url.clone(),
-                    method: Method::Get,
-                    content_type: None,
-                    headers: Vec::new(),
-                    body: Body::Empty,
-                    signal: None,
-                    kind: ResourceKind::ExternalStylesheet,
-                };
-
-                match network.fetch(request) {
+                match network.fetch(get_request(
+                    url.clone(),
+                    ResourceKind::ExternalStylesheet,
+                    None,
+                )) {
                     Ok(fetched) => {
                         // A successful empty response contributes no source.
                         let css = String::from_utf8_lossy(&fetched.bytes).into_owned();
@@ -364,21 +358,8 @@ fn fetch_external_stylesheets(
                         // ResourcePolicy / RenderResources may deny a response
                         // because it exceeds a byte cap. Preserve that diagnostic
                         // separately from ordinary policy denials.
-                        let kind = match &violation.violation_type {
-                            ViolationType::FetchTooLarge { limit, actual }
-                            | ViolationType::DecodedTooLarge { limit, actual } => {
-                                WarningKind::ResourceLimitExceeded {
-                                    kind: violation.kind,
-                                    limit: *limit,
-                                    actual: *actual,
-                                }
-                            }
-                            _ => WarningKind::PolicyWarning {
-                                violation: sanitize_policy_violation((*violation).clone()),
-                            },
-                        };
                         doc.warnings.push(RenderWarning {
-                            kind,
+                            kind: policy_violation_warning_kind(&violation, violation.kind),
                             node_id: Some(node_id),
                             details: "<link rel=stylesheet>: fetch denied by resource policy or resource limit"
                                 .to_owned(),
@@ -463,15 +444,6 @@ pub fn effective_document_base_url(
             .filter(|url| !matches!(url.scheme(), "data" | "javascript"))
             .or_else(|| fallback.cloned()),
         None => fallback.cloned(),
-    }
-}
-
-/// Resolve `href` against `base`. Absolute URLs do not need a base; relative
-/// URLs are rejected when no base is available.
-fn resolve_url(href: &str, base: Option<&Url>) -> Option<Url> {
-    match base {
-        Some(base) => base.join(href).ok(),
-        None => Url::parse(href).ok(),
     }
 }
 

@@ -364,6 +364,10 @@ pub fn cumulative_offset(
     offsets: &[(usize, (f32, f32))],
     node: usize,
 ) -> (f32, f32) {
+    if offsets.is_empty() {
+        return (0.0, 0.0);
+    }
+
     let (mut dx, mut dy) = (0.0, 0.0);
     // A pseudo-element moves by its own relative offset, and with its
     // element.
