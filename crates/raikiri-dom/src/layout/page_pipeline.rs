@@ -1352,8 +1352,9 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
         let width = measure(width_ch);
         let height = measure(height_ch);
         let min_width = measure(&cv.min_width_ch);
-        // Use the same normalized logical block axis as the min/max bridge.
-        let min_height_ch = if !cv.writing_mode.is_vertical()
+        // Use the same logical block axis as the min/max bridge: a box on
+        // vertical axes has its logical block minimum as its minimum width.
+        let min_height_ch = if !crate::layout::bridge::uses_vertical_axes(cascade, idx)
             && cv.cssom_writing_mode.is_vertical()
             && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
         {

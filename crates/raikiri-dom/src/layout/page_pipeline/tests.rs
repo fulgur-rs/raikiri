@@ -8200,12 +8200,19 @@ fn ch_constraints_keep_the_empty_font_collection_fallback() {
 }
 
 #[test]
-fn logical_ch_minimums_follow_the_existing_normalized_bridge_axis() {
+fn logical_ch_minimums_follow_the_bridge_axis() {
+    // A box on vertical axes takes its logical block minimum as its minimum
+    // width only; a vertical flex container, on horizontal axes, keeps it on
+    // its minimum height as well, unless a physical `min-height` is set.
     for (css, expected_height) in [
-        ("writing-mode:vertical-rl;min-block-size:4ch", 64.0),
+        ("writing-mode:vertical-rl;min-block-size:4ch", 0.0),
         (
             "writing-mode:vertical-rl;min-block-size:4ch;min-height:20px",
             20.0,
+        ),
+        (
+            "display:flex;writing-mode:vertical-rl;min-block-size:4ch",
+            64.0,
         ),
     ] {
         let css = format!("font-size:16px;width:16px;height:16px;{css}");
@@ -8213,11 +8220,13 @@ fn logical_ch_minimums_follow_the_existing_normalized_bridge_axis() {
         lay_out(&mut doc, &cascade);
         assert_eq!(
             doc.nodes[root].style.min_size.width.into_raw().value(),
-            64.0
+            64.0,
+            "{css}"
         );
         assert_eq!(
             doc.nodes[root].style.min_size.height.into_raw().value(),
-            expected_height
+            expected_height,
+            "{css}"
         );
     }
 }

@@ -114,6 +114,14 @@ pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
     !values.multicol_flow
 }
 
+/// Whether the bridge gives `idx` its vertical axes: a box that
+/// [`lays_out_vertically`], except a table box, which keeps horizontal axes
+/// even in vertical writing.
+pub(crate) fn uses_vertical_axes(cascade: &CascadeResult, idx: usize) -> bool {
+    lays_out_vertically(cascade, idx)
+        && !crate::taffy_impl::is_table_box(cascade.computed[idx].display)
+}
+
 /// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
 /// lays out vertical lines on its own axes ([`lays_out_vertically`]). Other
 /// boxes keep the horizontal mapping in [`ComputedValues::width`] /
@@ -255,9 +263,7 @@ pub(crate) fn apply_computed_to_style(
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         doc.nodes[idx].needs_relative_block_paint_offset = false;
         let is_multicol_container = doc.nodes[idx].multicol.is_some();
-        // Table boxes keep horizontal axes even in vertical writing.
-        let vertical_axes = lays_out_vertically(cascade, idx)
-            && !crate::taffy_impl::is_table_box(cascade.computed[idx].display);
+        let vertical_axes = uses_vertical_axes(cascade, idx);
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv, vertical_axes);
         bridge_display(style, cv);
