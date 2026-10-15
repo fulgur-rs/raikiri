@@ -1387,13 +1387,13 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
         Some(body),
         "div",
         Style::default(),
-        Some("width: 100px; height: 100px;"),
+        Some("display: block; width: 100px; height: 100px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
         Style::default(),
-        Some("width: 10px; height: 10px; margin-left: -1e9%;"),
+        Some("display: block; width: 10px; height: 10px; margin-left: -1e9%;"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1469,13 +1469,13 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
         Some(body),
         "div",
         Style::default(),
-        Some("width: 100px; height: 100px;"),
+        Some("display: block; width: 100px; height: 100px;"),
     );
     let child = doc.append_element(
         Some(parent),
         "div",
         Style::default(),
-        Some("width: 10px; height: 10px; margin-left: 1e9%;"),
+        Some("display: block; width: 10px; height: 10px; margin-left: 1e9%;"),
     );
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -1534,7 +1534,7 @@ fn saturated_positive_margin_percentage_child_is_not_reset() {
 #[test]
 fn deep_nested_negative_percentage_margin_saturating_location_is_not_reset() {
     const DEPTH: usize = 45;
-    let layouts = nested_decl_layouts("width: 200%; margin-left: -100%", DEPTH);
+    let layouts = nested_decl_layouts("display: block; width: 200%; margin-left: -100%", DEPTH);
     assert_eq!(layouts.len(), DEPTH);
 
     let saturated_negative_count = layouts

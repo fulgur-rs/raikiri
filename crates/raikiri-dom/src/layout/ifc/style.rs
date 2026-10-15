@@ -15,7 +15,7 @@ use raikiri_style::{
 };
 use shodo::font::FontCollection;
 use shodo::geometry::WritingMode;
-use shodo::node::{InlineEdges, Sides};
+use shodo::node::{InlineEdgePercents, InlineEdges, Sides};
 use shodo::style::{
     self as s, FontFamily, InlineStyle, LineHeight, LineOptions, ParagraphStyle,
     TextCombineUpright, TextOrientation, TextWrapMode, WhiteSpaceCollapse,
@@ -869,37 +869,51 @@ pub(crate) fn line_options(
     ))
 }
 
-/// Absolute inline-box edges as logical sides. A `ch` edge is measured with
-/// the font that declared it; a percentage or calc() edge would need the
-/// containing block's inline size and is taken as zero.
+/// Inline-box edges as logical sides: the absolute px parts, and the
+/// percentage parts as fractions of the containing block's inline size,
+/// which only line layout knows (`calc(10% + 4px)` is `4.0` and `0.1`). A
+/// `ch` edge is measured with the font that declared it.
 pub(crate) fn inline_edges(
     cv: &ComputedValues,
     node: usize,
     fonts: &FontCollection,
-) -> Result<InlineEdges, IfcError> {
+) -> Result<(InlineEdges, InlineEdgePercents), IfcError> {
     let unsupported = |reason: &'static str| IfcError::Unsupported { node, reason };
-    // An edge in `ch` records the font of the element that declared it; one
-    // whose calc() also has a percentage is taken as zero like other
-    // percentage edges.
-    let ch_px = |provenance: &Option<ChLengthProvenance>| {
+    // An edge in `ch` records the font of the element that declared it, with
+    // the rest of its calc() sum.
+    let ch = |provenance: &Option<ChLengthProvenance>| {
         provenance.as_ref().map(|value| {
             let used = value.with_advance(ch_advance(fonts, &value.font));
-            if used.percent == 0.0 { used.px } else { 0.0 }
+            (used.px, used.percent / 100.0)
         })
     };
-    let padding = |value: ComputedLengthPercentageOrCalc, ch: &Option<ChLengthProvenance>| match (
-        ch_px(ch),
+    let padding = |value: ComputedLengthPercentageOrCalc,
+                   provenance: &Option<ChLengthProvenance>| {
+        let (px, percent) = match (ch(provenance), value) {
+            (Some(parts), _) => parts,
+            (None, ComputedLengthPercentageOrCalc::Px(value)) => return (value, 0.0),
+            (None, ComputedLengthPercentageOrCalc::Percent(percent)) => (0.0, percent / 100.0),
+            (None, ComputedLengthPercentageOrCalc::Calc(calc)) => (calc.px, calc.percent / 100.0),
+        };
+        // A calc() sum can go negative; padding cannot. With a percentage
+        // the sum is only known against the basis, where the engine clamps
+        // it.
+        if percent == 0.0 {
+            (px.max(0.0), 0.0)
+        } else {
+            (px, percent)
+        }
+    };
+    let margin = |value: LengthOrAuto, provenance: &Option<ChLengthProvenance>| match (
+        ch(provenance),
         value,
     ) {
-        // A calc() sum can go negative; padding cannot.
-        (Some(px), _) => Ok::<f32, IfcError>(px.max(0.0)),
-        (None, ComputedLengthPercentageOrCalc::Px(value)) => Ok(value),
-        _ => Ok(0.0),
-    };
-    let margin = |value: LengthOrAuto, ch: &Option<ChLengthProvenance>| match (ch_px(ch), value) {
-        (Some(px), _) => Ok::<f32, IfcError>(px),
-        (None, LengthOrAuto::Px(value)) => Ok(value),
-        _ => Ok(0.0),
+        (Some(parts), _) => parts,
+        (None, LengthOrAuto::Px(value)) => (value, 0.0),
+        (None, LengthOrAuto::Percent(percent)) => (0.0, percent / 100.0),
+        (None, LengthOrAuto::Calc(calc)) => (calc.px, calc.percent / 100.0),
+        // `auto` inline margins are zero (CSS 2.1 §10.3.1).
+        (None, LengthOrAuto::Auto | LengthOrAuto::MinContent) => (0.0, 0.0),
     };
     let writing_mode = match cv.cssom_writing_mode {
         p::WritingMode::HorizontalTb | p::WritingMode::SidewaysRl | p::WritingMode::SidewaysLr => {
@@ -950,26 +964,40 @@ pub(crate) fn inline_edges(
             "edge writing mode or direction is not represented by shodo",
         )),
     };
-    Ok(InlineEdges {
-        margin: logical(
-            margin(cv.margin.top, &cv.margin_ch.top)?,
-            margin(cv.margin.right, &cv.margin_ch.right)?,
-            margin(cv.margin.bottom, &cv.margin_ch.bottom)?,
-            margin(cv.margin.left, &cv.margin_ch.left)?,
-        )?,
-        padding: logical(
-            padding(cv.padding.top, &cv.padding_ch.top)?,
-            padding(cv.padding.right, &cv.padding_ch.right)?,
-            padding(cv.padding.bottom, &cv.padding_ch.bottom)?,
-            padding(cv.padding.left, &cv.padding_ch.left)?,
-        )?,
-        border: logical(
-            cv.border.top.width().0,
-            cv.border.right.width().0,
-            cv.border.bottom.width().0,
-            cv.border.left.width().0,
-        )?,
-    })
+    let sides = |top: (f32, f32), right: (f32, f32), bottom: (f32, f32), left: (f32, f32)| {
+        Ok::<_, IfcError>((
+            logical(top.0, right.0, bottom.0, left.0)?,
+            logical(top.1, right.1, bottom.1, left.1)?,
+        ))
+    };
+    let (margin_px, margin_percent) = sides(
+        margin(cv.margin.top, &cv.margin_ch.top),
+        margin(cv.margin.right, &cv.margin_ch.right),
+        margin(cv.margin.bottom, &cv.margin_ch.bottom),
+        margin(cv.margin.left, &cv.margin_ch.left),
+    )?;
+    let (padding_px, padding_percent) = sides(
+        padding(cv.padding.top, &cv.padding_ch.top),
+        padding(cv.padding.right, &cv.padding_ch.right),
+        padding(cv.padding.bottom, &cv.padding_ch.bottom),
+        padding(cv.padding.left, &cv.padding_ch.left),
+    )?;
+    Ok((
+        InlineEdges {
+            margin: margin_px,
+            padding: padding_px,
+            border: logical(
+                cv.border.top.width().0,
+                cv.border.right.width().0,
+                cv.border.bottom.width().0,
+                cv.border.left.width().0,
+            )?,
+        },
+        InlineEdgePercents {
+            margin: margin_percent,
+            padding: padding_percent,
+        },
+    ))
 }
 
 #[cfg(test)]

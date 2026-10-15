@@ -714,10 +714,12 @@ impl Content<'_, '_> {
                 self.push_nodes(builder, &node.children, ends, letter)?;
                 continue;
             }
-            let edges = style::inline_edges(cv, id, self.fonts)?;
+            let (edges, edge_percents) = style::inline_edges(cv, id, self.fonts)?;
             let inline = styled(self.doc, self.cascade, cv, id, self.fonts)?;
             self.record_element(id);
-            builder.open_inline(NodeId(id as u64), &inline, edges);
+            builder
+                .open_inline(NodeId(id as u64), &inline, edges)
+                .set_inline_edge_percents(edge_percents);
             // A `<wbr>` is a break opportunity, as in the paragraph outside
             // the ruby.
             if node.tag_name() == Some("wbr") {
@@ -841,9 +843,11 @@ impl Content<'_, '_> {
         let cv = &self.cascade.computed[ruby];
         let container = styled(self.doc, self.cascade, cv, ruby, self.fonts)?;
         if !root {
-            let edges = style::inline_edges(cv, ruby, self.fonts)?;
+            let (edges, edge_percents) = style::inline_edges(cv, ruby, self.fonts)?;
             self.record_element(ruby);
-            builder.open_inline(NodeId(ruby as u64), &container, edges);
+            builder
+                .open_inline(NodeId(ruby as u64), &container, edges)
+                .set_inline_edge_percents(edge_percents);
         }
         for &container in &plan.base_containers {
             self.record_element(container);
