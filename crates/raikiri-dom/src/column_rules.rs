@@ -59,6 +59,25 @@ struct Group {
     occupied: BTreeSet<usize>,
 }
 
+/// One rule rectangle centered in the gap after `column`: the gap midpoint
+/// is the column's inline offset plus a full column width and half the gap.
+/// Shared by retained groups, fresh groups, and page projection so the three
+/// stay in agreement.
+fn column_rule_rect(
+    origin_x: f32,
+    origin_y: f32,
+    context: &FragmentationContext,
+    column: usize,
+    width: f32,
+    height: f32,
+) -> PaintRect {
+    let center = origin_x
+        + context.column_offset_x(column)
+        + context.column_width
+        + context.column_gap / 2.0;
+    PaintRect::new(center - width / 2.0, origin_y, width, height)
+}
+
 /// Retain rules from the final column placements without reshaping or balancing.
 /// Source scans and retained rectangles share the layout work cap.
 pub(crate) fn prepare(
@@ -193,13 +212,11 @@ pub(crate) fn prepare(
                 for &column in &retained.occupied {
                     if retained.occupied.contains(&column.saturating_add(1)) {
                         charge(1)?;
-                        let center = retained.context.origin_x
-                            + retained.context.column_offset_x(column)
-                            + retained.context.column_width
-                            + retained.context.column_gap / 2.0;
-                        rules.push(PaintRect::new(
-                            center - width / 2.0,
+                        rules.push(column_rule_rect(
+                            retained.context.origin_x,
                             retained.context.origin_y,
+                            &retained.context,
+                            column,
                             width,
                             retained.height,
                         ));
@@ -216,13 +233,11 @@ pub(crate) fn prepare(
         for &column in &group.occupied {
             if group.occupied.contains(&column.saturating_add(1)) {
                 charge(1)?;
-                let center = group.origin.0
-                    + group.context.column_offset_x(column)
-                    + group.context.column_width
-                    + group.context.column_gap / 2.0;
-                rules.push(PaintRect::new(
-                    center - width / 2.0,
+                rules.push(column_rule_rect(
+                    group.origin.0,
                     group.origin.1,
+                    &group.context,
+                    column,
                     width,
                     group.height,
                 ));
@@ -300,13 +315,11 @@ pub(crate) fn project(
                             .iter()
                             .filter(|&&column| row.occupied.contains(&(column + 1)))
                             .map(move |&column| {
-                                let center = row.context.origin_x
-                                    + row.context.column_offset_x(column)
-                                    + row.context.column_width
-                                    + row.context.column_gap / 2.0;
-                                PaintRect::new(
-                                    center - width / 2.0,
+                                column_rule_rect(
+                                    row.context.origin_x,
                                     row.context.origin_y,
+                                    &row.context,
+                                    column,
                                     width,
                                     row.height,
                                 )

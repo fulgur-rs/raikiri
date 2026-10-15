@@ -1,8 +1,8 @@
 //! Shared marker content resolution for inline layout and outside painting.
 
 use super::{
-    CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, format_counter,
-    format_counter_component, format_counters_component,
+    CounterSnapshotLookup, CounterSnapshotView, EMPTY_COUNTER_SNAPSHOT, fallback_quote,
+    format_counter, format_counter_component, format_counters_component,
 };
 use crate::{CounterSnapshot, Document};
 use raikiri_style::property::{
@@ -219,17 +219,16 @@ fn marker_content_text<T: AsRef<str>>(
                 separator,
                 style,
             } if name.as_str() == "list-item" => {
-                let values = counters.values_for("list-item");
-                if !values.is_empty() {
-                    text.push_str(
-                        &values
-                            .iter()
-                            .map(|value| format_counter(value, style, registry))
-                            .collect::<Vec<_>>()
-                            .join(separator.as_str()),
-                    );
-                } else {
+                if counters.values_for(name.as_str()).is_empty() {
                     text.push_str(&format_counter(ordinal as i32, style, registry));
+                } else {
+                    text.push_str(&format_counters_component(
+                        counters,
+                        name.as_str(),
+                        separator.as_str(),
+                        style,
+                        registry,
+                    ));
                 }
             }
             ContentComponent::Counters {
@@ -250,7 +249,7 @@ fn marker_content_text<T: AsRef<str>>(
                     if let Some((open, _)) = quotes.get(depth) {
                         text.push_str(open.as_ref());
                     } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(if depth == 0 { "“" } else { "‘" });
+                        text.push_str(fallback_quote(depth, true));
                     } // cov:ignore: branch-closing line has no executable mapping
                     depth = depth.saturating_add(1);
                 }
@@ -259,7 +258,7 @@ fn marker_content_text<T: AsRef<str>>(
                     if let Some((_, close)) = quotes.get(depth) {
                         text.push_str(close.as_ref());
                     } else if quotes_auto && quotes.is_empty() {
-                        text.push_str(if depth == 0 { "”" } else { "’" });
+                        text.push_str(fallback_quote(depth, false));
                     } // cov:ignore: branch-closing line has no executable mapping
                 }
                 QuoteKeyword::NoOpenQuote => depth = depth.saturating_add(1),

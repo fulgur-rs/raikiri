@@ -611,10 +611,10 @@ pub fn holds_negative_stack_level(
     if pseudos(root).into_iter().any(negative) {
         return true;
     }
-    let mut stack = document
-        .get_node(root)
-        .map(|node| node.children.clone())
-        .unwrap_or_default();
+    let mut stack = Vec::new();
+    if let Some(node) = document.get_node(root) {
+        stack.extend(node.children.iter().copied());
+    }
     while let Some(id) = stack.pop() {
         let Some(node) = document
             .get_node(id)
