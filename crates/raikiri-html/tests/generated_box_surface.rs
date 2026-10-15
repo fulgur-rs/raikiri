@@ -990,3 +990,29 @@ fn inline_and_singular_pseudo_transforms() {
     let page = document.page(0).unwrap();
     assert_eq!(composited_with_transforms(&page), ["text A"]);
 }
+
+/// A `::before` that an image alone in its `content` replaces is
+/// transformable even when it is inline, and turns its image.
+#[test]
+fn a_replaced_inline_before_turns_its_image() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E);\
+         background:red;transform:translateX(30px)}",
+    );
+    let page = document.page(0).unwrap();
+    let events: Vec<String> = page
+        .paint_order_for_text_runs(&page.text_runs())
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::PushTransform(transform) => {
+                Some(format!("turn {} {}", transform.e, transform.f))
+            }
+            PaintEvent::PopTransform => Some("unturn".into()),
+            PaintEvent::GeneratedBox(piece) => Some(format!("box {:?}", piece.kind)),
+            PaintEvent::GeneratedImage(_) => Some("image".into()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(events, ["turn 30 0", "box Before", "image", "unturn"]);
+}

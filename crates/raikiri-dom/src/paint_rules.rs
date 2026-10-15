@@ -252,7 +252,8 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
 
 /// The style of a `::before` or `::after` laid out in its paragraph, by its
 /// generated id, when it turns its boxes, images and text by its own
-/// `transform`. Only an atomic inline-level pseudo-element does: a
+/// `transform`. Only an atomic inline-level pseudo-element does, or one
+/// that an image alone in its `content` replaces (CSS Content 3 §2.1): a
 /// non-replaced inline box is not transformable (CSS Transforms 1 §3).
 /// Floated and out-of-flow pseudo-elements are not in the paragraph.
 pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
@@ -263,7 +264,8 @@ pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedV
     let cv = crate::generated_content::computed_for_id(cascade, id)?;
     (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
         && matches!(cv.float, FloatValue::None)
-        && cv.display.is_atomic_inline_level()
+        && (cv.display.is_atomic_inline_level()
+            || matches!(cv.content.as_slice(), [ContentComponent::Image { .. }]))
         && !cv.transform.is_empty())
     .then_some(cv)
 }

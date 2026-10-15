@@ -241,6 +241,13 @@ fn transformed_pseudo_elements_match_paint() {
              position: relative; left: 3px; opacity: 0.5; background: rgb(255, 0, 0); \
              transform: scale(0.5, 1.5) skewX(10deg); transform-origin: 25% 0 }",
         ),
+        // An image alone in `content` replaces an inline pseudo-element,
+        // which makes it transformable.
+        (
+            "<p>text</p>",
+            "p::before { content: url(\"data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E\"); \
+             background: rgb(255, 0, 0); transform: rotate(15deg) }",
+        ),
     ] {
         assert!(assert_matches_paint(body, css) > 0, "{body} {css}");
     }
