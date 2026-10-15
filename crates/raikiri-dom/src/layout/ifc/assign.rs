@@ -326,7 +326,7 @@ pub(crate) fn assign_ifc_roots(
             )
             .map_err(|error| projection_error(cell.owner, error))?;
             candidates.push(Candidate {
-                idx: doc.table_objects.arena_len + index,
+                idx: doc.nodes.anonymous_cell_key(index),
                 projected,
             });
         }
@@ -792,7 +792,7 @@ fn write_roots(doc: &mut Document, built: Vec<(usize, IfcRoot)>) {
                 continue;
             }
             doc.nodes[id].flags.insert(NodeFlags::IN_IFC_SUBTREE);
-            if idx >= doc.table_objects.arena_len {
+            if doc.is_anonymous_cell(idx) {
                 doc.table_objects.paragraph_owner[id] = Some(idx);
             }
             stack.extend(doc.nodes[id].children.iter().copied());

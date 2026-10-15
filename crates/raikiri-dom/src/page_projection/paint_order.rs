@@ -1147,7 +1147,7 @@ impl Document {
     /// The frame that visits paint child `key`: an anonymous paragraph key
     /// stands for a paragraph laid out outside the source DOM arena.
     fn child_frame(&self, key: usize) -> Frame {
-        if self.get_node(key).is_none() && self.ifc_layout_node(key).is_some() {
+        if self.is_anonymous_cell(key) {
             Frame::Paragraph(key)
         } else {
             Frame::Visit(key)

@@ -3455,7 +3455,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             };
             id = parent_id;
             guard += 1;
-            if id >= document.nodes.len() {
+            if !document.is_source_node(id) {
                 break;
             }
         }
@@ -3631,7 +3631,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 .unrounded_layout
                 .location
                 .y += delta;
-            if node_id < document.nodes.len() {
+            if document.is_source_node(node_id) {
                 follow_moved_ifc_block(document, node_id, delta);
             }
         }
@@ -3766,7 +3766,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             if id == ancestor_id {
                 return true;
             }
-            if id >= document.nodes.len() || guard > document.nodes.len() {
+            if !document.is_source_node(id) || guard > document.nodes.len() {
                 break;
             }
             current = document.parent_of(id);
@@ -4027,7 +4027,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 .ifc_layout_node(owned.root)
                                 .expect("owned text lines require an IFC layout view")
                                 .unrounded_layout;
-                            let root_y = if owned.root >= document.nodes.len() {
+                            let root_y = if document.is_anonymous_cell(owned.root) {
                                 root_layout.location.y
                             } else {
                                 0.0
@@ -4809,7 +4809,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         let moves_ifc_root = {
             let mut first = candidate
                 .ifc_root
-                .filter(|(root, _)| *root >= document.nodes.len())
+                .filter(|&(root, _)| document.is_anonymous_cell(root))
                 .is_none_or(|(root, _)| entered_ifc_roots.insert(root));
             let mut current = document.parent_of(node_id);
             while let Some(id) = current {
@@ -5001,7 +5001,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                 current_page = current_page.max(page_index_for_y(candidate.raw_y + flow_shift));
             }
         }
-        if document.get_node(node_id).is_none() {
+        if !document.is_source_node(node_id) {
             continue;
         }
         let participates_in_margin_adjacency = !candidate.is_float_descendant
@@ -5075,7 +5075,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             let paragraph_root = candidate
                 .ifc_root
                 .map(|(root, _)| root)
-                .filter(|&root| root < document.nodes.len() && root != node_id);
+                .filter(|&root| document.is_source_node(root) && root != node_id);
             let line_block_parent = paragraph_root
                 .or(document.parent_of(node_id))
                 .filter(|parent_id| {

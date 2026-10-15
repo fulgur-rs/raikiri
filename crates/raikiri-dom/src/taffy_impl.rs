@@ -308,7 +308,12 @@ impl<'a> TaffyChildIter<'a> {
 impl Document {
     /// The node whose taffy children include `node`: its DOM parent, or the
     /// container its `display: contents` ancestors lift it into.
+    /// An anonymous table cell wrapping `node` is its container, though the
+    /// cell exists only in the layout view.
     pub(crate) fn taffy_parent_of(&self, node: usize) -> Option<usize> {
+        if let Some(cell) = self.anonymous_cell_of(node) {
+            return Some(cell);
+        }
         let parent = self.parent_of(node)?;
         let mut top = parent;
         while TaffyChildIter::is_flattened(self, top) {
@@ -475,34 +480,11 @@ impl Document {
         inputs: LayoutInput,
         block_ctx: Option<&mut BlockContext<'_>>,
     ) -> LayoutOutput {
-        if usize::from(node_id) >= self.nodes.len() {
-            let index = usize::from(node_id) - self.table_objects.arena_len;
-            let owner = self.table_objects.cells[index].owner;
-            // The wrapper exists only in the layout view. Its source children
-            // retain their DOM parents and their own styles throughout.
-            // The view takes the owner's slot while it is laid out, and the
-            // source node waits in the cell; nothing reads the cell's view
-            // meanwhile, so swapping avoids cloning the whole node.
-            std::mem::swap(
-                &mut self.nodes[owner],
-                &mut self.table_objects.cells[index].node,
-            );
-            let output = self.compute_child_layout_with_block_ctx_inner(
-                NodeId::from(owner),
-                inputs,
-                block_ctx,
-            );
-            std::mem::swap(
-                &mut self.nodes[owner],
-                &mut self.table_objects.cells[index].node,
-            );
-            return output;
-        }
         // Lazy layout cache invalidation — mutations only set a flag; we
         // clear all node caches on the first compute after the flag flips
         // (amortized O(1) per mutation over N-node batches).
         if self.layout_dirty {
-            for node in &mut self.nodes {
+            for node in self.nodes.layout_nodes_mut() {
                 node.cache.clear();
             }
             self.layout_dirty = false;

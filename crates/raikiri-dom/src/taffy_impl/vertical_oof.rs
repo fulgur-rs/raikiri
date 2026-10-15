@@ -99,7 +99,10 @@ pub(super) fn absolute_child_inputs(
     let Some(&(container, inline_size)) = tree.vertical_oof_containing_blocks.last() else {
         return inputs;
     };
-    if tree.parent_of(node) != Some(container)
+    let parent = tree
+        .anonymous_cell_of(node)
+        .or_else(|| tree.parent_of(node));
+    if parent != Some(container)
         || !is_absolute(tree, node)
         || inputs.known_dimensions.height.is_some()
     {

@@ -1148,5 +1148,7 @@ impl Node {
     }
 }
 
+pub(crate) mod arena;
+
 #[cfg(test)]
 mod tests;

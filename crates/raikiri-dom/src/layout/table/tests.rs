@@ -329,7 +329,7 @@ fn anonymous_block_direction_reaches_the_native_callback() {
 }
 
 #[test]
-fn laying_out_an_anonymous_cell_puts_its_source_owner_back() {
+fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     let mut doc = Document::new();
     let table = doc.append_element(
         Some(0),
@@ -353,16 +353,17 @@ fn laying_out_an_anonymous_cell_puts_its_source_owner_back() {
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
     assert_eq!(doc.table_objects.cells.len(), 1);
-    let cell = &doc.table_objects.cells[0];
-    assert_eq!(cell.owner, row);
-    let view_children = cell.node.children.clone();
+    assert_eq!(doc.table_objects.cells[0].owner, row);
+    let key = doc
+        .anonymous_cell_of(block)
+        .expect("block wrapped in a cell");
+    let view_children = doc.nodes[key].children.clone();
     let row_children = doc.nodes[row].children.clone();
     let row_display = doc.nodes[row].display;
+    let row_layout = doc.nodes[row].unrounded_layout;
     let mut inputs = column_probe_input();
     inputs.known_dimensions.width = Some(100.0);
-    // A single layout of the cell key: an even number of them would hide a
-    // missing swap back.
-    let key = doc.table_objects.arena_len;
+    inputs.run_mode = taffy::RunMode::PerformLayout;
     let output =
         taffy::LayoutPartialTree::compute_child_layout(&mut doc, taffy::NodeId::from(key), inputs);
     assert_eq!(
@@ -372,13 +373,15 @@ fn laying_out_an_anonymous_cell_puts_its_source_owner_back() {
             height: 10.0
         }
     );
-    // The source row is back in its slot, and the view, laid out in the
-    // row's place, is back in the cell.
+    // The cell is laid out under its own key: the source row keeps its
+    // node and its layout, and the cell's view keeps its children.
     assert_eq!(doc.nodes[row].children, row_children);
     assert_eq!(doc.nodes[row].display, row_display);
-    let cell = &doc.table_objects.cells[0];
-    assert_eq!(cell.node.children, view_children);
+    assert_eq!(doc.nodes[row].unrounded_layout, row_layout);
+    assert_eq!(doc.nodes[key].children, view_children);
+    assert_eq!(doc.nodes[block].unrounded_layout.size.width, 20.0);
     assert_eq!(doc.parent_of(block), Some(row));
+    assert_eq!(doc.taffy_parent_of(block), Some(key));
 }
 
 #[test]
@@ -421,10 +424,10 @@ fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts(
     assert!(doc.ifc.is_none());
     assert_eq!(doc.table_objects.cells.len(), 2);
     assert!(
-        doc.table_objects
-            .cells
+        doc.nodes
+            .anonymous_cells()
             .iter()
-            .all(|cell| !cell.node.is_ifc_root())
+            .all(|cell| !cell.is_ifc_root())
     );
     let output =
         super::compute_table_layout(&mut doc, taffy::NodeId::from(table), column_probe_input());

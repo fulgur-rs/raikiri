@@ -76,14 +76,9 @@ impl HeaderRepeats {
             // break points the header is repeated at, and an anonymous body
             // row is not one. Cells flattened out of a `display: contents`
             // row keep the existing table projection instead.
-            let anonymous = |id: usize| id >= document.nodes.len();
-            let owned_by_header = |cell: usize| {
-                document
-                    .table_objects
-                    .cells
-                    .get(cell.wrapping_sub(document.table_objects.arena_len))
-                    .is_some_and(|cell| cell.owner == header)
-            };
+            let anonymous = |id: usize| document.is_anonymous_cell(id);
+            let owned_by_header =
+                |cell: usize| anonymous(cell) && document.ifc_source_owner(cell) == header;
             if !grid_rows.iter().all(|row| {
                 if anonymous(row.marker) {
                     return row

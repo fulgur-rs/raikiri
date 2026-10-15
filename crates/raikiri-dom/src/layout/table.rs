@@ -998,7 +998,7 @@ fn position_source_table_parts(
         && !grid
             .cells
             .iter()
-            .any(|cell| cell.node_id >= doc.nodes.len())
+            .any(|cell| doc.is_anonymous_cell(cell.node_id))
     {
         return;
     }
@@ -1133,7 +1133,7 @@ fn position_source_table_parts(
     let mut offsets = Vec::new();
     for cell in &grid.cells {
         let owner = doc.ifc_source_owner(cell.node_id);
-        let parent = if cell.node_id >= doc.nodes.len() {
+        let parent = if doc.is_anonymous_cell(cell.node_id) {
             Some(owner)
         } else {
             doc.parent_of(owner)
@@ -1149,7 +1149,7 @@ fn position_source_table_parts(
         let node = doc.table_layout_node_mut(key);
         node.unrounded_layout.location.x -= offset.x;
         node.unrounded_layout.location.y -= offset.y;
-        if key >= doc.nodes.len() {
+        if doc.is_anonymous_cell(key) {
             let root = doc
                 .ifc_layout_node(key)
                 .expect("anonymous cell layout view");
@@ -1228,7 +1228,7 @@ fn build_table_grid(
             let row = u16::try_from(rows.len() - 1).map_err(|_| table_column_error())?;
             let mut col = 0;
             for &node_id in &projected.cells {
-                let anonymous = node_id >= doc.nodes.len();
+                let anonymous = doc.is_anonymous_cell(node_id);
                 let col_span = if anonymous {
                     1
                 } else {
@@ -2415,7 +2415,7 @@ fn place_cells(
             let sanitized = super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
             doc.table_layout_node_mut(cell.node_id).unrounded_layout = sanitized;
         }
-        if cell.node_id >= doc.nodes.len() {
+        if doc.is_anonymous_cell(cell.node_id) {
             let root = doc
                 .ifc_layout_node(cell.node_id)
                 .expect("anonymous cell layout view");

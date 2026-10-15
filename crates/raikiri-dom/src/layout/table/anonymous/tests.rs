@@ -87,9 +87,14 @@ fn owner_generated_cells_keep_source_children_and_shared_projection_limits() {
         vec![Content::After(owner)]
     );
     let fonts = crate::layout::ifc::test_support::ahem_fonts();
-    for cell in &doc.table_objects.cells {
-        assert!(cell.node.children.is_empty());
-        let border = cell.node.computed_border.unwrap();
+    for (cell, view) in doc
+        .table_objects
+        .cells
+        .iter()
+        .zip(doc.nodes.anonymous_cells())
+    {
+        assert!(view.children.is_empty());
+        let border = view.computed_border.unwrap();
         assert_eq!(
             border.top.style(),
             raikiri_style::property::BorderStyle::None
@@ -228,9 +233,10 @@ fn generated_contents_classification_preserves_css22_visibility_and_rebuilds() {
         crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
         assert_eq!(doc.table_objects.cells.len(), 1);
         let cell = &doc.table_objects.cells[0];
-        assert!(cell.node.children.is_empty());
+        let view = &doc.nodes.anonymous_cells()[0];
+        assert!(view.children.is_empty());
         assert_eq!(cell.content, vec![Content::Before(span)]);
-        assert_eq!(cell.node.hides_empty_table_cell, expected);
+        assert_eq!(view.hides_empty_table_cell, expected);
     }
 }
 

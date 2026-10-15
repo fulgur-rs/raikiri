@@ -1202,7 +1202,7 @@ fn anonymous_contents_generated_tokens_preserve_projection_limits() {
         crate::layout::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).unwrap();
         let cell = &fixture.doc.table_objects.cells[0];
         assert_eq!(cell.content.len(), 1);
-        assert!(cell.node.children.is_empty());
+        assert!(fixture.doc.nodes.anonymous_cells()[0].children.is_empty());
         for limits in [
             Limits {
                 max_items: Some(0),
