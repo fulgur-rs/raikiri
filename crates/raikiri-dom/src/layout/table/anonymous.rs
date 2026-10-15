@@ -164,7 +164,9 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
         target.namespace = source_data.namespace.clone();
         target.prefix = source_data.prefix.clone();
     }
-    node.parent = source.parent;
+    // The cell's box sits in its owner's box, where its location is measured
+    // from.
+    node.parent = Some(owner);
     node.flags = source.flags;
     node.flags
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
@@ -414,6 +416,9 @@ impl Document {
     /// The layout key of the anonymous cell that wraps the source box `id`,
     /// if table fixup wrapped it in one.
     pub(crate) fn anonymous_cell_of(&self, id: usize) -> Option<usize> {
+        if self.table_objects.cells.is_empty() {
+            return None;
+        }
         self.table_objects
             .cell_by_content
             .get(&Content::Node(id))

@@ -931,9 +931,11 @@ fn offset_boxes_inside_relative_inlines(tree: &mut Document, idx: usize, root: &
     }
     for b in &root.boxes {
         let (mut dx, mut dy) = (0.0, 0.0);
+        // The content of an anonymous cell sits in the cell's owner.
+        let owner = tree.ifc_source_owner(idx);
         let mut current = tree.parent_of(b.node);
         while let Some(id) = current {
-            if id == idx {
+            if id == idx || id == owner {
                 break;
             }
             if let Some((_, (x, y))) = root.offsets.iter().find(|(owner, _)| *owner == id) {

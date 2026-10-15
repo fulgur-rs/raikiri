@@ -1034,7 +1034,7 @@ impl Document {
     /// `<template>` element's `template_contents` slot (that host link is not
     /// a parent, so a contents fragment root still reports `None`).
     pub fn parent_of(&self, child: usize) -> Option<usize> {
-        self.nodes.get(child)?.parent
+        self.nodes.layout_node(child)?.parent
     }
 
     /// Iterate over the ancestors of `node`, nearest first, not including
@@ -2010,7 +2010,8 @@ impl Document {
         let mut copied: Vec<Node> = nodes
             .iter()
             .map(|&old| {
-                let source = &arena[old];
+                // Source nodes only: an anonymous cell key is out of range.
+                let source = &arena.as_slice()[old];
                 let mut node = Node::new_document();
                 node.data = source.data.clone();
                 if let Some(element) = node.data.as_element_mut() {

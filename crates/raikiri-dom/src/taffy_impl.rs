@@ -484,7 +484,7 @@ impl Document {
         // clear all node caches on the first compute after the flag flips
         // (amortized O(1) per mutation over N-node batches).
         if self.layout_dirty {
-            for node in &mut self.nodes {
+            for node in self.nodes.layout_nodes_mut() {
                 node.cache.clear();
             }
             self.layout_dirty = false;
@@ -1438,9 +1438,7 @@ fn fragmentation_context_for_ifc(
     }
 
     let mut has_row_flex = false;
-    // An anonymous table cell has no DOM parent; its view records the
-    // owner's parent instead.
-    let mut ancestor = tree.nodes[idx].parent;
+    let mut ancestor = tree.parent_of(idx);
     while let Some(node_id) = ancestor {
         let node = &tree.nodes[node_id];
         if let Some(multicol) = node.multicol {

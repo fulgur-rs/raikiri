@@ -1030,7 +1030,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         // Reordering changes Taffy's child traversal. Clear every cache before
         // layout starts: a root/ancestor cache hit would otherwise skip the
         // normal lazy invalidation hook and preserve stale item positions.
-        for node in &mut doc.nodes {
+        for node in doc.nodes.layout_nodes_mut() {
             node.cache.clear();
             node.grid_item_row_starts = Box::new([]);
             node.grid_column_count = 0;

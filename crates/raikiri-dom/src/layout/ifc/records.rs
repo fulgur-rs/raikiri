@@ -75,9 +75,11 @@ pub(crate) fn record_inline_boxes(
         let rect = boxes.get(&element).copied();
         // The nearest ancestor with a box of its own: another inline element
         // of the paragraph, or the root.
+        // The content of an anonymous cell sits in the cell's owner.
+        let owner = tree.ifc_source_owner(root);
         let parent = tree
             .ancestors(element)
-            .find(|&id| id == root || boxes.contains_key(&id));
+            .find(|&id| id == root || id == owner || boxes.contains_key(&id));
         let origin = match parent.and_then(|id| boxes.get(&id)) {
             Some(parent_box) => (parent_box.x, parent_box.y),
             // A child of the root sits in the root's content box, which starts

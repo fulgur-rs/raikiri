@@ -58,3 +58,17 @@ fn mutable_indexing_past_every_node_panics() {
     let mut arena = arena();
     arena[3].children.clear();
 }
+
+#[test]
+fn a_layout_pass_reaches_every_node_and_keys_are_fixed_when_cells_are_set() {
+    let mut arena: NodeArena = [element("a")].into_iter().collect();
+    arena.set_anonymous_cells(vec![element("cell")]);
+    assert_eq!(arena.anonymous_cell_key(0), 1);
+    assert_eq!(arena.layout_nodes_mut().count(), 2);
+    arena.push(element("b"));
+    assert_eq!(arena.anonymous_cell_key(0), 1);
+    assert_eq!(arena.box_key(1), Some(BoxKey::Source(1)));
+    arena.set_anonymous_cells(vec![element("cell")]);
+    assert_eq!(arena.anonymous_cell_key(0), 2);
+    assert_eq!(arena.box_key(2), Some(BoxKey::AnonymousCell(0)));
+}

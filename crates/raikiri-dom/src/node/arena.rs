@@ -27,17 +27,20 @@ pub(crate) enum BoxKey {
 pub(crate) struct NodeArena {
     source: Vec<Node>,
     anonymous_cells: Vec<Node>,
+    /// The key of the first anonymous cell: the number of source nodes when
+    /// the cells were set. Table fixup sets the cells again on every layout
+    /// pass, after any change to the DOM.
+    anonymous_base: usize,
 }
 
 impl NodeArena {
     /// What `key` names, or `None` when it names nothing in this arena.
     pub(crate) fn box_key(&self, key: usize) -> Option<BoxKey> {
-        match key.checked_sub(self.source.len()) {
-            None => Some(BoxKey::Source(key)),
-            Some(index) => {
-                (index < self.anonymous_cells.len()).then_some(BoxKey::AnonymousCell(index))
-            }
+        if key < self.source.len() {
+            return Some(BoxKey::Source(key));
         }
+        let index = key.checked_sub(self.anonymous_base)?;
+        (index < self.anonymous_cells.len()).then_some(BoxKey::AnonymousCell(index))
     }
 
     /// Whether `key` names a layout-only anonymous table cell.
@@ -47,7 +50,7 @@ impl NodeArena {
 
     /// The layout key of the anonymous cell at `index`.
     pub(crate) fn anonymous_cell_key(&self, index: usize) -> usize {
-        self.source.len() + index
+        self.anonymous_base + index
     }
 
     /// The node `key` names, a source node or an anonymous cell.
@@ -58,9 +61,17 @@ impl NodeArena {
         }
     }
 
-    /// Replace the anonymous cells of the previous pass.
+    /// Replace the anonymous cells of the previous pass. Their keys follow
+    /// the source nodes there are now.
     pub(crate) fn set_anonymous_cells(&mut self, cells: Vec<Node>) {
         self.anonymous_cells = cells;
+        self.anonymous_base = self.source.len();
+    }
+
+    /// Every node a layout pass may lay out: the source nodes, then the
+    /// anonymous cells.
+    pub(crate) fn layout_nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
+        self.source.iter_mut().chain(&mut self.anonymous_cells)
     }
 
     /// The anonymous cells of the current pass, in key order.
@@ -73,9 +84,16 @@ impl NodeArena {
 impl From<Vec<Node>> for NodeArena {
     fn from(source: Vec<Node>) -> Self {
         Self {
+            anonymous_base: source.len(),
             source,
             anonymous_cells: Vec::new(),
         }
+    }
+}
+
+impl FromIterator<Node> for NodeArena {
+    fn from_iter<I: IntoIterator<Item = Node>>(nodes: I) -> Self {
+        Vec::from_iter(nodes).into()
     }
 }
 
