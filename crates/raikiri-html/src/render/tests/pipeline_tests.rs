@@ -2103,18 +2103,34 @@ fn pipeline_treats_a_percentage_offset_against_an_auto_height_as_auto() {
 
 #[test]
 fn pipeline_places_a_float_in_an_inline_in_its_paragraph() {
-    // The body's lines hold the float, which sits in the body's
-    // coordinates 50px down after the first line, whatever inline holds
-    // it: it ends at 130px and the body, with its padding, at 190px.
-    for float in [
-        "<span style='float:left;width:10px;height:80px'></span>",
-        "<span><span style='float:left;width:10px;height:80px'></span></span>",
-        "<span style='display:contents'><span style='float:left;width:10px;height:80px'></span></span>",
+    // Floats in a paragraph sit in the paragraph's coordinates, so the
+    // inlines that hold them add no offset: the float ends 130px down,
+    // and the body ends with its padding inside the page.
+    for paragraph in [
+        "a<br>b<span style='float:left;width:10px;height:80px'></span>",
+        "a<br>b<span><span style='float:left;width:10px;height:80px'></span></span>",
+        "a<br>b<span style='display:contents'><span style='float:left;width:10px;height:80px'></span></span>",
+        "<div style='line-height:50px'>a<br>b<span>c<span style='float:left;width:10px;height:80px'></span></span></div>",
+        "<div style='line-height:50px'>a<br>b<span style='display:contents'><span style='float:left;width:10px;height:80px'></span></span></div>",
     ] {
         let doc = parse(&format!(
-            "<style>@page{{size:250px 250px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:60px;line-height:50px}}</style>\
-             a<br>b{float}"
+            "<style>@page{{size:300px 300px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:60px;line-height:50px}}</style>{paragraph}"
         ));
-        assert_eq!(run(&doc).slices.len(), 1, "{float}");
+        assert_eq!(run(&doc).slices.len(), 1, "{paragraph}");
+    }
+}
+
+#[test]
+fn pipeline_leaves_footnotes_out_of_the_body_end() {
+    // A footnote moves to its page's footnote area, so it does not extend
+    // the body, whether or not a block of the body holds it.
+    for note in [
+        "<div style='float:footnote;height:30px'></div>",
+        "<div><div style='float:footnote;height:30px'></div></div>",
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:20px}}</style>{note}"
+        ));
+        assert_eq!(run(&doc).slices.len(), 1, "{note}");
     }
 }

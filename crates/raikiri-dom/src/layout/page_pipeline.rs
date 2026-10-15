@@ -504,9 +504,11 @@ fn body_border_box_end(
         }
         if super::page::is_floating_box_for_pagination(document, cascade, child) {
             // The painter adds a float's relative offset; its layout box is
-            // where the float sits in the flow.
+            // where the float sits in the flow. A footnote leaves the flow
+            // for its page's footnote area.
             let end = offset + layout.location.y + layout.size.height + layout.margin.bottom;
-            if encloses_floats && end.is_finite() {
+            let footnote = child_computed.float == FloatValue::Footnote;
+            if encloses_floats && !footnote && end.is_finite() {
                 content_end = content_end.max(end);
             }
             continue;
