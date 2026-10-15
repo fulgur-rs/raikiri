@@ -712,6 +712,7 @@ fn url_parses_against_a_base_and_exposes_its_components() {
         "new URL()",
         "URL('https://a.test/')",
         "Object.getOwnPropertyDescriptor(URL.prototype, 'href').get.call({})",
+        "function F() {} F.prototype = 1; Reflect.construct(URL, ['https://a.test/'], F)",
     ] {
         ok(
             &mut rt,

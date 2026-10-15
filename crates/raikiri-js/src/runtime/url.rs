@@ -70,7 +70,6 @@ fn url_constructor(
     let new_target = new_target
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("URL constructor requires 'new'"))?;
-    // cov:ignore: `URL.prototype` is a non-writable object, so this never fails.
     let prototype = new_target
         .get(js_string!("prototype"), context)?
         .as_object()
