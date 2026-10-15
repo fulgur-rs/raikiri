@@ -188,3 +188,18 @@ fn each_fragment_draws_only_the_joined_border_image_tiles_it_shows() {
     // the square of the lines instead.
     assert!(many < few * 4, "{few} fills for 4 lines, {many} for 16");
 }
+
+#[test]
+fn a_broken_vertical_inline_box_lays_its_border_image_out_over_the_joined_box() {
+    let pixels = raster(
+        "div{height:30px;writing-mode:vertical-rl;font:10px/20px Ahem}\
+         span{border:5px solid blue;border-image:linear-gradient(lime,lime) 1}",
+        "<div><span>XX XX</span></div>",
+    );
+    let all: Vec<_> = (0..50)
+        .flat_map(|y| (0..50).map(move |x| (x, y)))
+        .map(|(x, y)| pixel(&pixels, x, y))
+        .collect();
+    assert!(all.contains(&LIME));
+    assert!(!all.contains(&BLUE));
+}

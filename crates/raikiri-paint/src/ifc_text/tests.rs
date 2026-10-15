@@ -3484,3 +3484,64 @@ fn an_ellipsis_shares_the_paragraph_decoration_phases() {
         "{kinds:?}"
     );
 }
+
+#[test]
+fn a_wrapping_vertical_inline_keeps_its_start_border_on_its_first_piece_only() {
+    let (mut doc, cascade, _root) =
+        paragraph("height:60px;writing-mode:vertical-rl", |doc, root| {
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some(
+                    "display:inline;background-color:rgb(255,0,0);padding:3px 0;\
+                 border-width:2px 0;border-style:solid;border-color:rgb(0,0,255);margin:4px 0",
+                ),
+            );
+            doc.append_text(inner, "aaaa bbbb");
+        });
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    // The span wraps after "aaaa ": line 1 piece y 4..49 in the right column
+    // (x 13..23), line 2 piece y 0..45 in the left one (x 3..13).
+    assert_eq!(
+        fills_with(&scene, &solid(255, 0, 0)),
+        [[px(13), px(4), px(23), px(49)], [px(3), 0, px(13), px(45)]]
+    );
+    // Line 1 keeps the top border, line 2 the bottom one.
+    assert_eq!(
+        fills_with(&scene, &solid(0, 0, 255)),
+        [
+            [px(13), px(4), px(23), px(6)],
+            [px(3), px(43), px(13), px(45)]
+        ]
+    );
+}
+
+#[test]
+fn a_wrapping_vertical_inline_slices_its_shadow_from_the_joined_box() {
+    let (mut doc, cascade, _root) =
+        paragraph("height:60px;writing-mode:vertical-rl", |doc, root| {
+            let inner = doc.append_element(
+                Some(root),
+                "span",
+                Style::default(),
+                Some("display:inline;box-shadow:2px 2px rgb(0,255,0)"),
+            );
+            doc.append_text(inner, "aaaa bbbb");
+        });
+    lay_out(&mut doc, &cascade);
+    let scene = painted(&doc, &cascade);
+    // Line 1's piece is y 0..40 in the right column (x 13..23), line 2's
+    // y 0..40 in the left one (x 3..13). Each draws the shadow of the 80px
+    // joined box, offset by 2px, from its own place in that box: line 1 at
+    // its top, line 2 at its bottom.
+    let green = solid(0, 255, 0);
+    assert_eq!(
+        box_shadows(&scene),
+        [
+            ([px(15), px(2), px(25), px(82)], green.clone()),
+            ([px(5), px(-38), px(15), px(42)], green),
+        ]
+    );
+}

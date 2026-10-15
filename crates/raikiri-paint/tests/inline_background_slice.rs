@@ -12,23 +12,34 @@ const AHEM: &[u8] = include_bytes!(concat!(
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
 
-/// A 2×1 image: red on the left, blue on the right.
+/// A 2×1 image, red on the left and blue on the right, and a 1×2 one, red
+/// on top and blue at the bottom.
 struct TwoColor;
 impl ImagePixelSource for TwoColor {
     fn get_decoded(&self, url: &url::Url) -> Option<Arc<DecodedImage>> {
-        (url.as_str() == "file:///two-color.png").then(|| {
-            Arc::new(DecodedImage {
-                width: 2,
-                height: 1,
-                rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
-            })
-        })
+        let (width, height) = match url.as_str() {
+            "file:///two-color.png" => (2, 1),
+            "file:///two-color-tall.png" => (1, 2),
+            _ => return None,
+        };
+        Some(Arc::new(DecodedImage {
+            width,
+            height,
+            rgba: vec![255, 0, 0, 255, 0, 0, 255, 255],
+        }))
     }
 }
 
 /// Pixels of a 100×80 page whose 40px-wide block holds `AAAA<br>AAAA` in a
 /// span styled `span_style`, with 10px Ahem on 20px lines.
 fn paint(span_style: &str) -> Vec<u8> {
+    paint_in("width:40px", span_style)
+}
+
+/// Pixels of a 100×80 page whose block, sized by `block_style`, holds
+/// `AAAA<br>AAAA` in a span styled `span_style`, with 10px Ahem on 20px
+/// lines.
+fn paint_in(block_style: &str, span_style: &str) -> Vec<u8> {
     let mut doc = Document::new();
     doc.set_font_collection(
         build_bundled_font_collection(
@@ -46,7 +57,7 @@ fn paint(span_style: &str) -> Vec<u8> {
         Some(body),
         "div",
         Style::default(),
-        Some("display:block;width:40px;font:10px/20px Ahem;color:transparent"),
+        Some(format!("display:block;{block_style};font:10px/20px Ahem;color:transparent").as_str()),
     );
     let span = doc.append_element(Some(root), "span", Style::default(), Some(span_style));
     doc.append_text(span, "AAAA");
@@ -146,5 +157,41 @@ fn a_cloned_fragment_draws_both_borders_beside_its_own_content() {
             [255, 255, 255],
             "after the box at y={y}"
         );
+    }
+}
+
+#[test]
+fn a_vertical_box_joins_its_line_fragments_from_top_to_bottom() {
+    let pixels = paint_in(
+        "height:40px;writing-mode:vertical-rl",
+        "display:inline;background-image:url(file:///two-color-tall.png);\
+         background-size:100% 100%;background-repeat:no-repeat",
+    );
+    // The joined box is 80px tall. The first line, the right column, is its
+    // top end and shows the red pixel; the second line, the left column, is
+    // its bottom end and shows the blue one.
+    for y in [2, 10] {
+        assert_eq!(pixel(&pixels, 30, y), [255, 0, 0], "first line at y={y}");
+    }
+    for y in [30, 37] {
+        assert_eq!(pixel(&pixels, 10, y), [0, 0, 255], "second line at y={y}");
+    }
+}
+
+#[test]
+fn a_right_to_left_vertical_box_joins_later_lines_above() {
+    let pixels = paint_in(
+        "height:40px;writing-mode:vertical-rl",
+        "display:inline;direction:rtl;background-image:url(file:///two-color-tall.png);\
+         background-size:100% 100%;background-repeat:no-repeat",
+    );
+    // The inline start is at the bottom: the first line, the right column, is
+    // the bottom end of the joined box and the second line, the left column,
+    // its top end.
+    for y in [30, 37] {
+        assert_eq!(pixel(&pixels, 30, y), [0, 0, 255], "first line at y={y}");
+    }
+    for y in [2, 10] {
+        assert_eq!(pixel(&pixels, 10, y), [255, 0, 0], "second line at y={y}");
     }
 }
