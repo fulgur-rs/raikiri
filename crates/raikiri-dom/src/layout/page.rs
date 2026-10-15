@@ -1271,10 +1271,10 @@ pub(crate) fn pagination_child_order(
     children
 }
 
-/// A table's children in the order the table lays them out: captions above
+/// A table's children in the order the table lays them out: a caption above
 /// the grid, the first header group, the other groups and rows in source
-/// order, the first footer group, then captions below the grid (CSS 2.1
-/// §17.4 and §17.5).
+/// order, the first footer group, then a caption below the grid (CSS 2.1
+/// §17.4 and §17.5). Captions after the first are left out.
 fn table_pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
@@ -1289,6 +1289,12 @@ fn table_pagination_child_order(
     };
     let header = first(DisplayValue::TableHeaderGroup);
     let footer = first(DisplayValue::TableFooterGroup);
+    let caption = first(DisplayValue::TableCaption);
+    // Table layout renders only the first caption, so later captions have no
+    // box to paginate or to take a page name from.
+    children.retain(|&id| {
+        cascade.computed[id].display != DisplayValue::TableCaption || Some(id) == caption
+    });
     children.sort_by_key(|&id| {
         let computed = &cascade.computed[id];
         if computed.display == DisplayValue::TableCaption {

@@ -650,6 +650,51 @@ fn first_page_name_reads_the_body_before_a_footer_written_first() {
 }
 
 #[test]
+fn first_page_name_skips_a_second_caption_that_table_layout_drops() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
+    doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;caption-side:bottom"),
+    );
+    let group = doc.append_element(
+        Some(table),
+        "tbody",
+        Style::default(),
+        Some("display:table-row-group;page:body"),
+    );
+    let row = doc.append_element(
+        Some(group),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;caption-side:top;page:caption"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("table cascade Ok");
+
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("body"));
+}
+
+#[test]
 fn first_page_name_reads_a_static_position_absolute_box() {
     use raikiri_style::{build_rule_tree, cascade};
 
