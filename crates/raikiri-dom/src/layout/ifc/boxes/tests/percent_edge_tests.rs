@@ -219,3 +219,42 @@ fn text_broken_again_for_a_width_resolves_against_that_width() {
     crate::layout::relayout_text_for_width(&mut doc, &cascade, 400.0);
     assert_eq!(text_start(&doc, root, text).1, 50.0, "10% of 400px");
 }
+
+/// The border-box width of a span styled by `span_css` inside a ruby
+/// annotation of a `width:300px` root.
+fn annotation_span_width(span_css: &str) -> f32 {
+    let mut target = 0;
+    let (mut doc, cascade, root) = ahem_paragraph_with("width:300px", |doc, root| {
+        let ruby = span(doc, root, "display:ruby");
+        let base = span(doc, ruby, "display:ruby-base");
+        doc.append_text(base, "AAAAAAAAAA");
+        let annotation = span(doc, ruby, "display:ruby-text;font-size:5px");
+        doc.append_text(annotation, "a");
+        target = span(doc, annotation, &format!("display:inline;{span_css}"));
+        doc.append_text(target, "b");
+    });
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    pieces
+        .iter()
+        .find(|piece| piece.node == target)
+        .expect("annotation piece")
+        .border_box
+        .width
+}
+
+#[test]
+fn a_percentage_edge_inside_a_ruby_annotation_resolves_against_the_root_width() {
+    // Annotation boxes take percentages from the same containing block as
+    // the paragraph, 10% of 300px here, not from the annotation's own size.
+    // Ruby alignment spreads the annotation over its base, so compare with
+    // the same edge in px rather than with a fixed offset.
+    let plain = annotation_span_width("");
+    let percent = annotation_span_width("padding-left:10%");
+    assert!(percent > plain, "{percent} > {plain}");
+    assert_eq!(percent, annotation_span_width("padding-left:30px"));
+    assert_eq!(
+        annotation_span_width("padding-right:calc(10% + 2px)"),
+        annotation_span_width("padding-right:32px")
+    );
+}
