@@ -6274,15 +6274,9 @@ fn collect_candidates_inner(
                         } else {
                             0.0
                         };
-                        let positioned = positioned_owned_text_line_bounds(document, owned)
-                            // cov:ignore: ifc_text_lines returns Some only when these root line records exist.
-                            .unwrap_or_else(|| {
-                                owned
-                                    .lines
-                                    .iter()
-                                    .map(|line| (line.top, line.bottom))
-                                    .collect()
-                            });
+                        let positioned = positioned_owned_text_line_bounds(document, owned).expect(
+                            "ifc_text_lines returns Some only when root line records exist",
+                        );
                         let first_top = positioned.first().map_or(0.0, |line| line.0);
                         let last_bottom = positioned
                             .iter()
@@ -6334,31 +6328,32 @@ fn collect_candidates_inner(
             // collected as if they were. The flag is set only when the
             // inline engine is switched on.
             if node.flags.contains(NodeFlags::IN_IFC_SUBTREE) {
-                for &child_id in &node.children {
+                let rendered_children = node.children.iter().copied().filter(|&child_id| {
                     let kind = document.nodes[child_id].kind();
-                    if matches!(kind, NodeKind::Element | NodeKind::Text) {
-                        collect_candidates(
-                            document,
-                            cascade,
-                            child_id,
-                            parent_abs_y,
-                            direct_body_child,
-                            body_id,
-                            parent_height,
-                            page_step,
-                            inherited_page_name.clone(),
-                            inside_table,
-                            flex_column_parent,
-                            grid_single_column_parent,
-                            inside_flex,
-                            named_flex_context,
-                            inside_float,
-                            inside_out_of_flow,
-                            out,
-                            text_lines,
-                            control,
-                        )?; // cov:ignore: LLVM coverage maps this multiline call to its first expression line.
-                    } // cov:ignore: non-rendered node kinds are filtered by the document invariant.
+                    matches!(kind, NodeKind::Element | NodeKind::Text) // cov:ignore: children of an inline-engine element are elements or text.
+                });
+                for child_id in rendered_children {
+                    collect_candidates(
+                        document,
+                        cascade,
+                        child_id,
+                        parent_abs_y,
+                        direct_body_child,
+                        body_id,
+                        parent_height,
+                        page_step,
+                        inherited_page_name.clone(),
+                        inside_table,
+                        flex_column_parent,
+                        grid_single_column_parent,
+                        inside_flex,
+                        named_flex_context,
+                        inside_float,
+                        inside_out_of_flow,
+                        out,
+                        text_lines,
+                        control,
+                    )?; // cov:ignore: LLVM coverage maps this multiline call to its first expression line.
                 }
                 return Ok(());
             }
