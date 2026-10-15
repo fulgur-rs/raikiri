@@ -165,28 +165,40 @@ fn a_line_break_cut_shows_no_border_image_side() {
     assert_ne!(pixel(&pixels, 22, 10), LIME);
 }
 
-#[test]
-fn each_fragment_draws_only_the_joined_border_image_tiles_it_shows() {
+/// The fills painting a span of `words` one-glyph words that breaks after
+/// each word in a box styled `div`, its edges repeating many small
+/// border-image tiles.
+fn joined_border_image_fills(div: &str, words: usize) -> usize {
     // A 49% slice leaves thin edge slices of the box-sized gradient, so the
     // edges of the joined box repeat many small tiles.
-    let fills = |words: usize| {
-        let body = format!("<div><span>{}</span></div>", vec!["X"; words].join(" "));
-        painted(
-            "div{width:10px;font:2px/4px Ahem}\
-             span{border:1px solid blue;\
-             border-image:linear-gradient(lime,lime) 49% / 1px repeat}",
-            &body,
-        )
-        .commands
-        .iter()
-        .filter(|command| matches!(command, RenderCommand::Fill(_)))
-        .count()
-    };
-    let (few, many) = (fills(4), fills(16));
-    // The joined box, and so its tile count, grows with the lines. Each
-    // fragment repeating every tile of it would make the fills grow with
-    // the square of the lines instead.
-    assert!(many < few * 4, "{few} fills for 4 lines, {many} for 16");
+    let body = format!("<div><span>{}</span></div>", vec!["X"; words].join(" "));
+    painted(
+        &format!(
+            "div{{{div};font:2px/4px Ahem}}\
+             span{{border:1px solid blue;\
+             border-image:linear-gradient(lime,lime) 49% / 1px repeat}}"
+        ),
+        &body,
+    )
+    .commands
+    .iter()
+    .filter(|command| matches!(command, RenderCommand::Fill(_)))
+    .count()
+}
+
+#[test]
+fn each_fragment_draws_only_the_joined_border_image_tiles_it_shows() {
+    for div in ["width:10px", "height:10px;writing-mode:vertical-rl"] {
+        let few = joined_border_image_fills(div, 4);
+        let many = joined_border_image_fills(div, 16);
+        // The joined box, and so its tile count, grows with the lines. Each
+        // fragment repeating every tile of it would make the fills grow
+        // with the square of the lines instead.
+        assert!(
+            many < few * 4,
+            "{div}: {few} fills for 4 lines, {many} for 16"
+        );
+    }
 }
 
 #[test]
