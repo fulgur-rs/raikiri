@@ -13,7 +13,7 @@ fn block(css: &str) -> GeneratedBlock {
         raikiri_style::StyleNodeId::new(fixture.root as u64),
         raikiri_style::PseudoElem::Before,
     )];
-    GeneratedBlock::new(1, 2, cv)
+    GeneratedBlock::new(1, 2, cv, false)
 }
 
 #[test]

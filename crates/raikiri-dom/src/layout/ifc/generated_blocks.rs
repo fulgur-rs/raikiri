@@ -53,8 +53,9 @@ pub(crate) struct GeneratedBlock {
 
 impl GeneratedBlock {
     /// The geometry of the generated box styled by `cv`, marked by the tokens
-    /// `start` and `end`.
-    pub(crate) fn new(start: u64, end: u64, cv: &ComputedValues) -> Self {
+    /// `start` and `end`; `orthogonal` says its writing mode is orthogonal to
+    /// its element's.
+    pub(crate) fn new(start: u64, end: u64, cv: &ComputedValues, orthogonal: bool) -> Self {
         Self {
             start,
             end,
@@ -81,7 +82,7 @@ impl GeneratedBlock {
                 ClearValue::Both => taffy::Clear::Both,
                 _ => taffy::Clear::None,
             },
-            formatting_root: establishes_formatting_context(cv),
+            formatting_root: orthogonal || establishes_formatting_context(cv),
         }
     }
 

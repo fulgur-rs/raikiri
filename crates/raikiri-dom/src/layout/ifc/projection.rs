@@ -373,10 +373,14 @@ fn push_generated(
     let id = NodeId(generated_node_id(element, pseudo) as u64);
     let inline_level = pseudo == PseudoElem::Marker
         || (cv.display.is_inline_level() || matches!(cv.display, DisplayValue::Contents));
+    // A writing mode other than the element's makes the box an orthogonal
+    // flow (CSS Writing Modes 4 §7.3).
+    let orthogonal = cv.cssom_writing_mode.is_vertical()
+        != cascade.computed[element].cssom_writing_mode.is_vertical();
     let block = (!inline_level)
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
-        .map(|end| GeneratedBlock::new(id.0, end, cv));
+        .map(|end| GeneratedBlock::new(id.0, end, cv, orthogonal));
     if text.is_empty() && !has_images && block.is_none() {
         if atomic {
             first_letter.stop();

@@ -6790,6 +6790,7 @@ fn margins_may_collapse_through(document: &Document, cascade: &CascadeResult, id
         && visible(computed.overflow.y)
         && document.nodes[id].multicol.is_none()
         && !establishes_containment_context(computed)
+        && !super::page::establishes_orthogonal_flow(document, cascade, id)
 }
 
 #[cfg(test)]
