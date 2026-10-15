@@ -2160,3 +2160,63 @@ fn pipeline_keeps_an_inline_holding_a_float_to_its_line() {
     assert_eq!(height("div", 0), 130.0);
     assert!(height("span", 0) < 50.0, "{}", height("span", 0));
 }
+
+/// The page-flow top of each element with an `id`, in source order.
+fn tops_by_id(out: &PipelineOutput, ids: &[&str]) -> Vec<f32> {
+    let document = &out.document;
+    ids.iter()
+        .map(|id| {
+            let node = (0..document.node_count())
+                .find(|&i| document.get_node(i).and_then(|node| node.attribute("id")) == Some(*id))
+                .expect("element with id");
+            let mut top = 0.0;
+            let mut current = Some(node);
+            while let Some(i) = current {
+                top += document
+                    .get_node(i)
+                    .expect("node")
+                    .unrounded_layout
+                    .location
+                    .y;
+                current = document.layout_parent_of(i);
+            }
+            top
+        })
+        .collect()
+}
+
+#[test]
+fn pipeline_clears_floats_after_a_named_page_inside_a_static_absolute_box() {
+    // The named box inside the absolutely positioned box left at its static
+    // position opens page `x`, so the box after it opens a page of its own
+    // and starts below the 250px float, at the start of the fourth page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;line-height:10px}</style>\
+         <div style='float:left;width:50px;height:250px'></div><div style='height:20px'>a</div>\
+         <div style='position:absolute;width:200px'><div style='page:x;height:10px'>x</div></div>\
+         <div id=after style='height:10px'>after</div>",
+    );
+    assert_eq!(tops_by_id(&run(&doc), &["after"]), [300.0]);
+    // An absolutely positioned box whose content is unnamed passes no page
+    // name on, so the two `y` boxes around it share their page.
+    // Nor does a monolithic one, here an orthogonal flow, whatever its
+    // content's page names.
+    for content in ["", "t", "<div>t</div>"] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;line-height:10px}}</style>\
+             <div style='float:left;width:50px;height:250px'></div>\
+             <div id=first style='page:y;height:10px'>a</div>\
+             <div style='position:absolute'>{content}</div>\
+             <div id=second style='page:y;height:10px'>b</div>"
+        ));
+        let tops = tops_by_id(&run(&doc), &["first", "second"]);
+        assert_eq!(tops[1] - tops[0], 10.0, "{content:?}");
+    }
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;line-height:10px}</style>\
+         <div style='float:left;width:50px;height:250px'></div><div style='height:20px'>a</div>\
+         <div style='position:absolute;writing-mode:vertical-rl;height:20px'><div style='page:x;width:10px'>x</div></div>\
+         <div id=after style='height:10px'>after</div>",
+    );
+    assert_eq!(tops_by_id(&run(&doc), &["after"]), [20.0]);
+}

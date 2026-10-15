@@ -2920,8 +2920,9 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
         |document: &Document, id: usize| is_floating_box_for_pagination(document, cascade, id);
     // The in-flow and floating child boxes of `parent`, and its nonempty text
     // as `None`, with the children of a `display: contents` element standing
-    // in its place.
-    let child_boxes = |document: &Document, parent: usize| {
+    // in its place. With `static_absolute`, the absolutely positioned boxes
+    // left at their static position are among them too.
+    let child_boxes = |document: &Document, parent: usize, static_absolute: bool| {
         let mut boxes = Vec::new();
         // `None` stands for the `::before` content of a flattened element.
         let mut pending: Vec<Option<usize>> = document.nodes[parent]
@@ -2964,6 +2965,14 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 ) {
                     pending.push(None);
                 }
+            } else if static_absolute
+                && node.kind() == NodeKind::Element
+                && node.is_in_document()
+                && !node.is_non_rendered_html_element()
+                && cascade.computed[child].display != DisplayValue::None
+                && is_static_position_absolute(document, cascade, child)
+            {
+                boxes.push(Some(child));
             } else if in_flow(document, child) {
                 // An atomic inline box, a replaced element among them, is
                 // content of its parent's line, which pagination does not
@@ -2993,7 +3002,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             if is_monolithic_for_pagination(document, cascade, id) {
                 break None;
             }
-            let last = child_boxes(document, id)
+            let last = child_boxes(document, id, false)
                 .into_iter()
                 .rev()
                 .find(|child| child.is_none_or(|child| !is_float(document, child)));
@@ -3036,7 +3045,7 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
             raikiri_style::PseudoElem::Before,
         )
         .then(|| inherited.clone());
-        for item in child_boxes(document, parent) {
+        for item in child_boxes(document, parent, true) {
             let Some(child) = item else {
                 // Text takes the parent's page and starts the new page itself.
                 // Its lines have no element to give clearance to, so the
@@ -3052,6 +3061,31 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 previous_page_name = Some(inherited.clone());
                 continue;
             };
+            if is_static_position_absolute(document, cascade, child) {
+                // An absolutely positioned box left at its static position
+                // keeps the named pages of its in-flow content in the page
+                // flow, as pagination does, while its own `page` value and
+                // its unnamed content take no part. Its content is in a
+                // formatting context of its own, so only the boxes after it
+                // start below the earlier floats. A monolithic box passes no
+                // page name on.
+                let last = (!is_monolithic_for_pagination(document, cascade, child))
+                    .then(|| {
+                        child_boxes(document, child, false)
+                            .into_iter()
+                            .rev()
+                            .find(|item| item.is_none_or(|item| !is_float(document, item)))
+                    })
+                    .flatten()
+                    .flatten();
+                if let Some(last) = last {
+                    let name = end_page_name(document, &mut trailing, last, inherited.clone());
+                    if name != inherited {
+                        previous_page_name = Some(name);
+                    }
+                }
+                continue;
+            }
             if is_float(document, child) {
                 // The first float right after a forced break goes to the new
                 // page, so it clears the earlier page's floats too; the floats
