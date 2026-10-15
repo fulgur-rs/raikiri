@@ -539,15 +539,21 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
         return Err(reason);
     }
     microtask_checkpoint(context)?;
+    let mut settled = false;
     loop {
         let Ok(next) = with_state(context, |state| state.event_loop.next_task()) else {
             return Ok(()); // cov:ignore: the loop never runs inside a binding
         };
         let task = match next {
+            Next::Idle if settled => return Ok(()),
             // The page settling is a rendering opportunity too, so the
             // focus fixup runs even when no frame callback asked for one.
-            Next::Idle if !fix_up_focus(context)? => return Ok(()),
-            Next::Idle => continue,
+            // Its listeners may queue tasks, so look at the queue again.
+            Next::Idle => {
+                settled = true;
+                fix_up_focus(context)?;
+                continue;
+            }
             Next::Abort(reason) => return Err(abort(context, reason)),
             Next::Run(task) => task,
         };
@@ -560,6 +566,7 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
             }
         }
         microtask_checkpoint(context)?;
+        settled = false;
     }
 }
 
@@ -637,21 +644,16 @@ fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
         // Each callback is its own "clean up after running script".
         microtask_checkpoint(context)?;
     }
-    fix_up_focus(context)?;
-    Ok(())
+    fix_up_focus(context)
 }
 
 /// The rendering update's focus fixup: a focused element that stopped
 /// being focusable (disabled, inert, no longer rendered) loses focus, with
-/// blur events. Returns whether focus changed.
-fn fix_up_focus(context: &mut Context) -> Result<bool, Abort> {
-    let focused =
-        |context: &mut Context| with_state(context, |s| s.host.document().focused_element()).ok();
-    let before = focused(context);
+/// blur events.
+fn fix_up_focus(context: &mut Context) -> Result<(), Abort> {
     let result = super::focus::fix_up_focus(context).map(|()| JsValue::undefined());
     settle(context, result)?;
-    microtask_checkpoint(context)?;
-    Ok(focused(context) != before)
+    microtask_checkpoint(context)
 }
 
 fn callable_arg(args: &[JsValue], what: &str) -> JsResult<JsObject> {

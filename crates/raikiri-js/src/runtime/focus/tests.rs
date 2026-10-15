@@ -528,3 +528,41 @@ fn settling_the_page_runs_the_focus_fixup_without_a_frame_callback() {
          && document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi').tabIndex === -1",
     );
 }
+
+#[test]
+fn a_blur_listener_that_disables_the_target_stops_the_focus_move() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var a = document.body.appendChild(document.createElement('button'));\
+         var b = document.body.appendChild(document.createElement('button'));\
+         var log = []; b.onfocus = function () { log.push('focus'); };\
+         a.focus(); a.onblur = function () { b.setAttribute('disabled', ''); };\
+         b.focus();\
+         var stopped = document.activeElement === document.body && log.length === 0;\
+         var ns = 'http://www.w3.org/1998/Math/MathML';\
+         var link = document.body.appendChild(document.createElementNS(ns, 'a'));\
+         link.focus(); var plain = document.activeElement !== link;\
+         link.setAttribute('href', '#'); link.focus();\
+         var linked = document.activeElement === link;\
+         a.removeAttribute('disabled'); a.onblur = null; a.focus();\
+         var blurred = false; a.onblur = function () { blurred = true; };\
+         document.documentElement.focus();\
+         stopped && plain && linked && blurred && document.activeElement === document.body",
+    );
+}
+
+#[test]
+fn tasks_a_fixup_listener_queues_still_run() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var fired = false; b.focus(); b.setAttribute('disabled', '');\
+         b.onblur = function () { b.onblur = null; b.removeAttribute('disabled'); b.focus();\
+           setTimeout(function () { fired = true; }); };\
+         true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(&mut rt, "fired && document.activeElement === b");
+}

@@ -47,15 +47,35 @@ fn html_tag(document: &Document, index: usize) -> Option<&str> {
     tag_in(document, index, HTML_NS)
 }
 
-/// Whether `index` is an SVG `<a>` with a link, focusable by default.
+/// Whether `index` is an SVG or MathML `<a>` with a link, focusable by
+/// default. SVG also accepts the legacy XLink `href`.
 ///
-/// Spec: <https://svgwg.org/svg2-draft/interact.html#Focus>
-fn is_svg_link(document: &Document, index: usize) -> bool {
+/// Spec: <https://svgwg.org/svg2-draft/interact.html#Focus>,
+/// <https://w3c.github.io/mathml-core/#dom-and-javascript>
+fn is_foreign_link(document: &Document, index: usize) -> bool {
+    let href = document.element_attribute(index, "href").is_some();
+    if tag_in(document, index, MATHML_NS) == Some("a") {
+        return href;
+    }
     tag_in(document, index, SVG_NS) == Some("a")
-        && (document.element_attribute(index, "href").is_some()
+        && (href
             || document
                 .element_attribute_ns(index, XLINK_NS, "href")
                 .is_some())
+}
+
+/// The document element: the first element child of the document.
+fn document_element(document: &Document) -> Option<usize> {
+    document
+        .get_node(document.root_index())?
+        .children
+        .iter()
+        .copied()
+        .find(|&child| {
+            document
+                .get_node(child)
+                .is_some_and(|node| node.kind() == NodeKind::Element)
+        })
 }
 
 /// Whether a `contenteditable` value is in the true or plaintext-only
@@ -198,7 +218,7 @@ fn is_focusable(document: &Document, index: usize) -> bool {
     !is_actually_disabled(document, index)
         && is_connected_and_not_inert(document, index)
         && (attr("tabindex").and_then(parse_integer).is_some()
-            || is_svg_link(document, index)
+            || is_foreign_link(document, index)
             || focusable_by_default(document, index)
             || html && attr("contenteditable").is_some_and(is_editing_host_value))
 }
@@ -318,6 +338,10 @@ fn move_focus(context: &mut Context, next: Option<usize>, visible: Option<bool>)
         }
     }
     if let Some(next) = next {
+        // A blur listener may have made the new element unfocusable.
+        if previous.is_some() && !can_take_focus(context, next)? {
+            return Ok(());
+        }
         let focus = [("focus", false), ("focusin", true)];
         let state = (Some(next), visible.unwrap_or(true));
         let focused = focus_phase(context, state, next, previous, focus);
@@ -401,6 +425,11 @@ fn focus_visible_option(args: &[JsValue], context: &mut Context) -> JsResult<Opt
 fn focus(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let visible = focus_visible_option(args, context)?;
+    // Focusing the document element focuses the viewport instead.
+    if with_state(context, |s| document_element(s.host.document()))? == Some(index) {
+        move_focus(context, None, None)?;
+        return Ok(JsValue::undefined());
+    }
     if !can_take_focus(context, index)? {
         return Ok(JsValue::undefined());
     }
@@ -454,16 +483,7 @@ fn active_element(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsRes
     let active = with_state(context, |s| {
         let document = s.host.document();
         document.focused_element().or_else(|| {
-            let html = document
-                .get_node(document.root_index())?
-                .children
-                .iter()
-                .copied()
-                .find(|&child| {
-                    document
-                        .get_node(child)
-                        .is_some_and(|node| node.kind() == NodeKind::Element)
-                })?;
+            let html = document_element(document)?;
             let body = document
                 .get_node(html)?
                 .children
