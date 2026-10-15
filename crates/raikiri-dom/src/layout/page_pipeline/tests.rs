@@ -10390,6 +10390,35 @@ fn a_margin_after_a_box_pulled_back_to_a_forced_page_edge_is_truncated() {
 }
 
 #[test]
+fn a_forced_break_keeps_a_margin_collapsed_through_two_empty_boxes() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "height:0",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_box_after_a_pulled_back_box_is_truncated() {
+    // The third box separates the empty fourth box, and the margin after
+    // it, from the forced break.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:-10px;height:10px",
+            "height:0",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 90.0, 100.0, 100.0], 2)
+    );
+}
+
+#[test]
 fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

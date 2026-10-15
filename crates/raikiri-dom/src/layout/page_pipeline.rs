@@ -4971,9 +4971,10 @@ fn paginate_flow(
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
     let mut previous_block_bottoms: HashMap<usize, (usize, f32)> = HashMap::new();
-    // The top of the latest page that starts at a forced break. A margin
-    // after that break is kept, even when it follows an empty box there.
-    let mut forced_page_top: Option<f32> = None;
+    // The empty box whose block-end margin still adjoins the latest forced
+    // break: the forced-break box itself, or an empty box right after it.
+    // A margin collapsed through it follows the break and is kept.
+    let mut forced_break_margin_box: Option<usize> = None;
     let mut margins_moved_boxes = false;
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
@@ -6301,7 +6302,7 @@ fn paginate_flow(
                 }
                 current_page = target_page;
                 if forced_transition {
-                    forced_page_top = Some(target_y);
+                    forced_break_margin_box = (height <= 0.0).then_some(node_id);
                 }
                 if pending_break_applies {
                     pending_break_source = None;
@@ -6318,8 +6319,7 @@ fn paginate_flow(
                 // A forced break that coincides with a page edge also starts
                 // that page.
                 if forced_before {
-                    let margin_box_y = (effective_y - margin_top.max(0.0)).max(0.0);
-                    forced_page_top = Some(page_origin(page_index_for_y(margin_box_y)));
+                    forced_break_margin_box = (height <= 0.0).then_some(node_id);
                 }
                 // An unforced break that falls inside the collapsed margin
                 // between this box and its preceding sibling truncates that
@@ -6342,9 +6342,7 @@ fn paginate_flow(
                     // an adjoining margin on the following page.
                     // An empty box that a forced break placed at the page
                     // top leaves its collapsed margin after the break.
-                    let after_forced_break = previous_bottom >= page_top - 0.001
-                        && document.nodes[previous].unrounded_layout.size.height <= 0.001
-                        && forced_page_top.is_some_and(|top| (top - page_top).abs() <= 0.001);
+                    let after_forced_break = forced_break_margin_box == Some(previous);
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001
@@ -6401,6 +6399,18 @@ fn paginate_flow(
             && let Some(parent_id) =
                 box_parent(document, cascade, node_id, BoxParentScope::Document)
         {
+            // An empty box right after the forced-break box passes the
+            // break on to the margin after it; any other box ends it.
+            if !forced_before {
+                let follows_forced_box = forced_break_margin_box.is_some_and(|owner| {
+                    previous_block_bottoms
+                        .get(&parent_id)
+                        .is_some_and(|&(previous, _)| previous == owner)
+                });
+                forced_break_margin_box =
+                    (follows_forced_box && collapses_with_previous_block && height <= 0.0)
+                        .then_some(node_id);
+            }
             if collapses_with_previous_block {
                 previous_block_bottoms.insert(parent_id, (node_id, raw_y + height));
             } else {
