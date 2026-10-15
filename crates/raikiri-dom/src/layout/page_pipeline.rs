@@ -520,8 +520,9 @@ fn body_border_box_end(
     }
     if let Some(end) = last_flow_end {
         // Without block-end edges the last child's block-end margin
-        // collapses through the end of the body.
-        let end = if edges_end {
+        // collapses through the end of the body, unless the body is a
+        // formatting context of its own.
+        let end = if edges_end || holds_floats(document, cascade, body_id) {
             end
         } else {
             end - last_flow_margin

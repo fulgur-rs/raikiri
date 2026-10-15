@@ -469,6 +469,25 @@ fn a_body_with_only_a_side_border_ends_with_its_last_block() {
 }
 
 #[test]
+fn a_formatting_context_body_keeps_its_last_blocks_margin() {
+    // A `flow-root` body keeps the last block's 5px block-end margin, so
+    // it ends 135px down the third page.
+    let blocks = "<div style='height:40px;margin-bottom:5px'>x</div>".repeat(10);
+    let out = run(&format!(
+        "{}<style>body {{ display: flow-root; border-left: 1px solid }}</style>{blocks}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 135.0)),
+        ]
+    );
+}
+
+#[test]
 fn generated_overflow_leaves_a_definite_body_height() {
     // The `::after` overflows the 10px body onto the third page. The body
     // keeps the box layout gave it, the page area and its border, and does
