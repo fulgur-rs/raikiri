@@ -86,9 +86,9 @@ pub use fragment::{FragmentRect, LayoutFragment};
 #[doc(hidden)]
 // cov:ignore: this attribute controls rustdoc metadata and has no runtime coverage.
 pub use layout::{
-    BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph,
+    AnnotationRun, BoxRect, IfcBuildMode, IfcTextLine, IfcTextLines, InlineBoxPiece, LineGlyph,
     PositionedContentImage, PositionedLine, PositionedLines, PositionedMarker, PositionedRun,
-    cumulative_offset, relative_offset, used_relative_offset,
+    cumulative_offset, generates_inline_box, relative_offset, used_relative_offset,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
 pub use column_rules::ColumnRule;
@@ -107,6 +107,8 @@ pub use layout::{
     resolve_initial_page_context, validate_layout_depth,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
+#[doc(hidden)]
+pub use layout::pages_follow_x_axis;
 #[doc(hidden)]
 pub use layout::placed_without_relative_offset;
 pub use layout::{RootBox, root_box};

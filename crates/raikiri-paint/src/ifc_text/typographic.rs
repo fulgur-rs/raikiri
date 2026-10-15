@@ -69,7 +69,11 @@ pub(super) fn background_slices(
 
 struct Group {
     scene: Scene,
-    opacity: f32,
+    /// The group's opacity, when it composites in a layer of its own.
+    opacity: Option<f32>,
+    /// The transform of an atomic `::before` or `::after`, about its box on
+    /// its line in page space.
+    transform: Option<Affine>,
     level: i32,
     parent: Option<usize>,
     children: Vec<Child>,
@@ -123,7 +127,9 @@ impl TypographicPaint {
     /// A non-atomic inline element with an opacity below one composites its
     /// fragments on the paragraph's lines as one group, and so do the
     /// `::before`, `::after` and `::first-letter` boxes (CSS Color 4 §3.3).
-    /// The groups nest as their boxes do.
+    /// An atomic `::before` or `::after` with a transform is a group too,
+    /// turned as a whole (CSS Transforms 1 §6). The groups nest as their
+    /// boxes do.
     pub(super) fn new(paragraph: Paragraph<'_>, root: &Node, pieces: &[InlineBoxPiece]) -> Self {
         let cascade = paragraph.cascade;
         let mut paint = Self {
@@ -137,6 +143,7 @@ impl TypographicPaint {
         let mut by_box = HashMap::new();
         let mut parents = HashMap::new();
         let mut opacities = HashMap::new();
+        let mut turned = std::collections::HashSet::new();
         for piece in pieces {
             let key = FragmentKey {
                 node: piece.node,
@@ -165,6 +172,9 @@ impl TypographicPaint {
                 raikiri_dom::paint_rules::letter_opacity_layer(cascade, piece.node, retained)
             {
                 opacities.insert(key, opacity);
+            }
+            if raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node).is_some() {
+                turned.insert(key);
             }
         }
         // Resolve parents before children. Equal opacities share a group only
@@ -197,14 +207,16 @@ impl TypographicPaint {
                 }
             };
             for key in path.into_iter().rev() {
-                if let Some(&opacity) = opacities.get(&key) {
+                let opacity = opacities.get(&key).copied();
+                if opacity.is_some() || turned.contains(&key) {
                     let index = *by_box
-                        .entry((key.node, opacity.to_bits(), group))
+                        .entry((key.node, opacity.map(f32::to_bits), group))
                         .or_insert_with(|| {
                             let index = paint.groups.len();
                             paint.groups.push(Group {
                                 scene: Scene::new(),
                                 opacity,
+                                transform: None,
                                 level: raikiri_dom::paint_rules::pseudo_stack_level(
                                     cascade, key.node,
                                 ),
@@ -265,7 +277,8 @@ impl TypographicPaint {
                 let index = self.groups.len();
                 self.groups.push(Group {
                     scene: Scene::new(),
-                    opacity,
+                    opacity: Some(opacity),
+                    transform: None,
                     level: element_stack_level(paragraph.cascade, id),
                     parent: group,
                     children: Vec::new(),
@@ -320,6 +333,16 @@ impl TypographicPaint {
         match group {
             Some(index) if self.groups[index].owner == piece.node => &mut self.groups[index].boxes,
             _ => self.target(group),
+        }
+    }
+
+    /// Turn the group that `piece` owns, if any, by `transform`, in page
+    /// space. An atomic box has one piece, so the last one set holds.
+    pub(super) fn turn(&mut self, group: Option<usize>, piece: &InlineBoxPiece, transform: Affine) {
+        if let Some(index) = group
+            && self.groups[index].owner == piece.node
+        {
+            self.groups[index].transform = Some(transform);
         }
     }
 
@@ -425,19 +448,18 @@ impl TypographicPaint {
                 Affine::IDENTITY,
             );
             // A group whose pieces are on lines painted elsewhere draws
-            // nothing here.
+            // nothing here, and neither does one turned by a singular
+            // transform (CSS Transforms 1 §5).
+            let transform = group.transform.unwrap_or(Affine::IDENTITY);
             let mut composite = Scene::new();
-            if !content.commands.is_empty() {
-                composite.push_layer(
-                    Mix::Normal,
-                    group.opacity,
-                    clip_transform,
-                    &clip,
-                    None,
-                    None,
-                );
-                composite.append_scene(content, Affine::IDENTITY);
-                composite.pop_layer();
+            if !content.commands.is_empty() && crate::transform::is_invertible(transform) {
+                if let Some(opacity) = group.opacity {
+                    composite.push_layer(Mix::Normal, opacity, clip_transform, &clip, None, None);
+                }
+                composite.append_scene(content, transform);
+                if group.opacity.is_some() {
+                    composite.pop_layer();
+                }
             }
             // A group composites after the rest of its parent's paint, like
             // the other stacking contexts with `z-index: auto` of the
@@ -499,8 +521,8 @@ fn inline_ancestors(
             let node = paragraph.document.get_node(id)?;
             let cv = paragraph.cascade.computed.get(id)?;
             (node.kind() == NodeKind::Element
-                && matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents))
-            .then(|| (id, raikiri_dom::paint_rules::opacity_layer(cv)))
+                && (cv.display.is_inline_flow() || cv.display == DisplayValue::Contents))
+                .then(|| (id, raikiri_dom::paint_rules::opacity_layer(cv)))
         })
 }
 

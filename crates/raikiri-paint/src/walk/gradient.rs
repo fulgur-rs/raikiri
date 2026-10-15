@@ -245,21 +245,10 @@ const MAX_GRADIENT_TILES: usize = 16_384;
 /// The average color along a gradient brush, weighting each pair of stops by
 /// the distance between them.
 fn brush_average_color(brush: &PenikoGradient) -> Color {
-    let mut stops: Vec<(f64, CssColor)> = brush
+    let mut stops: Vec<(f64, DynamicColor)> = brush
         .stops
         .iter()
-        .map(|stop| {
-            let color = stop.color.to_alpha_color::<Srgb>().to_rgba8();
-            (
-                f64::from(stop.offset),
-                CssColor {
-                    r: color.r,
-                    g: color.g,
-                    b: color.b,
-                    a: color.a,
-                },
-            )
-        })
+        .map(|stop| (f64::from(stop.offset), stop.color))
         .collect();
     // A padded brush shows its first and last colors before and after its
     // stops.
@@ -348,10 +337,11 @@ fn linear_fill(
     let start = center - direction * (length / 2.0);
     let line = direction * length;
     let stops = resolved_stops(&linear.stops, length, length, current_color);
-    let (first, last, stops) = match normalize_stops(stops, linear.repeating, length)? {
-        Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
-        Normalized::Stops { first, last, stops } => (first, last, stops),
-    };
+    let (first, last, stops) =
+        match normalize_stops(stops, linear.repeating, length, &linear.interpolation)? {
+            Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
+            Normalized::Stops { first, last, stops } => (first, last, stops),
+        };
     let brush = PenikoGradient::new_linear(start + line * first, start + line * last);
     Some(GradientFill::Brush(
         Box::new(finish_brush(
@@ -470,10 +460,10 @@ fn radial_fill(
         // only its last color, or the average of a repeating one, shows.
         let stops = resolved_stops(&radial.stops, rx, rx, current_color);
         let color = if radial.repeating {
-            average_color(&stops)
+            ramp_average_color(&stops, &radial.interpolation)
         } else {
             let (_, last) = *stops.last()?;
-            Color::from_rgba8(last.r, last.g, last.b, last.a)
+            solid_color(last)
         };
         return Some(GradientFill::Solid(color));
     };
@@ -494,10 +484,11 @@ fn radial_fill(
     }
     // An ellipse stretches the period along its longer radius, where it is
     // most visible.
-    let (first, last, stops) = match normalize_stops(stops, radial.repeating, rx.max(ry))? {
-        Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
-        Normalized::Stops { first, last, stops } => (first, last, stops),
-    };
+    let (first, last, stops) =
+        match normalize_stops(stops, radial.repeating, rx.max(ry), &radial.interpolation)? {
+            Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
+            Normalized::Stops { first, last, stops } => (first, last, stops),
+        };
     let brush = PenikoGradient::new_two_point_radial(
         center,
         (rx * first) as f32,
@@ -540,7 +531,7 @@ fn resolved_stops(
     length: f64,
     percent_basis: f64,
     current_color: CssColor,
-) -> Vec<(f64, CssColor)> {
+) -> Vec<(f64, DynamicColor)> {
     let raw: Vec<Option<f32>> = stops
         .iter()
         .map(|stop| {
@@ -597,7 +588,7 @@ fn resolved_stops(
         .map(|(offset, stop)| {
             (
                 f64::from(offset),
-                resolve_gradient_stop_color(stop.color, current_color),
+                gradient_stop_dynamic(stop.color, current_color),
             )
         })
         .collect()
@@ -609,12 +600,12 @@ fn resolved_stops(
 /// Returns the solid color the gradient paints when every stop lies before
 /// the center.
 fn clip_stops_at_zero(
-    stops: &mut Vec<(f64, CssColor)>,
+    stops: &mut Vec<(f64, DynamicColor)>,
     interpolation: &GradientColorInterpolation,
 ) -> Option<Color> {
     let Some(index) = stops.iter().position(|stop| stop.0 >= 0.0) else {
         let &(_, last) = stops.last()?;
-        return Some(Color::from_rgba8(last.r, last.g, last.b, last.a));
+        return Some(solid_color(last));
     };
     if index == 0 {
         return None;
@@ -636,34 +627,34 @@ fn clip_stops_at_zero(
 /// The color `t` of the way from `from` to `to` in the gradient's
 /// interpolation space, with premultiplied alpha (CSS Images 4 §3.5.2).
 fn lerp_color(
-    from: CssColor,
-    to: CssColor,
+    from: DynamicColor,
+    to: DynamicColor,
     t: f64,
     interpolation: &GradientColorInterpolation,
-) -> CssColor {
-    let color = css_color_to_dynamic(from)
-        .interpolate(
-            css_color_to_dynamic(to),
-            conic_interpolation_tag(interpolation.color_space),
-            conic_hue_direction(interpolation.hue_method),
-        )
-        .eval(t as f32)
-        .to_alpha_color::<Srgb>()
-        .to_rgba8();
-    CssColor {
-        r: color.r,
-        g: color.g,
-        b: color.b,
-        a: color.a,
-    }
+) -> DynamicColor {
+    from.interpolate(
+        to,
+        conic_interpolation_tag(interpolation.color_space),
+        conic_hue_direction(interpolation.hue_method),
+    )
+    .eval(t as f32)
+}
+
+/// A dynamic color drawn as one solid 8-bit sRGB color.
+fn solid_color(color: DynamicColor) -> Color {
+    let CssColor { r, g, b, a } = dynamic_to_css_color(color);
+    Color::from_rgba8(r, g, b, a)
 }
 
 /// The average color of one period of stops (CSS Images 4 §3.5.3): each pair
 /// of neighboring stops contributes the mean of its two colors, weighted by
 /// the distance between them, in premultiplied sRGB. Stops that share one
 /// position are spread evenly, so each pair weighs the same.
-pub(super) fn average_color(stops: &[(f64, CssColor)]) -> Color {
-    let premultiplied: Vec<[f64; 4]> = stops.iter().map(|(_, color)| premultiply(*color)).collect();
+pub(super) fn average_color(stops: &[(f64, DynamicColor)]) -> Color {
+    let premultiplied: Vec<[f64; 4]> = stops
+        .iter()
+        .map(|(_, color)| premultiply(dynamic_to_css_color(*color)))
+        .collect();
     let period = match stops {
         [first, .., last] => last.0 - first.0,
         _ => 0.0,
@@ -689,6 +680,47 @@ pub(super) fn average_color(stops: &[(f64, CssColor)]) -> Color {
         })),
     };
     Color::from_rgba8(r, g, b, a)
+}
+
+/// The average color of one period of stops, as [`average_color`] takes it.
+/// Clipping does not commute with interpolation, so when a stop lies outside
+/// the sRGB gamut the ramp is interpolated in its own space and clipped
+/// before it is averaged, not the other way round. Stops that share one
+/// position are spread evenly, as [`average_color`] weighs them.
+fn ramp_average_color(
+    stops: &[(f64, DynamicColor)],
+    interpolation: &GradientColorInterpolation,
+) -> Color {
+    let in_gamut_stops = stops
+        .iter()
+        .all(|(_, color)| in_gamut(color.to_alpha_color::<Srgb>()));
+    let ([first, .., last], false) = (stops, in_gamut_stops) else {
+        return average_color(stops);
+    };
+    let period = last.0 - first.0;
+    let last_index = (stops.len() - 1) as f64;
+    let spread: Vec<(f32, DynamicColor)> = stops
+        .iter()
+        .enumerate()
+        .map(|(index, &(offset, color))| {
+            let offset = if period > 1e-6 {
+                (offset - first.0) / period
+            } else {
+                index as f64 / last_index
+            };
+            (offset as f32, color)
+        })
+        .collect();
+    let ramp: Vec<(f64, DynamicColor)> = expand_stops(
+        &spread,
+        conic_interpolation_tag(interpolation.color_space),
+        conic_hue_direction(interpolation.hue_method),
+        true,
+    )
+    .into_iter()
+    .map(|(offset, color)| (f64::from(offset), color))
+    .collect();
+    average_color(&ramp)
 }
 
 /// Color channels from 0 to 1, multiplied by alpha.
@@ -722,7 +754,7 @@ enum Normalized {
     Stops {
         first: f64,
         last: f64,
-        stops: Vec<(f32, CssColor)>,
+        stops: Vec<(f32, DynamicColor)>,
     },
 }
 
@@ -736,9 +768,10 @@ enum Normalized {
 /// one whose period, measured along `length` CSS pixels, is too short for any
 /// output resolution to show.
 fn normalize_stops(
-    stops: Vec<(f64, CssColor)>,
+    stops: Vec<(f64, DynamicColor)>,
     repeating: bool,
     length: f64,
+    interpolation: &GradientColorInterpolation,
 ) -> Option<Normalized> {
     let (first, last) = (stops.first()?.0, stops.last()?.0);
     let period = if length > 0.0 {
@@ -747,7 +780,7 @@ fn normalize_stops(
         last - first
     };
     if repeating && period <= MIN_REPEATING_PERIOD {
-        return Some(Normalized::Solid(average_color(&stops)));
+        return Some(Normalized::Solid(ramp_average_color(&stops, interpolation)));
     }
     let (start, end) = if repeating {
         (first, last)
@@ -800,25 +833,21 @@ fn normalize_stops(
 
 fn finish_brush(
     brush: PenikoGradient,
-    stops: &[(f32, CssColor)],
+    stops: &[(f32, DynamicColor)],
     repeating: bool,
     color_space: MixColorSpace,
     hue_method: HueInterpolationMethod,
 ) -> PenikoGradient {
-    let stops: Vec<(f32, DynamicColor)> = stops
-        .iter()
-        .map(|(offset, color)| (*offset, css_color_to_dynamic(*color)))
-        .collect();
     let space = conic_interpolation_tag(color_space);
     let brush = brush.with_extend(if repeating {
         PenikoExtend::Repeat
     } else {
         PenikoExtend::Pad
     });
-    if space == ColorSpaceTag::Srgb {
-        return brush.with_stops(stops.as_slice());
+    if !needs_expansion(stops, space) {
+        return brush.with_stops(stops);
     }
-    let stops = expand_stops(&stops, space, conic_hue_direction(hue_method), repeating);
+    let stops = expand_stops(stops, space, conic_hue_direction(hue_method), repeating);
     brush.with_stops(stops.as_slice())
 }
 
@@ -830,6 +859,107 @@ const COINCIDENT_STEP: f32 = 1e-5;
 /// transitions with nothing to interpolate.
 const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 
+/// Exact samples between two approximated stops when either lies outside
+/// the sRGB gamut, before each substep is refined further.
+const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
+
+/// Exact samples along a whole segment between two stops when either stop
+/// lies outside the sRGB gamut, before each gap is refined further.
+const OUT_OF_GAMUT_SEGMENT_STEPS: usize = 64;
+
+/// Largest premultiplied channel error, about half an 8-bit level, that a
+/// drawn substep may have against the clipped ramp at its middle.
+const CLIP_TOLERANCE: f32 = 0.5 / 255.0;
+
+/// Stops a brush cannot take as they are: ones interpolated outside sRGB, or
+/// ones outside its gamut, which a renderer clips before interpolating.
+fn needs_expansion(stops: &[(f32, DynamicColor)], space: ColorSpaceTag) -> bool {
+    space != ColorSpaceTag::Srgb || any_out_of_gamut(stops)
+}
+
+/// Some stop lies outside the sRGB gamut.
+pub(super) fn any_out_of_gamut(stops: &[(f32, DynamicColor)]) -> bool {
+    stops
+        .iter()
+        .any(|(_, color)| !in_gamut(color.to_alpha_color::<Srgb>()))
+}
+
+/// Every sRGB channel lies in 0..=1.
+fn in_gamut(color: AlphaColor<Srgb>) -> bool {
+    color.components[..3]
+        .iter()
+        .all(|channel| (0.0..=1.0).contains(channel))
+}
+
+/// The color clipped to the sRGB gamut, as it is drawn.
+fn clamp_srgb(color: AlphaColor<Srgb>) -> AlphaColor<Srgb> {
+    AlphaColor::<Srgb>::new(color.components.map(|channel| channel.clamp(0.0, 1.0)))
+}
+
+/// Push exact clipped samples strictly between `start` and `end`: `steps`
+/// evenly spaced gaps, each then refined by [`refine_clipped`].
+fn clipped_samples(
+    sample: &impl Fn(f32) -> AlphaColor<Srgb>,
+    start: (f32, AlphaColor<Srgb>),
+    end: (f32, AlphaColor<Srgb>),
+    steps: usize,
+    min_width: f32,
+    out: &mut Vec<(f32, AlphaColor<Srgb>)>,
+) {
+    let mut previous = start;
+    for step in 1..=steps {
+        let next = if step == steps {
+            end
+        } else {
+            let t = start.0 + (end.0 - start.0) * step as f32 / steps as f32;
+            (t, sample(t))
+        };
+        refine_clipped(sample, previous, next, min_width, out);
+        if step < steps {
+            out.push(next);
+        }
+        previous = next;
+    }
+}
+
+/// Push clipped samples strictly between `start` and `end` until a renderer
+/// interpolating linearly between neighbors stays within
+/// [`CLIP_TOLERANCE`] of the clipped ramp at each middle. A channel far
+/// outside the gamut crosses into it within a sliver of the step, which
+/// fixed substeps cannot find. Halving stops at `min_width`, the width of
+/// [`MIN_EXPANDED_SEGMENT`] in the brush: anything narrower draws as a hard
+/// transition, like the steps between coincident stops.
+fn refine_clipped(
+    sample: &impl Fn(f32) -> AlphaColor<Srgb>,
+    start: (f32, AlphaColor<Srgb>),
+    end: (f32, AlphaColor<Srgb>),
+    min_width: f32,
+    out: &mut Vec<(f32, AlphaColor<Srgb>)>,
+) {
+    if end.0 - start.0 < min_width {
+        return;
+    }
+    let t = (start.0 + end.0) / 2.0;
+    let middle = sample(t);
+    let premultiplied = |color: AlphaColor<Srgb>| {
+        let [r, g, b, a] = color.components;
+        [r * a, g * a, b * a, a]
+    };
+    let (from, to, at) = (
+        premultiplied(start.1),
+        premultiplied(end.1),
+        premultiplied(middle),
+    );
+    if (0..4)
+        .all(|channel| ((from[channel] + to[channel]) / 2.0 - at[channel]).abs() <= CLIP_TOLERANCE)
+    {
+        return;
+    }
+    refine_clipped(sample, start, (t, middle), min_width, out);
+    out.push((t, middle));
+    refine_clipped(sample, (t, middle), end, min_width, out);
+}
+
 /// Approximate interpolation in `space` with dense sRGB stops.
 ///
 /// The colors outside the first and last stops are solid (CSS Images 3
@@ -837,7 +967,7 @@ const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 /// draws the pad as a segment between two equal colors, which `longer hue`
 /// turns into a full hue turn. Expanding each segment here and pinning the
 /// first and last colors to 0 and 1 keeps the pads solid.
-fn expand_stops(
+pub(super) fn expand_stops(
     stops: &[(f32, DynamicColor)],
     space: ColorSpaceTag,
     direction: HueDirection,
@@ -858,13 +988,55 @@ fn expand_stops(
             expanded.push((from_offset, from));
             continue;
         }
-        for (t, color) in peniko::color::gradient::<Srgb>(from, to, space, direction, 0.01) {
-            if t < 1.0 {
+        let exact = from.interpolate(to, space, direction);
+        let sample = |t: f32| clamp_srgb(exact.eval(t).to_alpha_color::<Srgb>());
+        let min_width = MIN_EXPANDED_SEGMENT / span;
+        let mut push_samples = |samples: Vec<(f32, AlphaColor<Srgb>)>| {
+            for (t, color) in samples {
                 expanded.push((
                     from_offset + span * t,
-                    DynamicColor::from_alpha_color(color.un_premultiply()),
+                    DynamicColor::from_alpha_color(color),
                 ));
             }
+        };
+        let (from_srgb, to_srgb) = (from.to_alpha_color::<Srgb>(), to.to_alpha_color::<Srgb>());
+        if !in_gamut(from_srgb) || !in_gamut(to_srgb) {
+            // The approximation below bounds its error before clipping, which
+            // a stop far outside the gamut may never meet. The clipped ramp
+            // is bounded, so sample it exactly instead.
+            let start = (0.0, clamp_srgb(from_srgb));
+            let mut samples = vec![start];
+            clipped_samples(
+                &sample,
+                start,
+                (1.0, clamp_srgb(to_srgb)),
+                OUT_OF_GAMUT_SEGMENT_STEPS,
+                min_width,
+                &mut samples,
+            );
+            push_samples(samples);
+            continue;
+        }
+        let mut previous: Option<(f32, AlphaColor<Srgb>)> = None;
+        for (t, color) in peniko::color::gradient::<Srgb>(from, to, space, direction, 0.01) {
+            let color = color.un_premultiply();
+            let mut samples = Vec::new();
+            // The approximation error is bounded before clipping, but a
+            // channel leaving the gamut bends the clipped curve within one
+            // step. Sample such a step exactly so the drawn colors follow it.
+            if let Some((previous_t, previous_color)) = previous
+                && (!in_gamut(previous_color) || !in_gamut(color))
+            {
+                let start = (previous_t, clamp_srgb(previous_color));
+                let end = (t, clamp_srgb(color));
+                let steps = OUT_OF_GAMUT_SUBSTEPS;
+                clipped_samples(&sample, start, end, steps, min_width, &mut samples);
+            }
+            if t < 1.0 {
+                samples.push((t, clamp_srgb(color)));
+            }
+            push_samples(samples);
+            previous = Some((t, color));
         }
     }
     if let Some((offset, color)) = stops.last() {

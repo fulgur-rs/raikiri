@@ -411,6 +411,7 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
                     | DisplayValue::FlowRoot
                     | DisplayValue::ListItem
                     | DisplayValue::TableCaption
+                    | DisplayValue::BlockRuby
             )))
         && !super::fixed::generates_inline_box(doc, idx, cv);
     if !applies {
@@ -500,6 +501,9 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
     style.display = match cv.display {
         DisplayValue::Block => Display::Block,
         DisplayValue::Inline => Display::Block,
+        // Ruby boxes are inline boxes to the block layout; the inline engine
+        // lays them out (CSS Ruby 1 §2).
+        display if display.is_ruby() => Display::Block,
         DisplayValue::InlineBlock => Display::Block,
         DisplayValue::FlowRoot => Display::FlowRoot,
         DisplayValue::None => Display::None,

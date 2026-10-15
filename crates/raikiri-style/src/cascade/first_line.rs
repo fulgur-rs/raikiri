@@ -263,7 +263,7 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
             if ordinary.display == DisplayValue::None {
                 continue;
             }
-            if ordinary.display != DisplayValue::Inline
+            if !ordinary.display.is_inline_flow()
                 || matches!(
                     ordinary.position,
                     crate::property::PositionValue::Absolute

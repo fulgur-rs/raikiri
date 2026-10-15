@@ -31,7 +31,7 @@ pub fn named_page_matches(
             let is_inline_canvas = document.get_node(node_id).is_some_and(|node| {
                 node.tag_name()
                     .is_some_and(|tag| tag.eq_ignore_ascii_case("canvas"))
-                    && matches!(cascade.computed[node_id].display, DisplayValue::Inline)
+                    && cascade.computed[node_id].display.is_inline_flow()
             });
             if is_inline_canvas {
                 true
@@ -99,7 +99,7 @@ pub(crate) fn clips_element_overflow(
         // A non-replaced inline box has no overflow clip, but the cascade
         // keeps `inline` on elements that layout blockifies (flex and grid
         // items, absolutely positioned boxes) or lays out as atomic inlines.
-        || (cv.display == DisplayValue::Inline
+        || (cv.display.is_inline_flow()
             && !node.is_inline_svg_root()
             && !matches!(node.tag_name(), Some("img" | "canvas"))
             && !crate::layout::ifc::assign::generates_own_box(document, cascade, node_id))
@@ -248,6 +248,35 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
         && matches!(cv.float, FloatValue::None))
     .then(|| opacity_layer(cv))
     .flatten()
+}
+
+/// The style of a `::before` or `::after` laid out in its paragraph, by its
+/// generated id, when it turns its boxes, images and text by its own
+/// `transform`. Only an atomic inline-level pseudo-element does, or one
+/// that an image alone in its `content` replaces (CSS Content 3 §2.1): a
+/// non-replaced inline box is not transformable (CSS Transforms 1 §3).
+/// Floated and out-of-flow pseudo-elements are not in the paragraph.
+pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
+    let (_, pseudo) = crate::generated_content::generated_origin(id)?;
+    if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
+        return None;
+    }
+    let cv = crate::generated_content::computed_for_id(cascade, id)?;
+    (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+        && matches!(cv.float, FloatValue::None)
+        && (cv.display.is_atomic_inline_level()
+            || matches!(cv.content.as_slice(), [ContentComponent::Image { .. }]))
+        && !cv.transform.is_empty())
+    .then_some(cv)
+}
+
+/// Whether the pseudo-element with generated id `id` composites its boxes,
+/// images and text as one group in its paragraph: one with an opacity below
+/// one (see [`pseudo_opacity_layer`]), or one with a transform of its own
+/// (see [`pseudo_transform`]), which is a stacking context too (CSS
+/// Transforms 1 §3).
+pub fn pseudo_forms_group(cascade: &CascadeResult, id: usize) -> bool {
+    pseudo_opacity_layer(cascade, id).is_some() || pseudo_transform(cascade, id).is_some()
 }
 
 /// The group opacity one fragment of a `::first-letter` laid out in its
@@ -610,7 +639,7 @@ pub fn holds_negative_stack_level(
         if pseudos(id).into_iter().any(negative) {
             return true;
         }
-        if matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+        if cv.display.is_inline_flow() || cv.display == DisplayValue::Contents {
             stack.extend(node.children.iter().copied());
         }
     }

@@ -98,3 +98,91 @@ fn taffy_calc_margins_resolve_against_the_fragmentainer_width() {
     assert_eq!(fragment.rect.x, 5.0);
     assert_eq!(fragment.rect.width, 80.0);
 }
+
+#[test]
+fn column_clips_keep_overhanging_ruby_annotations() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:20px/20px Ahem"),
+    );
+    let mc = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px;orphans:1;widows:1"),
+    );
+    let leaf = doc.append_element(
+        Some(mc),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;width:80px;margin:0"),
+    );
+    let ruby = doc.append_element(
+        Some(leaf),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;ruby-position:inter-character"),
+    );
+    let base = doc.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    doc.append_text(base, "AAAA");
+    let annotation = doc.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text"),
+    );
+    doc.append_text(annotation, "XX");
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+    doc.fragment_tree.fragments.clear();
+    let context = FragmentationContext {
+        available_width: 100.0,
+        available_height: Some(40.0),
+        column_fill: raikiri_style::property::ColumnFillValue::Auto,
+        column_width: 40.0,
+        column_count: 2,
+        column_gap: 20.0,
+        column_index: 0,
+        origin_x: 0.0,
+        origin_y: 0.0,
+        orphans: 1,
+        widows: 1,
+    };
+    layout(
+        &mut doc,
+        mc,
+        &[leaf],
+        context,
+        Size {
+            width: 100.0,
+            height: 40.0,
+        },
+        Point::ZERO,
+    )
+    .unwrap();
+    let clip = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .find(|fragment| fragment.node_id == leaf)
+        .and_then(|fragment| fragment.fragmentainer_clip)
+        .unwrap();
+    // The inter-character annotation stands beside the end of the 80px
+    // base, past the box, inside the ruby's inline box.
+    assert_eq!((clip.x, clip.width), (0.0, 100.0), "{clip:?}");
+}

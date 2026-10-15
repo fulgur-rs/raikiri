@@ -3,7 +3,7 @@
 
 use std::any::Any;
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use raikiri_dom::Document;
@@ -25,6 +25,8 @@ pub(crate) struct StubHost {
     /// [`super::scripts::run`] resolved and asked for; a URL with no entry
     /// fails, the same as the default `DocumentHost` implementation.
     pub scripts: HashMap<String, String>,
+    /// The URLs [`DocumentHost::load_image`] loads; any other URL fails.
+    pub images: HashSet<String>,
 }
 
 impl StubHost {
@@ -55,6 +57,7 @@ impl StubHost {
                 fail_computed: false,
                 document_url: None,
                 scripts: HashMap::new(),
+                images: HashSet::new(),
             },
             html,
             head,
@@ -143,6 +146,13 @@ impl DocumentHost for StubHost {
             .get(url)
             .cloned()
             .ok_or_else(|| HostError(format!("no script registered for {url}")))
+    }
+    fn load_image(&mut self, url: &str) -> Result<(), HostError> {
+        if self.images.contains(url) {
+            Ok(())
+        } else {
+            Err(HostError(format!("no image registered for {url}")))
+        }
     }
     fn as_any(&self) -> &dyn Any {
         self

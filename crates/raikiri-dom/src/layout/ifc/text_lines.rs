@@ -46,6 +46,23 @@ fn root_of(doc: &Document, node: usize) -> Option<usize> {
         .find(|&id| doc.nodes[id].flags.contains(NodeFlags::IS_IFC_ROOT))
 }
 
+/// The DOM owners of the glyph runs on `line`, in order. The glyphs of a ruby
+/// annotation belong to the line the annotation is placed over.
+fn glyph_owners(line: &shodo::Line) -> Vec<usize> {
+    fn collect(line: &shodo::Line, owners: &mut Vec<usize>) {
+        for fragment in line.fragments() {
+            match fragment {
+                Fragment::GlyphRun(run) => owners.extend(run.node().map(|node| node.0 as usize)),
+                Fragment::RubyAnnotation(annotation) => collect(annotation.line(), owners),
+                _ => {}
+            }
+        }
+    }
+    let mut owners = Vec::new();
+    collect(line, &mut owners);
+    owners
+}
+
 /// The lines `node` has a glyph run on. A line is owned by every text node
 /// one of its glyph runs comes from, so a line shared by two text nodes
 /// belongs to both, and a line of atomic boxes only belongs to none.
@@ -68,10 +85,7 @@ pub(crate) fn lines_of(doc: &Document, node: usize) -> Option<IfcTextLines> {
             #[cfg(test)]
             crate::layout::test_support::TEXT_LINE_VISITS
                 .with(|visits| visits.set(visits.get() + 1));
-            line.fragments().any(|fragment| match fragment {
-                Fragment::GlyphRun(run) => run.node().is_some_and(|owner| owner.0 as usize == node),
-                _ => false,
-            })
+            glyph_owners(line).contains(&node)
         })
         .map(|(index, line)| {
             let top = lines.line_top(index);
@@ -122,14 +136,8 @@ impl Document {
                 top,
                 bottom: top + line.block_size(),
             };
-            for fragment in line.fragments() {
+            for owner in glyph_owners(line) {
                 check()?;
-                let Fragment::GlyphRun(run) = fragment else {
-                    continue;
-                };
-                let Some(owner) = run.node().map(|node| node.0 as usize) else {
-                    continue; // cov:ignore: Raikiri assigns node ids to every projected glyph source; anonymous Shodo runs have no DOM owner.
-                };
                 let Some(candidate) = self.nodes.get(owner) else {
                     continue;
                 };

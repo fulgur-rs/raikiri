@@ -13,7 +13,6 @@ use std::any::Any;
 use std::path::{Component, Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
-use raikiri_style::property::DisplayValue;
 
 use crate::reftest::{
     LiveWptSetup, live_wpt_stylesheets_in_subtree, parse_wpt_inner_html_fragment,
@@ -250,7 +249,7 @@ impl DocumentHost for WptDocumentHost {
     fn document_url(&self) -> Option<String> {
         self.page_url
             .as_ref()
-            .or(self.setup.document_base_url.as_ref())
+            .or(self.setup.document_url.as_ref())
             .map(ToString::to_string)
     }
 
@@ -258,9 +257,36 @@ impl DocumentHost for WptDocumentHost {
         self.script_source(url)
     }
 
+    /// Load and decode the image the way layout will, through the same
+    /// checkout-rooted file provider, so `load` fires exactly for the images
+    /// the page renders and `error` for the broken ones. Without a checkout
+    /// root nothing would confine a `file:` URL, so every load fails, the
+    /// same as [`Self::script_source`].
+    fn load_image(&mut self, url: &str) -> Result<(), HostError> {
+        let root = self
+            .canonical_root
+            .clone()
+            .ok_or_else(|| HostError(format!("{url}: the WPT root does not exist")))?;
+        let parsed = raikiri::Url::parse(url)
+            .map_err(|_| HostError(format!("{url}: not an absolute URL")))?;
+        let resolver = raikiri_net::ImageResolver::new(
+            crate::reftest::local_resources::WptFileNetworkProvider::new(Some(root)),
+        );
+        raikiri_traits::ReplacedResolver::resolve(
+            &resolver,
+            raikiri_traits::ResolverRequest::new(&parsed),
+        )
+        .map(drop)
+        .map_err(|error| HostError(format!("{url}: {error}")))
+    }
+
     fn flush(&mut self) -> Result<(), HostError> {
         #[cfg(test)]
         self.flushes.set(self.flushes.get() + 1);
+        // A script may have added, changed, or removed `<base href>` since
+        // the parse; everything below resolves against the current base.
+        let document_url = self.page_url.as_ref().or(self.setup.document_url.as_ref());
+        self.setup.document_base_url = self.setup.uncascaded.dom.live_base_url(document_url);
         self.resync_stylesheets();
         self.setup.uncascaded.dom.mark_in_document_flags();
         // Before the cascade, which measures `line-height: normal` in them.
@@ -407,7 +433,11 @@ impl DocumentHost for WptDocumentHost {
             scroll_width,
             scroll_height,
             position: computed.map_or(PositionKind::Static, |c| position_kind(&c.position)),
-            is_inline: computed.is_some_and(|c| c.display == DisplayValue::Inline),
+            // An inline-level element that is blockified, as an absolutely
+            // positioned one is, generates a block box.
+            is_inline: computed.is_some_and(|c| {
+                raikiri_dom::generates_inline_box(&self.setup.uncascaded.dom, node, c)
+            }),
         }))
     }
 

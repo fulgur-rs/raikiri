@@ -559,6 +559,9 @@ fn every_block_level_box_is_a_block_child() {
         // Logical float sides are not mapped: the box is not floated.
         "display:block;float:inline-start",
         "display:block;float:inline-end",
+        // A logically floated ruby blockifies to `block ruby`.
+        "display:ruby;float:inline-start",
+        "display:ruby;float:inline-end",
     ] {
         let fixture = block_fixture("", |doc, root| {
             doc.append_text(root, "aa");

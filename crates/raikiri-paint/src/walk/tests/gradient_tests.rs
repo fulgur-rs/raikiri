@@ -1225,8 +1225,8 @@ fn degenerate_shapes_and_lengths_still_resolve() {
 
 #[test]
 fn average_colors_of_few_or_transparent_stops() {
-    let red = CssColor::from_hex("ff0000").unwrap();
-    let clear = CssColor::from_hex("00000000").unwrap();
+    let red = css_color_to_dynamic(CssColor::from_hex("ff0000").unwrap());
+    let clear = css_color_to_dynamic(CssColor::from_hex("00000000").unwrap());
     assert_eq!(gradient::average_color(&[]), Color::TRANSPARENT);
     assert_eq!(
         gradient::average_color(&[(0.0, red)]),
@@ -1269,4 +1269,196 @@ fn mixed_calc_stops_and_radii_resolve_against_the_gradient_box() {
         gradient::gradient_fill(&gradient_of(&cv), Rect::new(0.0, 0.0, 0.0, 100.0), cv.color),
         Some(gradient::GradientFill::Solid(_))
     ));
+}
+
+#[test]
+fn out_of_gamut_stops_interpolate_before_clipping() {
+    // Two stops 270 degrees apart draw the same colors as the same turn
+    // split into four stops, which both stay outside the sRGB gamut.
+    let two = raster_layer(
+        "background-image: linear-gradient(to right in lch increasing hue, \
+         lch(50% 100% 0deg), lch(50% 100% 270deg))",
+        200,
+        4,
+    );
+    let four = raster_layer(
+        "background-image: linear-gradient(to right in lch increasing hue, \
+         lch(50% 100% 0deg), lch(50% 100% 90deg), lch(50% 100% 180deg), \
+         lch(50% 100% 270deg))",
+        200,
+        4,
+    );
+    let largest = two
+        .iter()
+        .zip(&four)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .expect("pixels");
+    // Where blue enters the gamut it climbs about 20 levels per pixel, so a
+    // fraction of a pixel in where the renderer samples its ramp shows up as
+    // a few levels there.
+    assert!(largest <= 8, "largest channel difference {largest}");
+    // Halfway the hue is 135 degrees, a green outside the gamut: red clips
+    // to zero instead of the value 8-bit stops would interpolate.
+    assert_eq!(pixel(&two, 200, 100, 2)[0], 0);
+}
+
+#[test]
+fn unbounded_stop_colors_keep_their_space() {
+    for (css, expected) in [
+        // Hand-checked against the CSS Color 4 conversions; 100% lch
+        // chroma is 150.
+        ("lch(50% 100% 0deg)", [1.232, -0.548, 0.503]),
+        ("lab(50% 120 0)", [1.094, -0.412, 0.494]),
+        ("oklch(60% 0.4 30deg)", [1.156, -0.458, -0.290]),
+        ("oklab(60% 0.4 0)", [1.102, -0.439, 0.465]),
+        ("color(srgb 1.2 0 0)", [1.2, 0.0, 0.0]),
+        ("color(srgb-linear 1.5 0 0)", [1.194, 0.0, 0.0]),
+    ] {
+        let cv = computed_for(&format!("background-image: linear-gradient({css}, red)"));
+        let Gradient::Linear(linear) = gradient_of(&cv) else {
+            panic!("expected a linear gradient");
+        };
+        let color = gradient_stop_dynamic(linear.stops[0].color, cv.color)
+            .to_alpha_color::<Srgb>()
+            .components;
+        for channel in 0..3 {
+            assert!(
+                (color[channel] - expected[channel]).abs() < 0.002,
+                "{css}: {color:?}"
+            );
+        }
+        // An 8-bit consumer gets the clipped color.
+        assert_eq!(
+            resolve_gradient_stop_color(linear.stops[0].color, cv.color).a,
+            255
+        );
+    }
+}
+
+#[test]
+fn out_of_gamut_srgb_stops_clip_after_interpolation() {
+    // Red falls from 2 to 0, so it stays clipped at 1 for the first half.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, color(srgb 2 0 0), black)",
+        200,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 200, 50, 0)[0], 255);
+    assert!(pixel(&rgba, 200, 150, 0)[0].abs_diff(128) <= 2);
+}
+
+#[test]
+fn average_colors_follow_the_clipped_ramp() {
+    // The clipped ramp averages to three quarters red; averaging the
+    // clipped stops would give half.
+    let short_period = raster_layer(
+        "background-image: repeating-linear-gradient(to right in srgb, \
+         color(srgb 2 0 0) 0, black 0.001px)",
+        10,
+        1,
+    );
+    assert!(pixel(&short_period, 10, 5, 0)[0].abs_diff(191) <= 2);
+    // Stops sharing one position are spread evenly before averaging.
+    let no_period = raster_layer(
+        "background-image: repeating-linear-gradient(to right in srgb, \
+         color(srgb 2 0 0) 5px, black 5px)",
+        10,
+        1,
+    );
+    assert!(pixel(&no_period, 10, 5, 0)[0].abs_diff(191) <= 2);
+
+    let cv = computed_for(
+        "background-image: linear-gradient(to right in srgb, color(srgb 2 0 0), black); \
+         background-size: 1px 1px",
+    );
+    let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+    let mut scene = Scene::new();
+    assert!(gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
+        cv.color,
+    ));
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    assert!(pixel(&rgba, 10, 5, 5)[0].abs_diff(191) <= 2);
+}
+
+#[test]
+fn out_of_gamut_conic_stops_clip_after_interpolation() {
+    // Red falls from 2 to 0 over the turn: still clipped at a quarter turn,
+    // half way down at three quarters.
+    let cv = computed_for("background-image: conic-gradient(in srgb, color(srgb 2 0 0), black)");
+    let Gradient::Conic(conic) = gradient_of(&cv) else {
+        panic!("expected a conic gradient");
+    };
+    let area = Rect::new(0.0, 0.0, 200.0, 200.0);
+    let mut scene = Scene::new();
+    paint_conic_gradient(
+        &mut scene,
+        &conic,
+        area,
+        area,
+        &cv.border_radius,
+        (0.0, 0.0, 0.0, 0.0),
+        (200.0, 200.0),
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        200,
+        200,
+    );
+    assert_eq!(pixel(&rgba, 200, 180, 100)[0], 255);
+    assert!(pixel(&rgba, 200, 20, 100)[0].abs_diff(128) <= 3);
+}
+
+#[test]
+fn far_out_of_gamut_stops_find_where_they_enter_the_gamut() {
+    // Red falls from 1000 to 0 and only drops below 1 in the last
+    // thousandth, so nearly the whole line stays fully red.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, color(srgb 1000 0 0), black)",
+        400,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 400, 300, 0)[0], 255);
+    assert_eq!(pixel(&rgba, 400, 395, 0)[0], 255);
+}
+
+#[test]
+fn extreme_stop_coordinates_still_paint() {
+    // Opposite channels near the limits of f32 would overflow interpolation,
+    // and channels far outside the gamut in a polar space defeat an error
+    // bound measured before clipping.
+    for css in [
+        "linear-gradient(to right in srgb, color(srgb 3e38 0 0), color(srgb -3e38 0 0))",
+        "linear-gradient(to right in lch, color(srgb 1000 -1000 0), color(srgb -1000 1000 1000))",
+        "linear-gradient(to right in oklch longer hue, color(srgb 100 0 -100), lab(50% 0 0))",
+        "linear-gradient(to right in lab, color(srgb 1e6 -1e6 0), color(srgb -1e6 1e6 1e6))",
+        "linear-gradient(to right in oklch longer hue, color(srgb 1e6 0 -1e6), black)",
+    ] {
+        let rgba = raster_layer(&format!("background-image: {css}"), 100, 1);
+        assert_eq!(pixel(&rgba, 100, 50, 0)[3], 255, "{css}");
+    }
+}
+
+#[test]
+fn large_out_of_gamut_stops_stay_clipped_until_they_enter_the_gamut() {
+    // Red falls from 2000 to 0 and stays clipped until the last 0.05%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, color(srgb 2000 0 0), black)",
+        400,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 400, 398, 0)[0], 255);
 }

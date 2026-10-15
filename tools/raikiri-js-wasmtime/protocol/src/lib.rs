@@ -4,7 +4,7 @@ use raikiri_js::runtime::{
     Abort, BoxGeometry, DomRect, Limits, PositionKind, RunOptions, RunReport,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -56,6 +56,8 @@ pub enum HostOperation {
         markup: String,
     },
     Fetch(String),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol users; tools/ is outside the workspace llvm-cov run.
+    LoadImage(String),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {

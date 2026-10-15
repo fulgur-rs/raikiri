@@ -3,7 +3,7 @@
 
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use boa_engine::object::FunctionObjectBuilder;
@@ -21,6 +21,7 @@ pub(crate) mod event_loop;
 pub(crate) mod events;
 pub(crate) mod geometry;
 pub mod host;
+pub(crate) mod image;
 pub(crate) mod indexed;
 pub(crate) mod interfaces;
 pub(crate) mod node;
@@ -96,6 +97,18 @@ pub(crate) struct State {
     pub child_node_lists: HashMap<usize, JsObject>,
     /// Per-node `children` collections so `n.children === n.children`.
     pub children_collections: HashMap<usize, JsObject>,
+    /// The pending image request of each `<img>` that has one, by arena
+    /// index; a queued request whose number is no longer here is stale.
+    pub image_requests: HashMap<usize, u64>,
+    /// The number given to the last image request.
+    pub next_image_request: u64,
+    /// `<img>` elements in template contents whose request waits until they
+    /// are moved out.
+    pub inert_images: HashSet<usize>,
+    /// `<img>` elements whose image data was last updated in this document,
+    /// with or without a request still pending: moving one into template
+    /// contents makes it inert again.
+    pub active_images: HashSet<usize>,
     /// The Window's live Selection object, created on first access.
     pub selection_object: Option<JsObject>,
     /// Ranges currently held by the singleton Selection object.
@@ -350,6 +363,10 @@ impl DomRuntime {
             class_lists: HashMap::new(),
             child_node_lists: HashMap::new(),
             children_collections: HashMap::new(),
+            image_requests: HashMap::new(),
+            next_image_request: 0,
+            inert_images: HashSet::new(),
+            active_images: HashSet::new(),
             selection_object: None,
             selection_ranges: Vec::new(),
             custom_highlights: HashMap::new(),

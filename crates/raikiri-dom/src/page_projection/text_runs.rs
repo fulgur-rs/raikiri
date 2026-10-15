@@ -1449,8 +1449,12 @@ fn glyph_run<'a>(
         ellipsis_text(shaped.len(), runs > 1)
     } else {
         let clusters: Vec<u32> = shaped.iter().map(|glyph| glyph.cluster).collect();
+        // An annotation's text is in its own line.
+        let text_line = positioned
+            .annotation
+            .map_or(line.line, |annotation| annotation.line);
         (
-            line.line.text().get(text_range.clone()).unwrap_or_default(),
+            text_line.text().get(text_range.clone()).unwrap_or_default(),
             glyph_text_ranges(&clusters, text_range.start, text_range.end),
         )
     };
@@ -1467,10 +1471,11 @@ fn glyph_run<'a>(
     if run.bidi_level() % 2 == 1 {
         placed.reverse();
     }
-    let origin = (
-        placed.first()?.0,
-        dy + line.line.block_offset() + run.baseline(),
+    let baseline = positioned.annotation.map_or_else(
+        || line.line.block_offset() + run.baseline(),
+        |annotation| annotation.baseline,
     );
+    let origin = (placed.first()?.0, dy + baseline);
     let mut pen = origin.0;
     let glyphs = placed
         .into_iter()
@@ -1510,7 +1515,9 @@ fn glyph_run<'a>(
         advance: run.inline_size(),
         ascent: metrics.ascent,
         descent: metrics.descent,
-        text_offset: text_range.start,
+        text_offset: positioned
+            .annotation
+            .map_or(text_range.start, |annotation| annotation.text_offset),
         text,
         glyphs,
         color,
@@ -1583,11 +1590,48 @@ fn root_runs<'a>(
                     run.decorations = lines;
                 }
                 run.transform = transform;
+                if let RunSource::Generated(owner, kind) = run.source
+                    && let Some(own) =
+                        pseudo_turn(document, cascade, page, root.node, owner, kind, line.index)
+                {
+                    run.transform = Some(transform.unwrap_or(PaintTransform::IDENTITY) * own);
+                }
                 out.push(run);
             } // cov:ignore: current positioned body runs have a source, style, font and nonempty glyphs; future element-owned runs may be omitted.
         }
     }
     Some(())
+}
+
+/// The transform of the atomic `::before` or `::after` of `owner` whose text
+/// is on line `line` of paragraph `root` on `page`, about its box there (see
+/// [`crate::paint_rules::pseudo_transform`]).
+fn pseudo_turn(
+    document: &Document,
+    cascade: &CascadeResult,
+    page: &PageFragment,
+    root: usize,
+    owner: NodeId,
+    kind: GeneratedKind,
+    line: usize,
+) -> Option<PaintTransform> {
+    let owner = usize::try_from(owner.0).ok()?;
+    let pseudo = match kind {
+        GeneratedKind::Before => PseudoElem::Before,
+        GeneratedKind::After => PseudoElem::After,
+        _ => return None, // cov:ignore: generated runs come from `::before` and `::after`
+    };
+    let id = crate::generated_content::generated_node_id(owner, pseudo);
+    let cv = crate::paint_rules::pseudo_transform(cascade, id)?;
+    let rect = document
+        .page_projection
+        .generated_boxes
+        .get(&page.page_index)?
+        .get(&(root, owner, kind))?
+        .iter()
+        .find(|piece| piece.line == line)?
+        .rect;
+    Some(super::paint_transform::box_transform(cv, rect))
 }
 
 /// The node whose table-header repeat moves the runs of text root `node`.

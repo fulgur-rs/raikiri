@@ -5943,3 +5943,54 @@ fn a_standalone_after_paints_after_its_deferred_lines() {
     // two-glyph `::after`.
     assert_eq!(runs, [1, 2]);
 }
+
+#[test]
+fn a_viewport_fixed_box_repeats_in_place_on_pages_along_the_x_axis() {
+    let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
+        <div style='position:fixed;left:0;top:0;width:10px;height:10px;background:green'></div>\
+        <div style='width:100px'></div><div style='width:100px'></div></body></html>";
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    assert_eq!(pages.len(), 2);
+    for (index, slice) in (0u32..).zip(&pages) {
+        let mut scene = Scene::new();
+        crate::paint_single_page_with_origin_and_page(
+            &mut scene,
+            &parsed.dom,
+            &cascade,
+            page,
+            slice.content_origin_y,
+            index,
+            2,
+            index == 1,
+        )
+        .unwrap();
+        let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            100,
+            100,
+        );
+        assert_eq!(
+            &rgba[(5 * 100 + 5) * 4..][..4],
+            &[0, 128, 0, 255],
+            "page {index}"
+        );
+        assert_eq!(
+            &rgba[(50 * 100 + 50) * 4..][..4],
+            &[255, 255, 255, 255],
+            "page {index}"
+        );
+    }
+}

@@ -327,6 +327,25 @@ fn cssom_view_metrics_follow_the_css_box_model() {
     );
 }
 
+/// An absolutely positioned inline or ruby element is blockified (CSS
+/// Display 3 §2.7), so it has client metrics although its computed display
+/// is inline-level.
+#[test]
+fn blockified_inline_boxes_have_client_metrics() {
+    let (_dir, mut rt) = runtime(
+        "<span id=s style='position:absolute; width:40px; height:20px; border:2px solid'>x</span>\
+         <ruby id=r style='position:absolute; width:30px; height:10px; border:1px solid'>a</ruby>",
+    );
+    for (src, expected) in [
+        ("document.getElementById('s').clientWidth", 40.0),
+        ("document.getElementById('s').clientTop", 2.0),
+        ("document.getElementById('r').clientWidth", 30.0),
+        ("document.getElementById('r').clientHeight", 10.0),
+    ] {
+        assert_eq!(num(&mut rt, src), expected, "{src}");
+    }
+}
+
 /// An unstyled block sits at the UA body margin.
 ///
 /// This is the `data-offset-x=8` shape that WPT check-layout fixtures pin:
@@ -1027,4 +1046,69 @@ fn a_live_flush_lays_out_an_image_that_fails_to_load_as_broken() {
     .unwrap();
     let mut host = WptDocumentHost::new(setup, dir.path());
     host.flush().unwrap();
+}
+
+/// A 1x1 green PNG, and the same bytes as a `data:` URL.
+const GREEN_PNG_BYTES: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+    0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 96, 104, 96, 0, 0, 1, 4, 0,
+    129, 112, 246, 199, 165, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+const GREEN_PNG: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgaGAAAAEEAIFw9selAAAAAElFTkSuQmCC";
+
+#[test]
+fn load_image_decodes_data_and_checkout_images_and_rejects_the_rest() {
+    let (_dir, root) = script_root();
+    std::fs::write(root.join("css/page/broken.png"), "not a png").unwrap();
+    let mut host = host_at(&root.join("css/page"), &root);
+    host.load_image(GREEN_PNG).unwrap();
+    std::fs::write(root.join("css/page/green.png"), GREEN_PNG_BYTES).unwrap();
+    host.load_image(&file_url(&root.join("css/page/green.png")))
+        .unwrap();
+    host.load_image("file:///css/page/green.png").unwrap();
+    for url in [
+        file_url(&root.join("css/page/missing.png")),
+        file_url(&root.join("css/page/broken.png")),
+        "not a url".to_owned(),
+    ] {
+        assert!(host.load_image(&url).is_err(), "{url}");
+    }
+    // Without a checkout root, even an image that exists on disk is refused.
+    let mut host = host_at(&root.join("css/page"), &root.join("no-such-root"));
+    let error = host
+        .load_image(&file_url(&root.join("css/page/green.png")))
+        .unwrap_err();
+    assert!(error.0.contains("the WPT root does not exist"), "{error:?}");
+}
+
+#[test]
+fn flush_resolves_against_a_base_element_added_after_the_parse() {
+    let (_dir, root) = script_root();
+    let page = raikiri::Url::from_file_path(root.join("css/page/t.html")).unwrap();
+    let mut host = host_at(&root.join("css/page"), &root).with_page_url(page.clone());
+    let document = host.document_mut();
+    let head = (0..document.node_count())
+        .find(|&index| {
+            document
+                .get_node(index)
+                .is_some_and(|node| node.tag_name() == Some("head"))
+        })
+        .unwrap();
+    let base = document.append_element(Some(head), "base", Default::default(), None::<&str>);
+    document
+        .set_element_attribute(base, "href", "../../resources/")
+        .unwrap();
+    host.flush().unwrap();
+    assert_eq!(
+        host.setup.document_base_url,
+        Some(raikiri::Url::from_directory_path(root.join("resources")).unwrap())
+    );
+    // The document URL itself does not move with the base.
+    assert_eq!(host.document_url(), Some(page.to_string()));
+
+    host.document_mut()
+        .remove_element_attribute(base, "href")
+        .unwrap();
+    host.flush().unwrap();
+    assert_eq!(host.setup.document_base_url, Some(page));
 }

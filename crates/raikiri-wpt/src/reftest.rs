@@ -2068,22 +2068,35 @@ fn expand_css_viewport_units_with_axes(
         vertical: bool,
     }
 
-    fn unit_value(unit: &str, basis: Basis) -> Option<f32> {
+    /// The viewport extent that one hundred `unit`s span.
+    fn unit_extent(unit: &str, basis: Basis) -> Option<f32> {
         let Basis {
             width,
             height,
             vertical,
         } = basis;
-        let value = match unit {
-            "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
-            "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
-            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height) / 100.0,
-            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height) / 100.0,
-            "vi" | "svi" | "lvi" | "dvi" => (if vertical { height } else { width }) / 100.0,
-            "vb" | "svb" | "lvb" | "dvb" => (if vertical { width } else { height }) / 100.0,
+        let extent = match unit {
+            "vw" | "svw" | "lvw" | "dvw" => width,
+            "vh" | "svh" | "lvh" | "dvh" => height,
+            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height),
+            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height),
+            "vi" | "svi" | "lvi" | "dvi" => {
+                if vertical {
+                    height
+                } else {
+                    width
+                }
+            }
+            "vb" | "svb" | "lvb" | "dvb" => {
+                if vertical {
+                    width
+                } else {
+                    height
+                }
+            }
             _ => return None,
         };
-        Some(value)
+        Some(extent)
     }
 
     type Edits = Vec<(std::ops::Range<usize>, String)>;
@@ -2104,11 +2117,15 @@ fn expand_css_viewport_units_with_axes(
     ) {
         match token {
             cssparser::Token::Dimension { value, unit, .. } => {
-                if let Some(scale) = unit_value(&unit.to_ascii_lowercase(), basis)
-                    && (value * scale).is_finite()
+                // Multiply before dividing, as the cascade does, so `100vw`
+                // is the viewport width exactly. Scaling by a precomputed
+                // `width / 100` rounds twice: 100 * (420 / 100) is 419.99997.
+                if let Some(px) = unit_extent(&unit.to_ascii_lowercase(), basis)
+                    .map(|extent| extent * value / 100.0)
+                    && px.is_finite()
                 {
                     let end = input.position().byte_index();
-                    edits.push((start..end, format!("{:.6}px", value * scale)));
+                    edits.push((start..end, format!("{px:.6}px")));
                 }
             }
             cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {}
@@ -2558,6 +2575,9 @@ fn self_consistent_page_box(
 pub(crate) struct LiveWptSetup {
     pub uncascaded: raikiri_html::UncascadedDocument,
     pub document_base_url: Option<raikiri::Url>,
+    /// The URL `document_base_url` falls back to without a `<base href>`:
+    /// the page's directory.
+    pub document_url: Option<raikiri::Url>,
     pub page_resource_base: Option<PathBuf>,
     pub font_face_tree: raikiri_style::RuleTree,
     /// The WPT fonts with the document's `@font-face` faces, which every
@@ -2652,6 +2672,7 @@ pub(crate) fn prepare_wpt_live_document(
     Ok(LiveWptSetup {
         uncascaded,
         document_base_url,
+        document_url: stylesheet_base,
         page_resource_base: page_base,
         font_face_tree,
         fonts,

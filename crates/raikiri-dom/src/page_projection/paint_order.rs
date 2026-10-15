@@ -369,7 +369,9 @@ impl Document {
     /// A `::before`, `::after` or `::first-letter` laid out in the paragraph
     /// is such a group too, named by the id of
     /// [`crate::generated_content::generated_node_id`]: its letters and
-    /// generated text belong to it before any element around them. The
+    /// generated text belong to it before any element around them. An
+    /// atomic `::before` or `::after` with a transform is a group too, turned
+    /// as a whole (see [`paint_rules::pseudo_transform`]). The
     /// fragments of a `::first-letter` that keep different opacities, or lie
     /// in different groups, form one group each, the others named by ids of
     /// [`crate::generated_content::first_letter_group_id`].
@@ -438,7 +440,7 @@ impl Document {
             }
             // Anything but an inline element or a `display: contents` one is
             // a block boundary: the walk has left the paragraph.
-            if !matches!(cv.display, DisplayValue::Inline | DisplayValue::Contents) {
+            if !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents) {
                 return None;
             }
         }
@@ -654,18 +656,39 @@ impl Document {
                     // then the groups nested in it.
                     let letter = crate::generated_content::generated_origin(group)
                         .is_some_and(|(_, pseudo)| pseudo == PseudoElem::FirstLetter);
-                    let Some(alpha) = letter
+                    let alpha = letter
                         .then(|| items.letter_groups(root).opacity(group))
                         .flatten()
                         .or_else(|| {
                             crate::generated_content::computed_for_id(cascade, group)
                                 .and_then(paint_rules::opacity_layer)
-                        })
-                    else {
-                        continue; // cov:ignore: groups are found by their opacity
-                    };
-                    events.push(PaintEvent::PushOpacity(alpha));
-                    stack.push(Frame::PopOpacity);
+                        });
+                    // A `::before` or `::after` with a transform turns its
+                    // group about its own box (CSS Transforms 1 §6).
+                    // A singular one paints nothing of it (CSS Transforms 1
+                    // §5). Without a box on the page, such as an empty one,
+                    // its content is listed where layout put it, as its runs
+                    // are.
+                    let turned = paint_rules::pseudo_transform(cascade, group);
+                    if alpha.is_none() && turned.is_none() {
+                        continue; // cov:ignore: groups are found by their opacity or transform
+                    }
+                    if turned.is_some_and(super::paint_transform::is_singular) {
+                        continue;
+                    }
+                    let turn = turned
+                        .zip(pseudo_box(&items, root, group, part))
+                        .map(|(cv, rect)| super::paint_transform::box_transform(cv, rect));
+                    if let Some(turn) = turn {
+                        let space = *spaces.last().unwrap_or(&PaintTransform::IDENTITY);
+                        events.push(PaintEvent::PushTransform(turn));
+                        stack.push(Frame::PopTransform);
+                        spaces.push(space * turn);
+                    }
+                    if let Some(alpha) = alpha {
+                        events.push(PaintEvent::PushOpacity(alpha));
+                        stack.push(Frame::PopOpacity);
+                    }
                     let mut content = Vec::new();
                     let nested =
                         push_paragraph(self, &items, root, Some(group), lines, part, &mut content);
@@ -2123,11 +2146,34 @@ fn letter_groups(
     found
 }
 
-/// The opacity group the pseudo-element with generated id `id` forms in its
+/// The group the pseudo-element with generated id `id` forms in its
 /// paragraph: its id, when it has one (see
-/// [`paint_rules::pseudo_opacity_layer`]).
+/// [`paint_rules::pseudo_forms_group`]).
 fn pseudo_opacity_group(cascade: &CascadeResult, id: usize) -> Option<usize> {
-    paint_rules::pseudo_opacity_layer(cascade, id).map(|_| id)
+    paint_rules::pseudo_forms_group(cascade, id).then_some(id)
+}
+
+/// The border box of the `::before` or `::after` with generated id `group`
+/// on the lines of `part` of paragraph `root` on the page, in the
+/// coordinates of the paragraph's lines. An atomic pseudo-element has one.
+fn pseudo_box(
+    items: &PageItems<'_>,
+    root: usize,
+    group: usize,
+    part: LinePart,
+) -> Option<PaintRect> {
+    let (owner, pseudo) = crate::generated_content::generated_origin(group)?;
+    let kind = match pseudo {
+        PseudoElem::Before => GeneratedKind::Before,
+        PseudoElem::After => GeneratedKind::After,
+        _ => return None, // cov:ignore: only `::before` and `::after` take transforms here
+    };
+    items
+        .generated_boxes?
+        .get(&(root, owner, kind))?
+        .iter()
+        .find(|piece| part.admits(piece.line))
+        .map(|piece| piece.rect)
 }
 
 /// The opacity group the `::before` or `::after` of `element` forms in its
@@ -2249,7 +2295,7 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
 /// Whether an element inside a paragraph composites its fragments on the
 /// paragraph's lines as one opacity group.
 fn is_inline_opacity_group(cv: &raikiri_style::ComputedValues) -> bool {
-    cv.display == DisplayValue::Inline && paint_rules::opacity_layer(cv).is_some()
+    cv.display.is_inline_flow() && paint_rules::opacity_layer(cv).is_some()
 }
 
 #[cfg(test)]

@@ -436,7 +436,17 @@ fn contains(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
 /// The runtime holds exactly one document, so copying the Document itself
 /// (which DOM allows for `cloneNode`) is not supported and throws
 /// `NotSupportedError`, the error `importNode` gives a Document anyway.
-fn clone_into_wrapper(context: &mut Context, index: usize, deep: bool) -> JsResult<JsValue> {
+///
+/// `adopt` is set for `importNode`, which adopts the copy into this
+/// document. A `cloneNode` copy keeps its source's node document, so a copy
+/// of template contents stays in their inert document: its images are only
+/// remembered until it is inserted into this one.
+fn clone_into_wrapper(
+    context: &mut Context,
+    index: usize,
+    deep: bool,
+    adopt: bool,
+) -> JsResult<JsValue> {
     let count = with_state(context, |s| s.host.document().clone_node_count(index, deep))?;
     if count == 0 {
         return Err(throw_dom_exception(
@@ -451,6 +461,19 @@ fn clone_into_wrapper(context: &mut Context, index: usize, deep: bool) -> JsResu
         // node is cloneable.
         .ok_or_else(unreachable_mutation_error)?;
     mark_dirty(context)?;
+    // Each copied attribute is appended, so copied `on*` handlers compile
+    // and every copied `<img>` starts its own request.
+    super::dispatch::sync_event_handlers_in_tree(context, copy)?;
+    if !adopt && super::image::is_inert(context, index)? {
+        super::image::remember_inert_images(context, copy)?;
+        return Ok(wrap(context, copy)?.into());
+    }
+    super::image::update_images_below(context, copy)?;
+    if with_state(context, |s| {
+        super::image::is_html_image(s.host.document(), copy)
+    })? {
+        super::image::update_image_data(context, copy)?;
+    }
     Ok(wrap(context, copy)?.into())
 }
 
@@ -458,7 +481,7 @@ fn clone_into_wrapper(context: &mut Context, index: usize, deep: bool) -> JsResu
 fn clone_node(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_node(this, context)?;
     let deep = args.first().is_some_and(JsValue::to_boolean);
-    clone_into_wrapper(context, index, deep)
+    clone_into_wrapper(context, index, deep, false)
 }
 
 pub(crate) const NODE_TREE_MEMBERS: Members = Members {
@@ -1132,7 +1155,7 @@ fn import_node(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
             None => value.to_boolean(),
         },
     };
-    clone_into_wrapper(context, node, deep)
+    clone_into_wrapper(context, node, deep, true)
 }
 
 pub(crate) const DOCUMENT_CREATE_MEMBERS: Members = Members {

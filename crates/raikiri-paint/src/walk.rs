@@ -15,7 +15,9 @@
 
 use anyrender::PaintScene;
 use kurbo::{Affine, Arc, BezPath, Point, Rect, Vec2};
-use peniko::color::{AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Srgb};
+use peniko::color::{
+    AlphaColor, ColorSpaceTag, DynamicColor, HueDirection, Lab, Lch, LinearSrgb, Oklab, Oklch, Srgb,
+};
 use peniko::{Color, Extend as PenikoExtend, Fill, Gradient as PenikoGradient, Mix};
 use raikiri_dom::image_geometry::{
     background_image_dimensions, background_tiles, border_image_geometry, position_offset,
@@ -27,7 +29,7 @@ use raikiri_style::property::{
     CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
     HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
     OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
-    VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
+    UnboundedColor, VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -1245,7 +1247,7 @@ fn generated_flow_height(
                 .iter()
                 .filter_map(|&child| {
                     let child_cv = cascade.computed.get(child)?;
-                    (child_cv.display == DisplayValue::Inline).then_some(
+                    (child_cv.display.is_inline_flow()).then_some(
                         generated_pseudo_text_height(
                             document,
                             cascade,
@@ -1289,7 +1291,7 @@ fn generated_flow_block_children(
                 PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
             );
             (child_node.kind() != NodeKind::Text
-                && child_cv.display != DisplayValue::Inline
+                && !child_cv.display.is_inline_flow()
                 && normal_flow)
                 .then_some(child)
         })
@@ -1771,6 +1773,11 @@ fn ifc_paint_extent(node: &raikiri_dom::Node, layout: &taffy::Layout) -> f32 {
         .max(layout.border.top + layout.padding.top + lines)
 }
 
+/// How far the band of a page that follows the x axis reaches along y, both
+/// ways: far enough to hold any box, and finite, so that page membership
+/// tests compare against it like a page edge.
+pub(crate) const FLOW_EXTENT: f32 = f32::MAX / 4.0;
+
 fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> bool {
     if !y.is_finite() || !height.is_finite() || !page_top.is_finite() || !page_bottom.is_finite() {
         return false;
@@ -2056,23 +2063,41 @@ pub(crate) fn paint_document_impl(
     } else {
         content_width
     };
-    let page_top = content_origin_y;
-    let page_bottom = content_origin_y + content_height;
     // The walker keeps source coordinates in the stack.  Only the paint sites
     // receive the page translation, which makes page membership testable even
-    // when an ancestor spans a page boundary.  The cascade retains the raw
-    // root writing-mode winner because vertical-rl currently normalizes to
-    // horizontal-tb for ordinary layout; in that page context the physical
-    // left page margin is on the opposite inline edge.
-    let root_vertical_rl = find_html(document)
-        .and_then(|html_id| cascade.authored_writing_modes.get(html_id))
-        .is_some_and(|mode| matches!(mode, Some(WritingMode::VerticalRl)));
-    let page_offset_x = if root_vertical_rl {
-        insets.left
-    } else {
-        margins.left + insets.left
+    // when an ancestor spans a page boundary.
+    let pages_follow_x_axis = raikiri_dom::pages_follow_x_axis(document, cascade);
+    let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
+        // Pages that follow the x axis hold a band of the flow across the
+        // whole page height: every box is on the page along y, and the
+        // caller clips the page to its band.
+        Some(right_to_left) => (
+            -FLOW_EXTENT,
+            FLOW_EXTENT,
+            margins.left
+                + insets.left
+                + if right_to_left {
+                    content_origin_y
+                } else {
+                    -content_origin_y
+                },
+            margins.top + insets.top,
+        ),
+        None => (
+            content_origin_y,
+            content_origin_y + content_height,
+            margins.left + insets.left,
+            margins.top + insets.top - content_origin_y,
+        ),
     };
-    let page_offset_y = margins.top + insets.top - content_origin_y;
+    // Viewport-fixed boxes repeat at the same place on every page, so they
+    // are placed against the page, not against the band of the flow that
+    // the page offsets above carry.
+    let (fixed_flow_shift_x, fixed_origin_y) = if pages_follow_x_axis.is_some() {
+        (page_offset_x - (margins.left + insets.left), 0.0)
+    } else {
+        (0.0, content_origin_y)
+    };
     // A body background is normally propagated to the canvas. When the body
     // has authored padding, its border box can still extend beyond the
     // synthetic canvas width used by this paint walk; paint that visible
@@ -2154,10 +2179,11 @@ pub(crate) fn paint_document_impl(
         || insets.top > 0.0
         || insets.bottom > 0.0
     {
+        let left = margins.left + insets.left;
         Some(Rect::new(
-            page_offset_x as f64,
+            left as f64,
             (margins.top + insets.top) as f64,
-            (page_box.width - margins.right - insets.right).max(page_offset_x) as f64,
+            (page_box.width - margins.right - insets.right).max(left) as f64,
             (margins.top + insets.top + content_height) as f64,
         ))
     } else {
@@ -2942,11 +2968,11 @@ pub(crate) fn paint_document_impl(
                         (abs_x, abs_y),
                         fixed_rtl,
                         page_box.width,
-                        content_origin_y,
+                        fixed_origin_y,
                         fixed_content_width,
                         content_height,
                     )
-                    .map(|(x, y)| (x - abs_x, y - abs_y))
+                    .map(|(x, y)| (x - abs_x - fixed_flow_shift_x, y - abs_y))
                     .unwrap_or((0.0, 0.0))
                 } else {
                     (0.0, 0.0)
@@ -3803,36 +3829,37 @@ pub(crate) fn paint_document_impl(
                 // remains in source order.  This is deliberately limited to
                 // siblings that actually carry generated content; ordinary
                 // inline layout remains unchanged until a full IFC lands.
-                let child_generated_advances: Vec<(usize, bool, f32)> =
-                    children
-                        .iter()
-                        .map(|&child| {
-                            let is_text = document
-                                .get_node(child)
-                                .is_some_and(|child_node| child_node.kind() == NodeKind::Text);
-                            let advance = if !is_text
-                                && cascade.computed.get(child).is_some_and(|child_cv| {
-                                    child_cv.display == DisplayValue::Inline
-                                }) {
-                                generated_pseudo_text_advance(
-                                    document,
-                                    cascade,
-                                    child,
-                                    raikiri_style::PseudoElem::Before,
-                                    counter_snapshots,
-                                ) + generated_pseudo_text_advance(
-                                    document,
-                                    cascade,
-                                    child,
-                                    raikiri_style::PseudoElem::After,
-                                    counter_snapshots,
-                                )
-                            } else {
-                                0.0
-                            };
-                            (child, is_text, advance)
-                        })
-                        .collect();
+                let child_generated_advances: Vec<(usize, bool, f32)> = children
+                    .iter()
+                    .map(|&child| {
+                        let is_text = document
+                            .get_node(child)
+                            .is_some_and(|child_node| child_node.kind() == NodeKind::Text);
+                        let advance = if !is_text
+                            && cascade
+                                .computed
+                                .get(child)
+                                .is_some_and(|child_cv| child_cv.display.is_inline_flow())
+                        {
+                            generated_pseudo_text_advance(
+                                document,
+                                cascade,
+                                child,
+                                raikiri_style::PseudoElem::Before,
+                                counter_snapshots,
+                            ) + generated_pseudo_text_advance(
+                                document,
+                                cascade,
+                                child,
+                                raikiri_style::PseudoElem::After,
+                                counter_snapshots,
+                            )
+                        } else {
+                            0.0
+                        };
+                        (child, is_text, advance)
+                    })
+                    .collect();
                 let inline_offsets = if child_generated_advances
                     .iter()
                     .any(|(_, _, advance)| *advance > 0.0)
@@ -3872,7 +3899,7 @@ pub(crate) fn paint_document_impl(
                 } else {
                     Vec::new()
                 };
-                let vertical_generated_offsets = if cv.display != DisplayValue::Inline {
+                let vertical_generated_offsets = if !cv.display.is_inline_flow() {
                     let mut flow_extra = generated_pseudo_text_height(
                         document,
                         cascade,
@@ -3892,7 +3919,7 @@ pub(crate) fn paint_document_impl(
                             PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
                         );
                         if child_node.kind() != NodeKind::Text
-                            && child_cv.display != DisplayValue::Inline
+                            && !child_cv.display.is_inline_flow()
                             && child_is_normal_flow
                         {
                             let required_height = generated_flow_height(
@@ -6763,9 +6790,50 @@ fn gradient_first_color(gradient: &Gradient, current_color: CssColor) -> Option<
 fn resolve_gradient_stop_color(c: GradientStopColor, current_color: CssColor) -> CssColor {
     match c {
         GradientStopColor::Resolved(color) => color,
+        GradientStopColor::Unbounded(color) => color.srgb,
         GradientStopColor::CurrentColor => current_color,
         // non_exhaustive
         _ => current_color,
+    }
+}
+
+/// A gradient stop color for interpolation. A color outside the sRGB gamut
+/// keeps its own coordinates, so the gradient is clipped only when drawn.
+fn gradient_stop_dynamic(c: GradientStopColor, current_color: CssColor) -> DynamicColor {
+    match c {
+        GradientStopColor::Unbounded(color) => unbounded_to_dynamic(color),
+        other => css_color_to_dynamic(resolve_gradient_stop_color(other, current_color)),
+    }
+}
+
+/// Convert a style color kept in its own space to a peniko dynamic color.
+fn unbounded_to_dynamic(color: UnboundedColor) -> DynamicColor {
+    let [first, second, third] = color.components;
+    let components = [first, second, third, color.alpha];
+    match color.space {
+        MixColorSpace::SrgbLinear => {
+            DynamicColor::from_alpha_color(AlphaColor::<LinearSrgb>::new(components))
+        }
+        MixColorSpace::Lab => DynamicColor::from_alpha_color(AlphaColor::<Lab>::new(components)),
+        MixColorSpace::Lch => DynamicColor::from_alpha_color(AlphaColor::<Lch>::new(components)),
+        MixColorSpace::Oklab => {
+            DynamicColor::from_alpha_color(AlphaColor::<Oklab>::new(components))
+        }
+        MixColorSpace::Oklch => {
+            DynamicColor::from_alpha_color(AlphaColor::<Oklch>::new(components))
+        }
+        _ => DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new(components)),
+    }
+}
+
+/// The 8-bit sRGB color a dynamic color is drawn as, clipped to the gamut.
+fn dynamic_to_css_color(color: DynamicColor) -> CssColor {
+    let rgba = color.to_alpha_color::<Srgb>().to_rgba8();
+    CssColor {
+        r: rgba.r,
+        g: rgba.g,
+        b: rgba.b,
+        a: rgba.a,
     }
 }
 
@@ -6942,8 +7010,7 @@ fn conic_to_peniko(
     let offsets = fixup_conic_offsets(&raw);
     let mut peniko_stops: Vec<(f32, DynamicColor)> = Vec::with_capacity(conic.stops.len());
     for (stop, offset) in conic.stops.iter().zip(offsets.iter()) {
-        let base = resolve_gradient_stop_color(stop.color, current_color);
-        peniko_stops.push((*offset, css_color_to_dynamic(base)));
+        peniko_stops.push((*offset, gradient_stop_dynamic(stop.color, current_color)));
     }
     let from_degrees = if conic.angle.0.is_finite() {
         conic.angle.0
@@ -6958,12 +7025,22 @@ fn conic_to_peniko(
     // clamp the wrapped slice to the last stop and paint the starting
     // quadrant with the wrong color, so always repeat for the wrap.
     let extend = PenikoExtend::Repeat;
-    let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle)
-        .with_extend(extend)
-        .with_interpolation_cs(conic_interpolation_tag(conic.interpolation.color_space))
-        .with_hue_direction(conic_hue_direction(conic.interpolation.hue_method))
-        .with_stops(peniko_stops.as_slice());
-    Some(gradient)
+    let space = conic_interpolation_tag(conic.interpolation.color_space);
+    let direction = conic_hue_direction(conic.interpolation.hue_method);
+    let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle).with_extend(extend);
+    // A renderer clips each stop to the sRGB gamut before interpolating, so
+    // a sweep with a stop outside it gets clipped sRGB stops sampled from
+    // the ramp in its own space instead.
+    if gradient::any_out_of_gamut(&peniko_stops) {
+        let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
+        return Some(gradient.with_stops(stops.as_slice()));
+    }
+    Some(
+        gradient
+            .with_interpolation_cs(space)
+            .with_hue_direction(direction)
+            .with_stops(peniko_stops.as_slice()),
+    )
 }
 
 /// Paint one conic background over its painting area.
@@ -7098,7 +7175,13 @@ fn translation_only(cv: &ComputedValues) -> bool {
 // Commands already carry page coordinates. Conjugate the local matrix around
 // the border-box origin in that same coordinate space, then compose with the
 // ancestor context. This also keeps transforms out of layout geometry.
-fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
+pub(crate) fn element_transform(
+    cv: &ComputedValues,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) -> Affine {
     // Border backgrounds and borders use this same snapped paint box.
     let paint_x = (x as f64).round();
     let paint_y = (y as f64).round();

@@ -112,6 +112,18 @@ fn expand_viewport_units_preserves_utf8_text() {
 }
 
 #[test]
+fn full_viewport_lengths_expand_to_the_exact_viewport_size() {
+    // 420 / 100 is not representable in f32, so scaling by it first left
+    // `100vw` a hair short of the 420px page area.
+    let input = "<style>.page { width: 100vw; height: 100vh; inline-size: 50vmax }</style>";
+    let expanded = expand_css_viewport_units_with_media_basis(input, 420.0, 480.0, 420.0, 480.0);
+    assert_eq!(
+        expanded,
+        "<style>.page { width: 420.000000px; height: 480.000000px; inline-size: 240.000000px }</style>"
+    );
+}
+
+#[test]
 fn resource_url_absolutization_handles_optional_and_invalid_bases() {
     let html = r#"<img src="support/colors-16x8.png"><img src='support/other.png'>"#;
     assert_eq!(absolutize_wpt_resource_urls(html, None, None), html);
@@ -2347,7 +2359,7 @@ fn ignored_page_size_does_not_rescale_later_viewport_size() {
 #[test]
 fn page_context_unit_expansion_preserves_other_css_tokens() {
     let source = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:50vw 50vh!important; width:100vw; content:'size:50vw'; @top-left{size:50vw}}}.box{size:50vw;width:100vw}"#;
-    let expected = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:240.000015px 144.000000px!important; width:480.000031px; content:'size:50vw'; @top-left{size:240.000015px}}}.box{size:50vw;width:100vw}"#;
+    let expected = r#"/* @page{size:50vw} */ @MEDIA print and (width:100vw){@\70 age{SIZE:240.000000px 144.000000px!important; width:480.000000px; content:'size:50vw'; @top-left{size:240.000000px}}}.box{size:50vw;width:100vw}"#;
     assert_eq!(resolve_page_context_viewport_units(source), expected);
     let deep = format!(
         "{}@page{{size:50vw}}{}",

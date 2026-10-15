@@ -175,6 +175,18 @@ fn size_containment_applies_to_blockified_inline_elements() {
 }
 
 #[test]
+fn size_containment_applies_to_blockified_rubies() {
+    for body in [
+        "<ruby id=r style=\"float: left; contain: size\">XX<rt>YY</rt></ruby>",
+        "<div style=\"position: relative\"><ruby id=r style=\"position: absolute; contain: size\">XX<rt>YY</rt></ruby></div>",
+        "<div style=\"display: flex; align-items: start\"><ruby id=r style=\"contain: size\">XX<rt>YY</rt></ruby></div>",
+    ] {
+        let (_, _, width, height) = first(body, "r");
+        assert_eq!((width, height), (0.0, 0.0), "{body}");
+    }
+}
+
+#[test]
 fn a_size_contained_box_is_not_a_definite_percentage_basis() {
     // The empty-sized height of an auto-height box does not turn a
     // percentage height inside it into a size.

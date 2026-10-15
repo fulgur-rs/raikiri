@@ -632,6 +632,429 @@ fn a_grid_first_line_finds_items_inside_display_contents() {
     assert_eq!(line.center, 7.0 + 10.0);
 }
 
+#[test]
+fn ruby_annotations_project_above_their_base_without_its_decorations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem;text-decoration:underline"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(annotation, "xx");
+    let underlined = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:overline"),
+    );
+    document.append_text(underlined, "yy");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base run");
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    assert!(annotation.origin.1 < base.origin.1);
+    assert!(!base.decorations.is_empty());
+    assert!(annotation.decorations.is_empty());
+    // An annotation's own decorations are drawn.
+    let own = runs
+        .iter()
+        .find(|run| run.text == "yy")
+        .expect("second level");
+    assert_eq!(own.decorations.len(), 1);
+    // Annotations are read after their base.
+    assert!(annotation.text_offset >= base.text_offset + base.text.len());
+}
+
+/// An annotation's decoration stays at the annotation's baseline across a
+/// raised descendant.
+#[test]
+fn annotation_decorations_stay_on_the_annotation_baseline() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aaaa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:underline"),
+    );
+    document.append_text(annotation, "xx");
+    let raised = document.append_element(
+        Some(annotation),
+        "span",
+        taffy::Style::default(),
+        Some("vertical-align:super"),
+    );
+    document.append_text(raised, "yy");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let plain = runs.iter().find(|run| run.text == "xx").expect("plain");
+    let raised = runs.iter().find(|run| run.text == "yy").expect("raised");
+    assert!(raised.origin.1 < plain.origin.1);
+    assert_eq!(plain.decorations.len(), 1);
+    assert_eq!(raised.decorations.len(), 1);
+    assert_eq!(raised.decorations[0].y, plain.decorations[0].y);
+}
+
+/// A ruby that layout blockifies (here, an absolutely positioned one) is
+/// transformable, though its computed display stays `ruby`.
+#[test]
+fn blockified_rubies_take_their_transforms() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;position:absolute;left:0;top:0;transform:translate(7px,0)"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(annotation, "xx");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base");
+    let transform = base.transform.expect("the ruby's transform");
+    assert_eq!((transform.e, transform.f), (7.0, 0.0), "{transform:?}");
+}
+
+/// An inter-character annotation runs across a horizontal line; its
+/// decorations, drawn along the line, are not drawn on it.
+#[test]
+fn inter_character_annotations_draw_no_decorations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;text-decoration:underline;ruby-position:inter-character"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:underline"),
+    );
+    document.append_text(annotation, "xx");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base");
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    assert_eq!(base.decorations.len(), 1);
+    assert!(
+        annotation.decorations.is_empty(),
+        "{:?}",
+        annotation.decorations
+    );
+}
+
+/// A ruby nested in a decorated annotation passes the annotation's
+/// decorations to its base, not to its own annotation.
+#[test]
+fn nested_ruby_bases_keep_their_annotation_decorations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let outer = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let base = document.append_element(
+        Some(outer),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(outer),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-decoration:underline"),
+    );
+    let inner = document.append_element(
+        Some(annotation),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby"),
+    );
+    let inner_base = document.append_element(
+        Some(inner),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(inner_base, "bb");
+    let inner_annotation = document.append_element(
+        Some(inner),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(inner_annotation, "yy");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base run");
+    let nested_base = runs
+        .iter()
+        .find(|run| run.text == "bb")
+        .expect("nested base");
+    let nested_annotation = runs
+        .iter()
+        .find(|run| run.text == "yy")
+        .expect("nested annotation");
+    assert!(base.decorations.is_empty());
+    assert_eq!(nested_base.decorations.len(), 1);
+    assert!(nested_annotation.decorations.is_empty());
+}
+
+/// A floated ruby is a `block ruby` container: its decorations reach its
+/// base but not its annotations.
+#[test]
+fn floated_ruby_decorations_skip_its_annotations() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;float:left;text-decoration:underline"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px"),
+    );
+    document.append_text(annotation, "xx");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let base = runs.iter().find(|run| run.text == "aa").expect("base run");
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    assert!(annotation.origin.1 < base.origin.1);
+    assert!(!base.decorations.is_empty());
+    assert!(annotation.decorations.is_empty());
+}
+
 /// The painter moves an element by its `transform` exactly when layout
 /// treats it as transformable (CSS Transforms 1 §1): a non-replaced inline
 /// box is not, but a form control, a MathML root and an inline that layout
@@ -696,4 +1119,79 @@ fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
     assert_eq!(offset(button), (10.0, 0.0));
     assert_eq!(offset(math), (10.0, 0.0));
     assert_eq!(offset(floated), (10.0, 0.0));
+}
+
+/// shodo sets an inter-character annotation beside horizontal text upright,
+/// so its reported glyphs need no orientation: they stand one below the
+/// other at their placed positions.
+#[test]
+fn inter_character_annotation_glyphs_are_reported_upright_one_below_the_other() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;ruby-position:inter-character"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-orientation:sideways"),
+    );
+    document.append_text(annotation, "xx");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    let mut pen = annotation.origin.0;
+    let positions: Vec<(f32, f32)> = annotation
+        .glyphs
+        .iter()
+        .map(|glyph| {
+            let position = (pen + glyph.x_offset, annotation.origin.1 + glyph.y_offset);
+            pen += glyph.advance;
+            position
+        })
+        .collect();
+    assert_eq!(positions.len(), 2, "{positions:?}");
+    assert_eq!(positions[0].0, positions[1].0, "{positions:?}");
+    assert_eq!(positions[1].1 - positions[0].1, 5.0, "{positions:?}");
+    assert!(document.omitted_text_run_roots(&cascade).is_empty());
 }

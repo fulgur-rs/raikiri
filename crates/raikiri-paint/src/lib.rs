@@ -455,6 +455,23 @@ fn paint_single_page_with_origin_and_page_context_impl(
     let Some(transform) = root_content_transform(root.as_ref()) else {
         return Ok(());
     };
+    // A page that follows the x axis holds the band of the flow across its
+    // page area; the boxes of the pages beside it lie past its sides.
+    let flow_band = raikiri_dom::pages_follow_x_axis(document, cascade).map(|_| {
+        let margins = raikiri_dom::page_margins(cascade, page_box);
+        let insets = raikiri_dom::page_content_insets(cascade, page_box);
+        let left = f64::from(margins.left + insets.left);
+        let extent = f64::from(walk::FLOW_EXTENT);
+        kurbo::Rect::new(
+            left,
+            -extent,
+            left + f64::from(insets.page_area_width(margins, page_box)),
+            extent,
+        )
+    });
+    if let Some(band) = &flow_band {
+        scene.push_clip_layer(kurbo::Affine::IDENTITY, band);
+    }
     let scene = &mut transform::TransformScene { scene, transform };
     if let Some(pixel_source) = pixel_source {
         walk::paint_document_with_images_and_warnings(
@@ -486,6 +503,9 @@ fn paint_single_page_with_origin_and_page_context_impl(
             custom_highlights,
             transform,
         );
+    }
+    if flow_band.is_some() {
+        scene.scene.pop_layer();
     }
     Ok(())
 }

@@ -311,6 +311,9 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
+    /// URLs a script host selected for `<img>` elements, with the `src`
+    /// each was selected for; see [`Document::select_image_url`].
+    pub(crate) selected_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, PreparedImage>,
@@ -376,6 +379,10 @@ pub struct Document {
     /// contain: the flow after such a box follows this height, not its grown
     /// one (CSS 2.1 §10.6.3).
     pub(crate) in_flow_heights: HashMap<usize, f32>,
+    /// Whether the paginator is running on the transposed axes of a document
+    /// whose root element lays out its blocks on vertical axes. Pagination
+    /// then treats the boxes laid out on horizontal axes as monolithic.
+    pub(crate) pagination_on_transposed_axes: bool,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -645,6 +652,7 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes: nodes.into(),
             resolved_image_urls: Default::default(),
+            selected_image_urls: Default::default(),
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
@@ -662,6 +670,7 @@ impl Document {
             body_block_start_margin: 0.0,
             fixed_page_area: (0.0, 0.0),
             in_flow_heights: HashMap::new(),
+            pagination_on_transposed_axes: false,
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -1959,6 +1968,7 @@ impl Document {
             page_projection: _,
             nodes: arena,
             resolved_image_urls,
+            selected_image_urls,
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
@@ -1976,6 +1986,7 @@ impl Document {
             body_block_start_margin: _,
             fixed_page_area: _,
             in_flow_heights: _,
+            pagination_on_transposed_axes: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
@@ -2032,6 +2043,7 @@ impl Document {
         document.nodes = copied.into();
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
+        document.selected_image_urls = remap_keys(selected_image_urls, nodes);
         document.list_marker_images = remap_keys(list_marker_images, nodes);
         document.content_images = content_images
             .iter()
@@ -2915,6 +2927,37 @@ impl Document {
     pub fn base_url(&self) -> Option<&url::Url> {
         self.base_url.as_ref()
     }
+
+    /// The document base URL computed from the current tree rather than
+    /// recorded at parse time, so a script that adds, changes, or removes
+    /// `<base href>` is seen (HTML "document base URL"): the first HTML
+    /// `<base>` with an `href` in tree order, parsed against `document_url`;
+    /// `document_url` itself when there is none, or when that `href` does
+    /// not parse or names a `data:` or `javascript:` URL, which the parser
+    /// also refuses as a base.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#document-base-url>
+    pub fn live_base_url(&self, document_url: Option<&url::Url>) -> Option<url::Url> {
+        let mut stack = vec![self.root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else {
+                continue; // cov:ignore: children always hold valid arena indices.
+            };
+            if node.tag_name() == Some("base")
+                && self.element_namespace_uri(id) == Some(XHTML_NAMESPACE_URI)
+                && let Some(href) = self.element_attribute(id, "href")
+            {
+                return url::Url::options()
+                    .base_url(document_url)
+                    .parse(href)
+                    .ok()
+                    .filter(|url| !matches!(url.scheme(), "data" | "javascript"))
+                    .or_else(|| document_url.cloned());
+            }
+            stack.extend(node.children.iter().rev());
+        }
+        document_url.cloned()
+    }
 }
 
 /// The entries of `map` for `nodes`, keyed by position in `nodes`.
@@ -3473,6 +3516,27 @@ fn marker_image_size(
 }
 
 impl Document {
+    /// Record `url` as the image `element` selected for its `src` value
+    /// `src`. HTML resolves an `<img>` source once, when its request starts,
+    /// so a later `<base href>` change does not move it to another resource;
+    /// layout uses this URL for as long as `src` keeps that value.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#document-base-urls>
+    pub fn select_image_url(&mut self, element: usize, src: &str, url: url::Url) {
+        self.selected_image_urls
+            .insert(element, (src.to_owned(), url));
+    }
+
+    /// The URL [`Document::select_image_url`] recorded for `element`, while
+    /// its `src` still has the value it was selected for.
+    pub fn selected_image_url(&self, element: usize) -> Option<&url::Url> {
+        let src = self.get_node(element)?.attribute("src")?;
+        self.selected_image_urls
+            .get(&element)
+            .filter(|(selected_for, _)| selected_for == src)
+            .map(|(_, url)| url)
+    }
+
     /// Absolute image URL resolved during the current layout pass.
     ///
     /// Source attributes remain unchanged. Absolute source URLs also work for

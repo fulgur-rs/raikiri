@@ -1635,8 +1635,9 @@ fn default_center_position() -> CssPosition {
 }
 
 /// Color of a gradient stop with `<color>` (see [`GradientStopColor`]):
-/// handle the `currentcolor` keyword before delegating to [`parse_color`],
-/// as in [`parse_text_shadow_color`].
+/// handle the `currentcolor` keyword before delegating to the color parser,
+/// as in [`parse_text_shadow_color`]. A color outside the sRGB gamut keeps
+/// its own coordinates for interpolation.
 fn parse_gradient_stop_color(input: &mut Parser<'_, '_>) -> Option<GradientStopColor> {
     if input
         .try_parse(|i| i.expect_ident_matching("currentcolor"))
@@ -1644,7 +1645,10 @@ fn parse_gradient_stop_color(input: &mut Parser<'_, '_>) -> Option<GradientStopC
     {
         return Some(GradientStopColor::CurrentColor);
     }
-    parse_color(input).map(GradientStopColor::Resolved)
+    parse_color_float(input, 0).map(|color| match color.to_unbounded() {
+        Some(unbounded) => GradientStopColor::Unbounded(unbounded),
+        None => GradientStopColor::Resolved(color.to_css_color()),
+    })
 }
 
 /// `<linear-color-stop> = <color> <length-percentage>?`

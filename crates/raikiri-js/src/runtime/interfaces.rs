@@ -42,6 +42,7 @@ pub(crate) struct Protos {
     pub element: JsObject,
     pub html_element: JsObject,
     pub html_canvas_element: JsObject,
+    pub html_image_element: JsObject,
     pub html_style_element: JsObject,
     pub svg_style_element: JsObject,
     pub canvas_rendering_context_2d: JsObject,
@@ -287,6 +288,28 @@ fn interface(
     })
 }
 
+/// Register the `Image` legacy factory function (HTML §4.8.4.1): a
+/// constructor whose `prototype` is `HTMLImageElement.prototype`.
+fn install_image_factory(context: &mut Context, prototype: &JsObject) -> JsResult<()> {
+    let factory = FunctionObjectBuilder::new(
+        context.realm(),
+        NativeFunction::from_fn_ptr(super::image::image_constructor),
+    )
+    .name(js_string!("Image"))
+    .length(0)
+    .constructor(true)
+    .build();
+    let fixed = PropertyDescriptor::builder()
+        .value(prototype.clone())
+        .writable(false)
+        .enumerable(false)
+        .configurable(false);
+    factory.define_property_or_throw(js_string!("prototype"), fixed, context)?;
+    let exposed = Attribute::WRITABLE | Attribute::CONFIGURABLE;
+    context.register_global_property(js_string!("Image"), factory, exposed)?;
+    Ok(())
+}
+
 /// Build interface `name` inheriting from interface `parent`. Every derived
 /// interface here has an illegal constructor -- one with a real constructor
 /// operation calls [`interface`] directly instead.
@@ -376,6 +399,9 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let canvas_members = [&canvas::HTML_CANVAS_ELEMENT_MEMBERS];
     let html_canvas_element =
         derived(context, "HTMLCanvasElement", &html_element, &canvas_members)?;
+    let image_members = [&super::image::HTML_IMAGE_ELEMENT_MEMBERS];
+    let html_image_element = derived(context, "HTMLImageElement", &html_element, &image_members)?;
+    install_image_factory(context, &html_image_element.prototype)?;
     let style_element_members = [&super::stylesheet::HTML_STYLE_ELEMENT_MEMBERS];
     let html_style_element = derived(
         context,
@@ -595,6 +621,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         element: element.prototype,
         html_element: html_element.prototype,
         html_canvas_element: html_canvas_element.prototype,
+        html_image_element: html_image_element.prototype,
         html_style_element: html_style_element.prototype,
         svg_style_element: svg_style_element.prototype,
         canvas_rendering_context_2d: canvas_2d.prototype,
@@ -664,20 +691,22 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html, canvas, style, svg_style) = with_state(context, |s| {
+    let (kind, html, canvas, image, style, svg_style) = with_state(context, |s| {
         let doc = s.host.document();
         let node = doc.get_node(index);
         let kind = node.map(|n| n.kind());
         let namespace = doc.element_namespace_uri(index);
         let html = namespace == Some(HTML_NS);
         let canvas = doc.is_canvas_element(index);
+        let image = super::image::is_html_image(doc, index);
         let is_style = node.and_then(|n| n.tag_name()) == Some("style");
         let svg_style = is_style && namespace == Some(SVG_NS);
-        (kind, html, canvas, html && is_style, svg_style)
+        (kind, html, canvas, image, html && is_style, svg_style)
     })?;
     let p = protos(context);
     Ok(match kind {
         Some(NodeKind::Element) if canvas => p.html_canvas_element.clone(),
+        Some(NodeKind::Element) if image => p.html_image_element.clone(),
         Some(NodeKind::Element) if style => p.html_style_element.clone(),
         Some(NodeKind::Element) if svg_style => p.svg_style_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),

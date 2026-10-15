@@ -1387,6 +1387,7 @@ css/css-page/page-left-right-001-print.html
 css/css-page/page-name-flex-003-print.html
 css/css-page/page-name-flex-004-print.html
 css/css-page/page-margin-001-print.html
+css/css-page/page-margin-003-print.html
 css/css-page/page-margin-004-print.html
 css/css-page/page-margin-005-print.html
 css/css-page/page-margin-006-print.html
@@ -1591,6 +1592,7 @@ css/CSS2/pagination/float-page-break-inside-avoid-7-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-4-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-5-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-7-print.html
 # --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---
@@ -2797,7 +2799,16 @@ css/css-images/conic-gradient-angle-negative.html
 css/css-images/gradient-move-stops.html
 css/css-images/gradient/gradient-analogous-missing-components-001.html
 css/css-images/gradient/gradient-analogous-missing-components-004.html
+css/css-images/gradient/gradient-decreasing-hue-lch.html
 css/css-images/gradient/gradient-hue-direction.html
+css/css-images/gradient/gradient-increasing-hue-lch.html
+css/css-images/gradient/gradient-longer-hue-lch-001.html
+css/css-images/gradient/gradient-longer-hue-lch-002.html
+css/css-images/gradient/gradient-longer-hue-lch-003.html
+css/css-images/gradient/gradient-longer-hue-lch-004.html
+css/css-images/gradient/gradient-longer-hue-lch-005.html
+css/css-images/gradient/gradient-longer-hue-lch-006.html
+css/css-images/gradient/gradient-longer-hue-lch-007.html
 css/css-images/gradient/gradient-longer-hue-lch-008.html
 css/css-images/gradient/gradient-longer-hue-lch-009.html
 css/css-images/gradient/gradient-longer-hue-lch-010.html
@@ -4490,17 +4501,14 @@ css/css-ruby/abs-in-ruby-container.html
 css/css-ruby/empty-ruby-text-container-abs.html
 css/css-ruby/empty-ruby-text-container-float.html
 css/css-ruby/empty-ruby-text-container.html
-css/css-ruby/nested-ruby-pairing-001.html
 css/css-ruby/pseudo-first-letter.html
 css/css-ruby/ruby-bidi-001.html
-css/css-ruby/ruby-bidi-002.html
 css/css-ruby/ruby-dynamic-removal-001.html
 css/css-ruby/ruby-dynamic-removal-002.html
 css/css-ruby/ruby-dynamic-removal-003.html
 css/css-ruby/ruby-float-handling-001.html
 css/css-ruby/ruby-intra-level-whitespace-001.html
 css/css-ruby/ruby-intra-level-whitespace-002.html
-css/css-ruby/ruby-intra-level-whitespace-003.html
 css/css-ruby/ruby-intrinsic-isize-001.html
 css/css-ruby/ruby-intrinsic-isize-002.html
 css/css-ruby/ruby-intrinsic-isize-003.html
@@ -4595,6 +4603,22 @@ css/css-values/viewport-page-print.html
 # Pass once the harness relays pages of another width out from the document; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-004-print.html
 
+# --- ruby annotations placed over their bases (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once ruby annotations are placed over their bases; KEEP in two audit-vacuous-passes runs.
+css/css-ruby/rb-display-001.html
+css/css-ruby/rt-display-001.html
+css/css-ruby/ruby-autohide-001.html
+css/css-ruby/ruby-autohide-004.html
+css/css-ruby/ruby-base-different-size.html
+css/css-ruby/ruby-bidi-002.html
+css/css-ruby/ruby-bidi-004.html
+css/css-ruby/ruby-text-collapse.html
+css/css-text-decor/ruby-text-decoration-01.html
+css/css-text-decor/text-emphasis-style-002.html
+css/css-text-decor/text-emphasis-style-007.html
+css/css-text-decor/text-emphasis-style-016.html
+css/css-text-decor/text-emphasis-style-021.html
+css/css-text-decor/text-emphasis-style-string-001.xht
 # --- scripts that clone nodes and edit character data (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
 # Pass once cloneNode, importNode, the CharacterData edit methods, and splitText run; KEEP in two audit-vacuous-passes runs.
 css/css-flexbox/flex-item-contains-size-layout-001.html

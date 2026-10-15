@@ -114,6 +114,8 @@ pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 
+#[doc(hidden)]
+pub use fixed::generates_inline_box;
 pub use fixed::{establishes_fixed_containing_block, is_transformable};
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
@@ -121,8 +123,8 @@ pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
 /// Glyph positions of the lines of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::positioned_runs::{
-    LineGlyph, PositionedContentImage, PositionedLine, PositionedLines, PositionedMarker,
-    PositionedRun, cumulative_offset,
+    AnnotationRun, LineGlyph, PositionedContentImage, PositionedLine, PositionedLines,
+    PositionedMarker, PositionedRun, cumulative_offset,
 };
 #[doc(hidden)]
 pub use ifc::root::IfcBuildMode;
@@ -146,7 +148,7 @@ pub use page_pipeline::{
     layout_pages_with_page_steps, layout_pages_with_resolver,
     layout_pages_with_resolver_and_base_url, layout_pages_with_resolver_and_base_url_and_control,
     layout_single_page, layout_single_page_with_resolver,
-    layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
+    layout_single_page_with_resolver_and_base_url, pages_follow_x_axis, relayout_text_for_width,
 };
 pub use relative::placed_without_relative_offset;
 #[doc(hidden)]

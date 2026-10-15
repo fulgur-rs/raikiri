@@ -3503,6 +3503,26 @@ pub enum DisplayValue {
     TableCell,
     /// `table-caption` — CSS Display 3 §2 `<display-internal>` / CSS 2.1 §17.2: caption (`<caption>`).
     TableCaption,
+    /// `ruby` — CSS Display 3 §2 / CSS Ruby 1 §2.1: an inline-level ruby
+    /// container (`<ruby>`), short for `inline ruby`.
+    /// <https://www.w3.org/TR/css-ruby-1/#ruby-display>
+    Ruby,
+    /// `ruby-base` — CSS Ruby 1 §2.1 `<display-internal>`: a ruby base box
+    /// (`<rb>`).
+    RubyBase,
+    /// `ruby-text` — CSS Ruby 1 §2.1 `<display-internal>`: a ruby annotation
+    /// box (`<rt>`).
+    RubyText,
+    /// `ruby-base-container` — CSS Ruby 1 §2.1 `<display-internal>`: a box
+    /// grouping ruby bases.
+    RubyBaseContainer,
+    /// `ruby-text-container` — CSS Ruby 1 §2.1 `<display-internal>`: a box
+    /// grouping ruby annotations of one level (`<rtc>`).
+    RubyTextContainer,
+    /// `block ruby` — CSS Display 3 §2.7 / CSS Ruby 1 §2.1: a block box that
+    /// holds a ruby container. It is the computed value of a blockified
+    /// `ruby`, such as a floated one; the two-keyword form is not parsed.
+    BlockRuby,
 }
 
 /// Predicates on the stored display value. Callers remain responsible for
@@ -3530,29 +3550,31 @@ impl DisplayValue {
         self.is_flex_or_grid_container() && !self.is_inline_level()
     }
 
-    /// Whether the box has inline outer display, including inline tables.
+    /// Whether the box has inline outer display: an inline box, a ruby box,
+    /// or an atomic inline, including inline tables (CSS Display 3 §2.4).
     /// `contents` generates no box and is therefore excluded.
     pub const fn is_inline_level(self) -> bool {
-        matches!(
-            self,
-            Self::Inline
-                | Self::InlineBlock
-                | Self::InlineFlex
-                | Self::InlineGrid
-                | Self::InlineTable
-        )
+        self.is_inline_flow()
+            || matches!(
+                self,
+                Self::InlineBlock | Self::InlineFlex | Self::InlineGrid | Self::InlineTable
+            )
     }
 
     /// Whether the box participates in its parent's inline formatting context
     /// as one atomic box, including inline tables.
     pub const fn is_atomic_inline_level(self) -> bool {
-        self.is_inline_level() && !matches!(self, Self::Inline)
+        matches!(
+            self,
+            Self::InlineBlock | Self::InlineFlex | Self::InlineGrid | Self::InlineTable
+        )
     }
 
     /// Whether the inline-level box uses flow or flow-root layout, rather
-    /// than flex, grid, or table layout.
+    /// than flex, grid, or table layout. Ruby boxes lay out their content as
+    /// inline boxes do.
     pub const fn is_inline_flow_box(self) -> bool {
-        matches!(self, Self::Inline | Self::InlineBlock)
+        self.is_inline_flow() || matches!(self, Self::InlineBlock)
     }
 }
 
@@ -3578,7 +3600,45 @@ css_keywords!(DisplayValue {
     TableColumn => "table-column",
     TableCell => "table-cell",
     TableCaption => "table-caption",
+    Ruby => "ruby",
+    RubyBase => "ruby-base",
+    RubyText => "ruby-text",
+    RubyBaseContainer => "ruby-base-container",
+    RubyTextContainer => "ruby-text-container",
+    BlockRuby => "block ruby",
 });
+
+impl DisplayValue {
+    /// Whether the box takes part in its parent's inline formatting context
+    /// as an inline box: `inline`, a ruby container, or an internal ruby box.
+    ///
+    /// Layout that does not lay ruby out (CSS Ruby 1 §2) treats ruby boxes
+    /// as inline boxes, which keeps their content in the line as plain text.
+    #[must_use]
+    pub const fn is_inline_flow(self) -> bool {
+        matches!(
+            self,
+            Self::Inline
+                | Self::Ruby
+                | Self::RubyBase
+                | Self::RubyText
+                | Self::RubyBaseContainer
+                | Self::RubyTextContainer
+        )
+    }
+
+    /// Whether this is one of the ruby display types (CSS Ruby 1 §2.1).
+    #[must_use]
+    pub const fn is_ruby(self) -> bool {
+        (self.is_inline_flow() && !matches!(self, Self::Inline)) || matches!(self, Self::BlockRuby)
+    }
+
+    /// Whether the box is a ruby container, inline-level or block-level.
+    #[must_use]
+    pub const fn is_ruby_container(self) -> bool {
+        matches!(self, Self::Ruby | Self::BlockRuby)
+    }
+}
 
 /// The value of the `flex-direction` property.
 ///
@@ -6598,6 +6658,14 @@ pub(crate) fn resolve_display_for_float(display: DisplayValue, float: FloatValue
         | DisplayValue::TableRow
         | DisplayValue::TableCell
         | DisplayValue::TableCaption => DisplayValue::Block,
+        // CSS Display 3 §2.7: a blockified `ruby` becomes `block ruby`, a
+        // block box whose content keeps its ruby layout. Internal ruby boxes
+        // blockify to `block`.
+        DisplayValue::Ruby | DisplayValue::BlockRuby => DisplayValue::BlockRuby,
+        DisplayValue::RubyBase
+        | DisplayValue::RubyText
+        | DisplayValue::RubyBaseContainer
+        | DisplayValue::RubyTextContainer => DisplayValue::Block,
         // The remaining variants are "others" — same as specified. Explicitly list
         // `Block` / `Table` / `Flex` / `Grid` / `ListItem` / `FlowRoot` so
         // adding a future variant causes a non-exhaustive-match compile error
@@ -8234,12 +8302,34 @@ pub struct GradientColorInterpolation {
 /// the `currentcolor` keyword from a resolved `<color>` (same shape as
 /// [`TextShadowColor`], but a separate type for gradient stops).
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum GradientStopColor {
     /// `currentcolor` keyword. Used-value resolution belongs to the paint layer.
     CurrentColor,
     /// Resolved `<color>` value.
     Resolved(CssColor),
+    /// A `<color>` outside the sRGB gamut, kept in the space it was given
+    /// in. Gradients interpolate it before any gamut mapping (CSS Color 4
+    /// §12 "Color Interpolation"), so clipping it to [`CssColor`] first
+    /// would change the colors between the stops.
+    Unbounded(UnboundedColor),
+}
+
+/// A color kept with its coordinates in the space it was specified in,
+/// without the 8-bit sRGB gamut bound of [`CssColor`].
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UnboundedColor {
+    /// Space of `components`: `Srgb`, `SrgbLinear`, `Lab`, `Lch`, `Oklab`
+    /// or `Oklch`.
+    pub space: MixColorSpace,
+    /// Coordinates in CSS units: 0-1 RGB channels, Lab lightness 0-100,
+    /// Oklab lightness 0-1, and hue in degrees.
+    pub components: [f32; 3],
+    /// Alpha from 0 to 1.
+    pub alpha: f32,
+    /// The color clipped to sRGB, for consumers that need one 8-bit color.
+    pub srgb: CssColor,
 }
 
 /// Entry in the color-stop list of `<linear-color-stop>` /

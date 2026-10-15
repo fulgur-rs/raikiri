@@ -81,7 +81,16 @@ impl Bridge {
                 .fetch_script(&url)
                 .map(|s| HostValue::Text(Some(s)))
                 .map_err(|e| e.to_string()),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::LoadImage(url) => self.load_image(&url),
         }
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+    fn load_image(&mut self, url: &str) -> Result<HostValue, String> {
+        self.host
+            .load_image(url)
+            .map(|()| HostValue::Unit)
+            .map_err(|e| e.to_string())
     }
     pub fn take_response(&mut self, capacity: usize) -> Result<Vec<u8>, String> {
         let bytes = self.pending.as_ref().ok_or("no pending response")?;
