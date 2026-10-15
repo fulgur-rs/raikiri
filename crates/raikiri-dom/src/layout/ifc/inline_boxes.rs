@@ -256,6 +256,8 @@ fn annotation_pieces(
 ) {
     let line = annotation.line();
     let fragments: Vec<Fragment> = line.fragments().collect();
+    let line_start = pieces.len();
+    let mut nested_annotations = Vec::new();
     for fragment in &fragments {
         match fragment {
             Fragment::InlineBox(piece) => {
@@ -283,17 +285,22 @@ fn annotation_pieces(
                     source_owner: None,
                 });
             }
-            Fragment::RubyAnnotation(nested) => annotation_pieces(
-                *nested,
-                placement.annotation(nested.transform(), line.block_offset()),
-                line_index,
-                axes,
-                content_size,
-                pieces,
-            ),
+            Fragment::RubyAnnotation(nested) => {
+                let mut own = Vec::new();
+                annotation_pieces(
+                    *nested,
+                    placement.annotation(nested.transform(), line.block_offset()),
+                    line_index,
+                    axes,
+                    content_size,
+                    &mut own,
+                );
+                nested_annotations.push((nested.container().0 as usize, own));
+            }
             _ => {}
         }
     }
+    insert_annotation_pieces(pieces, line_start, nested_annotations);
 }
 
 /// The node of each line's ending forced break, with a box that spans the

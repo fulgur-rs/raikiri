@@ -11,6 +11,7 @@ use raikiri_style::{PseudoElem, property::Visibility};
 use raikiri_traits::PaintRect;
 use shodo::Fragment;
 use shodo::geometry::{PhysicalConverter, PhysicalSize, WritingMode};
+use std::ops::Range;
 
 /// One glyph of a run, at its outline origin.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -384,7 +385,7 @@ impl<'a> PositionedLines<'a> {
                     &converter,
                     &mut own,
                 );
-                annotations.push((annotation.base_text_range().end, own));
+                annotations.push((annotation.base_text_range(), own));
                 continue;
             }
             let Fragment::GlyphRun(run) = fragment else {
@@ -446,16 +447,7 @@ impl<'a> PositionedLines<'a> {
                 });
             }
         }
-        // shodo reports annotations after every other fragment of the line;
-        // each one paints after the text of its ruby segment, before the
-        // text that follows the segment.
-        for (end, own) in annotations {
-            let at = runs
-                .iter()
-                .position(|run| run.annotation.is_none() && run.run.text_range().start >= end)
-                .unwrap_or(runs.len());
-            runs.splice(at..at, own);
-        }
+        insert_annotation_runs(&mut runs, annotations);
         PositionedLine {
             index,
             line,
@@ -485,15 +477,21 @@ impl<'a> PositionedLines<'a> {
         runs: &mut Vec<PositionedRun<'a>>,
     ) {
         let line = annotation.line();
+        let mut own = Vec::new();
+        let mut nested_annotations = Vec::new();
         for fragment in line.fragments() {
             match fragment {
-                Fragment::RubyAnnotation(nested) => self.annotation_runs(
-                    nested,
-                    placement.annotation(nested.transform(), line.block_offset()),
-                    text_offset,
-                    converter,
-                    runs,
-                ),
+                Fragment::RubyAnnotation(nested) => {
+                    let mut own = Vec::new();
+                    self.annotation_runs(
+                        nested,
+                        placement.annotation(nested.transform(), line.block_offset()),
+                        text_offset,
+                        converter,
+                        &mut own,
+                    );
+                    nested_annotations.push((nested.base_text_range(), own));
+                }
                 Fragment::GlyphRun(run) => {
                     let Some(owner) = run.node().map(|node| node.0 as usize) else {
                         continue; // cov:ignore: every text of ruby content is pushed with its DOM node.
@@ -521,7 +519,7 @@ impl<'a> PositionedLines<'a> {
                     let baseline = placement
                         .apply(run.inline_start(), line.block_offset() + run.baseline())
                         .1;
-                    runs.push(PositionedRun {
+                    own.push(PositionedRun {
                         run,
                         owner,
                         style_owner: owner,
@@ -540,6 +538,45 @@ impl<'a> PositionedLines<'a> {
                 _ => {}
             }
         }
+        insert_annotation_runs(&mut own, nested_annotations);
+        runs.append(&mut own);
+    }
+}
+
+/// Insert the runs of each annotation, given with the text range of its
+/// ruby segment's base text, after the last of `runs` that draws that base
+/// text, so that the annotation paints after its base and before the text
+/// that follows the segment. shodo reports annotations after every other
+/// fragment of a line, and the other fragments in visual order, so the
+/// base text locates the segment. An annotation over a base that draws
+/// nothing goes before the first run after the base text, or last.
+fn insert_annotation_runs<'a>(
+    runs: &mut Vec<PositionedRun<'a>>,
+    annotations: Vec<(Range<usize>, Vec<PositionedRun<'a>>)>,
+) {
+    // Whether each run is one of the line's own, not an annotation's.
+    let mut own = vec![true; runs.len()];
+    for (base, annotation) in annotations {
+        let ranges = || {
+            runs.iter()
+                .zip(&own)
+                .enumerate()
+                .filter(|(_, (_, own))| **own)
+                .map(|(index, (run, _))| (index, run.run.text_range()))
+        };
+        let at = ranges()
+            .filter(|(_, range)| range.start < base.end && base.start < range.end)
+            .next_back()
+            .map(|(index, _)| index + 1)
+            .or_else(|| {
+                ranges()
+                    .find(|(_, range)| range.start >= base.end)
+                    .map(|(index, _)| index)
+            })
+            .unwrap_or(runs.len());
+        let count = annotation.len();
+        runs.splice(at..at, annotation);
+        own.splice(at..at, std::iter::repeat_n(false, count));
     }
 }
 

@@ -645,6 +645,72 @@ fn annotation_runs_keep_their_place_in_tree_order() {
 }
 
 #[test]
+fn annotation_runs_follow_their_bases_in_reordered_lines() {
+    let mut ids = (0, 0, 0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        ids.3 = doc.append_text(root, "\u{5D2}");
+        let container = ruby(doc, root);
+        let base = rb(doc, container, "\u{5D0}");
+        let annotation = rt(doc, container, "x");
+        ids.0 = doc.nodes[base].children[0];
+        ids.1 = doc.nodes[annotation].children[0];
+        ids.2 = doc.append_text(root, "\u{5D1}");
+    });
+    let runs = runs(fixture);
+    let order: Vec<usize> = runs.iter().map(|run| run.0).collect();
+    // The right-to-left text is reordered, so the text after the ruby comes
+    // first; the annotation still paints right after its base.
+    assert_eq!(order, [ids.2, ids.0, ids.1, ids.3], "{runs:?}");
+}
+
+#[test]
+fn nested_annotation_runs_keep_their_place_in_tree_order() {
+    let mut ids = (0, 0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aaaa");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        let nested = ruby(doc, annotation);
+        let base = rb(doc, nested, "p");
+        let inner = rt(doc, nested, "q");
+        ids.0 = doc.nodes[base].children[0];
+        ids.1 = doc.nodes[inner].children[0];
+        ids.2 = doc.append_text(annotation, "s");
+    });
+    let runs = runs(fixture);
+    let order: Vec<usize> = runs
+        .iter()
+        .map(|run| run.0)
+        .filter(|node| [ids.0, ids.1, ids.2].contains(node))
+        .collect();
+    assert_eq!(order, [ids.0, ids.1, ids.2], "{runs:?}");
+}
+
+#[test]
+fn nested_annotation_boxes_keep_their_place_in_tree_order() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aaaa");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        let nested = ruby(doc, annotation);
+        rb(doc, nested, "p");
+        let inner = element(doc, nested, "rt", "display:ruby-text");
+        ids.0 = text_element(doc, inner, "span", "background:red", "q");
+        ids.1 = text_element(doc, annotation, "span", "background:blue", "s");
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    let order: Vec<usize> = pieces
+        .iter()
+        .map(|piece| piece.node)
+        .filter(|&node| [ids.0, ids.1].contains(&node))
+        .collect();
+    assert_eq!(order, [ids.0, ids.1], "{pieces:?}");
+}
+
+#[test]
 fn word_break_opportunities_stay_in_the_base_text() {
     let fixture = block_fixture("line-height:20px", |doc, root| {
         let container = ruby(doc, root);
