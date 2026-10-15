@@ -5828,6 +5828,9 @@ fn paginate_flow(
         };
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
+        // A box with no block size and no content lets its block-start and
+        // block-end margins collapse through it.
+        let margins_collapse_through = height <= 0.0 && document.nodes[node_id].children.is_empty();
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -6302,7 +6305,7 @@ fn paginate_flow(
                 }
                 current_page = target_page;
                 if forced_transition {
-                    forced_break_margin_box = (height <= 0.0).then_some(node_id);
+                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
                 }
                 if pending_break_applies {
                     pending_break_source = None;
@@ -6319,7 +6322,7 @@ fn paginate_flow(
                 // A forced break that coincides with a page edge also starts
                 // that page.
                 if forced_before {
-                    forced_break_margin_box = (height <= 0.0).then_some(node_id);
+                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
                 }
                 // An unforced break that falls inside the collapsed margin
                 // between this box and its preceding sibling truncates that
@@ -6410,9 +6413,10 @@ fn paginate_flow(
                         .get(&parent_id)
                         .is_some_and(|&(previous, _)| previous == owner)
                 });
-                forced_break_margin_box =
-                    (follows_forced_box && collapses_with_previous_block && height <= 0.0)
-                        .then_some(node_id);
+                forced_break_margin_box = (follows_forced_box
+                    && collapses_with_previous_block
+                    && margins_collapse_through)
+                    .then_some(node_id);
             }
             if collapses_with_previous_block {
                 previous_block_bottoms.insert(parent_id, (node_id, raw_y + height));
