@@ -6740,12 +6740,15 @@ pub fn layout_single_page_with_resolver_and_base_url(
 /// through their lines, and an empty block child whose own margins collapse
 /// through it does not count.
 fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    // On transposed axes the paragraph's width is its inline size, while the
+    // generated boxes keep their physical styles.
+    let vertical = document.pagination_on_transposed_axes;
     let has_paragraph_content = document.ifc_layout_node(id).is_some_and(|node| {
         let width = node.unrounded_layout.size.width;
         node.ifc.as_ref().is_some_and(|ifc| {
             ifc.generated_blocks
                 .iter()
-                .any(|block| block.separates_margins(width))
+                .any(|block| block.separates_margins(width, vertical))
                 || ifc
                     .lines
                     .as_ref()

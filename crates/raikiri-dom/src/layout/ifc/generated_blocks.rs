@@ -112,8 +112,21 @@ impl GeneratedBlock {
     /// height counts only against the definite `definite_height` of the
     /// containing block (CSS 2.1 10.5).
     fn used_height(&self, content: f32, edges: f32, definite_height: Option<f32>) -> f32 {
+        let sizes = [self.height, self.min_height, self.max_height];
+        self.used_size(sizes, content, edges, definite_height)
+    }
+
+    /// The content-box size along one axis, from that axis's `[size, min,
+    /// max]` properties: see [`Self::used_height`].
+    fn used_size(
+        &self,
+        [size, min_size, max_size]: [ComputedLengthPercentageOrAuto; 3],
+        content: f32,
+        edges: f32,
+        definite: Option<f32>,
+    ) -> f32 {
         let content_box = |value| {
-            length_or_auto(value, definite_height).map(|size: f32| {
+            length_or_auto(value, definite).map(|size: f32| {
                 if self.border_box {
                     (size - edges).max(0.0)
                 } else {
@@ -121,24 +134,38 @@ impl GeneratedBlock {
                 }
             })
         };
-        let mut height = content_box(self.height).unwrap_or(content);
-        if let Some(max) = content_box(self.max_height) {
-            height = height.min(max);
+        let mut used = content_box(size).unwrap_or(content);
+        if let Some(max) = content_box(max_size) {
+            used = used.min(max);
         }
-        if let Some(min) = content_box(self.min_height) {
-            height = height.max(min);
+        if let Some(min) = content_box(min_size) {
+            used = used.max(min);
         }
-        height.max(0.0)
+        used.max(0.0)
     }
 
     /// Whether the box keeps margins from collapsing through it even with no
     /// content (CSS 2.1 8.3.1): it establishes an independent formatting
-    /// context, has block-axis padding or border, or has a used height above
-    /// zero. `basis` is the containing block width.
-    pub(crate) fn separates_margins(&self, basis: f32) -> bool {
-        let edges = self.edges(basis);
-        let block_edges = edges.top + edges.bottom;
-        self.formatting_root || block_edges > 0.0 || self.used_height(0.0, block_edges, None) > 0.0
+    /// context, has block-axis padding or border, or has a used block size
+    /// above zero. `inline_size` is the containing block's inline size, and
+    /// `vertical` says the block axis is horizontal, so that the box's left
+    /// and right sides and its width are on it.
+    pub(crate) fn separates_margins(&self, inline_size: f32, vertical: bool) -> bool {
+        let edges = self.edges(inline_size);
+        let (block_edges, sizes) = if vertical {
+            (
+                edges.left + edges.right,
+                [self.width, self.min_width, self.max_width],
+            )
+        } else {
+            (
+                edges.top + edges.bottom,
+                [self.height, self.min_height, self.max_height],
+            )
+        };
+        self.formatting_root
+            || block_edges > 0.0
+            || self.used_size(sizes, 0.0, block_edges, None) > 0.0
     }
 
     /// The physical left and right insets of the box's lines from the

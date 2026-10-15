@@ -14985,3 +14985,76 @@ fn a_forced_break_on_a_wrapped_row_flex_item_moves_same_line_siblings() {
         ]
     );
 }
+
+/// Paginate a vertical-rl document on 100px pages: a 20px box, a forced-break
+/// `section` with no block size whose `::before` is styled `before_css`, and
+/// a last 20px box with a 30px block-start margin. Returns the last box's
+/// physical x.
+fn vertical_forced_break_with_before_box(before_css: &str) -> f32 {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:100px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:0;height:100px;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        format!("section::before {{ content: \"\"; display: block; {before_css} }}").as_str(),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:100px;margin-right:30px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    crate::layout::test_support::absolute_rect(&doc, last).0
+}
+
+#[test]
+fn a_vertical_before_box_with_a_block_size_keeps_margins_from_collapsing_through() {
+    // In vertical-rl the block size is the physical width: the 10px wide
+    // `::before` box keeps the forced-break box's margins apart, so the margin
+    // after it is truncated at the page edge.
+    assert_eq!(vertical_forced_break_with_before_box("width:10px"), -20.0);
+}
+
+#[test]
+fn a_vertical_before_box_with_only_an_inline_size_lets_margins_collapse_through() {
+    // A physical height is the inline size in vertical-rl, so the empty
+    // `::before` box still lets the margins collapse through, and the margin
+    // after the forced break is kept.
+    assert_eq!(
+        vertical_forced_break_with_before_box("width:0;height:10px"),
+        -50.0
+    );
+}
