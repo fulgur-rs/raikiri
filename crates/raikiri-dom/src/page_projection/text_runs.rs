@@ -1,7 +1,7 @@
 //! Positioned glyph runs of the paragraphs on a page, for a painter that
 //! draws text itself.
 
-use super::records::{PageFragment, ProjectedTextRoot};
+use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
@@ -1216,13 +1216,9 @@ fn marker_runs<'a>(
     if !root.is_repeat && marker.first_page != Some(page.page_index) {
         return;
     }
-    let x = page.content_box.x + root.x + shift.0 + marker.offset_x;
-    let top = page.content_box.y + root.y + shift.1
-        - if root.is_repeat {
-            0.0
-        } else {
-            page.content_origin_y
-        };
+    let (dx, dy) = page.flow_shift(root.is_repeat);
+    let x = page.content_box.x + root.x + shift.0 + marker.offset_x + dx;
+    let top = page.content_box.y + root.y + shift.1 + dy;
     let y = marker.line_top(top, page.content_box.y + page.content_box.height);
     standalone_runs(
         &marker.shaped,
@@ -1550,8 +1546,9 @@ fn root_runs<'a>(
     // A repeated paragraph sits at the same place on every page; any other
     // is placed in its page's slice of the flow. The paint shift moves the
     // lines, not the page they belong to.
-    let x = page.content_box.x + root.x + shift.0;
-    let y = page.content_box.y + root.y + shift.1 - flow_range.map_or(0.0, |(start, _)| start);
+    let (dx, dy) = flow_range.map_or((0.0, 0.0), |(start, _)| page.flow_axis.page_shift(start));
+    let x = page.content_box.x + root.x + shift.0 + dx;
+    let y = page.content_box.y + root.y + shift.1 + dy;
     let decoration_context = crate::text_decoration::context_for_root(document, cascade, root.node);
     for (index, line) in positioned.all_lines().iter().enumerate() {
         let Some(offset) = positioned.line_offset(index) else {
@@ -1559,7 +1556,10 @@ fn root_runs<'a>(
         };
         if let Some((start, end)) = flow_range {
             let top = root.y + offset.1 + line.block_offset();
-            if !line_center_on_page(top, top + line.block_size(), start, end) {
+            let (top, bottom) = page
+                .flow_axis
+                .line_extent(root, top, top + line.block_size());
+            if !line_center_on_page(top, bottom, start, end) {
                 continue;
             }
         }
@@ -1646,6 +1646,7 @@ fn line_center_span(
     document: &Document,
     cascade: &CascadeResult,
     root: &ProjectedTextRoot,
+    axis: FlowAxis,
 ) -> Option<(f32, f32)> {
     let positioned = PositionedLines::new(document, cascade, root.node, root.fragmentainer)?;
     let mut span: Option<(f32, f32)> = None;
@@ -1655,7 +1656,8 @@ fn line_center_span(
         };
         // The same arithmetic as `root_runs` and `line_center_on_page`.
         let top = root.y + offset.1 + line.block_offset();
-        let center = (top + (top + line.block_size())) * 0.5;
+        let (top, bottom) = axis.line_extent(root, top, top + line.block_size());
+        let center = (top + bottom) * 0.5;
         if !center.is_finite() {
             continue;
         }
@@ -1712,7 +1714,10 @@ pub(super) fn roots_by_page(
             }
             continue;
         }
-        let Some((low, high)) = line_center_span(document, cascade, root) else {
+        let axis = pages
+            .first()
+            .map_or_else(Default::default, |page| page.flow_axis);
+        let Some((low, high)) = line_center_span(document, cascade, root, axis) else {
             continue;
         };
         // `line_center_on_page` keeps a center in `[start - 0.001, end - 0.001)`.

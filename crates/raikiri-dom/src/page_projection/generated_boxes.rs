@@ -119,6 +119,9 @@ pub(super) fn prepare(
         prepared.push((*root, paint_shift, pieces));
     }
     let flow_pages = FlowPages::new(pages);
+    let axis = pages
+        .first()
+        .map_or_else(Default::default, |page| page.flow_axis);
     let mut result = GeneratedBoxes::new();
     let mut inline = InlineBoxes::new();
     for (root, paint_shift, pieces) in &prepared {
@@ -138,7 +141,8 @@ pub(super) fn prepare(
                 // The arithmetic of `line_center_on_page`, so rounding at
                 // large coordinates cannot prune the owning page.
                 let top = root.y + offset.1 + top;
-                (top + (top + height)) * 0.5
+                let (top, bottom) = axis.line_extent(root, top, top + height);
+                (top + bottom) * 0.5
             });
             for (index, center) in centers.enumerate().filter(|(_, center)| center.is_finite()) {
                 for page in flow_pages.around(center, center) {
@@ -161,15 +165,20 @@ pub(super) fn prepare(
                 root.is_repeat = true;
             }
             let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
+            let page_shift = if root.is_repeat {
+                (0.0, 0.0)
+            } else {
+                page.flow_axis.page_shift(start)
+            };
             for &(owner, kind, piece, offset, shift, top, height) in pieces {
                 work.charge(1)?;
+                let (line_top, line_bottom) = page.flow_axis.line_extent(
+                    &root,
+                    root.y + offset.1 + top,
+                    root.y + offset.1 + top + height,
+                );
                 if !root.is_repeat
-                    && !crate::layout::line_center_on_page(
-                        root.y + offset.1 + top,
-                        root.y + offset.1 + top + height,
-                        start,
-                        end,
-                    )
+                    && !crate::layout::line_center_on_page(line_top, line_bottom, start, end)
                 {
                     continue;
                 }
@@ -211,7 +220,8 @@ pub(super) fn prepare(
                             + paint_shift.0
                             + relative.0
                             + offset.0
-                            + rect.x,
+                            + rect.x
+                            + page_shift.0,
                         page.content_box.y
                             + root.y
                             + paint_shift.1
@@ -219,7 +229,7 @@ pub(super) fn prepare(
                             + offset.1
                             + rect.y
                             - shift
-                            - if root.is_repeat { 0.0 } else { start },
+                            + page_shift.1,
                         rect.width,
                         rect.height,
                     ),

@@ -195,7 +195,7 @@ impl Document {
                 let block_level = !self.nodes[node].in_ifc_subtree() && node != self.root;
                 (item.fragment_index == 0 && block_level).then_some(PageStart {
                     token: PageStartToken::Node(node),
-                    offset: item.box_y,
+                    offset: item.flow_box_y,
                 })
             }
             PageFragmentKind::Text => {
@@ -211,7 +211,7 @@ impl Document {
                 };
                 Some(PageStart {
                     token,
-                    offset: item.box_y + (line.top - first.top),
+                    offset: item.flow_box_y + (line.top - first.top),
                 })
             }
         }
@@ -279,7 +279,7 @@ impl Document {
                 item.node_id.0 as usize == node && !item.is_repeat && !item.is_table_header_repeat
             })
             .find_map(|item| match token {
-                PageStartToken::Node(_) => (item.fragment_index == 0).then_some(item.box_y),
+                PageStartToken::Node(_) => (item.fragment_index == 0).then_some(item.flow_box_y),
                 PageStartToken::Line { text, offset } => {
                     let range = item.line_range?;
                     let lines = self.ifc_text_lines(text)?;
@@ -291,7 +291,7 @@ impl Document {
                         .find(|line| {
                             line_start(self, lines.root, line.line) == Some((text, offset))
                         })
-                        .map(|line| item.box_y + (line.top - first.top))
+                        .map(|line| item.flow_box_y + (line.top - first.top))
                 }
             })
     }
@@ -390,7 +390,7 @@ impl Document {
             let candidate = CrossingBox {
                 node: item.node_id,
                 earlier_fragments: item.fragment_index,
-                top: item.box_y,
+                top: item.flow_box_y,
             };
             lowest
                 .entry(item.node_id)

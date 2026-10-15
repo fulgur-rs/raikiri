@@ -82,7 +82,9 @@ pub(super) fn transform_boxes(
                         y: item.box_y - grid.1,
                         repeat: true,
                     });
-            } else {
+            } else if page.flow_axis == super::records::FlowAxis::Y {
+                // A page cutting the flow along x leaves each box where
+                // layout put it, which is where it is looked up otherwise.
                 boxes.flow.entry(id).or_insert(TransformBox {
                     x,
                     y: item.box_y - grid.1 + page.content_origin_y,
@@ -248,13 +250,9 @@ pub(super) fn element_transform(
     // paints: the layout box moved by every offset, in page coordinates and
     // snapped to whole pixels.
     let size = node.unrounded_layout.size;
-    let x = page.content_box.x + placed.x + ancestors.0 + offset.0;
-    let y = page.content_box.y + placed.y + ancestors.1 + offset.1
-        - if placed.repeat {
-            0.0
-        } else {
-            page.content_origin_y
-        };
+    let (dx, dy) = page.flow_shift(placed.repeat);
+    let x = page.content_box.x + placed.x + ancestors.0 + offset.0 + dx;
+    let y = page.content_box.y + placed.y + ancestors.1 + offset.1 + dy;
     let paint_x = f64::from(x).round();
     let paint_y = f64::from(y).round();
     let width = f64::from(x + size.width).round() - paint_x;

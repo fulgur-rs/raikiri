@@ -116,6 +116,9 @@ pub(super) fn prepare(
         roots.push((root, shift, images));
     }
     let flow_pages = FlowPages::new(pages);
+    let flow_axis = pages
+        .first()
+        .map_or_else(Default::default, |page| page.flow_axis);
     for (root, paint_shift, prepared) in &roots {
         work.check()?;
         let source = document.ifc_source_owner(root.node);
@@ -136,7 +139,8 @@ pub(super) fn prepare(
                     // The arithmetic of `line_center_on_page`, so rounding at
                     // large coordinates cannot prune the owning page.
                     let top = root.y + top;
-                    (top + (top + height)) * 0.5
+                    let (top, bottom) = flow_axis.line_extent(root, top, top + height);
+                    (top + bottom) * 0.5
                 })
                 .filter(|center| center.is_finite())
                 .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), center| {
@@ -156,24 +160,18 @@ pub(super) fn prepare(
                 root.y += shift - page.content_origin_y;
                 root.is_repeat = true;
             }
-            let x = page.content_box.x + root.x + paint_shift.0;
-            let y = page.content_box.y + root.y + paint_shift.1
-                - if root.is_repeat {
-                    0.0
-                } else {
-                    page.content_origin_y
-                };
+            let (dx, dy) = page.flow_shift(root.is_repeat);
+            let x = page.content_box.x + root.x + paint_shift.0 + dx;
+            let y = page.content_box.y + root.y + paint_shift.1 + dy;
             for &(top, height, line, image) in *prepared {
                 work.charge(1)?;
                 if !root.is_repeat {
                     // A page without flow geometry cannot own a normal-flow line.
                     let (start, end) = page.flow_range.unwrap_or((0.0, 0.0));
-                    if !crate::layout::line_center_on_page(
-                        root.y + top,
-                        root.y + top + height,
-                        start,
-                        end,
-                    ) {
+                    let (top, bottom) =
+                        page.flow_axis
+                            .line_extent(&root, root.y + top, root.y + top + height);
+                    if !crate::layout::line_center_on_page(top, bottom, start, end) {
                         continue;
                     }
                 }
