@@ -3762,3 +3762,106 @@ fn a_flex_item_beside_a_display_contents_child_keeps_its_natural_break() {
         ]
     );
 }
+
+#[test]
+fn a_paragraph_over_three_pages_keeps_its_widows_on_the_last_page() {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    // Seven 10px lines from 15px down 40px pages break 2/4/1 naturally.
+    // With `widows: 2` the last break moves up a line, so the last two lines,
+    // which span both texts' runs, start page 2; the section grows to hold
+    // them and the flow after follows.
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block"),
+    );
+    let root = doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
+             orphans:1;widows:2",
+        ),
+    );
+    let first = doc.append_text(root, "aaaa bbbb cccc dddd ");
+    let span = doc.append_element(Some(root), "span", Style::default(), Some("display:inline"));
+    let second = doc.append_text(span, "eeee ffff gggg");
+    let after = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(slices.len(), 3);
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, first),
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 4))),
+        ]
+    );
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, second),
+        [
+            (1, Some(PageFragmentLineRange::new(0, 1))),
+            (2, Some(PageFragmentLineRange::new(1, 3))),
+        ]
+    );
+    let (_, section_y, _, section_height) = absolute_rect(&doc, section);
+    assert_eq!((section_y, section_height), (15.0, 85.0));
+    assert_eq!(absolute_rect(&doc, after).1, 100.0);
+}
+
+#[test]
+fn the_last_break_stays_when_the_page_before_would_keep_too_few_orphans() {
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
+    // Nine 10px lines on 40px pages break 4/4/1. Moving a line from page 1
+    // to page 2 leaves it three lines: enough for `orphans: 3`, too few for
+    // `orphans: 4`.
+    let fragments = |css: &str| {
+        let (mut doc, cascade, root) =
+            ahem_paragraph("a b c d e f g h i", &format!("width:10px;{css}"));
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 40.0;
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        let text = doc.nodes[root].children[0];
+        text_fragments(&doc, &cascade, page, &slices, text)
+    };
+    assert_eq!(
+        fragments("orphans:3;widows:2"),
+        [
+            (0, Some(PageFragmentLineRange::new(0, 4))),
+            (1, Some(PageFragmentLineRange::new(4, 7))),
+            (2, Some(PageFragmentLineRange::new(7, 9))),
+        ]
+    );
+    assert_eq!(
+        fragments("orphans:4;widows:2"),
+        [
+            (0, Some(PageFragmentLineRange::new(0, 4))),
+            (1, Some(PageFragmentLineRange::new(4, 8))),
+            (2, Some(PageFragmentLineRange::new(8, 9))),
+        ]
+    );
+}
