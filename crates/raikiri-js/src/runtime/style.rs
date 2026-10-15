@@ -708,19 +708,42 @@ pub(crate) fn ensure_flushed(context: &mut Context) -> JsResult<()> {
 }
 
 /// `Element.getBoundingClientRect` (CSSOM View §5): the border box relative
-/// to the viewport, as a real `DOMRect`. The host reports boxes relative to
-/// the initial containing block, so the viewport offset is subtracted here,
-/// except for fixed-position boxes which are already viewport-relative and
-/// stay put. There is still no transform to account for.
+/// to the viewport, as a real `DOMRect`, or an empty one without a box.
+/// There is still no transform to account for.
 pub(crate) fn get_bounding_client_rect(
     this: &JsValue,
     _: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    let geometry = super::geometry::box_geometry(context, index)?;
-    let Some(g) = geometry else {
-        return Ok(super::geometry::new_dom_rect(context, Default::default())?.into());
+    let rect = client_border_box(context, index)?.unwrap_or_default();
+    Ok(super::geometry::new_dom_rect(context, rect)?.into())
+}
+
+/// `Element.getClientRects` (CSSOM View §5): one `DOMRect` per box
+/// fragment, relative to the viewport, or none for an element without a
+/// box. The host reports one box per element, so the list holds that
+/// box's border box.
+pub(crate) fn get_client_rects(
+    this: &JsValue,
+    _: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let rects = client_border_box(context, index)?.into_iter().collect();
+    Ok(super::geometry::dom_rect_list(context, rects)?.into())
+}
+
+/// `index`'s border box relative to the viewport, or `None` without a box.
+/// The host reports boxes relative to the initial containing block, so
+/// the viewport offset is subtracted, except for fixed-position boxes,
+/// which are already viewport-relative.
+fn client_border_box(
+    context: &mut Context,
+    index: usize,
+) -> JsResult<Option<super::host::DomRect>> {
+    let Some(g) = super::geometry::box_geometry(context, index)? else {
+        return Ok(None);
     };
     let mut r = g.border_box;
     if g.position != super::host::PositionKind::Fixed {
@@ -731,7 +754,7 @@ pub(crate) fn get_bounding_client_rect(
         r.top -= scroll_y;
         r.bottom -= scroll_y;
     }
-    Ok(super::geometry::new_dom_rect(context, r)?.into())
+    Ok(Some(r))
 }
 
 // ---- CSSStyleDeclaration ---------------------------------------------------

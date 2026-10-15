@@ -15,10 +15,11 @@ use boa_engine::property::Attribute;
 use boa_engine::{Context, Finalize, JsData, JsNativeError, JsResult, JsValue, Trace, js_string};
 
 use super::host::{BoxGeometry, DomRect, PositionKind};
+use super::indexed::{IndexedSource, indexed_object, this_indexed};
 use super::interfaces::{HTML_NS, Members, protos, wrap_optional};
 use super::node::first_element_child;
 use super::style::ensure_flushed;
-use super::webidl::{host_failure, this_element, with_state};
+use super::webidl::{arg_unsigned_long, host_failure, this_element, with_state};
 
 /// Native data behind a `DOMRect`/`DOMRectReadOnly` instance. `x`/`y`/
 /// `width`/`height` are the only stored fields (the spec's own model);
@@ -117,6 +118,52 @@ pub(crate) fn new_dom_rect(context: &mut Context, r: DomRect) -> JsResult<JsObje
     let proto = protos(context).dom_rect.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data))
 }
+
+/// The rects of a `DOMRectList`. Each item read creates its `DOMRect`, so
+/// the rects need not be kept alive by the list.
+struct DomRectListSource {
+    rects: Vec<DomRect>,
+}
+
+impl IndexedSource for DomRectListSource {
+    fn length(&self, _: &mut Context) -> JsResult<usize> {
+        Ok(self.rects.len())
+    }
+
+    fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
+        self.rects
+            .get(index)
+            .map(|&rect| Ok(new_dom_rect(context, rect)?.into()))
+            .transpose()
+    }
+}
+
+/// A new `DOMRectList` (Geometry Interfaces §3.1) over `rects`.
+pub(crate) fn dom_rect_list(context: &mut Context, rects: Vec<DomRect>) -> JsResult<JsObject> {
+    let prototype = protos(context).dom_rect_list.clone();
+    indexed_object(context, prototype, DomRectListSource { rects })
+}
+
+fn dom_rect_list_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let source = this_indexed::<DomRectListSource>(this, context, "DOMRectList")?;
+    Ok(source.length(context)?.into())
+}
+
+fn dom_rect_list_item(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let source = this_indexed::<DomRectListSource>(this, context, "DOMRectList")?;
+    let index = arg_unsigned_long(args, 0, context)?;
+    Ok(source.item(index, context)?.unwrap_or_else(JsValue::null))
+}
+
+pub(crate) const DOM_RECT_LIST_MEMBERS: Members = Members {
+    getters: &[("length", dom_rect_list_length)],
+    accessors: &[],
+    methods: &[("item", 1, dom_rect_list_item)],
+};
 
 /// NaN-propagating minimum (the spec's `top`/`left`, and `toJSON`, define
 /// these in terms of ordinary `min`/`max` over possibly-`NaN` numbers --

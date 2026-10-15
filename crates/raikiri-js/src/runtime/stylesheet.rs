@@ -918,6 +918,8 @@ fn style_sheet_object(context: &mut Context, style_element: usize) -> JsResult<J
     define_getter(&object, "cssRules", style_sheet_rules, context)?;
     // `rules` is the legacy alias of `cssRules` (CSSOM §6.1.2.1).
     define_getter(&object, "rules", style_sheet_rules, context)?;
+    define_method(&object, "insertRule", 1, style_sheet_insert_rule, context)?;
+    define_method(&object, "deleteRule", 1, style_sheet_delete_rule, context)?;
     let to_string_tag = PropertyDescriptor::builder()
         .value(JsString::from("CSSStyleSheet"))
         .writable(false)
@@ -967,6 +969,218 @@ fn style_sheet_rules(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
         state.css_rule_lists.insert(style_element, list.clone())
     })?;
     Ok(list.into())
+}
+
+/// `CSSStyleSheet.insertRule(rule, index = 0)` (CSSOM §6.1.2, "insert a
+/// CSS rule"): the rule's text is spliced into the style element's text
+/// before the rule now at `index`, or after the last rule.
+fn style_sheet_insert_rule(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let style_element = style_sheet_node(this)?;
+    let rule = dom_string(args, 0, context)?;
+    let index = match args.get(1) {
+        Some(value) if !value.is_undefined() => value.to_u32(context)? as usize,
+        _ => 0,
+    };
+    // Converting the arguments can run script that rewrites the sheet, so
+    // the sheet is read only afterwards.
+    let sheet = SheetKey::Element(style_element);
+    let text = with_state(context, |state| {
+        sync_sheet(state, style_element);
+        sheet_text(state, sheet)
+    })?;
+    let rules = parse_css_rules(&text);
+    if index > rules.len() {
+        return Err(throw_dom_exception(
+            context,
+            "IndexSizeError",
+            "rule index is out of range",
+        ));
+    }
+    let Some(rule) = parse_single_rule(&rule) else {
+        return Err(throw_dom_exception(
+            context,
+            "SyntaxError",
+            "the rule could not be parsed",
+        ));
+    };
+    if !import_order_allows(&rules, index, &rule.prelude) {
+        return Err(throw_dom_exception(
+            context,
+            "HierarchyRequestError",
+            "@import rules must precede all other rules",
+        ));
+    }
+    let mut updated = text.clone();
+    match rules.get(index) {
+        Some(next) => updated.insert_str(next.source.start, &format!("{}\n", rule.text)),
+        None => {
+            if let Some(last) = rules.last() {
+                // A last rule cut off by the end of the sheet is closed, so
+                // the new rule does not land inside it.
+                updated.push_str(closing(&text[last.source.clone()], last.body.is_some()));
+            }
+            updated.push('\n');
+            updated.push_str(&rule.text);
+        }
+    }
+    write_sheet_text(context, sheet, updated)?;
+    with_state(context, |state| {
+        shift_sheet_rules(state, sheet, &text, |rule| {
+            Some(if rule >= index { rule + 1 } else { rule })
+        });
+    })?;
+    Ok(JsValue::from(index as u32))
+}
+
+/// `CSSStyleSheet.deleteRule(index)` (CSSOM §6.1.2, "remove a CSS rule").
+fn style_sheet_delete_rule(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let style_element = style_sheet_node(this)?;
+    let index = arg_unsigned_long(args, 0, context)?;
+    let sheet = SheetKey::Element(style_element);
+    let text = with_state(context, |state| {
+        sync_sheet(state, style_element);
+        sheet_text(state, sheet)
+    })?;
+    let Some(range) = parse_css_rules(&text)
+        .get(index)
+        .map(|rule| rule.source.clone())
+    else {
+        return Err(throw_dom_exception(
+            context,
+            "IndexSizeError",
+            "rule index is out of range",
+        ));
+    };
+    let mut updated = text.clone();
+    updated.replace_range(range, "");
+    write_sheet_text(context, sheet, updated)?;
+    with_state(context, |state| {
+        shift_sheet_rules(state, sheet, &text, |rule| match rule.cmp(&index) {
+            std::cmp::Ordering::Less => Some(rule),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(rule - 1),
+        });
+    })?;
+    Ok(JsValue::undefined())
+}
+
+/// A rule given to `insertRule`, made ready to splice into a sheet.
+struct SingleRule {
+    prelude: String,
+    text: String,
+}
+
+/// CSS Syntax "parse a rule": `source` must hold exactly one rule,
+/// surrounded by nothing but whitespace and comments. A rule cut off by
+/// the end of `source` is closed, so it ends where it would in `source`
+/// once more text follows it.
+fn parse_single_rule(source: &str) -> Option<SingleRule> {
+    let trimmed = source.trim_matches(|c: char| c.is_ascii_whitespace());
+    let rules = parse_css_rules(trimmed);
+    let [rule] = rules.as_slice() else {
+        return None;
+    };
+    if !only_trivia(&trimmed[..rule.source.start]) || !only_trivia(&trimmed[rule.source.end..]) {
+        return None;
+    }
+    let text = &trimmed[rule.source.clone()];
+    Some(SingleRule {
+        prelude: rule.prelude.clone(),
+        text: format!("{text}{}", closing(text, rule.body.is_some())),
+    })
+}
+
+/// Whether `text` is only whitespace and comments.
+fn only_trivia(text: &str) -> bool {
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    parser.is_exhausted()
+}
+
+/// What closes `rule`, the source of one rule, when the end of its text
+/// cut it off: the `}` of an unclosed block, or the `;` an at-rule
+/// without a block needs before another rule.
+fn closing(rule: &str, has_block: bool) -> &'static str {
+    match (has_block, rule.ends_with('}'), rule.ends_with(';')) {
+        (true, false, _) => "}",
+        (false, _, false) => ";",
+        _ => "",
+    }
+}
+
+/// Whether the at-keyword of `prelude` is `name` (ASCII case-insensitive).
+fn is_at_rule(prelude: &str, name: &str) -> bool {
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    matches!(parser.next(), Ok(Token::AtKeyword(keyword)) if keyword.eq_ignore_ascii_case(name))
+}
+
+/// CSSOM "insert a CSS rule" step 6: an `@import` rule may only follow
+/// `@charset` and `@import` rules, and no other rule may precede one.
+fn import_order_allows(rules: &[CssRuleInfo], index: usize, prelude: &str) -> bool {
+    let leading = |rule: &CssRuleInfo| {
+        is_at_rule(&rule.prelude, "import") || is_at_rule(&rule.prelude, "charset")
+    };
+    if is_at_rule(prelude, "import") {
+        rules[..index].iter().all(leading)
+    } else {
+        !rules[index..]
+            .iter()
+            .any(|rule| is_at_rule(&rule.prelude, "import"))
+    }
+}
+
+/// Moves the rule objects of `sheet`, whose text was `old_text`, after a
+/// rule was inserted or removed: `shift` maps an old rule index to its new
+/// one, or to `None` for the removed rule. The objects of the removed rule
+/// are detached and keep that rule, in a text of its own.
+fn shift_sheet_rules(
+    state: &mut State,
+    sheet: SheetKey,
+    old_text: &str,
+    shift: impl Fn(usize) -> Option<usize>,
+) {
+    let rules: Vec<_> = state
+        .css_style_rules
+        .extract_if(|&(key, _), _| key == sheet)
+        .map(|((_, rule), object)| (rule, None, object))
+        .collect();
+    let margins: Vec<_> = state
+        .css_margin_rules
+        .extract_if(|&(key, ..), _| key == sheet)
+        .map(|((_, rule, margin), object)| (rule, Some(margin), object))
+        .collect();
+    let mut removed: Option<SheetKey> = None;
+    for (rule, margin, object) in rules.into_iter().chain(margins) {
+        let (key, index) = match shift(rule) {
+            Some(index) => (sheet, index),
+            None => {
+                let key = *removed.get_or_insert_with(|| {
+                    let text = parse_css_rules(old_text)
+                        .get(rule)
+                        .map_or("", |info| &old_text[info.source.clone()]);
+                    detached_rule_text(state, text.to_owned())
+                });
+                (key, 0)
+            }
+        };
+        if let Some(slot) = rule_object_slot(&object) {
+            slot.sheet.set(key);
+            slot.rule_index.set(index);
+        }
+        match margin {
+            Some(margin) => state.css_margin_rules.insert((key, index, margin), object),
+            None => state.css_style_rules.insert((key, index), object),
+        };
+    }
 }
 
 fn css_style_rule_object(

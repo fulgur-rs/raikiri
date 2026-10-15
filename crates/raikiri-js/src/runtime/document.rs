@@ -65,15 +65,15 @@ fn is_xml_name(name: &str) -> bool {
 }
 
 /// DOM §4.5 "validate and extract": split `qualified_name` into an optional
-/// prefix and a local name, then check the namespace/prefix combinations
+/// prefix and a local name, returned with the namespace, then check the namespace/prefix combinations
 /// the spec restricts. `namespace` is normalized from an empty string to
 /// `None` first (the algorithm's own first step); both inputs are already
 /// `DOMString`-converted.
-fn validate_and_extract(
+pub(crate) fn validate_and_extract(
     context: &mut Context,
     namespace: Option<String>,
     qualified_name: &str,
-) -> JsResult<(Option<String>, String)> {
+) -> JsResult<(Option<String>, Option<String>, String)> {
     let namespace = namespace.filter(|n| !n.is_empty());
     let (prefix, local_name) = match qualified_name.split_once(':') {
         None => {
@@ -124,7 +124,7 @@ fn validate_and_extract(
             "'xmlns' and the XMLNS namespace must go together",
         ));
     }
-    Ok((namespace, local_name))
+    Ok((namespace, prefix, local_name))
 }
 
 /// `Document.createElementNS` (DOM §4.5): unlike `createElement`, this never
@@ -146,7 +146,7 @@ pub(crate) fn create_element_ns(
         _ => Some(dom_string(args, 0, context)?),
     };
     let qualified_name = dom_string(args, 1, context)?;
-    let (namespace, local_name) = validate_and_extract(context, namespace, &qualified_name)?;
+    let (namespace, _, local_name) = validate_and_extract(context, namespace, &qualified_name)?;
     guard_node_budget(context)?;
     let result = with_state(context, |s| {
         s.host.document_mut().create_detached_element(&local_name)

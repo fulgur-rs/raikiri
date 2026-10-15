@@ -2366,3 +2366,123 @@ fn urls_read_back_as_quoted_strings_in_every_property() {
          s.getPropertyValue('--x') === 'url(c.png)'",
     );
 }
+
+#[test]
+fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = 'a { color: red; } b { color: blue; }'; \
+         document.head.appendChild(el); \
+         var sheet = el.sheet; var rules = sheet.cssRules; \
+         var a = rules[0]; var b = rules[1];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule.length === 1 && sheet.deleteRule.length === 1",
+    );
+    ok(
+        &mut rt,
+        "sheet.insertRule('  i { color: green; }  ') === 0 && rules.length === 3 && \
+         rules[0].selectorText === 'i' && rules[1] === a && rules[2] === b",
+    );
+    ok(
+        &mut rt,
+        "sheet.insertRule('z { color: gray }', 3) === 3 && rules[3].selectorText === 'z' && \
+         el.textContent === 'i { color: green; }\\na { color: red; } b { color: blue; }\\nz { color: gray }'",
+    );
+    // Removing a rule detaches its object, which keeps the rule's text.
+    rt.evaluate("sheet.deleteRule(1);").unwrap();
+    ok(
+        &mut rt,
+        "rules.length === 3 && rules[1] === b && a.cssText === 'a { color: red; }' && \
+         a.style.color === 'red' && b.style.color === 'blue'",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { sheet.deleteRule(3); return false; } \
+         catch (e) { return e.name === 'IndexSizeError'; } })()",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { sheet.insertRule('q {}', 4); return false; } \
+         catch (e) { return e.name === 'IndexSizeError'; } })()",
+    );
+    for bad in ["''", "'a {} b {}'", "'a {} b'", "'a'"] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ sheet.insertRule({bad}); return false; }} \
+                 catch (e) {{ return e.name === 'SyntaxError' && rules.length === 3; }} }})()"
+            ),
+        );
+    }
+}
+
+#[test]
+fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = '@import \"x.css\"'; \
+         document.head.appendChild(el); var sheet = el.sheet;",
+    )
+    .unwrap();
+    // The cut-off `@import` gets its `;`, and a cut-off inserted rule its `}`.
+    ok(
+        &mut rt,
+        "sheet.insertRule('p { color: red', 1) === 1 && sheet.cssRules.length === 2 && \
+         el.textContent === '@import \"x.css\";\\np { color: red}'",
+    );
+    ok(
+        &mut rt,
+        "sheet.insertRule('@import \"y.css\"', 1) === 1 && \
+         sheet.cssRules[1].cssText === '@import \"y.css\";' && sheet.cssRules[2].selectorText === 'p'",
+    );
+    for (rule, index) in [("'@import \"z.css\";'", 3), ("'q {}'", 0), ("'q {}'", 1)] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ sheet.insertRule({rule}, {index}); return false; }} \
+                 catch (e) {{ return e.name === 'HierarchyRequestError'; }} }})()"
+            ),
+        );
+    }
+    ok(
+        &mut rt,
+        "sheet.insertRule('q {}', 2) === 2 && sheet.cssRules.length === 4",
+    );
+    // Appending after a block cut off by the end of the sheet closes it.
+    rt.evaluate("el.textContent = 'a { color: red';").unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule('b {}', 1) === 1 && el.textContent === 'a { color: red}\\nb {}'",
+    );
+}
+
+#[test]
+fn style_sheet_delete_rule_detaches_page_rule_margin_objects() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = 'p {} @page { @top-left { content: \"a\" } }'; \
+         document.head.appendChild(el); var sheet = el.sheet; \
+         var page = sheet.cssRules[1]; var margin = page.cssRules[0];",
+    )
+    .unwrap();
+    rt.evaluate("sheet.deleteRule(0);").unwrap();
+    ok(
+        &mut rt,
+        "sheet.cssRules[0] === page && page.cssRules[0] === margin",
+    );
+    rt.evaluate("sheet.deleteRule(0);").unwrap();
+    ok(
+        &mut rt,
+        "sheet.cssRules.length === 0 && margin.name === 'top-left' && \
+         margin.style.content === '\"a\"' && el.textContent === ' '",
+    );
+}

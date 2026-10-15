@@ -664,3 +664,76 @@ fn viewport_scroll_attributes_are_read_only() {
     rt.evaluate("scrollX = 100; scrollY = 100;").unwrap();
     ok(&mut rt, "scrollX === 9 && scrollY === 8");
 }
+
+#[test]
+fn url_parses_against_a_base_and_exposes_its_components() {
+    let mut rt = rt();
+    rt.evaluate(
+        "var u = new URL('../c/d.png?x=1&y=2#frag', 'https://user:pw@example.test:8443/a/b/e.html');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "u.href === 'https://user:pw@example.test:8443/a/c/d.png?x=1&y=2#frag' && \
+         u.origin === 'https://example.test:8443' && u.protocol === 'https:' && \
+         u.username === 'user' && u.password === 'pw' && u.host === 'example.test:8443' && \
+         u.hostname === 'example.test' && u.port === '8443' && u.pathname === '/a/c/d.png' && \
+         u.search === '?x=1&y=2' && u.hash === '#frag' && String(u) === u.href && \
+         u.toJSON() === u.href && JSON.stringify({u}) === '{\"u\":\"' + u.href + '\"}' && \
+         Object.prototype.toString.call(u) === '[object URL]'",
+    );
+    ok(
+        &mut rt,
+        "u.searchParams === u.searchParams && u.searchParams.get('y') === '2' && \
+         JSON.stringify([...u.searchParams]) === '[[\"x\",\"1\"],[\"y\",\"2\"]]' && \
+         JSON.stringify(Array.from(u.searchParams.entries())) === '[[\"x\",\"1\"],[\"y\",\"2\"]]'",
+    );
+    ok(
+        &mut rt,
+        "var plain = new URL('http://example.test/?#'); \
+         plain.port === '' && plain.host === 'example.test' && plain.search === '' && \
+         plain.hash === '' && plain.password === '' && new URL('data:text/plain,x').origin === 'null' && \
+         new URL('data:text/plain,x').hostname === ''",
+    );
+    ok(
+        &mut rt,
+        "var Saved = URLSearchParams; URLSearchParams = 1; \
+         var kept = new URL('https://a.test/?k=v').searchParams; URLSearchParams = Saved; \
+         kept instanceof URLSearchParams && kept.get('k') === 'v'",
+    );
+    ok(
+        &mut rt,
+        "URL.canParse('https://a.test/') && !URL.canParse('nope') && URL.canParse('x', 'https://a.test/') && \
+         !URL.canParse('x', 'nope') && URL.canParse('x', undefined) === false",
+    );
+    for bad in [
+        "new URL('relative')",
+        "new URL('x', 'not a base')",
+        "new URL()",
+        "URL('https://a.test/')",
+        "Object.getOwnPropertyDescriptor(URL.prototype, 'href').get.call({})",
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ {bad}; return false; }} catch (e) {{ return e instanceof TypeError; }} }})()"
+            ),
+        );
+    }
+}
+
+#[test]
+fn url_install_propagates_global_registration_errors() {
+    let mut rt = rt();
+    rt.context_mut()
+        .register_global_property(JsString::from("URL"), JsValue::null(), Attribute::empty())
+        .unwrap();
+
+    let prototype = rt
+        .context_mut()
+        .intrinsics()
+        .constructors()
+        .object()
+        .prototype();
+    assert!(super::super::url::install(rt.context_mut(), prototype).is_err());
+}

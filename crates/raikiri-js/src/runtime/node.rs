@@ -337,6 +337,96 @@ fn set_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     Ok(JsValue::undefined())
 }
 
+/// `Element.setAttributeNS(namespace, qualifiedName, value)` (DOM §4.9):
+/// the name is validated and split like `createElementNS`'s, and the
+/// attribute is found by namespace and exact local name, never
+/// ASCII-lowercased.
+fn set_attribute_ns(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let namespace = match args.first() {
+        Some(value) if !value.is_null() && !value.is_undefined() => {
+            Some(dom_string(args, 0, context)?)
+        }
+        _ => None,
+    };
+    let qualified_name = dom_string(args, 1, context)?;
+    let value = dom_string(args, 2, context)?;
+    let (namespace, prefix, local) =
+        super::document::validate_and_extract(context, namespace, &qualified_name)?;
+    let Some(namespace) = namespace else {
+        if !local.bytes().any(|byte| byte.is_ascii_uppercase()) {
+            // Without an uppercase letter, the exact name is the one
+            // `setAttribute` stores, along with its side effects.
+            write_attribute(context, index, &local, &value)?;
+            super::dispatch::sync_event_handler_for_attribute(
+                context,
+                index,
+                &local,
+                Some(&value),
+            )?;
+            return Ok(JsValue::undefined());
+        }
+        with_state(context, |s| {
+            let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
+            // cov:ignore: `validate_and_extract` accepted `local` as an XML name.
+            let _ = s
+                .host
+                .document_mut()
+                .set_element_attribute_exact(index, local, value);
+            super::stylesheet::note_attribute_change(s, index, had_css_type);
+        })?;
+        mark_dirty(context)?;
+        return Ok(JsValue::undefined());
+    };
+    with_state(context, |s| {
+        // cov:ignore: `validate_and_extract` accepted the namespace and name.
+        let _ = s.host.document_mut().set_element_namespaced_attribute(
+            index,
+            namespace,
+            prefix.map(Into::into),
+            local,
+            value,
+        );
+    })?;
+    mark_dirty(context)?;
+    Ok(JsValue::undefined())
+}
+
+/// `Element.removeAttributeNS(namespace, localName)` (DOM §4.9): removes
+/// the attribute with that namespace and exact local name, if any.
+fn remove_attribute_ns(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let index = this_element(this, context)?;
+    let namespace = match args.first() {
+        Some(value) if !value.is_null() && !value.is_undefined() => {
+            Some(dom_string(args, 0, context)?).filter(|namespace| !namespace.is_empty())
+        }
+        _ => None,
+    };
+    let local = dom_string(args, 1, context)?;
+    if namespace.is_none() && !local.bytes().any(|byte| byte.is_ascii_uppercase()) {
+        // Without an uppercase letter, `removeAttribute` finds the same
+        // attribute and keeps its side effects.
+        return remove_attribute(this, &[JsValue::from(JsString::from(local))], context);
+    }
+    let removed = with_state(context, |s| {
+        let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
+        let removed =
+            s.host
+                .document_mut()
+                .remove_element_attribute_ns(index, namespace.as_deref(), &local);
+        super::stylesheet::note_attribute_change(s, index, had_css_type);
+        removed
+    })?;
+    if removed.is_some() {
+        mark_dirty(context)?;
+    }
+    Ok(JsValue::undefined())
+}
+
 /// `Element.removeAttribute` (DOM §4.9): unlike `setAttribute`, the
 /// algorithm never validates `name` — it just looks up an attribute by
 /// that name and removes it if found, so a syntactically invalid name (one
@@ -370,6 +460,18 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
     let object = super::token_list::token_list(context, index)?;
     with_state(context, |s| s.class_lists.insert(index, object.clone()))?;
     Ok(object.into())
+}
+
+/// `Element.classList` on setting: `[PutForwards=value]` (WebIDL §3.7.6)
+/// assigns the value to the token list's `value`, which rewrites the
+/// `class` attribute.
+fn set_class_list(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let list = class_list(this, &[], context)?;
+    let value = args.first().cloned().unwrap_or_default();
+    if let Some(list) = list.as_object() {
+        list.set(JsString::from("value"), value, true, context)?;
+    }
+    Ok(JsValue::undefined())
 }
 
 /// `Element.namespaceURI` (DOM §4.9): `null` for an element created with a
@@ -635,20 +737,25 @@ pub(crate) const ELEMENT_MEMBERS: Members = Members {
     getters: &[
         ("tagName", tag_name),
         ("localName", local_name),
-        ("classList", class_list),
         ("namespaceURI", namespace_uri),
     ],
-    accessors: &[("innerHTML", inner_html, set_inner_html)],
+    accessors: &[
+        ("innerHTML", inner_html, set_inner_html),
+        ("classList", class_list, set_class_list),
+    ],
     methods: &[
         ("getAttribute", 1, get_attribute),
         ("hasAttribute", 1, has_attribute),
         ("setAttribute", 2, set_attribute),
+        ("setAttributeNS", 3, set_attribute_ns),
+        ("removeAttributeNS", 2, remove_attribute_ns),
         ("removeAttribute", 1, remove_attribute),
         (
             "getBoundingClientRect",
             0,
             super::style::get_bounding_client_rect,
         ),
+        ("getClientRects", 0, super::style::get_client_rects),
         ("animate", 2, super::animation::element_animate),
     ],
 };
