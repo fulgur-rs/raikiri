@@ -863,10 +863,6 @@ const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 /// the sRGB gamut, before each substep is refined further.
 const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
 
-/// Most halvings of one substep while its drawn colors stray from the
-/// clipped ramp.
-const MAX_CLIP_REFINEMENT: u32 = 12;
-
 /// Largest premultiplied channel error, about half an 8-bit level, that a
 /// drawn substep may have against the clipped ramp at its middle.
 const CLIP_TOLERANCE: f32 = 0.5 / 255.0;
@@ -905,15 +901,17 @@ fn clipped(color: AlphaColor<Srgb>) -> DynamicColor {
 /// interpolating linearly between neighbors stays within
 /// [`CLIP_TOLERANCE`] of the clipped ramp at each middle. A channel far
 /// outside the gamut crosses into it within a sliver of the step, which
-/// fixed substeps cannot find.
+/// fixed substeps cannot find. Halving stops at `min_width`, the width of
+/// [`MIN_EXPANDED_SEGMENT`] in the brush: anything narrower draws as a hard
+/// transition, like the steps between coincident stops.
 fn refine_clipped(
     sample: &impl Fn(f32) -> AlphaColor<Srgb>,
     start: (f32, AlphaColor<Srgb>),
     end: (f32, AlphaColor<Srgb>),
-    depth: u32,
+    min_width: f32,
     out: &mut Vec<(f32, AlphaColor<Srgb>)>,
 ) {
-    if depth == 0 {
+    if end.0 - start.0 < min_width {
         return;
     }
     let t = (start.0 + end.0) / 2.0;
@@ -932,9 +930,9 @@ fn refine_clipped(
     {
         return;
     }
-    refine_clipped(sample, start, (t, middle), depth - 1, out);
+    refine_clipped(sample, start, (t, middle), min_width, out);
     out.push((t, middle));
-    refine_clipped(sample, (t, middle), end, depth - 1, out);
+    refine_clipped(sample, (t, middle), end, min_width, out);
 }
 
 /// Approximate interpolation in `space` with dense sRGB stops.
@@ -986,7 +984,8 @@ pub(super) fn expand_stops(
                             + (t - previous_t) * step as f32 / OUT_OF_GAMUT_SUBSTEPS as f32;
                         (t, sample(t))
                     };
-                    refine_clipped(&sample, start, end, MAX_CLIP_REFINEMENT, &mut samples);
+                    let min_width = MIN_EXPANDED_SEGMENT / span;
+                    refine_clipped(&sample, start, end, min_width, &mut samples);
                     if step < OUT_OF_GAMUT_SUBSTEPS {
                         samples.push(end);
                     }
