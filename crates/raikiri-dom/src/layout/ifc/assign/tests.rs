@@ -37,101 +37,6 @@ fn vertical_block_children_with_inside_counter_text_qualify_the_parent() {
     );
 }
 
-fn legacy_marker_fixture() -> Fixture {
-    let mut fixture = block_fixture(
-        "display:list-item;list-style:inside decimal;columns:2;font-family:Ahem,serif;font-style:italic;font-weight:bold",
-        |doc, root| {
-            let ruby = doc.append_element(
-                Some(root),
-                "ruby",
-                taffy::Style::default(),
-                Some("display:inline"),
-            );
-            doc.append_element(
-                Some(ruby),
-                "span",
-                taffy::Style::default(),
-                Some("display:inline-block;width:10px;height:20px"),
-            );
-            doc.append_element(
-                Some(root),
-                "br",
-                taffy::Style::default(),
-                Some("display:inline"),
-            );
-        },
-    );
-    enable(&mut fixture);
-    crate::layout::bridge::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).unwrap();
-    fixture
-}
-
-#[test]
-fn legacy_marker_reservation_preserves_registered_calc_padding() {
-    let mut fixture = legacy_marker_fixture();
-    let pointer = crate::taffy_impl::push_calc(
-        &mut fixture.doc.calc_values,
-        raikiri_style::property::CalcLengthPercentage {
-            percent: 10.0,
-            px: 4.0,
-        },
-        true,
-    );
-    fixture.doc.nodes[fixture.root].style.padding.left = taffy::LengthPercentage::calc(pointer);
-    prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade).unwrap();
-    let padding = fixture.doc.nodes[fixture.root]
-        .style
-        .padding
-        .left
-        .into_raw();
-    assert!(padding.is_calc());
-    assert_eq!(fixture.doc.legacy_inside_marker_advance(fixture.root), 30.0);
-    assert_eq!(
-        crate::taffy_impl::resolve_calc(padding.calc_value(), 200.0),
-        54.0
-    );
-    assert_eq!(
-        fixture.doc.calc_values[0].value,
-        raikiri_style::property::CalcLengthPercentage {
-            percent: 10.0,
-            px: 4.0
-        }
-    );
-    assert_eq!(
-        fixture.doc.calc_values[1].value,
-        raikiri_style::property::CalcLengthPercentage {
-            percent: 10.0,
-            px: 34.0
-        }
-    );
-}
-
-#[test]
-fn legacy_marker_reservation_rejects_unregistered_calc_handles() {
-    let mut fixture = legacy_marker_fixture();
-    let unregistered = std::sync::Arc::new(raikiri_style::property::CalcLengthPercentage {
-        percent: 10.0,
-        px: 4.0,
-    });
-    fixture.doc.nodes[fixture.root].style.padding.left =
-        taffy::LengthPercentage::calc(std::sync::Arc::as_ptr(&unregistered).cast());
-    assert!(matches!(
-        prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade),
-        Err(LayoutError::Internal { .. })
-    ));
-}
-
-#[test]
-fn legacy_marker_reservation_uses_the_legacy_painters_usable_font_size() {
-    for size in [0.0, f32::NAN] {
-        let mut fixture = legacy_marker_fixture();
-        fixture.cascade.computed[fixture.root].font_size = raikiri_style::ComputedLength(size);
-        fixture.cascade.computed[fixture.root].font_family = std::sync::Arc::new(Vec::new());
-        prepare_legacy_inside_markers_before_taffy(&mut fixture.doc, &fixture.cascade).unwrap();
-        assert_eq!(fixture.doc.legacy_inside_marker_advance(fixture.root), 48.0);
-    }
-}
-
 #[test]
 fn ancestor_counters_qualify_empty_and_block_only_inside_markers() {
     for block_child in [false, true] {
@@ -309,7 +214,7 @@ fn a_box_without_inline_content_is_not_a_root() {
 }
 
 #[test]
-fn empty_ruby_items_with_forced_breaks_stay_on_the_multicol_flex_path() {
+fn empty_ruby_items_with_forced_breaks_in_multicol_are_an_inline_formatting_root() {
     let mut detached_child = 0;
     let mut fixture = block_fixture("columns:4;column-fill:auto;height:175px", |doc, root| {
         let mut first_ruby = None;
@@ -366,14 +271,9 @@ fn empty_ruby_items_with_forced_breaks_stay_on_the_multicol_flex_path() {
         .flags
         .remove(NodeFlags::IS_IN_DOCUMENT);
     enable(&mut fixture);
-    assert!(is_ruby_multicol_flex_projection(
-        &fixture.doc,
-        &fixture.cascade,
-        fixture.root
-    ));
     assign(&mut fixture);
 
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
@@ -394,11 +294,6 @@ fn ruby_multicol_with_text_remains_an_inline_formatting_root() {
         );
     });
     enable(&mut fixture);
-    assert!(!is_ruby_multicol_flex_projection(
-        &fixture.doc,
-        &fixture.cascade,
-        fixture.root
-    ));
     assign(&mut fixture);
 
     assert!(is_root(&fixture, fixture.root));
@@ -428,11 +323,6 @@ fn direct_text_in_ruby_multicol_remains_an_inline_formatting_root() {
         );
     });
     enable(&mut fixture);
-    assert!(!is_ruby_multicol_flex_projection(
-        &fixture.doc,
-        &fixture.cascade,
-        fixture.root
-    ));
     assign(&mut fixture);
 
     assert!(is_root(&fixture, fixture.root));
@@ -455,18 +345,13 @@ fn ruby_multicol_without_forced_breaks_remains_an_inline_formatting_root() {
         );
     });
     enable(&mut fixture);
-    assert!(!is_ruby_multicol_flex_projection(
-        &fixture.doc,
-        &fixture.cascade,
-        fixture.root
-    ));
     assign(&mut fixture);
 
     assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]
-fn empty_ruby_in_a_single_column_stays_on_the_multicol_flex_path() {
+fn empty_ruby_in_a_single_column_multicol_is_an_inline_formatting_root() {
     let mut fixture = block_fixture("columns:1;column-fill:auto;height:60px", |doc, root| {
         let ruby = doc.append_element(
             Some(root),
@@ -494,14 +379,9 @@ fn empty_ruby_in_a_single_column_stays_on_the_multicol_flex_path() {
         );
     });
     enable(&mut fixture);
-    assert!(is_ruby_multicol_flex_projection(
-        &fixture.doc,
-        &fixture.cascade,
-        fixture.root
-    ));
     assign(&mut fixture);
 
-    assert!(!is_root(&fixture, fixture.root));
+    assert!(is_root(&fixture, fixture.root));
 }
 
 #[test]

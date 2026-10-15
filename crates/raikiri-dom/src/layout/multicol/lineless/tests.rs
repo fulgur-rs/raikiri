@@ -84,6 +84,44 @@ fn boxes_avoiding_breaks_that_must_stay_whole_overflow_whole() {
 }
 
 #[test]
+fn a_splittable_box_that_must_stay_whole_moves_to_the_next_column_when_it_fits_one() {
+    let whole = |height| Item {
+        whole: true,
+        ..split(height)
+    };
+    // 95 + 100 does not fit a 100px column, but the bordered box fits a
+    // whole column, so it starts the next one instead of being cut.
+    assert_eq!(
+        shape(&[split(95.0), whole(100.0)], 100.0),
+        vec![vec![(0, 0.0, 95.0)], vec![(1, 0.0, 100.0)]]
+    );
+}
+
+#[test]
+fn a_box_that_must_stay_whole_is_cut_when_its_margin_leaves_no_room_at_the_top() {
+    let whole = Item {
+        whole: true,
+        margin_top: 10.0,
+        ..split(95.0)
+    };
+    // Nothing precedes it, so moving on gains nothing; it is cut instead of
+    // overflowing the column end.
+    assert_eq!(place(&[whole], 100.0, 64).err(), Some(super::Stop::Cut));
+}
+
+#[test]
+fn balancing_keeps_boxes_that_must_stay_whole_within_the_columns() {
+    let whole = Item {
+        whole: true,
+        ..split(40.0)
+    };
+    let items = [split(50.0), whole, split(50.0)];
+    let height = balanced_height(&items, 2, usize::MAX);
+    let placement = place(&items, height, usize::MAX).unwrap();
+    assert!(placement.columns_used() <= 2, "height={height}");
+}
+
+#[test]
 fn sibling_margins_collapse_and_truncate_at_a_break() {
     let first = Item {
         margin_bottom: 20.0,

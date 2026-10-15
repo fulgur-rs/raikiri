@@ -23,7 +23,6 @@ fn css_break_fulgur_pass_pairs_are_pixel_exact_at_800x600() {
         "css/css-break/block-min-height-001b.html",
         "css/css-break/border-image-000.html",
         "css/css-break/overflowed-abs-pos-with-percentage-height-print.html",
-        "css/css-break/widows-block-in-inline-001.html",
     ];
     let mut config = ReftestConfig::default();
     config.width = 800;

@@ -129,7 +129,8 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
                         | DisplayValue::InlineBlock
                         | DisplayValue::FlowRoot
                         | DisplayValue::ListItem
-                ))
+                )
+                || block_in_inline_wrapper(tree, id))
             || node.has_logical_min_block_size
         {
             return false;
@@ -186,6 +187,45 @@ fn atomic(tree: &Document, id: usize) -> bool {
             BreakInside::Avoid | BreakInside::AvoidColumn
         )
         || !has_rendered_element_child(tree, id)
+}
+
+/// An inline box that holds only block-level boxes and no line of its own.
+/// Block-in-inline splitting leaves no inline fragment with content around
+/// those blocks (CSS 2.1, 9.2.1.1), so the box flows like a block wrapper.
+fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
+    let node = &tree.nodes[id];
+    node.display == DisplayValue::Inline
+        && node.style.display == Display::Block
+        && node.ifc.is_none()
+        && !in_paragraph_with_lines(tree, id)
+        && has_rendered_element_child(tree, id)
+        && node.children.iter().all(|&child| {
+            let child = &tree.nodes[child];
+            !child.is_in_document()
+                || child.style.display == Display::None
+                || if child.kind() == NodeKind::Element {
+                    !child.display.is_inline_level() && child.display != DisplayValue::Contents
+                } else {
+                    child.text_content().is_none_or(|text| {
+                        text.chars()
+                            .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+                    })
+                }
+        })
+}
+
+/// Whether the inline box belongs to a paragraph that lays out lines, such as
+/// one holding preserved white space next to the blocks. The block-in-inline
+/// split then leaves those lines around the blocks, and they are painted by
+/// that paragraph rather than by a line-less wrapper.
+fn in_paragraph_with_lines(tree: &Document, id: usize) -> bool {
+    std::iter::successors(tree.nodes[id].parent, |&ancestor| {
+        tree.nodes[ancestor].parent
+    })
+    .find(|&ancestor| tree.nodes[ancestor].display != DisplayValue::Inline)
+    .and_then(|ancestor| tree.nodes[ancestor].ifc.as_ref())
+    .and_then(|root| root.lines.as_ref())
+    .is_some_and(|lines| !lines.lines.is_empty())
 }
 
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {
