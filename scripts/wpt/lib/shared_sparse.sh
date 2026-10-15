@@ -3,7 +3,10 @@
 
 validate_shared_wpt_subset() {
   local subset_file="$1"
-  local -a expected=(acid css fonts images /common /resources /tools /wpt /docs/commands.json)
+  local -a expected=(
+    acid css fonts images /common /resources /tools /wpt /docs/commands.json
+    /web-animations/testcommon.js /web-animations/resources
+  )
   local -a actual=()
 
   if [ ! -r "$subset_file" ]; then
@@ -15,15 +18,13 @@ validate_shared_wpt_subset() {
   )
 
   if [ "${#actual[@]}" -ne "${#expected[@]}" ]; then
-    echo "error: $subset_file must contain exactly: acid, css, fonts, images," \
-      "/common, /resources, /tools, /wpt, /docs/commands.json" >&2
+    echo "error: $subset_file must contain exactly: ${expected[*]}" >&2
     return 2
   fi
   local index
   for index in "${!expected[@]}"; do
     if [ "${actual[$index]}" != "${expected[$index]}" ]; then
-      echo "error: $subset_file must contain exactly: acid, css, fonts, images," \
-        "/common, /resources, /tools, /wpt, /docs/commands.json" >&2
+      echo "error: $subset_file must contain exactly: ${expected[*]}" >&2
       return 2
     fi
   done
@@ -35,14 +36,18 @@ install_locked_shared_sparse_file() {
   shift
   local -a roots=("$@")
   local expected_content current_content directory temporary_file
-  local legacy_content
+  local legacy_content previous_content
   expected_content="$(printf '%s\n' "${roots[@]}")"
   current_content="$(cat "$sparse_file" 2>/dev/null || true)"
+  # Earlier locked root sets migrate to the current one.
   legacy_content="$(printf '%s\n' acid css fonts images /resources)"
+  previous_content="$(printf '%s\n' acid css fonts images /common /resources /tools /wpt \
+    /docs/commands.json)"
 
   if [ -e "$sparse_file" ] &&
     [ "$current_content" != "$expected_content" ] &&
     [ "$current_content" != "$legacy_content" ] &&
+    [ "$current_content" != "$previous_content" ] &&
     [ ! -w "$sparse_file" ]; then
     echo "error: $sparse_file is locked with unexpected roots; inspect it manually" >&2
     return 2

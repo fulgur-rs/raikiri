@@ -12,7 +12,10 @@ removes only the link; `fetch.sh` and the gate recreate it from the home cache.
 not the per-test `resources/` helper directories nested throughout the tree.
 It also includes upstream
 `tools/`, the root `wpt` CLI, and `/docs/commands.json`, which that CLI reads
-while loading its command registry. The top-level
+while loading its command registry, plus the Web Animations helpers
+`/web-animations/testcommon.js` and `/web-animations/resources/`, which CSS
+tests load for `waitForAnimationFrames` and `waitForCompositorReady` (the
+web-animations tests themselves stay out). The top-level
 `common/` carries shared helpers used by reftests, including
 `rendering-utils.js`. The top-level `resources/` directory carries the real
 `testharness.js`,

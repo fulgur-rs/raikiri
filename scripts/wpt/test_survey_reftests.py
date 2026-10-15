@@ -178,7 +178,8 @@ class SurveyReftestsTests(unittest.TestCase):
         subset_file = Path(self.temp.name) / "subset.txt"
         subset_file.write_text(
             "# stable roots\nacid\ncss\nfonts\nimages\n/common\n"
-            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n"
+            "/web-animations/testcommon.js\n/web-animations/resources\n",
             encoding="utf-8",
         )
         valid = self.run_shared_sparse(
@@ -188,7 +189,8 @@ class SurveyReftestsTests(unittest.TestCase):
         self.assertEqual(
             valid.stdout,
             "acid\ncss\nfonts\nimages\n/common\n"
-            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n"
+            "/web-animations/testcommon.js\n/web-animations/resources\n",
         )
 
         subset_file.write_text("css fonts images\n", encoding="utf-8")
