@@ -202,16 +202,18 @@ pub(super) fn prepare(
                 let mut block_edges = block.unwrap_or((true, true));
                 if block.is_some() && !root.is_repeat && page.flow_axis == FlowAxis::Y {
                     // The page holds the part of a block box in its slice of
-                    // the flow; a cut takes the edge off that side (CSS
-                    // Fragmentation 3 `box-decoration-break: slice`).
+                    // the flow; a cut takes the edge off that side, unless
+                    // every fragment is cloned (CSS Fragmentation 3 §5.4).
                     let (low, high) = (line_top.max(start), line_bottom.min(end));
                     if high <= low {
                         continue;
                     }
                     rect.y += low - line_top;
                     rect.height = high - low;
-                    block_edges.0 &= low == line_top;
-                    block_edges.1 &= high == line_bottom;
+                    let clone = crate::generated_content::computed_for_id(cascade, piece.node)
+                        .is_some_and(crate::layout::clones_fragments);
+                    block_edges.0 &= clone || low == line_top;
+                    block_edges.1 &= clone || high == line_bottom;
                 } else if !root.is_repeat
                     && !crate::layout::line_center_on_page(line_top, line_bottom, start, end)
                 {
