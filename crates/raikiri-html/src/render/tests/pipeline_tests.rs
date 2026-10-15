@@ -2037,3 +2037,42 @@ fn pipeline_clears_the_box_after_a_float_with_break_after() {
         .expect("the block is on the new page");
     assert_eq!(block.rect().width, 400.0);
 }
+
+#[test]
+fn pipeline_counts_the_padding_after_a_bodys_own_lines() {
+    // The 60px line and the 60px padding below it reach the second page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;line-height:60px;padding-bottom:60px}</style>x",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_counts_the_padding_after_a_nested_float_in_a_formatting_context_body() {
+    // The 80px float inside the first block ends below the 1px last block;
+    // the flow-root body encloses it, and its 40px padding reaches the
+    // second page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;display:flow-root;padding-bottom:40px}</style>\
+         <div><div style='float:left;width:10px;height:80px'></div></div><div style='height:1px'></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_leaves_out_floats_the_body_does_not_enclose() {
+    // A body that is no formatting context of its own lets the nested
+    // float overflow it, and a float inside an absolutely positioned box
+    // belongs to that box: either way the body ends 41px down the page.
+    for (body, wrapper) in [
+        ("", ""),
+        ("display:flow-root;", "position:absolute;width:20px"),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;{body}padding-bottom:40px}}</style>\
+             <div style='{wrapper}'><div style='float:left;width:10px;height:80px'></div></div>\
+             <div style='height:1px'></div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), 1, "{body} {wrapper}");
+    }
+}

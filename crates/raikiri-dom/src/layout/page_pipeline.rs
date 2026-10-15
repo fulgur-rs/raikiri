@@ -433,18 +433,18 @@ fn body_border_box_end(
     let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
     // Without block-end edges or a `min-height` an auto-height body ends
     // with its content, which the flow already paginated.
+    let edges_end = edges_bottom > 0.0 || min_height > 0.0;
     if body.is_ifc_root() {
         let lines_end = body
             .ifc
             .as_ref()
             .and_then(|root| root.lines.as_ref())
-            .filter(|_| whole_box)
+            .filter(|_| whole_box || edges_end)
             .map_or(f32::NEG_INFINITY, |lines| {
                 (top + edges_top + lines.shifted_height() + edges_bottom).min(max_end)
             });
         return min_end.max(generated_end).max(lines_end);
     }
-    let edges_end = edges_bottom > 0.0 || min_height > 0.0;
     if !edges_end && !whole_box {
         return min_end;
     }
@@ -452,22 +452,26 @@ fn body_border_box_end(
     // between them collapsed, so the content ends at the block-end margin
     // edge of the last one; block-end edges or a `min-height` keep that
     // margin, negative or not, inside the body. A body that establishes a
-    // formatting context of its own also encloses its floats.
+    // formatting context of its own also encloses its floats, including
+    // those inside its in-flow blocks that are not formatting contexts
+    // themselves.
     // The children of a `display: contents` element take part as the body's
     // own, and a relative offset moves a box without moving the flow.
-    let encloses_floats = computed.display == DisplayValue::FlowRoot;
+    let encloses_floats = holds_floats(document, cascade, body_id);
     let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
     let mut last_flow_margin = 0.0;
-    // Popped in document order.
-    let mut children: Vec<(usize, f32)> = body
+    // Popped in document order, each with the offset of its parent's
+    // coordinates and whether it is nested in one of the body's blocks,
+    // where only floats count.
+    let mut children: Vec<(usize, f32, bool)> = body
         .children
         .iter()
         .rev()
-        .map(|&child| (child, 0.0))
+        .map(|&child| (child, 0.0, false))
         .collect();
-    while let Some((child, offset)) = children.pop() {
+    while let Some((child, offset, nested)) = children.pop() {
         let node = &document.nodes[child];
         let child_computed = &cascade.computed[child];
         if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
@@ -480,7 +484,7 @@ fn body_border_box_end(
                 node.children
                     .iter()
                     .rev()
-                    .map(|&grandchild| (grandchild, offset)),
+                    .map(|&grandchild| (grandchild, offset, nested)),
             );
             continue;
         }
@@ -497,6 +501,18 @@ fn body_border_box_end(
             if encloses_floats && end.is_finite() {
                 content_end = content_end.max(end);
             }
+            continue;
+        }
+        if encloses_floats && !holds_floats(document, cascade, child) {
+            let offset = offset + layout.location.y;
+            children.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&grandchild| (grandchild, offset, true)),
+            );
+        }
+        if nested {
             continue;
         }
         // Layout resolves the insets of relative and sticky boxes alike,
@@ -523,7 +539,7 @@ fn body_border_box_end(
         // Without block-end edges the last child's block-end margin
         // collapses through the end of the body, unless the body is a
         // formatting context of its own.
-        let end = if edges_end || holds_floats(document, cascade, body_id) {
+        let end = if edges_end || encloses_floats {
             end
         } else {
             end - last_flow_margin
