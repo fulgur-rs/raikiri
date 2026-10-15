@@ -1444,8 +1444,21 @@ fn extreme_stop_coordinates_still_paint() {
         "linear-gradient(to right in srgb, color(srgb 3e38 0 0), color(srgb -3e38 0 0))",
         "linear-gradient(to right in lch, color(srgb 1000 -1000 0), color(srgb -1000 1000 1000))",
         "linear-gradient(to right in oklch longer hue, color(srgb 100 0 -100), lab(50% 0 0))",
+        "linear-gradient(to right in lab, color(srgb 1e6 -1e6 0), color(srgb -1e6 1e6 1e6))",
+        "linear-gradient(to right in oklch longer hue, color(srgb 1e6 0 -1e6), black)",
     ] {
         let rgba = raster_layer(&format!("background-image: {css}"), 100, 1);
         assert_eq!(pixel(&rgba, 100, 50, 0)[3], 255, "{css}");
     }
+}
+
+#[test]
+fn large_out_of_gamut_stops_stay_clipped_until_they_enter_the_gamut() {
+    // Red falls from 2000 to 0 and stays clipped until the last 0.05%.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, color(srgb 2000 0 0), black)",
+        400,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 400, 398, 0)[0], 255);
 }

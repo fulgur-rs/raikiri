@@ -1847,10 +1847,10 @@ fn parse_optional_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, Pa
 }
 
 /// Largest sRGB channel magnitude a gradient stop keeps unclipped for
-/// interpolation. A channel this far out already clips to the edge of the
-/// gamut almost everywhere along a ramp, and larger ones, up to the limits
-/// of `f32`, overflow when their endpoints are subtracted.
-const MAX_UNBOUNDED_SRGB: f32 = 1024.0;
+/// interpolation. Converting such a channel between color spaces, and
+/// subtracting two of opposite sign, stays well within `f32`; larger ones,
+/// up to its limits, overflow.
+const MAX_UNBOUNDED_SRGB: f32 = 1.0e6;
 
 fn rgb_f32_to_css_color(rgb: [f32; 3], alpha: f32) -> CssColor {
     CssColor {

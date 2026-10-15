@@ -3903,7 +3903,7 @@ fn gradient_stops_too_far_outside_the_gamut_are_clipped_when_parsed() {
     for css in [
         "color(srgb 3e38 0 0)",
         "color(srgb -3e38 0 0)",
-        "color(srgb 2000 0 0)",
+        "color(srgb 2e6 0 0)",
     ] {
         let source = format!("linear-gradient({css}, red)");
         assert!(
@@ -3914,6 +3914,11 @@ fn gradient_stops_too_far_outside_the_gamut_are_clipped_when_parsed() {
             "{css}"
         );
     }
+    // Large but finite channels keep their coordinates.
+    assert!(matches!(
+        first_linear_stop_color("linear-gradient(color(srgb 2000 0 0), red)"),
+        GradientStopColor::Unbounded(_)
+    ));
     // Hues are kept in [0, 360).
     let GradientStopColor::Unbounded(color) =
         first_linear_stop_color("linear-gradient(lch(50% 100% 3690deg), red)")
