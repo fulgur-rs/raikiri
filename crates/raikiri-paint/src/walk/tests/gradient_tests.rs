@@ -1513,7 +1513,7 @@ fn large_out_of_gamut_stops_stay_clipped_until_they_enter_the_gamut() {
 
 /// Paint the `@page` border of a 100px square page into pixels.
 fn raster_page_border(page_css: &str) -> Vec<u8> {
-    let (_, cascade) = canvas_fixture(Some(page_css), None);
+    let (document, cascade) = canvas_fixture(Some(page_css), None);
     let mut page_box = PageBox::A4;
     page_box.width = 100.0;
     page_box.height = 100.0;
@@ -1522,6 +1522,7 @@ fn raster_page_border(page_css: &str) -> Vec<u8> {
     paint_page_border(
         &ImageBrushCache::default(),
         &mut scene,
+        &document,
         &cascade,
         page_box,
         None,
@@ -1572,4 +1573,14 @@ fn page_border_without_a_drawable_image_keeps_its_style() {
         "@page { size: 100px; margin: 10px; border: 10px solid blue; border-image: none }",
     );
     assert_eq!(pixel(&none, 100, 15, 50), BLUE);
+}
+
+#[test]
+fn page_border_image_inherits_current_color_from_the_root() {
+    // The page context without a `color` of its own takes the root's.
+    let rgba = raster_page_border(
+        "html { color: blue } @page { size: 100px; margin: 10px; border: 10px solid; \
+         border-image: linear-gradient(currentColor, currentColor) 1 }",
+    );
+    assert_eq!(pixel(&rgba, 100, 15, 50), BLUE);
 }

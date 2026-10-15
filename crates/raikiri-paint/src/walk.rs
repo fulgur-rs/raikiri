@@ -295,6 +295,7 @@ pub(crate) fn paint_root_element_border(
 pub(crate) fn paint_page_border(
     image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
+    document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
     pixel_source: Option<&dyn ImagePixelSource>,
@@ -309,9 +310,12 @@ pub(crate) fn paint_page_border(
     ) {
         return;
     }
+    // The page context inherits `color` from the root element.
     let current_color = match declarations.get(&PropertyKey::Color) {
         Some(PropertyValue::Color(color)) => *color,
-        _ => CssColor::BLACK,
+        _ => find_html(document)
+            .and_then(|node_id| cascade.computed.get(node_id))
+            .map_or(CssColor::BLACK, |computed| computed.color),
     };
     let ctx = ResolveContext::initial();
 
