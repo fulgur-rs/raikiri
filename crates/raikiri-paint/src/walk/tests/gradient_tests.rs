@@ -1356,6 +1356,14 @@ fn average_colors_follow_the_clipped_ramp() {
         1,
     );
     assert!(pixel(&short_period, 10, 5, 0)[0].abs_diff(191) <= 2);
+    // Stops sharing one position are spread evenly before averaging.
+    let no_period = raster_layer(
+        "background-image: repeating-linear-gradient(to right in srgb, \
+         color(srgb 2 0 0) 5px, black 5px)",
+        10,
+        1,
+    );
+    assert!(pixel(&no_period, 10, 5, 0)[0].abs_diff(191) <= 2);
 
     let cv = computed_for(
         "background-image: linear-gradient(to right in srgb, color(srgb 2 0 0), black); \
