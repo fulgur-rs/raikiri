@@ -250,6 +250,33 @@ pub fn pseudo_opacity_layer(cascade: &CascadeResult, id: usize) -> Option<f32> {
     .flatten()
 }
 
+/// The style of a `::before` or `::after` laid out in its paragraph, by its
+/// generated id, when it turns its boxes, images and text by its own
+/// `transform`. Only an atomic inline-level pseudo-element does: a
+/// non-replaced inline box is not transformable (CSS Transforms 1 §3).
+/// Floated and out-of-flow pseudo-elements are not in the paragraph.
+pub fn pseudo_transform(cascade: &CascadeResult, id: usize) -> Option<&ComputedValues> {
+    let (_, pseudo) = crate::generated_content::generated_origin(id)?;
+    if !matches!(pseudo, PseudoElem::Before | PseudoElem::After) {
+        return None;
+    }
+    let cv = crate::generated_content::computed_for_id(cascade, id)?;
+    (matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+        && matches!(cv.float, FloatValue::None)
+        && cv.display.is_atomic_inline_level()
+        && !cv.transform.is_empty())
+    .then_some(cv)
+}
+
+/// Whether the pseudo-element with generated id `id` composites its boxes,
+/// images and text as one group in its paragraph: one with an opacity below
+/// one (see [`pseudo_opacity_layer`]), or one with a transform of its own
+/// (see [`pseudo_transform`]), which is a stacking context too (CSS
+/// Transforms 1 §3).
+pub fn pseudo_forms_group(cascade: &CascadeResult, id: usize) -> bool {
+    pseudo_opacity_layer(cascade, id).is_some() || pseudo_transform(cascade, id).is_some()
+}
+
 /// The group opacity one fragment of a `::first-letter` laid out in its
 /// paragraph, by the generated id `id` of its box, paints its boxes and
 /// letters with. A fragment keeps the style it was given for the text it

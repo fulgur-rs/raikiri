@@ -152,6 +152,22 @@ fn assert_matches_paint(body: &str, css: &str) -> usize {
                     );
                     checked += 1;
                 }
+                // A generated box with the marked background, painted in
+                // one piece.
+                PaintEvent::GeneratedBox(piece)
+                    if piece.style.background_color.r == 255
+                        && piece.style.background_color.g == 0
+                        && piece.has_start_edge
+                        && piece.has_end_edge =>
+                {
+                    let expected = corners(transform, piece.rect);
+                    assert!(
+                        has_shape(&fills, &expected),
+                        "{body}: page {}: generated box {expected:?} is not filled; fills: {fills:?}",
+                        page.index()
+                    );
+                    checked += 1;
+                }
                 PaintEvent::PushClip(clip, ClipKind::Overflow) => {
                     let expected = corners(transform, clip.rect);
                     assert!(
@@ -208,6 +224,25 @@ fn transformed_boxes_match_paint() {
          <tbody><tr><td style=\"height: 250px\">body</td></tr></tbody></table>",
     ] {
         assert!(assert_matches_paint(body, "") > 0, "{body}");
+    }
+}
+
+#[test]
+fn transformed_pseudo_elements_match_paint() {
+    for (body, css) in [
+        (
+            "<p>text</p>",
+            "p::before { content: 'x'; display: inline-block; background: rgb(255, 0, 0); \
+             transform: rotate(30deg) }",
+        ),
+        (
+            "<div style=\"transform: translate(4px, 3px) rotate(-10deg)\"><p>text</p></div>",
+            "p::after { content: 'x'; display: inline-block; width: 20px; height: 15px; \
+             position: relative; left: 3px; opacity: 0.5; background: rgb(255, 0, 0); \
+             transform: scale(0.5, 1.5) skewX(10deg); transform-origin: 25% 0 }",
+        ),
+    ] {
+        assert!(assert_matches_paint(body, css) > 0, "{body} {css}");
     }
 }
 

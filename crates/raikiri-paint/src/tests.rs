@@ -3041,3 +3041,37 @@ fn paint_with_images_skips_the_content_of_a_singular_root() {
         RenderCommand::Fill(f) if matches!(f.brush, anyrender::types::Paint::Image(_))
     )));
 }
+
+/// An atomic `::before` with a singular transform paints none of its box
+/// and text (CSS Transforms 1 §5), and the rest of the paragraph stays.
+#[test]
+fn singularly_transformed_before_paints_nothing() {
+    use raikiri_html::{ParseOptions, parse};
+
+    let html = br#"<html><head><style>p::before{content:'X';display:inline-block;background:red;transform:scale(0)}</style></head><body><p>abc</p></body></html>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = parse(&html[..], &options).expect("HTML parse succeeds");
+    let cascade = raikiri_html::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let mut doc = uncascaded.dom;
+    layout_single_page(&mut doc, &cascade, PageBox::A4).expect("layout succeeds");
+    let mut scene = Scene::new();
+    paint_single_page(&mut scene, &doc, &cascade, PageBox::A4).expect("paint succeeds");
+
+    let glyphs: Vec<usize> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run.glyphs.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(glyphs, [3]);
+    assert!(!scene.commands.iter().any(|command| matches!(
+        command,
+        RenderCommand::Fill(fill) if fill.brush == anyrender::Paint::Solid(peniko::color::AlphaColor::from_rgb8(255, 0, 0))
+    )));
+}

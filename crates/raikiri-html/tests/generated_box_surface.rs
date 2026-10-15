@@ -883,3 +883,110 @@ fn first_letter_fragments_of_one_group_compose_once() {
         ]
     );
 }
+
+/// The events of `page` summarized like [`composited`], with the transforms
+/// around them.
+fn composited_with_transforms(page: &raikiri_html::Page<'_>) -> Vec<String> {
+    let runs = page.text_runs();
+    let mut order = Vec::new();
+    for event in page.paint_order_for_text_runs(&runs) {
+        match event {
+            PaintEvent::PushTransform(transform) => order.push(format!(
+                "turn {} {} {} {} {} {}",
+                transform.a, transform.b, transform.c, transform.d, transform.e, transform.f
+            )),
+            PaintEvent::PopTransform => order.push("unturn".into()),
+            PaintEvent::PushOpacity(alpha) => order.push(format!("push {alpha}")),
+            PaintEvent::PopOpacity => order.push("pop".into()),
+            PaintEvent::GeneratedBox(piece) => order.push(format!("box {:?}", piece.kind)),
+            PaintEvent::TextLine(line) | PaintEvent::GroupTextLine(line, _) => {
+                let group = match event {
+                    PaintEvent::GroupTextLine(_, group) => Some(group),
+                    _ => None,
+                };
+                let text: String = runs
+                    .iter()
+                    .filter(|run| run.line == line && page.text_run_opacity_group(run) == group)
+                    .map(|run| run.text)
+                    .collect();
+                order.push(format!("text {text}"));
+            }
+            _ => {}
+        }
+    }
+    order
+}
+
+/// An atomic `::before` with a transform turns its box and its text as one
+/// group about its own box (CSS Transforms 1 §6), after the rest of its
+/// paragraph, and its runs carry that transform.
+#[test]
+fn a_transformed_atomic_before_turns_its_box_and_text() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B';display:inline-block;background:red;transform:translateX(30px)}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(
+        composited_with_transforms(&page),
+        [
+            "text A",
+            "turn 1 0 0 1 30 0",
+            "box Before",
+            "text B",
+            "unturn"
+        ]
+    );
+    let runs = page.text_runs();
+    let generated = runs.iter().find(|run| run.text == "B").unwrap();
+    assert_eq!(
+        generated.transform,
+        Some(raikiri_html::PaintTransform::translate(30.0, 0.0))
+    );
+    let own = runs.iter().find(|run| run.text == "A").unwrap();
+    assert_eq!(own.transform, None);
+}
+
+/// The transform turns about the pseudo-element's transform origin, and it
+/// nests inside the group of its opacity.
+#[test]
+fn a_transformed_translucent_after_turns_about_its_origin() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::after{content:'C';display:inline-block;opacity:.5;\
+         transform:scale(2);transform-origin:0 0}",
+    );
+    let page = document.page(0).unwrap();
+    // The box is at x 20: scaling about its corner moves points by 20 to
+    // the left of it.
+    assert_eq!(
+        composited_with_transforms(&page),
+        [
+            "text A",
+            "turn 2 0 0 2 -20 0",
+            "push 0.5",
+            "box After",
+            "text C",
+            "pop",
+            "unturn"
+        ]
+    );
+}
+
+/// An inline `::before` is not transformable, and a singular transform
+/// paints nothing of the pseudo-element.
+#[test]
+fn inline_and_singular_pseudo_transforms() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B';background:red;transform:translateX(30px)}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(composited_with_transforms(&page), ["box Before", "text BA"]);
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{content:'B';display:inline-block;background:red;transform:scale(0)}",
+    );
+    let page = document.page(0).unwrap();
+    assert_eq!(composited_with_transforms(&page), ["text A"]);
+}

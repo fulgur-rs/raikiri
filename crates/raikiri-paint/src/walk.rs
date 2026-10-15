@@ -7102,7 +7102,13 @@ fn translation_only(cv: &ComputedValues) -> bool {
 // Commands already carry page coordinates. Conjugate the local matrix around
 // the border-box origin in that same coordinate space, then compose with the
 // ancestor context. This also keeps transforms out of layout geometry.
-fn element_transform(cv: &ComputedValues, x: f32, y: f32, width: f32, height: f32) -> Affine {
+pub(crate) fn element_transform(
+    cv: &ComputedValues,
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) -> Affine {
     // Border backgrounds and borders use this same snapped paint box.
     let paint_x = (x as f64).round();
     let paint_y = (y as f64).round();

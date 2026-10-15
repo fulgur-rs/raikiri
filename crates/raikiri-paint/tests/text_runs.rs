@@ -653,6 +653,19 @@ fn transformed_text_matches_paint() {
             "<p>a <span style=\"display: inline-block; transform: rotate(45deg)\">box</span> b</p>",
             "",
         ),
+        // An atomic pseudo-element turns its text about its own box, inside
+        // the transforms around it.
+        (
+            "<p id=\"p\">text</p>",
+            "#p::before { content: \"before\"; display: inline-block; \
+             transform: rotate(20deg) translate(3px, 2px) } \
+             #p::after { content: \"after\"; display: inline-block; position: relative; \
+             left: 4px; opacity: 0.5; transform: scale(1.5); transform-origin: 0 100% }",
+        ),
+        (
+            "<div style=\"transform: rotate(-7deg)\"><p id=\"p\">a <span>b</span></p></div>",
+            "#p span::after { content: \"x\"; display: inline-block; transform: skewX(15deg) }",
+        ),
         // A box broken across pages turns about its box on each page.
         (
             &format!(

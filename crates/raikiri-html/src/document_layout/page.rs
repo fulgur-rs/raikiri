@@ -622,7 +622,12 @@ impl<'a> Page<'a> {
     /// the [`PaintEvent::PopOpacity`]. A `::before`, `::after` or
     /// `::first-letter` with opacity below one is such a group too, holding
     /// its generated boxes, its images and its text, named by the
-    /// pseudo-element's own id instead of an element's.
+    /// pseudo-element's own id instead of an element's. So is an atomic
+    /// inline-level `::before` or `::after` with a `transform`, listed inside
+    /// a [`PaintEvent::PushTransform`] that turns it about the
+    /// pseudo-element's box. That transform encloses the group's
+    /// [`PaintEvent::PushOpacity`] when the pseudo-element is translucent
+    /// too; otherwise the group has no opacity events.
     /// A `::first-line` with opacity below one, on the paragraph or on an
     /// ancestor block whose first line it holds, makes a group of the
     /// paragraph's first line, listed
@@ -658,8 +663,8 @@ impl<'a> Page<'a> {
     /// with `display: contents` generate no box and form no group.
     ///
     /// The letters of a translucent `::first-letter` and the text of a
-    /// translucent `::before` or `::after` belong to that pseudo-element's
-    /// group. Its id is not a node of [`Self::dom`]; it is the group of the
+    /// translucent or transformed atomic `::before` or `::after` belong to
+    /// that pseudo-element's group. Its id is not a node of [`Self::dom`]; it is the group of the
     /// matching [`PaintEvent::GroupTextLine`] events. The fragments of a
     /// `::first-letter` keep the style they are given for the text they wrap,
     /// so where its letters come from text with different inherited values,
