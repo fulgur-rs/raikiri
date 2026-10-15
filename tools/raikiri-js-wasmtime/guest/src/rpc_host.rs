@@ -53,6 +53,13 @@ impl DocumentHost for RpcDocumentHost {
             _ => Err(HostError("geometry response kind".into())),
         }
     }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
+    fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
+        match self.call(HostOperation::Rendered(node))? {
+            HostValue::Flag(v) => Ok(v),
+            _ => Err(HostError("rendered response kind".into())),
+        }
+    }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         match self.call(HostOperation::Computed(node, property.into()))? {
             HostValue::Text(v) => Ok(v),

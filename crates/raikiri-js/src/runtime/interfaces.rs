@@ -414,9 +414,12 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &html_element,
         &style_element_members,
     )?;
-    // `SVGElement` carries only the focus members of the shared
-    // `HTMLOrSVGElement` mixin so far.
-    let svg_element_members = [&super::focus::HTML_ELEMENT_FOCUS_MEMBERS];
+    // `SVGElement` carries the event handler and focus members it shares
+    // with `HTMLElement` (`GlobalEventHandlers`, `HTMLOrSVGElement`).
+    let svg_element_members = [
+        &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
+        &super::focus::HTML_ELEMENT_FOCUS_MEMBERS,
+    ];
     let svg_element = derived(context, "SVGElement", &element, &svg_element_members)?;
     // SVG 2 `SVGStyleElement` also includes `LinkStyle`.
     let svg_style_result = derived(

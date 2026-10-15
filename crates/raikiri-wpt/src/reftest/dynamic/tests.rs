@@ -249,3 +249,32 @@ fn animation_style_sidecar_survives_adjacent_text_node_serialization() {
 
     assert_eq!(animation_style.as_deref(), Some("font-size: 20px;"));
 }
+
+#[test]
+fn focus_sidecar_survives_adjacent_text_node_serialization() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("focused.html");
+    std::fs::write(&path, "").unwrap();
+    let html = "<!DOCTYPE html><html><head></head><body><div id=target tabindex=0>WORD</div><div id=hidden tabindex=0 style='display:none'></div><script>const target = document.querySelector('#target'); target.parentNode.insertBefore(document.createTextNode('a'), target); target.parentNode.insertBefore(document.createTextNode('b'), target); document.querySelector('#hidden').focus(); const missed = document.activeElement === document.body; if (missed) target.focus();</script></body></html>";
+    let prepared = prepare(html, &path, "", crate::reftest::ReftestConfig::default())
+        .expect("focused document should prepare");
+    // `<head>` and `<body>` under `<html>`, then the first element in body.
+    assert_eq!(prepared.focused_path.as_deref(), Some(&[0, 1, 0][..]));
+
+    let parsed = raikiri_html::parse(
+        prepared.html.as_bytes(),
+        &raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let mut document = parsed.dom;
+    super::super::restore_focus(&mut document, prepared.focused_path.as_deref().unwrap());
+    let target = (0..document.node_count())
+        .find(|id| document.element_attribute(*id, "id") == Some("target"))
+        .expect("target element should survive serialization");
+
+    assert_eq!(document.focused_element(), Some(target));
+}

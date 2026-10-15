@@ -100,7 +100,11 @@ fn only_connected_focusable_areas_take_focus() {
             })()\
          && takes(make('span', {tabindex: '-1'})) && !takes(make('span', {tabindex: 'x'}))\
          && takes(make('span', {contenteditable: ''}))\
+         && takes(make('span', {contenteditable: 'TRUE'}))\
+         && takes(make('span', {contenteditable: 'plaintext-only'}))\
          && !takes(make('span', {contenteditable: 'false'}))\
+         && !takes(make('span', {contenteditable: 'inherit'}))\
+         && !takes(make('span', {contenteditable: ' true'}))\
          && takes(make('video', {controls: ''})) && !takes(make('video'))\
          && takes(first) && !takes(second) && !takes(make('summary'))\
          && !takes(make('button', {}, inert))\
@@ -117,7 +121,7 @@ fn only_connected_focusable_areas_take_focus() {
               return document.activeElement !== math\
                 && svg('svg') instanceof SVGElement && !takes(svg('svg'))\
                 && takes(svg('svg', {tabindex: '0'})) && takes(svg('a', {href: '#'}))\
-                && takes(svg('a', {'xlink:href': '#'})) && !takes(svg('a'))\
+                && !takes(svg('a', {'xlink:href': '#'})) && !takes(svg('a'))\
                 && !takes(svg('rect', {contenteditable: ''})); })()",
     );
 }
@@ -231,5 +235,86 @@ fn a_frame_takes_focus_from_an_element_that_stopped_being_focusable() {
     ok(
         &mut rt,
         "document.activeElement === document.body && log.join() === 'blur,focusout'",
+    );
+}
+
+#[test]
+fn elements_that_are_not_rendered_do_not_take_or_keep_focus() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let hidden = document.create_detached_element("div").unwrap();
+    document.append_child(body, hidden).unwrap();
+    host.unrendered.insert(hidden);
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var hidden = document.body.firstChild; hidden.tabIndex = 0;\
+         var inner = hidden.appendChild(document.createElement('button'));\
+         var shown = document.body.appendChild(document.createElement('button'));\
+         var log = []; shown.onblur = function () { log.push('blur'); };\
+         hidden.focus(); inner.focus(); shown.focus();\
+         document.activeElement === shown",
+    );
+    with_state(rt.context_mut(), |s| {
+        let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();
+        host.unrendered.insert(body);
+    })
+    .unwrap();
+    ok(&mut rt, "requestAnimationFrame(function () {}); true");
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && log.join() === 'blur'",
+    );
+}
+
+#[test]
+fn a_failed_rendering_check_fails_the_host() {
+    let (mut host, _, _, _) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let result = rt.evaluate(
+        "var b = document.body.appendChild(document.createElement('button')); b.focus();",
+    );
+    assert!(result.is_err());
+    let focused = with_state(rt.context_mut(), |s| s.host.document().focused_element()).unwrap();
+    assert_eq!(focused, None);
+}
+
+#[test]
+fn an_svg_link_with_a_namespaced_xlink_href_takes_focus() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let link = document.create_detached_element("a").unwrap();
+    document.set_element_namespace(link, Some("http://www.w3.org/2000/svg".into()));
+    document
+        .set_element_namespaced_attribute(
+            link,
+            "http://www.w3.org/1999/xlink",
+            Some("xlink".into()),
+            "href",
+            "#",
+        )
+        .unwrap();
+    document.append_child(body, link).unwrap();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var link = document.body.lastChild; link.focus(); document.activeElement === link",
+    );
+}
+
+#[test]
+fn svg_elements_run_focus_handlers_from_properties_and_attributes() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], ns = 'http://www.w3.org/2000/svg';\
+         var rect = document.body.appendChild(document.createElementNS(ns, 'rect'));\
+         rect.setAttribute('tabindex', '0');\
+         rect.onfocus = function () { log.push('focus'); };\
+         rect.setAttribute('onblur', 'log.push(\"blur\")');\
+         rect.focus(); rect.blur();\
+         log.join() === 'focus,blur' && typeof rect.onblur === 'function'",
     );
 }

@@ -151,7 +151,7 @@ pub(crate) struct PrintRenderResources<'a> {
     /// Script-created ranges identified by a child-index path, so reparsing
     /// serialized HTML can resolve them to its new arena indices.
     pub(crate) custom_highlight_ranges: Option<&'a [CustomHighlightPathRange]>,
-    /// Child-index path of the element script left focused, so reparsing
+    /// Element-child path of the element script left focused, so reparsing
     /// serialized HTML keeps `:focus` and `:focus-within` matching it.
     pub(crate) focused_path: Option<&'a [usize]>,
     /// Fail instead of falling back to the installed fonts when the inline
@@ -2916,16 +2916,24 @@ fn restore_animation_styles(
     Ok(())
 }
 
-/// Focus the element at `path`, a child-index path from the document root
-/// into the reparsed tree. A path that no longer reaches a node leaves the
-/// document unfocused.
+/// Focus the element at `path`, an element-child path from the document
+/// root into the reparsed tree. A path that no longer reaches an element
+/// leaves the document unfocused.
 fn restore_focus(document: &mut raikiri_dom::Document, path: &[usize]) {
     let mut node = document.root_index();
     for child_index in path {
-        match document
-            .get_node(node)
-            .and_then(|parent| parent.children.get(*child_index))
-        {
+        let child = document.get_node(node).and_then(|parent| {
+            parent
+                .children
+                .iter()
+                .filter(|&&child| {
+                    document
+                        .get_node(child)
+                        .is_some_and(|node| node.tag_name().is_some())
+                })
+                .nth(*child_index)
+        });
+        match child {
             Some(child) => node = *child,
             None => return,
         }

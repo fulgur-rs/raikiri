@@ -11,7 +11,10 @@ use raikiri_dom::{Document, NodeKind};
 use super::dispatch::fire_focus_event;
 use super::interfaces::{HTML_NS, Members, SVG_NS, wrap_optional};
 use super::node::{mark_dirty, write_attribute};
-use super::webidl::{this_document, this_element, with_state};
+use super::style::ensure_flushed;
+use super::webidl::{host_failure, this_document, this_element, with_state};
+
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 
 /// HTML "rules for parsing integers": optional ASCII whitespace, an optional
 /// sign, then ASCII digits; `None` when no digit follows or it overflows.
@@ -49,7 +52,20 @@ fn html_tag(document: &Document, index: usize) -> Option<&str> {
 fn is_svg_link(document: &Document, index: usize) -> bool {
     tag_in(document, index, SVG_NS) == Some("a")
         && (document.element_attribute(index, "href").is_some()
-            || document.element_attribute(index, "xlink:href").is_some())
+            || document
+                .element_attribute_ns(index, XLINK_NS, "href")
+                .is_some())
+}
+
+/// Whether a `contenteditable` value is in the true or plaintext-only
+/// state, making its element an editing host. Other values, invalid ones
+/// included, are the false or inherit state.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#attr-contenteditable>
+fn is_editing_host_value(value: &str) -> bool {
+    value.is_empty()
+        || value.eq_ignore_ascii_case("true")
+        || value.eq_ignore_ascii_case("plaintext-only")
 }
 
 /// Whether `index` is a `<summary>` that is the first `<summary>` child of
@@ -167,9 +183,7 @@ fn is_focusable(document: &Document, index: usize) -> bool {
         && (attr("tabindex").and_then(parse_integer).is_some()
             || is_svg_link(document, index)
             || focusable_by_default(document, index)
-            || !svg
-                && attr("contenteditable")
-                    .is_some_and(|value| !value.eq_ignore_ascii_case("false")))
+            || !svg && attr("contenteditable").is_some_and(is_editing_host_value))
 }
 
 /// HTML "focus update steps" for a move from the current focus to `next`
@@ -197,19 +211,32 @@ fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
     Ok(())
 }
 
+/// Whether the element `index` is being rendered, after bringing style and
+/// layout up to date. A focusable area must be.
+fn is_being_rendered(context: &mut Context, index: usize) -> JsResult<bool> {
+    ensure_flushed(context)?;
+    let rendered = with_state(context, |s| s.host.is_being_rendered(index))?;
+    rendered.map_err(|error| host_failure(context, error))
+}
+
+/// Whether `index` is a focusable area that is being rendered.
+fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
+    Ok(
+        with_state(context, |s| is_focusable(s.host.document(), index))?
+            && is_being_rendered(context, index)?,
+    )
+}
+
 /// The rendering update's focus fixup: clear focus, firing `blur` and
 /// `focusout`, when the focused element is no longer a focusable area.
 /// Leaving the document already cleared it without events.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering>
 pub(crate) fn fix_up_focus(context: &mut Context) -> JsResult<()> {
-    let lost = with_state(context, |s| {
-        let document = s.host.document();
-        document
-            .focused_element()
-            .is_some_and(|focused| !is_focusable(document, focused))
-    })?;
-    if lost {
+    let focused = with_state(context, |s| s.host.document().focused_element())?;
+    if let Some(focused) = focused
+        && !can_take_focus(context, focused)?
+    {
         move_focus(context, None)?;
     }
     Ok(())
@@ -219,7 +246,7 @@ pub(crate) fn fix_up_focus(context: &mut Context) -> JsResult<()> {
 /// area; otherwise do nothing. `preventScroll` has nothing to prevent.
 fn focus(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    if with_state(context, |s| is_focusable(s.host.document(), index))? {
+    if can_take_focus(context, index)? {
         move_focus(context, Some(index))?;
     }
     Ok(JsValue::undefined())

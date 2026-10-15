@@ -1158,6 +1158,17 @@ fn set_handler_callback(
     })
 }
 
+/// Whether element `index` has event handler content attributes: HTML
+/// and SVG elements both include `GlobalEventHandlers`.
+///
+/// Spec: <https://svgwg.org/svg2-draft/types.html#InterfaceSVGElement>
+fn has_event_handlers(doc: &raikiri_dom::Document, index: usize) -> bool {
+    matches!(
+        doc.element_namespace_uri(index),
+        Some(super::interfaces::HTML_NS | super::interfaces::SVG_NS)
+    )
+}
+
 /// Whether `index` is an HTML-namespace body or frameset element whose
 /// load and error handlers live on the window per HTML section 8.1.7.1.
 fn is_window_handler_element(doc: &raikiri_dom::Document, index: usize) -> bool {
@@ -1249,12 +1260,14 @@ pub(crate) fn sync_event_handler_for_attribute(
     name: &str,
     value: Option<&str>,
 ) -> JsResult<()> {
-    let (is_html, exists) = with_state(context, |s| {
+    let (has_handlers, exists) = with_state(context, |s| {
         let doc = s.host.document();
-        let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
-        (is_html, doc.get_node(index).is_some())
+        (
+            has_event_handlers(doc, index),
+            doc.get_node(index).is_some(),
+        )
     })?;
-    if !is_html || !exists {
+    if !has_handlers || !exists {
         return Ok(());
     }
     let lower = name.to_ascii_lowercase();
@@ -1274,7 +1287,7 @@ pub(crate) fn sync_event_handler_for_attribute(
     Ok(())
 }
 
-/// Collect every HTML element on-prefix content attribute as an element,
+/// Collect every HTML or SVG element on-prefix content attribute as an element,
 /// lowercased name, and value triple. Reads the document once so callers
 /// can compile without holding the state borrow.
 fn collect_content_handler_attributes(
@@ -1291,7 +1304,7 @@ fn collect_content_handler_attributes(
             if node.kind() != NodeKind::Element {
                 continue;
             }
-            if doc.element_namespace_uri(index) != Some(super::interfaces::HTML_NS) {
+            if !has_event_handlers(doc, index) {
                 continue;
             }
             for qualified in doc.element_attribute_names(index) {
@@ -1384,7 +1397,7 @@ fn sync_event_handlers_below(
             if node.kind() != NodeKind::Element {
                 return Vec::new();
             }
-            if doc.element_namespace_uri(index) != Some(super::interfaces::HTML_NS) {
+            if !has_event_handlers(doc, index) {
                 return Vec::new();
             }
             let mut attrs = Vec::new();

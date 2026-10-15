@@ -101,6 +101,14 @@ pub trait DocumentHost: 'static {
     /// Geometry of `node`'s principal box, or `None` when it has no box
     /// (for example `display: none`). Called after [`Self::flush`].
     fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError>;
+    /// Whether the element `node` is being rendered (HTML: it has a box).
+    /// Called after [`Self::flush`]. The default asks
+    /// [`Self::box_geometry`].
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/rendering.html#being-rendered>
+    fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
+        Ok(self.box_geometry(node)?.is_some())
+    }
     /// Serialized computed value of `property` on `node`, or `None` when the
     /// property is not supported. Called after [`Self::flush`].
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError>;

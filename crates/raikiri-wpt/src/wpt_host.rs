@@ -438,6 +438,28 @@ impl DocumentHost for WptDocumentHost {
         }))
     }
 
+    /// Being rendered here means no inclusive ancestor computes to
+    /// `display: none`. A box placed off every page still counts, which the
+    /// page-scene geometry behind [`Self::box_geometry`] cannot tell apart.
+    fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
+        let Some(styles) = self.computed_styles.as_ref() else {
+            // cov:ignore: the runtime flushes before asking.
+            return Err(HostError("rendering read before flush".into()));
+        };
+        let document = &self.setup.uncascaded.dom;
+        let mut current = Some(node);
+        while let Some(index) = current {
+            if styles
+                .get(index)
+                .is_some_and(|style| style.display == raikiri_style::DisplayValue::None)
+            {
+                return Ok(false);
+            }
+            current = document.parent_of(index);
+        }
+        Ok(true)
+    }
+
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         let Some(property) = raikiri_style::ComputedProperty::from_name(property) else {
             return Ok(None);

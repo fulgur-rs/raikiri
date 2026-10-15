@@ -20,7 +20,8 @@ pub(super) struct PreparedDynamic {
     pub animation_styles: Vec<AnimationStyleSidecar>,
     /// Script-created highlight ranges expressed against the serialized tree.
     pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
-    /// Child-index path of the element script left focused.
+    /// Element-child path of the element script left focused. Counting
+    /// only elements keeps it stable when serialization merges text nodes.
     pub focused_path: Option<Vec<usize>>,
 }
 
@@ -57,7 +58,26 @@ fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationSt
 }
 
 fn focused_path(document: &raikiri_dom::Document) -> Option<Vec<usize>> {
-    node_path(document, document.focused_element()?)
+    let root = document.root_index();
+    let mut path = Vec::new();
+    let mut current = document.focused_element()?;
+    while current != root {
+        let parent = document.parent_of(current)?;
+        let position = document
+            .get_node(parent)?
+            .children
+            .iter()
+            .filter(|&&child| {
+                document
+                    .get_node(child)
+                    .is_some_and(|node| node.tag_name().is_some())
+            })
+            .position(|&child| child == current)?;
+        path.push(position);
+        current = parent;
+    }
+    path.reverse();
+    Some(path)
 }
 
 fn node_path(document: &raikiri_dom::Document, node: usize) -> Option<Vec<usize>> {

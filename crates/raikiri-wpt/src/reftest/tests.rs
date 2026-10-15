@@ -487,7 +487,7 @@ fn focus_sidecar_is_restored_after_geometry_reparse() {
     let page_rules = "@page{size:300px 300px;margin:0} @page :first{size:300px 200px}";
     let document = |focus_rule: &str| {
         format!(
-            "<html><head><style>{page_rules} html,body{{margin:0}} div{{height:550px;background:red}} {focus_rule}</style></head><body><div tabindex=\"0\"></div></body></html>"
+            "<html><head><style>{page_rules} html,body{{margin:0}} div{{height:550px;background:red}} {focus_rule}</style></head><body>text<div tabindex=\"0\"></div></body></html>"
         )
     };
     let source = document("div:focus{background:green}");

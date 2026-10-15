@@ -83,7 +83,19 @@ impl Bridge {
                 .map_err(|e| e.to_string()),
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::LoadImage(url) => self.load_image(&url),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::Rendered(n) => self.is_being_rendered(n),
         }
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+    fn is_being_rendered(&mut self, node: usize) -> Result<HostValue, String> {
+        if node >= self.host.document().node_count() {
+            return Err("rendered node bounds".into());
+        }
+        self.host
+            .is_being_rendered(node)
+            .map(HostValue::Flag)
+            .map_err(|e| e.to_string())
     }
     // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
     fn load_image(&mut self, url: &str) -> Result<HostValue, String> {
