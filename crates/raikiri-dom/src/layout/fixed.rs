@@ -86,7 +86,11 @@ fn containable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
 }
 
 /// Whether `id` is the containing block of its fixed-position descendants.
-fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+pub fn establishes_fixed_containing_block(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
     // spec: https://drafts.fxtf.org/filter-effects-1/#FilterProperty
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout

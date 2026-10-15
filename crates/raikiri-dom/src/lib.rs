@@ -111,7 +111,9 @@ pub use layout::{RootBox, root_box};
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 #[doc(hidden)]
-pub use layout::{is_transformable, placed_without_relative_offset};
+pub use layout::{
+    establishes_fixed_containing_block, is_transformable, placed_without_relative_offset,
+};
 pub use margin_boxes::{
     DeferredGlyph, DeferredSlot, DeferredValue, MarginBox, MarginBoxBackgroundImage,
     MarginBoxBorder, MarginBoxNamedValues, MarginBoxPageContext, MarginBoxRunning, MarginBoxText,

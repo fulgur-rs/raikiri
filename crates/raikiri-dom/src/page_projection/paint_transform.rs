@@ -325,8 +325,7 @@ impl MotionCache {
         }
         for &node in path.iter().rev() {
             contains |= cascade.computed.get(node).is_some_and(|cv| {
-                (crate::layout::is_transformable(document, node, cv) && !cv.transform.is_empty())
-                    || !cv.filter.is_empty()
+                crate::layout::establishes_fixed_containing_block(document, node, cv)
             });
             self.fixed_container.insert(node, contains);
         }

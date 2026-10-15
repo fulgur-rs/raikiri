@@ -795,14 +795,12 @@ pub(super) fn paint_shift(
         };
         if fixed {
             // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
-            // A transformed or filtered ancestor makes the fixed box local
-            // to it, while the projection repeats it on every page. Any other
-            // ancestor neither moves the fixed box in layout, which places it
-            // against the page area, nor in the painter, which places it from
-            // its insets.
-            if (crate::layout::is_transformable(document, id, cv) && !cv.transform.is_empty())
-                || !cv.filter.is_empty()
-            {
+            // An ancestor that is the containing block of fixed boxes makes
+            // the fixed box local to it, while the projection repeats it on
+            // every page. Any other ancestor neither moves the fixed box in
+            // layout, which places it against the page area, nor in the
+            // painter, which places it from its insets.
+            if crate::layout::establishes_fixed_containing_block(document, id, cv) {
                 return Err(TextRunOmission::FixedPlacement);
             }
             continue;
