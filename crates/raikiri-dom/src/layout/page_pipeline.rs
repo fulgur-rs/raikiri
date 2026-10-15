@@ -4591,9 +4591,16 @@ pub fn layout_pages_with_page_geometry_and_control(
     // paragraph, and its texts that start on a moved line, take each shift
     // once they are reached; its texts before that line stay where they are.
     let mut pending_line_splits: Vec<(usize, usize, f32)> = Vec::new();
-    // How far each table row moved to a later page; the table boxes around
-    // the moved rows follow them once every row is placed.
-    let mut moved_table_rows = HashMap::<usize, f32>::new();
+    // Where each table row sits in its parent before pagination; the table
+    // boxes around the rows that moved follow them once every row is placed.
+    let table_row_origins: Vec<(usize, f32)> = candidates
+        .iter()
+        .filter(|candidate| candidate.is_table_row)
+        .map(|candidate| {
+            let row = candidate.node_id;
+            (row, document.nodes[row].unrounded_layout.location.y)
+        })
+        .collect();
     // A float moved to a later page carries its own content with it, but
     // the in-flow content after it in the source sits beside or above it,
     // so the shift ends where the float's subtree does. A later float may
@@ -5737,9 +5744,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
                     follow_moved_ifc_block(document, node_id, node_delta);
-                    if candidate.is_table_row && node_delta > 0.0 {
-                        *moved_table_rows.entry(node_id).or_default() += node_delta;
-                    }
                     // A nested avoiding block that moves to the next page
                     // lengthens the ancestors whose content box holds it, so
                     // their continuation (and any `overflow` clip) reaches the
@@ -6172,6 +6176,15 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
     }
 
+    // A row moves within its parent with the page it opens, and with the
+    // rows before it in the same table that opened one.
+    let moved_table_rows: HashMap<usize, f32> = table_row_origins
+        .into_iter()
+        .filter_map(|(row, origin)| {
+            let delta = document.nodes[row].unrounded_layout.location.y - origin;
+            (delta > 0.001).then_some((row, delta))
+        })
+        .collect();
     super::table::row_moves::follow_moved_rows(document, &moved_table_rows, |table| {
         table_headers
             .headers

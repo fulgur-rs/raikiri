@@ -352,6 +352,22 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
             ));
         }
         if cells.is_empty() {
+            // A row without cells still takes its own used height, which the
+            // parts around it enclose.
+            if document.nodes[part].display == DisplayValue::TableRow {
+                let bottom = part_origin.1 + document.nodes[part].unrounded_layout.size.height;
+                table_bottom = table_bottom.max(bottom);
+                let owners: Vec<usize> = document
+                    .inclusive_ancestors(part)
+                    .skip(1)
+                    .take_while(|&id| id != table)
+                    .collect();
+                for id in owners {
+                    let top = absolute_position(document, id).1;
+                    let height = &mut document.nodes[id].unrounded_layout.size.height;
+                    *height = height.max(bottom - top);
+                }
+            }
             continue;
         }
         // The traversal above reaches rows only through explicit
