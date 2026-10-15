@@ -8,7 +8,7 @@ use std::rc::Rc;
 
 use raikiri_dom::Document;
 
-use super::host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+use super::host::{BoxGeometry, DocumentHost, DomRect, HostError, ImagePixels, PositionKind};
 
 pub(crate) struct StubHost {
     pub document: Document,
@@ -36,6 +36,12 @@ pub(crate) struct StubHost {
     pub scripts: HashMap<String, String>,
     /// The URLs [`DocumentHost::load_image`] loads; any other URL fails.
     pub images: HashSet<String>,
+    /// [`DocumentHost::image_pixels`]' pixels, by URL; a URL with no entry
+    /// has none.
+    pub image_pixels: HashMap<String, ImagePixels>,
+    /// The default object size each [`DocumentHost::image_pixels`] call
+    /// passed, in call order.
+    pub image_pixel_default_sizes: Vec<(f64, f64)>,
 }
 
 impl StubHost {
@@ -70,6 +76,8 @@ impl StubHost {
                 document_url: None,
                 scripts: HashMap::new(),
                 images: HashSet::new(),
+                image_pixels: HashMap::new(),
+                image_pixel_default_sizes: Vec::new(),
             },
             html,
             head,
@@ -185,6 +193,10 @@ impl DocumentHost for StubHost {
         } else {
             Err(HostError(format!("no image registered for {url}")))
         }
+    }
+    fn image_pixels(&mut self, url: &str, default_size: (f64, f64)) -> Option<ImagePixels> {
+        self.image_pixel_default_sizes.push(default_size);
+        self.image_pixels.get(url).cloned()
     }
     fn as_any(&self) -> &dyn Any {
         self

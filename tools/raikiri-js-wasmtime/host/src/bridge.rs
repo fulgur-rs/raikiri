@@ -89,6 +89,12 @@ impl Bridge {
             HostOperation::Viewport => self.viewport_size(),
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::Rendered(n) => self.is_being_rendered(n),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::ImagePixels(url, default_size) => Ok(HostValue::Image(
+                self.host
+                    .image_pixels(&url, default_size)
+                    .map(|pixels| ImageDto::from(&pixels)),
+            )),
         }
     }
     // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.

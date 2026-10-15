@@ -386,10 +386,26 @@ fn push_generated(
     };
     let orthogonal = cv.cssom_writing_mode.is_vertical()
         != cascade.computed[box_owner].cssom_writing_mode.is_vertical();
-    let block = (!inline_level)
+    let block = match (!inline_level)
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
-        .map(|end| GeneratedBlock::new(id.0, end, cv, orthogonal));
+    {
+        Some(end) => {
+            let (mut options, indent) = style::line_options(cv, element, fonts)?;
+            let rtl = cv.direction == Direction::Rtl;
+            if rtl != images.rtl {
+                super::generated_blocks::align_physically(&mut options, rtl);
+            }
+            Some(GeneratedBlock::new(
+                id.0,
+                end,
+                cv,
+                (options, indent),
+                orthogonal,
+            ))
+        }
+        None => None,
+    };
     if text.is_empty() && !has_images && block.is_none() {
         if atomic {
             first_letter.stop();

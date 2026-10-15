@@ -1145,6 +1145,53 @@ fn load_image_decodes_data_and_checkout_images_and_rejects_the_rest() {
 }
 
 #[test]
+fn image_pixels_decodes_the_images_load_image_accepts() {
+    let (_dir, root) = script_root();
+    std::fs::write(root.join("css/page/broken.png"), "not a png").unwrap();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let pixels = host
+        .image_pixels(GREEN_PNG, (300.0, 150.0))
+        .expect("decoded pixels");
+    assert_eq!(pixels.size, (1.0, 1.0));
+    assert_eq!((pixels.image.width, pixels.image.height), (1, 1));
+    assert_eq!(
+        pixels.image.rgba,
+        [0, 128, 0, 255],
+        "the pixel is CSS green"
+    );
+    assert!(
+        host.image_pixels(&file_url(&root.join("css/page/broken.png")), (300.0, 150.0))
+            .is_none()
+    );
+    // An SVG with only an aspect ratio is contain-fitted into the default
+    // size the canvas passes, not into the 300x150 default object size.
+    std::fs::write(
+        root.join("css/page/ratio.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><rect width="20" height="10" fill="lime"/></svg>"#,
+    )
+    .unwrap();
+    let pixels = host
+        .image_pixels(&file_url(&root.join("css/page/ratio.svg")), (100.0, 100.0))
+        .expect("rasterized svg");
+    assert_eq!(pixels.size, (100.0, 50.0));
+    assert_eq!((pixels.image.width, pixels.image.height), (100, 50));
+    // A fractional concrete size keeps its exact value; only the raster
+    // rounds up to whole pixels.
+    std::fs::write(
+        root.join("css/page/ratio3.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 10"><rect width="30" height="10" fill="lime"/></svg>"#,
+    )
+    .unwrap();
+    let pixels = host
+        .image_pixels(&file_url(&root.join("css/page/ratio3.svg")), (100.0, 100.0))
+        .expect("rasterized svg");
+    assert_eq!(pixels.size, (100.0, 100.0 / 3.0));
+    assert_eq!((pixels.image.width, pixels.image.height), (100, 34));
+    let mut host = host_at(&root.join("css/page"), &root.join("no-such-root"));
+    assert!(host.image_pixels(GREEN_PNG, (300.0, 150.0)).is_none());
+}
+
+#[test]
 fn flush_resolves_against_a_base_element_added_after_the_parse() {
     let (_dir, root) = script_root();
     let page = raikiri::Url::from_file_path(root.join("css/page/t.html")).unwrap();

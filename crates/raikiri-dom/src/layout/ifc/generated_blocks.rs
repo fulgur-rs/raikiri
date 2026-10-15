@@ -14,8 +14,9 @@ use raikiri_style::property::{
 };
 use raikiri_style::{
     ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
-    ComputedValues,
+    ComputedTextIndent, ComputedValues,
 };
+use shodo::style::LineOptions;
 use taffy::{BlockContext, CollapsibleMarginSet};
 
 /// Marks the end token of a block-level `::before` or `::after`: the id of
@@ -28,6 +29,39 @@ const END_TOKEN_BIT: u64 = 1 << 60;
 /// into the arena to encode.
 pub(crate) fn end_token_id(start: u64) -> Option<u64> {
     (start & END_TOKEN_BIT == 0).then_some(start | END_TOKEN_BIT)
+}
+
+/// Resolve the `start` and `end` alignments of `options` against a box whose
+/// direction is right-to-left when `rtl`, for lines that keep the opposite
+/// direction of the paragraph around it. The paragraph's direction still
+/// orders the lines' content and sets the side their indent is on.
+pub(crate) fn align_physically(options: &mut LineOptions, rtl: bool) {
+    use shodo::style::{TextAlign, TextAlignLast};
+    let (start, end) = if rtl {
+        (TextAlign::Right, TextAlign::Left)
+    } else {
+        (TextAlign::Left, TextAlign::Right)
+    };
+    let (last_start, last_end) = if rtl {
+        (TextAlignLast::Right, TextAlignLast::Left)
+    } else {
+        (TextAlignLast::Left, TextAlignLast::Right)
+    };
+    // An `auto` last line of justified text is aligned to the start
+    // (CSS Text 3 §6.2).
+    if options.text_align_last == TextAlignLast::Auto && options.text_align == TextAlign::Justify {
+        options.text_align_last = last_start;
+    }
+    match options.text_align {
+        TextAlign::Start => options.text_align = start,
+        TextAlign::End => options.text_align = end,
+        _ => {}
+    }
+    match options.text_align_last {
+        TextAlignLast::Start => options.text_align_last = last_start,
+        TextAlignLast::End => options.text_align_last = last_end,
+        _ => {}
+    }
 }
 
 /// The box geometry of one block-level `::before` or `::after`, as computed:
@@ -53,13 +87,23 @@ pub(crate) struct GeneratedBlock {
     /// Whether the box establishes an independent formatting context, which
     /// keeps margins from collapsing through it.
     formatting_root: bool,
+    /// The box's own line options and raw `text-indent`, from its computed
+    /// style.
+    own_lines: (LineOptions, ComputedTextIndent),
 }
 
 impl GeneratedBlock {
     /// The geometry of the generated box styled by `cv`, marked by the tokens
-    /// `start` and `end`; `orthogonal` says its writing mode is orthogonal to
-    /// its element's.
-    pub(crate) fn new(start: u64, end: u64, cv: &ComputedValues, orthogonal: bool) -> Self {
+    /// `start` and `end`, whose lines are set by the line options and raw
+    /// `text-indent` in `lines`; `orthogonal` says its writing mode is
+    /// orthogonal to its box parent's.
+    pub(crate) fn new(
+        start: u64,
+        end: u64,
+        cv: &ComputedValues,
+        lines: (LineOptions, ComputedTextIndent),
+        orthogonal: bool,
+    ) -> Self {
         Self {
             start,
             end,
@@ -87,6 +131,7 @@ impl GeneratedBlock {
                 _ => taffy::Clear::None,
             },
             formatting_root: orthogonal || establishes_formatting_context(cv),
+            own_lines: lines,
         }
     }
 
@@ -429,9 +474,24 @@ pub(crate) struct OpenBlock {
     pub(crate) inline: (f32, f32),
     /// The paragraph is right-to-left: the left side is the end side.
     rtl: bool,
+    /// The box's own line options, with its `text-indent` resolved against
+    /// its content width.
+    own_options: LineOptions,
+    /// The box goes on from an earlier fragmentainer, where its first line
+    /// was laid out.
+    continues: bool,
 }
 
 impl OpenBlock {
+    /// The box after `lines` lines of the paragraph: once one of them is the
+    /// box's, its first line is laid out.
+    pub(crate) fn after(self, lines: usize) -> Self {
+        Self {
+            continues: self.continues || lines > self.lines_before,
+            ..self
+        }
+    }
+
     /// The box as it goes on at the top of the next fragmentainer, after a
     /// fragmentainer that ends at `end`: the box fills it to there.
     pub(crate) fn continued(self, end: f32) -> Self {
@@ -444,6 +504,20 @@ impl OpenBlock {
             consumed: self.consumed + (end - top).max(0.0),
             ..self
         }
+    }
+
+    /// The line options of the box's next line, after `lines` lines of the
+    /// paragraph, and whether it is the box's first line.
+    pub(crate) fn line_options(&self, lines: usize) -> (LineOptions, bool) {
+        let mut options = self.own_options;
+        let first = lines == self.lines_before && !self.continues;
+        // The engine starts the line after the box's start token as one after
+        // a forced break, not as a first line: its `text-indent` is the
+        // box's first-line indent only when it applies to such lines too.
+        if first {
+            options.text_indent.each_line = true;
+        }
+        (options, first)
     }
 
     /// The line space `space` of a line of the box, set in by the box's
@@ -532,6 +606,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         }
         None => *flow.pending = top_set,
     }
+    let inline = block.inline_insets(flow.width, flow.rtl, &edges);
     OpenBlock {
         lines_before: flow.lines.len(),
         content_top,
@@ -540,8 +615,17 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         starts_paragraph: flow.at_start,
         has_clearance: clearance.is_some(),
         consumed: 0.0,
-        inline: block.inline_insets(flow.width, flow.rtl, &edges),
+        inline,
         rtl: flow.rtl,
+        own_options: {
+            let (mut options, indent) = block.own_lines;
+            // A percentage `text-indent` refers to the box's own width
+            // (CSS Text 3 §8.1).
+            let content = (flow.width - inline.0 - inline.1).max(0.0);
+            options.text_indent.length = super::flow::resolve_indent(indent, content);
+            options
+        },
+        continues: false,
     }
 }
 

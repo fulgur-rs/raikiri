@@ -61,6 +61,25 @@ struct RunBoxesOutcome {
     atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
     /// The generated block still open where the segment stopped.
     open_block: Option<generated_blocks::OpenBlock>,
+    /// Where the next segment's first line starts.
+    next_start: LineStart,
+}
+
+/// What the engine knows of the line a break token starts, for the indent it
+/// gives that line (CSS Text 3 §8.1).
+#[derive(Clone, Copy, Debug)]
+struct LineStart {
+    /// The paragraph's first line.
+    first: bool,
+    /// A line after a forced break or a block.
+    after_forced: bool,
+}
+
+impl LineStart {
+    const PARAGRAPH: Self = Self {
+        first: true,
+        after_forced: false,
+    };
 }
 
 struct FragmentedFloatOutput<'a> {
@@ -190,6 +209,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     };
 
     let mut token = root.line_paragraph.start_token();
+    let mut next_start = LineStart::PARAGRAPH;
     let mut all_lines = Vec::new();
     let mut block_line_starts = Vec::new();
     let mut shifts = super::root::LineShifts::default();
@@ -283,7 +303,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             Some(column),
             has_next,
             carried_block,
+            next_start,
         );
+        next_start = outcome.next_start;
         carried_block = outcome
             .open_block
             .map(|open| open.continued(fragmentainer_height.unwrap_or_default()));
@@ -470,6 +492,7 @@ fn run_boxes(
         None,
         false,
         None,
+        LineStart::PARAGRAPH,
     );
     if perform {
         truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
@@ -501,6 +524,7 @@ fn run_boxes_segment(
     fragmentainer: Option<usize>,
     has_next_fragmentainer: bool,
     mut open_block: Option<generated_blocks::OpenBlock>,
+    start: LineStart,
 ) -> RunBoxesOutcome {
     let FlowGeometry {
         width,
@@ -554,6 +578,9 @@ fn run_boxes_segment(
     // The boxes of the generated blocks closed so far.
     let mut placed_blocks = Vec::new();
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
+    // The next line follows a forced break or a block: the engine treats it
+    // as such for `text-indent: each-line`.
+    let mut after_forced = start.after_forced;
 
     loop {
         calls += 1;
@@ -574,6 +601,13 @@ fn run_boxes_segment(
         };
         let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
         let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
+        // The lines of a generated block take its own alignment and indent.
+        // Its content is part of the paragraph's text, so its lines keep the
+        // paragraph's base direction.
+        let (line_options, first_line) = open_block.as_ref().map_or_else(
+            || (options, start.first && lines.is_empty()),
+            |open| open.line_options(lines.len()),
+        );
         let mut constraint = LineConstraint::from_physical_insets(
             width,
             space.inline_start,
@@ -598,7 +632,7 @@ fn run_boxes_segment(
             root.line_paragraph.next_line(
                 &mut state.layout_cx,
                 token,
-                &options,
+                &line_options,
                 &constraint,
                 &atomics.sizes,
             )
@@ -676,6 +710,7 @@ fn run_boxes_segment(
                     // Empty inline closures around a block do not separate
                     // its adjoining margins or add a line box (CSS 2.2 9.4.2).
                     token = line.break_token();
+                    after_forced = false;
                     continue;
                 }
                 // The line may span more of an outer float than the height it
@@ -705,8 +740,13 @@ fn run_boxes_segment(
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
                 // Its own floats keep the place they have at this offset.
-                let indent = if lines.is_empty() {
-                    options.text_indent.length
+                // The engine indents the first line, and with `each-line` a
+                // line after a forced break or a block; a hanging indent is on
+                // every other line instead (CSS Text 3 §8.1).
+                let text_indent = line_options.text_indent;
+                let indented = first_line || (text_indent.each_line && after_forced);
+                let indent = if indented != text_indent.hanging {
+                    line_options.text_indent.length
                 } else {
                     0.0
                 };
@@ -767,6 +807,7 @@ fn run_boxes_segment(
                 y = line_y + height;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
+                after_forced = line.break_reason() == shodo::BreakReason::Forced;
                 // A cleared `<br>` ends this line: the next one starts below
                 // the floats it clears (CSS 2.1 9.5.2).
                 if line.break_reason() == shodo::BreakReason::Forced
@@ -853,6 +894,7 @@ fn run_boxes_segment(
                         }
                     }
                     token = token_after;
+                    after_forced = true;
                     withdrawn.clear();
                     assumed_height = 0.0;
                     retries = 0;
@@ -888,6 +930,7 @@ fn run_boxes_segment(
                     pending = CollapsibleMarginSet::ZERO;
                 }
                 token = token_after;
+                after_forced = true;
                 // The call count is kept: every block is one of the root's
                 // boxes, so blocks in a row stay within the bound, and a
                 // result that does not move past its block ends the loop.
@@ -950,6 +993,12 @@ fn run_boxes_segment(
     } else {
         y
     };
+    // A box still open goes on with the lines it has laid out here.
+    let open_block = open_block.map(|open| open.after(lines.len()));
+    let next_start = LineStart {
+        first: start.first && lines.is_empty(),
+        after_forced,
+    };
     RunBoxesOutcome {
         lines: IfcLines {
             width,
@@ -968,6 +1017,7 @@ fn run_boxes_segment(
         continuation,
         atomic_outputs: atomics.outputs,
         open_block,
+        next_start,
     }
 }
 

@@ -1,5 +1,5 @@
 use super::super::test_host::StubHost;
-use super::super::{DomRuntime, RuntimeError};
+use super::super::{DomRuntime, ImagePixels, RuntimeError};
 
 fn rt() -> DomRuntime {
     let (host, ..) = StubHost::page();
@@ -509,4 +509,231 @@ fn deeply_nested_fill_style_is_rejected() {
     );
     assert!(super::mentions_current_color(&"(".repeat(20000)));
     assert!(!super::mentions_current_color(&"(".repeat(100)));
+}
+
+const PAGE: &str = "https://example.test/page.html";
+const IMAGE: &str = "https://example.test/two-by-two.png";
+const RED: [u8; 4] = [255, 0, 0, 255];
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+const HALF_WHITE: [u8; 4] = [255, 255, 255, 128];
+const CLEAR: [u8; 4] = [0; 4];
+
+/// A runtime over a page holding one 4×4 canvas (`c`, with context `ctx`)
+/// and one `<img>` (`img`) whose `src` is [`IMAGE`]: a 2×2 image of red,
+/// green, blue and half-transparent white pixels, already loaded. Returns
+/// the canvas's arena index.
+fn draw_rt(keeps_pixels: bool) -> (DomRuntime, usize) {
+    draw_rt_sized(keeps_pixels.then_some((2.0, 2.0)))
+}
+
+/// [`draw_rt`], with the image's 2×2 raster standing for an image of
+/// `size` CSS px, or with no pixels kept when `size` is `None`.
+fn draw_rt_sized(size: Option<(f64, f64)>) -> (DomRuntime, usize) {
+    let (mut host, _, _, body) = StubHost::page();
+    host.document_url = Some(PAGE.to_owned());
+    host.images.insert(IMAGE.to_owned());
+    if let Some(size) = size {
+        host.image_pixels.insert(
+            IMAGE.to_owned(),
+            ImagePixels {
+                size,
+                image: std::sync::Arc::new(raikiri_traits::DecodedImage {
+                    width: 2,
+                    height: 2,
+                    rgba: [RED, GREEN, BLUE, HALF_WHITE].concat(),
+                }),
+            },
+        );
+    }
+    let canvas = host.document.create_detached_element("canvas").unwrap();
+    host.document.append_child(body, canvas).unwrap();
+    host.document.mark_in_document_flags();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(&format!(
+        "var c = document.getElementsByTagName('canvas')[0]; c.width = 4; c.height = 4; \
+         var ctx = c.getContext('2d'); \
+         var img = new Image(); img.src = '{IMAGE}';"
+    ))
+    .unwrap();
+    rt.run_until_idle().unwrap();
+    (rt, canvas)
+}
+
+/// The canvas pixels as rows of RGBA quadruples.
+fn pixels(rt: DomRuntime, canvas: usize) -> Vec<Vec<[u8; 4]>> {
+    let host = rt.into_host();
+    let bitmap = host.document().canvas_bitmap(canvas).expect("bitmap");
+    bitmap
+        .rgba
+        .chunks_exact(4 * bitmap.width as usize)
+        .map(|row| {
+            row.chunks_exact(4)
+                .map(|pixel| pixel.try_into().unwrap())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn draw_image_copies_an_image_at_its_natural_size() {
+    let (mut rt, canvas) = draw_rt(true);
+    rt.evaluate("ctx.drawImage(img, 1, 1);").unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [CLEAR; 4]);
+    assert_eq!(rows[1], [CLEAR, RED, GREEN, CLEAR]);
+    // Translucent white over transparent black keeps its color.
+    assert_eq!(rows[2], [CLEAR, BLUE, HALF_WHITE, CLEAR]);
+    assert_eq!(rows[3], [CLEAR; 4]);
+}
+
+#[test]
+fn draw_image_scales_to_the_destination_rectangle() {
+    let (mut rt, canvas) = draw_rt(true);
+    // A negative extent flips the rectangle's origin, not the image.
+    rt.evaluate("ctx.drawImage(img, 4, 0, -4, 2);").unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [RED, RED, GREEN, GREEN]);
+    assert_eq!(rows[1], [BLUE, BLUE, HALF_WHITE, HALF_WHITE]);
+    assert_eq!(rows[2], [CLEAR; 4]);
+}
+
+#[test]
+fn draw_image_paints_the_pixels_whose_centers_it_covers() {
+    let (mut rt, canvas) = draw_rt(true);
+    // Pixel 0's center (0.5) lies left of 0.7, so the draw starts at pixel
+    // 1; pixel 2's center (2.5) is past the right edge at 2.4.
+    rt.evaluate("ctx.drawImage(img, 0, 0, 1, 1, 0.7, 0, 1.7, 1);")
+        .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [CLEAR, RED, CLEAR, CLEAR]);
+}
+
+#[test]
+fn draw_image_clips_a_source_rectangle_outside_the_image() {
+    let (mut rt, canvas) = draw_rt(true);
+    // Only the source column 1 of row 0 lies in the image, so only the
+    // first destination pixel is painted.
+    rt.evaluate(
+        "ctx.drawImage(img, 1, 0, 4, 1, 0, 0, 4, 1); ctx.drawImage(img, 0, 0, 0, 1, 0, 1, 4, 1);",
+    )
+    .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [GREEN, CLEAR, CLEAR, CLEAR]);
+    assert_eq!(rows[1], [CLEAR; 4]);
+}
+
+#[test]
+fn draw_image_composites_translucent_pixels_over_the_canvas() {
+    let (mut rt, canvas) = draw_rt(true);
+    rt.evaluate(
+        "ctx.fillStyle = 'blue'; ctx.fillRect(0, 0, 4, 4); \
+         ctx.drawImage(img, 1, 1, 1, 1, 0, 0, 1, 1); \
+         ctx.drawImage(img, 1, 1, 1, 1, 9, 9, 1, 1);",
+    )
+    .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0][0], [128, 128, 255, 255]);
+    assert_eq!(rows[0][1], BLUE);
+}
+
+#[test]
+fn draw_image_copies_another_canvas() {
+    let (mut rt, canvas) = draw_rt(true);
+    rt.evaluate(
+        "var other = document.createElement('canvas'); other.width = 1; other.height = 1; \
+         var octx = other.getContext('2d'); octx.fillStyle = 'red'; octx.fillRect(0, 0, 1, 1); \
+         ctx.drawImage(other, 3, 3); \
+         ctx.drawImage(document.createElement('canvas'), 0, 0); \
+         ctx.drawImage(c, 2, 2, 2, 2, 0, 0, 2, 2);",
+    )
+    .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[1], [CLEAR, RED, CLEAR, CLEAR]);
+    assert_eq!(rows[3], [CLEAR, CLEAR, CLEAR, RED]);
+}
+
+#[test]
+fn draw_image_checks_its_arguments() {
+    let (mut rt, _) = draw_rt(true);
+    for call in [
+        "ctx.drawImage(img, 0, 0, 1)",
+        "ctx.drawImage(img, 0, 0, 1, 1, 0, 0, 1)",
+        "ctx.drawImage(img)",
+        "ctx.drawImage(document.body, 0, 0)",
+        "ctx.drawImage({}, 0, 0)",
+        "ctx.drawImage.call({}, img, 0, 0)",
+    ] {
+        ok(
+            &mut rt,
+            &format!("try {{ {call}; false }} catch (e) {{ e instanceof TypeError }}"),
+        );
+    }
+    ok(
+        &mut rt,
+        "var empty = document.createElement('canvas'); empty.width = 0; \
+         try { ctx.drawImage(empty, 0, 0); false } catch (e) { e.name === 'InvalidStateError' }",
+    );
+    // Non-finite numbers return before the image is checked, and arguments
+    // past the ninth are ignored.
+    ok(
+        &mut rt,
+        "var broken = new Image(); ctx.drawImage(broken, NaN, 0); \
+         ctx.drawImage(img, 0, 0, 1, 1, 0, 0, 1, 1, 'ignored') === undefined",
+    );
+}
+
+#[test]
+fn draw_image_skips_unavailable_images_and_rejects_broken_ones() {
+    let (mut rt, canvas) = draw_rt(true);
+    rt.evaluate(&format!(
+        "var pending = new Image(); pending.src = '{IMAGE}'; ctx.drawImage(pending, 0, 0); \
+         ctx.drawImage(new Image(), 0, 0); \
+         var broken = new Image(); broken.src = 'missing.png';"
+    ))
+    .unwrap();
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "try { ctx.drawImage(broken, 0, 0); false } catch (e) { e.name === 'InvalidStateError' }",
+    );
+    // A new request makes a loaded image unavailable until it finishes.
+    rt.evaluate("img.src = 'missing.png'; ctx.drawImage(img, 0, 0);")
+        .unwrap();
+    assert_eq!(pixels(rt, canvas), vec![vec![CLEAR; 4]; 4]);
+}
+
+#[test]
+fn draw_image_sizes_images_against_the_canvas_bitmap() {
+    let (mut rt, _) = draw_rt(true);
+    rt.evaluate("c.width = 7; ctx.drawImage(img, 0, 0);")
+        .unwrap();
+    let host = rt.try_into_host::<StubHost>().ok().unwrap();
+    assert_eq!(host.image_pixel_default_sizes, [(7.0, 4.0)]);
+}
+
+#[test]
+fn draw_image_uses_the_concrete_size_rather_than_the_raster_extent() {
+    // The 2×2 raster covers an image 1.5 CSS px tall.
+    let (mut rt, canvas) = draw_rt_sized(Some((2.0, 1.5)));
+    rt.evaluate("ctx.drawImage(img, 0, 0);").unwrap();
+    let rows = pixels(rt, canvas);
+    // Row 1's center (1.5) is past the image's bottom edge.
+    assert_eq!(rows[0], [RED, GREEN, CLEAR, CLEAR]);
+    assert_eq!(rows[1], [CLEAR; 4]);
+
+    // Source coordinates are CSS px too: y 1.125 is raster row 1.
+    let (mut rt, canvas) = draw_rt_sized(Some((2.0, 1.5)));
+    rt.evaluate("ctx.drawImage(img, 0, 0.75, 2, 0.75, 0, 0, 2, 1);")
+        .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [BLUE, HALF_WHITE, CLEAR, CLEAR]);
+    assert_eq!(rows[1], [CLEAR; 4]);
+}
+
+#[test]
+fn draw_image_draws_nothing_when_the_host_keeps_no_pixels() {
+    let (mut rt, canvas) = draw_rt(false);
+    rt.evaluate("ctx.drawImage(img, 0, 0);").unwrap();
+    assert_eq!(pixels(rt, canvas), vec![vec![CLEAR; 4]; 4]);
 }
