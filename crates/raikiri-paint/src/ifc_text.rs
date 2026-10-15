@@ -330,6 +330,22 @@ pub(crate) fn hold_ifc_lines<'a>(
             // `position` holds too.
             let line_shift = shifts.get(line_index).copied().unwrap_or(0.0);
             let group = paint.piece_group(piece);
+            // An atomic `::before` or `::after` turns about its own box, as
+            // painted here (CSS Transforms 1 §6).
+            if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
+                let outer = piece.border_box;
+                paint.turn(
+                    group,
+                    piece,
+                    crate::walk::element_transform(
+                        turned,
+                        position.x + dx + outer.x,
+                        position.y + position.shift_y + dy - line_shift + outer.y,
+                        outer.width,
+                        outer.height,
+                    ),
+                );
+            }
             crate::walk::paint_inline_box(
                 image_cache,
                 paint.box_target(group, piece),

@@ -182,6 +182,30 @@ pub(super) fn is_singular(cv: &ComputedValues) -> bool {
     !function_matrix(cv, 1.0, 1.0).is_invertible()
 }
 
+/// The transform of a box painted at `rect`, which carries `cv`'s
+/// `transform`: the matrix turned about the box's transform origin, in the
+/// coordinates `rect` is in. Like [`element_transform`], it works on the box
+/// snapped to whole pixels, as the painter does.
+pub(super) fn box_transform(
+    cv: &ComputedValues,
+    rect: raikiri_traits::PaintRect,
+) -> PaintTransform {
+    // spec: https://www.w3.org/TR/css-transforms-1/#transform-rendering
+    let paint_x = f64::from(rect.x).round();
+    let paint_y = f64::from(rect.y).round();
+    let width = f64::from(rect.x + rect.width).round() - paint_x;
+    let height = f64::from(rect.y + rect.height).round() - paint_y;
+    let origin = (
+        paint_x + position_offset(cv.transform_origin.horizontal, width),
+        paint_y + position_offset(cv.transform_origin.vertical, height),
+    );
+    let matrix = Affine::translate(origin.0, origin.1)
+        .then(function_matrix(cv, width, height))
+        .then(Affine::translate(-origin.0, -origin.1));
+    let [a, b, c, d, e, f] = matrix.0.map(|value| value as f32);
+    PaintTransform::new(a, b, c, d, e, f)
+}
+
 /// The transform the painter applies to element `id` and its subtree on
 /// `page`, in the coordinates the element's parent paints its content in.
 ///
