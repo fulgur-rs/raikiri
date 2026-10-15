@@ -880,7 +880,7 @@ fn pipeline_resolves_a_named_first_page_from_the_first_page_cascade() {
 }
 
 #[test]
-fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_order() {
+fn pipeline_preloads_element_backgrounds_once_then_page_images_in_page_order() {
     #[derive(Default)]
     struct RecordingSvgProvider {
         requests: Mutex<Vec<String>>,
@@ -914,6 +914,7 @@ fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_orde
         "<style>body { margin: 0 }\
              @page { size: 200px 100px; margin: 10px;\
                      background-image: url('https://images.test/page.svg');\
+                     border-image-source: url('https://images.test/border.svg');\
                      @top-left { color: red } }\
              @page :right { @top-left { background-image: url('https://images.test/top.svg') } }\
              @page :left { background-image: url('https://images.test/left.svg') }\
@@ -946,7 +947,13 @@ fn pipeline_preloads_element_backgrounds_once_then_page_backgrounds_in_page_orde
         .clone();
     assert_eq!(
         requests,
-        ["/element.svg", "/page.svg", "/top.svg", "/left.svg"]
+        [
+            "/element.svg",
+            "/page.svg",
+            "/border.svg",
+            "/top.svg",
+            "/left.svg"
+        ]
     );
 }
 

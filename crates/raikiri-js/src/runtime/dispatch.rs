@@ -93,6 +93,33 @@ pub(crate) struct EventData {
     colno: u32,
     /// `ErrorEvent.error`.
     error: JsValue,
+    /// `UIEvent.view`: whether it is the window rather than null.
+    #[unsafe_ignore_trace]
+    view_is_window: bool,
+    /// `FocusEvent.relatedTarget`, in the `target` key convention.
+    #[unsafe_ignore_trace]
+    related_target: Option<Option<usize>>,
+    /// The most derived interface the event implements, which the
+    /// subclass getters check `this` against.
+    #[unsafe_ignore_trace]
+    interface: EventInterface,
+}
+
+/// The `Event` subclasses with members of their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EventInterface {
+    Event,
+    CustomEvent,
+    ErrorEvent,
+    UiEvent,
+    FocusEvent,
+}
+
+impl EventInterface {
+    /// Whether an event of this interface implements `other`.
+    fn implements(self, other: Self) -> bool {
+        self == other || (self == Self::FocusEvent && other == Self::UiEvent)
+    }
 }
 
 fn new_event_data(
@@ -125,6 +152,9 @@ fn new_event_data(
         lineno: 0,
         colno: 0,
         error: JsValue::undefined(),
+        view_is_window: false,
+        related_target: None,
+        interface: EventInterface::Event,
     }
 }
 
@@ -156,7 +186,7 @@ fn target_key_to_js(context: &mut Context, key: Option<Option<usize>>) -> JsResu
 /// The `EventInit`/`CustomEventInit`/`ErrorEventInit` dictionary argument:
 /// `undefined`/absent/`null` all mean "every member at its default"; any
 /// other non-object value cannot convert to a dictionary type.
-fn dict_arg(args: &[JsValue], i: usize) -> JsResult<Option<JsObject>> {
+pub(crate) fn dict_arg(args: &[JsValue], i: usize) -> JsResult<Option<JsObject>> {
     match args.get(i) {
         None => Ok(None),
         Some(v) if v.is_undefined() || v.is_null() => Ok(None),
@@ -257,6 +287,7 @@ pub(crate) fn custom_event_constructor(
     let time_stamp = now(context)?;
     let mut data = new_event_data(kind, bubbles, cancelable, composed, false, time_stamp);
     data.detail = detail;
+    data.interface = EventInterface::CustomEvent;
     let proto = protos(context).custom_event.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
@@ -289,7 +320,81 @@ pub(crate) fn error_event_constructor(
     data.lineno = lineno;
     data.colno = colno;
     data.error = error;
+    data.interface = EventInterface::ErrorEvent;
     let proto = protos(context).error_event.clone();
+    Ok(JsObject::from_proto_and_data(Some(proto), data).into())
+}
+
+/// The `view` member of a `UIEventInit` dictionary: null or the window.
+fn dict_view(context: &mut Context, dict: &JsObject) -> JsResult<bool> {
+    let view = dict_any(context, dict, "view")?;
+    if view.is_null_or_undefined() {
+        return Ok(false);
+    }
+    if view.as_object().as_ref() == Some(&context.global_object()) {
+        return Ok(true);
+    }
+    Err(type_error("UIEventInit.view is not a Window"))
+}
+
+/// `new UIEvent(type, eventInitDict = {})` (UI Events §3.1).
+pub(crate) fn ui_event_constructor(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let data = ui_event_data(this, args, context)?;
+    let proto = protos(context).ui_event.clone();
+    Ok(JsObject::from_proto_and_data(Some(proto), data).into())
+}
+
+fn ui_event_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<EventData> {
+    require_new(this)?;
+    let kind = required_dom_string(args, 0, context)?;
+    let dict = dict_arg(args, 1)?;
+    let (bubbles, cancelable, composed) = event_init(context, dict.as_ref())?;
+    let (view_is_window, detail) = match &dict {
+        Some(d) => {
+            // WebIDL converts dictionary members in lexicographic order.
+            let detail = dict_any(context, d, "detail")?;
+            let detail = if detail.is_undefined() {
+                0
+            } else {
+                detail.to_i32(context)?
+            };
+            (dict_view(context, d)?, detail)
+        }
+        None => (false, 0),
+    };
+    let time_stamp = now(context)?;
+    let mut data = new_event_data(kind, bubbles, cancelable, composed, false, time_stamp);
+    data.view_is_window = view_is_window;
+    data.detail = JsValue::from(detail);
+    data.interface = EventInterface::UiEvent;
+    Ok(data)
+}
+
+/// `new FocusEvent(type, eventInitDict = {})` (UI Events §3.3).
+pub(crate) fn focus_event_constructor(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let mut data = ui_event_data(this, args, context)?;
+    if let Some(dict) = dict_arg(args, 1)? {
+        let related = dict_any(context, &dict, "relatedTarget")?;
+        data.related_target = if related.is_null_or_undefined() {
+            None
+        } else if related.as_object().as_ref() == Some(&context.global_object()) {
+            Some(None)
+        } else {
+            Some(Some(super::webidl::node_index(&related).ok_or_else(
+                || type_error("FocusEventInit.relatedTarget is not an EventTarget"),
+            )?))
+        };
+    }
+    data.interface = EventInterface::FocusEvent;
+    let proto = protos(context).focus_event.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
 
@@ -337,28 +442,48 @@ fn get_time_stamp(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<Js
     with_event(this, |d| JsValue::from(d.time_stamp))
 }
 
-fn get_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| d.detail.clone())
+fn get_custom_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    with_event_of(this, EventInterface::CustomEvent, |d| d.detail.clone())
+}
+
+fn get_ui_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    with_event_of(this, EventInterface::UiEvent, |d| d.detail.clone())
+}
+
+fn get_view(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let is_window = with_event_of(this, EventInterface::UiEvent, |d| d.view_is_window)?;
+    Ok(if is_window {
+        context.global_object().into()
+    } else {
+        JsValue::null()
+    })
+}
+
+fn get_related_target(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let key = with_event_of(this, EventInterface::FocusEvent, |d| d.related_target)?;
+    target_key_to_js(context, key)
 }
 
 fn get_message(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| js_str(&d.message))
+    with_event_of(this, EventInterface::ErrorEvent, |d| js_str(&d.message))
 }
 
 fn get_filename(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| js_str(&d.filename))
+    with_event_of(this, EventInterface::ErrorEvent, |d| js_str(&d.filename))
 }
 
 fn get_lineno(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| JsValue::from(d.lineno))
+    with_event_of(this, EventInterface::ErrorEvent, |d| {
+        JsValue::from(d.lineno)
+    })
 }
 
 fn get_colno(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| JsValue::from(d.colno))
+    with_event_of(this, EventInterface::ErrorEvent, |d| JsValue::from(d.colno))
 }
 
 fn get_error(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| d.error.clone())
+    with_event_of(this, EventInterface::ErrorEvent, |d| d.error.clone())
 }
 
 fn stop_propagation(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
@@ -400,6 +525,19 @@ fn with_event<T>(this: &JsValue, f: impl FnOnce(&EventData) -> T) -> JsResult<T>
         .ok_or_else(|| type_error("'this' is not an Event"))
 }
 
+/// [`with_event`] for a getter declared on `interface`: an event that does
+/// not implement it is a `TypeError`, per WebIDL's attribute getter steps.
+fn with_event_of<T>(
+    this: &JsValue,
+    interface: EventInterface,
+    f: impl FnOnce(&EventData) -> T,
+) -> JsResult<T> {
+    this.as_object()
+        .and_then(|o| event_data(&o, |d| d.interface.implements(interface).then(|| f(d))))
+        .flatten()
+        .ok_or_else(|| type_error("'this' does not implement the getter's interface"))
+}
+
 pub(crate) const EVENT_MEMBERS: Members = Members {
     getters: &[
         ("type", event_type),
@@ -423,7 +561,19 @@ pub(crate) const EVENT_MEMBERS: Members = Members {
 };
 
 pub(crate) const CUSTOM_EVENT_MEMBERS: Members = Members {
-    getters: &[("detail", get_detail)],
+    getters: &[("detail", get_custom_detail)],
+    accessors: &[],
+    methods: &[],
+};
+
+pub(crate) const UI_EVENT_MEMBERS: Members = Members {
+    getters: &[("view", get_view), ("detail", get_ui_detail)],
+    accessors: &[],
+    methods: &[],
+};
+
+pub(crate) const FOCUS_EVENT_MEMBERS: Members = Members {
+    getters: &[("relatedTarget", get_related_target)],
     accessors: &[],
     methods: &[],
 };
@@ -907,6 +1057,29 @@ pub(crate) fn fire_event(
     dispatch(context, &event, target)
 }
 
+/// Fire a trusted, composed, non-cancelable `FocusEvent` named `kind` at
+/// the element `target`, with the window as its `view` and `related` as
+/// its `relatedTarget`.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#fire-a-focus-event>
+pub(crate) fn fire_focus_event(
+    context: &mut Context,
+    target: usize,
+    kind: &str,
+    bubbles: bool,
+    related: Option<usize>,
+) -> JsResult<bool> {
+    let time_stamp = now(context)?;
+    let mut data = new_event_data(kind.to_owned(), bubbles, false, true, true, time_stamp);
+    data.view_is_window = true;
+    data.detail = JsValue::from(0);
+    data.related_target = related.map(Some);
+    data.interface = EventInterface::FocusEvent;
+    let proto = protos(context).focus_event.clone();
+    let event = JsObject::from_proto_and_data(Some(proto), data);
+    dispatch(context, &event, Some(target))
+}
+
 /// HTML "report an exception": dispatch a trusted, cancelable `ErrorEvent`
 /// at `window`. If nothing cancels it (no `onerror` handler returned a
 /// truthy value), `error`'s message is recorded in
@@ -956,6 +1129,7 @@ pub(crate) fn report_exception(
     data.message = message.clone();
     data.filename = source.unwrap_or_default().to_owned();
     data.error = error_value;
+    data.interface = EventInterface::ErrorEvent;
     let proto = protos(context).error_event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);
     let outcome = dispatch(context, &event, None);
@@ -1032,6 +1206,18 @@ fn set_handler_callback(
     })
 }
 
+/// Whether element `index` has event handler content attributes: HTML,
+/// SVG and MathML elements all include `GlobalEventHandlers`.
+///
+/// Spec: <https://svgwg.org/svg2-draft/types.html#InterfaceSVGElement>,
+/// <https://w3c.github.io/mathml-core/#dom-mathmlelement>
+fn has_event_handlers(doc: &raikiri_dom::Document, index: usize) -> bool {
+    matches!(
+        doc.element_namespace_uri(index),
+        Some(super::interfaces::HTML_NS | super::interfaces::SVG_NS | super::interfaces::MATHML_NS)
+    )
+}
+
 /// Whether `index` is an HTML-namespace body or frameset element whose
 /// load and error handlers live on the window per HTML section 8.1.7.1.
 fn is_window_handler_element(doc: &raikiri_dom::Document, index: usize) -> bool {
@@ -1046,14 +1232,16 @@ fn is_window_handler_element(doc: &raikiri_dom::Document, index: usize) -> bool 
 }
 
 /// Storage key for the handler slot of `kind` on element `index`: the
-/// window for load and error on body and frameset, otherwise the element
+/// window for load, error, focus and blur on body and frameset (HTML's
+/// window-reflecting body element event handlers), otherwise the element
 /// itself.
 fn resolve_handler_key_for_index(
     doc: &raikiri_dom::Document,
     index: usize,
     kind: &str,
 ) -> Option<usize> {
-    if matches!(kind, "load" | "error") && is_window_handler_element(doc, index) {
+    if matches!(kind, "load" | "error" | "focus" | "blur") && is_window_handler_element(doc, index)
+    {
         None
     } else {
         Some(index)
@@ -1109,8 +1297,9 @@ fn compile_content_handler(
 
 /// Sync one event handler content attribute change for element `index`.
 /// `name` is the attribute name as passed to set or remove (any case for
-/// HTML elements). `value` is the new value, or `None` for removal.
-/// Names without an on prefix and non-HTML elements are no-ops.
+/// HTML elements, exact case for SVG and MathML ones). `value` is the new
+/// value, or `None` for removal. Names without an on prefix and elements
+/// outside those namespaces are no-ops.
 ///
 /// The compiled function replaces the same handler slot the matching on
 /// IDL accessor manages, so content and IDL writes overwrite each other in
@@ -1121,16 +1310,25 @@ pub(crate) fn sync_event_handler_for_attribute(
     name: &str,
     value: Option<&str>,
 ) -> JsResult<()> {
-    let (is_html, exists) = with_state(context, |s| {
+    let (has_handlers, exists, is_html) = with_state(context, |s| {
         let doc = s.host.document();
-        let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
-        (is_html, doc.get_node(index).is_some())
+        (
+            has_event_handlers(doc, index),
+            doc.get_node(index).is_some(),
+            doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS),
+        )
     })?;
-    if !is_html || !exists {
+    if !has_handlers || !exists {
         return Ok(());
     }
-    let lower = name.to_ascii_lowercase();
-    let Some(kind) = lower.strip_prefix("on").filter(|rest| !rest.is_empty()) else {
+    // Only HTML elements fold attribute names to lowercase; a foreign
+    // element's `onFocus` is a different attribute from `onfocus`.
+    let name = if is_html {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_owned()
+    };
+    let Some(kind) = name.strip_prefix("on").filter(|rest| !rest.is_empty()) else {
         return Ok(());
     };
     let storage = with_state(context, |s| {
@@ -1146,8 +1344,8 @@ pub(crate) fn sync_event_handler_for_attribute(
     Ok(())
 }
 
-/// Collect every HTML element on-prefix content attribute as an element,
-/// lowercased name, and value triple. Reads the document once so callers
+/// Collect every HTML, SVG or MathML element on-prefix content attribute as
+/// an element, name (lowercased for HTML elements), and value triple. Reads the document once so callers
 /// can compile without holding the state borrow.
 fn collect_content_handler_attributes(
     context: &mut Context,
@@ -1163,14 +1361,19 @@ fn collect_content_handler_attributes(
             if node.kind() != NodeKind::Element {
                 continue;
             }
-            if doc.element_namespace_uri(index) != Some(super::interfaces::HTML_NS) {
+            if !has_event_handlers(doc, index) {
                 continue;
             }
+            let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
             for qualified in doc.element_attribute_names(index) {
                 if qualified == "style" {
                     continue;
                 }
-                let lower = qualified.to_ascii_lowercase();
+                let lower = if is_html {
+                    qualified.to_ascii_lowercase()
+                } else {
+                    qualified.to_owned()
+                };
                 if lower.strip_prefix("on").is_none_or(|rest| rest.is_empty()) {
                     continue;
                 }
@@ -1256,15 +1459,21 @@ fn sync_event_handlers_below(
             if node.kind() != NodeKind::Element {
                 return Vec::new();
             }
-            if doc.element_namespace_uri(index) != Some(super::interfaces::HTML_NS) {
+            if !has_event_handlers(doc, index) {
                 return Vec::new();
             }
+            // Only HTML elements fold attribute names to lowercase.
+            let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
             let mut attrs = Vec::new();
             for qualified in doc.element_attribute_names(index) {
                 if qualified == "style" {
                     continue;
                 }
-                let lower = qualified.to_ascii_lowercase();
+                let lower = if is_html {
+                    qualified.to_ascii_lowercase()
+                } else {
+                    qualified.to_owned()
+                };
                 if lower
                     .strip_prefix("on")
                     .is_some_and(|rest| !rest.is_empty())
@@ -1304,6 +1513,8 @@ event_handler_pair!(on_error, set_on_error, "error");
 event_handler_pair!(on_click, set_on_click, "click");
 event_handler_pair!(on_input, set_on_input, "input");
 event_handler_pair!(on_change, set_on_change, "change");
+event_handler_pair!(on_focus, set_on_focus, "focus");
+event_handler_pair!(on_blur, set_on_blur, "blur");
 
 /// `onload`/`onerror`/`onclick`/`oninput`/`onchange` on `HTMLElement`.
 /// `window` gets the same five, installed by [`install_window_handlers`]
@@ -1317,6 +1528,8 @@ pub(crate) const HTML_ELEMENT_HANDLER_MEMBERS: Members = Members {
         ("onclick", on_click, set_on_click),
         ("oninput", on_input, set_on_input),
         ("onchange", on_change, set_on_change),
+        ("onfocus", on_focus, set_on_focus),
+        ("onblur", on_blur, set_on_blur),
     ],
     methods: &[],
 };

@@ -1317,15 +1317,10 @@ impl Document {
     /// The preorder index of each node in the subtree of `root`.
     #[doc(hidden)]
     pub fn preorder_positions(&self, root: usize) -> HashMap<usize, usize> {
-        let mut positions = HashMap::new();
-        let mut pending = vec![root];
-        while let Some(id) = pending.pop() {
-            positions.insert(id, positions.len());
-            if let Some(node) = self.get_node(id) {
-                pending.extend(node.children.iter().rev().copied());
-            }
-        }
-        positions
+        self.preorder(root)
+            .enumerate()
+            .map(|(position, id)| (id, position))
+            .collect()
     }
 
     /// The `groups` of paragraph `root` that list anything on the lines of
@@ -1870,6 +1865,8 @@ fn push_paragraph<'a>(
                         clip_owner: NodeId::new(clip as u64),
                         has_start_edge: piece.has_start_edge,
                         has_end_edge: piece.has_end_edge,
+                        has_block_start_edge: piece.has_block_start_edge,
+                        has_block_end_edge: piece.has_block_end_edge,
                     }));
                 }
                 // The `::before` images wait for the first-letter slot that
@@ -2048,6 +2045,8 @@ fn push_pseudo_group<'a>(
             clip_owner: NodeId::new(clip as u64),
             has_start_edge: piece.has_start_edge,
             has_end_edge: piece.has_end_edge,
+            has_block_start_edge: piece.has_block_start_edge,
+            has_block_end_edge: piece.has_block_end_edge,
         }));
     };
     let letters = first_letter_pieces(document, items, root);

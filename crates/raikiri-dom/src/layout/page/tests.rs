@@ -78,8 +78,11 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     let detached = doc.append_element(None, "div", Style::default(), None::<&str>);
 
     doc.mark_in_document_flags();
-    // `is_display_none` reads the bridged classification rather than the
-    // cascade result, so make the defensive predicate explicit here.
+    // Pagination reads the bridged classification rather than the cascade
+    // result, so classify these unbridged boxes as the bridge would.
+    for id in [html, body, named, inline, absolute, normal, empty, detached] {
+        doc.nodes[id].formatting_context = FormattingContext::Block;
+    }
     doc.nodes[hidden].formatting_context = FormattingContext::None;
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
@@ -923,6 +926,44 @@ fn first_page_name_reads_a_static_position_absolute_box() {
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
 
     assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("narrow"));
+}
+
+#[test]
+fn first_page_name_keeps_the_source_order_of_an_absolute_block_before_layout() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    // Before the first layout no box is classified yet, so the block's
+    // children keep their source order: its `flex-direction` does not apply.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let absolute = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:absolute;flex-direction:column-reverse"),
+    );
+    for page in ["first", "second"] {
+        doc.append_element(
+            Some(absolute),
+            "p",
+            Style::default(),
+            Some(format!("display:block;page:{page}").as_str()),
+        );
+    }
+    // A grid gives layout a resolved order to record.
+    let grid = doc.append_element(Some(body), "div", Style::default(), Some("display:grid"));
+    doc.append_element(Some(grid), "div", Style::default(), Some("height:10px"));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("first"));
+
+    // Once laid out, the box is classified as a block and keeps that order.
+    layout_pages(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("pagination Ok");
+    assert!(document_has_resolved_pagination_order(&doc, &cascade));
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("first"));
 }
 
 #[test]

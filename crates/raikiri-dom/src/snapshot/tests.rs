@@ -22,12 +22,14 @@ fn rich_document() -> Document {
         url::Url::parse("https://example.test/dir/page.html").unwrap(),
     ));
     doc.add_stylesheet("p {color:blue}", StylesheetKind::Author);
-    let img = doc.append_element(None, "img", Default::default(), None::<&str>);
+    let img = doc.append_element(Some(0), "img", Default::default(), None::<&str>);
     doc.select_image_url(
         img,
         "a.png",
         url::Url::parse("https://example.test/a.png").unwrap(),
     );
+    doc.set_focused_element(Some(img));
+    doc.set_focus_visible(false);
     doc
 }
 
@@ -44,6 +46,9 @@ fn roundtrip_all_logical_kinds() {
 
 #[test]
 fn reject_a_selected_image_url_that_does_not_parse_or_names_no_node() {
+    let mut bad = rich_document().logical_snapshot();
+    bad.focused = Some(usize::MAX);
+    assert!(Document::from_logical_snapshot(bad, 100).is_err());
     for selected in [
         (1, "a.png".to_owned(), "not a url".to_owned()),
         (
@@ -202,6 +207,8 @@ fn reject_empty_arena_and_root_out_of_bounds() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(empty.validate(100).is_err());
@@ -238,6 +245,8 @@ fn reject_non_document_root_kind() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     // Root points at Text, so validation must fail even though node 0 is a Document.
@@ -305,6 +314,8 @@ fn reject_leaf_children() {
             quirks: 0,
             base_url: None,
             selected_image_urls: Vec::new(),
+            focused: None,
+            focus_hidden: false,
             stylesheets: Vec::new(),
         };
         assert!(bad.validate(100).is_err());
@@ -341,6 +352,8 @@ fn reject_template_link_variants() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(bad_tag.validate(100).is_err());
@@ -386,6 +399,8 @@ fn reject_template_link_variants() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(bad_target.validate(100).is_err());
@@ -412,6 +427,8 @@ fn reject_edge_to_root_and_self_loop() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(back_to_root.validate(100).is_err());
@@ -432,6 +449,8 @@ fn reject_edge_to_root_and_self_loop() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(self_loop.validate(100).is_err());
@@ -460,6 +479,8 @@ fn reject_detached_cycle_without_repeated_parent() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(cycle.validate(100).is_err());
@@ -497,6 +518,8 @@ fn snapshot_error_displays_its_reason() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     let err = bad.validate(100).unwrap_err();
@@ -513,4 +536,17 @@ fn logical_snapshot_maps_all_quirks_modes() {
     assert_eq!(doc.logical_snapshot().quirks, 1);
     doc.set_quirks_mode(QuirksMode::Quirks);
     assert_eq!(doc.logical_snapshot().quirks, 2);
+}
+
+#[test]
+fn detached_focus_is_dropped_on_rebuild() {
+    let mut doc = Document::new();
+    let body = doc.append_element(None, "body", Default::default(), None::<&str>);
+    let loose = doc.create_detached_element("button").unwrap();
+    let mut snapshot = doc.logical_snapshot();
+    snapshot.focused = Some(loose);
+    let mut rebuilt = Document::from_logical_snapshot(snapshot, 100).unwrap();
+    rebuilt.append_child(body, loose).unwrap();
+    assert_eq!(rebuilt.focused_element(), None);
+    assert_eq!(rebuilt.logical_snapshot().focused, None);
 }

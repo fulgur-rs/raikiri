@@ -84,10 +84,11 @@ fn animation_viewport_units_are_resolved_after_geometry_reparse() {
         Some(&styles),
         None,
         None,
+        None,
     )
     .unwrap();
     let expected = render_raikiri_pages_inner_with_canvases(
-        &expected, 800, 600, None, None, engine, None, None, None,
+        &expected, 800, 600, None, None, engine, None, None, None, None,
     )
     .unwrap();
     assert!(expected.pages.len() >= 2);
@@ -494,6 +495,63 @@ fn animation_style_sidecar_restore_rejects_missing_and_non_element_paths() {
 }
 
 #[test]
+fn focus_sidecar_is_restored_after_geometry_reparse() {
+    let page_rules = "@page{size:300px 300px;margin:0} @page :first{size:300px 200px}";
+    let document = |focus_rule: &str| {
+        format!(
+            "<html><head><style>{page_rules} html,body{{margin:0}} div{{height:550px;background:red}} {focus_rule}</style></head><body>text<div tabindex=\"0\"></div></body></html>"
+        )
+    };
+    let source = document("div:focus-visible{background:green}");
+    let expected = document("div{background:green}");
+    let engine = InlineEngineChoice {
+        require_inline_fonts: false,
+        print_page_margin: false,
+    };
+    let focused = |path: &[usize], visible| dynamic::FocusedPath {
+        path: path.to_vec(),
+        tags: ["html", "body", "div"]
+            .map(|tag| ("http://www.w3.org/1999/xhtml".to_owned(), tag.to_owned()))
+            .to_vec(),
+        visible,
+    };
+    let render = |html: &str, focused_path: Option<&dynamic::FocusedPath>| {
+        render_raikiri_pages_inner_with_canvases(
+            html,
+            800,
+            600,
+            None,
+            None,
+            engine,
+            None,
+            None,
+            None,
+            focused_path,
+        )
+        .expect("document should render")
+    };
+    let rendered = render(&source, Some(&focused(&[0, 1, 0], true)));
+    let reference = render(&expected, None);
+    // A path that no longer reaches a node leaves nothing focused.
+    let unfocused = render(&source, Some(&focused(&[0, 1, 7], true)));
+    // Focus that does not indicate itself does not match `:focus-visible`.
+    let hidden = render(&source, Some(&focused(&[0, 1, 0], false)));
+    let red = render(&document(""), None);
+
+    assert!(rendered.pages.len() >= 2);
+    assert_eq!(rendered.pages.len(), reference.pages.len());
+    for (rendered_page, reference_page) in rendered.pages.iter().zip(&reference.pages) {
+        assert_eq!(rendered_page.rgba, reference_page.rgba);
+    }
+    for (unfocused_page, red_page) in unfocused.pages.iter().zip(&red.pages) {
+        assert_eq!(unfocused_page.rgba, red_page.rgba);
+    }
+    for (hidden_page, red_page) in hidden.pages.iter().zip(&red.pages) {
+        assert_eq!(hidden_page.rgba, red_page.rgba);
+    }
+}
+
+#[test]
 fn animation_style_sidecar_is_restored_after_geometry_reparse() {
     let page_rules = "@page{size:300px 300px;margin:0} @page :first{size:300px 200px}";
     let source = format!(
@@ -520,10 +578,11 @@ fn animation_style_sidecar_is_restored_after_geometry_reparse() {
         Some(&styles),
         None,
         None,
+        None,
     )
     .expect("sidecar document should render after the geometry reparse");
     let reference = render_raikiri_pages_inner_with_canvases(
-        &expected, 800, 600, None, None, engine, None, None, None,
+        &expected, 800, 600, None, None, engine, None, None, None, None,
     )
     .expect("authored animation result should render");
 
@@ -1806,6 +1865,7 @@ fn render_with_engine(html: &str) -> RenderedDocument {
         None,
         None,
         None,
+        None,
     )
     .expect("render")
 }
@@ -2782,6 +2842,7 @@ fn render_in_checkout(root: &Path, html: &str) -> RenderedDocument {
         None,
         None,
         None,
+        None,
     )
     .unwrap()
 }
@@ -2928,6 +2989,7 @@ fn a_canvas_on_a_later_page_of_another_width_keeps_its_bitmap() {
         engine,
         None,
         Some(vec![green]),
+        None,
         None,
     )
     .expect("pages should render");

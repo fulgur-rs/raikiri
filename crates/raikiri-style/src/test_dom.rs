@@ -13,6 +13,10 @@ pub(crate) struct TestDoc {
     /// `NoQuirks`, matching [`StyleDom::quirks_mode`]'s own default —
     /// Callers assign this field directly when constructing a fixture.
     pub(crate) quirks_mode: StyleQuirksMode,
+    /// The element `:focus` matches; callers assign it directly.
+    pub(crate) focused: Option<usize>,
+    /// Whether the focused element does not indicate focus.
+    pub(crate) focus_hidden: bool,
 }
 
 pub(crate) struct TestNode {
@@ -46,6 +50,8 @@ impl TestDoc {
                 children: Vec::new(),
             }],
             quirks_mode: StyleQuirksMode::NoQuirks,
+            focused: None,
+            focus_hidden: false,
         }
     }
 
@@ -220,6 +226,14 @@ impl StyleDom for TestDoc {
 
     fn quirks_mode(&self) -> StyleQuirksMode {
         self.quirks_mode
+    }
+
+    fn focused_element(&self) -> Option<StyleNodeId> {
+        self.focused.map(|id| StyleNodeId::new(id as u64))
+    }
+
+    fn focus_visible_element(&self) -> Option<StyleNodeId> {
+        self.focused_element().filter(|_| !self.focus_hidden)
     }
 
     fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {

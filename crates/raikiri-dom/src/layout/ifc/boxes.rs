@@ -69,6 +69,22 @@ struct FragmentedFloatOutput<'a> {
     placements: &'a mut Vec<IfcBoxFragment>,
 }
 
+/// Resolve what the root's percentages refer to before its lines are laid
+/// out: the offsets of its relatively positioned inline elements, and the
+/// percentage margins and padding of its inline boxes against the inline
+/// size the lines are broken at. In columns that is the column width, as
+/// the column box is the containing block of the content (CSS Multicol 1
+/// §2); a vertical root's is its physical height (CSS Writing Modes 4 §7.2).
+fn resolve_root_percentages(tree: &mut Document, idx: usize, geometry: &FlowGeometry) {
+    let Some(root) = tree.nodes[idx].ifc.as_mut() else {
+        return;
+    };
+    root.resolve_percent_offsets(geometry.content_size.width);
+    if let Some(state) = tree.ifc.as_mut() {
+        root.resolve_percent_edges(geometry.width, &mut state.layout_cx, &state.fonts);
+    }
+}
+
 /// [`layout_with_boxes_in`] for a root whose margins stay inside it.
 #[cfg(test)]
 pub(crate) fn layout_with_boxes(
@@ -98,9 +114,7 @@ pub(crate) fn layout_with_boxes_in(
     perform: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
-    if let Some(root) = tree.nodes[idx].ifc.as_mut() {
-        root.resolve_percent_offsets(geometry.content_size.width);
-    }
+    resolve_root_percentages(tree, idx, &geometry);
     let Some(root) = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -118,6 +132,7 @@ pub(crate) fn layout_with_boxes_in(
             fragment_box_placements: Vec::new(), // cov:ignore: empty IFC fallback has no runtime placement to measure.
             fragmentainer_line_ranges: None, // cov:ignore: empty IFC fallback has no runtime placement to measure.
             unfragmented_tail_column: None,
+            placed_blocks: Vec::new(),
         };
     };
     // One inner function takes the context from both arms: the caller's
@@ -152,9 +167,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     context: FragmentationContext,
     perform: bool,
 ) -> IfcLines {
-    if let Some(root) = tree.nodes[idx].ifc.as_mut() {
-        root.resolve_percent_offsets(geometry.content_size.width);
-    }
+    resolve_root_percentages(tree, idx, &geometry);
     let Some(root) = tree.nodes[idx]
         .ifc
         .as_ref()
@@ -172,10 +185,11 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             fragment_box_placements: Vec::new(),
             fragmentainer_line_ranges: Some(Vec::new()),
             unfragmented_tail_column: None,
+            placed_blocks: Vec::new(),
         };
     };
 
-    let mut token = root.paragraph.start_token();
+    let mut token = root.line_paragraph.start_token();
     let mut all_lines = Vec::new();
     let mut block_line_starts = Vec::new();
     let mut shifts = super::root::LineShifts::default();
@@ -209,7 +223,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         })
         .unwrap_or(0);
     let column_budget = root
-        .paragraph
+        .line_paragraph
         .text()
         .len()
         .saturating_add(root.boxes.len())
@@ -340,6 +354,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         fragment_box_placements,
         fragmentainer_line_ranges: Some(fragmentainer_line_ranges),
         unfragmented_tail_column,
+        placed_blocks: Vec::new(),
     };
     if perform {
         place_atomics(tree, &lines, &atomic_outputs, geometry, root.rtl);
@@ -450,7 +465,7 @@ fn run_boxes(
         perform,
         local,
         bottom_margin_escapes,
-        root.paragraph.start_token(),
+        root.line_paragraph.start_token(),
         None,
         None,
         false,
@@ -536,6 +551,8 @@ fn run_boxes_segment(
     // are being laid out: its start token was met and its end token was not.
     // The tokens come in document order; the cursor is the block of the next.
     let mut block_cursor = 0;
+    // The boxes of the generated blocks closed so far.
+    let mut placed_blocks = Vec::new();
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
 
     loop {
@@ -578,7 +595,7 @@ fn run_boxes_segment(
         // The state is taken only for the engine call: measuring a float
         // below lays out another node, which may be an ifc root itself.
         let result = with_state(tree, |state| {
-            root.paragraph.next_line(
+            root.line_paragraph.next_line(
                 &mut state.layout_cx,
                 token,
                 &options,
@@ -827,8 +844,10 @@ fn run_boxes_segment(
                             }
                             generated_blocks::Token::End(block) => {
                                 block_cursor += 1;
-                                if let Some(open) = open_block.take() {
-                                    generated_blocks::close(block, open, flow);
+                                if let Some(open) = open_block.take()
+                                    && let Some(placed) = generated_blocks::close(block, open, flow)
+                                {
+                                    placed_blocks.push(placed);
                                 }
                             }
                         }
@@ -944,6 +963,7 @@ fn run_boxes_segment(
             fragment_box_placements,
             fragmentainer_line_ranges: None,
             unfragmented_tail_column: None,
+            placed_blocks,
         },
         continuation,
         atomic_outputs: atomics.outputs,
@@ -1001,16 +1021,14 @@ fn offset_boxes_inside_relative_inlines(tree: &mut Document, idx: usize, root: &
         let (mut dx, mut dy) = (0.0, 0.0);
         // The content of an anonymous cell sits in the cell's owner.
         let owner = tree.ifc_source_owner(idx);
-        let mut current = tree.parent_of(b.node);
-        while let Some(id) = current {
-            if id == idx || id == owner {
-                break;
-            }
+        for id in tree
+            .ancestors(b.node)
+            .take_while(|&id| id != idx && id != owner)
+        {
             if let Some((_, (x, y))) = root.offsets.iter().find(|(owner, _)| *owner == id) {
                 dx += x;
                 dy += y;
             }
-            current = tree.parent_of(id);
         }
         if dx != 0.0 || dy != 0.0 {
             let mut layout = tree.nodes[b.node].unrounded_layout;
@@ -1195,7 +1213,7 @@ pub(crate) fn measure_atomics(
         // Only the alphabetic baseline is supplied (horizontal lines). shodo
         // measures it from the margin-box top and falls back to the margin
         // box's bottom edge when there is none (CSS 2.1 10.8.1).
-        let baseline = match root.paragraph.required_baseline(id) {
+        let baseline = match root.line_paragraph.required_baseline(id) {
             Some(shodo::geometry::BaselineKind::Alphabetic) | None => {
                 atomic_baseline(tree, node, &output).map(|b| b + margin.top)
             }

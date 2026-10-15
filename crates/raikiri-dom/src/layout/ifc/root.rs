@@ -16,11 +16,28 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+/// How many paragraphs resolved for earlier percentage bases a root keeps.
+const MAX_EDGE_PARAGRAPHS: usize = 3;
+
 /// A block laid out as one shodo paragraph.
 #[derive(Clone)]
 pub(crate) struct IfcRoot {
     /// `Paragraph` is a cheap clone over shared data, so it is held directly.
+    ///
+    /// Percentage margins and padding of its inline boxes are resolved
+    /// against zero, as intrinsic sizing requires (CSS Sizing 3 §5.2.1).
     pub(crate) paragraph: Paragraph,
+    /// The paragraph the lines are broken from: [`Self::paragraph`] with its
+    /// percentage margins and padding resolved against [`Self::edge_basis`].
+    /// The same paragraph when it has none.
+    pub(crate) line_paragraph: Paragraph,
+    /// The containing block inline size [`Self::line_paragraph`] was
+    /// resolved for, set by [`Self::resolve_percent_edges`].
+    pub(crate) edge_basis: f32,
+    /// Paragraphs resolved for earlier nonzero bases, most recent first. A
+    /// parent that probes a few widths before the final layout comes back
+    /// to them without shaping the paragraph again.
+    edge_paragraphs: Vec<(f32, Paragraph)>,
     /// Writing mode used to shape the paragraph.
     pub(crate) writing_mode: WritingMode,
     pub(crate) options: LineOptions,
@@ -153,6 +170,9 @@ pub(crate) struct IfcLines {
     pub(crate) fragmentainer_line_ranges: Option<Vec<crate::node::MulticolTextFragment>>,
     /// Column whose final line range overflowed the fragmentainer budget.
     pub(crate) unfragmented_tail_column: Option<usize>,
+    /// The block-level `::before` and `::after` boxes the lines were laid
+    /// out in, in document order. A fragmenting layout records none.
+    pub(crate) placed_blocks: Vec<super::generated_blocks::PlacedBlock>,
 }
 
 /// Placement of an IFC-owned box accepted in one fragmentainer.
@@ -310,7 +330,10 @@ impl IfcRoot {
         let Projected { paragraph, meta } = projected;
         let letter_style_index = Arc::new(LetterStyleIndex::new(&meta.letter_styles));
         Self {
+            line_paragraph: paragraph.clone(),
             paragraph,
+            edge_basis: 0.0,
+            edge_paragraphs: Vec::new(),
             writing_mode: meta.writing_mode,
             options: meta.options,
             indent: meta.indent,
@@ -349,10 +372,63 @@ impl IfcRoot {
         }
     }
 
+    /// Resolve the percentage margins and padding of the inline boxes against
+    /// `basis`, the inline size of the containing block the lines are laid
+    /// out in, for [`Self::line_paragraph`]. The paragraph is rebuilt only
+    /// when it has such edges and the basis is neither the current one nor
+    /// one of the last few.
+    pub(crate) fn resolve_percent_edges(
+        &mut self,
+        basis: f32,
+        cx: &mut LayoutContext,
+        fonts: &FontCollection,
+    ) {
+        if !self.paragraph.has_percent_edges() {
+            return;
+        }
+        // The engine takes a non-finite or negative basis as zero.
+        let basis = if basis.is_finite() && basis > 0.0 {
+            basis
+        } else {
+            0.0
+        };
+        if basis.to_bits() == self.edge_basis.to_bits() {
+            return;
+        }
+        let cached = self
+            .edge_paragraphs
+            .iter()
+            .position(|(cached, _)| cached.to_bits() == basis.to_bits());
+        let paragraph = match cached {
+            Some(index) => self.edge_paragraphs.remove(index).1,
+            None if basis == 0.0 => self.paragraph.clone(),
+            // A rebuild over the resource limits keeps the percentages at
+            // zero: the lines still lay out, only without those edges. The
+            // basis is recorded either way, so the rebuild is not retried
+            // for every layout at this width.
+            None => self
+                .paragraph
+                .with_edge_basis(basis, cx, fonts)
+                .unwrap_or_else(|_| self.paragraph.clone()),
+        };
+        let previous = std::mem::replace(&mut self.line_paragraph, paragraph);
+        // The base paragraph is at hand for a zero basis.
+        if self.edge_basis != 0.0 {
+            self.edge_paragraphs.insert(0, (self.edge_basis, previous));
+            self.edge_paragraphs.truncate(MAX_EDGE_PARAGRAPHS);
+        }
+        self.edge_basis = basis;
+    }
+
     /// A copy without the stored lines, for measuring with lines of its own.
     pub(crate) fn without_lines(&self) -> Self {
         Self {
             paragraph: self.paragraph.clone(),
+            line_paragraph: self.line_paragraph.clone(),
+            edge_basis: self.edge_basis,
+            // The copy lays out at the basis already resolved; only the
+            // stored root resolves again.
+            edge_paragraphs: Vec::new(),
             writing_mode: self.writing_mode,
             options: self.options,
             indent: self.indent,

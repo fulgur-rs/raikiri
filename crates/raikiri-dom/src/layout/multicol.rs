@@ -395,6 +395,39 @@ fn multicol_max_fragmentainer_height(
     Some(used_content_height.min(max_content_height))
 }
 
+/// The input that lays a child out in a column of `column_width`, at
+/// `known_width` when the column fixes its width; its height comes from its
+/// content within `available_height`.
+fn column_child_input(
+    known_width: Option<f32>,
+    column_width: f32,
+    parent_height: Option<f32>,
+    available_height: AvailableSpace,
+) -> LayoutInput {
+    LayoutInput {
+        run_mode: RunMode::PerformLayout,
+        sizing_mode: SizingMode::InherentSize,
+        axis: RequestedAxis::Both,
+        known_dimensions: Size {
+            width: known_width,
+            height: None,
+        },
+        known_dimensions_are_definite: Size {
+            width: true,
+            height: false,
+        },
+        parent_size: Size {
+            width: Some(column_width),
+            height: parent_height,
+        },
+        available_space: Size {
+            width: AvailableSpace::Definite(column_width),
+            height: available_height,
+        },
+        vertical_margins_are_collapsible: TaffyLine::FALSE,
+    }
+}
+
 /// The width a column imposes on a child it lays out, or `None` when an
 /// element's authored width resolves against the column width instead.
 fn column_child_known_width(tree: &Document, child: usize, column_width: f32) -> Option<f32> {
@@ -730,28 +763,12 @@ fn layout_column_group(
     {
         let mut measurements = Vec::with_capacity(children.len());
         for &child in children {
-            let child_inputs = LayoutInput {
-                run_mode: RunMode::PerformLayout,
-                sizing_mode: SizingMode::InherentSize,
-                axis: RequestedAxis::Both,
-                known_dimensions: Size {
-                    width: column_child_known_width(tree, child, context.column_width),
-                    height: None,
-                },
-                known_dimensions_are_definite: Size {
-                    width: true,
-                    height: false,
-                },
-                parent_size: Size {
-                    width: Some(context.column_width),
-                    height: context.available_height,
-                },
-                available_space: Size {
-                    width: AvailableSpace::Definite(context.column_width),
-                    height: AvailableSpace::MaxContent,
-                },
-                vertical_margins_are_collapsible: TaffyLine::FALSE,
-            };
+            let child_inputs = column_child_input(
+                column_child_known_width(tree, child, context.column_width),
+                context.column_width,
+                context.available_height,
+                AvailableSpace::MaxContent,
+            );
             // A direct text child is measured again against the column
             // width instead of reusing a size cached for another width.
             if matches!(tree.nodes[child].data, NodeData::Text(_)) {
@@ -816,28 +833,12 @@ fn layout_column_group(
                     Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),
                     None => AvailableSpace::MaxContent,
                 };
-                let child_inputs = LayoutInput {
-                    run_mode: RunMode::PerformLayout,
-                    sizing_mode: SizingMode::InherentSize,
-                    axis: RequestedAxis::Both,
-                    known_dimensions: Size {
-                        width: column_child_known_width(tree, child, context.column_width),
-                        height: None,
-                    },
-                    known_dimensions_are_definite: Size {
-                        width: true,
-                        height: false,
-                    },
-                    parent_size: Size {
-                        width: Some(context.column_width),
-                        height: context.available_height,
-                    },
-                    available_space: Size {
-                        width: AvailableSpace::Definite(context.column_width),
-                        height: child_height,
-                    },
-                    vertical_margins_are_collapsible: TaffyLine::FALSE,
-                };
+                let child_inputs = column_child_input(
+                    column_child_known_width(tree, child, context.column_width),
+                    context.column_width,
+                    context.available_height,
+                    child_height,
+                );
 
                 // A direct text child is measured again against the column
                 // width instead of reusing a size cached for another width.

@@ -179,3 +179,28 @@ fn first_letter_group_ids_round_trip_and_stay_apart_from_other_ids() {
     assert_eq!(first_letter_group_id(1, MAX_LETTER_GROUPS), None);
     assert_eq!(first_letter_group_id(largest + 1, 1), None);
 }
+
+#[test]
+fn nested_auto_quotes_use_inner_fallback_glyphs() {
+    let document = Document::new();
+    let counters = CounterSnapshot::default();
+    let registry = CounterStyleRegistry::new();
+    let components = [
+        ContentComponent::Quote(QuoteKeyword::OpenQuote),
+        ContentComponent::Quote(QuoteKeyword::OpenQuote),
+        ContentComponent::Quote(QuoteKeyword::CloseQuote),
+        ContentComponent::Quote(QuoteKeyword::CloseQuote),
+    ];
+    assert_eq!(
+        content_components_to_text_with_quotes(
+            &document,
+            document.root_index(),
+            &components,
+            &[] as &[(&str, &str)],
+            true,
+            &counters,
+            &registry,
+        ),
+        Some("\u{201c}\u{2018}\u{2019}\u{201d}".to_string())
+    );
+}

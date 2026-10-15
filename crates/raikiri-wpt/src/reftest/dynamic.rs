@@ -20,6 +20,25 @@ pub(super) struct PreparedDynamic {
     pub animation_styles: Vec<AnimationStyleSidecar>,
     /// Script-created highlight ranges expressed against the serialized tree.
     pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
+    /// The element script left focused.
+    pub focused_path: Option<FocusedPath>,
+}
+
+/// The element script left focused, so reparsing serialized HTML keeps
+/// `:focus`, `:focus-within` and `:focus-visible` as script left them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FocusedPath {
+    /// Element-child path from the document root. Counting only elements
+    /// keeps it stable when serialization merges text nodes.
+    pub path: Vec<usize>,
+    /// Namespace URI and tag name of the element each `path` step reaches.
+    /// Reparsing can restructure the tree (e.g. insert an implied
+    /// `<tbody>`) or change a namespace (a script-created HTML `svg`
+    /// element reparses as SVG), so a step whose name differs means the
+    /// path no longer names the same element.
+    pub tags: Vec<(String, String)>,
+    /// Whether the element indicates focus.
+    pub visible: bool,
 }
 
 fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationStyleSidecar> {
@@ -52,6 +71,37 @@ fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationSt
         }
     }
     styles
+}
+
+fn focused_path(document: &raikiri_dom::Document) -> Option<FocusedPath> {
+    let root = document.root_index();
+    let mut path = Vec::new();
+    let mut tags = Vec::new();
+    let mut current = document.focused_element()?;
+    while current != root {
+        let parent = document.parent_of(current)?;
+        let tag = document.get_node(current)?.tag_name()?.to_owned();
+        tags.push((document.element_namespace_uri(current)?.to_owned(), tag));
+        let position = document
+            .get_node(parent)?
+            .children
+            .iter()
+            .filter(|&&child| {
+                document
+                    .get_node(child)
+                    .is_some_and(|node| node.tag_name().is_some())
+            })
+            .position(|&child| child == current)?;
+        path.push(position);
+        current = parent;
+    }
+    path.reverse();
+    tags.reverse();
+    Some(FocusedPath {
+        path,
+        tags,
+        visible: document.focus_visible_element().is_some(),
+    })
 }
 
 fn node_path(document: &raikiri_dom::Document, node: usize) -> Option<Vec<usize>> {
@@ -211,6 +261,7 @@ pub(super) fn prepare(
             canvases: Vec::new(),
             animation_styles: Vec::new(),
             custom_highlight_ranges: Vec::new(),
+            focused_path: None,
         });
     }
     let parent = path
@@ -250,6 +301,7 @@ pub(super) fn prepare(
         let mut host = runtime.into_host();
         let custom_highlight_ranges = custom_highlight_paths(host.document(), &highlights);
         let animation_styles = animation_style_sidecars(host.document());
+        let focused_path = focused_path(host.document());
         let html = serialize(host.document(), &report)?;
         let canvases = host.document_mut().take_canvases_in_tree_order();
         Ok(PreparedDynamic {
@@ -257,6 +309,7 @@ pub(super) fn prepare(
             canvases,
             animation_styles,
             custom_highlight_ranges,
+            focused_path,
         })
     }
     #[cfg(feature = "js-wasmtime")]
@@ -278,6 +331,7 @@ pub(super) fn prepare(
             .synchronize_final_document()
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
         let animation_styles = animation_style_sidecars(runtime.document());
+        let focused_path = focused_path(runtime.document());
         let html = serialize(runtime.document(), &report)?;
         let canvases = runtime.take_canvases_in_tree_order();
         return Ok(PreparedDynamic {
@@ -285,6 +339,7 @@ pub(super) fn prepare(
             canvases,
             animation_styles,
             custom_highlight_ranges: Vec::new(),
+            focused_path,
         });
     }
     #[cfg(not(any(feature = "js-native", feature = "js-wasmtime")))]

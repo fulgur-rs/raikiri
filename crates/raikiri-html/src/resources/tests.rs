@@ -449,6 +449,38 @@ fn background_preload_skips_layers_below_the_painted_ones() {
 }
 
 #[test]
+fn margin_box_background_preload_takes_the_cascaded_winner() {
+    let provider = SvgNetworkProvider::default();
+    let resources = RenderResources::new().network_provider(&provider);
+    // The important declaration wins although it comes first, and a
+    // variable reaches the margin box from the page context.
+    let html = br#"<!doctype html><style>
+        @page { @top-left { content:'x'; background-image:var(--image) !important } }
+        @page { --image:url(https://images.test/variable.svg);
+                @top-left { background-image:url(https://images.test/later.svg) } }
+        </style><div></div>"#;
+    let options = ParseOptions {
+        extra_stylesheets: &[],
+        network: None,
+        base_url: None,
+    };
+    let uncascaded = crate::parse(html.as_slice(), &options).unwrap();
+    let cascade = crate::build_cascaded(&uncascaded).expect("the cascade succeeds");
+    let warnings = Arc::new(Mutex::new(Vec::new()));
+    let mut seen = Default::default();
+    let mut attempts = 0;
+    resources.preload_background_images(&cascade, &warnings, &mut seen, &mut attempts, None);
+    let requests: Vec<String> = provider
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(url, _)| url.path().trim_start_matches('/').to_owned())
+        .collect();
+    assert_eq!(requests, ["variable.svg"]);
+}
+
+#[test]
 fn render_preloads_only_effective_marker_images() {
     let provider = SvgNetworkProvider::default();
     let resources = RenderResources::new().network_provider(&provider);

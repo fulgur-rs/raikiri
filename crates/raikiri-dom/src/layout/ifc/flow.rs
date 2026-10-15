@@ -155,7 +155,7 @@ pub(crate) fn break_lines(root: &IfcRoot, cx: &mut LayoutContext, width: f32) ->
         atomics.insert(id, size);
     }
     let mut placed = place_lines(
-        &root.paragraph,
+        &root.line_paragraph,
         &options,
         cx,
         &atomics,
@@ -247,6 +247,7 @@ pub(crate) fn place_lines(
         fragment_box_placements: Vec::new(),
         fragmentainer_line_ranges: None,
         unfragmented_tail_column: None,
+        placed_blocks: Vec::new(),
     }
 }
 
@@ -332,6 +333,7 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
         {
             continue;
         }
+        root.resolve_percent_edges(width, &mut state.layout_cx, &state.fonts);
         let mut lines = break_lines(root, &mut state.layout_cx, width);
         apply_text_overflow(root, &mut lines, &mut state.layout_cx, width);
         let ifc = root.without_lines();

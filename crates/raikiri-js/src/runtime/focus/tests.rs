@@ -1,0 +1,795 @@
+use super::parse_integer;
+use crate::runtime::DomRuntime;
+use crate::runtime::test_host::StubHost;
+use crate::runtime::webidl::with_state;
+
+fn rt() -> DomRuntime {
+    let (host, _, _, _) = StubHost::page();
+    DomRuntime::new(host).unwrap()
+}
+
+fn ok(rt: &mut DomRuntime, src: &str) {
+    assert!(
+        rt.evaluate(src).unwrap().to_boolean(),
+        "expected true: {src}"
+    );
+}
+
+#[test]
+fn integers_parse_by_the_html_rules() {
+    for (value, expected) in [
+        ("0", Some(0)),
+        ("  7px", Some(7)),
+        ("-3", Some(-3)),
+        ("+2", Some(2)),
+        ("\n12", Some(12)),
+        ("", None),
+        ("-", None),
+        ("x1", None),
+        ("99999999999", None),
+    ] {
+        assert_eq!(parse_integer(value), expected, "{value:?}");
+    }
+}
+
+#[test]
+fn focus_moves_between_focusable_elements_and_fires_events() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [];\
+         function watch(name, el) {\
+           ['focus', 'blur', 'focusin', 'focusout'].forEach(function (type) {\
+             el.addEventListener(type, function (e) {\
+               if (!(e instanceof FocusEvent) || !e.isTrusted || !e.composed || e.view !== window)\
+                 throw new Error('not a trusted FocusEvent');\
+               var other = e.relatedTarget === a ? 'a' : e.relatedTarget === b ? 'b' : '-';\
+               log.push(name + ':' + e.type + ':' + e.bubbles + ':' + other); });\
+           });\
+         }\
+         var a = document.createElement('div'); a.tabIndex = 0;\
+         var b = document.createElement('button');\
+         document.body.appendChild(a); document.body.appendChild(b);\
+         watch('a', a); watch('b', b);\
+         document.activeElement === document.body && document.hasFocus()",
+    );
+    ok(
+        &mut rt,
+        "a.focus(); document.activeElement === a \
+         && log.join() === 'a:focus:false:-,a:focusin:true:-'",
+    );
+    ok(
+        &mut rt,
+        "log = []; b.focus(); a.focus(); a.focus(); document.activeElement === a \
+         && log.join() === 'a:blur:false:b,a:focusout:true:b,b:focus:false:a,b:focusin:true:a,\
+b:blur:false:a,b:focusout:true:a,a:focus:false:b,a:focusin:true:b'",
+    );
+    ok(
+        &mut rt,
+        "log = []; b.blur(); var kept = document.activeElement === a;\
+         a.blur(); kept && document.activeElement === document.body \
+         && log.join() === 'a:blur:false:-,a:focusout:true:-'",
+    );
+}
+
+#[test]
+fn only_connected_focusable_areas_take_focus() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "function takes(el) { el.focus(); var got = document.activeElement === el;\
+           if (got) el.blur(); return got; }\
+         function make(tag, attrs, parent) { var el = document.createElement(tag);\
+           for (var name in attrs) el.setAttribute(name, attrs[name]);\
+           (parent || document.body).appendChild(el); return el; }\
+         var details = make('details'), first = make('summary', {}, details);\
+         var second = make('summary', {}, details), inert = make('div', {inert: ''});\
+         takes(make('a', {href: 'x'})) && !takes(make('a'))\
+         && takes(make('input')) && !takes(make('input', {type: 'HIDDEN'}))\
+         && !takes(make('button', {disabled: ''}))\
+         && (function () {\
+              var fieldset = make('fieldset', {disabled: ''});\
+              var legend = make('legend', {}, fieldset), late = make('legend', {}, fieldset);\
+              var outer = make('fieldset', {disabled: ''}), outerLegend = make('legend', {}, outer);\
+              return takes(make('input', {}, legend)) && !takes(make('input', {}, late))\
+                && !takes(make('select', {}, fieldset))\
+                && !takes(make('button', {}, make('legend', {}, outerLegend).appendChild(\
+                     make('fieldset', {disabled: ''}))))\
+                && takes(make('textarea', {}, outerLegend))\
+                && takes(make('button', {}, make('fieldset')))\
+                && !takes(make('fieldset', {disabled: '', tabindex: '0'}))\
+                && !takes(make('fieldset', {tabindex: '0'}, fieldset))\
+                && takes(make('fieldset', {tabindex: '0'}));\
+            })()\
+         && (function () {\
+              var select = make('select'), group = make('optgroup', {tabindex: '0'}, select);\
+              var off = make('optgroup', {tabindex: '0', disabled: ''}, select);\
+              return takes(group) && !takes(off)\
+                && takes(make('option', {tabindex: '0'}, group))\
+                && !takes(make('option', {tabindex: '0', disabled: ''}, group))\
+                && !takes(make('option', {tabindex: '0'}, off))\
+                && takes(make('option', {tabindex: '0'}, select));\
+            })()\
+         && takes(make('span', {tabindex: '-1'})) && !takes(make('span', {tabindex: 'x'}))\
+         && takes(make('span', {contenteditable: ''}))\
+         && takes(make('span', {contenteditable: 'TRUE'}))\
+         && takes(make('span', {contenteditable: 'plaintext-only'}))\
+         && !takes(make('span', {contenteditable: 'false'}))\
+         && !takes(make('span', {contenteditable: 'inherit'}))\
+         && !takes(make('span', {contenteditable: ' true'}))\
+         && (function () {\
+              var host = make('div', {contenteditable: ''});\
+              var off = make('div', {contenteditable: 'false'}, host);\
+              var inherited = make('div', {contenteditable: 'inherit'}, host);\
+              return !takes(make('span', {contenteditable: ''}, host))\
+                && takes(make('span', {contenteditable: ''}, off))\
+                && !takes(make('span', {contenteditable: ''}, inherited));\
+            })()\
+         && takes(make('video', {controls: ''})) && !takes(make('video'))\
+         && takes(first) && !takes(second) && !takes(make('summary'))\
+         && !takes(make('button', {}, inert))\
+         && !takes(document.createElement('button')) && !takes(make('div'))\
+         && document.createElement('summary').tabIndex === -1\
+         && (function () {\
+              function svg(tag, attrs) {\
+                var el = document.createElementNS('http://www.w3.org/2000/svg', tag);\
+                for (var name in attrs) el.setAttribute(name, attrs[name]);\
+                document.body.appendChild(el); return el; }\
+              var math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi');\
+              document.body.appendChild(math);\
+              var plain = document.body.appendChild(document.createElementNS(null, 'x'));\
+              plain.setAttribute('tabindex', '0');\
+              var refused = false;\
+              try { HTMLElement.prototype.focus.call(plain); } catch (e) { refused = e instanceof TypeError; }\
+              return refused && document.activeElement !== plain\
+                && math instanceof MathMLElement && !takes(math)\
+                && (math.tabIndex = 0, takes(math))\
+                && svg('svg') instanceof SVGElement && !takes(svg('svg'))\
+                && takes(svg('svg', {tabindex: '0'})) && takes(svg('a', {href: '#'}))\
+                && !takes(svg('a', {'xlink:href': '#'})) && !takes(svg('a'))\
+                && !takes(svg('rect', {contenteditable: ''})); })()",
+    );
+}
+
+#[test]
+fn tab_index_reflects_the_attribute_with_per_element_defaults() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "function make(tag, attrs, parent) { var el = document.createElement(tag);\
+           for (var name in attrs) el.setAttribute(name, attrs[name]);\
+           if (parent) parent.appendChild(el); return el; }\
+         var div = make('div'), details = make('details');\
+         var svgLink = document.createElementNS('http://www.w3.org/2000/svg', 'a');\
+         var svgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');\
+         var before = div.tabIndex === -1 && make('a').tabIndex === 0\
+           && make('input', {type: 'hidden'}).tabIndex === 0\
+           && make('textarea').tabIndex === 0 && make('video', {controls: ''}).tabIndex === -1\
+           && make('summary', {}, details).tabIndex === 0\
+           && make('summary', {}, details).tabIndex === -1\
+           && HTMLElement.prototype.__lookupGetter__('tabIndex').call(svgLink) === 0\
+           && HTMLElement.prototype.__lookupGetter__('tabIndex').call(svgRect) === -1;\
+         div.tabIndex = 3.7;\
+         before && div.getAttribute('tabindex') === '3' && div.tabIndex === 3",
+    );
+}
+
+#[test]
+fn a_removed_focused_element_loses_focus() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.createElement('button'); document.body.appendChild(b);\
+         b.focus(); var had = document.activeElement === b;\
+         b.remove(); had && document.activeElement === document.body",
+    );
+    let focused = with_state(rt.context_mut(), |s| s.host.document().focused_element()).unwrap();
+    assert_eq!(focused, None);
+    // Inserting it again does not bring focus back.
+    ok(
+        &mut rt,
+        "document.body.appendChild(b); document.activeElement === document.body",
+    );
+}
+
+#[test]
+fn without_a_body_the_document_element_is_active() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "document.body.remove(); document.activeElement === document.documentElement",
+    );
+    ok(
+        &mut rt,
+        "document.documentElement.remove(); document.activeElement === null",
+    );
+}
+
+#[test]
+fn focus_and_ui_event_constructors_read_their_dictionaries() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var el = document.createElement('div');\
+         var e = new FocusEvent('focus', {relatedTarget: el, view: window, detail: 2.9, bubbles: true});\
+         var w = new FocusEvent('blur', {relatedTarget: window});\
+         var plain = new UIEvent('x'), bare = new FocusEvent('y', {});\
+         var nullView = new UIEvent('z', {view: null});\
+         function throws(f) { try { f(); return false; } catch (err) { return err instanceof TypeError; } }\
+         e instanceof UIEvent && e instanceof Event && e.relatedTarget === el\
+         && e.view === window && e.detail === 2 && e.bubbles && !e.isTrusted\
+         && w.relatedTarget === window && bare.relatedTarget === null\
+         && plain.view === null && plain.detail === 0 && !('relatedTarget' in plain)\
+         && nullView.view === null && new FocusEvent('n').relatedTarget === null\
+         && throws(function () { new UIEvent('x', {view: {}}); })\
+         && throws(function () { new FocusEvent('x', {relatedTarget: {}}); })\
+         && throws(function () { FocusEvent('x'); })\
+         && (function () { var order = [];\
+              new UIEvent('x', { get view() { order.push('view'); return null; },\
+                                 get detail() { order.push('detail'); return 1; } });\
+              return order.join() === 'detail,view'; })()",
+    );
+}
+
+#[test]
+fn focus_handler_attributes_run_and_body_ones_forward_to_the_window() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], b = document.createElement('button'); document.body.appendChild(b);\
+         b.onfocus = function (e) { log.push('focus:' + e.type); };\
+         b.onblur = function (e) { log.push('blur:' + e.type); };\
+         b.focus(); b.blur();\
+         document.body.onfocus = function () {};\
+         log.join() === 'focus:focus,blur:blur' && typeof b.onfocus === 'function'\
+         && typeof b.onblur === 'function' && window.onfocus === document.body.onfocus\
+         && window.onblur === null",
+    );
+}
+
+#[test]
+fn a_frame_takes_focus_from_an_element_that_stopped_being_focusable() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], b = document.createElement('button'); document.body.appendChild(b);\
+         b.addEventListener('blur', function () { log.push('blur'); });\
+         b.addEventListener('focusout', function () { log.push('focusout'); });\
+         b.focus(); b.setAttribute('disabled', '');\
+         var kept = document.activeElement === b;\
+         requestAnimationFrame(function () {});\
+         kept",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && log.join() === 'blur,focusout'",
+    );
+}
+
+#[test]
+fn elements_that_are_not_rendered_do_not_take_or_keep_focus() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let hidden = document.create_detached_element("div").unwrap();
+    document.append_child(body, hidden).unwrap();
+    let veiled = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(veiled, "usemap", "#veiled")
+        .unwrap();
+    document.append_child(body, veiled).unwrap();
+    let button = document.create_detached_element("button").unwrap();
+    document.append_child(body, button).unwrap();
+    host.unrendered.insert(hidden);
+    host.invisible.extend([veiled, button]);
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var hidden = document.body.firstChild; hidden.tabIndex = 0;\
+         var inner = hidden.appendChild(document.createElement('button'));\
+         var shown = document.body.appendChild(document.createElement('button'));\
+         var log = []; shown.onblur = function () { log.push('blur'); };\
+         hidden.focus(); inner.focus(); shown.focus();\
+         document.activeElement === shown",
+    );
+    with_state(rt.context_mut(), |s| {
+        let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();
+        host.unrendered.insert(body);
+    })
+    .unwrap();
+    ok(&mut rt, "requestAnimationFrame(function () {}); true");
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && log.join() === 'blur'",
+    );
+}
+
+#[test]
+fn a_failed_rendering_check_fails_the_host() {
+    let (mut host, _, _, _) = StubHost::page();
+    host.fail_geometry = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    let result = rt.evaluate(
+        "var b = document.body.appendChild(document.createElement('button')); b.focus();",
+    );
+    assert!(result.is_err());
+    let focused = with_state(rt.context_mut(), |s| s.host.document().focused_element()).unwrap();
+    assert_eq!(focused, None);
+}
+
+#[test]
+fn an_svg_link_with_a_namespaced_xlink_href_takes_focus() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let link = document.create_detached_element("a").unwrap();
+    document.set_element_namespace(link, Some("http://www.w3.org/2000/svg".into()));
+    document
+        .set_element_namespaced_attribute(
+            link,
+            "http://www.w3.org/1999/xlink",
+            Some("xlink".into()),
+            "href",
+            "#",
+        )
+        .unwrap();
+    document.append_child(body, link).unwrap();
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var link = document.body.lastChild; link.focus(); document.activeElement === link",
+    );
+}
+
+#[test]
+fn svg_elements_run_focus_handlers_from_properties_and_attributes() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], ns = 'http://www.w3.org/2000/svg';\
+         var rect = document.body.appendChild(document.createElementNS(ns, 'rect'));\
+         rect.setAttribute('tabindex', '0');\
+         rect.onfocus = function () { log.push('focus'); };\
+         rect.setAttribute('onblur', 'log.push(\"blur\")');\
+         rect.focus(); rect.blur();\
+         log.join() === 'focus,blur' && typeof rect.onblur === 'function'",
+    );
+}
+
+#[test]
+fn the_default_rendering_check_asks_for_a_box() {
+    use crate::runtime::host::{BoxGeometry, DocumentHost, HostError};
+    use std::any::Any;
+
+    // Keeps every default method, unlike `StubHost`.
+    struct GeometryOnly(StubHost);
+    impl DocumentHost for GeometryOnly {
+        fn document(&self) -> &raikiri_dom::Document {
+            self.0.document()
+        }
+        fn document_mut(&mut self) -> &mut raikiri_dom::Document {
+            self.0.document_mut()
+        }
+        fn flush(&mut self) -> Result<(), HostError> {
+            self.0.flush()
+        }
+        fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+            self.0.box_geometry(node)
+        }
+        fn computed_value(
+            &mut self,
+            node: usize,
+            property: &str,
+        ) -> Result<Option<String>, HostError> {
+            self.0.computed_value(node, property)
+        }
+        fn parse_fragment(
+            &mut self,
+            tag: &str,
+            ns: &str,
+            markup: &str,
+        ) -> Result<raikiri_dom::Document, HostError> {
+            self.0.parse_fragment(tag, ns, markup)
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    }
+
+    let (mut stub, _, _, body) = StubHost::page();
+    stub.geometry.insert(body, BoxGeometry::default());
+    let mut host = GeometryOnly(stub);
+    assert!(host.is_being_rendered(body).unwrap());
+    assert!(!host.is_being_rendered(0).unwrap());
+    // The default visibility check reports every element visible.
+    host.0.invisible.insert(body);
+    assert!(host.is_visible(body).unwrap());
+    // The default host has no viewport.
+    host.0.viewport = Ok(Some((1.0, 1.0)));
+    assert_eq!(host.viewport_size().unwrap(), None);
+    host.0.fail_geometry = true;
+    assert!(host.is_being_rendered(body).is_err());
+}
+
+#[test]
+fn an_area_takes_focus_through_a_rendered_image_using_its_map() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let hidden = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(hidden, "usemap", "#hidden")
+        .unwrap();
+    document.append_child(body, hidden).unwrap();
+    host.unrendered.insert(hidden);
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "function make(tag, attrs, parent) { var el = document.createElement(tag);\
+           for (var name in attrs) el.setAttribute(name, attrs[name]);\
+           (parent || document.body).appendChild(el); return el; }\
+         function takes(el) { el.focus(); var got = document.activeElement === el;\
+           if (got) el.blur(); return got; }\
+         var loose = make('area', {href: '#'});\
+         var map = make('map', {name: 'm'}), area = make('area', {href: '#'}, make('span', {}, map));\
+         var plain = make('area', {}, map);\
+         var before = takes(area);\
+         var image = make('img', {usemap: 'm'}); var unhashed = takes(area);\
+         image.setAttribute('usemap', '#m'); var linked = takes(area);\
+         var other = make('map', {id: 'o'}), late = make('map', {name: 'o'});\
+         var shadowed = make('area', {href: '#'}, late); make('img', {usemap: '#o'});\
+         var inert = make('map', {id: 'i'}), held = make('area', {href: '#'}, inert);\
+         make('img', {usemap: '#i', inert: ''});\
+         var hiddenMap = make('map', {name: 'hidden'}), unseen = make('area', {href: '#'}, hiddenMap);\
+         var nameless = make('area', {href: '#'}, make('map', {id: ''})); make('img', {usemap: '#'});\
+         var shrouded = make('area', {href: '#'}, make('map', {name: 'veiled'}));\
+         !takes(loose) && !before && !unhashed && linked && !takes(plain)\
+           && !takes(shadowed) && !takes(held) && !takes(unseen) && !takes(nameless)\
+           && !takes(shrouded) && !takes(document.body.children[2])\
+           && area.tabIndex === 0",
+    );
+}
+
+#[test]
+fn focus_options_convert_and_decide_focus_visibility() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var order = [];\
+         b.focus({ get preventScroll() { order.push('prevent'); return 1; },\
+                   get focusVisible() { order.push('visible'); return 0; } });\
+         var hidden = document.activeElement === b && b.matches(':focus')\
+           && !b.matches(':focus-visible');\
+         b.focus(); var kept = !b.matches(':focus-visible');\
+         b.focus({focusVisible: true}); var shown = b.matches(':focus-visible');\
+         b.blur(); b.focus(null); var again = b.matches(':focus-visible');\
+         var thrown = false;\
+         try { b.focus({ get preventScroll() { throw new Error('x'); } }); }\
+         catch (e) { thrown = e.message === 'x'; }\
+         var typed = false;\
+         try { b.focus(1); } catch (e) { typed = e instanceof TypeError; }\
+         var span = document.body.appendChild(document.createElement('span'));\
+         span.focus({focusVisible: false});\
+         var c = document.body.appendChild(document.createElement('button')), seen;\
+         c.onfocus = function () { seen = c.matches(':focus-visible'); };\
+         c.focus({focusVisible: false}); var quiet = seen === false;\
+         b.focus();\
+         hidden && kept && shown && again && thrown && typed && quiet\
+           && order.join() === 'visible,prevent' && b.matches(':focus-visible')",
+    );
+}
+
+#[test]
+fn a_focus_handler_that_moves_focus_keeps_the_new_element_visible() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var a = document.body.appendChild(document.createElement('button'));\
+         var b = document.body.appendChild(document.createElement('button'));\
+         a.onfocus = function () { b.focus(); };\
+         a.focus({focusVisible: false});\
+         document.activeElement === b && b.matches(':focus-visible')",
+    );
+}
+
+#[test]
+fn a_listener_that_moves_focus_stops_the_older_transition() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [];\
+         function make(id) { var el = document.body.appendChild(document.createElement('button'));\
+           ['blur', 'focusout', 'focus', 'focusin'].forEach(function (type) {\
+             el.addEventListener(type, function () { log.push(id + ':' + type); }); });\
+           return el; }\
+         var a = make('a'), b = make('b'), c = make('c'), d = make('d');\
+         a.focus(); log = [];\
+         a.addEventListener('blur', function () { c.focus(); }, {once: true});\
+         b.focus();\
+         var first = document.activeElement === c\
+           && log.join() === 'a:blur,c:focus,c:focusin';\
+         log = [];\
+         c.addEventListener('focusout', function () { d.focus(); }, {once: true});\
+         a.addEventListener('focus', function () { a.blur(); }, {once: true});\
+         a.focus();\
+         var second = document.activeElement === d\
+           && log.join() === 'c:blur,c:focusout,d:focus,d:focusin';\
+         log = []; a.focus();\
+         first && second && document.activeElement === document.body\
+           && log.join() === 'd:blur,d:focusout,a:focus,a:blur,a:focusout'",
+    );
+}
+
+#[test]
+fn the_document_has_event_handler_attributes() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var calls = 0; document.onclick = function () { calls++; };\
+         document.dispatchEvent(new Event('click'));\
+         'onfocus' in document && 'onblur' in document && calls === 1\
+           && typeof document.onclick === 'function'",
+    );
+}
+
+#[test]
+fn settling_the_page_runs_the_focus_fixup_without_a_frame_callback() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var detail; b.onblur = function (e) { detail = e.detail; };\
+         b.focus(); b.setAttribute('disabled', ''); document.activeElement === b",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && detail === 0\
+         && document.createElementNS('http://www.w3.org/1998/Math/MathML', 'a').tabIndex === 0\
+         && document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi').tabIndex === -1",
+    );
+}
+
+#[test]
+fn a_blur_listener_that_disables_the_target_stops_the_focus_move() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var a = document.body.appendChild(document.createElement('button'));\
+         var b = document.body.appendChild(document.createElement('button'));\
+         var log = []; b.onfocus = function () { log.push('focus'); };\
+         a.focus(); a.onblur = function () { b.setAttribute('disabled', ''); };\
+         b.focus();\
+         var stopped = document.activeElement === document.body && log.length === 0;\
+         var ns = 'http://www.w3.org/1998/Math/MathML';\
+         var link = document.body.appendChild(document.createElementNS(ns, 'a'));\
+         link.focus(); var plain = document.activeElement !== link;\
+         link.setAttribute('href', '#'); link.focus();\
+         var linked = document.activeElement === link;\
+         a.removeAttribute('disabled'); a.onblur = null; a.focus();\
+         var blurred = false; a.onblur = function () { blurred = true; };\
+         document.documentElement.focus();\
+         stopped && plain && linked && blurred && document.activeElement === document.body",
+    );
+}
+
+#[test]
+fn tasks_a_fixup_listener_queues_still_run() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var fired = false; b.focus(); b.setAttribute('disabled', '');\
+         b.onblur = function () { b.onblur = null; b.removeAttribute('disabled'); b.focus();\
+           setTimeout(function () { fired = true; }); };\
+         true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(&mut rt, "fired && document.activeElement === b");
+}
+
+#[test]
+fn foreign_handler_attributes_keep_their_case() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], ns = 'http://www.w3.org/2000/svg';\
+         var rect = document.body.appendChild(document.createElementNS(ns, 'rect'));\
+         rect.setAttribute('tabindex', '0');\
+         rect.onfocus = function () { log.push('focus'); };\
+         rect.setAttribute('onFocus', 'log.push(\"mixed\")'); rect.removeAttribute('onFocus');\
+         var button = document.body.appendChild(document.createElement('button'));\
+         button.setAttribute('onFocus', 'log.push(\"html\")');\
+         rect.focus(); button.focus();\
+         var copy = rect.cloneNode(); copy.setAttribute('onFocus', 'log.push(\"copy\")');\
+         document.body.appendChild(copy.cloneNode()).focus();\
+         log.join() === 'focus,html' && typeof rect.onfocus === 'function'",
+    );
+}
+
+#[test]
+fn the_idle_fixup_runs_again_when_its_listeners_leave_focus_invalid() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var blurs = 0; b.focus(); b.setAttribute('disabled', '');\
+         b.onblur = function () { blurs++; if (blurs === 1) {\
+           b.removeAttribute('disabled'); b.focus(); } };\
+         b.onfocus = function () { b.setAttribute('disabled', ''); };\
+         true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && blurs === 2",
+    );
+}
+
+#[test]
+fn listeners_that_keep_focus_invalid_cannot_stop_the_page_settling() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var blurs = 0; b.focus(); b.setAttribute('disabled', '');\
+         b.onblur = function () { blurs++; b.removeAttribute('disabled'); b.focus(); };\
+         b.onfocus = function () { b.setAttribute('disabled', ''); };\
+         true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && blurs === 16 && !b.matches(':focus')",
+    );
+}
+
+#[test]
+fn an_out_of_range_tabindex_still_makes_an_element_focusable() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var span = document.body.appendChild(document.createElement('span'));\
+         span.setAttribute('tabindex', '99999999999999999999999'); span.focus();\
+         var huge = document.activeElement === span && span.tabIndex === -1;\
+         span.blur(); span.setAttribute('tabindex', ' -2147483649x'); span.focus();\
+         huge && document.activeElement === span && span.tabIndex === -1",
+    );
+}
+
+#[test]
+fn event_subclass_getters_check_the_interface_of_this() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "function throws(proto, name, event) {\
+           try { Object.getOwnPropertyDescriptor(proto, name).get.call(event); return false; }\
+           catch (e) { return e instanceof TypeError; } }\
+         function reads(proto, name, event) {\
+           return Object.getOwnPropertyDescriptor(proto, name).get.call(event); }\
+         var plain = new Event('x'), focus = new FocusEvent('x', {detail: 2});\
+         throws(FocusEvent.prototype, 'relatedTarget', plain)\
+           && throws(FocusEvent.prototype, 'relatedTarget', new UIEvent('x'))\
+           && throws(UIEvent.prototype, 'view', plain)\
+           && throws(UIEvent.prototype, 'detail', new CustomEvent('x'))\
+           && throws(CustomEvent.prototype, 'detail', focus)\
+           && throws(ErrorEvent.prototype, 'message', plain)\
+           && reads(UIEvent.prototype, 'detail', focus) === 2\
+           && reads(FocusEvent.prototype, 'relatedTarget', focus) === null\
+           && reads(CustomEvent.prototype, 'detail', new CustomEvent('x', {detail: 3})) === 3\
+           && reads(ErrorEvent.prototype, 'lineno', new ErrorEvent('x', {lineno: 4})) === 4",
+    );
+}
+
+#[test]
+fn focus_members_reject_elements_outside_html_svg_and_mathml() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var plain = document.createElementNS(null, 'x'), proto = HTMLElement.prototype;\
+         var tab = Object.getOwnPropertyDescriptor(proto, 'tabIndex');\
+         function throws(f) { try { f(); return false; } catch (e) { return e instanceof TypeError; } }\
+         throws(function () { proto.focus.call(plain); })\
+           && throws(function () { proto.blur.call(plain); })\
+           && throws(function () { tab.get.call(plain); })\
+           && throws(function () { tab.set.call(plain, 1); })\
+           && !plain.hasAttribute('tabindex')",
+    );
+}
+
+#[test]
+fn an_element_with_a_scrollable_region_takes_focus() {
+    use crate::runtime::host::PositionKind;
+
+    let (mut host, _, _, body) = StubHost::page();
+    let rect = StubHost::dom_rect(0.0, 0.0, 100.0, 100.0);
+    let mut overflowing = StubHost::boxed(rect, rect, PositionKind::Static);
+    overflowing.scroll_width = 300.0;
+    overflowing.scroll_height = 300.0;
+    let mut scrollers = Vec::new();
+    for _ in 0..4 {
+        let div = host.document.create_detached_element("div").unwrap();
+        host.document.append_child(body, div).unwrap();
+        scrollers.push(div);
+    }
+    // Overflowing on an `auto` axis, on a `hidden` axis only, with no
+    // computed `overflow`, and without a box.
+    for &div in &scrollers[..3] {
+        host.geometry.insert(div, overflowing);
+    }
+    let computed = [
+        (scrollers[0], "overflow-x", "hidden"),
+        (scrollers[0], "overflow-y", "auto"),
+        (scrollers[1], "overflow-x", "hidden"),
+        (scrollers[1], "overflow-y", "hidden"),
+    ];
+    for (div, property, value) in computed {
+        host.computed
+            .insert((div, property.to_owned()), value.to_owned());
+    }
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var c = document.body.children; c[0].focus();\
+         var scrolled = document.activeElement === c[0]; c[0].blur();\
+         c[1].focus(); c[2].focus(); c[3].focus();\
+         scrolled && document.activeElement === document.body",
+    );
+
+    let (mut host, _, _, body) = StubHost::page();
+    let div = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, div).unwrap();
+    host.geometry.insert(div, overflowing);
+    host.fail_computed = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(rt.evaluate("document.body.children[0].focus()").is_err());
+    with_state(rt.context_mut(), |s| {
+        let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();
+        host.fail_computed = false;
+        host.fail_geometry = true;
+    })
+    .unwrap();
+    assert!(rt.evaluate("document.body.children[0].focus()").is_err());
+}
+
+#[test]
+fn moving_the_focused_element_clears_focus() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var d = document.body.appendChild(document.createElement('div'));\
+         b.focus(); var focused = document.activeElement === b;\
+         d.appendChild(b); focused && document.activeElement === document.body",
+    );
+}
+
+#[test]
+fn an_invisible_area_takes_focus_through_a_visible_image() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let map = document.create_detached_element("map").unwrap();
+    document.set_element_attribute(map, "name", "m").unwrap();
+    document.append_child(body, map).unwrap();
+    let area = document.create_detached_element("area").unwrap();
+    document.set_element_attribute(area, "href", "#").unwrap();
+    document.append_child(map, area).unwrap();
+    let image = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(image, "usemap", "#m")
+        .unwrap();
+    document.append_child(body, image).unwrap();
+    host.invisible.insert(area);
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var area = document.body.children[0].firstChild; area.focus();\
+         document.activeElement === area",
+    );
+}

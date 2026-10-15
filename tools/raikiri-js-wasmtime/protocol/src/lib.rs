@@ -4,7 +4,8 @@ use raikiri_js::runtime::{
     Abort, BoxGeometry, DomRect, Limits, PositionKind, RunOptions, RunReport,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-pub const VERSION: u32 = 2;
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+pub const VERSION: u32 = 4;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -58,6 +59,12 @@ pub enum HostOperation {
     Fetch(String),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol users; tools/ is outside the workspace llvm-cov run.
     LoadImage(String),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Rendered(usize),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Visible(usize),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Viewport,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
@@ -70,6 +77,10 @@ pub enum HostValue {
     Geometry(Option<GeometryDto>),
     Text(Option<String>),
     Document(LogicalSnapshot),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Flag(bool),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Size(Option<(f64, f64)>),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsDto {

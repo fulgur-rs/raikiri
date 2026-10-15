@@ -290,38 +290,23 @@ fn collect(
         return;
     }
     let floated = tree.nodes[id].style.float.is_floated();
-    let input = LayoutInput {
-        run_mode: RunMode::PerformLayout,
-        sizing_mode: SizingMode::InherentSize,
-        axis: RequestedAxis::Both,
-        known_dimensions: Size {
-            width: (tree.nodes[id].multicol_auto_width
-                && !floated
-                && (tree.nodes[id].display.is_block_flex_or_grid_container()
-                    || matches!(
-                        tree.nodes[id].display,
-                        DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-                    ))
-                && tree.nodes[id].style.size.width == Dimension::auto()
-                && tree.nodes[id].image_intrinsic_box().is_none()
-                && tree.nodes[id].tag_name() != Some("img"))
-            .then_some(context.column_width),
-            height: None,
-        },
-        known_dimensions_are_definite: Size {
-            width: true,
-            height: false,
-        },
-        parent_size: Size {
-            width: Some(context.column_width),
-            height: context.available_height,
-        },
-        available_space: Size {
-            width: AvailableSpace::Definite(context.column_width),
-            height: AvailableSpace::MaxContent,
-        },
-        vertical_margins_are_collapsible: TaffyLine::FALSE,
-    };
+    let known_width = (tree.nodes[id].multicol_auto_width
+        && !floated
+        && (tree.nodes[id].display.is_block_flex_or_grid_container()
+            || matches!(
+                tree.nodes[id].display,
+                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+            ))
+        && tree.nodes[id].style.size.width == Dimension::auto()
+        && tree.nodes[id].image_intrinsic_box().is_none()
+        && tree.nodes[id].tag_name() != Some("img"))
+    .then_some(context.column_width);
+    let input = super::column_child_input(
+        known_width,
+        context.column_width,
+        context.available_height,
+        AvailableSpace::MaxContent,
+    );
     let output = tree.compute_child_layout(TaffyNodeId::from(id), input);
     let before = descendant_edge(tree, id, true, 0);
     let after = descendant_edge(tree, id, false, 0);

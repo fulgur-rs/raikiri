@@ -79,3 +79,58 @@ fn a_node_listed_without_its_parent_is_detached() {
     assert!(copy.get_node(0).expect("root").children.is_empty());
     assert!(!copy.get_node(1).expect("node").is_in_document());
 }
+
+#[test]
+fn focus_follows_the_element_while_it_is_in_the_tree() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let button = doc.append_element(Some(html), "button", Style::default(), None::<&str>);
+    let text = doc.append_text(html, "x");
+    let detached = doc.append_element(None, "button", Style::default(), None::<&str>);
+    assert_eq!(doc.focused_element(), None);
+    doc.set_focused_element(Some(button));
+    assert_eq!(doc.focused_element(), Some(button));
+    let visible = |doc: &Document| raikiri_style::StyleDom::focus_visible_element(doc);
+    assert_eq!(
+        visible(&doc),
+        Some(raikiri_style::StyleNodeId::new(button as u64))
+    );
+    doc.set_focus_visible(false);
+    assert_eq!(doc.focused_element(), Some(button));
+    assert_eq!(visible(&doc), None);
+    // Moving focus indicates it again.
+    doc.set_focused_element(Some(button));
+    assert_eq!(doc.focus_visible_element(), Some(button));
+    // An extracted copy keeps focus on the copied element.
+    assert_eq!(
+        doc.extract_nodes(&[0, html, button]).focused_element(),
+        Some(2)
+    );
+    assert_eq!(doc.extract_nodes(&[0, html]).focused_element(), None);
+    // Without its ancestor, the copied element is detached and loses focus,
+    // so attaching it later does not bring focus back.
+    assert_eq!(doc.extract_nodes(&[0, button]).focused, None);
+    for unfocusable in [detached, text, usize::MAX] {
+        doc.set_focused_element(Some(unfocusable));
+        assert_eq!(doc.focused_element(), None);
+    }
+    doc.set_focused_element(None);
+    assert_eq!(doc.focused_element(), None);
+}
+
+#[test]
+fn moving_the_focused_element_clears_focus() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(html), "div", Style::default(), None::<&str>);
+    let button = doc.append_element(Some(html), "button", Style::default(), None::<&str>);
+    doc.set_focused_element(Some(button));
+    doc.append_child(div, button).unwrap();
+    assert_eq!(doc.parent_of(button), Some(div));
+    assert_eq!(doc.focused_element(), None);
+    // Moving a node outside the focused subtree keeps focus.
+    let span = doc.append_element(Some(html), "span", Style::default(), None::<&str>);
+    doc.set_focused_element(Some(button));
+    doc.append_child(div, span).unwrap();
+    assert_eq!(doc.focused_element(), Some(button));
+}

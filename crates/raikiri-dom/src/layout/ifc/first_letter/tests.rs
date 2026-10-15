@@ -129,7 +129,7 @@ fn opening_the_letter_inline_box_reports_the_item_budget_boundary() {
     let mut builder = paragraph_builder(&fixture, &fonts, &limits);
     let cv = &fixture.cascade.computed[span];
     let inline = styled(&fixture.doc, &fixture.cascade, cv, span, &fonts).unwrap();
-    let edges = style::inline_edges(cv, span, &fonts).unwrap();
+    let (edges, _) = style::inline_edges(cv, span, &fonts).unwrap();
     builder.open_inline(NodeId(span as u64), &inline, edges);
     assert!(builder.error().is_none());
     let mut letter = FirstLetter::new(&fixture.doc, &fixture.cascade, fixture.root, &limits);

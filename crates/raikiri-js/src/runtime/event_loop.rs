@@ -422,6 +422,10 @@ impl JobExecutor for RaikiriJobExecutor {
 /// is reserved as address space and only touched as deep as the run
 /// actually recurses.
 #[cfg(not(target_arch = "wasm32"))]
+/// How many focus fixups one settling of the page runs with events before
+/// it drops a still-invalid focus silently.
+const MAX_IDLE_FOCUS_FIXUPS: u32 = 16;
+
 const ENGINE_STACK_BYTES: usize = 16 * 1024 * 1024;
 
 /// Run `f` with at least [`ENGINE_STACK_BYTES`] of native stack, switching
@@ -539,12 +543,27 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
         return Err(reason);
     }
     microtask_checkpoint(context)?;
+    let mut settled = false;
+    let mut fixups = 0;
     loop {
         let Ok(next) = with_state(context, |state| state.event_loop.next_task()) else {
             return Ok(()); // cov:ignore: the loop never runs inside a binding
         };
         let task = match next {
-            Next::Idle => return Ok(()),
+            Next::Idle if settled => return Ok(()),
+            // The page settling is a rendering opportunity too, so the
+            // focus fixup runs even when no frame callback asked for one.
+            // Its listeners may queue tasks or leave focus invalid again,
+            // so look at the queue again, and settle only once a pass
+            // finds focus valid. Listeners that keep invalidating it would
+            // never let the page settle, so past a bound the focus is
+            // dropped without events.
+            Next::Idle => {
+                let events = fixups < MAX_IDLE_FOCUS_FIXUPS;
+                fixups += 1;
+                settled = !fix_up_focus(context, events)? || !events;
+                continue;
+            }
             Next::Abort(reason) => return Err(abort(context, reason)),
             Next::Run(task) => task,
         };
@@ -557,6 +576,7 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
             }
         }
         microtask_checkpoint(context)?;
+        settled = false;
     }
 }
 
@@ -605,9 +625,9 @@ fn run_timer(context: &mut Context, id: i32, nesting: u32) -> Result<(), Abort> 
 }
 
 /// Run the animation frame callbacks registered before this frame, in
-/// registration order, all with the frame's timestamp. Callbacks registered
-/// while the frame runs wait for the next frame; ones cancelled while it
-/// runs are skipped.
+/// registration order, all with the frame's timestamp, then the focus
+/// fixup. Callbacks registered while the frame runs wait for the next
+/// frame; ones cancelled while it runs are skipped.
 fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
     let setup = with_state(context, |state| {
         let event_loop = &mut state.event_loop;
@@ -627,13 +647,29 @@ fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
             callbacks.remove(&handle)
         });
         let Ok(Some(callback)) = next else {
-            return Ok(());
+            break;
         };
         let result = callback.call(&JsValue::undefined(), &[JsValue::from(timestamp)], context);
         settle(context, result)?;
         // Each callback is its own "clean up after running script".
         microtask_checkpoint(context)?;
     }
+    fix_up_focus(context, true).map(drop)
+}
+
+/// The rendering update's focus fixup: a focused element that stopped
+/// being focusable (disabled, inert, no longer rendered) loses focus, with
+/// blur events unless `events` is false. Returns whether focus needed
+/// fixing.
+fn fix_up_focus(context: &mut Context, events: bool) -> Result<bool, Abort> {
+    let mut fixed = false;
+    let result = super::focus::fix_up_focus(context, events).map(|moved| {
+        fixed = moved;
+        JsValue::undefined()
+    });
+    settle(context, result)?;
+    microtask_checkpoint(context)?;
+    Ok(fixed)
 }
 
 fn callable_arg(args: &[JsValue], what: &str) -> JsResult<JsObject> {

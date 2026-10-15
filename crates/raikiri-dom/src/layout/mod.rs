@@ -112,14 +112,13 @@ pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
-pub(crate) use sanitize::sanitize_taffy_layout;
 
 #[doc(hidden)]
 pub use fixed::generates_inline_box;
 pub use fixed::{establishes_fixed_containing_block, is_transformable};
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
-pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
+pub use ifc::inline_boxes::{BoxRect, GeneratedBlockPiece, InlineBoxPiece};
 /// Glyph positions of the lines of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::positioned_runs::{

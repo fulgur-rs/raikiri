@@ -86,9 +86,71 @@ fn block_generated_content_breaks_lines_without_replacing_text() {
             _ => None,
         })
         .collect();
+    // Each block box is painted over its whole border box, not its text.
     assert_eq!(boxes.len(), 2);
-    assert_eq!(boxes[0].rect, PaintRect::new(0.0, 0.0, 20.0, 20.0));
-    assert_eq!(boxes[1].rect, PaintRect::new(0.0, 40.0, 20.0, 20.0));
+    assert_eq!(boxes[0].rect, PaintRect::new(0.0, 0.0, 100.0, 20.0));
+    assert_eq!(boxes[1].rect, PaintRect::new(0.0, 40.0, 100.0, 20.0));
+    for piece in boxes {
+        assert!(piece.has_start_edge && piece.has_end_edge);
+        assert!(piece.has_block_start_edge && piece.has_block_end_edge);
+    }
+}
+
+#[test]
+fn an_empty_block_generated_box_paints_its_border_box() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::after{display:block;content:'';height:3px;margin:0 10px;border-top:2px solid;background:red}",
+    );
+    let page = document.page(0).unwrap();
+    let events = page.paint_order_for_text_runs(&page.text_runs());
+    let boxes: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event {
+            PaintEvent::GeneratedBox(piece) => Some(piece),
+            _ => None,
+        })
+        .collect();
+    let [bar] = boxes[..] else {
+        panic!("one generated box: {boxes:?}")
+    };
+    assert_eq!(bar.kind, GeneratedKind::After);
+    assert_eq!(bar.rect, PaintRect::new(10.0, 20.0, 80.0, 5.0));
+    assert_eq!(bar.style.background_color.r, 255);
+}
+
+#[test]
+fn a_block_generated_box_across_pages_drops_the_edges_at_the_cut() {
+    let document = lay_out(
+        "<div>A</div>",
+        "div::before{display:block;content:'B B B B';width:30px;background:red}",
+    );
+    assert_eq!(document.page_count(), 2);
+    let pieces: Vec<_> = document
+        .pages()
+        .map(|page| {
+            page.paint_order_for_text_runs(&page.text_runs())
+                .into_iter()
+                .filter_map(|event| match event {
+                    PaintEvent::GeneratedBox(piece) => Some((
+                        piece.rect,
+                        piece.has_block_start_edge,
+                        piece.has_block_end_edge,
+                    )),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    // The 80px box fills the 60px first page and goes on at the top of the
+    // second.
+    assert_eq!(
+        pieces,
+        vec![
+            vec![(PaintRect::new(0.0, 0.0, 30.0, 60.0), true, false)],
+            vec![(PaintRect::new(0.0, 0.0, 30.0, 20.0), false, true)],
+        ]
+    );
 }
 
 #[test]

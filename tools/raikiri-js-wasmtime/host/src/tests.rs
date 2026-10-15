@@ -370,6 +370,8 @@ fn hostile_flush_rejects_invalid_snapshot() {
         stylesheets: Vec::new(),
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
+        focus_hidden: false,
     };
     assert!(roundtrip_response(&mut b, HostOperation::Flush(empty)).is_err());
 }
@@ -383,6 +385,10 @@ fn hostile_geometry_and_computed_enforce_bounds() {
     // In-bounds indices succeed through the test host.
     assert!(roundtrip_response(&mut b, HostOperation::Geometry(0)).is_ok());
     assert!(roundtrip_response(&mut b, HostOperation::Computed(0, "color".into())).is_ok());
+    assert!(roundtrip_response(&mut b, HostOperation::Rendered(99)).is_err());
+    assert!(roundtrip_response(&mut b, HostOperation::Visible(99)).is_err());
+    assert!(roundtrip_response(&mut b, HostOperation::Visible(0)).is_ok());
+    assert!(roundtrip_response(&mut b, HostOperation::Viewport).is_ok());
 }
 
 #[test]

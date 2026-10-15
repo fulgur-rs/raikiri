@@ -745,15 +745,13 @@ fn paint_chain(
 ) -> Vec<(usize, bool)> {
     let root = generated_origin(root).map_or(root, |(owner, _)| owner);
     let mut chain = Vec::new();
-    let mut current = Some(document.ifc_source_owner(root));
-    while let Some(id) = current {
+    for id in document.inclusive_ancestors(document.ifc_source_owner(root)) {
         chain.push((id, false));
         // The painter starts at the body; the boxes above it do not move
         // its content.
         if Some(id) == context.body {
             break;
         }
-        current = document.parent_of(id);
     }
     let mut in_columns = false;
     for (id, below) in chain.iter_mut().rev() {

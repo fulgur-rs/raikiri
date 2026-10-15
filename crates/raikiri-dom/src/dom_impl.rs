@@ -307,6 +307,14 @@ impl StyleDom for Document {
     fn normal_line_height(&self) -> Option<raikiri_style::NormalLineHeightSource> {
         Some(Document::normal_line_height(self))
     }
+
+    fn focused_element(&self) -> Option<StyleNodeId> {
+        Document::focused_element(self).map(|id| StyleNodeId::new(id as u64))
+    }
+
+    fn focus_visible_element(&self) -> Option<StyleNodeId> {
+        Document::focus_visible_element(self).map(|id| StyleNodeId::new(id as u64))
+    }
 }
 
 /// [`raikiri_traits::QuirksMode`] (raikiri-html's parse-time mirror of

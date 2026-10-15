@@ -1,10 +1,11 @@
 //! Composite the complete paint of a translucent inline element or
 //! typographic pseudo as one opacity group.
 
+use crate::walk::InlineProgression;
 use anyrender::{PaintScene, Scene};
 use kurbo::{Affine, Rect};
 use peniko::Mix;
-use raikiri_dom::{Document, InlineBoxPiece, Node, NodeKind};
+use raikiri_dom::{BoxRect, Document, InlineBoxPiece, Node, NodeKind};
 use raikiri_style::PseudoElem;
 use raikiri_style::property::{DisplayValue, PositionValue, ZIndexValue};
 use std::collections::HashMap;
@@ -15,10 +16,10 @@ pub(crate) struct BackgroundSlice {
     pub(crate) content: raikiri_dom::BoxRect,
 }
 
-/// `rtl` tells whether an element's inline base direction is right-to-left.
+/// `progression` gives the axis and inline start of an element's fragments.
 pub(super) fn background_slices(
     pieces: &[InlineBoxPiece],
-    rtl: impl Fn(usize) -> bool,
+    progression: impl Fn(usize) -> InlineProgression,
 ) -> Vec<Option<BackgroundSlice>> {
     let mut groups = HashMap::<usize, Vec<usize>>::new();
     for (index, piece) in pieces.iter().enumerate() {
@@ -29,39 +30,51 @@ pub(super) fn background_slices(
         if indices.len() < 2 {
             continue;
         }
-        // Join the boxes line after line, each line's in visual order,
-        // excluding their owners' margins (CSS Fragmentation 3 §5.4
-        // `box-decoration-break: slice`). The first line's fragment sits at
-        // the inline start of the joined box, so right-to-left boxes join
-        // later lines to its left. Keep each fragment's own height and move
+        // Join the boxes line after line along the inline axis, each line's
+        // in visual order, excluding their owners' margins (CSS
+        // Fragmentation 3 §5.4 `box-decoration-break: slice`). The first
+        // line's fragment sits at the inline start of the joined box, so a
+        // box that starts at the high end of the axis joins later lines
+        // before it. Keep each fragment's own size across the axis and move
         // the virtual composite origin so its slice aligns with the
         // fragment's physical position.
-        let rtl = rtl(node);
+        let progression = progression(node);
+        let span = |index: usize, rect: fn(&InlineBoxPiece) -> BoxRect| {
+            progression.span(rect(&pieces[index]))
+        };
         indices.sort_by(|&a, &b| {
             let lines = pieces[a].line.cmp(&pieces[b].line);
-            if rtl { lines.reverse() } else { lines }
-                .then(pieces[a].border_box.x.total_cmp(&pieces[b].border_box.x))
+            if progression.reversed {
+                lines.reverse()
+            } else {
+                lines
+            }
+            .then(
+                span(a, |piece| piece.border_box)
+                    .0
+                    .total_cmp(&span(b, |piece| piece.border_box).0),
+            )
         });
-        let first = &pieces[indices[0]];
-        let last = &pieces[*indices.last().expect("nonempty pseudo fragment group")];
-        let left = first.content_box.x - first.border_box.x;
-        let right =
-            last.border_box.x + last.border_box.width - last.content_box.x - last.content_box.width;
-        let width = indices
+        let first = indices[0];
+        let last = *indices.last().expect("nonempty pseudo fragment group");
+        let low =
+            span(first, |piece| piece.content_box).0 - span(first, |piece| piece.border_box).0;
+        let (last_start, last_size) = span(last, |piece| piece.border_box);
+        let (last_content_start, last_content_size) = span(last, |piece| piece.content_box);
+        let high = last_start + last_size - last_content_start - last_content_size;
+        let size = indices
             .iter()
-            .map(|&index| pieces[index].border_box.width)
+            .map(|&index| span(index, |piece| piece.border_box).1)
             .sum::<f32>();
         let mut offset = 0.0;
         for &index in indices.iter() {
             let piece = &pieces[index];
-            let mut outer = piece.border_box;
-            outer.x -= offset;
-            outer.width = width;
-            let mut content = piece.content_box;
-            content.x = outer.x + left;
-            content.width = width - left - right;
+            let (start, own) = progression.span(piece.border_box);
+            let outer = progression.with_span(piece.border_box, (start - offset, size));
+            let content =
+                progression.with_span(piece.content_box, (start - offset + low, size - low - high));
             slices[index] = Some(BackgroundSlice { outer, content });
-            offset += piece.border_box.width;
+            offset += own;
         }
     }
     slices

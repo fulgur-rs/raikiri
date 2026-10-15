@@ -137,15 +137,11 @@ pub(super) fn styled(
 /// attribute, trimmed and lowercased. An empty value means "unknown" and stops
 /// inheritance.
 pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if let Some(value) = doc.get_node(id).and_then(|n| n.attribute("lang")) {
-            let value = value.trim();
-            return (!value.is_empty()).then(|| value.to_ascii_lowercase());
-        }
-        current = doc.parent_of(id);
-    }
-    None
+    let value = doc
+        .inclusive_ancestors(node)
+        .find_map(|id| doc.get_node(id).and_then(|n| n.attribute("lang")))?
+        .trim();
+    (!value.is_empty()).then(|| value.to_ascii_lowercase())
 }
 
 /// The style a `<br>` gives its line strut in quirks mode: the style of the
@@ -166,7 +162,8 @@ fn break_strut_style(
     if !line_height_quirk(doc) {
         return Ok(None);
     }
-    let owner = std::iter::successors(doc.parent_of(br), |&id| doc.parent_of(id))
+    let owner = doc
+        .ancestors(br)
         .find(|&id| {
             super::assign::is_layout_root(doc, id)
                 || cascade
@@ -432,10 +429,10 @@ fn push_generated(
     } else {
         None
     };
-    let edges = if inline_level && pseudo != PseudoElem::Marker {
+    let (edges, edge_percents) = if inline_level && pseudo != PseudoElem::Marker {
         style::inline_edges(cv, element, fonts)?
     } else {
-        InlineEdges::default()
+        Default::default()
     };
     if let Some(block) = &block {
         builder.push_block_in_inline(NodeId(block.start));
@@ -443,7 +440,9 @@ fn push_generated(
     }
     let empty = text.is_empty() && !has_images;
     if !empty {
-        builder.open_inline(id, &inline_style, edges);
+        builder
+            .open_inline(id, &inline_style, edges)
+            .set_inline_edge_percents(edge_percents);
     }
     if !inline_level && block.is_none() && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
@@ -1164,7 +1163,7 @@ fn project_children_builder(
                     )?; // cov:ignore: ruby content fails only on the style and counter errors the plain inline path reports for the same content.
                     continue;
                 }
-                let edges = style::inline_edges(cv, id, fonts)?;
+                let (edges, edge_percents) = style::inline_edges(cv, id, fonts)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;
                 push_relative_offset(
                     &mut offsets,
@@ -1202,7 +1201,9 @@ fn project_children_builder(
                         id as u64,
                         cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
                     );
-                    builder.open_inline(NodeId(id as u64), &inline_style, edges);
+                    builder
+                        .open_inline(NodeId(id as u64), &inline_style, edges)
+                        .set_inline_edge_percents(edge_percents);
                     push_generated(
                         &mut builder,
                         doc,
@@ -1311,8 +1312,7 @@ fn first_line_opacity(
             .filter(|cv| cv.opacity < 1.0)
             .map(|cv| cv.opacity)
     };
-    let ancestors = std::iter::successors(doc.parent_of(root), |&id| doc.parent_of(id))
-        .any(|id| translucent(id).is_some());
+    let ancestors = doc.ancestors(root).any(|id| translucent(id).is_some());
     if !ancestors && translucent(root).is_none() {
         return None;
     }

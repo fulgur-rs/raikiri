@@ -18,6 +18,15 @@ pub(crate) struct StubHost {
     pub fail_flush: bool,
     pub fail_geometry: bool,
     pub fail_computed: bool,
+    /// Elements whose subtrees [`DocumentHost::is_being_rendered`] reports
+    /// as not rendered, as if they had `display: none`.
+    pub unrendered: HashSet<usize>,
+    /// Elements [`DocumentHost::is_visible`] reports as invisible, as if
+    /// they computed `visibility: hidden`.
+    pub invisible: HashSet<usize>,
+    /// [`DocumentHost::viewport_size`]'s return value, or a failure when
+    /// `Err`.
+    pub viewport: Result<Option<(f64, f64)>, ()>,
     /// [`DocumentHost::document_url`]'s return value; tests set this
     /// directly (`host.document_url = Some(...)`) before building a runtime.
     pub document_url: Option<String>,
@@ -55,6 +64,9 @@ impl StubHost {
                 fail_flush: false,
                 fail_geometry: false,
                 fail_computed: false,
+                unrendered: HashSet::new(),
+                invisible: HashSet::new(),
+                viewport: Ok(None),
                 document_url: None,
                 scripts: HashMap::new(),
                 images: HashSet::new(),
@@ -119,6 +131,26 @@ impl DocumentHost for StubHost {
             return Err(HostError("stub geometry failure".into()));
         }
         Ok(self.geometry.get(&node).copied())
+    }
+    fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
+        if self.fail_geometry {
+            return Err(HostError("stub geometry failure".into()));
+        }
+        let mut current = Some(node);
+        while let Some(index) = current {
+            if self.unrendered.contains(&index) {
+                return Ok(false);
+            }
+            current = self.document.parent_of(index);
+        }
+        Ok(true)
+    }
+    fn is_visible(&mut self, node: usize) -> Result<bool, HostError> {
+        Ok(!self.invisible.contains(&node))
+    }
+    fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
+        self.viewport
+            .map_err(|()| HostError("stub viewport failure".into()))
     }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         if self.fail_computed {

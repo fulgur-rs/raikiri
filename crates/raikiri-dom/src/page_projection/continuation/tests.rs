@@ -121,7 +121,7 @@ fn page_start_names_a_block_that_begins_the_page() {
 #[test]
 fn continuation_cascade_drops_breaks_before_the_token() {
     let mut blocks = Vec::new();
-    let (doc, mut cascade, root) = ahem_paragraph_with("break-inside:avoid", |doc, root| {
+    let (mut doc, mut cascade, root) = ahem_paragraph_with("break-inside:avoid", |doc, root| {
         for style in [
             "display:block;break-after:page;page:cover",
             "display:block;break-before:page;break-inside:avoid",

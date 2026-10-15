@@ -186,6 +186,20 @@ pub trait StyleDom {
         None
     }
 
+    /// The element `:focus` matches, if any: the document's focused area
+    /// when it is an element in the document. The default `None` suits a
+    /// DOM with no focus, such as a static render.
+    fn focused_element(&self) -> Option<StyleNodeId> {
+        None
+    }
+
+    /// The element `:focus-visible` matches: the focused element while it
+    /// indicates focus. The default is [`Self::focused_element`], for a
+    /// DOM that always indicates focus.
+    fn focus_visible_element(&self) -> Option<StyleNodeId> {
+        self.focused_element()
+    }
+
     /// The measurer of `line-height: normal` in the fonts this document's
     /// text is laid out with, used by a cascade whose
     /// [`crate::CascadeOptions::normal_line_height`] is `None`.

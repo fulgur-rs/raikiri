@@ -635,7 +635,7 @@ impl<'a> RenderResources<'a> {
     }
 
     /// Preload the page-context and page-margin-box background images of one
-    /// page.
+    /// page, and its border image.
     pub(crate) fn preload_page_context_background_images(
         &self,
         page: &PageCascadeResult,
@@ -645,6 +645,16 @@ impl<'a> RenderResources<'a> {
         attempts: &mut usize,
         signal: Option<&AbortSignal>,
     ) {
+        // The cascaded rule of each margin box slot, with `var()` substituted.
+        let mut margin_box_rules: Vec<raikiri_style::PageMarginBoxCascadeResult> = Vec::new();
+        for rule in page.margin_boxes() {
+            if !margin_box_rules
+                .iter()
+                .any(|cascaded| cascaded.slot == rule.slot)
+            {
+                margin_box_rules.extend(page.cascade_margin_box(rule.slot));
+            }
+        }
         let mut raw_urls: Vec<&str> = Vec::new();
         if let Some(PropertyValue::BackgroundImage(images)) =
             page.declarations().get(&PropertyKey::BackgroundImage)
@@ -656,19 +666,16 @@ impl<'a> RenderResources<'a> {
                     .filter_map(background_url),
             );
         }
-        let margin_box_rules = page.margin_boxes();
-        let mut seen_slots = Vec::new();
-        for rule in margin_box_rules {
-            if seen_slots.contains(&rule.slot) {
-                continue;
-            }
-            seen_slots.push(rule.slot);
-            let winning_background = margin_box_rules
+        if let Some(PropertyValue::BorderImageSource(image)) =
+            page.declarations().get(&PropertyKey::BorderImageSource)
+        {
+            raw_urls.extend(background_url(image));
+        }
+        for rule in &margin_box_rules {
+            let winning_background = rule
+                .declarations
                 .iter()
-                .filter(|candidate| candidate.slot == rule.slot)
-                .flat_map(|candidate| candidate.declarations.iter())
-                .filter(|declaration| declaration.value().key() == PropertyKey::BackgroundImage)
-                .next_back();
+                .rfind(|declaration| declaration.value().key() == PropertyKey::BackgroundImage);
             if let Some(PropertyValue::BackgroundImage(images)) =
                 winning_background.map(|declaration| declaration.value())
             {

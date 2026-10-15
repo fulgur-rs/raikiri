@@ -244,6 +244,15 @@ pub enum PseudoClass {
     AnyLink,
     /// A valid history-dependent selector; always nonmatching in static rendering.
     Visited,
+    /// `:focus`: the document's focused element (Selectors L4 §9.4).
+    Focus,
+    /// `:focus-within`: the focused element and its flat-tree ancestors
+    /// (Selectors L4 §9.6).
+    FocusWithin,
+    /// `:focus-visible`: the focused element. Focus here only ever comes from
+    /// script with no pointer interaction before it, which the heuristics
+    /// treat as visible (Selectors L4 §9.5).
+    FocusVisible,
     /// `:lang(range1, range2, ...)` — CSS Selectors L4 §7.2
     /// <https://www.w3.org/TR/selectors-4/#the-lang-pseudo>. Each `String` is
     /// one comma-separated language range **as written in the selector**
@@ -321,6 +330,9 @@ impl ToCss for PseudoClass {
             PseudoClass::Link => dest.write_str(":link"),
             PseudoClass::AnyLink => dest.write_str(":any-link"),
             PseudoClass::Visited => dest.write_str(":visited"),
+            PseudoClass::Focus => dest.write_str(":focus"),
+            PseudoClass::FocusWithin => dest.write_str(":focus-within"),
+            PseudoClass::FocusVisible => dest.write_str(":focus-visible"),
             PseudoClass::Lang(ranges) => {
                 dest.write_str(":lang(")?;
                 for (i, range) in ranges.iter().enumerate() {
@@ -351,7 +363,14 @@ impl NonTSPseudoClass for PseudoClass {
     }
 
     fn is_user_action_state(&self) -> bool {
-        matches!(self, PseudoClass::Hover | PseudoClass::Active)
+        matches!(
+            self,
+            PseudoClass::Hover
+                | PseudoClass::Active
+                | PseudoClass::Focus
+                | PseudoClass::FocusWithin
+                | PseudoClass::FocusVisible
+        )
     }
 }
 
@@ -484,6 +503,12 @@ impl<'i> SelectorsParser<'i> for RaikiriSelectorParser {
             Ok(PseudoClass::AnyLink)
         } else if name.eq_ignore_ascii_case("visited") {
             Ok(PseudoClass::Visited)
+        } else if name.eq_ignore_ascii_case("focus") {
+            Ok(PseudoClass::Focus)
+        } else if name.eq_ignore_ascii_case("focus-within") {
+            Ok(PseudoClass::FocusWithin)
+        } else if name.eq_ignore_ascii_case("focus-visible") {
+            Ok(PseudoClass::FocusVisible)
         } else {
             Err(
                 location.new_custom_error(SelectorParseErrorKind::UnsupportedPseudoClassOrElement(

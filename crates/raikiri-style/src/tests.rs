@@ -5,6 +5,9 @@ fn common_report_pseudo_selectors_parse_without_forgiving_invalid_lists() {
     for source in [
         "a:link",
         "area:any-link",
+        "a:focus",
+        "div:focus-within",
+        "button:focus-visible",
         "::backdrop",
         "input::file-selector-button",
         "*, ::after, ::before, ::backdrop, ::file-selector-button",
@@ -17,6 +20,21 @@ fn common_report_pseudo_selectors_parse_without_forgiving_invalid_lists() {
     for source in ["p, ::unknown-pseudo", "p, :unknown-state", "p, input["] {
         assert!(parse_selector_list(source).is_err());
     }
+}
+
+#[test]
+fn focus_states_are_user_action_states() {
+    use selectors::parser::NonTSPseudoClass as _;
+    for state in [
+        PseudoClass::Hover,
+        PseudoClass::Active,
+        PseudoClass::Focus,
+        PseudoClass::FocusWithin,
+        PseudoClass::FocusVisible,
+    ] {
+        assert!(state.is_user_action_state(), "{state:?}");
+    }
+    assert!(!PseudoClass::Link.is_user_action_state());
 }
 
 #[test]

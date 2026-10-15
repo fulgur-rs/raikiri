@@ -346,6 +346,11 @@ impl Iterator for TaffyChildIter<'_> {
     }
 }
 
+/// The number of children from which taffy's walks over a container's
+/// children by index read them from a list; walking fewer children from
+/// the start each time costs less than building the list.
+const WALKED_CHILDREN_MIN: usize = 32;
+
 impl TraversePartialTree for Document {
     type ChildIter<'a> = TaffyChildIter<'a>;
 
@@ -354,12 +359,32 @@ impl TraversePartialTree for Document {
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
+        // Taffy counts a container's children before it walks them by
+        // index. For a container with many children the walk reads them
+        // from one list, so it costs O(k), not O(k²); the list is dropped
+        // when the walk reaches the last child.
+        let parent = usize::from(node_id);
+        let mut walks = self.taffy_child_walks.borrow_mut();
+        walks.remove(&parent);
         // Must match the filter of `child_ids`.
-        TaffyChildIter::new(self, node_id).count()
+        let count = TaffyChildIter::new(self, node_id).count();
+        if count >= WALKED_CHILDREN_MIN {
+            walks.insert(parent, TaffyChildIter::new(self, node_id).collect());
+        }
+        count
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         // Filtered index: return the nth child in the same view as child_ids.
+        let parent = usize::from(node_id);
+        let mut walks = self.taffy_child_walks.borrow_mut();
+        if let Some(&child) = walks.get(&parent).and_then(|children| children.get(index)) {
+            if walks[&parent].len() == index + 1 {
+                walks.remove(&parent);
+            }
+            return child;
+        }
+        drop(walks);
         TaffyChildIter::new(self, node_id)
             .nth(index)
             .expect("get_child_id: index out of range")
@@ -397,7 +422,7 @@ impl LayoutPartialTree for Document {
 
     /// The **only** path by which taffy writes layout into the arena.
     ///
-    /// Passing through [`crate::layout::sanitize_taffy_layout`] here structurally
+    /// Storing through [`Document::store_unrounded_layout`] here structurally
     /// guarantees that `Node.unrounded_layout` contains no non-finite f32 values.
     /// The input guard in the bridge (`layout::sanitize_taffy`) alone cannot
     /// close the gap: nested percentages compound at the used-value layer
@@ -411,16 +436,9 @@ impl LayoutPartialTree for Document {
     /// drains the buffer to an observer or eprintln (see the documentation for
     /// the diagnostics buffer below).
     /// See [`Document::layout_warnings`](crate::document::Document).
-    ///
-    /// Bind the RHS to `sanitized` before assigning the LHS. This deliberately
-    /// avoids borrowing two disjoint fields of `self` (`self.nodes[..]` via
-    /// IndexMut and `self.layout_warnings`) in the same assignment expression.
-    /// Besides satisfying borrowck, it makes evaluation order and dependencies
-    /// explicit to readers.
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
         self.note_transposed_layout(usize::from(node_id));
-        let sanitized = crate::layout::sanitize_taffy_layout(layout, &mut self.layout_warnings);
-        self.nodes[usize::from(node_id)].unrounded_layout = sanitized;
+        self.store_unrounded_layout(usize::from(node_id), layout);
     }
 
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
@@ -1423,8 +1441,7 @@ fn fragmentation_context_for_ifc(
     }
 
     let mut has_row_flex = false;
-    let mut ancestor = tree.parent_of(idx);
-    while let Some(node_id) = ancestor {
+    for node_id in tree.ancestors(idx) {
         let node = &tree.nodes[node_id];
         if let Some(multicol) = node.multicol {
             return (has_row_flex && multicol.horizontal).then_some(context);
@@ -1434,7 +1451,6 @@ fn fragmentation_context_for_ifc(
                 node.style.flex_direction,
                 taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
             );
-        ancestor = tree.parent_of(node_id);
     }
     None // cov:ignore: the unsupported ancestor path remains outside the ignored nested flex-float WPT scope.
 }

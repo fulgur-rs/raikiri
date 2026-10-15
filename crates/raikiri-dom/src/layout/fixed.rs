@@ -309,14 +309,12 @@ fn visit_out_of_flow_boxes(
         Some(cv) if establishes_absolute_containing_block(document, root, cv) => {
             containing_block_of(document, root, cv, Point::ZERO)
         }
-        _ if std::iter::successors(document.parent_of(root), |&id| document.parent_of(id)).any(
-            |id| {
-                cascade
-                    .computed
-                    .get(id)
-                    .is_some_and(|cv| establishes_absolute_containing_block(document, id, cv))
-            },
-        ) =>
+        _ if document.ancestors(root).any(|id| {
+            cascade
+                .computed
+                .get(id)
+                .is_some_and(|cv| establishes_absolute_containing_block(document, id, cv))
+        }) =>
         {
             ContainingBlock::Kept
         }

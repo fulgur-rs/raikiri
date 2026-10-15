@@ -314,6 +314,11 @@ pub struct Document {
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
     pub(crate) selected_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
+    /// The element a script focused; see [`Document::focused_element`].
+    pub(crate) focused: Option<usize>,
+    /// Whether the focused element was focused with `focusVisible: false`,
+    /// so it does not indicate focus; see [`Document::set_focus_visible`].
+    pub(crate) focus_hidden: bool,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, PreparedImage>,
@@ -347,9 +352,9 @@ pub struct Document {
     /// lines. Sorted, like `forced_break_clearance`, and dirties the layout
     /// cache the same way when it changes.
     pub(crate) forced_break_line_clearance: Vec<usize>,
-    /// Page values that paged layout gives clearance by in place of the
-    /// cascade's, for a layout that otherwise ignores page names.
-    pub(crate) clearance_page_values: Option<Vec<raikiri_style::property::PageValue>>,
+    /// Page values and forced breaks that paged layout gives clearance by in
+    /// place of the cascade's, for a relayout whose cascade drops them.
+    pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
     /// Set around a table's intrinsic width probe of a cell that is an ifc
     /// root: the next ifc measurement only needs the cell's width, so it
     /// skips breaking the paragraph into lines.
@@ -364,6 +369,10 @@ pub struct Document {
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
+    /// The children of each container with many children whose walk by
+    /// index taffy has started and not finished, listed when taffy counted
+    /// them.
+    pub(crate) taffy_child_walks: std::cell::RefCell<HashMap<usize, Vec<taffy::NodeId>>>,
     /// Used left and right margins of `<body>` that the most recent layout
     /// carried as inline padding of the synthetic body root.
     pub(crate) body_inline_margins: (f32, f32),
@@ -426,11 +435,11 @@ pub struct Document {
     /// "silent clamp" site).
     ///
     /// Owned (`Vec`, no borrowed observer) rather than a closure field —
-    /// deliberately, not as a simplification of convenience. `<Document as
-    /// taffy::LayoutPartialTree>::set_unrounded_layout` is the sole choke
-    /// point that writes non-finite-clamped geometry into the arena
-    /// ([`crate::layout::sanitize_taffy_layout`]'s doc), but its signature is
-    /// fixed by the `taffy` trait — it cannot receive an extra observer
+    /// deliberately, not as a simplification of convenience.
+    /// [`Document::store_unrounded_layout`] is the choke point that writes
+    /// non-finite-clamped layouts into the arena, and taffy's
+    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout` reaches
+    /// it through a signature fixed by the `taffy` trait — it cannot receive an extra observer
     /// parameter. Storing a borrowed `&mut dyn FnMut` here instead would
     /// require adding a lifetime parameter to `Document` itself, which is a
     /// public-shape break every consumer of this type would have to absorb
@@ -663,6 +672,8 @@ impl Document {
             nodes: nodes.into(),
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
+            focused: None,
+            focus_hidden: false,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
@@ -671,11 +682,12 @@ impl Document {
             layout_dirty: false,
             forced_break_clearance: Vec::new(),
             forced_break_line_clearance: Vec::new(),
-            clearance_page_values: None,
+            clearance_breaks: None,
             ifc_width_probe: false,
             ifc: None,
             normal_line_height: None,
             layout_cascade_generation: None,
+            taffy_child_walks: Default::default(),
             body_inline_margins: (0.0, 0.0),
             body_block_start_margin: 0.0,
             fixed_page_area: None,
@@ -1062,6 +1074,20 @@ impl Document {
         std::iter::successors(self.parent_of(node), move |&id| self.parent_of(id))
     }
 
+    /// Iterate over `root` and its descendants in tree order (preorder),
+    /// following `children` edges. `root` is always yielded first, even when
+    /// it is out of range.
+    pub fn preorder(&self, root: usize) -> impl Iterator<Item = usize> + '_ {
+        let mut pending = vec![root];
+        std::iter::from_fn(move || {
+            let id = pending.pop()?;
+            if let Some(node) = self.get_node(id) {
+                pending.extend(node.children.iter().rev().copied());
+            }
+            Some(id)
+        })
+    }
+
     /// Iterate over `node` and then its ancestors, nearest first. `node` is
     /// always yielded first, even when it is out of range; the walk then
     /// follows [`Self::ancestors`].
@@ -1135,6 +1161,10 @@ impl Document {
         if let Some(node) = self.nodes.get_mut(child) {
             node.parent = None;
         }
+        // Removal clears focus even when the node is inserted again right
+        // away, as `appendChild` and `insertBefore` moves do (HTML removing
+        // steps; only `moveBefore` preserves it).
+        self.fix_up_focus();
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         Some(parent)
@@ -1980,6 +2010,8 @@ impl Document {
             nodes: arena,
             resolved_image_urls,
             selected_image_urls,
+            focused,
+            focus_hidden,
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
@@ -1988,11 +2020,12 @@ impl Document {
             layout_dirty: _,
             forced_break_clearance: _,
             forced_break_line_clearance: _,
-            clearance_page_values: _,
+            clearance_breaks: _,
             ifc_width_probe: _,
             ifc,
             normal_line_height,
             layout_cascade_generation: _,
+            taffy_child_walks: _,
             body_inline_margins: _,
             body_block_start_margin: _,
             fixed_page_area: _,
@@ -2056,6 +2089,10 @@ impl Document {
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
+        document.focused = focused.and_then(|old| new_of_old.get(&old).copied());
+        document.focus_hidden = *focus_hidden;
+        // A focused element copied without its ancestors is detached.
+        document.fix_up_focus();
         document.list_marker_images = remap_keys(list_marker_images, nodes);
         document.content_images = content_images
             .iter()
@@ -2616,21 +2653,10 @@ impl Document {
     /// Arena ids of the HTML `<canvas>` elements under the root, in tree
     /// order.
     fn canvas_ids_in_tree_order(&self) -> Vec<usize> {
-        let mut ids = Vec::new();
-        let mut stack: Vec<usize> = self
-            .nodes
-            .get(self.root_index())
-            .map(|root| root.children.iter().rev().copied().collect())
-            .unwrap_or_default();
-        while let Some(index) = stack.pop() {
-            if self.is_canvas_element(index) {
-                ids.push(index);
-            }
-            if let Some(node) = self.nodes.get(index) {
-                stack.extend(node.children.iter().rev().copied());
-            }
-        }
-        ids
+        self.preorder(self.root_index())
+            .skip(1)
+            .filter(|&index| self.is_canvas_element(index))
+            .collect()
     }
 
     /// Clone materialized canvas bitmaps in tree order.
@@ -3528,6 +3554,56 @@ fn marker_image_size(
 }
 
 impl Document {
+    /// Make `element` the focused element, or clear focus with `None`. The
+    /// caller decides whether the element is focusable.
+    pub fn set_focused_element(&mut self, element: Option<usize>) {
+        self.focused = element;
+        self.focus_hidden = false;
+    }
+
+    /// Whether the focused element indicates focus, matching
+    /// `:focus-visible`. Moving focus makes it visible again; `focus()` with
+    /// `focusVisible: false` hides it.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#dom-focusoptions-focusvisible>
+    pub fn set_focus_visible(&mut self, visible: bool) {
+        self.focus_hidden = !visible;
+    }
+
+    /// The focused element when it indicates focus; see
+    /// [`Document::set_focus_visible`].
+    pub fn focus_visible_element(&self) -> Option<usize> {
+        self.focused_element().filter(|_| !self.focus_hidden)
+    }
+
+    /// The focused element while it is an element in this document's tree.
+    /// One removed from the tree no longer has focus (HTML "focus fixup"),
+    /// so `:focus` stops matching it.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focus-fixup-rule>
+    pub fn focused_element(&self) -> Option<usize> {
+        let focused = self.focused?;
+        if self.get_node(focused)?.kind() != crate::NodeKind::Element {
+            return None;
+        }
+        let mut root = focused;
+        while let Some(parent) = self.parent_of(root) {
+            root = parent;
+        }
+        (root == self.root).then_some(focused)
+    }
+
+    /// Forget a stored focused element that has left the document, so
+    /// inserting it again does not bring focus back without a `focus()`
+    /// call (HTML removing steps). Call after every tree mutation.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/infrastructure.html#dom-trees:focus-fixup-rule>
+    pub fn fix_up_focus(&mut self) {
+        if self.focused.is_some() && self.focused_element().is_none() {
+            self.focused = None;
+        }
+    }
+
     /// Record `url` as the image `element` selected for its `src` value
     /// `src`. HTML resolves an `<img>` source once, when its request starts,
     /// so a later `<base href>` change does not move it to another resource;

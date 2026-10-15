@@ -101,6 +101,29 @@ pub trait DocumentHost: 'static {
     /// Geometry of `node`'s principal box, or `None` when it has no box
     /// (for example `display: none`). Called after [`Self::flush`].
     fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError>;
+    /// Whether the element `node` is being rendered (HTML: it has a box).
+    /// Called after [`Self::flush`]. The default asks
+    /// [`Self::box_geometry`].
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/rendering.html#being-rendered>
+    fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
+        Ok(self.box_geometry(node)?.is_some())
+    }
+    /// Whether the element `node` computes `visibility: visible`. CSS takes
+    /// hidden and collapsed boxes out of interaction, so they cannot take
+    /// focus. Called after [`Self::flush`]. The default reports visible.
+    ///
+    /// Spec: <https://drafts.csswg.org/css-display-4/#visibility>
+    fn is_visible(&mut self, _node: usize) -> Result<bool, HostError> {
+        Ok(true)
+    }
+    /// The viewport's width and height in CSS pixels, or `None` when the
+    /// embedder has no viewport. The default has none.
+    ///
+    /// Spec: <https://drafts.csswg.org/cssom-view/#viewport>
+    fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
+        Ok(None)
+    }
     /// Serialized computed value of `property` on `node`, or `None` when the
     /// property is not supported. Called after [`Self::flush`].
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError>;

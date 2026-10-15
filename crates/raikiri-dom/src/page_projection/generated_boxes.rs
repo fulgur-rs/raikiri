@@ -1,7 +1,7 @@
 //! Page ownership of decorations from generated inline box pieces.
 
 use super::flow_pages::FlowPages;
-use super::records::{PageFragment, ProjectedTextRoot};
+use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use super::text_runs::{RunContext, placement};
 use crate::{Document, GeneratedKind};
 use raikiri_style::{CascadeResult, ComputedValues};
@@ -35,6 +35,13 @@ pub struct GeneratedBox<'a> {
     pub has_start_edge: bool,
     /// The piece contains the inline end edge of the generated box.
     pub has_end_edge: bool,
+    /// The piece contains the block-start edge of the generated box. Only a
+    /// block-level `::before` or `::after` that pagination cuts has a piece
+    /// without it.
+    pub has_block_start_edge: bool,
+    /// The piece contains the block-end edge of the generated box, as
+    /// [`Self::has_block_start_edge`].
+    pub has_block_end_edge: bool,
 }
 
 /// One line's piece of the box of a non-atomic inline element: its
@@ -69,6 +76,8 @@ pub(super) struct BoxPiece {
     pub rect: PaintRect,
     pub has_start_edge: bool,
     pub has_end_edge: bool,
+    pub has_block_start_edge: bool,
+    pub has_block_end_edge: bool,
 }
 
 /// Page, paragraph root, originating element, and the pseudo-element.
@@ -137,15 +146,27 @@ pub(super) fn prepare(
             pages.iter().map(|page| (page, *pieces)).collect()
         } else {
             let mut candidates = Vec::new();
-            let centers = pieces.iter().map(|&(_, _, _, offset, _, top, height)| {
-                // The arithmetic of `line_center_on_page`, so rounding at
-                // large coordinates cannot prune the owning page.
-                let top = root.y + offset.1 + top;
-                let (top, bottom) = axis.line_extent(root, top, top + height);
-                (top + bottom) * 0.5
-            });
-            for (index, center) in centers.enumerate().filter(|(_, center)| center.is_finite()) {
-                for page in flow_pages.around(center, center) {
+            let spans = pieces
+                .iter()
+                .map(|&(_, _, _, offset, _, top, height, block)| {
+                    let top = root.y + offset.1 + top;
+                    let (top, bottom) = axis.line_extent(root, top, top + height);
+                    if block.is_some() && axis == FlowAxis::Y {
+                        // A block box goes to every page it reaches.
+                        (top, bottom)
+                    } else {
+                        // The arithmetic of `line_center_on_page`, so
+                        // rounding at large coordinates cannot prune the
+                        // owning page.
+                        let center = (top + bottom) * 0.5;
+                        (center, center)
+                    }
+                });
+            for (index, (low, high)) in spans
+                .enumerate()
+                .filter(|(_, (low, high))| low.is_finite() && high.is_finite())
+            {
+                for page in flow_pages.around(low, high) {
                     work.charge(1)?;
                     candidates.push((page, &pieces[index..=index]));
                 }
@@ -170,19 +191,32 @@ pub(super) fn prepare(
             } else {
                 page.flow_axis.page_shift(start)
             };
-            for &(owner, kind, piece, offset, shift, top, height) in pieces {
+            for &(owner, kind, piece, offset, shift, top, height, block) in pieces {
                 work.charge(1)?;
                 let (line_top, line_bottom) = page.flow_axis.line_extent(
                     &root,
                     root.y + offset.1 + top,
                     root.y + offset.1 + top + height,
                 );
-                if !root.is_repeat
+                let mut rect = piece.border_box;
+                let mut block_edges = block.unwrap_or((true, true));
+                if block.is_some() && !root.is_repeat && page.flow_axis == FlowAxis::Y {
+                    // The page holds the part of a block box in its slice of
+                    // the flow; a cut takes the edge off that side (CSS
+                    // Fragmentation 3 `box-decoration-break: slice`).
+                    let (low, high) = (line_top.max(start), line_bottom.min(end));
+                    if high <= low {
+                        continue;
+                    }
+                    rect.y += low - line_top;
+                    rect.height = high - low;
+                    block_edges.0 &= low == line_top;
+                    block_edges.1 &= high == line_bottom;
+                } else if !root.is_repeat
                     && !crate::layout::line_center_on_page(line_top, line_bottom, start, end)
                 {
                     continue;
                 }
-                let rect = piece.border_box;
                 // A pseudo-element moves by its own relative offset and with
                 // its relatively positioned inline ancestors, as its text does.
                 // A typographic pseudo-element moves with the inline element
@@ -235,6 +269,8 @@ pub(super) fn prepare(
                     ),
                     has_start_edge: piece.has_start_edge,
                     has_end_edge: piece.has_end_edge,
+                    has_block_start_edge: block_edges.0,
+                    has_block_end_edge: block_edges.1,
                 });
             }
         }

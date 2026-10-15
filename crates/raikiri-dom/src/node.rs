@@ -558,11 +558,11 @@ pub struct Node {
     /// `size.width` and `padding.{left,right}` can make
     /// `size.width - padding.left - padding.right` negative.
     ///
-    /// [`crate::layout::sanitize_taffy_layout`] enforces this contract at
-    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
-    /// (`taffy_impl.rs`), the sole taffy-to-arena write point. This structural
-    /// invariant cannot be broken by forgetting a separate call (see the docs
-    /// for [`crate::layout::sanitize_taffy_layout`] for details and evidence).
+    /// [`crate::Document::store_unrounded_layout`], through which taffy's
+    /// `set_unrounded_layout` and the table algorithm store whole layouts,
+    /// enforces this contract (see the docs for
+    /// [`crate::layout::sanitize::sanitize_taffy_layout`] for details and
+    /// evidence).
     /// Although this field is `pub`, no public API yields an external `&mut Node`:
     /// `Document::nodes` and constructors such as [`Node::new_document`] are
     /// `pub(crate)`, and [`crate::Document::get_node`] returns only `&Node`.
@@ -813,6 +813,29 @@ impl Node {
     /// Enclosing typographic pseudo box, when ancestor block letters nest.
     pub fn ifc_typographic_parent(&self, box_id: usize) -> Option<usize> {
         self.ifc.as_ref()?.typographic_parent(box_id)
+    }
+
+    /// The pieces of the block-level `::before` and `::after` boxes of an
+    /// ifc root, in the root's content box with pagination's moves applied.
+    /// Every box has at least one piece. Their inline pieces on the lines
+    /// carry their text, not their boxes. A paragraph split into columns
+    /// has none: its generated blocks are painted as their line pieces.
+    #[doc(hidden)]
+    pub fn ifc_generated_block_pieces(&self) -> Vec<crate::layout::GeneratedBlockPiece> {
+        // Columns place their lines apart; their boxes stay on the lines.
+        let Some(lines) = self
+            .ifc
+            .as_ref()
+            .filter(|root| root.multicol_fragments.is_none())
+            .and_then(|root| root.lines.as_ref())
+        else {
+            return Vec::new();
+        };
+        lines
+            .placed_blocks
+            .iter()
+            .flat_map(|placed| placed.pieces(&lines.lines, |index| lines.shift_of(index)))
+            .collect()
     }
 
     /// Pieces of the inline elements of an ifc root on its lines, in the

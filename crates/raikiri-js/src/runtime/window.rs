@@ -388,7 +388,7 @@ fn console_object(context: &mut Context) -> JsResult<JsObject> {
 /// become zero, everything else is kept as-is. Positive overflow beyond the
 /// scrollable size is kept here; max clamping needs layout and happens in
 /// the host where that size is known, not in this shared-state store.
-fn clamp_viewport_offset(value: f64) -> f64 {
+pub(crate) fn clamp_viewport_offset(value: f64) -> f64 {
     if !value.is_finite() {
         0.0
     } else {
@@ -415,7 +415,7 @@ fn get_scroll_y(_: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
 /// `TypeError` instead of silently accepting an unknown behavior. Every
 /// accepted behavior scrolls instantly: this runtime has no smooth-scroll
 /// animation clock, so `smooth` does not interpolate.
-fn scroll_behavior(options: &JsObject, context: &mut Context) -> JsResult<()> {
+pub(crate) fn scroll_behavior(options: &JsObject, context: &mut Context) -> JsResult<()> {
     let value = options.get(JsString::from("behavior"), context)?;
     if value.is_undefined() {
         return Ok(());
