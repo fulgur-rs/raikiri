@@ -154,3 +154,21 @@ fn guest_envelope_version_mismatch_is_detectable() {
     let decoded: GuestResponse = decode(&bytes).unwrap();
     assert_ne!(decoded.version, VERSION);
 }
+
+#[test]
+fn image_dto_roundtrips_and_rejects_mismatched_bytes() {
+    let image = DecodedImage {
+        width: 1,
+        height: 1,
+        rgba: vec![1, 2, 3, 4],
+    };
+    let bytes = encode(&ImageDto::from(&image)).unwrap();
+    let decoded: ImageDto = decode(&bytes).unwrap();
+    assert_eq!(decoded.into_native().unwrap(), image);
+    let short = ImageDto {
+        width: 2,
+        height: 1,
+        rgba: vec![0; 4],
+    };
+    assert!(short.into_native().is_err());
+}

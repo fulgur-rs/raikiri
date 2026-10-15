@@ -1,11 +1,12 @@
 //! Owned, bounded protocol for the local integration trial.
 use raikiri_dom::snapshot::LogicalSnapshot;
+pub use raikiri_js::runtime::DecodedImage;
 use raikiri_js::runtime::{
     Abort, BoxGeometry, DomRect, Limits, PositionKind, RunOptions, RunReport,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -65,6 +66,10 @@ pub enum HostOperation {
     Visible(usize),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Viewport,
+    /// The pixels of a loaded image, sized against a default object size
+    /// (width, height) in CSS px.
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    ImagePixels(String, (f64, f64)),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
@@ -81,6 +86,43 @@ pub enum HostValue {
     Flag(bool),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Size(Option<(f64, f64)>),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Image(Option<ImageDto>),
+}
+/// Decoded straight-alpha RGBA8 image pixels.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageDto {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+impl From<&DecodedImage> for ImageDto {
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    fn from(image: &DecodedImage) -> Self {
+        Self {
+            width: image.width,
+            height: image.height,
+            rgba: image.rgba.clone(),
+        }
+    }
+}
+impl ImageDto {
+    /// The native image, or an error when the byte count does not match
+    /// the dimensions.
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    pub fn into_native(self) -> Result<DecodedImage, String> {
+        let expected = (self.width as usize)
+            .checked_mul(self.height as usize)
+            .and_then(|pixels| pixels.checked_mul(4));
+        if expected != Some(self.rgba.len()) {
+            return Err("image byte length".into());
+        }
+        Ok(DecodedImage {
+            width: self.width,
+            height: self.height,
+            rgba: self.rgba,
+        })
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsDto {

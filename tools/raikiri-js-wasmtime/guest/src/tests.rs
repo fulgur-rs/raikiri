@@ -21,6 +21,19 @@ fn rpc_flush_and_services() {
             HostOperation::Rendered(node) => Ok(HostValue::Flag(node == 0)),
             HostOperation::Visible(node) => Ok(HostValue::Flag(node == 1)),
             HostOperation::Viewport => Ok(HostValue::Size(Some((800.0, 600.0)))),
+            HostOperation::ImagePixels(url, size) => Ok(HostValue::Image(match url.as_str() {
+                "ok.png" if size == (4.0, 2.0) => Some(ImageDto {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 4],
+                }),
+                "corrupt.png" => Some(ImageDto {
+                    width: 2,
+                    height: 2,
+                    rgba: vec![0; 4],
+                }),
+                _ => None,
+            })),
             HostOperation::Fragment { .. } => {
                 Ok(HostValue::Document(Document::new().logical_snapshot()))
             }
@@ -37,6 +50,10 @@ fn rpc_flush_and_services() {
     assert!(!host.is_visible(0).unwrap());
     assert!(host.is_visible(1).unwrap());
     assert_eq!(host.viewport_size().unwrap(), Some((800.0, 600.0)));
+    let image = host.image_pixels("ok.png", (4.0, 2.0)).unwrap();
+    assert_eq!(image.rgba, [1, 2, 3, 4]);
+    assert!(host.image_pixels("corrupt.png", (4.0, 2.0)).is_none());
+    assert!(host.image_pixels("missing.png", (4.0, 2.0)).is_none());
     assert_eq!(host.parse_fragment("div", "", "x").unwrap().node_count(), 1);
     assert_eq!(host.document_url(), Some("file:///page".into()));
     // The downcast hooks recover the concrete host from its boxed form.
@@ -65,6 +82,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
                 HostOperation::Rendered(_) => HostValue::Unit,
                 HostOperation::Visible(_) => HostValue::Unit,
                 HostOperation::Viewport => HostValue::Unit,
+                HostOperation::ImagePixels(..) => HostValue::Unit,
                 HostOperation::Fragment { .. } => HostValue::Unit,
             })
         }),
@@ -77,6 +95,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
     assert!(wrong_kind.is_being_rendered(0).is_err());
     assert!(wrong_kind.is_visible(0).is_err());
     assert!(wrong_kind.viewport_size().is_err());
+    assert!(wrong_kind.image_pixels("x", (1.0, 1.0)).is_none());
     assert!(wrong_kind.parse_fragment("div", "", "x").is_err());
 
     let mut failing = RpcDocumentHost::new(
@@ -90,6 +109,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
     assert!(failing.computed_value(0, "color").is_err());
     assert!(failing.fetch_script("x").is_err());
     assert!(failing.load_image("x").is_err());
+    assert!(failing.image_pixels("x", (1.0, 1.0)).is_none());
     assert!(failing.parse_fragment("div", "", "x").is_err());
 }
 

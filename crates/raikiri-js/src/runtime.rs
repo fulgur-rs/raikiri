@@ -45,6 +45,8 @@ pub(crate) mod test_host;
 
 pub use event_loop::{Abort, Limits, RunOptions};
 pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+/// The decoded pixels [`DocumentHost::image_pixels`] returns.
+pub use raikiri_traits::DecodedImage;
 pub use scripts::RunReport;
 
 /// Mutable runtime state shared by every native binding.
