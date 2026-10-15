@@ -4033,10 +4033,7 @@ pub(crate) fn paint_document_impl(
                         document, cascade, node_id,
                     );
                 for child in children.into_iter().rev() {
-                    if let Some(cell) = document
-                        .ifc_layout_node(child)
-                        .filter(|_| document.get_node(child).is_none())
-                    {
+                    if let Some(cell) = document.anonymous_table_cell(child) {
                         child_frames.push(PaintFrame::AnonymousParagraph {
                             key: child,
                             cell,

@@ -309,7 +309,7 @@ struct PreparedImage {
 pub struct Document {
     pub(crate) table_objects: crate::layout::table::anonymous::TableObjects,
     pub(crate) page_projection: crate::page_projection::PageProjection,
-    pub(crate) nodes: Vec<Node>,
+    pub(crate) nodes: crate::node::arena::NodeArena,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
@@ -645,7 +645,7 @@ impl Document {
         Self {
             table_objects: crate::layout::table::anonymous::TableObjects::default(),
             page_projection: crate::page_projection::PageProjection::default(),
-            nodes,
+            nodes: nodes.into(),
             resolved_image_urls: Default::default(),
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
@@ -2032,7 +2032,7 @@ impl Document {
         }
 
         let mut document = Document::new();
-        document.nodes = copied;
+        document.nodes = copied.into();
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.list_marker_images = remap_keys(list_marker_images, nodes);

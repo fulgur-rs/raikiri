@@ -1,6 +1,7 @@
 //! Layout-only anonymous table cells, without changing the source DOM.
 
 use crate::Document;
+use crate::node::arena::BoxKey;
 use crate::node::{Node, NodeFlags};
 use raikiri_style::property::DisplayValue;
 use raikiri_style::{CascadeResult, PseudoElem};
@@ -27,7 +28,6 @@ impl Content {
 pub(crate) struct AnonymousCell {
     pub(crate) owner: usize,
     pub(crate) content: Vec<Content>,
-    pub(crate) node: Node,
 }
 
 #[derive(Debug, Clone)]
@@ -40,8 +40,9 @@ pub(crate) struct Row {
 pub(crate) struct TableObjects {
     pub(crate) project_explicit_parts: bool,
     pub(crate) headers: super::headers::HeaderRepeats,
-    pub(crate) arena_len: usize,
     pub(crate) cells: Vec<AnonymousCell>,
+    /// The layout views of `cells`, moved into the node arena once built.
+    cell_nodes: Vec<Node>,
     cells_by_owner: HashMap<usize, Vec<usize>>,
     cell_by_content: HashMap<Content, usize>,
     content_by_owner: HashMap<usize, Vec<Content>>,
@@ -152,8 +153,7 @@ fn children(
 fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     let source = &doc.nodes[owner];
     // Anonymous boxes have no source attributes, children or retained layout
-    // payloads. Text/style projection reads the original owner before layout;
-    // the temporary Taffy view is restored before any source metadata is read.
+    // payloads. Text/style projection reads the original owner instead.
     let mut node = Node::new_element(
         source.tag_name().unwrap_or("div").into(),
         taffy::Style::default(),
@@ -217,17 +217,14 @@ fn anonymous_cell(
         crate::paint_rules::hides_anonymous_table_cell(doc, cascade, owner, &node.children)
             && (cascade.computed[owner].visibility == raikiri_style::property::Visibility::Hidden
                 || !visible_generated);
-    let key = objects.arena_len + objects.cells.len();
     let index = objects.cells.len();
+    let key = doc.nodes.anonymous_cell_key(index);
     objects.cells_by_owner.entry(owner).or_default().push(index);
     for &entry in &content {
         objects.cell_by_content.insert(entry, index);
     }
-    objects.cells.push(AnonymousCell {
-        owner,
-        content,
-        node,
-    });
+    objects.cells.push(AnonymousCell { owner, content });
+    objects.cell_nodes.push(node);
     key
 }
 
@@ -376,8 +373,8 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     }
     // An unsuccessful rebuild must not expose cells from the previous pass.
     doc.table_objects = TableObjects::default();
+    doc.nodes.set_anonymous_cells(Vec::new());
     let mut objects = TableObjects {
-        arena_len: doc.nodes.len(),
         paragraph_owner: vec![None; doc.nodes.len()],
         ..TableObjects::default()
     };
@@ -393,6 +390,8 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
             objects.prototypes_by_owner.clear();
         }
     }
+    doc.nodes
+        .set_anonymous_cells(std::mem::take(&mut objects.cell_nodes));
     doc.table_objects = objects;
     Ok(())
 }
@@ -402,12 +401,14 @@ impl Document {
     /// Internal paragraph keys are distinct from the source DOM node arena.
     #[doc(hidden)]
     pub fn ifc_layout_node(&self, key: usize) -> Option<&Node> {
-        self.nodes.get(key).or_else(|| {
-            self.table_objects
-                .cells
-                .get(key.checked_sub(self.table_objects.arena_len)?)
-                .map(|cell| &cell.node)
-        })
+        self.nodes.layout_node(key)
+    }
+
+    /// The layout view of the anonymous cell `key`, or `None` when `key`
+    /// names a source node.
+    #[doc(hidden)]
+    pub fn anonymous_table_cell(&self, key: usize) -> Option<&Node> {
+        self.is_anonymous_cell(key).then(|| &self.nodes[key])
     }
 
     /// The layout key of the anonymous cell that wraps the source box `id`,
@@ -416,15 +417,11 @@ impl Document {
         self.table_objects
             .cell_by_content
             .get(&Content::Node(id))
-            .map(|&index| self.table_objects.arena_len + index)
+            .map(|&index| self.nodes.anonymous_cell_key(index))
     }
 
     pub(crate) fn table_layout_node_mut(&mut self, key: usize) -> &mut Node {
-        if key < self.nodes.len() {
-            &mut self.nodes[key]
-        } else {
-            &mut self.table_objects.cells[key - self.table_objects.arena_len].node
-        }
+        &mut self.nodes[key]
     }
 
     /// Anonymous paragraphs owned by this source table or row, with internal keys.
@@ -438,10 +435,8 @@ impl Document {
             .map(|&index| {
                 #[cfg(test)]
                 OWNER_CELL_VISITS.with(|visits| visits.set(visits.get() + 1));
-                (
-                    self.table_objects.arena_len + index,
-                    &self.table_objects.cells[index].node,
-                )
+                let key = self.nodes.anonymous_cell_key(index);
+                (key, &self.nodes[key])
             })
     }
 
@@ -451,7 +446,7 @@ impl Document {
         self.anonymous_table_paint_sequence(owner).map(|items| {
             items
                 .into_iter()
-                .filter(|&key| key < self.nodes.len())
+                .filter(|&key| !self.nodes.is_anonymous_cell(key))
                 .collect()
         })
     }
@@ -465,13 +460,14 @@ impl Document {
             #[cfg(test)]
             OWNER_CELL_VISITS.with(|visits| visits.set(visits.get() + 1));
             if let Some(&index) = self.table_objects.cell_by_content.get(&content) {
-                let cell = &self.table_objects.cells[index];
-                if cell.content.first() == Some(&content) {
-                    if cell.node.is_ifc_root() {
-                        out.push(self.table_objects.arena_len + index);
-                        out.extend(cell.node.ifc_boxes());
+                let key = self.nodes.anonymous_cell_key(index);
+                let node = &self.nodes[key];
+                if self.table_objects.cells[index].content.first() == Some(&content) {
+                    if node.is_ifc_root() {
+                        out.push(key);
+                        out.extend(node.ifc_boxes());
                     } else {
-                        out.extend(cell.node.children.iter().copied());
+                        out.extend(node.children.iter().copied());
                     }
                 }
             } else {
@@ -526,10 +522,20 @@ impl Document {
     /// Source owner of a paragraph, retaining real DOM ids for decorations.
     #[doc(hidden)]
     pub fn ifc_source_owner(&self, key: usize) -> usize {
-        self.table_objects
-            .cells
-            .get(key.wrapping_sub(self.table_objects.arena_len))
-            .map_or(key, |cell| cell.owner)
+        match self.nodes.box_key(key) {
+            Some(BoxKey::AnonymousCell(index)) => self.table_objects.cells[index].owner,
+            _ => key,
+        }
+    }
+
+    /// Whether a layout key names a layout-only anonymous table cell.
+    pub(crate) fn is_anonymous_cell(&self, key: usize) -> bool {
+        self.nodes.is_anonymous_cell(key)
+    }
+
+    /// Whether a layout key names a source DOM node.
+    pub(crate) fn is_source_node(&self, key: usize) -> bool {
+        matches!(self.nodes.box_key(key), Some(BoxKey::Source(_)))
     }
 }
 
