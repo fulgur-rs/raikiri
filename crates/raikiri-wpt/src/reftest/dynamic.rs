@@ -31,10 +31,12 @@ pub(crate) struct FocusedPath {
     /// Element-child path from the document root. Counting only elements
     /// keeps it stable when serialization merges text nodes.
     pub path: Vec<usize>,
-    /// Tag name of the element each `path` step reaches. Reparsing can
-    /// restructure the tree (e.g. insert an implied `<tbody>`), so a step
-    /// whose tag differs means the path no longer names the same element.
-    pub tags: Vec<String>,
+    /// Namespace URI and tag name of the element each `path` step reaches.
+    /// Reparsing can restructure the tree (e.g. insert an implied
+    /// `<tbody>`) or change a namespace (a script-created HTML `svg`
+    /// element reparses as SVG), so a step whose name differs means the
+    /// path no longer names the same element.
+    pub tags: Vec<(String, String)>,
     /// Whether the element indicates focus.
     pub visible: bool,
 }
@@ -78,7 +80,8 @@ fn focused_path(document: &raikiri_dom::Document) -> Option<FocusedPath> {
     let mut current = document.focused_element()?;
     while current != root {
         let parent = document.parent_of(current)?;
-        tags.push(document.get_node(current)?.tag_name()?.to_owned());
+        let tag = document.get_node(current)?.tag_name()?.to_owned();
+        tags.push((document.element_namespace_uri(current)?.to_owned(), tag));
         let position = document
             .get_node(parent)?
             .children

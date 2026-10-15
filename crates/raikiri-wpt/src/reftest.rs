@@ -2918,11 +2918,11 @@ fn restore_animation_styles(
 
 /// Focus the element at `focused`'s element-child path from the document
 /// root into the reparsed tree, with its focus visibility. A path that no
-/// longer reaches an element with the recorded tag names leaves the
-/// document unfocused.
+/// longer reaches elements with the recorded namespaces and tag names
+/// leaves the document unfocused.
 fn restore_focus(document: &mut raikiri_dom::Document, focused: &dynamic::FocusedPath) {
     let mut node = document.root_index();
-    for (child_index, tag) in focused.path.iter().zip(&focused.tags) {
+    for (child_index, (namespace, tag)) in focused.path.iter().zip(&focused.tags) {
         let child = document.get_node(node).and_then(|parent| {
             parent
                 .children
@@ -2936,7 +2936,8 @@ fn restore_focus(document: &mut raikiri_dom::Document, focused: &dynamic::Focuse
         });
         match child {
             Some(&child)
-                if document.get_node(child).and_then(|node| node.tag_name()) == Some(tag) =>
+                if document.get_node(child).and_then(|node| node.tag_name()) == Some(tag)
+                    && document.element_namespace_uri(child) == Some(namespace) =>
             {
                 node = child
             }

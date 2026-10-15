@@ -300,7 +300,39 @@ fn focus_sidecar_is_dropped_when_reparsing_restructures_the_path() {
         .as_ref()
         .expect("focus should be recorded");
     assert_eq!(focused.path, [0, 1, 0, 0]);
-    assert_eq!(focused.tags, ["html", "body", "table", "tr"]);
+    let names = focused.tags.iter().map(|(_, tag)| tag.as_str());
+    assert!(names.eq(["html", "body", "table", "tr"]));
+
+    let parsed = raikiri_html::parse(
+        prepared.html.as_bytes(),
+        &raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let mut document = parsed.dom;
+    super::super::restore_focus(&mut document, focused);
+
+    assert_eq!(document.focused_element(), None);
+}
+
+#[test]
+fn focus_sidecar_is_dropped_when_reparsing_changes_a_namespace() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("focused-svg.html");
+    std::fs::write(&path, "").unwrap();
+    // `createElement('svg')` makes an HTML element; its markup reparses
+    // as an SVG element at the same path.
+    let html = "<!DOCTYPE html><html><head></head><body><script>const svg = document.createElement('svg'); svg.setAttribute('tabindex', '0'); document.body.insertBefore(svg, document.body.firstChild); svg.focus();</script></body></html>";
+    let prepared = prepare(html, &path, "", crate::reftest::ReftestConfig::default())
+        .expect("focused document should prepare");
+    let focused = prepared
+        .focused_path
+        .as_ref()
+        .expect("focus should be recorded");
+    assert_eq!(focused.path, [0, 1, 0]);
 
     let parsed = raikiri_html::parse(
         prepared.html.as_bytes(),
