@@ -2558,6 +2558,9 @@ fn self_consistent_page_box(
 pub(crate) struct LiveWptSetup {
     pub uncascaded: raikiri_html::UncascadedDocument,
     pub document_base_url: Option<raikiri::Url>,
+    /// The URL `document_base_url` falls back to without a `<base href>`:
+    /// the page's directory.
+    pub document_url: Option<raikiri::Url>,
     pub page_resource_base: Option<PathBuf>,
     pub font_face_tree: raikiri_style::RuleTree,
     /// The WPT fonts with the document's `@font-face` faces, which every
@@ -2652,6 +2655,7 @@ pub(crate) fn prepare_wpt_live_document(
     Ok(LiveWptSetup {
         uncascaded,
         document_base_url,
+        document_url: stylesheet_base,
         page_resource_base: page_base,
         font_face_tree,
         fonts,

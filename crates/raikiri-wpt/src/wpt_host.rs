@@ -250,7 +250,7 @@ impl DocumentHost for WptDocumentHost {
     fn document_url(&self) -> Option<String> {
         self.page_url
             .as_ref()
-            .or(self.setup.document_base_url.as_ref())
+            .or(self.setup.document_url.as_ref())
             .map(ToString::to_string)
     }
 
@@ -284,6 +284,10 @@ impl DocumentHost for WptDocumentHost {
     fn flush(&mut self) -> Result<(), HostError> {
         #[cfg(test)]
         self.flushes.set(self.flushes.get() + 1);
+        // A script may have added, changed, or removed `<base href>` since
+        // the parse; everything below resolves against the current base.
+        let document_url = self.page_url.as_ref().or(self.setup.document_url.as_ref());
+        self.setup.document_base_url = self.setup.uncascaded.dom.live_base_url(document_url);
         self.resync_stylesheets();
         self.setup.uncascaded.dom.mark_in_document_flags();
         // Before the cascade, which measures `line-height: normal` in them.

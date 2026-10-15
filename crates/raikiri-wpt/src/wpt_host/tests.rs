@@ -1061,3 +1061,35 @@ fn load_image_decodes_data_and_checkout_images_and_rejects_the_rest() {
         .unwrap_err();
     assert!(error.0.contains("the WPT root does not exist"), "{error:?}");
 }
+
+#[test]
+fn flush_resolves_against_a_base_element_added_after_the_parse() {
+    let (_dir, root) = script_root();
+    let page = raikiri::Url::from_file_path(root.join("css/page/t.html")).unwrap();
+    let mut host = host_at(&root.join("css/page"), &root).with_page_url(page.clone());
+    let document = host.document_mut();
+    let head = (0..document.node_count())
+        .find(|&index| {
+            document
+                .get_node(index)
+                .is_some_and(|node| node.tag_name() == Some("head"))
+        })
+        .unwrap();
+    let base = document.append_element(Some(head), "base", Default::default(), None::<&str>);
+    document
+        .set_element_attribute(base, "href", "../../resources/")
+        .unwrap();
+    host.flush().unwrap();
+    assert_eq!(
+        host.setup.document_base_url,
+        Some(raikiri::Url::from_directory_path(root.join("resources")).unwrap())
+    );
+    // The document URL itself does not move with the base.
+    assert_eq!(host.document_url(), Some(page.to_string()));
+
+    host.document_mut()
+        .remove_element_attribute(base, "href")
+        .unwrap();
+    host.flush().unwrap();
+    assert_eq!(host.setup.document_base_url, Some(page));
+}

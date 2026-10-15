@@ -2912,6 +2912,37 @@ impl Document {
     pub fn base_url(&self) -> Option<&url::Url> {
         self.base_url.as_ref()
     }
+
+    /// The document base URL computed from the current tree rather than
+    /// recorded at parse time, so a script that adds, changes, or removes
+    /// `<base href>` is seen (HTML "document base URL"): the first HTML
+    /// `<base>` with an `href` in tree order, parsed against `document_url`;
+    /// `document_url` itself when there is none, or when that `href` does
+    /// not parse or names a `data:` or `javascript:` URL, which the parser
+    /// also refuses as a base.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#document-base-url>
+    pub fn live_base_url(&self, document_url: Option<&url::Url>) -> Option<url::Url> {
+        let mut stack = vec![self.root];
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.nodes.get(id) else {
+                continue; // cov:ignore: children always hold valid arena indices.
+            };
+            if node.tag_name() == Some("base")
+                && self.element_namespace_uri(id) == Some(XHTML_NAMESPACE_URI)
+                && let Some(href) = self.element_attribute(id, "href")
+            {
+                return url::Url::options()
+                    .base_url(document_url)
+                    .parse(href)
+                    .ok()
+                    .filter(|url| !matches!(url.scheme(), "data" | "javascript"))
+                    .or_else(|| document_url.cloned());
+            }
+            stack.extend(node.children.iter().rev());
+        }
+        document_url.cloned()
+    }
 }
 
 /// The entries of `map` for `nodes`, keyed by position in `nodes`.
