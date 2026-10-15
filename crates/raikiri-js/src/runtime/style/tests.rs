@@ -2431,6 +2431,10 @@ fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
         "'@layer'",
         "'@layer a, b {}'",
         "'@layer a.'",
+        "'@font-face garbage {}'",
+        "'@supports foo {}'",
+        "'@counter-style {}'",
+        "'@ {}'",
     ] {
         ok(
             &mut rt,
@@ -2586,6 +2590,18 @@ fn style_sheet_layer_statements_and_namespace_removal_keep_rule_order() {
         &mut rt,
         "ns.sheet.insertRule('svg|rect {}', 3) === 3 && ns.sheet.cssRules.length === 4 && \
          (function() { try { ns.sheet.insertRule('math|mi {}', 4); return false; } \
+         catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    // A namespace rule after other rules declares nothing.
+    rt.evaluate(
+        "var late = document.createElement('style'); \
+         late.textContent = 'p {} @namespace math url(m);'; \
+         document.head.appendChild(late);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "(function() { try { late.sheet.insertRule('math|mi {}', 2); return false; } \
          catch (e) { return e.name === 'SyntaxError'; } })()",
     );
     ok(

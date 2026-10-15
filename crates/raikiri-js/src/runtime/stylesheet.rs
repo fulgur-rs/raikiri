@@ -1163,11 +1163,17 @@ fn parse_single_rule(source: &str, namespaces: &str) -> Option<SingleRule> {
     })
 }
 
-/// The `@namespace` rules of a sheet whose text is `text`, closed so more
-/// text can follow them.
+/// The `@namespace` rules that declare prefixes in a sheet whose text is
+/// `text`, closed so more text can follow them. Only those before the
+/// sheet's first rule other than `@import`, `@namespace`, or a layer
+/// statement count (CSS Namespaces §2).
 fn namespace_header(text: &str, rules: &[CssRuleInfo]) -> String {
     rules
         .iter()
+        .take_while(|rule| {
+            order_rank(&rule.prelude) < OTHER_RANK
+                || is_layer_statement(&rule.prelude, rule.body.is_some())
+        })
         .filter(|rule| order_rank(&rule.prelude) == NAMESPACE_RANK)
         .filter_map(|rule| self_contained(&text[rule.source.clone()], false))
         .collect::<Vec<_>>()
@@ -1218,28 +1224,17 @@ fn is_at_rule(prelude: &str, name: &str) -> bool {
     matches!(parser.next(), Ok(Token::AtKeyword(keyword)) if keyword.eq_ignore_ascii_case(name))
 }
 
-/// Whether the cascade keeps an at-rule with this prelude, given whether
-/// it has a block.
+/// Whether an at-rule with this prelude, given whether it has a block,
+/// follows the grammar of an at-rule the cascade gives meaning to.
 fn is_supported_at_rule(prelude: &str, has_block: bool) -> bool {
-    let named = |names: &[&str]| names.iter().any(|name| is_at_rule(prelude, name));
-    if named(&["import"]) {
-        // The cascade keeps an `@import` without a URL but never loads it.
-        !has_block && {
-            let mut input = ParserInput::new(prelude);
-            let mut parser = Parser::new(&mut input);
-            parser.next().is_ok() && parser.expect_url_or_string().is_ok()
-        }
-    } else if named(&["namespace"]) {
-        !has_block
-    } else if named(&["layer"]) {
-        let mut input = ParserInput::new(prelude);
-        let mut parser = Parser::new(&mut input);
-        let _ = parser.next();
-        let names = &prelude[parser.position().byte_index()..];
-        raikiri_style::is_valid_layer_prelude(names, has_block)
-    } else {
-        has_block && named(&["media", "supports", "page", "font-face", "counter-style"])
-    }
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    let Ok(Token::AtKeyword(name)) = parser.next().cloned() else {
+        // A qualified rule whose selector starts with a bare `@`.
+        return false;
+    };
+    let rest = &prelude[parser.position().byte_index()..];
+    raikiri_style::is_valid_at_rule_prelude(&name, rest, has_block)
 }
 
 /// Whether a rule is an `@layer` statement (an `@layer` without a block).

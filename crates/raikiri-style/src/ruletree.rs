@@ -2350,6 +2350,42 @@ impl<'s> SupportsContext<'s> {
     }
 }
 
+/// Whether `prelude`, the text after the at-keyword of an `@name` rule
+/// with (`has_block`) or without a block, follows that at-rule's grammar.
+/// Only the at-rules the cascade gives meaning to are valid; it keeps any
+/// other at-rule, or one whose prelude it cannot parse, as an opaque
+/// record without effect.
+pub fn is_valid_at_rule_prelude(name: &str, prelude: &str, has_block: bool) -> bool {
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    match name.to_ascii_lowercase().as_str() {
+        "import" => !has_block && parser.expect_url_or_string().is_ok(),
+        "namespace" => {
+            !has_block
+                && parser
+                    .parse_entirely(|input| parse_namespace_prelude(input))
+                    .is_ok()
+        }
+        "layer" => crate::layer::is_valid_layer_prelude(prelude, has_block),
+        "media" => has_block,
+        "supports" => {
+            has_block
+                && crate::supports::is_valid_supports_condition(
+                    prelude,
+                    &SupportsContext::new("", &[]),
+                )
+        }
+        "page" => has_block && crate::page::is_valid_page_selector(prelude),
+        "font-face" | "counter-style" => {
+            has_block
+                && parser
+                    .parse_entirely(|input| parse_descriptor_prelude(name, input))
+                    .is_ok()
+        }
+        _ => false,
+    }
+}
+
 /// Parse the namespace syntax shared by rule parsing and feature queries.
 fn parse_namespace_prelude<'i>(
     input: &mut Parser<'i, '_>,

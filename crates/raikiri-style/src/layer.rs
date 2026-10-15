@@ -22,7 +22,7 @@ pub(crate) type LayerName = Vec<SmolStr>;
 /// Whether `prelude`, the text after an `@layer` keyword, is one the
 /// cascade parses: one or more layer names for a statement, at most one for
 /// a block (CSS Cascade 5 §6.4.2).
-pub fn is_valid_layer_prelude(prelude: &str, has_block: bool) -> bool {
+pub(crate) fn is_valid_layer_prelude(prelude: &str, has_block: bool) -> bool {
     let mut input = cssparser::ParserInput::new(prelude);
     let mut parser = Parser::new(&mut input);
     let mut budget = ParseBudget::new(&crate::ruletree::RuleTreeLimits::default(), 0);
