@@ -129,7 +129,11 @@ fn only_connected_focusable_areas_take_focus() {
                 document.body.appendChild(el); return el; }\
               var math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi');\
               document.body.appendChild(math);\
-              return math instanceof MathMLElement && !takes(math)\
+              var plain = document.body.appendChild(document.createElementNS(null, 'x'));\
+              plain.setAttribute('tabindex', '0');\
+              HTMLElement.prototype.focus.call(plain);\
+              return document.activeElement !== plain\
+                && math instanceof MathMLElement && !takes(math)\
                 && (math.tabIndex = 0, takes(math))\
                 && svg('svg') instanceof SVGElement && !takes(svg('svg'))\
                 && takes(svg('svg', {tabindex: '0'})) && takes(svg('a', {href: '#'}))\
@@ -391,7 +395,9 @@ fn an_area_takes_focus_through_a_rendered_image_using_its_map() {
     let (mut host, _, _, body) = StubHost::page();
     let document = &mut host.document;
     let hidden = document.create_detached_element("img").unwrap();
-    document.set_element_attribute(hidden, "usemap", "#hidden");
+    document
+        .set_element_attribute(hidden, "usemap", "#hidden")
+        .unwrap();
     document.append_child(body, hidden).unwrap();
     host.unrendered.insert(hidden);
     let mut rt = DomRuntime::new(host).unwrap();
@@ -454,5 +460,33 @@ fn a_focus_handler_that_moves_focus_keeps_the_new_element_visible() {
          a.onfocus = function () { b.focus(); };\
          a.focus({focusVisible: false});\
          document.activeElement === b && b.matches(':focus-visible')",
+    );
+}
+
+#[test]
+fn a_listener_that_moves_focus_stops_the_older_transition() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [];\
+         function make(id) { var el = document.body.appendChild(document.createElement('button'));\
+           ['blur', 'focusout', 'focus', 'focusin'].forEach(function (type) {\
+             el.addEventListener(type, function () { log.push(id + ':' + type); }); });\
+           return el; }\
+         var a = make('a'), b = make('b'), c = make('c'), d = make('d');\
+         a.focus(); log = [];\
+         a.addEventListener('blur', function () { c.focus(); }, {once: true});\
+         b.focus();\
+         var first = document.activeElement === c\
+           && log.join() === 'a:blur,c:focus,c:focusin';\
+         log = [];\
+         c.addEventListener('focusout', function () { d.focus(); }, {once: true});\
+         a.addEventListener('focus', function () { a.blur(); }, {once: true});\
+         a.focus();\
+         var second = document.activeElement === d\
+           && log.join() === 'c:blur,c:focusout,d:focus,d:focusin';\
+         log = []; a.focus();\
+         first && second && document.activeElement === document.body\
+           && log.join() === 'd:blur,d:focusout,a:focus,a:blur,a:focusout'",
     );
 }

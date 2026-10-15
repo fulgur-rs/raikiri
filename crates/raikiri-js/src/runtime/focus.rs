@@ -206,13 +206,12 @@ fn elements_in_tree_order(document: &Document) -> Vec<usize> {
     let mut elements = Vec::new();
     let mut stack = vec![document.root_index()];
     while let Some(index) = stack.pop() {
-        let Some(node) = document.get_node(index) else {
-            continue;
-        };
-        if node.kind() == NodeKind::Element {
-            elements.push(index);
+        if let Some(node) = document.get_node(index) {
+            if node.kind() == NodeKind::Element {
+                elements.push(index);
+            }
+            stack.extend(node.children.iter().rev());
         }
-        stack.extend(node.children.iter().rev());
     }
     elements
 }
@@ -253,10 +252,39 @@ fn image_map_images(document: &Document, area: usize) -> Vec<usize> {
         .collect()
 }
 
+/// Make `focused` the focused element (`None` clears it), then fire the
+/// two `events` at `target` with `related` as `relatedTarget` while focus
+/// stays there. Returns whether it still does: a listener that moves focus
+/// ends the transition, since what is left of it no longer holds.
+fn focus_phase(
+    context: &mut Context,
+    focused: Option<usize>,
+    target: usize,
+    related: Option<usize>,
+    events: [(&str, bool); 2],
+) -> JsResult<bool> {
+    let current = |context: &mut Context| {
+        with_state(context, |s| s.host.document().focused_element() == focused)
+    };
+    with_state(context, |s| {
+        s.host.document_mut().set_focused_element(focused)
+    })?;
+    // `:focus` and `:focus-within` change with it.
+    mark_dirty(context)?;
+    for (kind, bubbles) in events {
+        if !current(context)? {
+            return Ok(false);
+        }
+        fire_focus_event(context, target, kind, bubbles, related)?;
+    }
+    current(context)
+}
+
 /// HTML "focus update steps" for a move from the current focus to `next`
-/// (`None` to clear it): `blur` then `focusout` at the old element, then
-/// `focus` then `focusin` at the new one, each a `FocusEvent` whose
-/// `relatedTarget` is the other element.
+/// (`None` to clear it): with focus cleared, `blur` then `focusout` at the
+/// old element; then with focus on the new one, `focus` then `focusin`
+/// there. Each is a `FocusEvent` whose `relatedTarget` is the other
+/// element.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focus-update-steps>
 fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
@@ -264,16 +292,25 @@ fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
     if previous == next {
         return Ok(());
     }
-    with_state(context, |s| s.host.document_mut().set_focused_element(next))?;
-    // `:focus` and `:focus-within` change with it.
-    mark_dirty(context)?;
-    if let Some(previous) = previous {
-        fire_focus_event(context, previous, "blur", false, next)?;
-        fire_focus_event(context, previous, "focusout", true, next)?;
+    if let Some(previous) = previous
+        && !focus_phase(
+            context,
+            None,
+            previous,
+            next,
+            [("blur", false), ("focusout", true)],
+        )?
+    {
+        return Ok(());
     }
     if let Some(next) = next {
-        fire_focus_event(context, next, "focus", false, previous)?;
-        fire_focus_event(context, next, "focusin", true, previous)?;
+        focus_phase(
+            context,
+            Some(next),
+            next,
+            previous,
+            [("focus", false), ("focusin", true)],
+        )?;
     }
     Ok(())
 }
