@@ -403,6 +403,9 @@ pub struct Document {
             crate::page_projection::continuation::CrossingBox,
         >,
     >,
+    /// Fragments that boxes have on pages after the projected ones, which
+    /// another layout lays out (see [`Document::continue_fragments_after`]).
+    pub(crate) later_fragments: std::collections::HashMap<raikiri_traits::NodeId, u32>,
     /// Dirty flag for the IS_IN_DOCUMENT bit. Any tree mutation primitive
     /// (append_* / attach_child / insert_child_before / detach_from_parent /
     /// reparent_children / retain_children) sets it. Observation APIs
@@ -677,6 +680,7 @@ impl Document {
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
+            later_fragments: Default::default(),
             // Node::new_document() sets IS_IN_DOCUMENT=true on the initial root,
             // consistent with an attached root. There are no templates or
             // detached nodes yet, so the flag is not dirty.
@@ -1994,6 +1998,7 @@ impl Document {
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,
+            later_fragments: _,
             flags_dirty: _,
             stylesheets,
             layout_warnings: _,

@@ -167,17 +167,23 @@ fn continue_from(
             segment
                 .document
                 .page_content_before(segment.cascade, page as u32, start.token);
-        // Continue no box from the earlier layout. The body then has no
-        // fragment on the resumed page when it starts above it, as after a
-        // resumed stream, whose shorter dropped page would otherwise leave
-        // it one there.
+        // Continue only the body from the earlier layout: it spans the
+        // paginated content, so its fragments go on across the resumed page.
+        // Other boxes crossing the start begin anew in the copy.
+        let body = raikiri_dom::paint_rules::find_paint_root(segment.document);
+        let crossing: Vec<CrossingBox> = segment
+            .document
+            .crossing_boxes(page as u32)
+            .into_iter()
+            .filter(|crossing| Some(crossing.node.0 as usize) == body)
+            .collect();
         let Some((continuation, pages)) = relayout_from(
             inputs,
             slices,
             geometries,
             page,
             start,
-            Some(&[]),
+            Some(&crossing),
             Some(&before),
         )?
         else {
@@ -190,6 +196,36 @@ fn continue_from(
         run_start = page;
     }
     Ok(continuations)
+}
+
+/// The body's fragments on the pages that `continuations` lay out, out of
+/// `page_count` pages, as [`Document::continue_fragments_after`] takes them
+/// for the layout before the first continuation.
+#[doc(hidden)]
+pub fn body_fragments_after(
+    document: &Document,
+    continuations: &[Continuation],
+    page_count: usize,
+) -> Option<(raikiri_traits::NodeId, u32)> {
+    let body = raikiri_dom::paint_rules::find_paint_root(document)?;
+    let body = raikiri_traits::NodeId::new(body as u64);
+    let count = continuations
+        .iter()
+        .enumerate()
+        .flat_map(|(index, continuation)| {
+            let end = continuations
+                .get(index + 1)
+                .map_or(page_count, |next| next.first_page as usize);
+            (continuation.first_page as usize..end).map(move |page| (continuation, page as u32))
+        })
+        .filter(|(continuation, page)| {
+            continuation
+                .document
+                .page_fragments(*page)
+                .any(|fragment| fragment.node() == body)
+        })
+        .count();
+    Some((body, count as u32))
 }
 
 /// Lay a copy of the document out at the width of page `page` and resume it

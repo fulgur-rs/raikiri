@@ -351,8 +351,8 @@ impl Document {
     /// The next projection numbers their fragments after those of the
     /// earlier pages and keeps the top the earlier layout gave them, which
     /// the content left out of the relayout would otherwise move. The body,
-    /// which spans one page area from the top of the relayout's dropped
-    /// first page, has no fragment on the resumed page unless it is listed.
+    /// which begins on the relayout's dropped first page, has no fragment on
+    /// the resumed page unless it is listed.
     pub fn continue_fragments(&mut self, crossing: impl IntoIterator<Item = CrossingBox>) {
         self.earlier_fragments = Some(
             crossing
@@ -360,6 +360,17 @@ impl Document {
                 .map(|crossing| (crossing.node, crossing))
                 .collect(),
         );
+    }
+
+    /// Count, in the next projection, `count` more fragments for each box
+    /// `node` after the projected pages, where another layout of the
+    /// document goes on with it.
+    ///
+    /// A layout that keeps only the pages before a relayout at another page
+    /// width uses this for the boxes the relayout continues, so their last
+    /// fragment is the relayout's.
+    pub fn continue_fragments_after(&mut self, later: impl IntoIterator<Item = (NodeId, u32)>) {
+        self.later_fragments = later.into_iter().collect();
     }
 
     /// The boxes on projected page `page_index` that began on an earlier

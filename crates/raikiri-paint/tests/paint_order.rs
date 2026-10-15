@@ -359,12 +359,10 @@ fn separated_table_part_shadows_precede_the_cell_clips() {
     assert_eq!(shadows(&collapse), 0);
 }
 
-/// The walker draws the body's box on every page, as the root of the page's
-/// content; `paint_order` lists it only on the pages its box reaches. Here
-/// the body's box ends on page 1 while its paragraphs go on to page 2, and
-/// on the pages after the first the paragraphs alone have a box.
+/// The body's box reaches every page its paragraphs go on to, so both the
+/// walker and `paint_order` start each page with it.
 #[test]
-fn known_difference_body_box_on_every_page() {
+fn body_box_on_every_page() {
     let paragraphs: String = (0..20).map(|i| format!("<p>paragraph {i}</p>")).collect();
     let result = lay_out(
         &paragraphs,
@@ -381,14 +379,7 @@ fn known_difference_body_box_on_every_page() {
             "page {}",
             page.index()
         );
-        if page.index() == 2 {
-            // The walker has the body's box first; paint_order has no body
-            // box and is otherwise the same.
-            assert!(!api.contains(&Step::Box(body)));
-            assert_eq!(walker[1..], api[..], "page {}", page.index());
-        } else {
-            assert_eq!(walker, api, "page {}", page.index());
-        }
+        assert_eq!(walker, api, "page {}", page.index());
     }
 }
 

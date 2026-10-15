@@ -374,3 +374,146 @@ fn a_float_continuing_onto_a_page_counts_as_content_before_its_start() {
         .collect();
     assert_eq!(floats.len(), 1, "{before:?}");
 }
+
+/// The body's box fragment on each page, as (top, height).
+fn body_on_pages(out: &PipelineOutput) -> Vec<Option<(f32, f32)>> {
+    (0..out.slices.len() as u32)
+        .map(|page| {
+            let (document, _) = out.layout_for_page(page);
+            document
+                .page_fragments(page)
+                .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+                .find(|fragment| {
+                    document
+                        .get_node(fragment.node().0 as usize)
+                        .and_then(|node| node.tag_name())
+                        == Some("body")
+                })
+                .map(|fragment| (fragment.rect().y, fragment.rect().height))
+        })
+        .collect()
+}
+
+#[test]
+fn a_bordered_body_reaches_every_relaid_out_page() {
+    // 14 blocks of 40px below a 1px border: the later pages start at the
+    // top of their first block, so the body's bottom border ends 81px down
+    // the fourth page.
+    let blocks = "<div style='height:40px'>x</div>".repeat(14);
+    let out = run(&format!(
+        "{PAGES}<style>body {{ border: 1px solid }}</style>{blocks}"
+    ));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 81.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_bordered_body_reaches_every_page_of_one_width() {
+    let blocks = "<div style='height:40px'>x</div>".repeat(14);
+    let out = run(&format!(
+        "{}<style>body {{ border: 1px solid }}</style>{blocks}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert!(out.continuations.is_empty());
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 82.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_bordered_paragraph_body_reaches_every_page() {
+    // Seven 50px words fit in 360px, so the body's 200 words take 29 10px
+    // lines: with its 1px borders it ends 132px down the second page.
+    let out = run(&format!(
+        "{}<style>body {{ border: 1px solid; font: 10px/10px Ahem }}</style>{}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px"),
+        words(200).join(" ")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![Some((20.0, 160.0)), Some((20.0, 132.0))]
+    );
+}
+
+#[test]
+fn a_body_with_only_a_side_border_ends_with_its_last_block() {
+    // The last block ends 130px down the third page; its block-end margin
+    // collapses through the body, which has no block-end edges.
+    let blocks = "<div style='height:40px;margin-bottom:5px'>x</div>".repeat(10);
+    let out = run(&format!(
+        "{}<style>body {{ border-left: 1px solid }}</style>{blocks}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 130.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_formatting_context_body_keeps_its_last_blocks_margin() {
+    // A `flow-root` body keeps the last block's 5px block-end margin, so
+    // it ends 135px down the third page.
+    let blocks = "<div style='height:40px;margin-bottom:5px'>x</div>".repeat(10);
+    let out = run(&format!(
+        "{}<style>body {{ display: flow-root; border-left: 1px solid }}</style>{blocks}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 135.0)),
+        ]
+    );
+}
+
+#[test]
+fn generated_overflow_leaves_a_definite_body_height() {
+    // The `::after` overflows the 10px body onto the third page. The body
+    // keeps the box layout gave it, the page area and its border, and does
+    // not follow its overflow there.
+    let out = run(&format!(
+        "{}<style>body {{ height: 10px; border: 1px solid }} \
+         body::after {{ content: ''; display: block; height: 400px }}</style>",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![Some((20.0, 160.0)), Some((20.0, 2.0)), None]
+    );
+}
+
+#[test]
+fn generated_overflow_leaves_a_paragraph_body_at_its_max_height() {
+    // Text and a tall `::after` in the body's own paragraph overflow its
+    // 10px `max-height`.
+    let out = run(&format!(
+        "{}<style>body {{ max-height: 10px; border: 1px solid }} \
+         body::after {{ content: ''; display: block; height: 400px }}</style>text",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    let pages = body_on_pages(&out);
+    assert!(pages.len() > 1);
+    assert_eq!(pages[0], Some((20.0, 12.0)));
+    assert!(pages[1..].iter().all(Option::is_none), "{pages:?}");
+}

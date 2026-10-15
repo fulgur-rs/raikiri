@@ -111,7 +111,14 @@ fn events_arrive_with_the_page_of_the_first_fragment() {
     let mut record = Record::default();
     let summary =
         completed(stream(PAGED, 16, &mut record, LayoutConfig::default()).expect("stream"));
-    let firsts: Vec<NodeId> = record.pages.iter().map(|(_, nodes)| nodes[0]).collect();
+    // The body has a fragment on every page; the first fragment after it
+    // differs from page to page.
+    let body = record.pages[0].1[0];
+    let firsts: Vec<NodeId> = record
+        .pages
+        .iter()
+        .map(|(_, nodes)| *nodes.iter().find(|&&node| node != body).expect("content"))
+        .collect();
     assert_eq!(record.events.len(), 3);
     for (page, events) in record.events.iter().enumerate() {
         assert_eq!(events.len(), 1, "page {page}: {events:?}");
