@@ -61,14 +61,10 @@ pub(super) fn generates_inline_box(document: &Document, id: usize, cv: &Computed
 /// containing block of its fixed descendants, and the painter moves it.
 pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-    // Non-replaced inline and table-column boxes are not transformable, nor
-    // is an element that generates no box.
+    // Non-replaced inline and table-column boxes are not transformable.
     !matches!(
         cv.display,
-        DisplayValue::TableColumn
-            | DisplayValue::TableColumnGroup
-            | DisplayValue::Contents
-            | DisplayValue::None
+        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
     ) && !generates_inline_box(document, id, cv)
 }
 
