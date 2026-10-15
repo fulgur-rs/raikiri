@@ -50,6 +50,9 @@ pub(crate) struct PageProjection {
     /// The `::first-letter` opacity groups of the paragraphs, built when
     /// first read.
     letter_groups: paint_order::LetterGroupCache,
+    /// Whether any style can decorate the text of each paragraph, by root,
+    /// found when first read.
+    pub(crate) decorated_paragraphs: std::cell::RefCell<HashMap<usize, bool>>,
     column_rules: crate::column_rules::PageColumnRules,
     /// Source clip geometry shared across pages rather than copied per page.
     overflow_clips: BTreeMap<NodeId, OverflowClipSource>,
@@ -73,6 +76,7 @@ impl PageProjection {
         self.generated_boxes.clear();
         self.inline_boxes.clear();
         self.letter_groups.clear();
+        self.decorated_paragraphs.get_mut().clear();
         self.column_rules.clear();
         self.overflow_clips.clear();
         self.placement_overflow_clips.clear();
@@ -355,6 +359,7 @@ impl Document {
             generated_boxes,
             inline_boxes,
             letter_groups: Default::default(),
+            decorated_paragraphs: Default::default(),
             column_rules,
             overflow_clips,
             placement_overflow_clips,

@@ -537,6 +537,79 @@ fn baseline_shifts(document: &Document, line: &shodo::Line) -> HashMap<usize, f3
     shifts
 }
 
+/// Whether any style that can decorate the text of paragraph `root` has a
+/// line to paint: an element or text of the paragraph, one of their
+/// pseudo-elements, or a `::first-line` or `::first-letter` of an ancestor,
+/// whose typographic styles reach the paragraph's first line. The
+/// decorations of the ancestors themselves are in the paragraph's base
+/// context. Paragraphs nested in this one, and boxes that are not
+/// rendered, decorate none of its text.
+fn paragraph_may_be_decorated(document: &Document, cascade: &CascadeResult, root: usize) -> bool {
+    use raikiri_style::{PseudoElem, StyleNodeId};
+    // The `::first-line` of an element shares the generated id of its
+    // `::before`, so pseudo-element styles are read from the cascade by
+    // kind rather than by generated id.
+    let pseudo_decorated = |id: usize, pseudos: &[PseudoElem]| {
+        pseudos.iter().any(|&pseudo| {
+            cascade
+                .pseudo
+                .get(&(StyleNodeId::new(id as u64), pseudo))
+                .is_some_and(|cv| has_paintable_line(cv.text_decoration_line))
+        })
+    };
+    let source = document.ifc_source_owner(root);
+    if document
+        .ancestors(source)
+        .any(|id| pseudo_decorated(id, &[PseudoElem::FirstLine, PseudoElem::FirstLetter]))
+    {
+        return true;
+    }
+    let mut pending: Vec<usize> = document
+        .get_node(source)
+        .map(|_| source)
+        .into_iter()
+        .collect();
+    while let Some(id) = pending.pop() {
+        let node = &document.nodes[id];
+        let cv = cascade.computed.get(id);
+        if id != source
+            && (node.is_ifc_root() || cv.is_some_and(|cv| cv.display == DisplayValue::None))
+        {
+            continue;
+        }
+        if cv.is_some_and(|cv| has_paintable_line(cv.text_decoration_line))
+            || pseudo_decorated(
+                id,
+                &[
+                    PseudoElem::Before,
+                    PseudoElem::After,
+                    PseudoElem::Marker,
+                    PseudoElem::FirstLine,
+                    PseudoElem::FirstLetter,
+                ],
+            )
+        {
+            return true;
+        }
+        pending.extend(node.children.iter().copied());
+    }
+    false
+}
+
+impl Document {
+    /// [`paragraph_may_be_decorated`] for `root`, found on first use and
+    /// shared by the paragraph's later lines until the next layout or tree
+    /// change.
+    fn cached_paragraph_may_be_decorated(&self, cascade: &CascadeResult, root: usize) -> bool {
+        *self
+            .page_projection
+            .decorated_paragraphs
+            .borrow_mut()
+            .entry(root)
+            .or_insert_with(|| paragraph_may_be_decorated(self, cascade, root))
+    }
+}
+
 /// Used decoration segments corresponding to each positioned run of a line.
 pub fn positioned_line_decorations(
     document: &Document,
@@ -546,6 +619,10 @@ pub fn positioned_line_decorations(
     line: &PositionedLine<'_>,
     origin: (f32, f32),
 ) -> Vec<Vec<DecorationLine>> {
+    // A paragraph that nothing decorates builds nothing for its lines.
+    if base.0.is_none() && !document.cached_paragraph_may_be_decorated(cascade, root) {
+        return vec![Vec::new(); line.runs.len()];
+    }
     let shifts = baseline_shifts(document, line.line);
     let mut bounds: Vec<(f64, f64)> = line
         .runs
