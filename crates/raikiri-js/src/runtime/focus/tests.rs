@@ -582,6 +582,8 @@ fn foreign_handler_attributes_keep_their_case() {
          var button = document.body.appendChild(document.createElement('button'));\
          button.setAttribute('onFocus', 'log.push(\"html\")');\
          rect.focus(); button.focus();\
+         var copy = rect.cloneNode(); copy.setAttribute('onFocus', 'log.push(\"copy\")');\
+         document.body.appendChild(copy.cloneNode()).focus();\
          log.join() === 'focus,html' && typeof rect.onfocus === 'function'",
     );
 }

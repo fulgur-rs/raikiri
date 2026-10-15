@@ -261,6 +261,27 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
     assert_eq!(host.box_geometry(hidden).unwrap(), None);
 }
 
+/// Elements layout never renders, such as `script`, are not being rendered
+/// even though no stylesheet gives them `display: none`.
+#[test]
+fn non_rendered_html_elements_are_not_being_rendered() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=shown>x</div><script id=code tabindex=0></script>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let shown = find_by_id(host.document(), "shown");
+    let code = find_by_id(host.document(), "code");
+    host.flush().unwrap();
+    assert!(host.is_being_rendered(shown).unwrap());
+    assert!(!host.is_being_rendered(code).unwrap());
+}
+
 /// CSSOM View metrics over a real layout, checked against CSS 2.1 box-model
 /// arithmetic:
 ///

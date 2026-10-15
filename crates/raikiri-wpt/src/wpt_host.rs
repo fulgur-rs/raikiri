@@ -439,7 +439,8 @@ impl DocumentHost for WptDocumentHost {
     }
 
     /// Being rendered here means no inclusive ancestor computes to
-    /// `display: none`. A box placed off every page still counts, which the
+    /// `display: none` or is an HTML element layout never renders, such as
+    /// `script`, whatever its computed display. A box placed off every page still counts, which the
     /// page-scene geometry behind [`Self::box_geometry`] cannot tell apart.
     fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
         let Some(styles) = self.computed_styles.as_ref() else {
@@ -449,9 +450,13 @@ impl DocumentHost for WptDocumentHost {
         let document = &self.setup.uncascaded.dom;
         let mut current = Some(node);
         while let Some(index) = current {
-            if styles
+            let hidden = styles
                 .get(index)
-                .is_some_and(|style| style.display == raikiri_style::DisplayValue::None)
+                .is_some_and(|style| style.display == raikiri_style::DisplayValue::None);
+            if hidden
+                || document
+                    .get_node(index)
+                    .is_some_and(|node| node.is_non_rendered_html_element())
             {
                 return Ok(false);
             }

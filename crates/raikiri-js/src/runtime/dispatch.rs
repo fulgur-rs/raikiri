@@ -1297,8 +1297,8 @@ pub(crate) fn sync_event_handler_for_attribute(
     Ok(())
 }
 
-/// Collect every HTML or SVG element on-prefix content attribute as an element,
-/// lowercased name, and value triple. Reads the document once so callers
+/// Collect every HTML, SVG or MathML element on-prefix content attribute as
+/// an element, name (lowercased for HTML elements), and value triple. Reads the document once so callers
 /// can compile without holding the state borrow.
 fn collect_content_handler_attributes(
     context: &mut Context,
@@ -1317,11 +1317,16 @@ fn collect_content_handler_attributes(
             if !has_event_handlers(doc, index) {
                 continue;
             }
+            let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
             for qualified in doc.element_attribute_names(index) {
                 if qualified == "style" {
                     continue;
                 }
-                let lower = qualified.to_ascii_lowercase();
+                let lower = if is_html {
+                    qualified.to_ascii_lowercase()
+                } else {
+                    qualified.to_owned()
+                };
                 if lower.strip_prefix("on").is_none_or(|rest| rest.is_empty()) {
                     continue;
                 }
@@ -1410,12 +1415,18 @@ fn sync_event_handlers_below(
             if !has_event_handlers(doc, index) {
                 return Vec::new();
             }
+            // Only HTML elements fold attribute names to lowercase.
+            let is_html = doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS);
             let mut attrs = Vec::new();
             for qualified in doc.element_attribute_names(index) {
                 if qualified == "style" {
                     continue;
                 }
-                let lower = qualified.to_ascii_lowercase();
+                let lower = if is_html {
+                    qualified.to_ascii_lowercase()
+                } else {
+                    qualified.to_owned()
+                };
                 if lower
                     .strip_prefix("on")
                     .is_some_and(|rest| !rest.is_empty())
