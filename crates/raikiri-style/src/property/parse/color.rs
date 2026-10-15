@@ -878,13 +878,16 @@ impl ParsedColor {
 
     /// The color with its own coordinates when it lies outside the sRGB
     /// gamut, so interpolation can use it before any clipping. A color at the
-    /// black or white lightness boundary is fixed to that sRGB color instead.
+    /// black or white lightness boundary is fixed to that sRGB color instead,
+    /// and so is one further out than [`MAX_UNBOUNDED_SRGB`], whose
+    /// coordinates would overflow the arithmetic of interpolation.
     pub(crate) fn to_unbounded(self) -> Option<UnboundedColor> {
+        let srgb = self.to_srgb();
         if self.lightness_boundary.is_some()
-            || self
-                .to_srgb()
+            || srgb.iter().all(|component| (0.0..=1.0).contains(component))
+            || !srgb
                 .iter()
-                .all(|component| (0.0..=1.0).contains(component))
+                .all(|component| component.abs() <= MAX_UNBOUNDED_SRGB)
         {
             return None;
         }
@@ -894,9 +897,16 @@ impl ParsedColor {
             ParsedColorSpace::SrgbLinear => (MixColorSpace::SrgbLinear, self.coordinates),
             ParsedColorSpace::Lab => (MixColorSpace::Lab, self.coordinates),
             ParsedColorSpace::Oklab => (MixColorSpace::Oklab, self.coordinates),
-            // Polar coordinates keep their hue in radians here.
-            ParsedColorSpace::Lch => (MixColorSpace::Lch, [first, second, hue.to_degrees()]),
-            ParsedColorSpace::Oklch => (MixColorSpace::Oklch, [first, second, hue.to_degrees()]),
+            // Polar coordinates keep their hue in radians here. Interpolation
+            // takes hues in [0, 360) (CSS Color 4 §12.4).
+            ParsedColorSpace::Lch => (
+                MixColorSpace::Lch,
+                [first, second, hue.to_degrees().rem_euclid(360.0)],
+            ),
+            ParsedColorSpace::Oklch => (
+                MixColorSpace::Oklch,
+                [first, second, hue.to_degrees().rem_euclid(360.0)],
+            ),
         };
         Some(UnboundedColor {
             space,
@@ -1835,6 +1845,12 @@ fn parse_optional_modern_alpha<'i>(input: &mut Parser<'i, '_>) -> Result<f32, Pa
     }
     Ok(expect_number_stable(input)?.clamp(0.0, 1.0))
 }
+
+/// Largest sRGB channel magnitude a gradient stop keeps unclipped for
+/// interpolation. A channel this far out already clips to the edge of the
+/// gamut almost everywhere along a ramp, and larger ones, up to the limits
+/// of `f32`, overflow when their endpoints are subtracted.
+const MAX_UNBOUNDED_SRGB: f32 = 1024.0;
 
 fn rgb_f32_to_css_color(rgb: [f32; 3], alpha: f32) -> CssColor {
     CssColor {

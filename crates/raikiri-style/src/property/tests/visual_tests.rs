@@ -3895,3 +3895,30 @@ fn gradient_stops_inside_the_gamut_or_at_a_lightness_boundary_stay_8_bit() {
         })
     );
 }
+
+#[test]
+fn gradient_stops_too_far_outside_the_gamut_are_clipped_when_parsed() {
+    // Coordinates this large would overflow interpolation, so the stop keeps
+    // only its clipped 8-bit color.
+    for css in [
+        "color(srgb 3e38 0 0)",
+        "color(srgb -3e38 0 0)",
+        "color(srgb 2000 0 0)",
+    ] {
+        let source = format!("linear-gradient({css}, red)");
+        assert!(
+            matches!(
+                first_linear_stop_color(&source),
+                GradientStopColor::Resolved(_)
+            ),
+            "{css}"
+        );
+    }
+    // Hues are kept in [0, 360).
+    let GradientStopColor::Unbounded(color) =
+        first_linear_stop_color("linear-gradient(lch(50% 100% 3690deg), red)")
+    else {
+        panic!("an out-of-gamut lch() stop should stay unbounded");
+    };
+    assert!((color.components[2] - 90.0).abs() < 1e-2);
+}

@@ -1294,7 +1294,10 @@ fn out_of_gamut_stops_interpolate_before_clipping() {
         .map(|(a, b)| a.abs_diff(*b))
         .max()
         .expect("pixels");
-    assert!(largest <= 4, "largest channel difference {largest}");
+    // Where blue enters the gamut it climbs about 20 levels per pixel, so a
+    // fraction of a pixel in where the renderer samples its ramp shows up as
+    // a few levels there.
+    assert!(largest <= 8, "largest channel difference {largest}");
     // Halfway the hue is 135 degrees, a green outside the gamut: red clips
     // to zero instead of the value 8-bit stops would interpolate.
     assert_eq!(pixel(&two, 200, 100, 2)[0], 0);
@@ -1430,4 +1433,19 @@ fn far_out_of_gamut_stops_find_where_they_enter_the_gamut() {
     );
     assert_eq!(pixel(&rgba, 400, 300, 0)[0], 255);
     assert_eq!(pixel(&rgba, 400, 395, 0)[0], 255);
+}
+
+#[test]
+fn extreme_stop_coordinates_still_paint() {
+    // Opposite channels near the limits of f32 would overflow interpolation,
+    // and channels far outside the gamut in a polar space defeat an error
+    // bound measured before clipping.
+    for css in [
+        "linear-gradient(to right in srgb, color(srgb 3e38 0 0), color(srgb -3e38 0 0))",
+        "linear-gradient(to right in lch, color(srgb 1000 -1000 0), color(srgb -1000 1000 1000))",
+        "linear-gradient(to right in oklch longer hue, color(srgb 100 0 -100), lab(50% 0 0))",
+    ] {
+        let rgba = raster_layer(&format!("background-image: {css}"), 100, 1);
+        assert_eq!(pixel(&rgba, 100, 50, 0)[3], 255, "{css}");
+    }
 }
