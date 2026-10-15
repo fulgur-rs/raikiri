@@ -6,6 +6,7 @@ use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
 use super::*;
+use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
 use std::cell::Cell;
@@ -575,7 +576,7 @@ fn enclosing_column_context(
             break None;
         };
         let computed = &cascade.computed[parent];
-        if computed.display.is_flex_container()
+        if document.nodes[parent].formatting_context == FormattingContext::Flex
             && matches!(
                 computed.flex_direction,
                 FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
@@ -681,8 +682,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
         let Some(parent_id) = document.parent_of(child_id) else {
             continue;
         };
-        let parent = &cascade.computed[parent_id];
-        if !parent.display.is_grid_container()
+        if document.nodes[parent_id].formatting_context != FormattingContext::Grid
             || !matches!(child.grid_row_start, GridLineValue::Auto)
             || !matches!(child.grid_row_end, GridLineValue::Auto)
             || !matches!(child.grid_column_start, GridLineValue::Auto)
@@ -690,6 +690,7 @@ fn realign_grid_abspos_static_positions(document: &mut Document, cascade: &Casca
         {
             continue;
         }
+        let parent = &cascade.computed[parent_id];
         let parent_size = document.nodes[parent_id].unrounded_layout.size;
         let border_left = parent.border.left.width().px();
         let border_right = parent.border.right.width().px();
@@ -4439,8 +4440,9 @@ fn paginate_flow(
                 // normal-flow page boundary. Keep its inherited page context,
                 // but do not use its explicit name to split pagination.
                 let parent_box = box_parent(document, cascade, node_id, BoxParentScope::Document);
-                let is_direct_flex_item = parent_box
-                    .is_some_and(|parent| cascade.computed[parent].display.is_flex_container());
+                let is_direct_flex_item = parent_box.is_some_and(|parent| {
+                    document.nodes[parent].formatting_context == FormattingContext::Flex
+                });
                 let own_page_name = if !inline_level
                     && !float_subtree
                     && (!inside_flex || named_flex_context.is_some())
@@ -4460,7 +4462,8 @@ fn paginate_flow(
                     node_id,
                     inherited_page_name.as_deref(),
                 );
-                let column_flex = computed.display.is_flex_container()
+                let is_flex = document.nodes[node_id].formatting_context == FormattingContext::Flex;
+                let column_flex = is_flex
                     && matches!(
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
@@ -4471,7 +4474,7 @@ fn paginate_flow(
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
-                let row_flex = computed.display.is_flex_container() && !column_flex;
+                let row_flex = is_flex && !column_flex;
                 let page_name = if column_flex
                     || (row_flex && !deferred_named_break_after)
                     || (named_flex_context.is_some() && !deferred_named_break_after)
@@ -4665,18 +4668,14 @@ fn paginate_flow(
                                     | DisplayValue::TableFooterGroup
                                     | DisplayValue::TableRow
                             ),
-                        computed.display.is_flex_container()
-                            && matches!(
-                                computed.flex_direction,
-                                FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
-                            )
+                        column_flex
                             || (computed.display == DisplayValue::Contents && flex_column_parent),
-                        computed.display.is_grid_container()
+                        document.nodes[node_id].formatting_context == FormattingContext::Grid
                             && document.nodes[node_id].grid_column_count == 1,
                         inside_flex || matches!(computed.display, DisplayValue::Flex),
                         if column_flex {
                             Some(node_id)
-                        } else if computed.display.is_flex_container() {
+                        } else if is_flex {
                             None
                         } else {
                             named_flex_context
@@ -6077,7 +6076,7 @@ fn paginate_flow(
                 let shift_delta = target_y - effective_y;
                 let row_flex_break_before = forced_before
                     && document.parent_of(node_id).is_some_and(|parent_id| {
-                        cascade.computed[parent_id].display.is_flex_container()
+                        document.nodes[parent_id].formatting_context == FormattingContext::Flex
                             && matches!(
                                 cascade.computed[parent_id].flex_direction,
                                 FlexDirectionValue::Row | FlexDirectionValue::RowReverse
@@ -7439,9 +7438,9 @@ fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) ->
     let style = &document.nodes[node_id].style;
     let item =
         box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|container| {
-            cascade.computed[container]
-                .display
-                .is_flex_or_grid_container()
+            document.nodes[container]
+                .formatting_context
+                .is_flex_or_grid()
         });
     item || !(computed.display.is_inline_flow()
         || matches!(
@@ -7609,10 +7608,11 @@ fn has_side_by_side_ancestor(
 ) -> bool {
     let mut current = document.parent_of(node_id);
     while let Some(id) = current {
-        let display = cascade.computed[id].display;
+        let formatting_context = document.nodes[id].formatting_context;
         if document.nodes[id].multicol.is_some()
-            || display.is_flex_container()
-            || display.is_grid_container() && !grid_stacks_items(document, cascade, id)
+            || formatting_context == FormattingContext::Flex
+            || formatting_context == FormattingContext::Grid
+                && !grid_stacks_items(document, cascade, id)
         {
             return true;
         }
@@ -7646,7 +7646,7 @@ fn ifc_paragraph_of_block(document: &Document, block: usize) -> Option<usize> {
 /// stack like blocks.
 fn stacks_children_in_block_flow(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     moves_later_siblings(document, cascade, id)
-        || cascade.computed[id].display.is_grid_container()
+        || document.nodes[id].formatting_context == FormattingContext::Grid
             && grid_stacks_items(document, cascade, id)
 }
 
