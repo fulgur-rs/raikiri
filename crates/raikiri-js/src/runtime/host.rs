@@ -6,8 +6,10 @@
 //! together with its stylesheets and layout state.
 
 use std::any::Any;
+use std::sync::Arc;
 
 use raikiri_dom::Document;
+use raikiri_traits::DecodedImage;
 
 /// `DOMRect` values in CSS pixels, relative to the initial containing block.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -179,6 +181,12 @@ pub trait DocumentHost: 'static {
     /// into script or counted in [`super::RunReport::host_failures`].
     fn load_image(&mut self, _url: &str) -> Result<(), HostError> {
         Err(HostError("image loading is not supported".into()))
+    }
+    /// The decoded pixels of an image [`Self::load_image`] loaded, for
+    /// drawing it into a canvas; `None` when the host does not keep them.
+    /// The default keeps none, so such an image draws nothing.
+    fn image_pixels(&mut self, _url: &str) -> Option<Arc<DecodedImage>> {
+        None
     }
     /// Type-erased shared access to the concrete host, for downcasting a
     /// boxed [`DocumentHost`] back to the embedder's own type (see

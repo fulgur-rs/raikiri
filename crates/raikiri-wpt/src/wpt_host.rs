@@ -128,6 +128,35 @@ fn expand_live_style_sources(
 }
 
 impl WptDocumentHost {
+    /// Resolve `url` through a checkout-rooted image resolver, returning the
+    /// resolver (which caches the decoded source) and the parsed URL.
+    fn resolve_image(
+        &self,
+        url: &str,
+    ) -> Result<
+        (
+            raikiri_net::ImageResolver<crate::reftest::local_resources::WptFileNetworkProvider>,
+            raikiri::Url,
+        ),
+        HostError,
+    > {
+        let root = self
+            .canonical_root
+            .clone()
+            .ok_or_else(|| HostError(format!("{url}: the WPT root does not exist")))?;
+        let parsed = raikiri::Url::parse(url)
+            .map_err(|_| HostError(format!("{url}: not an absolute URL")))?;
+        let resolver = raikiri_net::ImageResolver::new(
+            crate::reftest::local_resources::WptFileNetworkProvider::new(Some(root)),
+        );
+        raikiri_traits::ReplacedResolver::resolve(
+            &resolver,
+            raikiri_traits::ResolverRequest::new(&parsed),
+        )
+        .map_err(|error| HostError(format!("{url}: {error}")))?;
+        Ok((resolver, parsed))
+    }
+
     pub(crate) fn new(setup: LiveWptSetup, wpt_root: &Path) -> Self {
         let root = setup.uncascaded.dom.root_index();
         let raw = live_wpt_stylesheets_in_subtree(&setup.uncascaded.dom, root);
@@ -263,21 +292,14 @@ impl DocumentHost for WptDocumentHost {
     /// root nothing would confine a `file:` URL, so every load fails, the
     /// same as [`Self::script_source`].
     fn load_image(&mut self, url: &str) -> Result<(), HostError> {
-        let root = self
-            .canonical_root
-            .clone()
-            .ok_or_else(|| HostError(format!("{url}: the WPT root does not exist")))?;
-        let parsed = raikiri::Url::parse(url)
-            .map_err(|_| HostError(format!("{url}: not an absolute URL")))?;
-        let resolver = raikiri_net::ImageResolver::new(
-            crate::reftest::local_resources::WptFileNetworkProvider::new(Some(root)),
-        );
-        raikiri_traits::ReplacedResolver::resolve(
-            &resolver,
-            raikiri_traits::ResolverRequest::new(&parsed),
-        )
-        .map(drop)
-        .map_err(|error| HostError(format!("{url}: {error}")))
+        self.resolve_image(url).map(drop)
+    }
+
+    /// Decode the image again through the same checkout-rooted provider as
+    /// [`Self::load_image`], at the size layout gives it by default.
+    fn image_pixels(&mut self, url: &str) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        let (resolver, parsed) = self.resolve_image(url).ok()?;
+        raikiri_traits::ImagePixelSource::get_decoded(&resolver, &parsed)
     }
 
     fn flush(&mut self) -> Result<(), HostError> {

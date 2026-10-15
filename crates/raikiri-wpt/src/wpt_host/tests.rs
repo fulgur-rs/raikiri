@@ -1145,6 +1145,22 @@ fn load_image_decodes_data_and_checkout_images_and_rejects_the_rest() {
 }
 
 #[test]
+fn image_pixels_decodes_the_images_load_image_accepts() {
+    let (_dir, root) = script_root();
+    std::fs::write(root.join("css/page/broken.png"), "not a png").unwrap();
+    let mut host = host_at(&root.join("css/page"), &root);
+    let image = host.image_pixels(GREEN_PNG).expect("decoded pixels");
+    assert_eq!((image.width, image.height), (1, 1));
+    assert_eq!(image.rgba[1], 255, "the pixel is green: {:?}", image.rgba);
+    assert!(
+        host.image_pixels(&file_url(&root.join("css/page/broken.png")))
+            .is_none()
+    );
+    let mut host = host_at(&root.join("css/page"), &root.join("no-such-root"));
+    assert!(host.image_pixels(GREEN_PNG).is_none());
+}
+
+#[test]
 fn flush_resolves_against_a_base_element_added_after_the_parse() {
     let (_dir, root) = script_root();
     let page = raikiri::Url::from_file_path(root.join("css/page/t.html")).unwrap();

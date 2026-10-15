@@ -460,3 +460,39 @@ fn canvas_bitmap_constructor_enforces_byte_limit_below_pixel_limit() {
         Err(crate::CanvasBitmapError::DimensionsTooLarge)
     );
 }
+
+#[test]
+fn canvas_composite_rect_blends_each_sampled_pixel() {
+    let (mut doc, canvas) = canvas_in_body();
+    doc.set_element_attribute(canvas, "width", "3").unwrap();
+    doc.set_element_attribute(canvas, "height", "1").unwrap();
+    doc.canvas_fill_rect(canvas, 1, 0, 2, 1, [0, 0, 255, 255]);
+    let mut visited = Vec::new();
+    assert!(doc.canvas_composite_rect(canvas, -1, 0, 9, 9, |col, row| {
+        visited.push((col, row));
+        match col {
+            0 => Some([255, 255, 255, 128]),
+            1 => Some([255, 0, 0, 0]),
+            _ => Some([255, 255, 255, 128]),
+        }
+    }));
+    // Only the pixels inside the bitmap are sampled.
+    assert_eq!(visited, [(0, 0), (1, 0), (2, 0)]);
+    let bitmap = doc.canvas_bitmap(canvas).unwrap();
+    // Translucent over transparent keeps the source color; a transparent
+    // source leaves the backdrop; translucent over opaque blends.
+    assert_eq!(
+        bitmap.rgba,
+        [255, 255, 255, 128, 0, 0, 255, 255, 128, 128, 255, 255]
+    );
+    // An opaque source replaces the backdrop, and `None` leaves it.
+    assert!(doc.canvas_composite_rect(canvas, 0, 0, 3, 1, |col, _| {
+        (col == 0).then_some([1, 2, 3, 255])
+    }));
+    let bitmap = doc.canvas_bitmap(canvas).unwrap();
+    assert_eq!(&bitmap.rgba[..8], &[1, 2, 3, 255, 0, 0, 255, 255]);
+    // A translucent source over a translucent backdrop.
+    assert_eq!(source_over([0, 0, 0, 128], [255, 255, 255, 128]), [85, 85, 85, 192]);
+    let body = doc.root_index();
+    assert!(!doc.canvas_composite_rect(body, 0, 0, 1, 1, |_, _| None));
+}

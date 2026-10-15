@@ -100,6 +100,7 @@ pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult
     })?;
     let request = with_state(context, |s| {
         s.image_requests.remove(&index);
+        s.loaded_images.remove(&index);
         src.as_ref().map(|_| {
             s.next_image_request = s.next_image_request.wrapping_add(1);
             s.image_requests.insert(index, s.next_image_request);
@@ -147,7 +148,11 @@ fn finish_request(
         None => false,
     };
     // Layout resolves the image on its own, so nothing here dirties it.
-    with_state(context, |s| s.image_requests.remove(&index))?;
+    with_state(context, |s| {
+        s.image_requests.remove(&index);
+        let loaded_url = url.filter(|_| loaded).map(str::to_owned);
+        s.loaded_images.insert(index, loaded_url);
+    })?;
     let kind = if loaded { "load" } else { "error" };
     dispatch::fire_event(context, Some(index), kind, false, false)?;
     Ok(())
@@ -230,6 +235,7 @@ pub(crate) fn settle_moved_images(context: &mut Context) -> JsResult<()> {
         for index in moved_in {
             s.active_images.remove(&index);
             s.image_requests.remove(&index);
+            s.loaded_images.remove(&index);
             s.inert_images.insert(index);
         }
         let root = document.root_index();

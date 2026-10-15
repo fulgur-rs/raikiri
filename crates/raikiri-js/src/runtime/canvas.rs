@@ -14,12 +14,17 @@
 //! rectangles directly into the live [`raikiri_dom::Document`] bitmap, which
 //! paint later composites with `object-fit`/`object-position`.
 
+use std::sync::Arc;
+
 use boa_engine::object::JsObject;
 use boa_engine::{Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace};
 
 use super::interfaces::{Members, protos, wrap};
 use super::node::mark_dirty;
-use super::webidl::{dom_string, host_failure_with_message, this_element, with_state};
+use super::webidl::{
+    dom_string, host_failure_with_message, this_element, throw_dom_exception, with_state,
+};
+use raikiri_traits::DecodedImage;
 
 /// Native data behind a `CanvasRenderingContext2D` instance: the arena index
 /// of its canvas element. The bitmap itself lives in
@@ -436,6 +441,211 @@ fn clear_rect(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     Ok(JsValue::undefined())
 }
 
+/// The pixels of a `drawImage` source: straight-alpha RGBA8 rows.
+struct SourcePixels {
+    width: u32,
+    height: u32,
+    rgba: SourceBytes,
+}
+
+/// Where a [`SourcePixels`] keeps its bytes: shared with the host's image
+/// cache, or copied out of a canvas bitmap (which drawing may overwrite).
+enum SourceBytes {
+    Image(Arc<DecodedImage>),
+    Canvas(Vec<u8>),
+}
+
+impl SourcePixels {
+    fn pixel(&self, col: u32, row: u32) -> [u8; 4] {
+        let bytes = match &self.rgba {
+            SourceBytes::Image(image) => image.rgba.as_slice(),
+            SourceBytes::Canvas(rgba) => rgba.as_slice(),
+        };
+        let off = ((row * self.width + col) as usize) * 4;
+        bytes
+            .get(off..off + 4)
+            .and_then(|pixel| pixel.try_into().ok())
+            .unwrap_or([0; 4])
+    }
+}
+
+/// The `CanvasImageSource` an argument names (HTML Standard §4.12.5.1.15):
+/// an `<img>` or `<canvas>` element; any other value is a `TypeError`, as
+/// WebIDL union conversion requires.
+enum ImageSource {
+    Image(usize),
+    Canvas(usize),
+}
+
+fn image_source(value: &JsValue, context: &mut Context) -> JsResult<ImageSource> {
+    let not_a_source = || {
+        JsNativeError::typ()
+            .with_message("the image argument is not an HTMLImageElement or HTMLCanvasElement")
+    };
+    let index = this_element(value, context).map_err(|_| not_a_source())?;
+    let (image, canvas) = with_state(context, |s| {
+        let document = s.host.document();
+        (
+            super::image::is_html_image(document, index),
+            document.is_canvas_element(index),
+        )
+    })?;
+    match (image, canvas) {
+        (true, _) => Ok(ImageSource::Image(index)),
+        (_, true) => Ok(ImageSource::Canvas(index)),
+        _ => Err(not_a_source().into()),
+    }
+}
+
+/// "Check the usability of the image argument" (HTML Standard §4.12.5.1.15),
+/// then read its pixels: `Ok(None)` when there is nothing to draw (an image
+/// not yet loaded, or one whose pixels the host does not keep), and an
+/// `InvalidStateError` for a broken image or a zero-area canvas.
+fn source_pixels(context: &mut Context, source: ImageSource) -> JsResult<Option<SourcePixels>> {
+    match source {
+        ImageSource::Image(index) => {
+            let loaded = with_state(context, |s| s.loaded_images.get(&index).cloned())?;
+            match loaded {
+                None => Ok(None),
+                Some(None) => Err(throw_dom_exception(
+                    context,
+                    "InvalidStateError",
+                    "the image is broken",
+                )),
+                Some(Some(url)) => {
+                    let image = with_state(context, |s| s.host.image_pixels(&url))?;
+                    Ok(image.map(|image| SourcePixels {
+                        width: image.width,
+                        height: image.height,
+                        rgba: SourceBytes::Image(image),
+                    }))
+                }
+            }
+        }
+        ImageSource::Canvas(index) => {
+            let (size, rgba) = with_state(context, |s| {
+                let document = s.host.document();
+                let rgba = document
+                    .canvas_bitmap_ref(index)
+                    .filter(|bitmap| !bitmap.rgba.is_empty())
+                    .map(|bitmap| bitmap.rgba.clone());
+                (document.canvas_size(index), rgba)
+            })?;
+            let (width, height) = size.unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
+            if width == 0 || height == 0 {
+                return Err(throw_dom_exception(
+                    context,
+                    "InvalidStateError",
+                    "the canvas has no pixels",
+                ));
+            }
+            // A canvas without materialized pixels is transparent black,
+            // which source-over leaves unchanged.
+            Ok(rgba.map(|rgba| SourcePixels {
+                width,
+                height,
+                rgba: SourceBytes::Canvas(rgba),
+            }))
+        }
+    }
+}
+
+/// A rectangle with negative extents flipped to positive ones, as
+/// `drawImage` normalizes its source and destination rectangles.
+fn normalized(x: f64, y: f64, w: f64, h: f64) -> (f64, f64, f64, f64) {
+    let (x, w) = if w < 0.0 { (x + w, -w) } else { (x, w) };
+    let (y, h) = if h < 0.0 { (y + h, -h) } else { (y, h) };
+    (x, y, w, h)
+}
+
+/// `ctx.drawImage(image, dx, dy)`, `drawImage(image, dx, dy, dw, dh)` and
+/// `drawImage(image, sx, sy, sw, sh, dx, dy, dw, dh)` (HTML Standard
+/// §4.12.5.1.15): paint the source rectangle of `image` into the
+/// destination rectangle with source-over.
+///
+/// Each destination pixel whose center lies in the destination rectangle
+/// takes the nearest source pixel; image smoothing is not modelled, so
+/// scaled draws are not interpolated. Source pixels outside the image draw
+/// nothing, which clips the destination in the same proportion as the
+/// source rectangle is clipped to the image.
+fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let canvas = with_canvas_context(this, context)?;
+    // WebIDL overload resolution: the overloads take 3, 5 or 9 arguments,
+    // and extra arguments beyond 9 are ignored.
+    let count = args.len().min(9);
+    if !matches!(count, 3 | 5 | 9) {
+        return Err(JsNativeError::typ()
+            .with_message(format!(
+                "drawImage takes 3, 5 or 9 arguments, but {} were given",
+                args.len()
+            ))
+            .into());
+    }
+    let source = image_source(&args[0], context)?;
+    let mut numbers = Vec::with_capacity(count - 1);
+    for i in 1..count {
+        numbers.push(arg_double(args, i, context)?);
+    }
+    if numbers.iter().any(|number| !number.is_finite()) {
+        return Ok(JsValue::undefined());
+    }
+    let Some(pixels) = source_pixels(context, source)? else {
+        return Ok(JsValue::undefined());
+    };
+    let (image_w, image_h) = (f64::from(pixels.width), f64::from(pixels.height));
+    let [sx, sy, sw, sh, dx, dy, dw, dh] = match numbers[..] {
+        [dx, dy] => [0.0, 0.0, image_w, image_h, dx, dy, image_w, image_h],
+        [dx, dy, dw, dh] => [0.0, 0.0, image_w, image_h, dx, dy, dw, dh],
+        [sx, sy, sw, sh, dx, dy, dw, dh] => [sx, sy, sw, sh, dx, dy, dw, dh],
+        // cov:ignore: the arity check above admits only 2, 4 or 8 numbers.
+        _ => return Ok(JsValue::undefined()),
+    };
+    let (sx, sy, sw, sh) = normalized(sx, sy, sw, sh);
+    let (dx, dy, dw, dh) = normalized(dx, dy, dw, dh);
+    if sw == 0.0 || sh == 0.0 || dw == 0.0 || dh == 0.0 {
+        return Ok(JsValue::undefined());
+    }
+    let Some((canvas_w, canvas_h)) = with_state(context, |s| s.host.document().canvas_size(canvas))?
+    else {
+        // cov:ignore: a 2d context only exists for a canvas element.
+        return Ok(JsValue::undefined());
+    };
+    // The destination pixels the rectangle touches, clipped to the bitmap
+    // so every coordinate fits an `i32`.
+    let left = dx.floor().max(0.0);
+    let top = dy.floor().max(0.0);
+    let right = (dx + dw).ceil().min(f64::from(canvas_w));
+    let bottom = (dy + dh).ceil().min(f64::from(canvas_h));
+    if left >= right || top >= bottom {
+        return Ok(JsValue::undefined());
+    }
+    let sample = |offset: f64, d: f64, dl: f64, s: f64, sl: f64, limit: u32| {
+        // The pixel center, mapped from the destination to the source.
+        let center = offset + 0.5;
+        if center < d || center >= d + dl {
+            return None;
+        }
+        let source = s + (center - d) * sl / dl;
+        (source >= 0.0 && source < f64::from(limit)).then(|| source.floor() as u32)
+    };
+    with_state(context, |s| {
+        s.host.document_mut().canvas_composite_rect(
+            canvas,
+            left as i32,
+            top as i32,
+            (right - left) as i32,
+            (bottom - top) as i32,
+            |col, row| {
+                let source_col = sample(f64::from(col), dx, dw, sx, sw, pixels.width)?;
+                let source_row = sample(f64::from(row), dy, dh, sy, sh, pixels.height)?;
+                Some(pixels.pixel(source_col, source_row))
+            },
+        );
+    })?;
+    mark_dirty(context)?;
+    Ok(JsValue::undefined())
+}
+
 pub(crate) const HTML_CANVAS_ELEMENT_MEMBERS: Members = Members {
     getters: &[],
     accessors: &[
@@ -448,7 +658,11 @@ pub(crate) const HTML_CANVAS_ELEMENT_MEMBERS: Members = Members {
 pub(crate) const CANVAS_RENDERING_CONTEXT_2D_MEMBERS: Members = Members {
     getters: &[("canvas", context_canvas)],
     accessors: &[("fillStyle", fill_style, set_fill_style)],
-    methods: &[("fillRect", 4, fill_rect), ("clearRect", 4, clear_rect)],
+    methods: &[
+        ("fillRect", 4, fill_rect),
+        ("clearRect", 4, clear_rect),
+        ("drawImage", 3, draw_image),
+    ],
 };
 
 #[cfg(test)]

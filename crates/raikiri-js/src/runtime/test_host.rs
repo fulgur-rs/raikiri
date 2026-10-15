@@ -5,8 +5,10 @@ use std::any::Any;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 use raikiri_dom::Document;
+use raikiri_traits::DecodedImage;
 
 use super::host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
 
@@ -36,6 +38,9 @@ pub(crate) struct StubHost {
     pub scripts: HashMap<String, String>,
     /// The URLs [`DocumentHost::load_image`] loads; any other URL fails.
     pub images: HashSet<String>,
+    /// [`DocumentHost::image_pixels`]' pixels, by URL; a URL with no entry
+    /// has none.
+    pub image_pixels: HashMap<String, Arc<DecodedImage>>,
 }
 
 impl StubHost {
@@ -70,6 +75,7 @@ impl StubHost {
                 document_url: None,
                 scripts: HashMap::new(),
                 images: HashSet::new(),
+                image_pixels: HashMap::new(),
             },
             html,
             head,
@@ -185,6 +191,9 @@ impl DocumentHost for StubHost {
         } else {
             Err(HostError(format!("no image registered for {url}")))
         }
+    }
+    fn image_pixels(&mut self, url: &str) -> Option<Arc<DecodedImage>> {
+        self.image_pixels.get(url).cloned()
     }
     fn as_any(&self) -> &dyn Any {
         self
