@@ -1544,16 +1544,17 @@ fn record_nested_ifc_box_fragments(
                     Some(_) if !nested_row_flex_scope => line_shift.unwrap_or(0.0),
                     _ => column.saturating_sub(root_column) as f32 * height,
                 };
-                // The bottom of the last line, measured from the column top
-                // where this slice is painted.
+                // The bottom of the last line is measured from the column
+                // top where this slice is painted, so a shifted slice drops
+                // the offset of its first line.
+                let tail_shift = line_range
+                    .filter(|_| line_shift.is_some())
+                    .map_or(0.0, |range| node_offset_y + range.y);
                 let tail_line_bottom = lines
                     .as_ref()
                     .filter(|lines| lines.unfragmented_tail_column == Some(column))
-                    .map(|_| match (line_shift, line_range) {
-                        (Some(_), Some(range)) => line_bottom - range.y,
-                        _ => node_offset_y + line_bottom,
-                    })
-                    .unwrap_or(0.0);
+                    .map(|_| node_offset_y + line_bottom)
+                    .map_or(0.0, |bottom| bottom - tail_shift);
                 let overflow_float_bottom = overflow_clip_heights
                     .get(&column)
                     .map(|bottom| node_offset_y + bottom)
@@ -2398,7 +2399,7 @@ pub(crate) fn root_column_fragments(
 
 /// Give `auto`-width blocks outside any multicol container the width of their
 /// authored containing block before layout. Descendants of a multicol
-/// container are left to the multicol dispatch in `compute_multicol_layout`,
+/// container are left to the multicol dispatch in [`compute_multicol_layout`],
 /// which supplies their used widths, so they are not guessed from a page
 /// fallback.
 pub(crate) fn prepare_authored_block_widths(
