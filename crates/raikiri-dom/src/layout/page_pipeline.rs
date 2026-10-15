@@ -5145,7 +5145,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                     // Widows that cannot fit on the next page would not be
                     // kept together there either; the natural break stays.
                     let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
+                    // A box with a definite height keeps it; its lines
+                    // cannot grow it.
                     pending_line_split.is_none()
+                        && height_follows_content(document, block_id)
                         && moved_height <= page_step_at(current_page.saturating_add(1)) + 0.001
                         && document
                             .ifc_layout_node(block_id)
@@ -6748,22 +6751,40 @@ fn flex_container_of_item_alone_on_its_line(
     if outer_width < line_width - 0.001 {
         return None;
     }
+    // A single-line container puts every item on the item's line. In a
+    // multi-line one, another item joins the line when its outer main size
+    // fits in what the item leaves, which a zero or negative outer size
+    // (negative margins) does.
+    let wraps = cascade.computed[container].flex_wrap != FlexWrapValue::NoWrap;
+    let room = line_width - outer_width;
     let top = layout.location.y - layout.margin.top;
     let bottom = layout.location.y + layout.size.height + layout.margin.bottom;
     document.nodes[container]
         .children
         .iter()
         .filter(|&&child| {
+            // Collapsed white space between items, `display: none` and
+            // absolutely positioned children are on no flex line.
             child != item
-                && !matches!(
-                    cascade.computed[child].position,
-                    PositionValue::Absolute | PositionValue::Fixed
-                )
+                && match &document.nodes[child].data {
+                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                    _ => {
+                        let computed = &cascade.computed[child];
+                        computed.display != DisplayValue::None
+                            && !matches!(
+                                computed.position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                    }
+                }
         })
         .all(|&child| {
             let other = document.nodes[child].unrounded_layout;
-            other.location.y + other.size.height + other.margin.bottom <= top + 0.001
-                || other.location.y - other.margin.top >= bottom - 0.001
+            let other_width = other.size.width + other.margin.left + other.margin.right;
+            wraps
+                && other_width > room + 0.001
+                && (other.location.y + other.size.height + other.margin.bottom <= top + 0.001
+                    || other.location.y - other.margin.top >= bottom - 0.001)
         })
         .then_some(container)
 }

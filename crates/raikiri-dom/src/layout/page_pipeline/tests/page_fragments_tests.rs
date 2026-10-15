@@ -3474,6 +3474,7 @@ fn flex_item_paragraph_after_a_spacer(
     wrap: bool,
     root_css: &str,
     second_extra_css: &str,
+    between: &str,
 ) -> (Vec<(u32, Option<PageFragmentLineRange>)>, f32) {
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
@@ -3497,6 +3498,9 @@ fn flex_item_paragraph_after_a_spacer(
     );
     let item = doc.append_element(Some(flex), "div", Style::default(), Some(style.as_str()));
     let text = doc.append_text(item, "aaaa bbbb cccc");
+    if !between.is_empty() {
+        doc.append_text(flex, between);
+    }
     let second_css = format!(
         "display:block;height:5px;width:{};{second_extra_css}",
         if wrap { "100%" } else { "10px" }
@@ -3526,7 +3530,7 @@ fn flex_item_paragraph_after_a_spacer(
 fn a_flex_item_alone_on_its_line_breaks_between_earlier_lines_for_its_widows() {
     // The item's last two lines start page 1; the next flex line follows.
     let (fragments, second_top) =
-        flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2", "");
+        flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2", "", "");
     assert_eq!(
         fragments,
         [
@@ -3542,7 +3546,7 @@ fn a_flex_item_beside_another_keeps_its_natural_break() {
     // Moving the item's lines would grow the flex line under the item
     // beside it, so the item keeps its natural split.
     let (fragments, second_top) =
-        flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "");
+        flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "", "");
     assert_eq!(
         fragments,
         [
@@ -3651,7 +3655,7 @@ fn a_flex_item_sharing_its_line_with_a_lower_item_keeps_its_natural_break() {
     // The item beside it sits below the paragraph's box through its margin,
     // but on the same flex line, so it is not moved as a later line.
     let (fragments, second_top) =
-        flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "margin-top:40px");
+        flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "margin-top:40px", "");
     assert_eq!(
         fragments,
         [
@@ -3660,4 +3664,86 @@ fn a_flex_item_sharing_its_line_with_a_lower_item_keeps_its_natural_break() {
         ]
     );
     assert_eq!(second_top, 55.0);
+}
+
+#[test]
+fn a_flex_item_sharing_its_line_through_a_negative_margin_keeps_its_natural_break() {
+    // The second item's outer width is zero, so it fits on the line the
+    // item fills; its relative offset only draws it below the item.
+    let (fragments, second_top) = flex_item_paragraph_after_a_spacer(
+        true,
+        "orphans:1;widows:2",
+        "width:10px;margin-left:-10px;position:relative;top:40px",
+        "",
+    );
+    assert_eq!(
+        fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+    assert_eq!(second_top, 55.0);
+}
+
+#[test]
+fn a_paragraph_with_a_definite_height_moves_as_a_unit_for_its_widows() {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    // Three 10px lines in a 30px tall paragraph 15px down a 40px page would
+    // leave one widow. The paragraph's height is its own, so its lines do
+    // not move down inside it; it moves to page 1 whole and stays 30px tall.
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let paragraph = doc.append_element(
+        Some(body),
+        "p",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:40px;\
+             height:30px;orphans:1;widows:2",
+        ),
+    );
+    let text = doc.append_text(paragraph, "aaaa bbbb cccc");
+    let after = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        [(1, Some(PageFragmentLineRange::new(0, 3)))]
+    );
+    assert_eq!(doc.nodes[paragraph].unrounded_layout.size.height, 30.0);
+    assert_eq!(absolute_rect(&doc, after).1, 70.0);
+}
+
+#[test]
+fn white_space_between_flex_items_leaves_an_item_alone_on_its_line() {
+    // Collapsed white space between items is on no flex line.
+    let (fragments, second_top) =
+        flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2", "", "\n  ");
+    assert_eq!(
+        fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
+        ]
+    );
+    assert_eq!(second_top, 60.0);
 }
