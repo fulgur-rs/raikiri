@@ -388,6 +388,7 @@ fn hostile_geometry_and_computed_enforce_bounds() {
     assert!(roundtrip_response(&mut b, HostOperation::Rendered(99)).is_err());
     assert!(roundtrip_response(&mut b, HostOperation::Visible(99)).is_err());
     assert!(roundtrip_response(&mut b, HostOperation::Visible(0)).is_ok());
+    assert!(roundtrip_response(&mut b, HostOperation::Viewport).is_ok());
 }
 
 #[test]

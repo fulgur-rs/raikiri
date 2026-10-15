@@ -547,7 +547,11 @@ pub(crate) const ELEMENT_METRICS_MEMBERS: Members = Members {
         ("scrollTop", scroll_top, set_scroll_top),
         ("scrollLeft", scroll_left, set_scroll_left),
     ],
-    methods: &[],
+    methods: &[(
+        "scrollIntoView",
+        0,
+        super::scroll_into_view::scroll_into_view,
+    )],
 };
 
 #[cfg(test)]

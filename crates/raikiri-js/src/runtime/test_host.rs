@@ -24,6 +24,9 @@ pub(crate) struct StubHost {
     /// Elements [`DocumentHost::is_visible`] reports as invisible, as if
     /// they computed `visibility: hidden`.
     pub invisible: HashSet<usize>,
+    /// [`DocumentHost::viewport_size`]'s return value, or a failure when
+    /// `Err`.
+    pub viewport: Result<Option<(f64, f64)>, ()>,
     /// [`DocumentHost::document_url`]'s return value; tests set this
     /// directly (`host.document_url = Some(...)`) before building a runtime.
     pub document_url: Option<String>,
@@ -63,6 +66,7 @@ impl StubHost {
                 fail_computed: false,
                 unrendered: HashSet::new(),
                 invisible: HashSet::new(),
+                viewport: Ok(None),
                 document_url: None,
                 scripts: HashMap::new(),
                 images: HashSet::new(),
@@ -143,6 +147,10 @@ impl DocumentHost for StubHost {
     }
     fn is_visible(&mut self, node: usize) -> Result<bool, HostError> {
         Ok(!self.invisible.contains(&node))
+    }
+    fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
+        self.viewport
+            .map_err(|()| HostError("stub viewport failure".into()))
     }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         if self.fail_computed {

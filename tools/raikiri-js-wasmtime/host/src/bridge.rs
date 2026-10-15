@@ -86,6 +86,8 @@ impl Bridge {
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::Visible(n) => self.is_visible(n),
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::Viewport => self.viewport_size(),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::Rendered(n) => self.is_being_rendered(n),
         }
     }
@@ -114,6 +116,13 @@ impl Bridge {
         self.host
             .is_visible(node)
             .map(HostValue::Flag)
+            .map_err(|e| e.to_string())
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+    fn viewport_size(&mut self) -> Result<HostValue, String> {
+        self.host
+            .viewport_size()
+            .map(HostValue::Size)
             .map_err(|e| e.to_string())
     }
     pub fn take_response(&mut self, capacity: usize) -> Result<Vec<u8>, String> {

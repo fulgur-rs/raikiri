@@ -29,6 +29,7 @@ fn rt_over(document: raikiri_dom::Document) -> DomRuntime {
         fail_computed: false,
         unrendered: std::collections::HashSet::new(),
         invisible: std::collections::HashSet::new(),
+        viewport: Ok(None),
         document_url: None,
         images: std::collections::HashSet::new(),
         scripts: std::collections::HashMap::new(),

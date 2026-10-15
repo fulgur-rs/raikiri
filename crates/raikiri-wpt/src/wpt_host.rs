@@ -483,6 +483,12 @@ impl DocumentHost for WptDocumentHost {
             .is_none_or(|style| style.visibility == raikiri_style::property::Visibility::Visible))
     }
 
+    fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
+        // The live document lays out one screen page at the viewport size.
+        let page = self.setup.page_box;
+        Ok(Some((f64::from(page.width), f64::from(page.height))))
+    }
+
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         let Some(property) = raikiri_style::ComputedProperty::from_name(property) else {
             return Ok(None);
