@@ -436,6 +436,10 @@ pub(crate) struct PageFragmentItem {
     pub(crate) box_y: f32,
     /// Height of the whole border box, before the page cut it.
     pub(crate) box_height: f32,
+    /// Top of the whole border box along the flow, relative to the page's
+    /// slice of it; negative when the box starts on an earlier page. Equal
+    /// to `box_y` when the flow runs down the page.
+    pub(crate) flow_box_y: f32,
     /// Whole element content box before pagination, relative to the page's
     /// content origin. Text placements do not have an element content box.
     pub(crate) content_rect: Option<PageFragmentRect>,
@@ -555,6 +559,7 @@ impl PageFragmentItem {
             line_range: None,
             box_y: rect.y,
             box_height: rect.height,
+            flow_box_y: rect.y,
             content_rect: None,
         }
     }
@@ -563,6 +568,14 @@ impl PageFragmentItem {
     pub(crate) fn with_box_extent(mut self, box_y: f32, box_height: f32) -> Self {
         self.box_y = box_y;
         self.box_height = box_height;
+        self.flow_box_y = box_y;
+        self
+    }
+
+    /// Set the whole border box's top along the flow, when the flow does
+    /// not run down the page.
+    pub(crate) fn with_flow_box_y(mut self, flow_box_y: f32) -> Self {
+        self.flow_box_y = flow_box_y;
         self
     }
 

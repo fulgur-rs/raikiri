@@ -369,3 +369,27 @@ fn projection_holds_the_slice_of_a_narrower_page_against_its_right_edge() {
         runs[0].origin
     );
 }
+
+#[test]
+fn continuation_offsets_of_pages_along_x_are_along_the_flow() {
+    let (mut doc, cascade, ids, pages) = paginate_with_cascade(
+        "writing-mode:vertical-rl",
+        "margin:0",
+        &[
+            ("div", "width:600px", ""),
+            ("div", "width:400px", ""),
+            ("div", "width:100px", ""),
+        ],
+    );
+    projected_rects(&mut doc, &cascade, &pages, ids[1]);
+    let crossing = doc
+        .crossing_boxes(pages[1].page_index)
+        .into_iter()
+        .find(|crossing| crossing.node == raikiri_traits::NodeId::new(ids[2] as u64))
+        .map(|crossing| crossing.top);
+    assert_eq!(crossing, Some(-200.0));
+    assert_eq!(
+        doc.page_token_offset(pages[1].page_index, crate::PageStartToken::Node(ids[3])),
+        Some(200.0)
+    );
+}

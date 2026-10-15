@@ -2539,6 +2539,7 @@ pub(crate) fn project_slices_with_control(
             )
             .with_page_index(page.page_index)
             .with_box_extent(item_box_y, item_box_height)
+            .with_flow_box_y(box_y)
             .with_content_rect(source.content_insets.map(|insets| {
                 to_page((
                     source.abs_x + insets.left,
@@ -2579,7 +2580,7 @@ pub(crate) fn project_slices_with_control(
     {
         let body = NodeId::new(body_id as u64);
         first.items.retain(|item| {
-            item.node_id != body || item.box_y >= -0.01 || earlier.contains_key(&body)
+            item.node_id != body || item.flow_box_y >= -0.01 || earlier.contains_key(&body)
         });
     }
     let earlier = document.earlier_fragments.as_ref();
