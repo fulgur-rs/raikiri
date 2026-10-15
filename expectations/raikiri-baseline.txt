@@ -4641,3 +4641,7 @@ css/css-page/page-name-orthogonal-writing-002-print.html
 # --- percentage page margins in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once the page area that viewport units resolve against maps flow-relative @page margins and padding through the root's writing mode; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-008-print.html
+
+# --- later pages of another inline size in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
+# Pass once later pages of a vertical-rl root whose page area height differs are laid out again at that height; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-size-012-print.html
