@@ -182,71 +182,45 @@ fn fixed_height_edge_boxes_sit_against_the_page_area_or_center() {
 }
 
 #[test]
-fn lengths_resolve_every_unit_to_css_px() {
-    for (length, px) in [
-        (Length::Px(5.0), 5.0),
-        (Length::Percent(50.0), 100.0),
-        (Length::Em(2.0), 20.0),
-        (Length::Rem(2.0), 20.0),
-        (Length::Ex(2.0), 10.0),
-        (Length::Ch(2.0), 10.0),
-        (Length::Ic(2.0), 20.0),
-        (Length::Lh(2.0), 20.0),
-        (Length::Pt(72.0), 96.0),
-        (Length::Cm(2.54), 96.0),
-        (Length::Mm(25.4), 96.0),
-        (Length::Q(101.6), 96.0),
-        (Length::In(1.0), 96.0),
-        (Length::Pc(6.0), 96.0),
-        (Length::Px(-5.0), 0.0),
-        (Length::Px(f32::NAN), 0.0),
-    ] {
-        let resolved = length_to_px(length, 200.0, 10.0);
-        assert!((resolved - px).abs() < 1e-3, "{length:?} -> {resolved}");
-    }
-    assert_eq!(length_or_auto_to_px(LengthOrAuto::Auto, 200.0, 10.0), None);
+fn box_lengths_resolve_against_their_basis() {
+    let document = engine_document();
+    let px = |value| length_or_auto_px(&document, value, None, 200.0);
+    assert_eq!(px(ComputedLengthPercentageOrAuto::Auto), None);
+    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(5.0)), Some(5.0));
+    assert_eq!(
+        px(ComputedLengthPercentageOrAuto::Percent(50.0)),
+        Some(100.0)
+    );
+    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(-5.0)), Some(0.0));
+    assert_eq!(px(ComputedLengthPercentageOrAuto::Px(f32::NAN)), Some(0.0));
+    assert_eq!(px(ComputedLengthPercentageOrAuto::MinContent), Some(0.0));
     let calc = |px, percent| {
-        LengthOrAuto::Calc(raikiri_style::property::CalcLengthPercentage { px, percent })
+        ComputedLengthPercentageOrAuto::Calc(raikiri_style::property::CalcLengthPercentage {
+            px,
+            percent,
+        })
     };
-    assert_eq!(
-        length_or_auto_to_px(calc(10.0, 10.0), 200.0, 10.0),
-        Some(30.0)
-    );
-    assert_eq!(
-        length_or_auto_to_px(calc(f32::NAN, f32::NAN), 200.0, 10.0),
-        Some(0.0)
-    );
-    assert_eq!(
-        length_or_auto_to_px(calc(-50.0, 0.0), 200.0, 10.0),
-        Some(0.0)
-    );
-    assert_eq!(
-        margin_box_length(
-            &calc(10.0, 10.0),
-            200.0,
-            10.0,
-            &ResolveContext::new(ComputedLength(16.0))
-        ),
-        30.0
-    );
-    assert_eq!(
-        margin_box_length(
-            &calc(f32::INFINITY, 0.0),
-            200.0,
-            10.0,
-            &ResolveContext::new(ComputedLength(16.0))
-        ),
-        0.0
-    );
-    assert_eq!(
-        margin_box_length(
-            &LengthOrAuto::Auto,
-            200.0,
-            10.0,
-            &ResolveContext::new(ComputedLength(16.0))
-        ),
-        0.0
-    );
+    assert_eq!(px(calc(10.0, 10.0)), Some(30.0));
+    assert_eq!(px(calc(f32::NAN, f32::NAN)), Some(0.0));
+    assert_eq!(px(calc(-50.0, 0.0)), Some(0.0));
+}
+
+#[test]
+fn ch_lengths_use_the_zero_advance_of_the_margin_box_font() {
+    // Ahem's `0` is one em wide, where the style layer's fallback is half
+    // an em.
+    let boxes = boxes_for(&format!(
+        "@page {{ margin: 40px; @top-left {{ content: 'a'; {AHEM} width: 3ch; \
+           padding-left: 1ch; margin-left: calc(1ch + 2px); }} }}"
+    ));
+    let [head] = boxes.as_slice() else {
+        panic!("one box: {boxes:?}");
+    };
+    // The page margin plus the 12px left margin; the 30px content plus the
+    // 10px left padding.
+    assert_eq!(head.rect.x, 52.0);
+    assert_eq!(head.rect.width, 40.0);
+    assert_eq!(head.padding.left, 10.0);
 }
 
 #[test]
@@ -300,11 +274,13 @@ fn border_longhands_override_the_shorthand_and_skip_unsupported_styles() {
 }
 
 #[test]
-fn margin_boxes_inherit_page_fonts_and_alignment() {
+fn margin_boxes_inherit_page_fonts_and_text_align() {
+    // `vertical-align` is not inherited, so the page's value does not reach
+    // the box.
     let boxes = boxes_for(
         "@page { margin: 40px; font-family: Ahem; font-size: 20px; text-align: center; \
-           vertical-align: text-bottom; \
-           @top-left { content: 'ab'; font-size: 50% } }",
+           vertical-align: text-top; \
+           @top-left { content: 'ab'; font-size: 50%; vertical-align: text-bottom } }",
     );
     let [margin_box] = boxes.as_slice() else {
         panic!("one box: {boxes:?}");

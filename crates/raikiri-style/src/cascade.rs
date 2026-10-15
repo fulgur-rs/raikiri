@@ -233,6 +233,17 @@ impl CascadeResult {
         )
     }
 
+    /// The computed values of the margin box `slot` of `page`, measuring
+    /// `line-height: normal` with the measurer this cascade ran with. See
+    /// [`PageCascadeResult::margin_box_style`].
+    pub fn margin_box_style(
+        &self,
+        page: &PageCascadeResult,
+        slot: crate::PageMarginBoxSlot,
+    ) -> Option<ComputedValues> {
+        page.margin_box_style(slot, self.normal_line_height())
+    }
+
     /// Explicit SVG paint properties after winner selection and defaulting.
     ///
     /// Read concrete values from [`Self::computed`]. Properties marked

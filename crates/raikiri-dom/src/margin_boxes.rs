@@ -17,19 +17,15 @@ use crate::{
     TextShadow,
 };
 use raikiri_style::property::{
-    BackgroundImage, BackgroundLayerSpec, BackgroundRepeat, Border, BorderColor, BorderStyle,
-    ContentComponent, CounterStyle, CssColor, FontFamilyName, Length, LengthOrAuto,
-    LengthPercentageOrCalc, PropertyKey, PropertyValue, QuoteKeyword, RelativeCalcLengthPercentage,
-    Sides, StringFetchMode, TextAlign, TextShadowColor, TextShadowLength, VerticalAlign, VisualBox,
-    WritingMode,
+    BackgroundImage, BackgroundRepeat, BorderColor, BorderStyle, ContentComponent, CounterStyle,
+    CssColor, FontFamilyName, PropertyKey, PropertyValue, QuoteKeyword, StringFetchMode, TextAlign,
+    TextShadowColor, VerticalAlign, VisualBox, WritingMode,
 };
 use raikiri_style::{
-    CascadeResult, ComputedBackgroundSize, ComputedCssPosition, ComputedLength,
+    CascadeResult, ChLengthProvenance, ComputedBackgroundSize, ComputedBorder, ComputedCssPosition,
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
     CounterStyleRegistry, MAX_PAINTED_BACKGROUND_LAYERS, PageCascadeResult,
-    PageMarginBoxCascadeResult, PageMarginBoxSlot, ResolveContext, resolve_background_size,
-    resolve_css_position, resolve_font_size_calc, resolve_margin_length_or_auto,
-    resolve_non_negative_length_percentage_or_calc,
+    PageMarginBoxCascadeResult, PageMarginBoxSlot,
 };
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect};
 use smol_str::SmolStr;
@@ -120,97 +116,25 @@ pub struct MarginBoxBackgroundImage {
     pub clip: VisualBox,
 }
 
-/// The number of background layers a margin box rule declares: one per
-/// `background-image` item (CSS Backgrounds 3 §2.1).
-fn margin_box_background_layer_count(rule: &PageMarginBoxCascadeResult) -> usize {
-    match margin_box_property(rule, PropertyKey::BackgroundImage) {
-        Some(PropertyValue::BackgroundImage(images)) => images.len().max(1),
-        _ => 1,
-    }
-}
-
-/// The `background-clip` of the bottom background layer a margin box rule
-/// declares. The `background-image` list sets the number of layers and the
-/// clip list repeats to that length (CSS Backgrounds 3 §2.1).
-fn margin_box_background_clip(rule: &PageMarginBoxCascadeResult) -> VisualBox {
-    let layers = margin_box_background_layer_count(rule);
-    match margin_box_property(rule, PropertyKey::BackgroundClip) {
-        Some(PropertyValue::BackgroundClip(clips)) if !clips.is_empty() => {
-            clips[(layers - 1) % clips.len()]
-        }
-        _ => BackgroundLayerSpec::initial().clip,
-    }
-}
-
-/// The `url()` background layers a margin box rule declares, top first.
-/// Every per-layer list is reconciled to the number of `background-image`
-/// items (CSS Backgrounds 3 §2.1): a shorter list repeats, extra items are
-/// unused.
-fn margin_box_background_layers(
-    rule: &PageMarginBoxCascadeResult,
-    font_size: ComputedLength,
-    resolve_context: &ResolveContext,
-) -> Vec<MarginBoxBackgroundImage> {
-    let Some(PropertyValue::BackgroundImage(images)) =
-        margin_box_property(rule, PropertyKey::BackgroundImage)
-    else {
-        return Vec::new();
-    };
-    fn item<T: Copy>(list: Option<&[T]>, index: usize, initial: T) -> T {
-        match list {
-            Some(list) if !list.is_empty() => list[index % list.len()],
-            _ => initial,
-        }
-    }
-    let sizes = match margin_box_property(rule, PropertyKey::BackgroundSize) {
-        Some(PropertyValue::BackgroundSize(list)) => Some(&**list),
-        _ => None,
-    };
-    let positions = match margin_box_property(rule, PropertyKey::BackgroundPosition) {
-        Some(PropertyValue::BackgroundPosition(list)) => Some(&**list),
-        _ => None,
-    };
-    let repeats = match margin_box_property(rule, PropertyKey::BackgroundRepeat) {
-        Some(PropertyValue::BackgroundRepeat(list)) => Some(&**list),
-        _ => None,
-    };
-    let origins = match margin_box_property(rule, PropertyKey::BackgroundOrigin) {
-        Some(PropertyValue::BackgroundOrigin(list)) => Some(&**list),
-        _ => None,
-    };
-    let clips = match margin_box_property(rule, PropertyKey::BackgroundClip) {
-        Some(PropertyValue::BackgroundClip(list)) => Some(&**list),
-        _ => None,
-    };
-    let initial = BackgroundLayerSpec::initial();
-    // Only the top layers are painted; the cap applies to every item, as for
-    // element backgrounds, so the URL layers kept here match the ones
-    // resource loading fetched.
-    images
+/// The `url()` background layers of a margin box, top first. Only the top
+/// layers are painted; the cap applies as for element backgrounds, so the
+/// URL layers kept here match the ones resource loading fetched.
+fn margin_box_background_layers(style: &ComputedValues) -> Vec<MarginBoxBackgroundImage> {
+    style
+        .background_layers()
         .iter()
         .take(MAX_PAINTED_BACKGROUND_LAYERS)
-        .enumerate()
-        .filter_map(|(index, image)| {
-            let BackgroundImage::Url(url) = image else {
+        .filter_map(|layer| {
+            let BackgroundImage::Url(url) = &layer.image else {
                 return None;
             };
             Some(MarginBoxBackgroundImage {
                 url: url.to_string(),
-                size: resolve_background_size(
-                    item(sizes, index, initial.size),
-                    font_size,
-                    None,
-                    resolve_context,
-                ),
-                position: resolve_css_position(
-                    item(positions, index, initial.position),
-                    font_size,
-                    None,
-                    resolve_context,
-                ),
-                repeat: item(repeats, index, initial.repeat),
-                origin: item(origins, index, initial.origin),
-                clip: item(clips, index, initial.clip),
+                size: layer.size,
+                position: layer.position,
+                repeat: layer.repeat,
+                origin: layer.origin,
+                clip: layer.clip,
             })
         })
         .collect()
@@ -651,99 +575,6 @@ fn margin_box_property(
         .map(|declaration| declaration.value())
 }
 
-fn page_property(page: &PageCascadeResult, key: PropertyKey) -> Option<&PropertyValue> {
-    page.declarations().get(&key)
-}
-
-fn length_to_px(length: Length, basis: f32, font_size: f32) -> f32 {
-    signed_length_to_px(length, basis, font_size).max(0.0)
-}
-
-fn signed_length_to_px(length: Length, basis: f32, font_size: f32) -> f32 {
-    let value = match length {
-        Length::Px(value) => value,
-        Length::Percent(value) => basis * value / 100.0,
-        Length::Em(value) | Length::Rem(value) => font_size * value,
-        Length::Ex(value) | Length::Rex(value) | Length::Ch(value) | Length::Rch(value) => {
-            font_size * value * 0.5
-        }
-        Length::Ic(value) | Length::Ric(value) => font_size * value,
-        Length::Lh(value) | Length::Rlh(value) => font_size * value,
-        Length::Pt(value) => value * 96.0 / 72.0,
-        Length::Cm(value) => value * 96.0 / 2.54,
-        Length::Mm(value) => value * 96.0 / 25.4,
-        Length::Q(value) => value * 96.0 / 101.6,
-        Length::In(value) => value * 96.0,
-        Length::Pc(value) => value * 96.0 / 6.0,
-        _ => 0.0,
-    };
-    if value.is_finite() { value } else { 0.0 }
-}
-
-fn length_or_auto_to_px(value: LengthOrAuto, basis: f32, font_size: f32) -> Option<f32> {
-    let value = match value {
-        LengthOrAuto::Auto => return None,
-        LengthOrAuto::Length(length) => length_to_px(length, basis, font_size),
-        LengthOrAuto::Calc(value) => {
-            let px = if value.px.is_finite() { value.px } else { 0.0 };
-            px + if value.percent.is_finite() {
-                basis * value.percent / 100.0
-            } else {
-                0.0
-            }
-        }
-        _ => 0.0,
-    };
-    Some(if value.is_finite() {
-        value.max(0.0)
-    } else {
-        0.0
-    })
-}
-
-fn length_percentage_or_calc_to_px(
-    value: LengthPercentageOrCalc,
-    basis: f32,
-    font_size: f32,
-    ctx: &ResolveContext,
-) -> f32 {
-    match value {
-        LengthPercentageOrCalc::Length(length) => length_to_px(length, basis, font_size),
-        LengthPercentageOrCalc::Calc(calc) => {
-            ComputedLengthPercentageOrCalc::Calc(calc).resolve(basis)
-        }
-        other => resolve_non_negative_length_percentage_or_calc(
-            other,
-            ComputedLength(font_size),
-            None,
-            ctx,
-        )
-        .resolve(basis),
-    }
-}
-
-/// The used px of a `calc()` with font-relative terms. The style resolver
-/// takes `rem` and `rlh` from the root; an `lh` term has no line-height basis
-/// here and falls back to zero, the initial margin.
-fn relative_calc_to_px(
-    value: RelativeCalcLengthPercentage,
-    basis: f32,
-    font_size: f32,
-    ctx: &ResolveContext,
-) -> f32 {
-    match resolve_margin_length_or_auto(
-        LengthOrAuto::RelativeCalc(value),
-        ComputedLength(font_size),
-        None,
-        ctx,
-    ) {
-        ComputedLengthPercentageOrAuto::Px(px) => px,
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
-        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
-        _ => 0.0,
-    }
-}
-
 fn root_computed<'a>(
     document: &Document,
     cascade: &'a CascadeResult,
@@ -751,126 +582,61 @@ fn root_computed<'a>(
     find_html(document).map(|id| &cascade.computed[id])
 }
 
-fn inherited_margin_box_color(
-    document: &Document,
-    cascade: &CascadeResult,
-    page: &PageCascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-) -> CssColor {
-    if let Some(PropertyValue::Color(value)) = margin_box_property(rule, PropertyKey::Color) {
-        return *value;
-    }
-    if let Some(PropertyValue::Color(value)) = page_property(page, PropertyKey::Color) {
-        return *value;
-    }
-    root_computed(document, cascade)
-        .map(|computed| computed.color)
-        .unwrap_or_else(|| CssColor::BLACK)
+/// `value` when it is finite, else zero.
+fn finite_or_zero(value: f32) -> f32 {
+    if value.is_finite() { value } else { 0.0 }
 }
 
-/// The used `text-shadow` of a margin box. The property is inherited
-/// (CSS Text Decoration 3 §4), so a box without its own value takes the
-/// page context's, and a page context without one takes the root element's.
-/// `currentcolor` is the box's own text color.
-fn inherited_margin_box_text_shadows(
+/// The used px of a length authored in `ch`, measured with the inline
+/// engine's fonts against `basis` for its percentage part. `None` when the
+/// length has no `ch` part, or before the document is laid out, when the
+/// computed value's approximation stands.
+fn ch_length_px(
     document: &Document,
-    cascade: &CascadeResult,
-    page: &PageCascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    font_size: f32,
-    color: CssColor,
-) -> Vec<TextShadow> {
-    let shadow_color = |value: TextShadowColor| match value {
-        TextShadowColor::Resolved(resolved) => resolved,
-        _ => color,
-    };
-    let declared = margin_box_property(rule, PropertyKey::TextShadow)
-        .or_else(|| page_property(page, PropertyKey::TextShadow));
-    if let Some(PropertyValue::TextShadow(items)) = declared {
-        // Page-context lengths are already absolute; a margin box's own
-        // `em` lengths resolve against its font size and root-relative
-        // ones against the root's. Offsets may be negative, so only the
-        // blur radius is clamped.
-        let root = root_computed(document, cascade);
-        let root_size = root.map_or(16.0, |c| c.font_size.px());
-        // `normal` depends on font metrics; 1.2 is the usual used value.
-        let root_line_height = match root.map(|c| c.line_height) {
-            Some(raikiri_style::resolve::ComputedLineHeight::Number(factor)) => factor * root_size,
-            Some(raikiri_style::resolve::ComputedLineHeight::Length(length)) => length.px(),
-            _ => 1.2 * root_size,
-        };
-        let px = |length: TextShadowLength| match length {
-            TextShadowLength::Length(Length::Rlh(value)) => Some(value * root_line_height)
-                .filter(|px| px.is_finite())
-                .unwrap_or(0.0),
-            TextShadowLength::Length(
-                length @ (Length::Rem(_) | Length::Rex(_) | Length::Rch(_) | Length::Ric(_)),
-            ) => signed_length_to_px(length, 0.0, root_size),
-            TextShadowLength::Length(length) => signed_length_to_px(length, 0.0, font_size),
-            TextShadowLength::Calc { px, em } => px + em * font_size,
-            _ => 0.0,
-        };
-        return items
-            .iter()
-            .map(|item| TextShadow {
-                offset: (px(item.offset_x), px(item.offset_y)),
-                blur_radius: px(item.blur_radius).max(0.0),
-                color: shadow_color(item.color),
-            })
-            .collect();
-    }
-    root_computed(document, cascade).map_or_else(Vec::new, |computed| {
-        computed
-            .text_shadow
-            .iter()
-            .map(|shadow| TextShadow {
-                offset: (shadow.offset_x.px(), shadow.offset_y.px()),
-                blur_radius: shadow.blur_radius.px().max(0.0),
-                color: shadow_color(shadow.color),
-            })
-            .collect()
-    })
+    provenance: Option<&ChLengthProvenance>,
+    basis: f32,
+) -> Option<f32> {
+    let provenance = provenance?;
+    let fonts = &document.ifc.as_ref()?.fonts;
+    let used = provenance.with_advance(crate::layout::ifc::ch::ch_advance(fonts, &provenance.font));
+    Some(finite_or_zero(used.px + basis * used.percent / 100.0))
 }
 
-fn inherited_margin_box_font(
+/// The used px of a non-negative box length against `basis`; `None` for
+/// `auto`.
+fn length_or_auto_px(
     document: &Document,
-    cascade: &CascadeResult,
-    page: &PageCascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-) -> (f32, FontFamilyName) {
-    let root = root_computed(document, cascade);
-    let root_size = root.map_or(16.0, |computed| computed.font_size.px());
-    let page_size = match page_property(page, PropertyKey::FontSize) {
-        // `cascade_page` computes page-context font sizes, keywords included,
-        // to `Length::Px` (see `PageCascadeResult::declarations`).
-        Some(PropertyValue::FontSize(value)) => length_to_px(*value, root_size, root_size),
-        _ => root_size,
-    };
-    let font_size = match margin_box_property(rule, PropertyKey::FontSize) {
-        Some(PropertyValue::FontSize(value)) => length_to_px(*value, page_size, page_size),
-        Some(PropertyValue::FontSizeKeyword(keyword)) => keyword.px_for_medium(16.0),
-        // A mixed calc's percentage and `em` terms refer to the page's size,
-        // `lh` to the page's line height and `rlh` to the root's.
-        Some(PropertyValue::FontSizeCalc(calc)) => {
-            let root_line_height = root.and_then(ComputedValues::lh_basis);
-            resolve_font_size_calc(
-                *calc,
-                ComputedLength(page_size),
-                page.line_height_basis(),
-                &ResolveContext::with_root_line_height(ComputedLength(root_size), root_line_height),
-            )
-            .px()
-        }
-        _ => page_size,
-    };
-    let family = match margin_box_property(rule, PropertyKey::FontFamily)
-        .or_else(|| page_property(page, PropertyKey::FontFamily))
-    {
-        Some(PropertyValue::FontFamily(families)) => families.first().cloned(),
-        _ => root.and_then(|computed| computed.font_family.first().cloned()),
+    value: ComputedLengthPercentageOrAuto,
+    ch: Option<&ChLengthProvenance>,
+    basis: f32,
+) -> Option<f32> {
+    if matches!(value, ComputedLengthPercentageOrAuto::Auto) {
+        return None;
     }
-    .unwrap_or_else(|| FontFamilyName::generic("serif"));
-    (font_size.max(0.1), family)
+    let px = ch_length_px(document, ch, basis).unwrap_or(match value {
+        ComputedLengthPercentageOrAuto::Px(px) => px,
+        ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
+        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
+        _ => 0.0,
+    });
+    Some(finite_or_zero(px).max(0.0))
+}
+
+/// The used `text-shadow` of a margin box. `currentcolor` is the box's own
+/// text color.
+fn margin_box_text_shadows(style: &ComputedValues) -> Vec<TextShadow> {
+    style
+        .text_shadow
+        .iter()
+        .map(|shadow| TextShadow {
+            offset: (shadow.offset_x.px(), shadow.offset_y.px()),
+            blur_radius: shadow.blur_radius.px().max(0.0),
+            color: match shadow.color {
+                TextShadowColor::Resolved(resolved) => resolved,
+                _ => style.color,
+            },
+        })
+        .collect()
 }
 
 fn counter_reset_value(value: Option<&PropertyValue>, name: &str) -> Option<i32> {
@@ -996,37 +762,16 @@ fn margin_counter_value(
     base.saturating_add(increment.unwrap_or(0))
 }
 
-fn inherited_margin_box_quotes(
-    document: &Document,
-    cascade: &CascadeResult,
-    page: &PageCascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-) -> Vec<(String, String)> {
-    let explicit = margin_box_property(rule, PropertyKey::Quotes)
-        .or_else(|| page_property(page, PropertyKey::Quotes));
-    if let Some(PropertyValue::Quotes(values)) = explicit {
-        if values.is_empty() {
-            return Vec::new();
-        }
-        return values
-            .iter()
-            .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
-            .collect();
+fn margin_box_quotes(style: &ComputedValues) -> Vec<(String, String)> {
+    if style.quotes.is_empty() && style.quotes_auto {
+        // CSS Content's initial `quotes:auto` uses typographic pairs.
+        return vec![
+            ("“".to_string(), "”".to_string()),
+            ("‘".to_string(), "’".to_string()),
+        ];
     }
-    let Some(root) = root_computed(document, cascade) else {
-        return Vec::new();
-    };
-    if root.quotes.is_empty() {
-        if root.quotes_auto {
-            // CSS Content's initial `quotes:auto` uses typographic pairs.
-            return vec![
-                ("“".to_string(), "”".to_string()),
-                ("‘".to_string(), "’".to_string()),
-            ];
-        }
-        return Vec::new();
-    }
-    root.quotes
+    style
+        .quotes
         .iter()
         .map(|(open, close)| (open.as_str().to_string(), close.as_str().to_string()))
         .collect()
@@ -1229,19 +974,18 @@ fn resolved_margin_content(
     (text, deferred)
 }
 
+#[allow(clippy::too_many_arguments)] // the content reads the page, the rule and its style
 fn margin_box_content(
     document: &Document,
     cascade: &CascadeResult,
     page: &PageCascadeResult,
     rule: &PageMarginBoxCascadeResult,
+    style: &ComputedValues,
+    components: &[ContentComponent],
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
-) -> Option<(String, Vec<DeferredSlot>)> {
-    let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
-    else {
-        return None;
-    };
-    let quotes = inherited_margin_box_quotes(document, cascade, page, rule);
+) -> (String, Vec<DeferredSlot>) {
+    let quotes = margin_box_quotes(style);
     let (text, deferred) = resolved_margin_content(
         components, document, cascade, page, rule, context, &quotes, values,
     );
@@ -1260,7 +1004,7 @@ fn margin_box_content(
             registry: Arc::clone(registry.as_ref().expect("created for deferred slots")),
         })
         .collect();
-    Some((text, deferred))
+    (text, deferred)
 }
 
 /// The rules of `registry` that formatting in `styles` can reach: each named
@@ -1290,203 +1034,26 @@ fn fallback_chains<'s>(
     chains
 }
 
-fn margin_box_border_side(
-    rule: &PageMarginBoxCascadeResult,
-    width_key: PropertyKey,
-    style_key: PropertyKey,
-    color_key: PropertyKey,
-    side: fn(&Sides<Border>) -> &Border,
-    current_color: CssColor,
-    font_size: f32,
-) -> Option<(f32, CssColor)> {
-    let shorthand = margin_box_property(rule, PropertyKey::Border).and_then(|value| {
-        if let PropertyValue::Border(sides) = value {
-            Some(side(sides))
-        } else {
-            None
+/// The used solid borders of a margin box in top/right/bottom/left order;
+/// other styles are not drawn.
+fn margin_box_borders(style: &ComputedValues) -> [Option<(f32, CssColor)>; 4] {
+    let side = |border: &ComputedBorder| {
+        if border.style() != BorderStyle::Solid {
+            return None;
         }
-    });
-    let width = match margin_box_property(rule, width_key) {
-        Some(PropertyValue::BorderTopWidth(value))
-        | Some(PropertyValue::BorderRightWidth(value))
-        | Some(PropertyValue::BorderBottomWidth(value))
-        | Some(PropertyValue::BorderLeftWidth(value)) => Some(*value),
-        _ => shorthand.map(|border| border.width),
-    }?;
-    let style = match margin_box_property(rule, style_key) {
-        Some(PropertyValue::BorderTopStyle(value))
-        | Some(PropertyValue::BorderRightStyle(value))
-        | Some(PropertyValue::BorderBottomStyle(value))
-        | Some(PropertyValue::BorderLeftStyle(value)) => Some(*value),
-        _ => shorthand.map(|border| border.style),
-    }?;
-    if !matches!(style, BorderStyle::Solid) {
-        return None;
-    }
-    let color = match margin_box_property(rule, color_key) {
-        Some(PropertyValue::BorderTopColor(value))
-        | Some(PropertyValue::BorderRightColor(value))
-        | Some(PropertyValue::BorderBottomColor(value))
-        | Some(PropertyValue::BorderLeftColor(value)) => *value,
-        _ => shorthand
-            .map(|border| border.color)
-            .unwrap_or(BorderColor::CurrentColor),
+        let width = finite_or_zero(border.width().px()).max(0.0);
+        let color = match border.color {
+            BorderColor::Resolved(value) => value,
+            _ => style.color,
+        };
+        (width > 0.0).then_some((width, color))
     };
-    let color = match color {
-        BorderColor::CurrentColor => current_color,
-        BorderColor::Resolved(value) => value,
-        _ => current_color,
-    };
-    let width = length_to_px(width, 0.0, font_size).max(0.0);
-    (width > 0.0).then_some((width, color))
-}
-
-fn margin_box_borders(
-    document: &Document,
-    cascade: &CascadeResult,
-    page: &PageCascadeResult,
-    rule: &PageMarginBoxCascadeResult,
-    font_size: f32,
-) -> [Option<(f32, CssColor)>; 4] {
-    let current_color = inherited_margin_box_color(document, cascade, page, rule);
+    let border = &style.border;
     [
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderTopWidth,
-            PropertyKey::BorderTopStyle,
-            PropertyKey::BorderTopColor,
-            |sides| &sides.top,
-            current_color,
-            font_size,
-        ),
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderRightWidth,
-            PropertyKey::BorderRightStyle,
-            PropertyKey::BorderRightColor,
-            |sides| &sides.right,
-            current_color,
-            font_size,
-        ),
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderBottomWidth,
-            PropertyKey::BorderBottomStyle,
-            PropertyKey::BorderBottomColor,
-            |sides| &sides.bottom,
-            current_color,
-            font_size,
-        ),
-        margin_box_border_side(
-            rule,
-            PropertyKey::BorderLeftWidth,
-            PropertyKey::BorderLeftStyle,
-            PropertyKey::BorderLeftColor,
-            |sides| &sides.left,
-            current_color,
-            font_size,
-        ),
-    ]
-}
-
-fn margin_box_auto_margins(rule: &PageMarginBoxCascadeResult) -> [bool; 4] {
-    let is_auto = |key: PropertyKey| {
-        matches!(
-            margin_box_property(rule, key),
-            Some(PropertyValue::MarginTop(LengthOrAuto::Auto))
-                | Some(PropertyValue::MarginRight(LengthOrAuto::Auto))
-                | Some(PropertyValue::MarginBottom(LengthOrAuto::Auto))
-                | Some(PropertyValue::MarginLeft(LengthOrAuto::Auto))
-        )
-    };
-    [
-        is_auto(PropertyKey::MarginTop),
-        is_auto(PropertyKey::MarginRight),
-        is_auto(PropertyKey::MarginBottom),
-        is_auto(PropertyKey::MarginLeft),
-    ]
-}
-
-fn margin_box_length(
-    value: &LengthOrAuto,
-    basis: f32,
-    font_size: f32,
-    ctx: &ResolveContext,
-) -> f32 {
-    let value = match value {
-        LengthOrAuto::Length(length) => length_to_px(*length, basis, font_size),
-        LengthOrAuto::Calc(value) => value.px + basis * value.percent / 100.0,
-        LengthOrAuto::RelativeCalc(value) => relative_calc_to_px(*value, basis, font_size, ctx),
-        LengthOrAuto::Auto => 0.0,
-        _ => 0.0,
-    };
-    if value.is_finite() { value } else { 0.0 }
-}
-
-fn margin_box_side_margin(
-    rule: &PageMarginBoxCascadeResult,
-    key: PropertyKey,
-    basis: f32,
-    shorthand: Option<LengthOrAuto>,
-    font_size: f32,
-    ctx: &ResolveContext,
-) -> f32 {
-    let value = margin_box_property(rule, key)
-        .and_then(|value| match value {
-            PropertyValue::MarginTop(value)
-            | PropertyValue::MarginRight(value)
-            | PropertyValue::MarginBottom(value)
-            | PropertyValue::MarginLeft(value) => Some(value),
-            _ => None,
-        })
-        .or(shorthand.as_ref());
-    value
-        .map(|value| margin_box_length(value, basis, font_size, ctx))
-        .unwrap_or(0.0)
-}
-
-fn margin_box_margins(
-    rule: &PageMarginBoxCascadeResult,
-    width_basis: f32,
-    height_basis: f32,
-    font_size: f32,
-    ctx: &ResolveContext,
-) -> [f32; 4] {
-    // Margin-box rules expand the `margin` shorthand into its longhands when
-    // parsed, so there is no shorthand to fall back to.
-    let side = |key, basis| margin_box_side_margin(rule, key, basis, None, font_size, ctx);
-    [
-        side(PropertyKey::MarginTop, height_basis),
-        side(PropertyKey::MarginRight, width_basis),
-        side(PropertyKey::MarginBottom, height_basis),
-        side(PropertyKey::MarginLeft, width_basis),
-    ]
-}
-
-fn margin_box_padding(
-    rule: &PageMarginBoxCascadeResult,
-    width_basis: f32,
-    font_size: f32,
-    ctx: &ResolveContext,
-) -> [f32; 4] {
-    // As for margins, only the `padding` longhands reach a margin-box rule.
-    let side = |key: PropertyKey, fallback: Option<LengthPercentageOrCalc>| {
-        margin_box_property(rule, key)
-            .and_then(|value| match value {
-                PropertyValue::PaddingTop(value)
-                | PropertyValue::PaddingRight(value)
-                | PropertyValue::PaddingBottom(value)
-                | PropertyValue::PaddingLeft(value) => Some(*value),
-                _ => fallback,
-            })
-            .map(|value| length_percentage_or_calc_to_px(value, width_basis, font_size, ctx))
-            .unwrap_or(0.0)
-    };
-    [
-        side(PropertyKey::PaddingTop, None),
-        side(PropertyKey::PaddingRight, None),
-        side(PropertyKey::PaddingBottom, None),
-        side(PropertyKey::PaddingLeft, None),
+        side(&border.top),
+        side(&border.right),
+        side(&border.bottom),
+        side(&border.left),
     ]
 }
 
@@ -1501,20 +1068,15 @@ fn margin_box_spec(
     context: MarginBoxPageContext,
     values: &MarginBoxNamedValues,
 ) -> Option<MarginBoxSpec> {
-    let Some(PropertyValue::Content(components)) = margin_box_property(rule, PropertyKey::Content)
-    else {
-        return None;
-    };
+    let style = cascade.margin_box_style(page, rule.slot)?;
+    let components: &[ContentComponent] = &style.content;
     // `content: none` / `normal` suppress the margin box itself, including
     // its background. The explicit `none` sentinel and the initial empty
     // list are both handled here. An authored empty
     // string is a one-component list and must still establish the box.
-    // cov:ignore: defensive margin-box sentinel is not reached by current tests
-    let has_explicit_none = {
-        components
-            .iter()
-            .any(|c| matches!(c, ContentComponent::None))
-    };
+    let has_explicit_none = components
+        .iter()
+        .any(|c| matches!(c, ContentComponent::None));
     if components.is_empty() || has_explicit_none {
         return None;
     }
@@ -1525,99 +1087,87 @@ fn margin_box_spec(
                 if url.ends_with("/green.png") || url == "green.png"
         )
     });
-    let (content, deferred) = margin_box_content(document, cascade, page, rule, context, values)?;
-    let (font_size, font_family) = inherited_margin_box_font(document, cascade, page, rule);
-    let text_color = inherited_margin_box_color(document, cascade, page, rule);
-    let initial = ComputedValues::initial();
-    let root_font_size = root_computed(document, cascade)
-        .map(|computed| computed.font_size)
-        .unwrap_or(initial.font_size);
-    let resolve_context = ResolveContext::new(root_font_size);
-    let margin = margin_box_margins(rule, width_basis, height_basis, font_size, &resolve_context);
-    let padding = margin_box_padding(rule, width_basis, font_size, &resolve_context);
-    let background = match margin_box_property(rule, PropertyKey::BackgroundColor) {
-        Some(PropertyValue::BackgroundColor(value)) if value.a != 0 => Some(*value),
-        _ => None,
+    let (content, deferred) = margin_box_content(
+        document, cascade, page, rule, &style, components, context, values,
+    );
+    let font_size = style.font_size.px();
+    let text_color = style.color;
+    // Margins and paddings resolve as the edge layout has always taken
+    // them: vertical margins against the strip height, everything else
+    // against its width.
+    let margin_px = |value, ch: &Option<ChLengthProvenance>, basis| {
+        length_or_auto_px(document, value, ch.as_ref(), basis).unwrap_or(0.0)
     };
-    let background_clip = margin_box_background_clip(rule);
-    let background_layers =
-        margin_box_background_layers(rule, ComputedLength(font_size), &resolve_context);
+    let margin = [
+        margin_px(style.margin.top, &style.margin_ch.top, height_basis),
+        margin_px(style.margin.right, &style.margin_ch.right, width_basis),
+        margin_px(style.margin.bottom, &style.margin_ch.bottom, height_basis),
+        margin_px(style.margin.left, &style.margin_ch.left, width_basis),
+    ];
+    let margin_auto = [
+        style.margin.top,
+        style.margin.right,
+        style.margin.bottom,
+        style.margin.left,
+    ]
+    .map(|value| matches!(value, ComputedLengthPercentageOrAuto::Auto));
+    let padding_px = |value: ComputedLengthPercentageOrCalc, ch: &Option<ChLengthProvenance>| {
+        let px = ch_length_px(document, ch.as_ref(), width_basis)
+            .unwrap_or_else(|| value.resolve(width_basis));
+        finite_or_zero(px).max(0.0)
+    };
+    let padding = [
+        padding_px(style.padding.top, &style.padding_ch.top),
+        padding_px(style.padding.right, &style.padding_ch.right),
+        padding_px(style.padding.bottom, &style.padding_ch.bottom),
+        padding_px(style.padding.left, &style.padding_ch.left),
+    ];
+    let background = (style.background_color.a != 0).then_some(style.background_color);
+    let background_layers = margin_box_background_layers(&style);
     let background_image_lime = background_layers
         .iter()
         .any(|layer| layer.url.ends_with("/green.png") || layer.url == "green.png");
-    let border = margin_box_borders(document, cascade, page, rule, font_size);
-    let margin_auto = margin_box_auto_margins(rule);
-    let width = match margin_box_property(rule, PropertyKey::Width) {
-        Some(PropertyValue::Width(value)) => length_or_auto_to_px(*value, width_basis, font_size),
-        _ => None,
-    };
-    let height = match margin_box_property(rule, PropertyKey::Height) {
-        Some(PropertyValue::Height(value)) => length_or_auto_to_px(*value, height_basis, font_size),
-        _ => None,
-    };
-    let inherited_text_align = margin_box_property(rule, PropertyKey::TextAlign)
-        .or_else(|| page_property(page, PropertyKey::TextAlign))
-        .and_then(|value| match value {
-            PropertyValue::TextAlign(value) => Some(*value),
-            _ => None,
-        })
-        .or_else(|| root_computed(document, cascade).map(|computed| computed.text_align));
-    let alignment = match inherited_text_align {
-        Some(TextAlign::Right) => StandaloneAlign::Right,
-        Some(TextAlign::End) => StandaloneAlign::End,
-        Some(TextAlign::Justify) => StandaloneAlign::Justify,
-        Some(TextAlign::Center) => StandaloneAlign::Center,
-        Some(TextAlign::Left) => StandaloneAlign::Left,
+    let border = margin_box_borders(&style);
+    let width = length_or_auto_px(document, style.width, style.width_ch.as_ref(), width_basis);
+    let height = length_or_auto_px(
+        document,
+        style.height,
+        style.height_ch.as_ref(),
+        height_basis,
+    );
+    let alignment = match style.text_align {
+        TextAlign::Right => StandaloneAlign::Right,
+        TextAlign::End => StandaloneAlign::End,
+        TextAlign::Justify => StandaloneAlign::Justify,
+        TextAlign::Center => StandaloneAlign::Center,
+        TextAlign::Left => StandaloneAlign::Left,
         _ => StandaloneAlign::Start,
     };
     // `top`/`bottom` are margin-box-specific keywords and are not yet part of
     // the element `vertical-align` grammar.  Treat the supported explicit
-    // `text-top`/`text-bottom` values as their corresponding placement.  The
-    // current parser drops the margin-box `top` spelling, so retain the
-    // historical top placement as the fallback used by this minimal path.
-    let inherited_vertical_align = margin_box_property(rule, PropertyKey::VerticalAlign)
-        .or_else(|| page_property(page, PropertyKey::VerticalAlign))
-        .and_then(|value| match value {
-            PropertyValue::VerticalAlign(value) => Some(*value),
-            _ => None,
-        })
-        .or_else(|| root_computed(document, cascade).map(|computed| computed.vertical_align));
-    let vertical_align = match inherited_vertical_align {
-        Some(VerticalAlign::TextBottom) => MarginTextVerticalAlign::Bottom,
-        Some(VerticalAlign::Middle) => MarginTextVerticalAlign::Middle,
-        Some(VerticalAlign::TextTop) => MarginTextVerticalAlign::Top,
+    // `text-top`/`text-bottom` values as their corresponding placement, and
+    // every other value as the top placement.
+    let vertical_align = match style.vertical_align {
+        VerticalAlign::TextBottom => MarginTextVerticalAlign::Bottom,
+        VerticalAlign::Middle => MarginTextVerticalAlign::Middle,
         _ => MarginTextVerticalAlign::Top,
     };
-    let inherited = |key| margin_box_property(rule, key).or_else(|| page_property(page, key));
-    let root = root_computed(document, cascade).unwrap_or(&initial);
-    let mode = match inherited(PropertyKey::WritingMode) {
-        Some(PropertyValue::WritingMode(mode)) => *mode,
-        _ => root.cssom_writing_mode,
-    };
-    let orientation = match inherited(PropertyKey::TextOrientation) {
-        Some(PropertyValue::TextOrientation(value)) => *value,
-        _ => root.text_orientation,
-    };
-    let direction = match inherited(PropertyKey::Direction) {
-        Some(PropertyValue::Direction(value)) => *value,
-        _ => root.direction,
-    };
-    let mut text_style = text_style(font_size, std::slice::from_ref(&font_family));
-    text_style.writing_mode = match mode {
+    let mut text_style = text_style(font_size, &style.font_family);
+    text_style.writing_mode = match style.cssom_writing_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
         WritingMode::SidewaysRl => shodo::geometry::WritingMode::SidewaysRl,
         WritingMode::SidewaysLr => shodo::geometry::WritingMode::SidewaysLr,
         _ => shodo::geometry::WritingMode::HorizontalTb,
     };
-    text_style.text_orientation = match orientation {
+    text_style.text_orientation = match style.text_orientation {
         raikiri_style::property::TextOrientation::Upright => shodo::style::TextOrientation::Upright,
         raikiri_style::property::TextOrientation::Sideways => {
             shodo::style::TextOrientation::Sideways
         }
         _ => shodo::style::TextOrientation::Mixed,
     };
-    text_style.direction = match direction {
+    text_style.direction = match style.direction {
         raikiri_style::property::Direction::Rtl => shodo::geometry::Direction::Rtl,
         _ => shodo::geometry::Direction::Ltr,
     };
@@ -1626,9 +1176,9 @@ fn margin_box_spec(
         content,
         deferred,
         background,
-        background_clip,
+        background_clip: style.final_background_clip(),
         background_layers,
-        background_layer_count: margin_box_background_layer_count(rule),
+        background_layer_count: style.background_layers().len().max(1),
         background_image_lime,
         content_image_lime,
         border,
@@ -1638,16 +1188,14 @@ fn margin_box_spec(
         width,
         height,
         text_color,
-        text_shadows: inherited_margin_box_text_shadows(
-            document, cascade, page, rule, font_size, text_color,
-        ),
+        text_shadows: margin_box_text_shadows(&style),
         text_style,
         alignment,
         vertical_align,
         // `element()` cannot be combined with other content values (CSS
         // GCPM 3 §1.2.1). A combined value keeps its flattened text and
         // shows no running element.
-        running: match components.as_slice() {
+        running: match components {
             [ContentComponent::Element { name, fetch }] => Some((name.clone(), *fetch)),
             _ => None,
         },

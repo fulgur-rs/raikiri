@@ -295,7 +295,7 @@ fn css_wide_page_property_rollback_preserves_other_concrete_winners() {
 }
 
 #[test]
-fn css_wide_margin_resolution_preserves_deferred_sizing_declarations() {
+fn css_wide_margin_resolution_substitutes_sizing_variables() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(
         "@page{@top-center{content:'x';color:initial;--width:17px;width:var(--width)}}",
@@ -316,10 +316,12 @@ fn css_wide_margin_resolution_preserves_deferred_sizing_declarations() {
         .iter()
         .find(|decl| decl.value().key() == PropertyKey::Width)
         .unwrap();
-    let PropertyValue::Deferred(deferred) = sizing.value() else {
-        panic!("deferred sizing must remain available to its consumer");
-    };
-    assert_eq!(deferred.value, "var(--width)");
+    assert_eq!(
+        sizing.value(),
+        &PropertyValue::Width(crate::property::LengthOrAuto::Length(
+            crate::property::Length::Px(17.0)
+        ))
+    );
 }
 
 #[test]
