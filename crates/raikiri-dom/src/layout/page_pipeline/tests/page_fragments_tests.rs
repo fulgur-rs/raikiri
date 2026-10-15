@@ -3549,3 +3549,78 @@ fn a_flex_item_beside_another_keeps_its_natural_break() {
     );
     assert_eq!(second_top, 15.0);
 }
+
+#[test]
+fn widows_taller_than_the_next_page_keep_the_natural_break() {
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
+    // Eight 10px lines on 40px pages: six widows would not fit on the next
+    // page anyway, so the paragraph breaks where `widows: 1` breaks it.
+    let fragments = |css: &str| {
+        let (mut doc, cascade, root) =
+            ahem_paragraph("a b c d e f g h", &format!("width:10px;{css}"));
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 40.0;
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        let text = doc.nodes[root].children[0];
+        text_fragments(&doc, &cascade, page, &slices, text)
+    };
+    let natural = fragments("orphans:1;widows:1");
+    assert!(natural.len() > 1, "{natural:?}");
+    assert_eq!(fragments("orphans:1;widows:6"), natural);
+}
+
+#[test]
+fn an_absolutely_positioned_child_stays_when_a_flex_item_breaks_earlier() {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    // As in `flex_item_paragraph_after_a_spacer`, with an absolutely
+    // positioned child 35px down the container, below the item's old
+    // bottom: it is on no flex line, so the moved lines do not move it.
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-wrap:wrap;width:40px;position:relative"),
+    );
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:100%;orphans:1;widows:2",
+        ),
+    );
+    let text = doc.append_text(item, "aaaa bbbb cccc");
+    let positioned = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;top:35px;height:5px;width:5px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        [
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
+        ]
+    );
+    assert_eq!(doc.nodes[positioned].unrounded_layout.location.y, 35.0);
+}

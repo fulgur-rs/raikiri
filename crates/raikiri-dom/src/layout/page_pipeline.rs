@@ -5177,7 +5177,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                     && paragraph_root == Some(block_id))
                 .then(|| total_lines - widows)
                 .filter(|&line| {
+                    // Widows that cannot fit on the next page would not be
+                    // kept together there either; the natural break stays.
+                    let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
                     pending_line_split.is_none()
+                        && moved_height <= page_step_at(current_page.saturating_add(1)) + 0.001
                         && document
                             .ifc_layout_node(block_id)
                             .and_then(|node| node.ifc.as_ref())
@@ -5193,7 +5197,7 @@ pub fn layout_pages_with_page_geometry_and_control(
                     if shift.is_finite() && shift > 0.0 {
                         shift_ifc_lines_from(document, block_id, line, shift);
                         if flex_line_paragraph == Some(block_id) {
-                            shift_later_flex_lines(document, block_id, shift);
+                            shift_later_flex_lines(document, cascade, block_id, shift);
                         }
                         if nested {
                             grow_ancestors_for_shift(
@@ -6810,7 +6814,12 @@ fn is_flex_item_alone_on_its_line(
 /// Moves the flex lines below `item`, a flex item alone on its line that
 /// grew by `shift` at its block-end edge, down by `shift`: in a row flex
 /// container they follow the line that grew.
-fn shift_later_flex_lines(document: &mut Document, item: usize, shift: f32) {
+fn shift_later_flex_lines(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    item: usize,
+    shift: f32,
+) {
     let Some(container) = document.layout_parent_of(item) else {
         return;
     };
@@ -6822,7 +6831,13 @@ fn shift_later_flex_lines(document: &mut Document, item: usize, shift: f32) {
         .iter()
         .copied()
         .filter(|&child| {
-            child != item && document.nodes[child].unrounded_layout.location.y >= old_bottom - 0.001
+            // Absolutely positioned children are not on a flex line.
+            child != item
+                && !matches!(
+                    cascade.computed[child].position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && document.nodes[child].unrounded_layout.location.y >= old_bottom - 0.001
         })
         .collect();
     for child in later {
