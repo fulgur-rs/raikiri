@@ -14,10 +14,9 @@
 //! its columns, and lays it out at that width. Its inline size keeps
 //! following the available height the parent passes down.
 
+use crate::node::FormattingContext;
 use taffy::tree::{RequestedAxis, RunMode};
-use taffy::{
-    AvailableSpace, Display, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size,
-};
+use taffy::{AvailableSpace, LayoutInput, LayoutOutput, NodeId, Position as TaffyPosition, Size};
 
 use crate::document::Document;
 use raikiri_style::property::DisplayValue;
@@ -38,9 +37,9 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
             ))
         && used_writing_mode(tree, idx).is_vertical()
         && tree.taffy_parent_of(idx).is_some_and(|parent| {
-            matches!(
-                tree.nodes[parent].style.display,
-                Display::Block | Display::FlowRoot
+            !matches!(
+                tree.nodes[parent].formatting_context,
+                FormattingContext::None | FormattingContext::Flex | FormattingContext::Grid
             ) && !used_writing_mode(tree, parent).is_vertical()
         })
 }

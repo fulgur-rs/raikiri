@@ -1,4 +1,5 @@
 use super::*;
+use taffy::Display;
 
 #[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {

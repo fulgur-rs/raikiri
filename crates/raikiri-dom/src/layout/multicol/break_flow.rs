@@ -1,6 +1,7 @@
 use super::*;
 use crate::fragment::{FragmentRect, LayoutFragment};
 use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+use crate::node::FormattingContext;
 use raikiri_style::property::BreakInside;
 use std::collections::HashMap;
 
@@ -195,7 +196,7 @@ fn atomic(tree: &Document, id: usize) -> bool {
 fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
     let node = &tree.nodes[id];
     node.display == DisplayValue::Inline
-        && node.style.display == Display::Block
+        && node.formatting_context == FormattingContext::Block
         && node.ifc.is_none()
         && !in_paragraph_with_lines(tree, id)
         && has_rendered_element_child(tree, id)

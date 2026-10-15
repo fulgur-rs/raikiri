@@ -5,6 +5,7 @@ use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
+use crate::node::FormattingContext;
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
 };
@@ -999,17 +1000,14 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
                 center: y + baseline,
             });
         }
-        // A text node keeps Taffy's default display, which is not its own;
-        // its lines are found below.
-        let is_text = node.kind() == NodeKind::Text;
-        if !is_text && node.style.display == taffy::Display::Grid {
+        if node.formatting_context == FormattingContext::Grid {
             let line = grid_first_line(document, cascade, id)?;
             return Some(FirstLine {
                 baseline: y + line.baseline,
                 center: y + line.center,
             });
         }
-        if !is_text && node.style.display == taffy::Display::Flex {
+        if node.formatting_context == FormattingContext::Flex {
             // A flex container orders its items itself, and its layout
             // records the first baseline they give it. The middle of that
             // line comes from the first item, in layout order, whose first
