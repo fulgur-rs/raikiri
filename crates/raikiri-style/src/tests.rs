@@ -428,6 +428,7 @@ fn at_rule_preludes_follow_each_at_rule_grammar() {
     assert!(valid("supports", " (foo)", true));
     assert!(!valid("supports", " foo", true));
     assert!(!valid("supports", "", true));
+    assert!(!valid("supports", " (a: url(b c))", true));
     assert!(valid("page", " :first", true));
     assert!(!valid("page", " a b", true));
     assert!(valid("font-face", " ", true));
