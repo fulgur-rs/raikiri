@@ -888,8 +888,8 @@ pub(super) fn run_transform(
         };
         if cv.position == PositionValue::Fixed {
             // The painter places a fixed box from its insets, whatever moves
-            // its ancestors; one that a transform or filter contains is
-            // omitted first.
+            // its ancestors; one that an ancestor contains is omitted
+            // first.
             transform = PaintTransform::IDENTITY;
             ancestors = (0.0, 0.0);
         }

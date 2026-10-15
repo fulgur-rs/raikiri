@@ -342,3 +342,16 @@ fn fixed_boxes_inside_a_fixed_containing_block_match_paint() {
         assert_eq!(assert_matches_paint(&body, ""), 1, "{body}");
     }
 }
+
+#[test]
+fn fixed_boxes_ignore_containing_blocks_above_the_body() {
+    // Layout looks for the containing block of a fixed box from the body
+    // down, so the root element never contains it, and the painter places
+    // the box in the page area apart from the body's relative offset.
+    for root in ["will-change: transform", "contain: layout"] {
+        let css = format!("html {{ {root} }} body {{ position: relative; top: 20px }}");
+        let body = "<div class=\"b\" style=\"position: fixed; left: 5px; top: 7px; width: 10px; \
+                    height: 10px\"></div>";
+        assert_eq!(assert_matches_paint(body, &css), 1, "{css}");
+    }
+}
