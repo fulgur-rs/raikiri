@@ -6447,6 +6447,24 @@ fn a_page_along_the_x_axis_leaves_anonymous_cell_borders_beside_its_page_area_ou
     assert_eq!(pixel(5, 5), &[255, 255, 255, 255]);
 }
 
+#[test]
+fn a_page_along_the_x_axis_keeps_the_body_padding_strip_out_of_its_margins() {
+    // The body's red padding strip runs across the flow from its right
+    // padding edge; the page paints it across its page area only.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head>\
+         <body style='margin:0;padding-right:10px;background:red'>\
+         <div style='width:60px;height:10px'></div>\
+         <div style='width:60px;height:10px'></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(10, 5), &[255, 255, 255, 255]);
+    assert_eq!(pixel(90, 5), &[255, 255, 255, 255]);
+}
+
 fn flow_band(right_to_left: bool, root_transform: Affine) -> super::FlowBand {
     super::FlowBand {
         left: 20.0,

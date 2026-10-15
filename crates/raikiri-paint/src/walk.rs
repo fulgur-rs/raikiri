@@ -2221,6 +2221,18 @@ pub(crate) fn paint_document_impl(
                 })
                 .fold(0.0_f32, f32::max);
             if content_end > 0.0 && content_bottom > 0.0 {
+                // On a page that follows the x axis the strip belongs to the
+                // page whose page area it lies across; keep it out of the
+                // margins beside that area. The clip is in page coordinates,
+                // so it undoes the root element's transform.
+                let band_clip = pages_follow_x_axis.map(|_| {
+                    let left = f64::from(margins.left + insets.left);
+                    let extent = f64::from(FLOW_EXTENT);
+                    Rect::new(left, -extent, left + f64::from(content_width), extent)
+                });
+                if let Some(clip) = &band_clip {
+                    scene.push_clip_layer(root_transform.inverse(), clip);
+                }
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
@@ -2234,6 +2246,9 @@ pub(crate) fn paint_document_impl(
                             as f64,
                     ),
                 );
+                if band_clip.is_some() {
+                    scene.pop_layer();
+                }
             }
         }
     }
