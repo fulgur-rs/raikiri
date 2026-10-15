@@ -184,7 +184,7 @@ fn indexed_owners_keep_anonymous_flex_grid_and_table_roots() {
     let mut index = TextLineIndex::default();
     index.prepare_for(&doc, source, || Ok(())).unwrap();
     let owned = index.get(source).unwrap();
-    assert!(owned.root >= doc.nodes.len());
+    assert!(doc.is_anonymous_cell(owned.root));
     assert_eq!(owned.lines.len(), 2);
     assert_eq!(Some(owned), doc.ifc_text_lines(source).as_ref());
 }
