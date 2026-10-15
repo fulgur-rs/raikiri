@@ -134,24 +134,23 @@ pub(crate) fn is_body_element(doc: &Document, id: usize) -> bool {
 /// `<body>` (or `<frameset>`, see [`is_body_element`]) element.
 ///
 /// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid stack
-/// overflows in deeply nested DOMs. Return `None` for a fragment parse (no `<body>`);
-/// the caller promotes this to `LayoutError::Internal`.
+/// overflows in deeply nested DOMs. Return `None` for a fragment parse (no
+/// `<body>`); layout promotes this to `LayoutError::Internal`, the depth
+/// check has nothing to measure, and paint has no root.
 ///
-/// Skip subtrees whose root is `!is_in_document()`
-/// (such as a detached `<template>` contents fragment). A `<body>` within an
-/// inert subtree must not be selected as the actual body. For example, if real
-/// `<body>` follows `<template><body>ghost</body></template>` in the HTML
-/// (the ghost lives in the template's detached contents fragment), choosing
-/// the ghost body would run the subsequent layout / paint on an inert subtree.
-///
+/// The walk follows `children` from the document root, so it never enters a
+/// `<template>` element's contents: those live under a detached fragment
+/// root, not among the element's children. A `<body>` there is inert and must
+/// not be selected; for example, if the real `<body>` follows
+/// `<template><body>ghost</body></template>`, choosing the ghost would run
+/// layout and paint on an inert subtree. Reachability decides this rather
+/// than the `IS_IN_DOCUMENT` bit, so the answer does not depend on whether
+/// [`Document::mark_in_document_flags`] ran after the last tree mutation:
+/// the depth check runs before layout refreshes the bits.
 pub(crate) fn find_body(doc: &Document) -> Option<usize> {
     let mut stack: Vec<usize> = vec![doc.root];
     while let Some(node_idx) = stack.pop() {
         let node = &doc.nodes[node_idx];
-        if !node.is_in_document() {
-            // inert subtree — do not select a body inside it.
-            continue;
-        }
         if node.kind() == NodeKind::Element && is_body_element(doc, node_idx) {
             return Some(node_idx);
         }

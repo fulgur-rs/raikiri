@@ -3,7 +3,7 @@ mod sibling_shifts;
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 
 use super::ifc::boxes::IfcBoxKind;
-use super::ifc::text_lines::TextLineIndex;
+use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
 use super::*;
 use crate::page_projection::records::OverflowClipSource;
 use raikiri_traits::{PaintInsets, PaintRect};
@@ -1509,19 +1509,40 @@ pub(crate) fn resolve_page_fragment_geometry(
     )
 }
 
-/// Block-start and block-end edges of the lines of a text node, from its own
-/// block-start. A text node of an ifc paragraph has no layout of its own, so
-/// its lines come from the paragraph root, measured from its first line; any
-/// other text node has none.
-fn text_line_bounds(
+/// Block-start and block-end edges of every line of the ifc paragraph a text
+/// node belongs to, from the text node's own first line. A paragraph whose
+/// text sits in inline elements, or in several text nodes, has lines that no
+/// single text node owns. A text node outside an ifc paragraph has none.
+fn paragraph_line_bounds(
     document: &Document,
     node_id: usize,
     text_lines: &TextLineIndex,
 ) -> Option<Vec<(f32, f32)>> {
-    let lines = positioned_owned_text_line_bounds(document, text_lines.get(node_id)?)?;
-    let first_top = lines.first().map_or(0.0, |line| line.0);
+    let owned = text_lines.get(node_id)?;
+    let first_top = positioned_owned_text_line_bounds(document, owned)?
+        .first()?
+        .0;
+    let line_count = document
+        .ifc_layout_node(owned.root)?
+        .ifc
+        .as_ref()?
+        .lines
+        .as_ref()?
+        .lines
+        .len();
+    let paragraph = IfcTextLines {
+        root: owned.root,
+        width: owned.width,
+        lines: (0..line_count)
+            .map(|line| IfcTextLine {
+                line,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .collect(),
+    };
     Some(
-        lines
+        positioned_owned_text_line_bounds(document, &paragraph)?
             .into_iter()
             .map(|(top, bottom)| (top - first_top, bottom - first_top))
             .collect(),
@@ -4944,8 +4965,13 @@ pub fn layout_pages_with_page_geometry_and_control(
             // is laid out from the paragraph's root, as a direct child is.
             // A block nested in plain block flow is moved the same way; its
             // ancestors then grow to hold it.
-            let line_block_parent = document
-                .parent_of(node_id)
+            // The block of text in an IFC paragraph is its root, including nested inline elements.
+            let paragraph_root = candidate
+                .ifc_root
+                .map(|(root, _)| root)
+                .filter(|&root| root < document.nodes.len() && root != node_id);
+            let line_block_parent = paragraph_root
+                .or(document.parent_of(node_id))
                 .filter(|parent_id| {
                     !uses_positioned_coordinates
                         && (!checked_block_text.contains(parent_id)
@@ -5038,7 +5064,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             // path; their line-level fragment map is a separate concern.
             if let Some((block_id, nested)) = line_block_parent
                 && checked_orphans_widows.insert(block_id)
-                && let Some(line_metrics) = text_line_bounds(document, node_id, &text_lines)
+                && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
             {
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
@@ -5055,8 +5081,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                     .take_while(|(_, line_bottom)| effective_y + line_bottom <= page_end + 0.001)
                     .count();
                 let needs_break = lines_before_break < total_lines;
-                let orphans = cascade.computed[node_id].orphans.max(1) as usize;
-                let widows = cascade.computed[node_id].widows.max(1) as usize;
+                let orphans = cascade.computed[block_id].orphans.max(1) as usize;
+                let widows = cascade.computed[block_id].widows.max(1) as usize;
                 let violates_line_constraints = needs_break
                     && (lines_before_break < orphans
                         || total_lines.saturating_sub(lines_before_break) < widows);
