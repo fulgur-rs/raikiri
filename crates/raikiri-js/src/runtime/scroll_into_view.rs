@@ -126,12 +126,14 @@ fn axis_offset(
             let extent = high - low;
             let low_out = low < offset;
             let high_out = high > offset + size;
+            // A span exactly as long as the view matches neither rule and
+            // keeps the current offset.
             match (low_out, high_out) {
-                (true, true) | (false, false) => offset,
-                (true, false) if extent <= size => align_low,
-                (true, false) => align_high,
+                (true, false) if extent < size => align_low,
+                (true, false) if extent > size => align_high,
                 (false, true) if extent > size => align_low,
-                (false, true) => align_high,
+                (false, true) if extent < size => align_high,
+                _ => offset,
             }
         }
     }

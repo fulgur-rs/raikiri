@@ -385,6 +385,9 @@ fn nearest_alignment_moves_the_least() {
     // Off the high edge: a small span aligns high, a large one low.
     assert_eq!(nearest((150.0, 160.0), 0.0), 60.0);
     assert_eq!(nearest((50.0, 400.0), 0.0), 50.0);
+    // A span exactly as long as the view stays where it is.
+    assert_eq!(nearest((-10.0, 90.0), 0.0), 0.0);
+    assert_eq!(nearest((10.0, 110.0), 0.0), 0.0);
 }
 
 #[test]
