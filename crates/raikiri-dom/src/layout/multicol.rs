@@ -1778,15 +1778,10 @@ impl FlexFloatChain {
                         .iter()
                         .any(|placement| tree.nodes[placement.node_id].style.float.is_floated())
                 });
-        if matches!(
-            node.authored_writing_mode,
-            Some(
-                raikiri_style::property::WritingMode::VerticalRl
-                    | raikiri_style::property::WritingMode::VerticalLr
-                    | raikiri_style::property::WritingMode::SidewaysRl
-                    | raikiri_style::property::WritingMode::SidewaysLr
-            )
-        ) {
+        if node
+            .authored_writing_mode
+            .is_some_and(WritingMode::is_vertical)
+        {
             return Self::Vertical;
         }
         if let Some(multicol) = node.multicol {
@@ -2410,18 +2405,12 @@ impl AncestorFacts {
         id: usize,
         fallback_width: f32,
     ) {
-        let vertical_self = matches!(
-            cascade
-                .authored_writing_modes
-                .get(id)
-                .and_then(|mode| *mode),
-            Some(
-                WritingMode::VerticalRl
-                    | WritingMode::VerticalLr
-                    | WritingMode::SidewaysRl
-                    | WritingMode::SidewaysLr
-            )
-        );
+        let vertical_self = cascade
+            .authored_writing_modes
+            .get(id)
+            .copied()
+            .flatten()
+            .is_some_and(WritingMode::is_vertical);
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
         let cv = &cascade.computed[id];
         let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);

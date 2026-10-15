@@ -83,7 +83,7 @@ fn collect(
             })
             && node
                 .authored_writing_mode
-                .is_none_or(|mode| mode == raikiri_style::property::WritingMode::HorizontalTb)
+                .is_none_or(|mode| !mode.is_vertical())
             && node.style.overflow.x == taffy::Overflow::Visible
             && node.style.overflow.y == taffy::Overflow::Visible;
         if !can_balance_paragraph_box(tree, parent, child)

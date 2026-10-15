@@ -1319,8 +1319,8 @@ pub(crate) fn prepare_ch_box_values_before_taffy(doc: &mut Document, cascade: &C
         let height = measure(height_ch);
         let min_width = measure(&cv.min_width_ch);
         // Use the same normalized logical block axis as the min/max bridge.
-        let min_height_ch = if cv.writing_mode == WritingMode::HorizontalTb
-            && cv.cssom_writing_mode != WritingMode::HorizontalTb
+        let min_height_ch = if !cv.writing_mode.is_vertical()
+            && cv.cssom_writing_mode.is_vertical()
             && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
         {
             &cv.min_block_size_ch
@@ -4563,11 +4563,11 @@ pub fn layout_pages_with_page_geometry_and_control(
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
-    // A paragraph whose later lines were moved to the next page to keep
-    // enough widows there: `(root, first moved line, shift)`. The flow after
-    // the paragraph, and its texts that start on a moved line, take the shift
+    // Lines of a paragraph that were moved to a later page to keep enough
+    // widows there: `(root, first moved line, shift)`. The flow after the
+    // paragraph, and its texts that start on a moved line, take each shift
     // once they are reached; its texts before that line stay where they are.
-    let mut pending_line_split: Option<(usize, usize, f32)> = None;
+    let mut pending_line_splits: Vec<(usize, usize, f32)> = Vec::new();
     // A float moved to a later page carries its own content with it, but
     // the in-flow content after it in the source sits beside or above it,
     // so the shift ends where the float's subtree does. A later float may
@@ -4735,19 +4735,20 @@ pub fn layout_pages_with_page_geometry_and_control(
             first
         };
         let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
-        if let Some((root, first_moved, shift)) = pending_line_split
-            && (!is_descendant_or_self(document, node_id, root)
+        pending_line_splits.retain(|&(root, first_moved, shift)| {
+            let reached = !is_descendant_or_self(document, node_id, root)
                 || candidate
                     .ifc_root
                     .is_some_and(|(text_root, _)| text_root == root)
                     && text_lines
                         .get(node_id)
                         .and_then(|owned| owned.lines.first())
-                        .is_some_and(|line| line.line >= first_moved))
-        {
-            flow_shift += shift;
-            pending_line_split = None;
-        }
+                        .is_some_and(|line| line.line >= first_moved);
+            if reached {
+                flow_shift += shift;
+            }
+            !reached
+        });
         if let Some((ancestor_id, correction)) = pending_underflow
             && !is_descendant_or_self(document, node_id, ancestor_id)
         {
@@ -5119,65 +5120,109 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let violates_line_constraints = needs_break
                     && (lines_before_break < orphans
                         || total_lines.saturating_sub(lines_before_break) < widows);
-                // Only the widows are short, and the paragraph has lines
-                // enough for both constraints: the break moves up between
+                // Lines move down inside the paragraph only when it has
+                // lines enough for both constraints, grows with them (a box
+                // with a definite height keeps it), and holds nothing but
+                // text in one column.
+                let splittable = starts_on_page
+                    && orphans + widows <= total_lines
+                    && paragraph_root == Some(block_id)
+                    && pending_line_splits.is_empty()
+                    && height_follows_content(document, block_id)
+                    && document
+                        .ifc_layout_node(block_id)
+                        .and_then(|node| node.ifc.as_ref())
+                        .is_some_and(|ifc| {
+                            ifc.boxes.is_empty() && ifc.multicol_fragments.is_none()
+                        });
+                // Only the widows are short: the break moves up between
                 // earlier lines (CSS Fragmentation 3 §3.3), so the last
                 // `widows` lines start the next page and the lines before
                 // them stay.
-                let earlier_break = (starts_on_page
+                let earlier_break = (splittable
                     && violates_line_constraints
-                    && lines_before_break >= orphans
-                    && orphans + widows <= total_lines
-                    && paragraph_root == Some(block_id))
-                .then(|| total_lines - widows)
-                .filter(|&line| {
-                    // Widows that cannot fit on the next page would not be
-                    // kept together there either; the natural break stays.
-                    let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
-                    // A box with a definite height keeps it; its lines
-                    // cannot grow it.
-                    pending_line_split.is_none()
-                        && height_follows_content(document, block_id)
-                        && moved_height <= page_step_at(current_page.saturating_add(1)) + 0.001
-                        && document
-                            .ifc_layout_node(block_id)
-                            .and_then(|node| node.ifc.as_ref())
-                            .is_some_and(|ifc| {
-                                ifc.boxes.is_empty() && ifc.multicol_fragments.is_none()
-                            })
-                        && line > 0
-                })
-                .map(|line| {
-                    let target_y = page_origin(current_page.saturating_add(1));
-                    (line, target_y - (effective_y + line_metrics[line].0))
-                })
-                .filter(|(_, shift)| shift.is_finite() && *shift > 0.0);
-                if let Some((line, shift)) = earlier_break {
-                    check_candidate_page!('candidate_loop, current_page.saturating_add(1));
-                    shift_ifc_lines_from(document, block_id, line, shift);
-                    if let Some((item, container)) = flex_line_paragraph {
-                        shift_later_flex_lines(document, cascade, container, item, shift);
+                    && lines_before_break >= orphans)
+                    .then(|| total_lines - widows)
+                    .filter(|&line| {
+                        // Widows that cannot fit on the next page would not
+                        // be kept together there either; the natural break
+                        // stays.
+                        let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
+                        moved_height <= page_step_at(current_page.saturating_add(1)) + 0.001
+                            && line > 0
+                    })
+                    .map(|line| {
+                        let target_y = page_origin(current_page.saturating_add(1));
+                        (
+                            line,
+                            target_y - (effective_y + line_metrics[line].0),
+                            current_page.saturating_add(1),
+                        )
+                    })
+                    .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0);
+                // A paragraph that runs over more pages keeps `widows` lines
+                // on its last page too, whether or not its first break could
+                // be repaired. The pages between are full, so only the break
+                // before the last page can leave too few; it moves up the
+                // same way while the page before keeps `orphans`.
+                let final_break = splittable
+                    .then(|| {
+                        let moved = |line: usize| {
+                            earlier_break
+                                .filter(|&(first, _, _)| line >= first)
+                                .map_or(0.0, |(_, shift, _)| shift)
+                        };
+                        let top = |line: usize| effective_y + line_metrics[line].0 + moved(line);
+                        let bottom = |line: usize| effective_y + line_metrics[line].1 + moved(line);
+                        // Each line belongs to the page that holds its
+                        // center (see `line_center_on_page`).
+                        let page_of = |line: usize| {
+                            page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001)
+                        };
+                        let first_on = |page: u32| {
+                            (0..total_lines)
+                                .find(|&line| page_of(line) >= page)
+                                .unwrap_or(total_lines)
+                        };
+                        let last_page = page_of(total_lines - 1);
+                        let line = total_lines - widows;
+                        (last_page > current_page.saturating_add(1)
+                            && total_lines - first_on(last_page) < widows
+                            && line >= first_on(last_page - 1) + orphans
+                            && bottom(total_lines - 1) - top(line)
+                                <= page_step_at(last_page) + 0.001)
+                            .then(|| (line, page_origin(last_page) - top(line), last_page))
+                    })
+                    .flatten()
+                    .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0);
+                if earlier_break.is_some() || final_break.is_some() {
+                    for (line, shift, page) in earlier_break.into_iter().chain(final_break) {
+                        check_candidate_page!('candidate_loop, page);
+                        shift_ifc_lines_from(document, block_id, line, shift);
+                        if let Some((item, container)) = flex_line_paragraph {
+                            shift_later_flex_lines(document, cascade, container, item, shift);
+                        }
+                        if nested {
+                            grow_ancestors_for_shift(
+                                document,
+                                cascade,
+                                block_id,
+                                shift,
+                                body_id,
+                                &mut pending_bounded_shifts,
+                                &mut pending_context_growth,
+                                page_before_candidate,
+                            );
+                        }
+                        if text_lines
+                            .get(node_id)
+                            .and_then(|owned| owned.lines.last())
+                            .is_some_and(|last| last.line >= line)
+                        {
+                            height += shift;
+                        }
+                        pending_line_splits.push((block_id, line, shift));
                     }
-                    if nested {
-                        grow_ancestors_for_shift(
-                            document,
-                            cascade,
-                            block_id,
-                            shift,
-                            body_id,
-                            &mut pending_bounded_shifts,
-                            &mut pending_context_growth,
-                            page_before_candidate,
-                        );
-                    }
-                    if text_lines
-                        .get(node_id)
-                        .and_then(|owned| owned.lines.last())
-                        .is_some_and(|last| last.line >= line)
-                    {
-                        height += shift;
-                    }
-                    pending_line_split = Some((block_id, line, shift));
                 } else if line_block_parent.is_some()
                     && starts_on_page
                     && fits_on_page

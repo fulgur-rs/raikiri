@@ -91,8 +91,8 @@ fn ifc_edge(value: taffy::LengthPercentage, parent_inline_size: Option<f32>) -> 
 }
 
 /// The physical dimension used by percentage margins, padding, and borders
-/// depends on the containing block's writing mode. Sideways values use the
-/// horizontal IFC fallback, so they retain the horizontal inline-size basis.
+/// depends on the containing block's used writing mode, including sideways
+/// modes. This CSS percentage basis is independent of shaping fallbacks.
 ///
 /// Taffy's flexbox measures an item's flex base size and automatic minimum
 /// size without a main-axis parent size, so that a percentage *size* does not
@@ -111,21 +111,17 @@ fn ifc_parent_inline_size(
             .or(basis.and_then(|basis| basis.width))
             .unwrap_or(0.0)
     };
-    let mut ancestor = tree.nodes[node].parent;
-    while let Some(id) = ancestor {
-        if let Some(mode) = tree.nodes[id].authored_writing_mode {
-            return Some(match mode {
-                raikiri_style::property::WritingMode::VerticalRl
-                | raikiri_style::property::WritingMode::VerticalLr => parent_size
-                    .height
-                    .or(basis.and_then(|basis| basis.height))
-                    .unwrap_or(0.0),
-                _ => width(),
-            });
-        }
-        ancestor = tree.nodes[id].parent;
-    }
-    Some(width())
+    let vertical = tree
+        .parent_of(node)
+        .is_some_and(|parent| tree.nodes[parent].used_writing_mode.is_vertical());
+    Some(if vertical {
+        parent_size
+            .height
+            .or(basis.and_then(|basis| basis.height))
+            .unwrap_or(0.0)
+    } else {
+        width()
+    })
 }
 
 /// The content-box size of the flex container being laid out, when `node`
@@ -1449,20 +1445,8 @@ fn fragmentation_context_for_ifc(
     if !root.boxes.iter().any(|box_| box_.kind == IfcBoxKind::Float) {
         return None;
     }
-    let mut ancestor = Some(idx);
-    while let Some(node_id) = ancestor {
-        if matches!(
-            tree.nodes[node_id].authored_writing_mode,
-            Some(
-                raikiri_style::property::WritingMode::VerticalRl
-                    | raikiri_style::property::WritingMode::VerticalLr
-                    | raikiri_style::property::WritingMode::SidewaysRl
-                    | raikiri_style::property::WritingMode::SidewaysLr
-            )
-        ) {
-            return None;
-        }
-        ancestor = tree.parent_of(node_id);
+    if tree.nodes[idx].under_vertical_writing {
+        return None;
     }
 
     let mut has_row_flex = false;
@@ -1826,8 +1810,7 @@ fn center_absolute_children_in_block_axis(
     if inputs.run_mode != RunMode::PerformLayout {
         return;
     }
-    let block_is_height =
-        used_writing_mode(tree, idx) == raikiri_style::property::WritingMode::HorizontalTb;
+    let block_is_height = !used_writing_mode(tree, idx).is_vertical();
     let style = &tree.nodes[idx].style;
     let border = style
         .border
@@ -1956,18 +1939,9 @@ fn grid_layout(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> Lay
 }
 
 impl Document {
-    /// Whether `idx` uses a vertical writing mode: the one authored on it or
-    /// on its nearest ancestor that authors one.
+    /// Whether the bridged writing mode of `idx` has a vertical inline axis.
     fn has_vertical_writing_mode(&self, idx: usize) -> bool {
-        use raikiri_style::property::WritingMode;
-        let mut node = Some(idx);
-        while let Some(id) = node {
-            if let Some(mode) = self.nodes[id].authored_writing_mode {
-                return matches!(mode, WritingMode::VerticalRl | WritingMode::VerticalLr);
-            }
-            node = self.nodes[id].parent;
-        }
-        false
+        self.nodes[idx].used_writing_mode.is_vertical()
     }
 
     /// The border-box width of block container `idx` that taffy's block

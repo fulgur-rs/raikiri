@@ -231,9 +231,7 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
                     // The walk above resolves viewport-percentage lengths against
                     // the same viewport.
                     .with_viewport(viewport.0, viewport.1)
-                    .with_vertical_root(
-                        cv.cssom_writing_mode != crate::property::WritingMode::HorizontalTb,
-                    ),
+                    .with_vertical_root(cv.cssom_writing_mode.is_vertical()),
             )
         } else {
             ctx

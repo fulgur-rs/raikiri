@@ -2356,3 +2356,82 @@ fn a_multicol_container_establishes_a_block_formatting_context() {
     assert_eq!(doc.nodes[child].unrounded_layout.location.y, 15.0);
     assert_eq!(doc.nodes[multicol].unrounded_layout.size.height, 35.0);
 }
+
+#[test]
+fn bridged_writing_modes_follow_live_parents_and_refresh_before_consumers() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Style::default(), Some("display:block"));
+    let early = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let text = doc.append_text(early, "x");
+    let late = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:sideways-rl"),
+    );
+    let horizontal = doc.append_element(
+        Some(late),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    let template = doc.append_element(Some(late), "template", Style::default(), None::<&str>);
+    let fragment = doc.allocate_template_fragment_root(template);
+    let inert = doc.append_text(fragment, "inert");
+    doc.detach_from_parent(early);
+    doc.attach_child(late, early);
+    doc.mark_in_document_flags();
+    let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    apply_computed_to_style(&mut doc, &cr).unwrap();
+    assert_eq!(doc.nodes[early].used_writing_mode, WritingMode::SidewaysRl);
+    assert_eq!(doc.nodes[text].used_writing_mode, WritingMode::SidewaysRl);
+    assert_eq!(
+        doc.nodes[horizontal].used_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert!(doc.nodes[horizontal].under_vertical_writing);
+    assert_eq!(
+        doc.nodes[fragment].used_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert!(!doc.nodes[inert].under_vertical_writing);
+    // Reusing declarations after reparenting must follow the live DOM,
+    // as the previous nearest-authored ancestor walk did.
+    doc.detach_from_parent(early);
+    doc.attach_child(body, early);
+    apply_computed_to_style(&mut doc, &cr).unwrap();
+    assert_eq!(
+        doc.nodes[early].used_writing_mode,
+        WritingMode::HorizontalTb
+    );
+    assert!(!doc.nodes[text].under_vertical_writing);
+    for mode in [
+        "horizontal-tb",
+        "vertical-rl",
+        "vertical-lr",
+        "sideways-rl",
+        "sideways-lr",
+        "horizontal-tb",
+    ] {
+        doc.set_element_inline_style(
+            late,
+            Some(format!("display:block;writing-mode:{mode}").into()),
+        );
+        let cr = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        apply_computed_to_style(&mut doc, &cr).unwrap();
+        for id in 0..doc.nodes.len() {
+            let expected = doc
+                .inclusive_ancestors(id)
+                .find_map(|id| doc.nodes[id].authored_writing_mode)
+                .unwrap_or(WritingMode::HorizontalTb);
+            let under = doc.inclusive_ancestors(id).any(|id| {
+                doc.nodes[id]
+                    .authored_writing_mode
+                    .is_some_and(WritingMode::is_vertical)
+            });
+            assert_eq!(doc.nodes[id].used_writing_mode, expected);
+            assert_eq!(doc.nodes[id].under_vertical_writing, under);
+        }
+    }
+}

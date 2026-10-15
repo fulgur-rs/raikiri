@@ -321,3 +321,37 @@ fn fixed_boxes_leave_the_relative_offsets_around_them() {
     }
     assert_eq!(seen, 2);
 }
+
+#[test]
+fn fixed_boxes_inside_a_fixed_containing_block_match_paint() {
+    // Each ancestor is the containing block of the fixed box (CSS Transforms
+    // 1 §3, CSS Will Change 1 §2, CSS Containment 2 §3.2), so layout places
+    // the fixed box against it and the painter must not move it to the page
+    // area.
+    for ancestor in [
+        "will-change: transform",
+        "will-change: filter",
+        "contain: layout",
+        "filter: opacity(1)",
+    ] {
+        let body = format!(
+            "<div style=\"margin: 50px 0 0 30px; width: 100px; height: 60px; {ancestor}\">\
+             <div class=\"b\" style=\"position: fixed; left: 5px; top: 7px; width: 10px; \
+             height: 10px\"></div></div>"
+        );
+        assert_eq!(assert_matches_paint(&body, ""), 1, "{body}");
+    }
+}
+
+#[test]
+fn fixed_boxes_ignore_containing_blocks_above_the_body() {
+    // Layout looks for the containing block of a fixed box from the body
+    // down, so the root element never contains it, and the painter places
+    // the box in the page area apart from the body's relative offset.
+    for root in ["will-change: transform", "contain: layout"] {
+        let css = format!("html {{ {root} }} body {{ position: relative; top: 20px }}");
+        let body = "<div class=\"b\" style=\"position: fixed; left: 5px; top: 7px; width: 10px; \
+                    height: 10px\"></div>";
+        assert_eq!(assert_matches_paint(body, &css), 1, "{css}");
+    }
+}

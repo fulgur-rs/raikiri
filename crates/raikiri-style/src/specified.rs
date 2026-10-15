@@ -1778,7 +1778,7 @@ impl SpecifiedValues {
             ..ResolveContext::initial()
         }
         .with_viewport(width, height)
-        .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
+        .with_vertical_root(self.writing_mode.is_vertical());
         // The root's parent is the initial style, whose `font-family` is
         // `initial_font_family()`.
         let font_size = match self.keyword_font_size(&initial_font_family()) {
@@ -1822,7 +1822,7 @@ impl SpecifiedValues {
         let own_line_height = used_line_height_length_or(line_height, font_size, normal);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
             .with_viewport(width, height)
-            .with_vertical_root(self.writing_mode != WritingMode::HorizontalTb);
+            .with_vertical_root(self.writing_mode.is_vertical());
         self.absolutize_with(font_size, line_height, normal, text_align, &ctx)
     }
 
@@ -2088,38 +2088,34 @@ impl SpecifiedValues {
         let physical_min_block = self.min_block_size.map(|value| {
             resolve_size_length_percentage_or_auto(value, font_size, own_line_height, ctx)
         });
-        let (min_width, min_height) = match self.writing_mode {
-            WritingMode::HorizontalTb => (min_width, physical_min_block.unwrap_or(min_height)),
-            WritingMode::VerticalRl
-            | WritingMode::VerticalLr
-            | WritingMode::SidewaysRl
-            | WritingMode::SidewaysLr => (physical_min_block.unwrap_or(min_width), min_height),
+        let (min_width, min_height) = if self.writing_mode.is_vertical() {
+            (physical_min_block.unwrap_or(min_width), min_height)
+        } else {
+            (min_width, physical_min_block.unwrap_or(min_height))
         };
         let max_width_ch = size_ch(self.max_width);
         let max_height_ch = size_ch(self.max_height);
         let min_block_size_ch = self.min_block_size.and_then(size_ch);
         let min_width_ch = size_ch(self.min_width);
         let min_height_ch = size_ch(self.min_height);
-        let (min_width_ch, min_height_ch) = match self.writing_mode {
-            WritingMode::HorizontalTb => (
-                min_width_ch,
-                if self.min_block_size.is_some() {
-                    min_block_size_ch.clone()
-                } else {
-                    min_height_ch
-                },
-            ),
-            WritingMode::VerticalRl
-            | WritingMode::VerticalLr
-            | WritingMode::SidewaysRl
-            | WritingMode::SidewaysLr => (
+        let (min_width_ch, min_height_ch) = if self.writing_mode.is_vertical() {
+            (
                 if self.min_block_size.is_some() {
                     min_block_size_ch.clone()
                 } else {
                     min_width_ch
                 },
                 min_height_ch,
-            ),
+            )
+        } else {
+            (
+                min_width_ch,
+                if self.min_block_size.is_some() {
+                    min_block_size_ch.clone()
+                } else {
+                    min_height_ch
+                },
+            )
         };
         // CSS2 §9.7: same-node coupling forces the computed `display` value to depend on the
         // cascaded `float` value. See the `resolve_display_for_float` docs; this happens in
@@ -2379,12 +2375,10 @@ impl SpecifiedValues {
             text_emphasis_style: match &self.text_emphasis_style {
                 TextEmphasisStyle::DefaultShape { fill } => TextEmphasisStyle::Shape {
                     fill: *fill,
-                    shape: match self.writing_mode {
-                        WritingMode::HorizontalTb => TextEmphasisShape::Circle,
-                        WritingMode::VerticalRl
-                        | WritingMode::VerticalLr
-                        | WritingMode::SidewaysRl
-                        | WritingMode::SidewaysLr => TextEmphasisShape::Sesame,
+                    shape: if self.writing_mode.is_vertical() {
+                        TextEmphasisShape::Sesame
+                    } else {
+                        TextEmphasisShape::Circle
                     },
                 },
                 style => style.clone(),

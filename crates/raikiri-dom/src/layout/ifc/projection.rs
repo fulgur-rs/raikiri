@@ -112,37 +112,11 @@ pub(crate) struct ProjectedMeta {
     pub(crate) first_line_opacity: Option<f32>,
 }
 
-/// Whether `node` or one of its ancestors has an authored vertical writing
-/// mode. Such text is laid out horizontally, without autospacing: real
-/// vertical writing is not supported.
-fn under_vertical_writing(doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
-    use raikiri_style::property::WritingMode;
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if matches!(
-            cascade
-                .authored_writing_modes
-                .get(id)
-                .and_then(|mode| *mode),
-            Some(
-                WritingMode::VerticalRl
-                    | WritingMode::VerticalLr
-                    | WritingMode::SidewaysRl
-                    | WritingMode::SidewaysLr
-            )
-        ) {
-            return true;
-        }
-        current = doc.parent_of(id);
-    }
-    false
-}
-
 /// The text style of `node` with its document context: its `lang`, and no
 /// autospacing under a vertical writing mode.
 pub(super) fn styled(
     doc: &Document,
-    cascade: &CascadeResult,
+    _cascade: &CascadeResult,
     cv: &ComputedValues,
     node: usize,
     fonts: &FontCollection,
@@ -150,7 +124,7 @@ pub(super) fn styled(
     let mut inline = style::inline_style(cv, node, fonts)?;
     inline.lang = language_of(doc, node);
     style::resolve_auto_emphasis_position(cv, &mut inline);
-    if under_vertical_writing(doc, cascade, node) {
+    if doc.nodes[node].under_vertical_writing {
         inline.text_autospace = shodo::style::TextAutospace::NoAutospace;
     }
     Ok(inline)

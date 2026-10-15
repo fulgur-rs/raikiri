@@ -43,7 +43,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
         gap,
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
-        horizontal: matches!(cv.writing_mode, WritingMode::HorizontalTb),
+        horizontal: !cv.writing_mode.is_vertical(),
         orphans: cv.orphans.max(1) as usize,
         widows: cv.widows.max(1) as usize,
     })
@@ -145,6 +145,7 @@ pub(crate) fn apply_computed_to_style(
     doc: &mut Document,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    bridge_writing_modes(doc, cascade);
     // Styles retain raw pointers to these payloads for Taffy's calc callback;
     // rebuild the arena for every cascade/layout pass.
     doc.calc_values.clear();
@@ -207,10 +208,6 @@ pub(crate) fn apply_computed_to_style(
                     })
             });
         doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial);
-        doc.nodes[idx].authored_writing_mode = cascade
-            .authored_writing_modes
-            .get(idx)
-            .and_then(|mode| *mode);
         bridge_size(doc, idx, cv);
         // An intrinsic ratio only participates when at least one preferred
         // dimension is auto; Taffy's leaf sizing otherwise floors an explicit
@@ -348,6 +345,35 @@ pub(crate) fn apply_computed_to_style(
     Ok(())
 }
 
+/// Resolve writing-mode ancestry once, before any bridge consumer runs.
+/// Arena order need not put parents before children. Starting at every
+/// root also covers detached subtrees and inert template fragments.
+fn bridge_writing_modes(doc: &mut Document, cascade: &CascadeResult) {
+    for (id, node) in doc.nodes.iter_mut().enumerate() {
+        node.authored_writing_mode = cascade.authored_writing_modes.get(id).copied().flatten();
+    }
+    let mut pending: Vec<usize> = doc
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(id, node)| node.parent.is_none().then_some(id))
+        .collect();
+    while let Some(id) = pending.pop() {
+        let parent = doc.parent_of(id);
+        let inherited = parent.map_or(WritingMode::HorizontalTb, |parent| {
+            doc.nodes[parent].used_writing_mode
+        });
+        let under_vertical = parent.is_some_and(|parent| doc.nodes[parent].under_vertical_writing);
+        let node = &mut doc.nodes[id];
+        node.used_writing_mode = node.authored_writing_mode.unwrap_or(inherited);
+        node.under_vertical_writing = under_vertical
+            || node
+                .authored_writing_mode
+                .is_some_and(WritingMode::is_vertical);
+        pending.extend(node.children.iter().copied());
+    }
+}
+
 /// The physical axes in which `contain` sizes the box as if it had no
 /// content (CSS Containment 2 §3.1 size containment, §3.2 inline-size
 /// containment).
@@ -358,7 +384,7 @@ pub(crate) fn apply_computed_to_style(
 /// from its cells. Inline-size containment acts on the inline axis of the
 /// box's own writing mode.
 fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::Size<bool> {
-    use raikiri_style::property::{Contain, WritingMode};
+    use raikiri_style::property::Contain;
 
     let none = taffy::Size {
         width: false,
@@ -387,10 +413,7 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
     if !cv.contain.contains(Contain::INLINE_SIZE) {
         return none;
     }
-    let vertical = !matches!(
-        crate::taffy_impl::used_writing_mode(doc, idx),
-        WritingMode::HorizontalTb
-    );
+    let vertical = crate::taffy_impl::used_writing_mode(doc, idx).is_vertical();
     taffy::Size {
         width: !vertical,
         height: vertical,
@@ -806,8 +829,8 @@ fn bridge_min_max_size(
     // inline-size/block-size. Keep a logical block minimum on that same
     // layout axis when no physical min-height is present. Preserve an
     // explicit physical constraint; CSSOM keeps the original axis mapping.
-    let min_height = if cv.writing_mode == WritingMode::HorizontalTb
-        && cv.cssom_writing_mode != WritingMode::HorizontalTb
+    let min_height = if !cv.writing_mode.is_vertical()
+        && cv.cssom_writing_mode.is_vertical()
         && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
     {
         cv.min_block_size.unwrap_or(cv.min_height)

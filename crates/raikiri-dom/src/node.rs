@@ -429,6 +429,10 @@ pub struct Node {
     pub(crate) multicol_rows: Vec<MulticolGroup>,
     /// Authored writing mode retained for layout features that need the logical axes.
     pub(crate) authored_writing_mode: Option<WritingMode>,
+    /// Writing mode inherited through the current DOM at the last style bridge.
+    pub(crate) used_writing_mode: WritingMode,
+    /// Whether any inclusive ancestor declares a vertical writing mode.
+    pub(crate) under_vertical_writing: bool,
     /// Whether this node has an authored logical `min-block-size` constraint
     /// paired with `break-inside: avoid`. The used value is bridged
     /// to Taffy's physical min-size fields, while fragmentation needs the
@@ -569,6 +573,8 @@ impl Node {
             multicol_groups: Vec::new(),
             multicol_rows: Vec::new(),
             authored_writing_mode: None,
+            used_writing_mode: WritingMode::HorizontalTb,
+            under_vertical_writing: false,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
             size_containment: taffy::Size {

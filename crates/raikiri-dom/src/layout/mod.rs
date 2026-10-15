@@ -116,7 +116,7 @@ pub(crate) use sanitize::sanitize_taffy_layout;
 
 #[doc(hidden)]
 pub use fixed::generates_inline_box;
-pub use fixed::is_transformable;
+pub use fixed::{establishes_fixed_containing_block, is_transformable};
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
