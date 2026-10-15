@@ -559,33 +559,50 @@ fn insert_annotation_runs<'a>(
     runs: &mut Vec<PositionedRun<'a>>,
     annotations: Vec<(Range<usize>, Vec<PositionedRun<'a>>)>,
 ) {
-    // Whether each run is one of the line's own, not an annotation's.
-    let mut own = vec![true; runs.len()];
-    for (base, annotation) in annotations {
-        let ranges = || {
-            runs.iter()
-                .zip(&own)
-                .enumerate()
-                .filter(|(_, (_, own))| **own)
-                .map(|(index, (run, _))| (index, run.run.text_range()))
-        };
-        let at = ranges()
-            .filter(|(_, range)| range.start < base.end && base.start < range.end)
-            .next_back()
-            .map(|(index, _)| index + 1)
-            .or_else(|| {
-                ranges()
-                    .find(|(_, range)| range.start >= base.end)
-                    .map(|(index, _)| index)
-            })
-            .unwrap_or(runs.len());
-        // Annotations already placed there, such as an earlier level over
-        // the same base, keep their place before this one.
-        let at = at + own[at..].iter().take_while(|own| !**own).count();
-        let count = annotation.len();
-        runs.splice(at..at, annotation);
-        own.splice(at..at, std::iter::repeat_n(false, count));
+    if annotations.is_empty() {
+        return;
     }
+    // The line's own runs by the start of their text. Their nonempty text
+    // ranges do not overlap.
+    let mut by_text: Vec<(Range<usize>, usize)> = runs
+        .iter()
+        .enumerate()
+        .map(|(index, run)| (run.run.text_range(), index))
+        .collect();
+    by_text.sort_by_key(|(range, _)| range.start);
+    // The first in visual order of the runs from each place of `by_text` on.
+    let mut first_from = vec![runs.len(); by_text.len() + 1];
+    for place in (0..by_text.len()).rev() {
+        first_from[place] = first_from[place + 1].min(by_text[place].1);
+    }
+    // Where each annotation goes among the line's own runs.
+    let mut placed: Vec<(usize, Vec<PositionedRun<'a>>)> = annotations
+        .into_iter()
+        .map(|(base, annotation)| {
+            let after = by_text.partition_point(|(range, _)| range.start < base.end);
+            let last = by_text[..after]
+                .iter()
+                .rev()
+                .take_while(|(range, _)| range.is_empty() || base.start < range.end)
+                .filter(|(range, _)| base.start < range.end)
+                .map(|(_, index)| index + 1)
+                .max();
+            (last.unwrap_or(first_from[after]), annotation)
+        })
+        .collect();
+    // Annotations at the same place, such as levels over one base, keep the
+    // order they are given in.
+    placed.sort_by_key(|(at, _)| *at);
+    let own = std::mem::take(runs);
+    runs.reserve(own.len() + placed.iter().map(|(_, runs)| runs.len()).sum::<usize>());
+    let mut placed = placed.into_iter().peekable();
+    for (index, run) in own.into_iter().enumerate() {
+        while let Some((_, annotation)) = placed.next_if(|(at, _)| *at == index) {
+            runs.extend(annotation);
+        }
+        runs.push(run);
+    }
+    runs.extend(placed.flat_map(|(_, annotation)| annotation));
 }
 
 /// The sum of the relative offsets of `node` and its ancestors up to the ifc

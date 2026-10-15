@@ -886,7 +886,7 @@ impl Content<'_, '_> {
                     content,
                     align: shodo::RubyAlign::SpaceAround,
                 });
-                if index + 1 < segment.bases.len() && spaces.contains(&index) {
+                if index + 1 < segment.bases.len() && spaces[index] {
                     let (node, content) = self.space(part, id)?;
                     bases.push(shodo::RubyBase {
                         node,
@@ -975,7 +975,7 @@ impl Content<'_, '_> {
         &mut self,
         ruby: usize,
         level: &Level,
-        spaces: &[usize],
+        spaces: &[bool],
         text: usize,
     ) -> Result<shodo::RubyLevel, IfcError> {
         if let Some(container) = level.container {
@@ -1001,7 +1001,7 @@ impl Content<'_, '_> {
                 },
                 visibility: visibility(self.cascade.computed[part.style_owner].visibility),
             });
-            if index + 1 < level.annotations.len() && spaces.contains(&index) {
+            if index + 1 < level.annotations.len() && spaces[index] {
                 let (node, content) = self.space(part, text)?;
                 let owner = self.space_owner(part);
                 annotations.push(shodo::RubyAnnotation {
@@ -1022,21 +1022,23 @@ impl Content<'_, '_> {
     }
 }
 
-/// The positions after which a segment has intra-level white space in any
-/// level: there, every level gets a column of white space, so that the
-/// boxes after it stay paired (CSS Ruby 1 §2.3, §2.4).
-fn intra_level_spaces(segment: &Segment) -> Vec<usize> {
-    let mut spaces = Vec::new();
-    let lists = std::iter::once(segment.bases.as_slice()).chain(
-        segment
-            .levels
-            .iter()
-            .map(|level| level.annotations.as_slice()),
-    );
-    for list in lists {
+/// Whether a segment has intra-level white space in any level after each
+/// position of its longest level: there, every level gets a column of white
+/// space, so that the boxes after it stay paired (CSS Ruby 1 §2.3, §2.4).
+fn intra_level_spaces(segment: &Segment) -> Vec<bool> {
+    let lists = || {
+        std::iter::once(segment.bases.as_slice()).chain(
+            segment
+                .levels
+                .iter()
+                .map(|level| level.annotations.as_slice()),
+        )
+    };
+    let mut spaces = vec![false; lists().map(<[Part]>::len).max().unwrap_or(0)];
+    for list in lists() {
         for (index, part) in list.iter().enumerate() {
-            if index + 1 < list.len() && !part.tail.is_empty() && !spaces.contains(&index) {
-                spaces.push(index);
+            if index + 1 < list.len() && !part.tail.is_empty() {
+                spaces[index] = true;
             }
         }
     }
