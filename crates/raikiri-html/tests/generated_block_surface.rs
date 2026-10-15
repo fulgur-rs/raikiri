@@ -103,12 +103,13 @@ fn block_before_and_after_of_the_body_count_towards_the_pages() {
 }
 
 #[test]
-fn block_after_of_the_body_with_a_max_height_ends_at_it() {
+fn block_after_of_the_body_overflows_its_max_height_onto_the_pages() {
     let document = lay_out(
         "A",
         "body{max-height:100px}body::after{content:'';display:block;height:250px}",
     );
-    assert_eq!(document.page_count(), 2);
+    // As a trailing 250px div does: the body's overflow is visible.
+    assert_eq!(document.page_count(), 5);
 }
 
 #[test]

@@ -412,7 +412,9 @@ fn body_border_box_end(
     // with its content, which the flow already paginated. Text of the body's
     // own paragraph is located by its lines, which are not measured here,
     // but a block-level `::before` or `::after` between or after them takes
-    // room of its own: the paragraph then ends where its content does.
+    // room of its own: the paragraph then ends where its content does. Like
+    // the body's in-flow children, the content counts past a `max-height`:
+    // the body's overflow is visible.
     if body.is_ifc_root() {
         let Some(content_height) = body
             .ifc
@@ -423,9 +425,8 @@ fn body_border_box_end(
         else {
             return min_end;
         };
-        let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
         let auto_end = top + edges_top + content_height + edges_bottom;
-        return min_end.max(auto_end.min(max_end));
+        return min_end.max(auto_end);
     }
     if edges_bottom <= 0.0 && min_height <= 0.0 {
         return min_end;
