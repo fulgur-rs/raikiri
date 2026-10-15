@@ -157,18 +157,63 @@ fn guest_envelope_version_mismatch_is_detectable() {
 
 #[test]
 fn image_dto_roundtrips_and_rejects_mismatched_bytes() {
-    let image = DecodedImage {
-        width: 1,
-        height: 1,
-        rgba: vec![1, 2, 3, 4],
+    let pixels = ImagePixels {
+        size: (1.0, 0.5),
+        image: std::sync::Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 255],
+        }),
     };
-    let bytes = encode(&ImageDto::from(&image)).unwrap();
-    let decoded: ImageDto = decode(&bytes).unwrap();
-    assert_eq!(decoded.into_native().unwrap(), image);
+    let bytes = encode(&ImageDto::from(&pixels)).unwrap();
+    assert!(
+        String::from_utf8_lossy(&bytes).contains(r#""rgba":"AQID/w==""#),
+        "the bytes travel as base64"
+    );
+    let decoded = decode::<ImageDto>(&bytes).unwrap().into_native().unwrap();
+    assert_eq!(decoded.size, (1.0, 0.5));
+    assert_eq!(*decoded.image, *pixels.image);
     let short = ImageDto {
+        size: (2.0, 1.0),
         width: 2,
         height: 1,
         rgba: vec![0; 4],
     };
     assert!(short.into_native().is_err());
+    assert!(decode::<ImageDto>(br#"{"size":[1,1],"width":1,"height":1,"rgba":"AQ"}"#).is_err());
+}
+
+#[test]
+fn image_dto_fits_a_large_image_in_one_message() {
+    let image = DecodedImage {
+        width: 1024,
+        height: 1024,
+        rgba: vec![255; 1024 * 1024 * 4],
+    };
+    let pixels = ImagePixels {
+        size: (1024.0, 1024.0),
+        image: std::sync::Arc::new(image),
+    };
+    let response = Response {
+        version: VERSION,
+        result: Ok(HostValue::Image(Some(ImageDto::from(&pixels)))),
+    };
+    let bytes = encode(&response).unwrap();
+    let Ok(HostValue::Image(Some(dto))) = decode::<Response>(&bytes).unwrap().result else {
+        panic!("an image response");
+    };
+    assert_eq!(dto.rgba.len(), 1024 * 1024 * 4);
+}
+
+#[test]
+fn base64_roundtrips_every_tail_length_and_rejects_malformed_text() {
+    for len in 0..=7 {
+        let bytes: Vec<u8> = (0..len).map(|i| (i * 37 + 250) as u8).collect();
+        assert_eq!(base64::decode(&base64::encode(&bytes)).unwrap(), bytes);
+    }
+    assert_eq!(base64::encode(b"foobar"), "Zm9vYmFy");
+    assert_eq!(base64::encode(b"fo"), "Zm8=");
+    for bad in ["Zm8", "Zm=v", "Z===", "Zm8=Zm8=", "Zm9*"] {
+        assert!(base64::decode(bad).is_none(), "{bad}");
+    }
 }

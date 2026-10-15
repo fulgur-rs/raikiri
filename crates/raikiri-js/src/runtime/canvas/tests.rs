@@ -1,5 +1,5 @@
 use super::super::test_host::StubHost;
-use super::super::{DomRuntime, RuntimeError};
+use super::super::{DomRuntime, ImagePixels, RuntimeError};
 
 fn rt() -> DomRuntime {
     let (host, ..) = StubHost::page();
@@ -524,17 +524,26 @@ const CLEAR: [u8; 4] = [0; 4];
 /// green, blue and half-transparent white pixels, already loaded. Returns
 /// the canvas's arena index.
 fn draw_rt(keeps_pixels: bool) -> (DomRuntime, usize) {
+    draw_rt_sized(keeps_pixels.then_some((2.0, 2.0)))
+}
+
+/// [`draw_rt`], with the image's 2×2 raster standing for an image of
+/// `size` CSS px, or with no pixels kept when `size` is `None`.
+fn draw_rt_sized(size: Option<(f64, f64)>) -> (DomRuntime, usize) {
     let (mut host, _, _, body) = StubHost::page();
     host.document_url = Some(PAGE.to_owned());
     host.images.insert(IMAGE.to_owned());
-    if keeps_pixels {
+    if let Some(size) = size {
         host.image_pixels.insert(
             IMAGE.to_owned(),
-            std::sync::Arc::new(raikiri_traits::DecodedImage {
-                width: 2,
-                height: 2,
-                rgba: [RED, GREEN, BLUE, HALF_WHITE].concat(),
-            }),
+            ImagePixels {
+                size,
+                image: std::sync::Arc::new(raikiri_traits::DecodedImage {
+                    width: 2,
+                    height: 2,
+                    rgba: [RED, GREEN, BLUE, HALF_WHITE].concat(),
+                }),
+            },
         );
     }
     let canvas = host.document.create_detached_element("canvas").unwrap();
@@ -701,6 +710,25 @@ fn draw_image_sizes_images_against_the_canvas_bitmap() {
         .unwrap();
     let host = rt.try_into_host::<StubHost>().ok().unwrap();
     assert_eq!(host.image_pixel_default_sizes, [(7.0, 4.0)]);
+}
+
+#[test]
+fn draw_image_uses_the_concrete_size_rather_than_the_raster_extent() {
+    // The 2×2 raster covers an image 1.5 CSS px tall.
+    let (mut rt, canvas) = draw_rt_sized(Some((2.0, 1.5)));
+    rt.evaluate("ctx.drawImage(img, 0, 0);").unwrap();
+    let rows = pixels(rt, canvas);
+    // Row 1's center (1.5) is past the image's bottom edge.
+    assert_eq!(rows[0], [RED, GREEN, CLEAR, CLEAR]);
+    assert_eq!(rows[1], [CLEAR; 4]);
+
+    // Source coordinates are CSS px too: y 1.125 is raster row 1.
+    let (mut rt, canvas) = draw_rt_sized(Some((2.0, 1.5)));
+    rt.evaluate("ctx.drawImage(img, 0, 0.75, 2, 0.75, 0, 0, 2, 1);")
+        .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [BLUE, HALF_WHITE, CLEAR, CLEAR]);
+    assert_eq!(rows[1], [CLEAR; 4]);
 }
 
 #[test]

@@ -93,7 +93,7 @@ impl Bridge {
             HostOperation::ImagePixels(url, default_size) => Ok(HostValue::Image(
                 self.host
                     .image_pixels(&url, default_size)
-                    .map(|image| ImageDto::from(image.as_ref())),
+                    .map(|pixels| ImageDto::from(&pixels)),
             )),
         }
     }

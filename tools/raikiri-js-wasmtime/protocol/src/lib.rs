@@ -1,12 +1,12 @@
 //! Owned, bounded protocol for the local integration trial.
 use raikiri_dom::snapshot::LogicalSnapshot;
-pub use raikiri_js::runtime::DecodedImage;
 use raikiri_js::runtime::{
     Abort, BoxGeometry, DomRect, Limits, PositionKind, RunOptions, RunReport,
 };
+pub use raikiri_js::runtime::{DecodedImage, ImagePixels};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-pub const VERSION: u32 = 5;
+pub const VERSION: u32 = 6;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -76,6 +76,7 @@ pub struct Response {
     pub version: u32,
     pub result: Result<HostValue, String>,
 }
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum HostValue {
     Unit,
@@ -89,39 +90,119 @@ pub enum HostValue {
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Image(Option<ImageDto>),
 }
-/// Decoded straight-alpha RGBA8 image pixels.
+/// An image's concrete object size in CSS px and its decoded straight-alpha
+/// RGBA8 raster.
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageDto {
+    pub size: (f64, f64),
     pub width: u32,
     pub height: u32,
+    /// Sent as base64: as a JSON array of numbers, an ordinary 1024x1024
+    /// image alone would exceed [`MAX_MESSAGE`].
+    #[serde(with = "base64")]
     pub rgba: Vec<u8>,
 }
-impl From<&DecodedImage> for ImageDto {
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+impl From<&ImagePixels> for ImageDto {
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-    fn from(image: &DecodedImage) -> Self {
+    fn from(pixels: &ImagePixels) -> Self {
         Self {
-            width: image.width,
-            height: image.height,
-            rgba: image.rgba.clone(),
+            size: pixels.size,
+            width: pixels.image.width,
+            height: pixels.image.height,
+            rgba: pixels.image.rgba.clone(),
         }
     }
 }
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
 impl ImageDto {
     /// The native image, or an error when the byte count does not match
     /// the dimensions.
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-    pub fn into_native(self) -> Result<DecodedImage, String> {
+    pub fn into_native(self) -> Result<ImagePixels, String> {
         let expected = (self.width as usize)
             .checked_mul(self.height as usize)
             .and_then(|pixels| pixels.checked_mul(4));
         if expected != Some(self.rgba.len()) {
             return Err("image byte length".into());
         }
-        Ok(DecodedImage {
-            width: self.width,
-            height: self.height,
-            rgba: self.rgba,
+        Ok(ImagePixels {
+            size: self.size,
+            image: std::sync::Arc::new(DecodedImage {
+                width: self.width,
+                height: self.height,
+                rgba: self.rgba,
+            }),
         })
+    }
+}
+/// Padded standard base64 (RFC 4648 §4) for a byte field.
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+pub mod base64 {
+    use serde::{Deserialize, Deserializer, Serializer, de::Error};
+
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    pub fn serialize<S: Serializer>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&encode(bytes))
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u8>, D::Error> {
+        let text = String::deserialize(deserializer)?;
+        decode(&text).ok_or_else(|| D::Error::custom("invalid base64"))
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    pub fn encode(bytes: &[u8]) -> String {
+        let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+        for chunk in bytes.chunks(3) {
+            let byte = |i: usize| u32::from(chunk.get(i).copied().unwrap_or(0));
+            let group = byte(0) << 16 | byte(1) << 8 | byte(2);
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(char::from(ALPHABET[(group >> (18 - 6 * i) & 63) as usize]));
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+    /// The bytes `text` encodes, or `None` when it is not padded base64.
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    pub fn decode(text: &str) -> Option<Vec<u8>> {
+        let text = text.as_bytes();
+        if text.len() % 4 != 0 {
+            return None;
+        }
+        let groups = text.len() / 4;
+        let mut out = Vec::with_capacity(groups * 3);
+        for (index, quad) in text.chunks(4).enumerate() {
+            let padding = quad.iter().rev().take_while(|&&c| c == b'=').count();
+            // Only the last group may be padded, and by at most two.
+            if padding > 2 || (padding > 0 && index + 1 != groups) {
+                return None;
+            }
+            let mut group = 0u32;
+            for &c in &quad[..4 - padding] {
+                group = group << 6 | u32::from(value(c)?);
+            }
+            group <<= 6 * padding as u32;
+            out.extend_from_slice(&group.to_be_bytes()[1..4 - padding]);
+        }
+        Some(out)
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    fn value(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
     }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]

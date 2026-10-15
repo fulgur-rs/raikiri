@@ -23,11 +23,13 @@ fn rpc_flush_and_services() {
             HostOperation::Viewport => Ok(HostValue::Size(Some((800.0, 600.0)))),
             HostOperation::ImagePixels(url, size) => Ok(HostValue::Image(match url.as_str() {
                 "ok.png" if size == (4.0, 2.0) => Some(ImageDto {
+                    size: (4.0, 2.0),
                     width: 1,
                     height: 1,
                     rgba: vec![1, 2, 3, 4],
                 }),
                 "corrupt.png" => Some(ImageDto {
+                    size: (2.0, 2.0),
                     width: 2,
                     height: 2,
                     rgba: vec![0; 4],
@@ -50,8 +52,9 @@ fn rpc_flush_and_services() {
     assert!(!host.is_visible(0).unwrap());
     assert!(host.is_visible(1).unwrap());
     assert_eq!(host.viewport_size().unwrap(), Some((800.0, 600.0)));
-    let image = host.image_pixels("ok.png", (4.0, 2.0)).unwrap();
-    assert_eq!(image.rgba, [1, 2, 3, 4]);
+    let pixels = host.image_pixels("ok.png", (4.0, 2.0)).unwrap();
+    assert_eq!(pixels.size, (4.0, 2.0));
+    assert_eq!(pixels.image.rgba, [1, 2, 3, 4]);
     assert!(host.image_pixels("corrupt.png", (4.0, 2.0)).is_none());
     assert!(host.image_pixels("missing.png", (4.0, 2.0)).is_none());
     assert_eq!(host.parse_fragment("div", "", "x").unwrap().node_count(), 1);

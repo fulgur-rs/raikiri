@@ -5,12 +5,10 @@ use std::any::Any;
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
 
 use raikiri_dom::Document;
-use raikiri_traits::DecodedImage;
 
-use super::host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+use super::host::{BoxGeometry, DocumentHost, DomRect, HostError, ImagePixels, PositionKind};
 
 pub(crate) struct StubHost {
     pub document: Document,
@@ -40,7 +38,7 @@ pub(crate) struct StubHost {
     pub images: HashSet<String>,
     /// [`DocumentHost::image_pixels`]' pixels, by URL; a URL with no entry
     /// has none.
-    pub image_pixels: HashMap<String, Arc<DecodedImage>>,
+    pub image_pixels: HashMap<String, ImagePixels>,
     /// The default object size each [`DocumentHost::image_pixels`] call
     /// passed, in call order.
     pub image_pixel_default_sizes: Vec<(f64, f64)>,
@@ -196,7 +194,7 @@ impl DocumentHost for StubHost {
             Err(HostError(format!("no image registered for {url}")))
         }
     }
-    fn image_pixels(&mut self, url: &str, default_size: (f64, f64)) -> Option<Arc<DecodedImage>> {
+    fn image_pixels(&mut self, url: &str, default_size: (f64, f64)) -> Option<ImagePixels> {
         self.image_pixel_default_sizes.push(default_size);
         self.image_pixels.get(url).cloned()
     }

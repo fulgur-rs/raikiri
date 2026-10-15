@@ -73,6 +73,17 @@ pub struct BoxGeometry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostError(pub String);
 
+/// The pixels [`DocumentHost::image_pixels`] returns for one image.
+#[derive(Debug, Clone)]
+pub struct ImagePixels {
+    /// The image's concrete object size in CSS px, which `drawImage` uses as
+    /// the image's natural size. It may be fractional.
+    pub size: (f64, f64),
+    /// The image rasterized to cover [`Self::size`]. Its pixel extent may be
+    /// rounded up from that size, so it is not the image's size.
+    pub image: Arc<DecodedImage>,
+}
+
 impl std::fmt::Display for HostError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -182,14 +193,14 @@ pub trait DocumentHost: 'static {
     fn load_image(&mut self, _url: &str) -> Result<(), HostError> {
         Err(HostError("image loading is not supported".into()))
     }
-    /// The decoded pixels of an image [`Self::load_image`] loaded, for
-    /// drawing it into a canvas, rasterized at its concrete object size: the
-    /// CSS Images 3 default sizing algorithm with `default_size` (the
-    /// canvas's output bitmap size, in CSS px) as the default object size, so
-    /// an image without natural dimensions sizes against the canvas. `None`
-    /// when the host does not keep the pixels. The default keeps none, so
-    /// such an image draws nothing.
-    fn image_pixels(&mut self, _url: &str, _default_size: (f64, f64)) -> Option<Arc<DecodedImage>> {
+    /// The pixels of an image [`Self::load_image`] loaded, for drawing it
+    /// into a canvas, rasterized at its concrete object size: the CSS Images 3
+    /// default sizing algorithm with `default_size` (the canvas's output
+    /// bitmap size, in CSS px) as the default object size, so an image
+    /// without natural dimensions sizes against the canvas. `None` when the
+    /// host does not keep the pixels. The default keeps none, so such an
+    /// image draws nothing.
+    fn image_pixels(&mut self, _url: &str, _default_size: (f64, f64)) -> Option<ImagePixels> {
         None
     }
     /// Type-erased shared access to the concrete host, for downcasting a

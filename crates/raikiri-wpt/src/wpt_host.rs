@@ -302,21 +302,22 @@ impl DocumentHost for WptDocumentHost {
         &mut self,
         url: &str,
         default_size: (f64, f64),
-    ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+    ) -> Option<raikiri_js::runtime::ImagePixels> {
         use raikiri_traits::ImagePixelSource;
 
         let (resolver, parsed) = self.resolve_image(url).ok()?;
         let natural = resolver.intrinsic_size(&parsed)?;
-        let (width, height) =
-            raikiri_dom::image_geometry::default_sized_object(natural, default_size);
-        resolver.get_decoded_at_size(
-            &parsed,
-            raikiri_traits::ImageRasterSize {
-                width: width as f32,
-                height: height as f32,
-            },
-            None,
-        )
+        let size = raikiri_dom::image_geometry::default_sized_object(natural, default_size);
+        resolver
+            .get_decoded_at_size(
+                &parsed,
+                raikiri_traits::ImageRasterSize {
+                    width: size.0 as f32,
+                    height: size.1 as f32,
+                },
+                None,
+            )
+            .map(|image| raikiri_js::runtime::ImagePixels { size, image })
     }
 
     fn flush(&mut self) -> Result<(), HostError> {

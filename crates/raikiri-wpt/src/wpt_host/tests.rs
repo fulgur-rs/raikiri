@@ -1149,11 +1149,16 @@ fn image_pixels_decodes_the_images_load_image_accepts() {
     let (_dir, root) = script_root();
     std::fs::write(root.join("css/page/broken.png"), "not a png").unwrap();
     let mut host = host_at(&root.join("css/page"), &root);
-    let image = host
+    let pixels = host
         .image_pixels(GREEN_PNG, (300.0, 150.0))
         .expect("decoded pixels");
-    assert_eq!((image.width, image.height), (1, 1));
-    assert_eq!(image.rgba, [0, 128, 0, 255], "the pixel is CSS green");
+    assert_eq!(pixels.size, (1.0, 1.0));
+    assert_eq!((pixels.image.width, pixels.image.height), (1, 1));
+    assert_eq!(
+        pixels.image.rgba,
+        [0, 128, 0, 255],
+        "the pixel is CSS green"
+    );
     assert!(
         host.image_pixels(&file_url(&root.join("css/page/broken.png")), (300.0, 150.0))
             .is_none()
@@ -1165,10 +1170,23 @@ fn image_pixels_decodes_the_images_load_image_accepts() {
         r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 10"><rect width="20" height="10" fill="lime"/></svg>"#,
     )
     .unwrap();
-    let image = host
+    let pixels = host
         .image_pixels(&file_url(&root.join("css/page/ratio.svg")), (100.0, 100.0))
         .expect("rasterized svg");
-    assert_eq!((image.width, image.height), (100, 50));
+    assert_eq!(pixels.size, (100.0, 50.0));
+    assert_eq!((pixels.image.width, pixels.image.height), (100, 50));
+    // A fractional concrete size keeps its exact value; only the raster
+    // rounds up to whole pixels.
+    std::fs::write(
+        root.join("css/page/ratio3.svg"),
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 10"><rect width="30" height="10" fill="lime"/></svg>"#,
+    )
+    .unwrap();
+    let pixels = host
+        .image_pixels(&file_url(&root.join("css/page/ratio3.svg")), (100.0, 100.0))
+        .expect("rasterized svg");
+    assert_eq!(pixels.size, (100.0, 100.0 / 3.0));
+    assert_eq!((pixels.image.width, pixels.image.height), (100, 34));
     let mut host = host_at(&root.join("css/page"), &root.join("no-such-root"));
     assert!(host.image_pixels(GREEN_PNG, (300.0, 150.0)).is_none());
 }

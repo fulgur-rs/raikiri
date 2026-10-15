@@ -441,8 +441,10 @@ fn clear_rect(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     Ok(JsValue::undefined())
 }
 
-/// The pixels of a `drawImage` source: straight-alpha RGBA8 rows.
+/// The pixels of a `drawImage` source: straight-alpha RGBA8 rows that
+/// cover the source's `size`, which is in CSS px and may be fractional.
 struct SourcePixels {
+    size: (f64, f64),
     width: u32,
     height: u32,
     rgba: SourceBytes,
@@ -520,11 +522,12 @@ fn source_pixels(
                 )),
                 Some(Some(url)) => {
                     let default_size = (f64::from(bitmap_size.0), f64::from(bitmap_size.1));
-                    let image = with_state(context, |s| s.host.image_pixels(&url, default_size))?;
-                    Ok(image.map(|image| SourcePixels {
-                        width: image.width,
-                        height: image.height,
-                        rgba: SourceBytes::Image(image),
+                    let pixels = with_state(context, |s| s.host.image_pixels(&url, default_size))?;
+                    Ok(pixels.map(|pixels| SourcePixels {
+                        size: pixels.size,
+                        width: pixels.image.width,
+                        height: pixels.image.height,
+                        rgba: SourceBytes::Image(pixels.image),
                     }))
                 }
             }
@@ -549,6 +552,7 @@ fn source_pixels(
             // A canvas without materialized pixels is transparent black,
             // which source-over leaves unchanged.
             Ok(rgba.map(|rgba| SourcePixels {
+                size: (f64::from(width), f64::from(height)),
                 width,
                 height,
                 rgba: SourceBytes::Canvas(rgba),
@@ -601,7 +605,7 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     let Some(pixels) = source_pixels(context, source, (canvas_w, canvas_h))? else {
         return Ok(JsValue::undefined());
     };
-    let (image_w, image_h) = (f64::from(pixels.width), f64::from(pixels.height));
+    let (image_w, image_h) = pixels.size;
     // The 3- and 5-argument forms draw the whole image, and the 3-argument
     // form draws it at its natural size.
     let full = [0.0, 0.0, image_w, image_h];
@@ -627,14 +631,19 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     if left >= right || top >= bottom {
         return Ok(JsValue::undefined());
     }
-    let sample = |offset: f64, d: f64, dl: f64, s: f64, sl: f64, limit: u32| {
-        // The pixel center, mapped from the destination to the source.
+    let sample = |offset: f64, d: f64, dl: f64, s: f64, sl: f64, extent: f64, limit: u32| {
+        // The pixel center, mapped from the destination to the source, then
+        // from the source's CSS px to its raster pixels.
         let center = offset + 0.5;
         if center < d || center >= d + dl {
             return None;
         }
         let source = s + (center - d) * sl / dl;
-        (source >= 0.0 && source < f64::from(limit)).then(|| source.floor() as u32)
+        if source < 0.0 || source >= extent {
+            return None;
+        }
+        let raster = (source * f64::from(limit) / extent).floor() as u32;
+        Some(raster.min(limit.saturating_sub(1)))
     };
     with_state(context, |s| {
         s.host.document_mut().canvas_composite_rect(
@@ -644,8 +653,8 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
             (right - left) as i32,
             (bottom - top) as i32,
             |col, row| {
-                let source_col = sample(f64::from(col), dx, dw, sx, sw, pixels.width)?;
-                let source_row = sample(f64::from(row), dy, dh, sy, sh, pixels.height)?;
+                let source_col = sample(f64::from(col), dx, dw, sx, sw, image_w, pixels.width)?;
+                let source_row = sample(f64::from(row), dy, dh, sy, sh, image_h, pixels.height)?;
                 Some(pixels.pixel(source_col, source_row))
             },
         );
