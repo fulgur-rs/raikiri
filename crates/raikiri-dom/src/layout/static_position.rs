@@ -6,10 +6,10 @@ use crate::document::Document;
 use raikiri_style::property::{Direction, DisplayValue, FloatValue, PositionValue, TextAlign};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto};
 
-/// Move each absolutely positioned box whose `display` was inline-level,
-/// and whose horizontal insets are both `auto`, to its static position on
-/// the line it would sit on among the block-level children of its block
-/// container.
+/// Move each absolutely positioned or fixed box whose `display` was
+/// inline-level, and whose horizontal insets are both `auto`, to its static
+/// position on the line it would sit on among the block-level children of
+/// its block container.
 ///
 /// Taffy's block algorithm places such a box as if it were a block, at the
 /// inline-start edge of the content box. Its static position is that of a
@@ -23,11 +23,11 @@ use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto};
 /// other blocks of the same formatting context, and boxes and floats inside
 /// a `display: contents` child, are not seen.
 ///
-/// Run it before fixed boxes are placed in the page area: that placement
-/// fixes their offsets from their parents, so moving an ancestor afterwards
-/// would carry them along. Run it again after, for the boxes inside fixed
-/// boxes that placement lays out again; the pass computes each position
-/// from scratch, so the boxes it already placed do not move.
+/// Run it before fixed boxes are placed in the page area, and again after,
+/// for the boxes inside fixed boxes that placement lays out again. The pass
+/// computes each position from scratch, so the boxes it already placed do
+/// not move; a box it moves keeps the fixed boxes inside it that an inset
+/// placed against the page area where they are.
 // spec: https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width
 pub(super) fn realign_inline_level_abspos_static_positions(
     document: &mut Document,
@@ -97,8 +97,10 @@ pub(super) fn realign_inline_level_abspos_static_positions(
                 floats.push((child.float, child_layout));
                 continue;
             }
-            if child.position != PositionValue::Absolute
-                || !child.display.is_inline_level()
+            if !matches!(
+                child.position,
+                PositionValue::Absolute | PositionValue::Fixed
+            ) || !child.display.is_inline_level()
                 || !matches!(child.left, ComputedLengthPercentageOrAuto::Auto)
                 || !matches!(child.right, ComputedLengthPercentageOrAuto::Auto)
             {
@@ -143,7 +145,7 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             // An atomic inline sits on the line as its margin box. An empty
             // inline box is a point; the content of a non-empty one is not
             // measured here.
-            let hypothetical_width = if child.display == DisplayValue::Inline {
+            let hypothetical_width = if is_non_atomic_inline(document, child_id, child.display) {
                 0.0
             } else {
                 margin_left + child_layout.size.width + margin_right
@@ -154,7 +156,50 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             } else {
                 start + margin_left
             };
-            document.nodes[child_id].unrounded_layout.location.x = x;
+            let dx = x - child_layout.location.x;
+            if dx != 0.0 {
+                document.nodes[child_id].unrounded_layout.location.x = x;
+                keep_placed_fixed_descendants(document, cascade, child_id, dx);
+            }
+        }
+    }
+}
+
+/// Whether `id` would be a non-atomic inline box: `display: inline` on an
+/// element that is not replaced and not a form control.
+fn is_non_atomic_inline(document: &Document, id: usize, display: DisplayValue) -> bool {
+    use super::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
+    let node = &document.nodes[id];
+    let tag = node.tag_name().unwrap_or("");
+    display == DisplayValue::Inline
+        && !node.is_inline_svg_root()
+        && !ATOMIC_TAGS.contains(&tag)
+        && !REPLACED_BOX_TAGS.contains(&tag)
+}
+
+/// Undo the move of `moved` by `dx` for the fixed boxes inside it that a
+/// horizontal inset places against a containing block outside it: placing
+/// fixed boxes in the page area fixed their offsets from their parents.
+fn keep_placed_fixed_descendants(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    moved: usize,
+    dx: f32,
+) {
+    if super::establishes_fixed_containing_block(document, moved, &cascade.computed[moved]) {
+        return;
+    }
+    let mut stack = document.nodes[moved].children.clone();
+    while let Some(id) = stack.pop() {
+        let cv = &cascade.computed[id];
+        if cv.position == PositionValue::Fixed
+            && !(matches!(cv.left, ComputedLengthPercentageOrAuto::Auto)
+                && matches!(cv.right, ComputedLengthPercentageOrAuto::Auto))
+        {
+            document.nodes[id].unrounded_layout.location.x -= dx;
+        }
+        if !super::establishes_fixed_containing_block(document, id, cv) {
+            stack.extend_from_slice(&document.nodes[id].children);
         }
     }
 }

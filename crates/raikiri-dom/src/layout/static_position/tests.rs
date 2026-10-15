@@ -4,6 +4,9 @@ use crate::layout::test_support::{absolute_rect, page_box_800x600, with_ahem};
 use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
+/// An absolute rect: x, y, width and height.
+type Rect = (f32, f32, f32, f32);
+
 /// `body > div(container_css) > [div(height:50px), div(float_css),
 /// div(abs_css)]` with a 200px wide container, laid out on an 800x600 page.
 /// Returns the absolute rect of the last div.
@@ -254,4 +257,89 @@ fn a_fixed_box_laid_out_again_keeps_its_children_aligned() {
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
     assert_eq!(absolute_rect(&doc, fixed).2, 400.0);
     assert_eq!(absolute_rect(&doc, abs), (200.0, 50.0, 40.0, 10.0));
+}
+
+#[test]
+fn fixed_and_replaced_boxes_take_their_line_too() {
+    // A fixed box keeps its static position in the page area.
+    assert_eq!(
+        abs_rect(
+            "text-align:center",
+            "float:right",
+            "display:inline;position:fixed"
+        ),
+        (75.0, 50.0, 40.0, 10.0)
+    );
+}
+
+/// `body > div(width:100px) > div(fixed, 50% wide, centered) >
+/// [div(height:50px), tag(inner_css) > div(fixed, nested_css)]`. Returns
+/// the absolute rects of the inner box and of the fixed box inside it.
+fn inside_a_relaid_fixed_box(tag: &str, inner_css: &str, nested_css: &str) -> (Rect, Rect) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let add = |doc: &mut Document, parent: usize, tag: &str, css: &str| {
+        doc.append_element(Some(parent), tag, Style::default(), Some(css))
+    };
+    let narrow = add(&mut doc, body, "div", "display:block;width:100px");
+    let fixed = add(
+        &mut doc,
+        narrow,
+        "div",
+        "display:block;position:fixed;left:0;top:0;width:50%;height:100px;text-align:center",
+    );
+    add(&mut doc, fixed, "div", "display:block;height:50px");
+    let inner = add(&mut doc, fixed, tag, inner_css);
+    let nested = add(
+        &mut doc,
+        inner,
+        "div",
+        &format!("display:block;position:fixed;top:6px;width:20px;height:10px;{nested_css}"),
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    (absolute_rect(&doc, inner), absolute_rect(&doc, nested))
+}
+
+#[test]
+fn a_moved_box_leaves_its_placed_fixed_boxes_in_place() {
+    let (inner, nested) = inside_a_relaid_fixed_box(
+        "div",
+        "display:inline;position:absolute;width:40px;height:10px",
+        "left:5px",
+    );
+    assert_eq!(inner, (200.0, 50.0, 40.0, 10.0));
+    assert_eq!(nested, (5.0, 6.0, 20.0, 10.0));
+    // A fixed box at its static position moves with the box.
+    let (_, nested) = inside_a_relaid_fixed_box(
+        "div",
+        "display:inline;position:absolute;width:40px;height:10px",
+        "",
+    );
+    assert_eq!(nested.0, 200.0);
+    // A transformed box is the containing block of the fixed box.
+    let (_, nested) = inside_a_relaid_fixed_box(
+        "div",
+        "display:inline;position:absolute;width:40px;height:10px;transform:translate(0)",
+        "left:5px",
+    );
+    assert_eq!(nested.0, 205.0);
+}
+
+#[test]
+fn a_replaced_inline_is_aligned_as_its_box() {
+    let (inner, _) = inside_a_relaid_fixed_box(
+        "img",
+        "display:inline;position:absolute;width:40px;height:10px",
+        "left:5px",
+    );
+    assert_eq!(inner, (180.0, 50.0, 40.0, 10.0));
 }
