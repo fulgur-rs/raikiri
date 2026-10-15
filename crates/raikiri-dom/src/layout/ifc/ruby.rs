@@ -432,10 +432,10 @@ impl Planner<'_> {
         let internal =
             box_kind(cascade, doc, child).is_none() && !has_generated_content(cascade, child);
         // The children of an element with `display: contents` take its
-        // place in the ruby container (CSS Display 3 §2.5), so ruby parts
-        // among them, at any depth of such wrappers, are parts of this
-        // container.
-        if internal && holds_ruby_parts(doc, cascade, child) {
+        // place in the ruby container (CSS Display 3 §2.5), so they are
+        // grouped as if they were children of the container, at any depth
+        // of such wrappers.
+        if internal && is_contents_wrapper(doc, cascade, child) {
             for &id in &doc.nodes[child].children {
                 self.push_child(ruby, id)?;
             }
@@ -472,8 +472,8 @@ impl Planner<'_> {
 }
 
 /// The children of the ruby-internal container `container`, with every
-/// `display: contents` element holding ruby parts replaced by its children
-/// (CSS Display 3 §2.5).
+/// `display: contents` element replaced by its children (CSS Display 3
+/// §2.5).
 fn flattened_children(doc: &Document, cascade: &CascadeResult, container: usize) -> Vec<usize> {
     let mut children = Vec::new();
     let mut stack: Vec<usize> = doc.nodes[container]
@@ -483,7 +483,7 @@ fn flattened_children(doc: &Document, cascade: &CascadeResult, container: usize)
         .copied()
         .collect();
     while let Some(id) = stack.pop() {
-        if holds_ruby_parts(doc, cascade, id) {
+        if is_contents_wrapper(doc, cascade, id) {
             stack.extend(doc.nodes[id].children.iter().rev());
         } else {
             children.push(id);
@@ -492,37 +492,13 @@ fn flattened_children(doc: &Document, cascade: &CascadeResult, container: usize)
     children
 }
 
-/// Whether `id` is an element with `display: contents` whose children, seen
-/// through further such elements, include a ruby base or annotation part.
-fn holds_ruby_parts(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let is_contents = |id: usize| {
-        doc.nodes[id].kind() == NodeKind::Element
-            && cascade.computed[id].display == DisplayValue::Contents
-            && box_kind(cascade, doc, id).is_none()
-            && !has_generated_content(cascade, id)
-    };
-    if !is_contents(id) {
-        return false;
-    }
-    let mut stack = doc.nodes[id].children.clone();
-    while let Some(id) = stack.pop() {
-        if doc.nodes[id].kind() != NodeKind::Element {
-            continue;
-        }
-        if matches!(
-            cascade.computed[id].display,
-            DisplayValue::RubyBase
-                | DisplayValue::RubyText
-                | DisplayValue::RubyBaseContainer
-                | DisplayValue::RubyTextContainer
-        ) {
-            return true;
-        }
-        if is_contents(id) {
-            stack.extend(&doc.nodes[id].children);
-        }
-    }
-    false
+/// Whether `id` is an element with `display: contents` that its children
+/// replace in a ruby container (CSS Display 3 §2.5), whatever they are.
+fn is_contents_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    doc.nodes[id].kind() == NodeKind::Element
+        && cascade.computed[id].display == DisplayValue::Contents
+        && box_kind(cascade, doc, id).is_none()
+        && !has_generated_content(cascade, id)
 }
 
 /// How the ruby container `ruby` is laid out, or `None` when its content is

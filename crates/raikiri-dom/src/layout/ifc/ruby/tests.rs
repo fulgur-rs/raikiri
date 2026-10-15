@@ -212,6 +212,17 @@ fn display_contents_content_stays_plain() {
 }
 
 #[test]
+fn display_contents_white_space_is_white_space_between_parts() {
+    let plan = plan_of(|doc, ruby| {
+        let contents = element(doc, ruby, "span", "display:contents");
+        doc.append_text(contents, " ");
+        rb(doc, ruby, "a");
+        rt(doc, ruby, "x");
+    });
+    assert_eq!(plan, ["|rb(a)|[rt(x)]"]);
+}
+
+#[test]
 fn inline_boxes_in_annotations_have_pieces_over_their_bases() {
     let mut ids = (0, 0);
     let fixture = block_fixture("line-height:20px", |doc, root| {
