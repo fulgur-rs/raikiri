@@ -96,3 +96,66 @@ fn inline_baseline_shifts_require_the_documents_font_collection() {
     assert!(shifts[&span] < 0.0);
     assert!(baseline_shifts(&Document::new(), line).is_empty());
 }
+
+#[test]
+fn a_paragraph_is_decorated_by_its_contents_and_the_typographic_styles_above_it() {
+    use crate::layout::ifc::test_support::{sheet_fixture, span};
+    let decorated = |sheet: &str, span_style: &str| {
+        let fixture = sheet_fixture(sheet, "", |document, root| {
+            let span = span(document, root, span_style);
+            document.append_text(span, "ab");
+        });
+        paragraph_may_be_decorated(&fixture.doc, &fixture.cascade, fixture.root)
+    };
+    assert!(!decorated("", ""));
+    assert!(!decorated("span { text-decoration: none }", ""));
+    assert!(decorated("", "text-decoration: underline"));
+    assert!(!decorated("", "text-decoration: underline; display: none"));
+    assert!(decorated(
+        "span::after { content: 'x'; text-decoration: overline }",
+        ""
+    ));
+    assert!(decorated(
+        "body::first-line { text-decoration: line-through }",
+        ""
+    ));
+    assert!(decorated(
+        "div::first-letter { text-decoration: underline }",
+        ""
+    ));
+}
+
+#[test]
+fn an_undecorated_paragraph_builds_no_line_decorations() {
+    use crate::layout::layout_single_page;
+    use crate::layout::test_support::{ahem_paragraph_with, page_box_800x600, with_ahem};
+
+    for (style, lines) in [("", 0), ("text-decoration:underline", 1)] {
+        let (mut document, cascade, root) = ahem_paragraph_with("", |document, root| {
+            let span =
+                document.append_element(Some(root), "span", taffy::Style::default(), Some(style));
+            document.append_text(span, "ab");
+        });
+        layout_single_page(with_ahem(&mut document), &cascade, page_box_800x600()).unwrap();
+        let positioned = crate::PositionedLines::new(&document, &cascade, root, None).unwrap();
+        let line = positioned.line_at(0).unwrap();
+        let base = context_for_root(&document, &cascade, root);
+        let decorations =
+            positioned_line_decorations(&document, &cascade, root, &base, &line, (0.0, 0.0));
+        assert_eq!(decorations.len(), line.runs.len());
+        assert_eq!(
+            decorations.iter().map(Vec::len).sum::<usize>(),
+            lines,
+            "{style}"
+        );
+        assert_eq!(
+            document
+                .page_projection
+                .decorated_paragraphs
+                .borrow()
+                .get(&root),
+            Some(&(lines > 0)),
+            "{style}"
+        );
+    }
+}
