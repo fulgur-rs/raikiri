@@ -218,8 +218,6 @@ The generated page is [`docs/wpt-dashboard.html`](docs/wpt-dashboard.html). See 
 - [WPT workflow](scripts/wpt/README.md)
 - [hello-world VRT fixture](crates/raikiri/tests/reference/hello-world/README.md)
 
-Design decisions and work status are recorded in the repository's Beads issue tracker (`bd`).
-
 ### License
 
 Dual-licensed under the MIT License or Apache License 2.0.
