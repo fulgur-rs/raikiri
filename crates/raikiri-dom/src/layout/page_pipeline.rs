@@ -6735,8 +6735,9 @@ pub fn layout_single_page_with_resolver_and_base_url(
 /// through it (CSS 2 §8.3.1). A line box counts, including one holding only
 /// generated content such as an inside marker or `::before`, and so does a
 /// block-level `::before` or `::after` box with padding, border or height.
-/// Out-of-flow children do not count, and neither does an empty block child
-/// whose own margins collapse through it.
+/// Out-of-flow children do not count, an inline child counts only through
+/// its line, and an empty block child whose own margins collapse through it
+/// does not count.
 fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let has_generated_content = document.ifc_layout_node(id).is_some_and(|node| {
         let width = node.unrounded_layout.size.width;
@@ -6759,10 +6760,18 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
     }
     boxes.into_iter().any(|child| {
         let node = &document.nodes[child];
-        node.kind() == NodeKind::Text
-            || cascade.computed[child].display != DisplayValue::Block
-            || node.unrounded_layout.size.height > 0.0
-            || has_in_flow_content(document, cascade, child)
+        let display = cascade.computed[child].display;
+        if node.kind() == NodeKind::Text {
+            true
+        } else if display.is_inline_level() {
+            // An inline-level box is content only through the line it makes,
+            // which the line check above has already counted.
+            false
+        } else {
+            display != DisplayValue::Block
+                || node.unrounded_layout.size.height > 0.0
+                || has_in_flow_content(document, cascade, child)
+        }
     })
 }
 
