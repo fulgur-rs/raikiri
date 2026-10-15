@@ -2330,20 +2330,20 @@ pub(crate) struct MulticolMetrics {
 }
 
 /// Visit every node of the arena once, each parent before its children.
-fn visit_top_down(parent_of: &[Option<usize>], mut visit: impl FnMut(Option<usize>, usize)) {
-    let mut resolved = vec![false; parent_of.len()];
+fn visit_top_down(doc: &Document, mut visit: impl FnMut(Option<usize>, usize)) {
+    let mut resolved = vec![false; doc.nodes.len()];
     let mut chain = Vec::new();
-    for start in 0..parent_of.len() {
+    for start in 0..doc.nodes.len() {
         // Collect the unresolved part of this node's chain, then resolve it
         // from the top down.
         let mut current = Some(start);
         while let Some(id) = current.filter(|&id| !resolved[id]) {
             resolved[id] = true;
             chain.push(id);
-            current = parent_of[id];
+            current = doc.parent_of(id);
         }
         while let Some(id) = chain.pop() {
-            visit(parent_of[id], id);
+            visit(doc.parent_of(id), id);
         }
     }
 }
@@ -2385,13 +2385,8 @@ pub(crate) struct AncestorFacts {
 }
 
 impl AncestorFacts {
-    pub(crate) fn new(
-        doc: &Document,
-        cascade: &CascadeResult,
-        parent_of: &[Option<usize>],
-        fallback_width: f32,
-    ) -> Self {
-        let count = parent_of.len();
+    pub(crate) fn new(doc: &Document, cascade: &CascadeResult, fallback_width: f32) -> Self {
+        let count = doc.nodes.len();
         let mut facts = Self {
             multicol_ancestor: vec![false; count],
             vertical: vec![false; count],
@@ -2401,7 +2396,7 @@ impl AncestorFacts {
             authored_ancestor: vec![None; count],
             min_content: vec![false; count],
         };
-        visit_top_down(parent_of, |parent, id| {
+        visit_top_down(doc, |parent, id| {
             facts.resolve(doc, cascade, parent, id, fallback_width);
         });
         facts
@@ -2637,15 +2632,7 @@ pub(crate) fn prepare_multicol_layout(
     cascade: &CascadeResult,
     fallback_width: f32,
 ) {
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            if child < parent_of.len() {
-                parent_of[child] = Some(parent);
-            }
-        }
-    }
-    let ancestors = AncestorFacts::new(doc, cascade, &parent_of, fallback_width);
+    let ancestors = AncestorFacts::new(doc, cascade, fallback_width);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -2667,7 +2654,7 @@ pub(crate) fn prepare_multicol_layout(
             || cv.overflow.y != OverflowValue::Visible;
         let engine_box = engine_sized
             && !doc.nodes[idx].in_ifc_subtree()
-            && parent_of.get(idx).copied().flatten().is_some_and(|parent| {
+            && doc.parent_of(idx).is_some_and(|parent| {
                 doc.nodes[parent].is_ifc_root() || doc.nodes[parent].in_ifc_subtree()
             });
         if engine_box {

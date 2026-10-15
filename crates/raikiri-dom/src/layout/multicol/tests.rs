@@ -259,18 +259,12 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
     );
     let leaf = doc.append_element(Some(vertical), "div", Style::default(), None::<&str>);
     let late_parent = doc.append_element(Some(body), "div", Style::default(), Some("width:30px"));
+    // Reparent under a later arena index and keep both DOM edge representations consistent.
+    doc.detach_from_parent(half);
+    doc.attach_child(late_parent, half);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
-    // Reparent `half` under a node later in the arena: resolution must still
-    // reach the parent before the child.
-    parent_of[half] = Some(late_parent);
-    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
+    let facts = AncestorFacts::new(&doc, &cascade, 800.0);
 
     assert_eq!(facts.content_width[sized], 400.0);
     assert_eq!(facts.content_width[half], 15.0);
@@ -388,16 +382,10 @@ fn authored_containing_width_uses_the_resolved_ch_style_width() {
     doc.set_font_collection(crate::fonts::system_font_collection());
     prepare_ch_box_values_before_taffy(&mut doc, &cascade);
 
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
     let taffy_width = style_dimension_length(doc.nodes[container].style.size.width)
         .expect("resolved ch width should be a finite length");
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
+        AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(taffy_width),
     );
 }
@@ -428,18 +416,12 @@ fn content_widths_resolve_a_measured_ch_calc_with_a_percentage() {
     doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     prepare_ch_box_values_before_taffy(&mut doc, &cascade);
 
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
     // Half of the 200px container plus two 10px Ahem "0" advances.
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
+        AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(120.0),
     );
-    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
+    let facts = AncestorFacts::new(&doc, &cascade, 800.0);
     assert_eq!(facts.content_width[sized], 120.0);
 }
 
@@ -475,18 +457,12 @@ fn content_widths_skip_a_measured_ch_width_on_display_contents() {
     doc.set_font_collection(crate::layout::ifc::test_support::ahem_fonts());
     prepare_ch_box_values_before_taffy(&mut doc, &cascade);
 
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
     // The contents element has no box, so the child halves the 800px container.
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 1000.0).authored_containing_width(text),
+        AncestorFacts::new(&doc, &cascade, 1000.0).authored_containing_width(text),
         Some(400.0),
     );
-    let facts = AncestorFacts::new(&doc, &cascade, &parent_of, 1000.0);
+    let facts = AncestorFacts::new(&doc, &cascade, 1000.0);
     assert_eq!(facts.content_width[half], 400.0);
 }
 
@@ -514,18 +490,12 @@ fn authored_containing_width_preserves_percentage_fallback_behavior() {
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
 
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            parent_of[child] = Some(parent);
-        }
-    }
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(text),
+        AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(text),
         Some(100.0),
     );
     assert_eq!(
-        AncestorFacts::new(&doc, &cascade, &parent_of, 800.0).authored_containing_width(auto_text),
+        AncestorFacts::new(&doc, &cascade, 800.0).authored_containing_width(auto_text),
         None,
     );
 }
@@ -989,15 +959,7 @@ fn multicol_gap_fixture_metrics(style_attr: &str) -> MulticolMetrics {
     let container = doc.append_element(Some(body), "div", Style::default(), Some(style_attr));
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            if child < parent_of.len() {
-                parent_of[child] = Some(parent);
-            }
-        }
-    }
-    let ancestors = AncestorFacts::new(&doc, &cascade, &parent_of, 800.0);
+    let ancestors = AncestorFacts::new(&doc, &cascade, 800.0);
     multicol_metrics_with_width(&cascade, container, ancestors.content_width[container])
         .expect("multicol metrics")
 }
@@ -2618,8 +2580,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
     );
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-    let parents: Vec<_> = (0..doc.nodes.len()).map(|id| doc.parent_of(id)).collect();
-    let widths = AncestorFacts::new(&doc, &cascade, &parents, 800.0);
+    let widths = AncestorFacts::new(&doc, &cascade, 800.0);
     assert_eq!(widths.authored_containing_width(half), Some(400.0));
     assert_eq!(widths.authored_containing_width(text), Some(200.0));
     assert!(!widths.in_min_content(half));
@@ -2639,17 +2600,16 @@ fn ancestor_width_table_refreshes_measured_ch_and_percentage_inputs() {
     let ch = doc.append_element(Some(body), "div", Style::default(), Some("width:4ch"));
     let ch_text = doc.append_text(ch, "ch");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
-    let parents: Vec<_> = (0..doc.nodes.len()).map(|id| doc.parent_of(id)).collect();
     doc.nodes[ch].style.size.width = Dimension::length(64.0);
     let ComputedLengthPercentageOrAuto::Px(fallback) = cascade.computed[ch].width else {
         panic!("ch cascade fallback must be px")
     };
     assert_ne!(fallback, 64.0);
-    let preparation = AncestorFacts::new(&doc, &cascade, &parents, 800.0);
+    let preparation = AncestorFacts::new(&doc, &cascade, 800.0);
     assert_eq!(preparation.authored_containing_width(ch_text), Some(64.0));
     for (page_width, measured_ch) in [(800.0, 64.0), (400.0, 96.0), (800.0, 64.0)] {
         doc.nodes[ch].style.size.width = Dimension::length(measured_ch);
-        let rebreak = AncestorFacts::new(&doc, &cascade, &parents, page_width);
+        let rebreak = AncestorFacts::new(&doc, &cascade, page_width);
         assert_eq!(
             rebreak.authored_containing_width(text),
             Some(page_width / 2.0)
@@ -2659,4 +2619,57 @@ fn ancestor_width_table_refreshes_measured_ch_and_percentage_inputs() {
             Some(measured_ch)
         );
     }
+}
+
+#[test]
+fn parent_lookup_matches_arena_edges_through_detached_and_fragment_mutations() {
+    fn assert_parents(doc: &Document) {
+        let mut from_children = vec![None; doc.nodes.len()];
+        for (parent, node) in doc.nodes.iter().enumerate() {
+            for &child in &node.children {
+                from_children[child] = Some(parent);
+            }
+        }
+        for (child, expected) in from_children.into_iter().enumerate() {
+            assert_eq!(doc.parent_of(child), expected);
+        }
+    }
+
+    let mut doc = Document::new();
+    let body = doc.append_element(Some(0), "body", Style::default(), None::<&str>);
+    let branch = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    let child = doc.append_element(Some(branch), "div", Style::default(), None::<&str>);
+    let text = doc.append_text(child, "detached text");
+    let late_parent = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+    doc.detach_from_parent(branch);
+    doc.mark_in_document_flags();
+    assert!(!doc.nodes[branch].is_in_document());
+    assert_eq!(doc.parent_of(branch), None);
+    assert_eq!(doc.parent_of(child), Some(branch));
+    assert_eq!(doc.parent_of(text), Some(child));
+    assert_parents(&doc);
+
+    doc.attach_child(late_parent, branch);
+    assert_parents(&doc);
+    let template = doc.append_element(Some(body), "template", Style::default(), None::<&str>);
+    let fragment = doc.allocate_template_fragment_root(template);
+    let fragment_child = doc.append_element(Some(fragment), "div", Style::default(), None::<&str>);
+    doc.append_text(fragment_child, "template text");
+    doc.mark_in_document_flags();
+    assert_eq!(doc.parent_of(fragment), None);
+    assert_eq!(doc.parent_of(fragment_child), Some(fragment));
+    assert!(!doc.nodes[fragment_child].is_in_document());
+    assert_parents(&doc);
+
+    doc.attach_child(body, fragment);
+    assert_eq!(doc.parent_of(fragment), None);
+    assert_eq!(doc.parent_of(fragment_child), Some(body));
+    assert_parents(&doc);
+    doc.reparent_children(branch, late_parent);
+    assert_eq!(doc.parent_of(child), Some(late_parent));
+    assert_parents(&doc);
+    doc.retain_children(|id| id != child);
+    assert_eq!(doc.parent_of(child), None);
+    assert_eq!(doc.parent_of(text), Some(child));
+    assert_parents(&doc);
 }
