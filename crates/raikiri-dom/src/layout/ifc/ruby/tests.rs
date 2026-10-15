@@ -1382,3 +1382,24 @@ fn floated_rubies_take_their_first_letter() {
     assert_eq!(xs.len(), 2, "{xs:?}");
     assert_eq!(xs[1] - xs[0], 20.0, "{xs:?}");
 }
+
+#[test]
+fn deeply_nested_display_contents_wrappers_fall_back() {
+    for (wrappers, planned) in [(MAX_DEPTH - 1, true), (MAX_DEPTH + 1, false)] {
+        let mut container = 0;
+        let fixture = block_fixture("", |doc, root| {
+            container = ruby(doc, root);
+            let mut parent = container;
+            for _ in 0..wrappers {
+                parent = element(doc, parent, "span", "display:contents");
+            }
+            rb(doc, parent, "a");
+            rt(doc, parent, "x");
+        });
+        assert_eq!(
+            plan(&fixture.doc, &fixture.cascade, container).is_some(),
+            planned,
+            "{wrappers} wrappers"
+        );
+    }
+}

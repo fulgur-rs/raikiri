@@ -152,6 +152,8 @@ struct Planner<'a> {
     cascade: &'a CascadeResult,
     /// How deeply the container is nested in other ruby content.
     depth: usize,
+    /// How many `display: contents` wrappers enclose the child being added.
+    wrappers: usize,
     segments: Vec<Segment>,
     current: Segment,
     /// The current segment has annotations or a base container: base content
@@ -185,7 +187,8 @@ impl Planner<'_> {
         let (doc, cascade) = (self.doc, self.cascade);
         // The content is laid out recursively, so deeply nested content is
         // left to the ordinary inline path, which walks the tree iteratively.
-        if self.depth + depth > MAX_DEPTH {
+        let nesting = self.depth + self.wrappers + depth;
+        if nesting > MAX_DEPTH {
             return false;
         }
         if is_skipped(doc, cascade, id) || doc.nodes[id].kind() == NodeKind::Text {
@@ -208,7 +211,7 @@ impl Planner<'_> {
                 .children
                 .iter()
                 .all(|&child| self.is_plain_inline_at(child, depth + 1)),
-            DisplayValue::Ruby => match plan_at(doc, cascade, id, self.depth + depth + 1) {
+            DisplayValue::Ruby => match plan_at(doc, cascade, id, nesting + 1) {
                 Some(nested) => {
                     self.found
                         .extend(nested.out_of_flow.into_iter().map(|(_, id)| id));
@@ -448,10 +451,17 @@ impl Planner<'_> {
         // place in the ruby container (CSS Display 3 §2.5), so they are
         // grouped as if they were children of the container, at any depth
         // of such wrappers.
+        // The wrappers are walked recursively, so deeply nested ones leave
+        // the container to the ordinary inline path.
         if internal && is_contents_wrapper(doc, cascade, child) {
+            if self.depth + self.wrappers >= MAX_DEPTH {
+                return None;
+            }
+            self.wrappers += 1;
             for &id in &doc.nodes[child].children {
                 self.push_child(ruby, id)?;
             }
+            self.wrappers -= 1;
             return Some(());
         }
         match cascade.computed[child].display {
@@ -528,6 +538,7 @@ fn plan_at(doc: &Document, cascade: &CascadeResult, ruby: usize, depth: usize) -
         doc,
         cascade,
         depth,
+        wrappers: 0,
         segments: Vec::new(),
         current: Segment::default(),
         annotated: false,
