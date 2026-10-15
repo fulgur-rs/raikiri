@@ -107,10 +107,18 @@ fn only_connected_focusable_areas_take_focus() {
          && !takes(document.createElement('button')) && !takes(make('div'))\
          && document.createElement('summary').tabIndex === -1\
          && (function () {\
-              var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');\
-              svg.setAttribute('tabindex', '0'); document.body.appendChild(svg);\
-              HTMLElement.prototype.focus.call(svg);\
-              return document.activeElement !== svg; })()",
+              function svg(tag, attrs) {\
+                var el = document.createElementNS('http://www.w3.org/2000/svg', tag);\
+                for (var name in attrs) el.setAttribute(name, attrs[name]);\
+                document.body.appendChild(el); return el; }\
+              var math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi');\
+              math.setAttribute('tabindex', '0'); document.body.appendChild(math);\
+              HTMLElement.prototype.focus.call(math);\
+              return document.activeElement !== math\
+                && svg('svg') instanceof SVGElement && !takes(svg('svg'))\
+                && takes(svg('svg', {tabindex: '0'})) && takes(svg('a', {href: '#'}))\
+                && takes(svg('a', {'xlink:href': '#'})) && !takes(svg('a'))\
+                && !takes(svg('rect', {contenteditable: ''})); })()",
     );
 }
 
@@ -187,5 +195,41 @@ fn focus_and_ui_event_constructors_read_their_dictionaries() {
          && throws(function () { new UIEvent('x', {view: {}}); })\
          && throws(function () { new FocusEvent('x', {relatedTarget: {}}); })\
          && throws(function () { FocusEvent('x'); })",
+    );
+}
+
+#[test]
+fn focus_handler_attributes_run_and_body_ones_forward_to_the_window() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], b = document.createElement('button'); document.body.appendChild(b);\
+         b.onfocus = function (e) { log.push('focus:' + e.type); };\
+         b.onblur = function (e) { log.push('blur:' + e.type); };\
+         b.focus(); b.blur();\
+         document.body.onfocus = function () {};\
+         log.join() === 'focus:focus,blur:blur' && typeof b.onfocus === 'function'\
+         && typeof b.onblur === 'function' && window.onfocus === document.body.onfocus\
+         && window.onblur === null",
+    );
+}
+
+#[test]
+fn a_frame_takes_focus_from_an_element_that_stopped_being_focusable() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], b = document.createElement('button'); document.body.appendChild(b);\
+         b.addEventListener('blur', function () { log.push('blur'); });\
+         b.addEventListener('focusout', function () { log.push('focusout'); });\
+         b.focus(); b.setAttribute('disabled', '');\
+         var kept = document.activeElement === b;\
+         requestAnimationFrame(function () {});\
+         kept",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && log.join() === 'blur,focusout'",
     );
 }

@@ -44,6 +44,7 @@ pub(crate) struct Protos {
     pub html_canvas_element: JsObject,
     pub html_image_element: JsObject,
     pub html_style_element: JsObject,
+    pub svg_element: JsObject,
     pub svg_style_element: JsObject,
     pub canvas_rendering_context_2d: JsObject,
     pub character_data: JsObject,
@@ -413,9 +414,17 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &html_element,
         &style_element_members,
     )?;
-    // SVG 2 `SVGStyleElement` also includes `LinkStyle`; there is no
-    // `SVGElement` interface here, so it derives from `Element`.
-    let svg_style_element = derived(context, "SVGStyleElement", &element, &style_element_members)?;
+    // `SVGElement` carries only the focus members of the shared
+    // `HTMLOrSVGElement` mixin so far.
+    let svg_element_members = [&super::focus::HTML_ELEMENT_FOCUS_MEMBERS];
+    let svg_element = derived(context, "SVGElement", &element, &svg_element_members)?;
+    // SVG 2 `SVGStyleElement` also includes `LinkStyle`.
+    let svg_style_element = derived(
+        context,
+        "SVGStyleElement",
+        &svg_element,
+        &style_element_members,
+    )?;
     let canvas_2d_members = [&canvas::CANVAS_RENDERING_CONTEXT_2D_MEMBERS];
     let canvas_2d_result = interface(
         context,
@@ -647,6 +656,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         html_canvas_element: html_canvas_element.prototype,
         html_image_element: html_image_element.prototype,
         html_style_element: html_style_element.prototype,
+        svg_element: svg_element.prototype,
         svg_style_element: svg_style_element.prototype,
         canvas_rendering_context_2d: canvas_2d.prototype,
         character_data: character_data.prototype,
@@ -717,7 +727,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html, canvas, image, style, svg_style) = with_state(context, |s| {
+    let (kind, html, svg, canvas, image, style, svg_style) = with_state(context, |s| {
         let doc = s.host.document();
         let node = doc.get_node(index);
         let kind = node.map(|n| n.kind());
@@ -726,8 +736,9 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         let canvas = doc.is_canvas_element(index);
         let image = super::image::is_html_image(doc, index);
         let is_style = node.and_then(|n| n.tag_name()) == Some("style");
-        let svg_style = is_style && namespace == Some(SVG_NS);
-        (kind, html, canvas, image, html && is_style, svg_style)
+        let svg = namespace == Some(SVG_NS);
+        let svg_style = is_style && svg;
+        (kind, html, svg, canvas, image, html && is_style, svg_style)
     })?;
     let p = protos(context);
     Ok(match kind {
@@ -736,6 +747,7 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         Some(NodeKind::Element) if style => p.html_style_element.clone(),
         Some(NodeKind::Element) if svg_style => p.svg_style_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),
+        Some(NodeKind::Element) if svg => p.svg_element.clone(),
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),
         Some(NodeKind::Comment) => p.comment.clone(),

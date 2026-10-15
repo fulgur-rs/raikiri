@@ -605,9 +605,9 @@ fn run_timer(context: &mut Context, id: i32, nesting: u32) -> Result<(), Abort> 
 }
 
 /// Run the animation frame callbacks registered before this frame, in
-/// registration order, all with the frame's timestamp. Callbacks registered
-/// while the frame runs wait for the next frame; ones cancelled while it
-/// runs are skipped.
+/// registration order, all with the frame's timestamp, then the focus
+/// fixup. Callbacks registered while the frame runs wait for the next
+/// frame; ones cancelled while it runs are skipped.
 fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
     let setup = with_state(context, |state| {
         let event_loop = &mut state.event_loop;
@@ -627,13 +627,18 @@ fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
             callbacks.remove(&handle)
         });
         let Ok(Some(callback)) = next else {
-            return Ok(());
+            break;
         };
         let result = callback.call(&JsValue::undefined(), &[JsValue::from(timestamp)], context);
         settle(context, result)?;
         // Each callback is its own "clean up after running script".
         microtask_checkpoint(context)?;
     }
+    // The rendering update's focus fixup: a focused element that stopped
+    // being focusable (disabled, inert) loses focus, with blur events.
+    let result = super::focus::fix_up_focus(context).map(|()| JsValue::undefined());
+    settle(context, result)?;
+    microtask_checkpoint(context)
 }
 
 fn callable_arg(args: &[JsValue], what: &str) -> JsResult<JsObject> {

@@ -1172,14 +1172,16 @@ fn is_window_handler_element(doc: &raikiri_dom::Document, index: usize) -> bool 
 }
 
 /// Storage key for the handler slot of `kind` on element `index`: the
-/// window for load and error on body and frameset, otherwise the element
+/// window for load, error, focus and blur on body and frameset (HTML's
+/// window-reflecting body element event handlers), otherwise the element
 /// itself.
 fn resolve_handler_key_for_index(
     doc: &raikiri_dom::Document,
     index: usize,
     kind: &str,
 ) -> Option<usize> {
-    if matches!(kind, "load" | "error") && is_window_handler_element(doc, index) {
+    if matches!(kind, "load" | "error" | "focus" | "blur") && is_window_handler_element(doc, index)
+    {
         None
     } else {
         Some(index)
@@ -1430,6 +1432,8 @@ event_handler_pair!(on_error, set_on_error, "error");
 event_handler_pair!(on_click, set_on_click, "click");
 event_handler_pair!(on_input, set_on_input, "input");
 event_handler_pair!(on_change, set_on_change, "change");
+event_handler_pair!(on_focus, set_on_focus, "focus");
+event_handler_pair!(on_blur, set_on_blur, "blur");
 
 /// `onload`/`onerror`/`onclick`/`oninput`/`onchange` on `HTMLElement`.
 /// `window` gets the same five, installed by [`install_window_handlers`]
@@ -1443,6 +1447,8 @@ pub(crate) const HTML_ELEMENT_HANDLER_MEMBERS: Members = Members {
         ("onclick", on_click, set_on_click),
         ("oninput", on_input, set_on_input),
         ("onchange", on_change, set_on_change),
+        ("onfocus", on_focus, set_on_focus),
+        ("onblur", on_blur, set_on_blur),
     ],
     methods: &[],
 };

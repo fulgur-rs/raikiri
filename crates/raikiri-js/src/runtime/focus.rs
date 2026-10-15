@@ -32,11 +32,24 @@ fn parse_integer(value: &str) -> Option<i32> {
     i32::try_from(if negative { -magnitude } else { magnitude }).ok()
 }
 
-fn html_tag(document: &Document, index: usize) -> Option<&str> {
+fn tag_in<'a>(document: &'a Document, index: usize, namespace: &str) -> Option<&'a str> {
     let node = document.get_node(index)?;
-    (node.kind() == NodeKind::Element && document.element_namespace_uri(index) == Some(HTML_NS))
+    (node.kind() == NodeKind::Element && document.element_namespace_uri(index) == Some(namespace))
         .then(|| node.tag_name())
         .flatten()
+}
+
+fn html_tag(document: &Document, index: usize) -> Option<&str> {
+    tag_in(document, index, HTML_NS)
+}
+
+/// Whether `index` is an SVG `<a>` with a link, focusable by default.
+///
+/// Spec: <https://svgwg.org/svg2-draft/interact.html#Focus>
+fn is_svg_link(document: &Document, index: usize) -> bool {
+    tag_in(document, index, SVG_NS) == Some("a")
+        && (document.element_attribute(index, "href").is_some()
+            || document.element_attribute(index, "xlink:href").is_some())
 }
 
 /// Whether `index` is a `<summary>` that is the first `<summary>` child of
@@ -83,10 +96,7 @@ fn default_tab_index(document: &Document, index: usize) -> i32 {
         ) => true,
         Some("summary") => is_details_summary(document, index),
         Some(_) => false,
-        None => {
-            document.element_namespace_uri(index) == Some(SVG_NS)
-                && document.get_node(index).and_then(|node| node.tag_name()) == Some("a")
-        }
+        None => tag_in(document, index, SVG_NS) == Some("a"),
     };
     if zero { 0 } else { -1 }
 }
@@ -127,14 +137,16 @@ fn is_disabled_control(document: &Document, index: usize) -> bool {
     false
 }
 
-/// Whether the HTML element `index` is a focusable area: connected, not
-/// inert, not a disabled form control, and focusable by default, through a
-/// valid `tabindex`, or as an editing host. Whether it is being rendered is
+/// Whether the HTML or SVG element `index` is a focusable area: connected,
+/// not inert, not a disabled form control, and focusable by default (an
+/// SVG link counts), through a valid `tabindex`, or as an HTML editing
+/// host. Whether it is being rendered is
 /// not checked, since that needs a layout.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
 fn is_focusable(document: &Document, index: usize) -> bool {
-    if html_tag(document, index).is_none() {
+    let svg = tag_in(document, index, SVG_NS).is_some();
+    if html_tag(document, index).is_none() && !svg {
         return false;
     }
     let attr = |name| document.element_attribute(index, name);
@@ -153,8 +165,11 @@ fn is_focusable(document: &Document, index: usize) -> bool {
     }
     connected
         && (attr("tabindex").and_then(parse_integer).is_some()
+            || is_svg_link(document, index)
             || focusable_by_default(document, index)
-            || attr("contenteditable").is_some_and(|value| !value.eq_ignore_ascii_case("false")))
+            || !svg
+                && attr("contenteditable")
+                    .is_some_and(|value| !value.eq_ignore_ascii_case("false")))
 }
 
 /// HTML "focus update steps" for a move from the current focus to `next`
@@ -178,6 +193,24 @@ fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
     if let Some(next) = next {
         fire_focus_event(context, next, "focus", false, previous)?;
         fire_focus_event(context, next, "focusin", true, previous)?;
+    }
+    Ok(())
+}
+
+/// The rendering update's focus fixup: clear focus, firing `blur` and
+/// `focusout`, when the focused element is no longer a focusable area.
+/// Leaving the document already cleared it without events.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering>
+pub(crate) fn fix_up_focus(context: &mut Context) -> JsResult<()> {
+    let lost = with_state(context, |s| {
+        let document = s.host.document();
+        document
+            .focused_element()
+            .is_some_and(|focused| !is_focusable(document, focused))
+    })?;
+    if lost {
+        move_focus(context, None)?;
     }
     Ok(())
 }
