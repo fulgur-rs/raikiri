@@ -15,7 +15,7 @@ fn fixture(page_css: &str, html_style: &str) -> (Document, CascadeResult) {
     (document, cascade)
 }
 
-/// [`fixture`], laid out on pages of `page_box`, as the root's writing mode
+/// `fixture`, laid out on pages of `page_box`, as the root's writing mode
 /// decides which way the pages run.
 fn laid_out(page_css: &str, html_style: &str, page_box: PageBox) -> (Document, CascadeResult) {
     let (mut document, cascade) = fixture(page_css, html_style);
@@ -278,4 +278,17 @@ fn a_vertical_lr_root_runs_across_the_pages_from_the_left() {
     assert_eq!((rect.x, rect.width), (40.0, 2.0 * 200.0 - 40.0 - 20.0));
     let later = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 2).expect("root box");
     assert_eq!(later.border_box.x, rect.x - 200.0);
+}
+
+#[test]
+fn a_vertical_root_maps_its_logical_sizes_onto_physical_axes() {
+    let (document, cascade) = laid_out(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; writing-mode: vertical-rl; inline-size: 50px; block-size: 300px",
+        page(200.0, 100.0),
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 2).expect("root box");
+    let rect = root.border_box;
+    assert_eq!((rect.width, rect.height), (300.0, 50.0));
+    assert_eq!(rect.x + rect.width, 200.0);
 }

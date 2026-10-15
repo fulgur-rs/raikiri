@@ -103,8 +103,14 @@ pub fn root_box(
         computed.padding.bottom.resolve(inline_size).max(0.0),
         computed.padding.left.resolve(inline_size).max(0.0),
     );
+    // A root on vertical axes maps a declared `inline-size` / `block-size`
+    // onto its height / width.
+    let (width, height) = super::bridge::vertical_logical_size(cascade, root)
+        .map_or((computed.width, computed.height), |size| {
+            (size.width, size.height)
+        });
     let horizontal = Axis {
-        size: computed.width,
+        size: width,
         min: computed.min_width,
         max: computed.max_width,
         area: area_width,
@@ -112,7 +118,7 @@ pub fn root_box(
         margins: (margin(computed.margin.left), margin(computed.margin.right)),
     };
     let vertical = Axis {
-        size: computed.height,
+        size: height,
         min: computed.min_height,
         max: computed.max_height,
         area: area_height,
