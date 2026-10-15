@@ -165,6 +165,51 @@ fn the_nearest_container_keeps_the_viewport_inside_a_scroller() {
 }
 
 #[test]
+fn the_nearest_container_follows_the_containing_block_chain() {
+    let (mut host, _, _, body) = StubHost::page();
+    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    let mut parent = body;
+    let mut chain = Vec::new();
+    // A relative box, a static scroller, an absolute box, then the target.
+    for position in [
+        PositionKind::Relative,
+        PositionKind::Static,
+        PositionKind::Absolute,
+        PositionKind::Absolute,
+    ] {
+        let element = host.document.create_detached_element("div").unwrap();
+        host.document.append_child(parent, element).unwrap();
+        host.geometry
+            .insert(element, StubHost::boxed(rect, rect, position));
+        chain.push(element);
+        parent = element;
+    }
+    host.computed
+        .insert((chain[1], "overflow-y".to_owned()), "auto".to_owned());
+    host.viewport = Ok(Some((100.0, 100.0)));
+    let mut rt = DomRuntime::new(host).unwrap();
+    let target = "var t = document.body; while (t.firstChild) t = t.firstChild;";
+    // The static scroller is not on the absolute boxes' chain.
+    ok(
+        &mut rt,
+        &format!("{target} t.scrollIntoView({{container: 'nearest'}}); scrollY === 300"),
+    );
+    crate::runtime::webidl::with_state(rt.context_mut(), |s| {
+        let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();
+        host.computed
+            .insert((chain[0], "overflow-x".to_owned()), "hidden".to_owned());
+    })
+    .unwrap();
+    // The relative box contains them, so its overflow confines them.
+    ok(
+        &mut rt,
+        &format!(
+            "scrollTo(0, 0); {target} t.scrollIntoView({{container: 'nearest'}}); scrollY === 0"
+        ),
+    );
+}
+
+#[test]
 fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
     let (mut host, html, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
@@ -241,7 +286,7 @@ fn nearest_alignment_moves_the_least() {
 }
 
 #[test]
-fn a_viewport_failure_fails_the_host_and_no_viewport_has_no_size() {
+fn a_viewport_failure_fails_the_host_and_no_viewport_does_not_scroll() {
     let (mut host, _, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
     host.document.append_child(body, target).unwrap();
@@ -252,7 +297,7 @@ fn a_viewport_failure_fails_the_host_and_no_viewport_has_no_size() {
     ok(
         &mut rt,
         "document.body.firstChild.scrollIntoView({block: 'end', inline: 'end'});\
-         scrollX === 320 && scrollY === 320",
+         scrollX === 0 && scrollY === 0",
     );
     crate::runtime::webidl::with_state(rt.context_mut(), |s| {
         let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();

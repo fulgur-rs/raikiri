@@ -148,8 +148,10 @@ fn is_scroll_container(context: &mut Context, index: usize) -> JsResult<bool> {
     Ok(false)
 }
 
-/// Whether a scroll container other than the viewport sits between
-/// `index` and the document element `root`. The document element's
+/// Whether a scroll container other than the viewport sits on the
+/// containing-block chain between `index` and the document element
+/// `root`: an absolutely positioned box skips the static ancestors
+/// between it and its positioned containing block. The document element's
 /// `overflow` applies to the viewport, so it does not count; neither does
 /// the body's when the root's is `visible` on both axes, since the body's
 /// then applies to the viewport instead (CSS Overflow 3 §3.3).
@@ -165,9 +167,17 @@ fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) 
         root_visible &= value.as_deref().is_none_or(|v| v == "visible");
     }
     let body = body.filter(|_| root_visible);
+    let position = |context: &mut Context, node| -> JsResult<PositionKind> {
+        Ok(box_geometry(context, node)?.map_or(PositionKind::Static, |g| g.position))
+    };
+    let mut absolute = position(context, index)? == PositionKind::Absolute;
     while let Some(ancestor) = current.filter(|&ancestor| ancestor != root) {
-        if Some(ancestor) != body && is_scroll_container(context, ancestor)? {
-            return Ok(true);
+        let ancestor_position = position(context, ancestor)?;
+        if !(absolute && ancestor_position == PositionKind::Static) {
+            if Some(ancestor) != body && is_scroll_container(context, ancestor)? {
+                return Ok(true);
+            }
+            absolute = ancestor_position == PositionKind::Absolute;
         }
         current = with_state(context, |s| s.host.document().parent_of(ancestor))?;
     }
@@ -249,9 +259,12 @@ fn scroll(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<(
         _ => (false, true, ltr),
     };
     let viewport = with_state(context, |s| s.host.viewport_size())?;
-    let (width, height) = viewport
-        .map_err(|error| super::webidl::host_failure(context, error))?
-        .unwrap_or((0.0, 0.0));
+    // A document without a viewport has nothing to scroll.
+    let Some((width, height)) =
+        viewport.map_err(|error| super::webidl::host_failure(context, error))?
+    else {
+        return Ok(());
+    };
     let (scroll_x, scroll_y) = with_state(context, |s| (s.viewport_scroll_x, s.viewport_scroll_y))?;
     let border = geometry.border_box;
     let horizontal = (border.left, border.right);
