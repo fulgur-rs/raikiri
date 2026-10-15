@@ -865,10 +865,9 @@ fn layout_single_page_with_table_projection(
     // Step 1: ComputedValues → taffy::Style bridge (currently a no-op site).
     apply_computed_to_style(document, cascade)?;
     if paged {
-        if let Some(values) = document.clearance_page_values.clone() {
-            let mut named = cascade.clone();
-            named.page_values = values;
-            clear_floats_at_forced_breaks(document, &named);
+        if let Some(breaks) = &document.clearance_breaks {
+            let breaks = breaks.applied_to(cascade);
+            clear_floats_at_forced_breaks(document, &breaks);
         } else {
             clear_floats_at_forced_breaks(document, cascade);
         }

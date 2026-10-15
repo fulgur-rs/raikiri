@@ -296,21 +296,6 @@ impl Document {
             })
     }
 
-    /// Give the next paged layouts clearance at forced page breaks by the
-    /// page values `values` rather than the cascade's, or by the cascade's
-    /// again with `None`.
-    ///
-    /// A layout that ignores page names to measure a relayout uses this to
-    /// keep the clearance that changes of named page give, so it places
-    /// boxes where the layout with the names does.
-    #[doc(hidden)]
-    pub fn set_clearance_page_values(
-        &mut self,
-        values: Option<Vec<raikiri_style::property::PageValue>>,
-    ) {
-        self.clearance_page_values = values;
-    }
-
     /// Insert a forced line break before byte `offset` of text node `text`
     /// in the next layout, or remove it with `None`.
     ///
@@ -420,7 +405,20 @@ impl Document {
     /// names; the token and its ancestors lose break avoidance, and the
     /// paragraph of a `Line` token keeps no minimum of lines on either side.
     /// The relayout then breaks exactly where it places the token's page.
-    pub fn prepare_continuation_cascade(&self, cascade: &mut CascadeResult, token: PageStartToken) {
+    ///
+    /// The dropped forced breaks and page names still give the boxes after
+    /// them clearance past the floats before them in the next paged layouts
+    /// of this document, as they did in the earlier layout: the floats that
+    /// ended before the token's page then stay above the token, rather than
+    /// running onto its page. A layout that also ignores the page names left
+    /// after the token, to measure where the token falls, keeps their
+    /// clearance the same way.
+    pub fn prepare_continuation_cascade(
+        &mut self,
+        cascade: &mut CascadeResult,
+        token: PageStartToken,
+    ) {
+        self.clearance_breaks = Some(ClearanceBreaks::of(cascade));
         let target = token.node();
         let order = preorder(self);
         let target_order = order[target];
@@ -443,6 +441,39 @@ impl Document {
                 }
             }
         }
+    }
+}
+
+/// The page values and forced breaks of a cascade, which paged layout gives
+/// clearance at forced page breaks by in place of those of a cascade that
+/// has since dropped them.
+#[derive(Clone, Debug)]
+pub(crate) struct ClearanceBreaks {
+    page_values: Vec<PageValue>,
+    breaks: Vec<(BreakBetween, BreakBetween)>,
+}
+
+impl ClearanceBreaks {
+    fn of(cascade: &CascadeResult) -> Self {
+        Self {
+            page_values: cascade.page_values.clone(),
+            breaks: cascade
+                .computed
+                .iter()
+                .map(|computed| (computed.break_before, computed.break_after))
+                .collect(),
+        }
+    }
+
+    /// `cascade` with these page values and forced breaks.
+    pub(crate) fn applied_to(&self, cascade: &CascadeResult) -> CascadeResult {
+        let mut cascade = cascade.clone();
+        cascade.page_values.clone_from(&self.page_values);
+        for (computed, &(before, after)) in cascade.computed.iter_mut().zip(&self.breaks) {
+            computed.break_before = before;
+            computed.break_after = after;
+        }
+        cascade
     }
 }
 

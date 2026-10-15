@@ -347,9 +347,9 @@ pub struct Document {
     /// lines. Sorted, like `forced_break_clearance`, and dirties the layout
     /// cache the same way when it changes.
     pub(crate) forced_break_line_clearance: Vec<usize>,
-    /// Page values that paged layout gives clearance by in place of the
-    /// cascade's, for a layout that otherwise ignores page names.
-    pub(crate) clearance_page_values: Option<Vec<raikiri_style::property::PageValue>>,
+    /// Page values and forced breaks that paged layout gives clearance by in
+    /// place of the cascade's, for a relayout whose cascade drops them.
+    pub(crate) clearance_breaks: Option<crate::page_projection::continuation::ClearanceBreaks>,
     /// Set around a table's intrinsic width probe of a cell that is an ifc
     /// root: the next ifc measurement only needs the cell's width, so it
     /// skips breaking the paragraph into lines.
@@ -671,7 +671,7 @@ impl Document {
             layout_dirty: false,
             forced_break_clearance: Vec::new(),
             forced_break_line_clearance: Vec::new(),
-            clearance_page_values: None,
+            clearance_breaks: None,
             ifc_width_probe: false,
             ifc: None,
             normal_line_height: None,
@@ -1988,7 +1988,7 @@ impl Document {
             layout_dirty: _,
             forced_break_clearance: _,
             forced_break_line_clearance: _,
-            clearance_page_values: _,
+            clearance_breaks: _,
             ifc_width_probe: _,
             ifc,
             normal_line_height,

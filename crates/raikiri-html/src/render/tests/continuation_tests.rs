@@ -704,3 +704,47 @@ fn a_named_page_after_an_empty_box_is_laid_out_at_its_own_width() {
     assert_eq!(out.continuations[0].first_page, 1);
     assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
 }
+
+#[test]
+fn text_after_the_floats_of_named_pages_continues_at_the_width_of_the_next_page() {
+    // Each 500px wide `large` page ends with a float, and the text after
+    // them starts a 400px wide page: eight 40px words with their spaces fit
+    // on a line there, ten on a `large` page.
+    let expected = words(12);
+    let float = "<div style='float:right; margin-top:300px; width:100px; height:100px'></div>";
+    let out = run(&format!(
+        "<style>@page {{ size: 400px; margin: 0 }} @page large {{ size: 500px 400px }}\
+         body {{ margin: 0; font: 10px/10px Ahem }}</style>\
+         first\
+         <div style='page:large'>{float}<div style='width:400px'>a</div>\
+         <div style='break-before:page'>{float}<div style='width:400px'>b</div></div></div>\
+         {}",
+        expected.join(" ")
+    ));
+    assert_eq!(out.slices.len(), 4);
+    let first_pages: Vec<u32> = out.continuations.iter().map(|c| c.first_page).collect();
+    assert_eq!(first_pages, vec![1, 3]);
+    let last = page_lines(&out, 3);
+    assert_eq!(last[0].len(), 8);
+    assert_eq!(last.concat(), expected);
+}
+
+#[test]
+fn content_after_a_float_and_a_forced_break_continues_at_the_width_of_the_next_page() {
+    // The float ends on the 300px wide first page, before the break.
+    let expected = words(12);
+    let out = run(&format!(
+        "<style>@page {{ size: 400px; margin: 0 }} @page :first {{ margin-left: 100px }}\
+         body {{ margin: 0; font: 10px/10px Ahem }}</style>\
+         <div>first</div>\
+         <div style='float:right; margin-top:280px; width:100px; height:100px'></div>\
+         <div style='break-before:page'>{}</div>",
+        expected.join(" ")
+    ));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    let second = page_lines(&out, 1);
+    assert_eq!(second[0].len(), 8);
+    assert_eq!(second.concat(), expected);
+}
