@@ -487,8 +487,7 @@ fn annotation_context(
 ) -> DecorationContext {
     let mut chain = Vec::new();
     let mut in_annotation = false;
-    let mut current = document.parent_of(text_node);
-    while let Some(id) = current {
+    for id in document.ancestors(text_node) {
         let Some(cv) = computed_for_id(cascade, id) else {
             break; // cov:ignore: annotation runs are positioned only for cascaded text.
         };
@@ -503,7 +502,6 @@ fn annotation_context(
             in_annotation = true;
         }
         chain.push((id, cv));
-        current = document.parent_of(id);
     }
     chain
         .iter()

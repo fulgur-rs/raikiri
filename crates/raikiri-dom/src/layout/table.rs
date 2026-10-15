@@ -1032,11 +1032,10 @@ fn position_source_table_parts(
         if let Some(layout) = vertical_rows.get(&index) {
             rect = *layout;
         }
-        let mut source = Some(doc.ifc_source_owner(marker));
-        while let Some(id) = source {
-            if id == table {
-                break;
-            }
+        for id in doc
+            .inclusive_ancestors(doc.ifc_source_owner(marker))
+            .take_while(|&id| id != table)
+        {
             if matches!(
                 doc.nodes[id].display,
                 DisplayValue::TableRow
@@ -1049,7 +1048,6 @@ fn position_source_table_parts(
                     .and_modify(|part| extend_part_bounds(part, &rect))
                     .or_insert(rect);
             }
-            source = doc.parent_of(id);
         }
     }
     if doc.nodes[table].border_collapse != BorderCollapseValue::Collapse {
@@ -1107,17 +1105,10 @@ fn position_source_table_parts(
         }
     }
     let origin_of = |owner: usize| {
-        let mut ancestor = Some(owner);
-        while let Some(id) = ancestor {
-            if id == table {
-                break;
-            }
-            if let Some(part) = parts.get(&id) {
-                return part.location;
-            }
-            ancestor = doc.parent_of(id);
-        }
-        Point::ZERO
+        doc.inclusive_ancestors(owner)
+            .take_while(|&id| id != table)
+            .find_map(|id| parts.get(&id))
+            .map_or(Point::ZERO, |part| part.location)
     };
     let mut projected = Vec::new();
     for (&id, &part) in &parts {

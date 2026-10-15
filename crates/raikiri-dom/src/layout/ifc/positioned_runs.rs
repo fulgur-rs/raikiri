@@ -635,23 +635,22 @@ pub fn cumulative_offset(
     let (mut dx, mut dy) = (0.0, 0.0);
     // A pseudo-element moves by its own relative offset, and with its
     // element.
-    let mut current = Some(node);
+    let mut start = node;
     if let Some((element, _)) = generated_origin(node) {
         if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == node) {
             dx += x;
             dy += y;
         }
-        current = Some(element);
+        start = element;
     }
-    while let Some(id) = current {
-        if id == root_id {
-            break;
-        }
+    for id in document
+        .inclusive_ancestors(start)
+        .take_while(|&id| id != root_id)
+    {
         if let Some((_, (x, y))) = offsets.iter().find(|(owner, _)| *owner == id) {
             dx += x;
             dy += y;
         }
-        current = document.parent_of(id);
     }
     (dx, dy)
 }

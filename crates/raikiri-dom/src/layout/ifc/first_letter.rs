@@ -480,17 +480,11 @@ impl FirstLetter {
                     source_container: crate::generated_content::generated_origin(source_owner)
                         .map_or_else(
                             || {
-                                let mut container = doc.parent_of(source_owner);
-                                while let Some(id) = container {
-                                    if id == self.origin {
-                                        return None;
-                                    }
-                                    if cascade.computed[id].display != DisplayValue::Contents {
-                                        break;
-                                    }
-                                    container = doc.parent_of(id);
-                                }
-                                container
+                                doc.ancestors(source_owner)
+                                    .take_while(|&id| id != self.origin)
+                                    .find(|&id| {
+                                        cascade.computed[id].display != DisplayValue::Contents
+                                    })
                             },
                             |_| Some(source_owner),
                         ),
@@ -727,14 +721,11 @@ fn is_planned_annotation(
     id: usize,
     planned: &mut std::collections::HashMap<usize, bool>,
 ) -> bool {
-    let mut current = doc.parent_of(id);
-    while let Some(ancestor) = current {
-        if cascade.computed[ancestor].display.is_ruby_container() {
-            return *planned
+    doc.ancestors(id)
+        .find(|&ancestor| cascade.computed[ancestor].display.is_ruby_container())
+        .is_some_and(|ancestor| {
+            *planned
                 .entry(ancestor)
-                .or_insert_with(|| super::ruby::plan(doc, cascade, ancestor).is_some());
-        }
-        current = doc.parent_of(ancestor);
-    }
-    false
+                .or_insert_with(|| super::ruby::plan(doc, cascade, ancestor).is_some())
+        })
 }
