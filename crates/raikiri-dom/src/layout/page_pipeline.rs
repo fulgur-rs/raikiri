@@ -6839,12 +6839,12 @@ fn generated_box_separates(
         if separates(id, PseudoElem::After) {
             return Some(true);
         }
-        for &child in document.nodes[id].children.iter().rev() {
-            if let Some(found) = scan(document, child, previous, is_contents, separates) {
-                return Some(found);
-            }
-        }
-        separates(id, PseudoElem::Before).then_some(true)
+        document.nodes[id]
+            .children
+            .iter()
+            .rev()
+            .find_map(|&child| scan(document, child, previous, is_contents, separates))
+            .or_else(|| separates(id, PseudoElem::Before).then_some(true))
     }
     let mut current = node_id;
     while let Some(parent) = document.parent_of(current) {
@@ -6853,20 +6853,21 @@ fn generated_box_separates(
             .iter()
             .position(|&id| id == current)
             .unwrap_or(siblings.len());
-        for &id in siblings[..index].iter().rev() {
-            if let Some(found) = scan(document, id, previous, &is_contents, &separates) {
-                return found;
-            }
+        if let Some(found) = siblings[..index]
+            .iter()
+            .rev()
+            .find_map(|&id| scan(document, id, previous, &is_contents, &separates))
+        {
+            return found;
         }
-        if !is_contents(parent) {
-            break;
-        }
-        if separates(parent, PseudoElem::Before) {
-            return true;
+        // `previous` shares the box parent of `node_id`, so the walk finds it
+        // before it leaves the `display: contents` ancestors.
+        if !is_contents(parent) || separates(parent, PseudoElem::Before) {
+            return is_contents(parent);
         }
         current = parent;
     }
-    false
+    false // cov:ignore: the document node is never a `display: contents` element, so the walk returns before it runs out of parents
 }
 
 /// Whether `id` is a block box (a list item included) that establishes no

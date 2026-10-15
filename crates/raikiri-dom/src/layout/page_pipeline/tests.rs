@@ -15588,7 +15588,7 @@ fn a_margin_after_a_contents_sibling_with_a_flow_root_before_box_is_truncated() 
 }
 
 /// Lays out a 20px box, then an empty forced-break section and a 30px
-/// top margin box, nested by `inside_contents` (`"section"` or `"last"`) in
+/// top margin box with white space around them, nested by `inside_contents` (`"section"` or `"last"`) in
 /// a `display: contents` span whose generated box is styled by `pseudo_css`;
 /// returns the y of the margin box.
 fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_css: &str) -> f32 {
@@ -15628,11 +15628,14 @@ fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_cs
         Style::default(),
         Some("display:block;width:100px;height:0;break-before:page"),
     );
+    // Collapsible white space generates no box between the boxes.
+    doc.append_text(section_parent, "\n  ");
     let last_parent = if inside_contents == "last" {
         span(&mut doc)
     } else {
         body
     };
+    doc.append_text(last_parent, "\n  ");
     let last = doc.append_element(
         Some(last_parent),
         "div",
@@ -15684,5 +15687,15 @@ fn a_margin_after_a_flow_root_before_box_of_its_contents_parent_is_truncated() {
             "span::before { content: \"\"; display: flow-root }"
         ),
         100.0
+    );
+}
+
+#[test]
+fn a_margin_inside_a_contents_element_after_a_forced_break_box_is_kept() {
+    // The span generates no box, so the margins of the forced-break box reach
+    // the last box inside it.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box("last", ""),
+        130.0
     );
 }
