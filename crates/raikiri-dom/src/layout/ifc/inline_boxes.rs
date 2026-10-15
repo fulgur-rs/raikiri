@@ -5,6 +5,7 @@ use super::geometry::IfcAxes;
 use super::positioned_runs::Placement;
 use shodo::geometry::{LogicalRect, PhysicalSize, WritingMode};
 use shodo::{Fragment, Line};
+use std::collections::HashMap;
 
 /// A physical rectangle in the paragraph's content box.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -104,7 +105,22 @@ pub(crate) fn inline_box_pieces(
             }));
             source_spans.sort_by(|a, b| a.0.total_cmp(&b.0));
         }
+        let line_start = pieces.len();
+        let mut annotations = Vec::new();
         for fragment in &fragments {
+            if let Fragment::RubyAnnotation(annotation) = fragment {
+                let mut own = Vec::new();
+                annotation_pieces(
+                    *annotation,
+                    Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
+                    line_index,
+                    axes,
+                    content_size,
+                    &mut own,
+                );
+                annotations.push((annotation.container().0 as usize, own));
+                continue;
+            }
             let Fragment::InlineBox(piece) = fragment else {
                 continue;
             };
@@ -148,20 +164,67 @@ pub(crate) fn inline_box_pieces(
                 source_owner,
             });
         }
-        for fragment in &fragments {
-            if let Fragment::RubyAnnotation(annotation) = fragment {
-                annotation_pieces(
-                    *annotation,
-                    Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
-                    line_index,
-                    axes,
-                    content_size,
-                    &mut pieces,
-                );
-            }
-        }
+        insert_annotation_pieces(&mut pieces, line_start, annotations);
     }
     pieces
+}
+
+/// Insert the pieces of each annotation after the pieces of its ruby
+/// segment's box and of that box's descendants on the line, which start at
+/// `line_start`, so that boxes paint in tree order. shodo reports
+/// annotations after every other fragment of the line.
+fn insert_annotation_pieces(
+    pieces: &mut Vec<InlineBoxPiece>,
+    line_start: usize,
+    annotations: Vec<(usize, Vec<InlineBoxPiece>)>,
+) {
+    // Where the next annotation of each segment goes.
+    let mut ends: HashMap<usize, usize> = HashMap::new();
+    for (container, own) in annotations {
+        let at = match ends.get(&container) {
+            Some(&at) => at,
+            None => {
+                let line = &pieces[line_start..];
+                let parents: HashMap<usize, Option<usize>> = line
+                    .iter()
+                    .map(|piece| (piece.node, piece.parent))
+                    .collect();
+                // A node can have pieces with different parents (an empty
+                // annotation box nests in a box of the same node), so the
+                // walk is bounded by the number of nodes on the line.
+                let inside = |mut node: Option<usize>| {
+                    for _ in 0..=parents.len() {
+                        let Some(id) = node else {
+                            return false;
+                        };
+                        if id == container {
+                            return true;
+                        }
+                        node = parents.get(&id).copied().flatten();
+                    }
+                    false
+                };
+                match line.iter().position(|piece| piece.node == container) {
+                    Some(start) => {
+                        let mut end = line_start + start + 1;
+                        while end < pieces.len() && inside(pieces[end].parent) {
+                            end += 1;
+                        }
+                        end
+                    }
+                    None => pieces.len(), // cov:ignore: every ruby segment opens a box keyed by the annotations' container.
+                }
+            }
+        };
+        let count = own.len();
+        pieces.splice(at..at, own);
+        for end in ends.values_mut() {
+            if *end >= at {
+                *end += count;
+            }
+        }
+        ends.insert(container, at + count);
+    }
 }
 
 /// The logical rectangle `rect` of a line that starts `line_top` below its

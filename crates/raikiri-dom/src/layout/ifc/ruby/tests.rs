@@ -251,6 +251,29 @@ fn inline_boxes_in_annotations_have_pieces_over_their_bases() {
 }
 
 #[test]
+fn annotation_boxes_keep_their_place_in_tree_order() {
+    let mut ids = (0, 0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "a");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        ids.0 = text_element(doc, annotation, "span", "background:red", "x");
+        let annotation = element(doc, container, "rt", "display:ruby-text;font-size:5px");
+        ids.1 = text_element(doc, annotation, "span", "background:red", "y");
+        ids.2 = text_element(doc, root, "span", "background:blue", "b");
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let pieces = doc.nodes[root].ifc_inline_boxes().expect("pieces");
+    let order: Vec<usize> = pieces
+        .iter()
+        .map(|piece| piece.node)
+        .filter(|&node| [ids.0, ids.1, ids.2].contains(&node))
+        .collect();
+    assert_eq!(order, [ids.0, ids.1, ids.2], "{pieces:?}");
+}
+
+#[test]
 fn content_without_a_ruby_mapping_falls_back() {
     let unplain: [fn(&mut Document, usize); 7] = [
         // An atomic inline.
