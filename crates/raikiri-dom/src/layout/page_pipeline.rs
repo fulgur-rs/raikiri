@@ -6342,7 +6342,10 @@ fn paginate_flow(
                     // an adjoining margin on the following page.
                     // An empty box that a forced break placed at the page
                     // top leaves its collapsed margin after the break.
-                    let after_forced_break = forced_break_margin_box == Some(previous);
+                    // A later, unforced page edge inside that margin still
+                    // truncates it.
+                    let after_forced_break = forced_break_margin_box == Some(previous)
+                        && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001

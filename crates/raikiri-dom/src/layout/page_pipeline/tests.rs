@@ -10419,6 +10419,19 @@ fn a_margin_after_an_empty_box_after_a_pulled_back_box_is_truncated() {
 }
 
 #[test]
+fn a_kept_margin_after_a_forced_break_is_truncated_at_the_next_page_edge() {
+    // The 150px margin crosses the unforced edge at 200, which truncates it.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:150px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
+
+#[test]
 fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
