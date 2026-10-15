@@ -6308,3 +6308,105 @@ fn a_viewport_fixed_box_keeps_its_page_position_on_a_narrower_page_along_the_x_a
     // carried onto it.
     assert_eq!(pixel(5, 5), &[0, 128, 0, 255]);
 }
+
+/// Lay `markup` out with the Ahem font on `page` and paint page
+/// `page_index` into a buffer of that page's size.
+fn paint_ahem_page(markup: &str, page: PageBox, page_index: usize) -> Vec<u8> {
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
+    parsed
+        .dom
+        .set_font_collection_with_limits(collection, shodo::limits::Limits::default());
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        page,
+        pages[page_index].content_origin_y,
+        page_index as u32,
+        pages.len() as u32,
+        true,
+        None,
+        None,
+        page.width,
+    )
+    .unwrap();
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        page.width as u32,
+        page.height as u32,
+    )
+}
+
+fn square_page(size: f32) -> PageBox {
+    let mut page = PageBox::new();
+    page.width = size;
+    page.height = size;
+    page
+}
+
+#[test]
+fn a_page_along_the_x_axis_leaves_the_boxes_of_the_next_page_out_of_its_margin() {
+    // Each box fills one 60px page area; the next page's lies to the left,
+    // with its right border across the page's 20px left margin.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:60px;height:10px;background:green'></div>\
+         <div style='width:50px;height:10px;border-right:10px solid red'></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(50, 5), &[0, 128, 0, 255]);
+    assert_eq!(pixel(15, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_paints_the_ink_of_its_lines_past_its_page_area() {
+    // The page holds the line; relative positioning moves 5px of its glyph
+    // into the right margin, where the page still paints it.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='font:10px/10px Ahem;color:green'>\
+         <span style='position:relative;left:5px'>a</span></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(82, 5), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_paints_only_the_lines_it_holds() {
+    // Ten 10px lines of one paragraph run over two 60px page areas; the
+    // lines of the second page lie to the left of the first page's area.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='font:10px/10px Ahem;color:green;height:10px'>\
+         a a a a a a a a a a</div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(75, 5), &[0, 128, 0, 255]);
+    assert_eq!(pixel(25, 5), &[0, 128, 0, 255]);
+    assert_eq!(pixel(10, 5), &[255, 255, 255, 255]);
+}

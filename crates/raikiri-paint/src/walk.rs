@@ -1789,6 +1789,35 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
     y < page_bottom && y + height > page_top
 }
 
+/// How far a box must reach into the page area of a page that follows the x
+/// axis to belong to it, so that a box ending at the page edge, up to
+/// rounding, stays on the page beside it.
+const FLOW_BAND_TOLERANCE: f64 = 0.01;
+
+/// Whether the rectangle at `x, y` of `width` and `height`, painted under
+/// `transform`, reaches across the page area from `band.0` to `band.1` along
+/// x, in page coordinates.
+fn box_intersects_flow_band(
+    transform: Affine,
+    (x, y, width, height): (f32, f32, f32, f32),
+    band: (f32, f32),
+) -> bool {
+    let rect = transform.transform_rect_bbox(Rect::new(
+        f64::from(x),
+        f64::from(y),
+        f64::from(x + width),
+        f64::from(y + height),
+    ));
+    let (left, right) = (f64::from(band.0), f64::from(band.1));
+    if !rect.x0.is_finite() || !rect.x1.is_finite() {
+        return false;
+    }
+    if rect.width() <= 0.0 {
+        return rect.x0 >= left && rect.x0 <= right;
+    }
+    rect.x0 < right - FLOW_BAND_TOLERANCE && rect.x1 > left + FLOW_BAND_TOLERANCE
+}
+
 /// Walk the Document arena iteratively in DFS order, starting from body.
 /// A fragment (without `<body>`) returns silently. `layout_single_page` should
 /// already have returned Err before painting; this is defensive.
@@ -2071,7 +2100,7 @@ pub(crate) fn paint_document_impl(
     let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
         // Pages that follow the x axis hold a band of the flow across the
         // whole page height: every box is on the page along y, and the
-        // caller clips the page to its band. Flowing right to left, the
+        // page area decides along x which boxes and lines the page holds. Flowing right to left, the
         // band starts at the page area's right edge, so on a page whose area
         // is narrower or wider than the one this document was laid out in it
         // moves with that edge.
@@ -2198,6 +2227,13 @@ pub(crate) fn paint_document_impl(
     } else {
         None
     };
+    // A page that follows the x axis holds the boxes and lines that lie
+    // across its page area, as pages along y hold those across their page
+    // height; nothing else of the flow beside it is painted.
+    let flow_band = pages_follow_x_axis.map(|_| {
+        let left = margins.left + insets.left;
+        (left, left + content_width)
+    });
     let mut capture_scene = crate::capture::CaptureScene::new(scene);
     let mut transformed_scene = crate::transform::TransformScene {
         scene: &mut capture_scene,
@@ -2445,6 +2481,7 @@ pub(crate) fn paint_document_impl(
                     pixel_source,
                     warnings,
                     page_box,
+                    flow_band,
                     paint_transform,
                 );
                 if clip.is_some() {
@@ -2581,6 +2618,7 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
+                        flow_band,
                         paint_transform,
                     );
                     match lines {
@@ -2615,6 +2653,7 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
+                        flow_band,
                         paint_transform,
                     );
                 }
@@ -3071,12 +3110,18 @@ pub(crate) fn paint_document_impl(
                         || ((fixed_in_viewport || named_page_matches(node_id))
                             && (fixed_in_viewport
                                 || inside_fixed
-                                || box_intersects_page(
+                                || (box_intersects_page(
                                     abs_y,
                                     layout.size.height,
                                     page_top,
                                     page_bottom,
-                                ))));
+                                ) && flow_band.is_none_or(|band| {
+                                    box_intersects_flow_band(
+                                        scene.transform,
+                                        (paint_x, paint_y, layout.size.width, layout.size.height),
+                                        band,
+                                    )
+                                })))));
                 // An absolutely positioned containing block can own a child
                 // fragment on a later page even when its first layout box ends
                 // before that page.  Preserve the parent's border/background
@@ -4292,6 +4337,7 @@ pub(crate) fn paint_document_impl(
                             pixel_source,
                             warnings,
                             page_box,
+                            flow_band,
                             paint_transform,
                         );
                     }

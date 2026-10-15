@@ -81,6 +81,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     warnings: &mut Vec<raikiri_traits::RenderWarning>,
     page_box: raikiri_traits::PageBox,
+    flow_band: Option<(f32, f32)>,
     paint_transform: Affine,
 ) {
     if let Some(lines) = hold_ifc_lines(
@@ -95,6 +96,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         pixel_source,
         warnings,
         page_box,
+        flow_band,
         paint_transform,
     ) {
         lines.finish(scene);
@@ -206,6 +208,7 @@ pub(crate) fn hold_ifc_lines<'a>(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     warnings: &mut Vec<raikiri_traits::RenderWarning>,
     page_box: raikiri_traits::PageBox,
+    flow_band: Option<(f32, f32)>,
     paint_transform: Affine,
 ) -> Option<HeldLines<'a>> {
     let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
@@ -287,6 +290,11 @@ pub(crate) fn hold_ifc_lines<'a>(
             y: base.y + column_y,
             shift_y: base.shift_y,
         };
+        if let Some(band) = flow_band
+            && !line_on_flow_band(&positioned_line, position, paint_transform, band)
+        {
+            continue;
+        }
         let transform = Affine::translate((
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
@@ -649,8 +657,32 @@ pub(crate) fn draw_ifc_lines(
         None,
         &mut Vec::new(),
         raikiri_traits::PageBox::A4,
+        None,
         Affine::IDENTITY,
     );
+}
+
+/// Whether a page that follows the x axis, with its page area from `band.0`
+/// to `band.1` along x in page coordinates, owns `line`: the page holding the
+/// line's center along x, as layout assigns lines to these pages.
+fn line_on_flow_band(
+    line: &raikiri_dom::PositionedLine<'_>,
+    position: IfcPosition,
+    paint_transform: Affine,
+    band: (f32, f32),
+) -> bool {
+    let rect = line.converter.rect(shodo::geometry::LogicalRect {
+        inline_start: 0.0,
+        block_start: line.line.block_offset(),
+        inline_size: line.line.inline_size(),
+        block_size: line.line.block_size(),
+    });
+    let center = paint_transform
+        * kurbo::Point::new(
+            f64::from(position.x + rect.x + rect.width / 2.0),
+            f64::from(position.y + position.shift_y + rect.y + rect.height / 2.0),
+        );
+    center.x >= f64::from(band.0) && center.x < f64::from(band.1)
 }
 
 fn physical_glyph_transform(
