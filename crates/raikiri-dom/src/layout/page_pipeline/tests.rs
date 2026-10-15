@@ -10351,6 +10351,30 @@ fn a_forced_break_keeps_the_top_margin() {
 }
 
 #[test]
+fn a_forced_break_keeps_a_margin_collapsed_through_an_empty_box() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_at_a_page_edge_keeps_a_margin_collapsed_through_an_empty_box() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:100px",
+            "break-before:page",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
 fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

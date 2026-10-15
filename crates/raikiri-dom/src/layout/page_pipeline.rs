@@ -4971,6 +4971,9 @@ fn paginate_flow(
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
     let mut previous_block_bottoms: HashMap<usize, (usize, f32)> = HashMap::new();
+    // The top of the latest page that starts at a forced break. A margin
+    // after that break is kept, even when it follows an empty box there.
+    let mut forced_page_top: Option<f32> = None;
     let mut margins_moved_boxes = false;
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
@@ -6297,6 +6300,9 @@ fn paginate_flow(
                     effective_y += node_delta;
                 }
                 current_page = target_page;
+                if forced_transition {
+                    forced_page_top = Some(target_y);
+                }
                 if pending_break_applies {
                     pending_break_source = None;
                 }
@@ -6309,6 +6315,12 @@ fn paginate_flow(
                 } else {
                     page_index_for_y(effective_y)
                 };
+                // A forced break that coincides with a page edge also starts
+                // that page.
+                if forced_before {
+                    let margin_box_y = (effective_y - margin_top.max(0.0)).max(0.0);
+                    forced_page_top = Some(page_origin(page_index_for_y(margin_box_y)));
+                }
                 // An unforced break that falls inside the collapsed margin
                 // between this box and its preceding sibling truncates that
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
@@ -6328,9 +6340,14 @@ fn paginate_flow(
                     let previous_bottom = effective_y - gap;
                     // A border box ending exactly at the break still has
                     // an adjoining margin on the following page.
+                    // An empty box that a forced break placed at the page
+                    // top leaves its collapsed margin after the break.
+                    let after_forced_break = previous_bottom >= page_top - 0.001
+                        && forced_page_top.is_some_and(|top| (top - page_top).abs() <= 0.001);
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001
+                        && !after_forced_break
                         // Only a margin between adjoining siblings is
                         // truncated; a box that is not a candidate may lie
                         // between two nested candidates.
