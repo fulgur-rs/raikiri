@@ -397,7 +397,7 @@ impl LayoutPartialTree for Document {
 
     /// The **only** path by which taffy writes layout into the arena.
     ///
-    /// Passing through [`crate::layout::sanitize_taffy_layout`] here structurally
+    /// Storing through [`Document::store_unrounded_layout`] here structurally
     /// guarantees that `Node.unrounded_layout` contains no non-finite f32 values.
     /// The input guard in the bridge (`layout::sanitize_taffy`) alone cannot
     /// close the gap: nested percentages compound at the used-value layer
@@ -411,16 +411,9 @@ impl LayoutPartialTree for Document {
     /// drains the buffer to an observer or eprintln (see the documentation for
     /// the diagnostics buffer below).
     /// See [`Document::layout_warnings`](crate::document::Document).
-    ///
-    /// Bind the RHS to `sanitized` before assigning the LHS. This deliberately
-    /// avoids borrowing two disjoint fields of `self` (`self.nodes[..]` via
-    /// IndexMut and `self.layout_warnings`) in the same assignment expression.
-    /// Besides satisfying borrowck, it makes evaluation order and dependencies
-    /// explicit to readers.
     fn set_unrounded_layout(&mut self, node_id: NodeId, layout: &Layout) {
         self.note_transposed_layout(usize::from(node_id));
-        let sanitized = crate::layout::sanitize_taffy_layout(layout, &mut self.layout_warnings);
-        self.nodes[usize::from(node_id)].unrounded_layout = sanitized;
+        self.store_unrounded_layout(usize::from(node_id), layout);
     }
 
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {

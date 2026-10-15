@@ -558,11 +558,11 @@ pub struct Node {
     /// `size.width` and `padding.{left,right}` can make
     /// `size.width - padding.left - padding.right` negative.
     ///
-    /// [`crate::layout::sanitize_taffy_layout`] enforces this contract at
-    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout`
-    /// (`taffy_impl.rs`), the sole taffy-to-arena write point. This structural
-    /// invariant cannot be broken by forgetting a separate call (see the docs
-    /// for [`crate::layout::sanitize_taffy_layout`] for details and evidence).
+    /// [`crate::Document::store_unrounded_layout`], through which taffy's
+    /// `set_unrounded_layout` and the table algorithm store whole layouts,
+    /// enforces this contract (see the docs for
+    /// [`crate::layout::sanitize::sanitize_taffy_layout`] for details and
+    /// evidence).
     /// Although this field is `pub`, no public API yields an external `&mut Node`:
     /// `Document::nodes` and constructors such as [`Node::new_document`] are
     /// `pub(crate)`, and [`crate::Document::get_node`] returns only `&Node`.

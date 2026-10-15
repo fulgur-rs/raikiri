@@ -312,8 +312,7 @@ fn layout_table_caption(
             bottom: margin_bottom,
         },
     };
-    let sanitized = super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
-    doc.nodes[caption_id].unrounded_layout = sanitized;
+    doc.store_unrounded_layout(caption_id, &layout);
     Some(Size {
         width: output.size.width + margin_left + margin_right,
         height: output.size.height + margin_top + margin_bottom,
@@ -371,24 +370,10 @@ fn position_table_caption(
         } else {
             layout.location.y += if before { 0.0 } else { grid_size.height };
         }
-        doc.nodes[id].unrounded_layout =
-            super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+        doc.store_unrounded_layout(id, &layout);
     }
     if run_mode == RunMode::PerformLayout && in_flow {
-        let grid_layout = super::sanitize_taffy_layout(
-            &TaffyLayout {
-                location: grid_origin,
-                size: grid_size,
-                ..TaffyLayout::with_order(0)
-            },
-            &mut doc.layout_warnings,
-        );
-        doc.nodes[table_idx].table_grid_box = Some(raikiri_traits::PaintRect::new(
-            grid_layout.location.x,
-            grid_layout.location.y,
-            grid_layout.size.width,
-            grid_layout.size.height,
-        ));
+        doc.store_table_grid_box(table_idx, grid_origin, grid_size);
     }
     (
         if vertical {
@@ -1130,8 +1115,7 @@ fn position_source_table_parts(
     }
     for (id, layout) in projected {
         doc.table_objects.materialized_parts.insert(id);
-        doc.nodes[id].unrounded_layout =
-            super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+        doc.store_unrounded_layout(id, &layout);
     }
     for (key, offset) in offsets {
         let node = doc.table_layout_node_mut(key);
@@ -2377,8 +2361,7 @@ fn place_cells(
             if doc.nodes[child].style.position != taffy::Position::Absolute {
                 let mut child_layout = doc.nodes[child].unrounded_layout;
                 child_layout.location.y += shift;
-                doc.nodes[child].unrounded_layout =
-                    super::sanitize_taffy_layout(&child_layout, &mut doc.layout_warnings);
+                doc.store_unrounded_layout(child, &child_layout);
             }
         }
         let layout = TaffyLayout {
@@ -2398,11 +2381,7 @@ fn place_cells(
             margin: Rect::ZERO,
         };
         cell.resolved = Some(layout);
-        // Write via Document's layout storage (includes sanitize)
-        {
-            let sanitized = super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
-            doc.table_layout_node_mut(cell.node_id).unrounded_layout = sanitized;
-        }
+        doc.store_unrounded_layout(cell.node_id, &layout);
         if doc.is_anonymous_cell(cell.node_id) {
             let root = doc
                 .ifc_layout_node(cell.node_id)
@@ -2455,8 +2434,7 @@ fn reposition_cells_for_vertical_writing(
         if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
-            doc.table_layout_node_mut(cell.node_id).unrounded_layout =
-                super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
+            doc.store_unrounded_layout(cell.node_id, layout);
             continue;
         }
         // Re-layout at the final physical dimensions before distributing
@@ -2586,14 +2564,12 @@ fn reposition_cells_for_vertical_writing(
             if doc.nodes[child].style.position != taffy::Position::Absolute {
                 let mut layout = doc.nodes[child].unrounded_layout;
                 layout.location.x += child_shift;
-                doc.nodes[child].unrounded_layout =
-                    super::sanitize_taffy_layout(&layout, &mut doc.layout_warnings);
+                doc.store_unrounded_layout(child, &layout);
             }
         }
         layout.padding = padding;
         layout.border = border;
-        let sanitized = super::sanitize_taffy_layout(layout, &mut doc.layout_warnings);
-        doc.table_layout_node_mut(cell.node_id).unrounded_layout = sanitized;
+        doc.store_unrounded_layout(cell.node_id, layout);
     }
 }
 
