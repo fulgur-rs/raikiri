@@ -554,6 +554,9 @@ fn run_boxes_segment(
     // The boxes of the generated blocks closed so far.
     let mut placed_blocks = Vec::new();
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
+    // The next line follows a forced break or a block: the engine treats it
+    // as such for `text-indent: each-line`.
+    let mut after_forced = false;
 
     loop {
         calls += 1;
@@ -683,6 +686,7 @@ fn run_boxes_segment(
                     // Empty inline closures around a block do not separate
                     // its adjoining margins or add a line box (CSS 2.2 9.4.2).
                     token = line.break_token();
+                    after_forced = false;
                     continue;
                 }
                 // The line may span more of an outer float than the height it
@@ -712,8 +716,12 @@ fn run_boxes_segment(
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
                 // Its own floats keep the place they have at this offset.
-                // A hanging indent is on every line but the first.
-                let indent = if first_line != line_options.text_indent.hanging {
+                // The engine indents the first line, and with `each-line` a
+                // line after a forced break or a block; a hanging indent is on
+                // every other line instead (CSS Text 3 §8.1).
+                let text_indent = line_options.text_indent;
+                let indented = first_line || (text_indent.each_line && after_forced);
+                let indent = if indented != text_indent.hanging {
                     line_options.text_indent.length
                 } else {
                     0.0
@@ -775,6 +783,7 @@ fn run_boxes_segment(
                 y = line_y + height;
                 pending = CollapsibleMarginSet::ZERO;
                 token = line.break_token();
+                after_forced = line.break_reason() == shodo::BreakReason::Forced;
                 // A cleared `<br>` ends this line: the next one starts below
                 // the floats it clears (CSS 2.1 9.5.2).
                 if line.break_reason() == shodo::BreakReason::Forced
@@ -861,6 +870,7 @@ fn run_boxes_segment(
                         }
                     }
                     token = token_after;
+                    after_forced = true;
                     withdrawn.clear();
                     assumed_height = 0.0;
                     retries = 0;
@@ -896,6 +906,7 @@ fn run_boxes_segment(
                     pending = CollapsibleMarginSet::ZERO;
                 }
                 token = token_after;
+                after_forced = true;
                 // The call count is kept: every block is one of the root's
                 // boxes, so blocks in a row stay within the bound, and a
                 // result that does not move past its block ends the loop.

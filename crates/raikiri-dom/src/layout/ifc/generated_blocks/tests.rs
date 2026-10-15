@@ -493,6 +493,43 @@ fn the_lines_of_a_block_box_take_its_own_alignment_and_indent() {
         starts("width: 30px; text-indent: 20px hanging"),
         [0.0, 20.0, 0.0]
     );
+    // A box of the opposite direction aligns to its own start and end.
+    assert_eq!(starts("direction: rtl; text-indent: 0"), [50.0, 0.0]);
+    assert_eq!(
+        starts("direction: rtl; text-indent: 0; text-align: end"),
+        [0.0, 0.0]
+    );
+}
+
+#[test]
+fn start_and_end_alignments_resolve_to_the_box_sides() {
+    use shodo::style::{LineOptions, TextAlign, TextAlignLast};
+    let aligned = |text_align, text_align_last, rtl| {
+        let mut options = LineOptions {
+            text_align,
+            text_align_last,
+            ..LineOptions::default()
+        };
+        align_physically(&mut options, rtl);
+        (options.text_align, options.text_align_last)
+    };
+    assert_eq!(
+        aligned(TextAlign::Start, TextAlignLast::End, true),
+        (TextAlign::Right, TextAlignLast::Left)
+    );
+    assert_eq!(
+        aligned(TextAlign::End, TextAlignLast::Start, false),
+        (TextAlign::Right, TextAlignLast::Left)
+    );
+    // The last line of justified text goes to the box's start.
+    assert_eq!(
+        aligned(TextAlign::Justify, TextAlignLast::Auto, true),
+        (TextAlign::Justify, TextAlignLast::Right)
+    );
+    assert_eq!(
+        aligned(TextAlign::Center, TextAlignLast::Auto, true),
+        (TextAlign::Center, TextAlignLast::Auto)
+    );
 }
 
 #[test]

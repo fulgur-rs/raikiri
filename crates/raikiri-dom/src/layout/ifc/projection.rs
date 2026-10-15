@@ -374,12 +374,14 @@ fn push_generated(
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
     {
-        Some(end) => Some(GeneratedBlock::new(
-            id.0,
-            end,
-            cv,
-            style::line_options(cv, element, fonts)?,
-        )),
+        Some(end) => {
+            let (mut options, indent) = style::line_options(cv, element, fonts)?;
+            let rtl = cv.direction == Direction::Rtl;
+            if rtl != images.rtl {
+                super::generated_blocks::align_physically(&mut options, rtl);
+            }
+            Some(GeneratedBlock::new(id.0, end, cv, (options, indent)))
+        }
         None => None,
     };
     if text.is_empty() && !has_images && block.is_none() {

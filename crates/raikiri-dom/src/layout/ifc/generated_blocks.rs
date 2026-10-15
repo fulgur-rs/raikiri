@@ -29,6 +29,39 @@ pub(crate) fn end_token_id(start: u64) -> Option<u64> {
     (start & END_TOKEN_BIT == 0).then_some(start | END_TOKEN_BIT)
 }
 
+/// Resolve the `start` and `end` alignments of `options` against a box whose
+/// direction is right-to-left when `rtl`, for lines that keep the opposite
+/// direction of the paragraph around it. The paragraph's direction still
+/// orders the lines' content and sets the side their indent is on.
+pub(crate) fn align_physically(options: &mut LineOptions, rtl: bool) {
+    use shodo::style::{TextAlign, TextAlignLast};
+    let (start, end) = if rtl {
+        (TextAlign::Right, TextAlign::Left)
+    } else {
+        (TextAlign::Left, TextAlign::Right)
+    };
+    let (last_start, last_end) = if rtl {
+        (TextAlignLast::Right, TextAlignLast::Left)
+    } else {
+        (TextAlignLast::Left, TextAlignLast::Right)
+    };
+    // An `auto` last line of justified text is aligned to the start
+    // (CSS Text 3 §6.2).
+    if options.text_align_last == TextAlignLast::Auto && options.text_align == TextAlign::Justify {
+        options.text_align_last = last_start;
+    }
+    match options.text_align {
+        TextAlign::Start => options.text_align = start,
+        TextAlign::End => options.text_align = end,
+        _ => {}
+    }
+    match options.text_align_last {
+        TextAlignLast::Start => options.text_align_last = last_start,
+        TextAlignLast::End => options.text_align_last = last_end,
+        _ => {}
+    }
+}
+
 /// The box geometry of one block-level `::before` or `::after`, as computed:
 /// lengths are resolved when the paragraph is laid out, against its width.
 #[derive(Clone, Copy, Debug, PartialEq)]
