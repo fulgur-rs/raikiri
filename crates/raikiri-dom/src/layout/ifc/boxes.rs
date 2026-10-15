@@ -284,12 +284,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             has_next,
             carried_block,
         );
-        carried_block = outcome.open_block.map(|open| {
-            open.continued(
-                fragmentainer_height.unwrap_or_default(),
-                outcome.lines.lines.len(),
-            )
-        });
+        carried_block = outcome
+            .open_block
+            .map(|open| open.continued(fragmentainer_height.unwrap_or_default()));
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
@@ -961,6 +958,8 @@ fn run_boxes_segment(
     } else {
         y
     };
+    // A box still open goes on with the lines it has laid out here.
+    let open_block = open_block.map(|open| open.after(lines.len()));
     RunBoxesOutcome {
         lines: IfcLines {
             width,

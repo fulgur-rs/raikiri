@@ -253,7 +253,7 @@ fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
         let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
         // The box fills two 40px fragmentainers, 70px of content, then its
         // lines take 30px of the next.
-        let open = open.continued(40.0, 0).continued(40.0, 0);
+        let open = open.continued(40.0).continued(40.0);
         y = 30.0;
         close(&block, open, flow(&mut y, &mut pending, &mut leading, &ctx));
         (y, pending.resolve())
@@ -511,8 +511,45 @@ fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() 
     assert!(!first(&open, 1));
     // No line of the box fits the first fragmentainer: its first line is
     // still to come.
-    let open = open.continued(40.0, 0);
+    let open = open.after(0).continued(40.0);
     assert!(first(&open, 0));
     // A line of the box was laid out before the break.
-    assert!(!first(&open.continued(40.0, 1), 0));
+    assert!(!first(&open.after(1).continued(40.0), 0));
+}
+
+#[test]
+fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::before { content: 'B B B B'; display: block; text-indent: 5px; width: 20px }",
+        "font: 10px/10px Ahem",
+        |_, _| {},
+    );
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    // Fragmentainers two lines tall: the box's first two lines fill the
+    // first, its last two go on in the second.
+    let lines = crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+        &mut fixture.doc,
+        fixture.root,
+        crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
+        crate::fragment::FragmentationContext {
+            available_width: 200.0,
+            available_height: Some(20.0),
+            column_fill: raikiri_style::property::ColumnFillValue::Auto,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        },
+        false,
+    );
+    assert_eq!(line_starts(&lines.lines), [5.0, 0.0, 0.0, 0.0]);
 }

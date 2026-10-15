@@ -405,10 +405,18 @@ pub(crate) struct OpenBlock {
 }
 
 impl OpenBlock {
+    /// The box after `lines` lines of the paragraph: once one of them is the
+    /// box's, its first line is laid out.
+    pub(crate) fn after(self, lines: usize) -> Self {
+        Self {
+            continues: self.continues || lines > self.lines_before,
+            ..self
+        }
+    }
+
     /// The box as it goes on at the top of the next fragmentainer, after a
-    /// fragmentainer that ends at `end` and holds `lines` lines of the
-    /// paragraph: the box fills it to there.
-    pub(crate) fn continued(self, end: f32, lines: usize) -> Self {
+    /// fragmentainer that ends at `end`: the box fills it to there.
+    pub(crate) fn continued(self, end: f32) -> Self {
         let top = self.content_top.unwrap_or(self.flow_top);
         Self {
             lines_before: 0,
@@ -416,7 +424,6 @@ impl OpenBlock {
             starts_paragraph: false,
             has_clearance: false,
             consumed: self.consumed + (end - top).max(0.0),
-            continues: self.continues || lines > self.lines_before,
             ..self
         }
     }
