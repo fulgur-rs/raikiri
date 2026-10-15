@@ -564,11 +564,13 @@ fn paragraph_may_be_decorated(document: &Document, cascade: &CascadeResult, root
     {
         return true;
     }
-    let mut pending = vec![source];
+    let mut pending: Vec<usize> = document
+        .get_node(source)
+        .map(|_| source)
+        .into_iter()
+        .collect();
     while let Some(id) = pending.pop() {
-        let Some(node) = document.get_node(id) else {
-            continue;
-        };
+        let node = &document.nodes[id];
         let cv = cascade.computed.get(id);
         if id != source
             && (node.is_ifc_root() || cv.is_some_and(|cv| cv.display == DisplayValue::None))
