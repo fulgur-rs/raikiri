@@ -362,6 +362,17 @@ impl Document {
         );
     }
 
+    /// Count, in the next projection, `count` more fragments for each box
+    /// `node` after the projected pages, where another layout of the
+    /// document goes on with it.
+    ///
+    /// A layout that keeps only the pages before a relayout at another page
+    /// width uses this for the boxes the relayout continues, so their last
+    /// fragment is the relayout's.
+    pub fn continue_fragments_after(&mut self, later: impl IntoIterator<Item = (NodeId, u32)>) {
+        self.later_fragments = later.into_iter().collect();
+    }
+
     /// The boxes on projected page `page_index` that began on an earlier
     /// page, by node.
     pub fn crossing_boxes(&self, page_index: u32) -> Vec<CrossingBox> {

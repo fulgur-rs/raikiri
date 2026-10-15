@@ -433,3 +433,37 @@ fn a_bordered_body_reaches_every_page_of_one_width() {
         ]
     );
 }
+
+#[test]
+fn a_bordered_paragraph_body_reaches_every_page() {
+    // Seven 50px words fit in 360px, so the body's 200 words take 29 10px
+    // lines: with its 1px borders it ends 132px down the second page.
+    let out = run(&format!(
+        "{}<style>body {{ border: 1px solid; font: 10px/10px Ahem }}</style>{}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px"),
+        words(200).join(" ")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![Some((20.0, 160.0)), Some((20.0, 132.0))]
+    );
+}
+
+#[test]
+fn a_body_with_only_a_side_border_ends_with_its_last_block() {
+    // The last block ends 130px down the third page; its block-end margin
+    // collapses through the body, which has no block-end edges.
+    let blocks = "<div style='height:40px;margin-bottom:5px'>x</div>".repeat(10);
+    let out = run(&format!(
+        "{}<style>body {{ border-left: 1px solid }}</style>{blocks}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 130.0)),
+        ]
+    );
+}

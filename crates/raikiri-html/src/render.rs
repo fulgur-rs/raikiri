@@ -1202,6 +1202,13 @@ pub(crate) fn run_pipeline(
         let page_styles = if let Some(first) = continuations.first() {
             // The first layout keeps only the pages before the first continuation.
             let own = first.first_page as usize;
+            // The body goes on in the continuations, which number its later
+            // fragments.
+            document.continue_fragments_after(continuation::body_fragments_after(
+                &document,
+                &continuations,
+                slices.len(),
+            ));
             // These pages were projected once already with the same limits.
             layout_step!(document.project_pages_with_control(
                 &first_cascade,

@@ -100,17 +100,8 @@ pub(super) fn resume_point(
     }
     let inside = inside_subtrees(dom, &skipped);
     let node_count = dom.node_count();
-    // The boxes crossing the page start continue their fragments, except
-    // the body, which is left to a full layout: it begins above the resumed
-    // page, in content the relayout leaves out.
-    let body = layout_root(dom, start.token.node());
+    // The boxes crossing the page start continue their fragments.
     let earlier_fragments = layout_document.crossing_boxes(page);
-    if earlier_fragments
-        .iter()
-        .any(|crossing| Some(crossing.node.0 as usize) == body)
-    {
-        return None;
-    }
     for index in page..laid_out.page_count() {
         for fragment in laid_out.page_at(index as usize).fragments() {
             let id = fragment.node().0 as usize;
@@ -260,12 +251,6 @@ fn has_content_height(computed: &ComputedValues) -> bool {
     matches!(computed.height, ComputedLengthPercentageOrAuto::Auto)
         && matches!(computed.max_height, ComputedLengthPercentageOrAuto::Auto)
         && unset(&computed.min_height)
-}
-
-/// The element the layout lays the document out from, the body, found
-/// among the ancestors of `node`: the element child of the root element.
-fn layout_root(dom: &Document, node: usize) -> Option<usize> {
-    dom.inclusive_ancestors(node).find(|&id| is_body(dom, id))
 }
 
 /// Whether element `id` is the body or the root element above it.

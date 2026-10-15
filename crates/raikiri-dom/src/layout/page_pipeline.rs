@@ -149,6 +149,7 @@ fn content_overflow_end(
                 body_id,
                 root_flow_offset,
                 page_area_height,
+                false,
             )
         } else if in_columns.is_none() && node.unrounded_layout.size.height > 0.0 {
             y + node.unrounded_layout.size.height
@@ -341,12 +342,19 @@ fn relative_offset_is_painted(
 /// auto-height body ends with its last in-flow child, followed by
 /// its own block-end padding and border. The body's border box starts after
 /// the root's margin (`root_flow_offset`) and its own block-start margin.
+///
+/// For page counting an auto-height body without block-end edges or a
+/// `min-height` ends nowhere of its own: its content, which the flow already
+/// paginated, decides. With `whole_box` the end of that content, its lines
+/// for a body that is one paragraph, is the end of the box, which is then
+/// laid over every page it reaches.
 fn body_border_box_end(
     document: &Document,
     cascade: &CascadeResult,
     body_id: usize,
     root_flow_offset: f32,
     page_area_height: f32,
+    whole_box: bool,
 ) -> f32 {
     let computed = &cascade.computed[body_id];
     // Percentages resolve against the root's used height only when it is
@@ -421,12 +429,22 @@ fn body_border_box_end(
     } else {
         f32::NEG_INFINITY
     };
+    let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
     // Without block-end edges or a `min-height` an auto-height body ends
     // with its content, which the flow already paginated.
     if body.is_ifc_root() {
-        return min_end.max(generated_end);
+        let lines_end = body
+            .ifc
+            .as_ref()
+            .and_then(|root| root.lines.as_ref())
+            .filter(|_| whole_box)
+            .map_or(f32::NEG_INFINITY, |lines| {
+                (top + edges_top + lines.shifted_height() + edges_bottom).min(max_end)
+            });
+        return min_end.max(generated_end).max(lines_end);
     }
-    if edges_bottom <= 0.0 && min_height <= 0.0 {
+    let edges_end = edges_bottom > 0.0 || min_height > 0.0;
+    if !edges_end && !whole_box {
         return min_end;
     }
     // In-flow children are in page coordinates already, with the margins
@@ -440,6 +458,7 @@ fn body_border_box_end(
     let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
+    let mut last_flow_margin = 0.0;
     // Popped in document order.
     let mut children: Vec<(usize, f32)> = body
         .children
@@ -496,15 +515,22 @@ fn body_border_box_end(
             offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
         if end.is_finite() {
             last_flow_end = Some(end);
+            last_flow_margin = layout.margin.bottom;
         }
     }
     if let Some(end) = last_flow_end {
+        // Without block-end edges the last child's block-end margin
+        // collapses through the end of the body.
+        let end = if edges_end {
+            end
+        } else {
+            end - last_flow_margin
+        };
         content_end = content_end.max(end);
     }
     // `max-height` caps the auto height, measured as `box-sizing` says;
     // `min-height` still wins over it.
     let content_height = content_end - (top + edges_top);
-    let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
     let auto_end = top + edges_top + content_height + edges_bottom;
     min_end.max(auto_end.min(max_end))
 }
@@ -2470,9 +2496,14 @@ pub(crate) fn project_slices_with_control(
     // Count all committed pieces together so edge ownership remains stable.
     let mut fragment_counts = HashMap::<NodeId, u32>::new();
     for item in pages.iter().flat_map(|page| &page.items) {
-        *fragment_counts
-            .entry(item.node_id)
-            .or_insert_with(|| before(&item.node_id).unwrap_or(0)) += 1;
+        *fragment_counts.entry(item.node_id).or_insert_with(|| {
+            before(&item.node_id).unwrap_or(0)
+                + document
+                    .later_fragments
+                    .get(&item.node_id)
+                    .copied()
+                    .unwrap_or(0)
+        }) += 1;
     }
     let mut fragment_indices = HashMap::<NodeId, u32>::new();
     for item in pages.iter_mut().flat_map(|page| &mut page.items) {
@@ -6271,7 +6302,14 @@ pub fn layout_pages_with_page_geometry_and_control(
     if !control.page_limit_reached.get()
         && cascade.computed[body_id].display != DisplayValue::Contents
     {
-        let end = body_border_box_end(document, cascade, body_id, root_flow_offset, content_height);
+        let end = body_border_box_end(
+            document,
+            cascade,
+            body_id,
+            root_flow_offset,
+            content_height,
+            true,
+        );
         let root_y = document
             .parent_of(body_id)
             .map_or(0.0, |root| document.nodes[root].unrounded_layout.location.y);
