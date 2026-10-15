@@ -3623,6 +3623,50 @@ struct PageFlowGeometry {
     insets: PageContentInsets,
 }
 
+/// The page type pagination assigns to each page the flow reaches.
+struct PageNames {
+    /// The page type of the flow at the candidate being placed.
+    current: Option<String>,
+    /// The page type the enclosing flow set last; an unnamed candidate
+    /// outside a named flex context compares its own against it.
+    outer: Option<String>,
+    by_page: Vec<Option<String>>,
+}
+
+impl PageNames {
+    fn new(first: Option<String>) -> Self {
+        Self {
+            by_page: vec![first.clone()],
+            outer: first.clone(),
+            current: first,
+        }
+    }
+
+    /// Give `page` the current page type.
+    fn name_page(&mut self, page: u32) {
+        let index = page as usize;
+        if self.by_page.len() <= index {
+            self.by_page.resize(index + 1, None);
+        }
+        self.by_page[index].clone_from(&self.current);
+    }
+
+    /// Name the pages after `from` through `end`, where content on page
+    /// `from` runs on. Pages no earlier content reached take the current
+    /// page type; with `overwrite`, so do those that already have one.
+    fn continue_onto(&mut self, from: u32, end: u32, overwrite: bool) {
+        let end = end as usize;
+        if self.by_page.len() <= end {
+            self.by_page.resize(end + 1, self.current.clone());
+        }
+        if overwrite && end > from as usize {
+            for name in &mut self.by_page[from as usize + 1..=end] {
+                name.clone_from(&self.current);
+            }
+        }
+    }
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_page_geometry_and_control`].
@@ -4071,10 +4115,9 @@ fn paginate_flow(
     // bottom edge of their anchor page. The normal-flow height is removed
     // from `flow_shift`, leaving the box only in this page-local area.
     let mut footnote_heights: HashMap<u32, f32> = HashMap::new();
-    let mut current_page_name =
-        selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade));
-    let mut page_names = vec![current_page_name.clone()];
-    let mut outer_page_name = current_page_name.clone();
+    let mut page_names = PageNames::new(
+        selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade)),
+    );
     let mut seen_named_flex_contexts = HashMap::new();
     let mut column_context_cache = vec![None; document.nodes.len()];
     let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
@@ -4124,7 +4167,7 @@ fn paginate_flow(
             );
         }
         let (name_context_seen, comparison_page_name) = if !name_participates_in_flow {
-            (false, current_page_name.clone())
+            (false, page_names.current.clone())
         } else {
             match candidate.named_flex_context {
                 Some(context) if candidate.deferred_named_break_after => {
@@ -4137,9 +4180,9 @@ fn paginate_flow(
                         document,
                         cascade,
                         &mut column_context_cache,
-                    ) || current_page_name.is_some();
-                    outer_page_name = candidate.page_name.clone();
-                    (saw_child && seen, current_page_name.clone())
+                    ) || page_names.current.is_some();
+                    page_names.outer = candidate.page_name.clone();
+                    (saw_child && seen, page_names.current.clone())
                 }
                 Some(context)
                     if candidate.is_named || candidate.is_text || candidate.is_rendered_leaf =>
@@ -4154,18 +4197,18 @@ fn paginate_flow(
                         document,
                         cascade,
                         &mut column_context_cache,
-                    ) || current_page_name.is_some();
-                    (saw_child && seen, current_page_name.clone())
+                    ) || page_names.current.is_some();
+                    (saw_child && seen, page_names.current.clone())
                 }
                 Some(_) => (false, candidate.page_name.clone()),
                 None => {
                     let previous = if candidate.is_named {
-                        current_page_name.clone()
+                        page_names.current.clone()
                     } else {
-                        outer_page_name.clone()
+                        page_names.outer.clone()
                     };
                     if !candidate.is_float_descendant {
-                        outer_page_name = candidate.page_name.clone();
+                        page_names.outer = candidate.page_name.clone();
                     }
                     (saw_child, previous)
                 }
@@ -4174,7 +4217,7 @@ fn paginate_flow(
         // Leaving a flex item's internal named flow keeps the last opened
         // physical page until an outer boundary or natural overflow opens one.
         let keep_local_page_type =
-            candidate.named_flex_context.is_none() && current_page_name != comparison_page_name;
+            candidate.named_flex_context.is_none() && page_names.current != comparison_page_name;
         let page_before_candidate = current_page;
         let moves_ifc_root = {
             let mut first = candidate
@@ -4776,7 +4819,7 @@ fn paginate_flow(
                         effective_y += shift_delta;
                     }
                     current_page = target_page;
-                    current_page_name = candidate_page_name.clone();
+                    page_names.current = candidate_page_name.clone();
                 } else if effective_y.is_finite() && effective_y >= 0.0 {
                     let natural_page = page_index_for_y(effective_y);
                     check_candidate_page!('candidate_loop, natural_page);
@@ -4786,7 +4829,7 @@ fn paginate_flow(
                 saw_child = true;
                 current_page = 0;
                 if name_participates_in_flow {
-                    current_page_name = candidate_page_name.clone();
+                    page_names.current = candidate_page_name.clone();
                 }
             }
             if height > 0.0
@@ -4795,13 +4838,10 @@ fn paginate_flow(
                 && !consumes_pending_break
                 && (!keep_local_page_type || current_page > page_before_candidate)
             {
-                current_page_name = candidate_page_name;
+                page_names.current = candidate_page_name;
             }
             check_candidate_page!('candidate_loop, current_page);
-            if page_names.len() <= current_page as usize {
-                page_names.resize(current_page as usize + 1, None);
-            }
-            page_names[current_page as usize] = current_page_name.clone();
+            page_names.name_page(current_page);
             max_page = max_page.max(current_page);
             if !candidate.is_out_of_flow_descendant {
                 flow_max_page = flow_max_page.max(current_page);
@@ -4831,15 +4871,11 @@ fn paginate_flow(
                     // started on until a later box names another, even when
                     // an enclosing box running onto them named them first.
                     let names_end = control.capped_page_index(end_page);
-                    if page_names.len() <= names_end as usize {
-                        page_names.resize(names_end as usize + 1, current_page_name.clone());
-                    }
-                    if !candidate.is_out_of_flow_descendant && names_end > current_page {
-                        for name in &mut page_names[current_page as usize + 1..=names_end as usize]
-                        {
-                            name.clone_from(&current_page_name);
-                        }
-                    }
+                    page_names.continue_onto(
+                        current_page,
+                        names_end,
+                        !candidate.is_out_of_flow_descendant,
+                    );
                 }
             }
             if consumes_pending_break {
@@ -5514,7 +5550,7 @@ fn paginate_flow(
                 || candidate.deferred_named_break_after)
             && (!keep_local_page_type || page_transition || current_page > page_before_candidate)
         {
-            current_page_name = candidate_page_name;
+            page_names.current = candidate_page_name;
             if candidate.is_direct_body_element || candidate.named_flex_context.is_some() {
                 last_named_context = candidate.named_flex_context;
                 last_named_raw_y = candidate.is_named.then_some(raw_y);
@@ -5524,10 +5560,7 @@ fn paginate_flow(
             }
         }
         check_candidate_page!('candidate_loop, current_page);
-        if page_names.len() <= current_page as usize {
-            page_names.resize(current_page as usize + 1, None);
-        }
-        page_names[current_page as usize] = current_page_name.clone();
+        page_names.name_page(current_page);
 
         max_page = max_page.max(current_page);
         if !candidate.is_out_of_flow_descendant {
@@ -5566,15 +5599,11 @@ fn paginate_flow(
                     // started on until a later box names another, even when
                     // an enclosing box running onto them named them first.
                     let names_end = control.capped_page_index(end_page);
-                    if page_names.len() <= names_end as usize {
-                        page_names.resize(names_end as usize + 1, current_page_name.clone());
-                    }
-                    if !candidate.is_out_of_flow_descendant && names_end > current_page {
-                        for name in &mut page_names[current_page as usize + 1..=names_end as usize]
-                        {
-                            name.clone_from(&current_page_name);
-                        }
-                    }
+                    page_names.continue_onto(
+                        current_page,
+                        names_end,
+                        !candidate.is_out_of_flow_descendant,
+                    );
                 }
             }
         }
@@ -5670,14 +5699,7 @@ fn paginate_flow(
     // it, and keep the page type the flow ended on, whatever page type was
     // active when one of those boxes first reached them.
     let names_end = control.capped_page_index(max_page);
-    if page_names.len() <= names_end as usize {
-        page_names.resize(names_end as usize + 1, current_page_name.clone());
-    }
-    if names_end > flow_max_page {
-        for name in &mut page_names[flow_max_page as usize + 1..=names_end as usize] {
-            name.clone_from(&current_page_name);
-        }
-    }
+    page_names.continue_onto(flow_max_page, names_end, true);
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
@@ -5726,7 +5748,11 @@ fn paginate_flow(
         .map(|page_index| PageSlice {
             page_index,
             content_origin_y: page_origin(page_index),
-            page_name: page_names.get(page_index as usize).cloned().flatten(),
+            page_name: page_names
+                .by_page
+                .get(page_index as usize)
+                .cloned()
+                .flatten(),
         })
         .collect())
 }
