@@ -260,14 +260,18 @@ impl DocumentHost for WptDocumentHost {
 
     /// Load and decode the image the way layout will, through the same
     /// checkout-rooted file provider, so `load` fires exactly for the images
-    /// the page renders and `error` for the broken ones.
+    /// the page renders and `error` for the broken ones. Without a checkout
+    /// root nothing would confine a `file:` URL, so every load fails, the
+    /// same as [`Self::script_source`].
     fn load_image(&mut self, url: &str) -> Result<(), HostError> {
+        let root = self
+            .canonical_root
+            .clone()
+            .ok_or_else(|| HostError(format!("{url}: the WPT root does not exist")))?;
         let parsed = raikiri::Url::parse(url)
             .map_err(|_| HostError(format!("{url}: not an absolute URL")))?;
         let resolver = raikiri_net::ImageResolver::new(
-            crate::reftest::local_resources::WptFileNetworkProvider::new(
-                self.canonical_root.clone(),
-            ),
+            crate::reftest::local_resources::WptFileNetworkProvider::new(Some(root)),
         );
         raikiri_traits::ReplacedResolver::resolve(
             &resolver,

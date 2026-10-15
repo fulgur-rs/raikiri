@@ -1054,4 +1054,10 @@ fn load_image_decodes_data_and_checkout_images_and_rejects_the_rest() {
     ] {
         assert!(host.load_image(&url).is_err(), "{url}");
     }
+    // Without a checkout root, even an image that exists on disk is refused.
+    let mut host = host_at(&root.join("css/page"), &root.join("no-such-root"));
+    let error = host
+        .load_image(&file_url(&root.join("css/page/green.png")))
+        .unwrap_err();
+    assert!(error.0.contains("the WPT root does not exist"), "{error:?}");
 }

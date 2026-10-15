@@ -79,6 +79,11 @@ fn src_reflects_the_resolved_attribute() {
          r1 === 'https://example.test/a%20b.png?q#f' \
          && r2 === 'data:image/png;base64,AA==' && img.src === 'http://['",
     );
+    // `src` is a `USVString`: an unpaired surrogate becomes U+FFFD.
+    ok(
+        &mut rt,
+        "img.src = 'a\\uD800b.png'; img.getAttribute('src') === 'a\\uFFFDb.png'",
+    );
 }
 
 #[test]

@@ -18,7 +18,7 @@ use super::dispatch;
 use super::event_loop;
 use super::interfaces::{HTML_NS, Members, wrap};
 use super::node::{js_str, mark_dirty, write_attribute};
-use super::webidl::{dom_string, guard_node_budget, this_element, with_state};
+use super::webidl::{guard_node_budget, this_element, usv_string, with_state};
 
 /// Whether `index` is an HTML `<img>` element.
 pub(crate) fn is_html_image(document: &raikiri_dom::Document, index: usize) -> bool {
@@ -185,7 +185,8 @@ fn src(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue
 
 fn set_src(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_image(this, context)?;
-    let value = dom_string(args, 0, context)?;
+    // `src` is a `USVString` attribute.
+    let value = usv_string(args, 0, context)?;
     write_attribute(context, index, "src", &value)?;
     Ok(JsValue::undefined())
 }
