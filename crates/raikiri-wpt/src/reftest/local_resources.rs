@@ -57,6 +57,23 @@ impl WptFileNetworkProvider {
         }
         request
     }
+
+    /// Whether an existing file `url` names stays inside the checkout once
+    /// symlinks are followed. A missing file is left for the file provider
+    /// to report, and with no checkout root nothing is confined.
+    fn stays_in_checkout(&self, url: &raikiri::Url) -> bool {
+        let Some(root) = self.root.as_deref() else {
+            return true;
+        };
+        let Some(path) = (url.scheme() == "file")
+            .then(|| url.to_file_path().ok())
+            .flatten()
+            .and_then(|path| std::fs::canonicalize(path).ok())
+        else {
+            return true;
+        };
+        std::fs::canonicalize(root).is_ok_and(|root| path.starts_with(root))
+    }
 }
 
 impl NetworkProvider for WptFileNetworkProvider {
@@ -64,7 +81,14 @@ impl NetworkProvider for WptFileNetworkProvider {
         &self,
         request: raikiri_traits::Request,
     ) -> Result<FetchOutcome, NetworkError> {
-        raikiri_net::FileNetworkProvider.fetch_one_hop(self.rebase(request))
+        let request = self.rebase(request);
+        if !self.stays_in_checkout(&request.url) {
+            return Err(NetworkError::Other(format!(
+                "{}: resolves outside the WPT checkout",
+                request.url
+            )));
+        }
+        raikiri_net::FileNetworkProvider.fetch_one_hop(request)
     }
 }
 

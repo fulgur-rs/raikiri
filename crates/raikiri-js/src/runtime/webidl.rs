@@ -18,6 +18,17 @@ pub(crate) fn dom_string(args: &[JsValue], i: usize, context: &mut Context) -> J
         .to_std_string_escaped())
 }
 
+/// WebIDL `USVString` conversion of argument `i`: a `DOMString` whose
+/// unpaired surrogates become U+FFFD.
+pub(crate) fn usv_string(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<String> {
+    Ok(args
+        .get(i)
+        .cloned()
+        .unwrap_or_default()
+        .to_string(context)?
+        .to_std_string_lossy())
+}
+
 /// WebIDL `unsigned long` conversion (ToUint32, no `[EnforceRange]`) of
 /// required argument `i`; a missing argument is a `TypeError`.
 pub(crate) fn arg_unsigned_long(

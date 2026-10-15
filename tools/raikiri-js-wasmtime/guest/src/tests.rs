@@ -14,6 +14,8 @@ fn rpc_flush_and_services() {
                 Ok(HostValue::Unit)
             }
             HostOperation::Fetch(url) => Ok(HostValue::Text(Some(url))),
+            HostOperation::LoadImage(url) if url == "ok.png" => Ok(HostValue::Unit),
+            HostOperation::LoadImage(_) => Err("missing image".into()),
             HostOperation::Computed(_, _) => Ok(HostValue::Text(Some("red".into()))),
             HostOperation::Geometry(_) => Ok(HostValue::Geometry(None)),
             HostOperation::Fragment { .. } => {
@@ -23,6 +25,8 @@ fn rpc_flush_and_services() {
     );
     host.flush().unwrap();
     assert_eq!(host.fetch_script("source").unwrap(), "source");
+    assert!(host.load_image("ok.png").is_ok());
+    assert!(host.load_image("missing.png").is_err());
     assert_eq!(host.computed_value(0, "color").unwrap(), Some("red".into()));
     assert!(host.box_geometry(0).unwrap().is_none());
     assert_eq!(host.parse_fragment("div", "", "x").unwrap().node_count(), 1);
@@ -49,6 +53,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
                 HostOperation::Geometry(_) => HostValue::Unit,
                 HostOperation::Computed(_, _) => HostValue::Unit,
                 HostOperation::Fetch(_) => HostValue::Unit,
+                HostOperation::LoadImage(_) => HostValue::Text(None),
                 HostOperation::Fragment { .. } => HostValue::Unit,
             })
         }),
@@ -57,6 +62,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
     assert!(wrong_kind.box_geometry(0).is_err());
     assert!(wrong_kind.computed_value(0, "color").is_err());
     assert!(wrong_kind.fetch_script("x").is_err());
+    assert!(wrong_kind.load_image("x").is_err());
     assert!(wrong_kind.parse_fragment("div", "", "x").is_err());
 
     let mut failing = RpcDocumentHost::new(
@@ -69,6 +75,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
     assert!(failing.box_geometry(0).is_err());
     assert!(failing.computed_value(0, "color").is_err());
     assert!(failing.fetch_script("x").is_err());
+    assert!(failing.load_image("x").is_err());
     assert!(failing.parse_fragment("div", "", "x").is_err());
 }
 
@@ -109,6 +116,8 @@ fn hostile_geometry_and_fragment_validation_are_rejected() {
                         nodes: Vec::new(),
                         quirks: 0,
                         stylesheets: Vec::new(),
+                        base_url: None,
+                        selected_image_urls: Vec::new(),
                     })
                 }
                 _ => HostValue::Unit,

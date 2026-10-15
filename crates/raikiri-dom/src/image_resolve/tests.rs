@@ -413,6 +413,33 @@ fn resolved_urls_follow_relative_sources_base_changes_and_attribute_mutation() {
 }
 
 #[test]
+fn a_selected_image_url_outlives_base_changes_until_src_changes() {
+    let mut document = Document::new();
+    let root = document.root_index();
+    let image = document.append_element(Some(root), "img", Style::default(), None::<&str>);
+    document.set_element_attributes(image, vec![("src".into(), "image.png".into())]);
+    document.mark_in_document_flags();
+    let selected = Url::parse("https://first.test/image.png").unwrap();
+    document.select_image_url(image, "image.png", selected.clone());
+    assert_eq!(document.selected_image_url(image), Some(&selected));
+    let later = Url::parse("https://second.test/document.html").unwrap();
+    resolve_images_with_base(&mut document, &FixedSizeResolver(4.0, 2.0), Some(&later)).unwrap();
+    assert_eq!(document.resolved_image_url(image), Some(selected.clone()));
+    // An extracted copy keeps the selection under its new index.
+    let copy = document.extract_nodes(&[root, image]);
+    assert_eq!(copy.selected_image_url(1), Some(&selected));
+    // A new `src` value is no longer covered by the old selection.
+    document.set_element_attributes(image, vec![("src".into(), "next.png".into())]);
+    assert_eq!(document.selected_image_url(image), None);
+    resolve_images_with_base(&mut document, &FixedSizeResolver(4.0, 2.0), Some(&later)).unwrap();
+    assert_eq!(
+        document.resolved_image_url(image).unwrap().as_str(),
+        "https://second.test/next.png"
+    );
+    assert_eq!(document.selected_image_url(usize::MAX), None);
+}
+
+#[test]
 fn svg_root_lengths_are_read_as_single_css_tokens() {
     for (value, expected) in [
         ("10", Some(10.0)),

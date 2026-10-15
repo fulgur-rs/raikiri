@@ -65,6 +65,13 @@ impl DocumentHost for RpcDocumentHost {
             _ => Err(HostError("fetch response kind".into())),
         }
     }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
+    fn load_image(&mut self, url: &str) -> Result<(), HostError> {
+        match self.call(HostOperation::LoadImage(url.into()))? {
+            HostValue::Unit => Ok(()),
+            _ => Err(HostError("image response kind".into())),
+        }
+    }
     fn parse_fragment(
         &mut self,
         tag: &str,

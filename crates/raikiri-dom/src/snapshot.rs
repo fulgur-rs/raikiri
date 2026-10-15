@@ -21,6 +21,10 @@ pub struct LogicalSnapshot {
     /// The document base URL, absolute when present.
     #[cfg_attr(feature = "snapshot-serde", serde(default))]
     pub base_url: Option<String>,
+    /// `(element, src, absolute URL)` for each image URL a script host
+    /// selected; see [`Document::select_image_url`].
+    #[cfg_attr(feature = "snapshot-serde", serde(default))]
+    pub selected_image_urls: Vec<(usize, String, String)>,
 }
 /// Node contents and ordered children without derived state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +120,10 @@ impl LogicalSnapshot {
                 .base_url
                 .as_deref()
                 .is_some_and(|url| url::Url::parse(url).is_err())
+            || self
+                .selected_image_urls
+                .iter()
+                .any(|(element, _, url)| *element >= n || url::Url::parse(url).is_err())
         {
             return fail("document metadata");
         }
@@ -191,6 +199,15 @@ impl Document {
         LogicalSnapshot {
             root: self.root,
             base_url: self.base_url().map(|url| url.as_str().to_owned()),
+            selected_image_urls: {
+                let mut selected = self
+                    .selected_image_urls
+                    .iter()
+                    .map(|(&element, (src, url))| (element, src.clone(), url.as_str().to_owned()))
+                    .collect::<Vec<_>>();
+                selected.sort_unstable();
+                selected
+            },
             quirks: match self.quirks_mode() {
                 QuirksMode::NoQuirks => 0,
                 QuirksMode::LimitedQuirks => 1,
@@ -265,6 +282,12 @@ impl Document {
                 .as_deref()
                 .and_then(|url| url::Url::parse(url).ok()),
         );
+        // `validate` rejected a selected URL that does not parse.
+        for (element, src, url) in snapshot.selected_image_urls {
+            if let Ok(url) = url::Url::parse(&url) {
+                doc.select_image_url(element, &src, url);
+            }
+        }
         for (s, k) in snapshot.stylesheets {
             doc.add_stylesheet(
                 s,

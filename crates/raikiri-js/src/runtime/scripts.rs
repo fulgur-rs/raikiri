@@ -422,8 +422,12 @@ pub(crate) fn run(runtime: &mut DomRuntime) -> RunReport {
     let uncaught_before = with_state(context, |s| s.event_loop.uncaught_errors.len()).unwrap_or(0);
     let console_before = with_state(context, |s| s.console.len()).unwrap_or(0);
 
+    // Compile parsed `on*` attributes, then start each parsed `<img>`'s
+    // request as the parser would on insertion; their `load`/`error` tasks
+    // run once the scripts below have finished.
     if report.aborted.is_none()
         && let Err(error) = super::dispatch::sync_all_event_handler_content_attributes(context)
+            .and_then(|()| super::image::update_parsed_images(context))
     {
         let reason = event_loop::abort_for(&error).unwrap_or(Abort::Recursion);
         report.aborted = Some(event_loop::abort(context, reason));

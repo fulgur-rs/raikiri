@@ -58,6 +58,33 @@ fn a_url_inside_the_checkout_is_left_alone() {
     assert_eq!(fetched.final_url, url);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlink_out_of_the_checkout_is_refused() {
+    let root = checkout();
+    let outside = tempfile::tempdir().unwrap();
+    std::fs::write(outside.path().join("secret.png"), b"secret").unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("secret.png"),
+        root.path().join("images/escape.png"),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(
+        root.path().join("images/green.png"),
+        root.path().join("images/alias.png"),
+    )
+    .unwrap();
+    let provider = WptFileNetworkProvider::new(Some(root.path().to_path_buf()));
+    let escape = raikiri::Url::parse("file:///images/escape.png").unwrap();
+    let error = provider.fetch(get(escape)).unwrap_err();
+    assert!(
+        error.to_string().contains("outside the WPT checkout"),
+        "{error}"
+    );
+    let alias = raikiri::Url::parse("file:///images/alias.png").unwrap();
+    assert_eq!(&provider.fetch(get(alias)).unwrap().bytes[..], b"root");
+}
+
 #[test]
 fn without_a_checkout_root_urls_are_not_rebased() {
     let provider = WptFileNetworkProvider::new(None);

@@ -88,8 +88,12 @@ pub(crate) fn resolve_images_with_base(
             let previous_size = element.image_intrinsic_size;
             let src = element.attribute("src");
             let next_size = if let Some(src) = src {
-                let url = Url::parse(src)
-                    .ok()
+                let url = document
+                    .selected_image_urls
+                    .get(&id)
+                    .filter(|(selected_for, _)| selected_for == src)
+                    .map(|(_, url)| url.clone())
+                    .or_else(|| Url::parse(src).ok())
                     .or_else(|| base_url.and_then(|base| base.join(src).ok()));
                 if let Some(url) = url {
                     document
