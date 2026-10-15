@@ -326,3 +326,129 @@ fn a_table_encloses_a_moved_row_without_cells() {
     assert_eq!(span(&doc, group), (62.0, 120.0));
     assert_eq!(span(&doc, table), (60.0, 122.0));
 }
+
+#[test]
+fn a_table_with_a_spanning_cell_keeps_its_row_tracks() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        let first = append_row(doc, group, "", 20.0).0;
+        let spanning = doc.append_element(
+            Some(first),
+            "td",
+            Style::default(),
+            Some("display:table-cell;padding:0;height:10px"),
+        );
+        doc.set_element_attribute(spanning, "rowspan", "2").unwrap();
+        append_row(doc, group, "", 10.0);
+        ids.push(first);
+        ids.push(append_row(doc, group, "", 30.0).0);
+    });
+    let [first, moved] = ids[..] else {
+        unreachable!()
+    };
+    assert_eq!(span(&doc, moved), (100.0, 130.0));
+    // The spanning cell reaches into the second row's track, which does not
+    // make the first row any taller.
+    assert_eq!(span(&doc, first), (62.0, 82.0));
+}
+
+#[test]
+fn a_direct_row_with_content_outside_cells_takes_the_table_top_along() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px;border:3px solid"),
+        );
+        // The block takes an anonymous cell owned by the row.
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        doc.append_element(
+            Some(row),
+            "div",
+            Style::default(),
+            Some("display:block;height:50px"),
+        );
+        ids.extend([table, row]);
+    });
+    let [table, row] = ids[..] else {
+        unreachable!()
+    };
+    assert_eq!(span(&doc, row), (105.0, 155.0));
+    assert_eq!(span(&doc, table), (100.0, 160.0));
+}
+
+#[test]
+fn a_later_row_group_of_a_table_with_a_repeated_header_follows_its_row() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:30px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        let head = doc.append_element(
+            Some(table),
+            "thead",
+            Style::default(),
+            Some("display:table-header-group"),
+        );
+        append_row(doc, head, "", 10.0);
+        for rows in [&[20.0, 40.0][..], &[10.0]] {
+            let group = doc.append_element(
+                Some(table),
+                "tbody",
+                Style::default(),
+                Some("display:table-row-group"),
+            );
+            ids.push(group);
+            for &height in rows {
+                ids.push(append_row(doc, group, "", height).0);
+            }
+        }
+    });
+    let [_, _, moved, second_group, follower] = ids[..] else {
+        unreachable!()
+    };
+    // The moved row starts the next page below the header's copy.
+    assert_eq!(span(&doc, moved), (112.0, 152.0));
+    assert_eq!(span(&doc, follower), (154.0, 164.0));
+    assert_eq!(span(&doc, second_group), (154.0, 164.0));
+}

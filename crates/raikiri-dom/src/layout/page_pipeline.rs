@@ -4427,7 +4427,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                     && cascade.computed[child].caption_side
                         == raikiri_style::property::CaptionSideValue::Top
                     && document.nodes[child].style.position != taffy::Position::Absolute
-                    || document.anonymous_table_cells(child).next().is_some()
+                    || cascade.computed[child].display != DisplayValue::TableRow
+                        && document.anonymous_table_cells(child).next().is_some()
             }) || document.anonymous_table_cells(table).next().is_some()
             {
                 continue;

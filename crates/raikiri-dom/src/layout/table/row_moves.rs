@@ -9,18 +9,28 @@ use std::collections::{BTreeSet, HashMap};
 /// starts with that row on its new page, so no empty fragment of its top edge
 /// stays behind (CSS Fragmentation 3 §4.4: the break before a table's first
 /// row is the break before the table). Every part then grows over the rows
-/// moved below its end. Tables in `skip` are finished elsewhere.
+/// moved below its end. A table for which `repeats_header` holds keeps its
+/// top with its repeated header and is finished with it. A table with cells
+/// spanning rows keeps its layout geometry, since a spanning cell's rectangle
+/// covers more than its own row's track.
 pub(crate) fn follow_moved_rows(
     document: &mut Document,
     moved_rows: &HashMap<usize, f32>,
-    skip: impl Fn(usize) -> bool,
+    repeats_header: impl Fn(usize) -> bool,
 ) {
     let tables: BTreeSet<usize> = moved_rows
         .keys()
         .filter_map(|&row| table_of(document, row))
-        .filter(|&table| !skip(table))
+        .filter(|&table| {
+            !document.table_objects.rows.get(&table).is_some_and(|rows| {
+                rows.iter()
+                    .flat_map(|row| row.cells.iter().copied())
+                    .any(|cell| super::get_rowspan(document, cell) != 1)
+            })
+        })
         .collect();
     for table in tables {
+        let repeated_header = repeats_header(table);
         let groups: Vec<usize> = document.nodes[table]
             .children
             .iter()
@@ -44,7 +54,10 @@ pub(crate) fn follow_moved_rows(
             if table_first.is_none_or(|(_, first_y)| y < first_y) {
                 table_first = Some((first, y));
             }
-            if part == table {
+            // The repeated header is placed with its copies.
+            if part == table
+                || repeated_header && document.nodes[part].display == DisplayValue::TableHeaderGroup
+            {
                 continue;
             }
             if let Some(&delta) = moved_rows.get(&first) {
@@ -63,6 +76,9 @@ pub(crate) fn follow_moved_rows(
         let anonymous_rows = groups
             .iter()
             .any(|&group| document.anonymous_table_cells(group).next().is_some());
+        if repeated_header {
+            continue;
+        }
         if !top_caption
             && !anonymous_rows
             && let Some((first, _)) = table_first
