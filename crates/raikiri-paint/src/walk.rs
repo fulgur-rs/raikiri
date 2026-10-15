@@ -3250,7 +3250,10 @@ pub(crate) fn paint_document_impl(
                 // Where the box's border box starts on this page's coordinates
                 // before it is cut into a continuation fragment.
                 let mut unfragmented_top = paint_y;
+                // Continuations cut boxes along y; a page that follows the x
+                // axis holds only the boxes across its page area.
                 if !paints_on_page
+                    && flow_band.is_none()
                     && is_absolute_fragment_candidate
                     && let Some(descendant_end) = descendant_end_on_page
                 {

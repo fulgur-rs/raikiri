@@ -6519,6 +6519,24 @@ fn a_page_along_the_x_axis_keeps_the_lines_of_a_turned_sideways_paragraph_togeth
     assert_eq!(pixel(10, 15), &[0, 128, 0, 255]);
 }
 
+#[test]
+fn a_page_along_the_x_axis_leaves_absolute_boxes_beside_it_out_of_its_margin() {
+    // The bordered absolute box with an in-flow child lies wholly in the
+    // page's left margin, so no continuation of it paints there.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:60px;height:10px'></div>\
+         <div style='position:absolute;left:-18px;top:0;width:10px;height:40px;\
+         border:3px solid red;background:red'><div style='width:10px;height:10px'></div></div>\
+         </body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(3, 1), &[255, 255, 255, 255]);
+}
+
 fn flow_band(right_to_left: bool, root_transform: Affine) -> super::FlowBand {
     super::FlowBand {
         left: 20.0,
