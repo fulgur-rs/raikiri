@@ -5511,9 +5511,11 @@ fn paginate_flow(
                     // top leaves its collapsed margin after the break.
                     // A later, unforced page edge inside that margin still
                     // truncates it.
-                    let after_forced_break = forced_break_margin_box.is_some_and(|owner| {
+                    let follows_forced_break = forced_break_margin_box.is_some_and(|owner| {
                         forced_margin_reaches(document, cascade, owner, previous, node_id)
-                    }) && (previous_bottom - page_top).abs() <= 0.001;
+                    });
+                    let after_forced_break =
+                        follows_forced_break && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001
@@ -5525,11 +5527,24 @@ fn paginate_flow(
                     {
                         // A forced break that already coincides with this
                         // page edge sits before the margin, which therefore
-                        // stays on the new page.
-                        let target_y = if forced_before {
-                            page_top + margin_top
+                        // stays on the new page. Otherwise the margin breaks
+                        // at the first page edge inside it, and the rest of
+                        // it is truncated together with the blank pages it
+                        // would fill.
+                        let (target_top, target_y) = if forced_before {
+                            (page_top, page_top + margin_top)
                         } else {
-                            page_top
+                            // Only the collapsed margin is truncated, not
+                            // clearance or other space in the gap.
+                            let collapsed = adjoining_margin(document, cascade, previous, false)
+                                .max(adjoining_margin(document, cascade, node_id, true));
+                            let margin_start = previous_bottom.max(effective_y - collapsed);
+                            // The forced break at the start of a kept
+                            // margin is not an edge inside it.
+                            let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
+                            let first_edge =
+                                (page_index_for_y(margin_start + edge_slack) + 1).min(natural_page);
+                            (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;
                         margins_moved_boxes |= delta != 0.0;
@@ -5537,10 +5552,10 @@ fn paginate_flow(
                         follow_moved_ifc_block(document, node_id, delta);
                         flow_shift += delta;
                         effective_y += delta;
-                        if target_y < page_top {
+                        if target_y < target_top {
                             // Descendants follow the negative margin; later
                             // siblings still follow the forced break boundary.
-                            pending_underflow = Some((node_id, page_top - target_y));
+                            pending_underflow = Some((node_id, target_top - target_y));
                         } else {
                             natural_page = page_index_for_y(effective_y);
                         }
@@ -6337,6 +6352,51 @@ fn generated_box_separates(
         current = parent;
     }
     false // cov:ignore: the document node is never a `display: contents` element, so the walk returns before it runs out of parents
+}
+
+/// The largest positive margin among the block-start (`start`) or block-end
+/// margin of `id` and the margins of its first or last in-flow child that
+/// adjoin it, which all collapse into one (CSS 2 §8.3.1).
+fn adjoining_margin(document: &Document, cascade: &CascadeResult, id: usize, start: bool) -> f32 {
+    let layout = &document.nodes[id].unrounded_layout;
+    let own = if start {
+        layout.margin.top
+    } else {
+        layout.margin.bottom
+    }
+    .max(0.0);
+    let edges = if start {
+        layout.border.top + layout.padding.top
+    } else {
+        layout.border.bottom + layout.padding.bottom
+    };
+    if edges > 0.0 || !margins_may_collapse_through(document, cascade, id) {
+        return own;
+    }
+    let mut boxes = Vec::new();
+    for &child in document.nodes[id].children.iter().rev() {
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+    }
+    let child = if start { boxes.last() } else { boxes.first() };
+    let Some(&child) = child else {
+        return own;
+    };
+    let child_layout = &document.nodes[child].unrounded_layout;
+    // The child's margin adjoins only when its border box touches this box's
+    // content edge, which a used height or a line before it would prevent.
+    let touches = if start {
+        child_layout.location.y <= 0.001
+    } else {
+        child_layout.location.y + child_layout.size.height >= layout.size.height - 0.001
+    };
+    if document.nodes[child].kind() == NodeKind::Element
+        && !cascade.computed[child].display.is_inline_level()
+        && touches
+    {
+        own.max(adjoining_margin(document, cascade, child, start))
+    } else {
+        own
+    }
 }
 
 /// Whether `id` is a block box (a list item included) that establishes no
