@@ -85,6 +85,7 @@ mod page_pipeline;
 mod relative;
 mod root_box;
 pub(crate) mod sanitize;
+mod static_position;
 #[cfg(test)]
 pub(crate) mod test_support;
 

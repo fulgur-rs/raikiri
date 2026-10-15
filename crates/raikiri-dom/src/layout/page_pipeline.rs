@@ -938,6 +938,7 @@ fn layout_single_page_with_table_projection(
         height: content_height,
     };
     document.fixed_page_area = (content_width, content_height);
+    super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     place_fixed_boxes_in_page_area(document, cascade, body_id, page_area);
     // Laying those boxes out again can fail a table or exhaust the
     // fragment budget like the root layout above.
@@ -945,6 +946,9 @@ fn layout_single_page_with_table_projection(
     // After the fixed boxes, whose relayout lays out the grids inside them
     // again with taffy's static positions.
     realign_grid_abspos_static_positions(document, cascade);
+    // Again for the boxes inside fixed boxes that relayout put back; the
+    // pass is idempotent, so the boxes placed above stay where they are.
+    super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
     refresh_projected_multicol_text_fragments(document);
     // Step 5b: check semantic parent-child geometry invariants and replace
