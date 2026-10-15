@@ -15729,3 +15729,17 @@ fn a_margin_after_a_contents_sibling_with_an_empty_before_box_is_kept() {
         130.0
     );
 }
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_inline_before_content_on_a_zero_height_line_is_truncated()
+{
+    // The text of the span's inline `::before` makes a line box, which keeps
+    // the margins apart even with no height.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "between",
+            "body { line-height: 0 } span::before { content: \"x\" }"
+        ),
+        100.0
+    );
+}

@@ -6791,10 +6791,11 @@ fn forced_margin_reaches(
     true
 }
 
-/// Whether a block-level `::before` or `::after` box of a `display: contents`
-/// element between `previous` and `node_id`, its following sibling box, keeps
-/// their margins apart. Such a box has no node of its own: it is a block in
-/// the paragraph of the shared box parent (see [`has_in_flow_content`]).
+/// Whether a `::before` or `::after` box of a `display: contents` element
+/// between `previous` and `node_id`, its following sibling box, keeps their
+/// margins apart. Such a box has no node of its own: it is a block or inline
+/// content in the paragraph of the shared box parent (see
+/// [`has_in_flow_content`]).
 fn generated_box_separates(
     document: &Document,
     cascade: &CascadeResult,
@@ -6810,15 +6811,20 @@ fn generated_box_separates(
             .and_then(|parent| document.ifc_layout_node(parent))
             .is_some_and(|node| {
                 let width = node.unrounded_layout.size.width;
-                // A box the line loop placed holds lines or clearance, either
-                // of which keeps the margins apart, like the content that
-                // `has_in_flow_content` counts.
+                // A block box the line loop placed holds lines or clearance,
+                // and inline content puts text on a line; either keeps the
+                // margins apart, like the content that `has_in_flow_content`
+                // counts.
                 node.ifc.as_ref().is_some_and(|ifc| {
                     ifc.generated_blocks
                         .iter()
                         .any(|block| block.start == id && block.separates_margins(width, vertical))
                         || ifc.lines.as_ref().is_some_and(|lines| {
                             lines.placed_blocks.iter().any(|placed| placed.node == id)
+                                || lines.lines.iter().any(|line| {
+                                    super::ifc::text_lines::glyph_owners(line)
+                                        .contains(&(id as usize))
+                                })
                         })
                 })
             })

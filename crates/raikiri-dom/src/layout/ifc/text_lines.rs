@@ -48,7 +48,7 @@ fn root_of(doc: &Document, node: usize) -> Option<usize> {
 
 /// The DOM owners of the glyph runs on `line`, in order. The glyphs of a ruby
 /// annotation belong to the line the annotation is placed over.
-fn glyph_owners(line: &shodo::Line) -> Vec<usize> {
+pub(crate) fn glyph_owners(line: &shodo::Line) -> Vec<usize> {
     fn collect(line: &shodo::Line, owners: &mut Vec<usize>) {
         for fragment in line.fragments() {
             match fragment {
