@@ -6410,3 +6410,32 @@ fn a_page_along_the_x_axis_paints_only_the_lines_it_holds() {
     assert_eq!(pixel(25, 5), &[0, 128, 0, 255]);
     assert_eq!(pixel(10, 5), &[255, 255, 255, 255]);
 }
+
+#[test]
+fn flow_band_membership_handles_empty_and_unbounded_boxes() {
+    let band = (20.0, 80.0);
+    // An empty box belongs to the page whose page area holds it, edges
+    // included.
+    assert!(super::box_intersects_flow_band(
+        Affine::IDENTITY,
+        (20.0, 0.0, 0.0, 10.0),
+        band
+    ));
+    assert!(!super::box_intersects_flow_band(
+        Affine::IDENTITY,
+        (10.0, 0.0, 0.0, 10.0),
+        band
+    ));
+    // A box without finite edges belongs to no page.
+    assert!(!super::box_intersects_flow_band(
+        Affine::IDENTITY,
+        (f32::INFINITY, 0.0, 10.0, 10.0),
+        band
+    ));
+    // A box that ends at the page area's edge belongs to the page beside it.
+    assert!(!super::box_intersects_flow_band(
+        Affine::IDENTITY,
+        (-40.0, 0.0, 60.0, 10.0),
+        band
+    ));
+}
