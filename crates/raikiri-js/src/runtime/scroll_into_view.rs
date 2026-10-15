@@ -136,7 +136,7 @@ fn axis_offset(
     }
 }
 
-/// Whether `index`, an ancestor below the body, is a scroll container: it
+/// Whether `index`, an ancestor of the target, is a scroll container: it
 /// computes an `overflow` other than `visible` or `clip` on an axis.
 fn is_scroll_container(context: &mut Context, index: usize) -> JsResult<bool> {
     for property in ["overflow-x", "overflow-y"] {
@@ -149,14 +149,22 @@ fn is_scroll_container(context: &mut Context, index: usize) -> JsResult<bool> {
 }
 
 /// Whether a scroll container other than the viewport sits between
-/// `index` and the document element `root`. The document element and the
-/// body propagate their `overflow` to the viewport, so they do not count.
+/// `index` and the document element `root`. The document element's
+/// `overflow` applies to the viewport, so it does not count; neither does
+/// the body's when the root's is `visible` on both axes, since the body's
+/// then applies to the viewport instead (CSS Overflow 3 §3.3).
 fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) -> JsResult<bool> {
     let (body, mut current) = with_state(context, |s| {
         let document = s.host.document();
         let body = first_element_child(document, root, Some("body"));
         (body, document.parent_of(index))
     })?;
+    let mut root_visible = true;
+    for property in ["overflow-x", "overflow-y"] {
+        let value = read_computed(context, root, property)?;
+        root_visible &= value.as_deref().is_none_or(|v| v == "visible");
+    }
+    let body = body.filter(|_| root_visible);
     while let Some(ancestor) = current.filter(|&ancestor| ancestor != root) {
         if Some(ancestor) != body && is_scroll_container(context, ancestor)? {
             return Ok(true);

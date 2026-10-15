@@ -137,11 +137,11 @@ fn the_nearest_container_keeps_the_viewport_inside_a_scroller() {
     host.geometry
         .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
     host.viewport = Ok(Some((100.0, 100.0)));
-    // The body's overflow belongs to the viewport, so it never confines.
+    // With a visible root, the body's overflow belongs to the viewport.
     host.computed
         .insert((body, "overflow-y".to_owned()), "hidden".to_owned());
     host.computed
-        .insert((html, "overflow-x".to_owned()), "hidden".to_owned());
+        .insert((html, "overflow-x".to_owned()), "visible".to_owned());
     let mut rt = DomRuntime::new(host).unwrap();
     ok(
         &mut rt,
@@ -161,6 +161,39 @@ fn the_nearest_container_keeps_the_viewport_inside_a_scroller() {
         "scrollTo(0, 0); var t = document.body.firstChild.firstChild;\
          t.scrollIntoView({container: 'nearest'}); var kept = scrollY === 0;\
          t.scrollIntoView(); kept && scrollY === 300",
+    );
+}
+
+#[test]
+fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
+    let (mut host, html, _, body) = StubHost::page();
+    let target = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, target).unwrap();
+    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    host.geometry
+        .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.viewport = Ok(Some((100.0, 100.0)));
+    host.computed
+        .insert((body, "overflow-y".to_owned()), "auto".to_owned());
+    host.computed
+        .insert((html, "overflow-x".to_owned()), "visible".to_owned());
+    let mut rt = DomRuntime::new(host).unwrap();
+    // The root is visible, so the body's overflow is the viewport's.
+    ok(
+        &mut rt,
+        "document.body.firstChild.scrollIntoView({container: 'nearest'}); scrollY === 300",
+    );
+    crate::runtime::webidl::with_state(rt.context_mut(), |s| {
+        let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();
+        host.computed
+            .insert((html, "overflow-y".to_owned()), "clip".to_owned());
+    })
+    .unwrap();
+    // A clipping root keeps the body's own scrolling box.
+    ok(
+        &mut rt,
+        "scrollTo(0, 0); document.body.firstChild.scrollIntoView({container: 'nearest'});\
+         scrollY === 0",
     );
 }
 
