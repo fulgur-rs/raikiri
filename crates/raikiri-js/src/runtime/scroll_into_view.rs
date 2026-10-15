@@ -167,13 +167,16 @@ fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) 
         root_visible &= value.as_deref().is_none_or(|v| v == "visible");
     }
     let body = body.filter(|_| root_visible);
-    let position = |context: &mut Context, node| -> JsResult<PositionKind> {
-        Ok(box_geometry(context, node)?.map_or(PositionKind::Static, |g| g.position))
-    };
-    let mut absolute = position(context, index)? == PositionKind::Absolute;
+    let mut absolute =
+        box_geometry(context, index)?.is_some_and(|g| g.position == PositionKind::Absolute);
     while let Some(ancestor) = current.filter(|&ancestor| ancestor != root) {
-        let ancestor_position = position(context, ancestor)?;
-        if !(absolute && ancestor_position == PositionKind::Static) {
+        // An ancestor without a box (`display: contents`, say) has no
+        // scrolling box whatever its `overflow`, and contains nothing.
+        let geometry = box_geometry(context, ancestor)?;
+        let ancestor_position = geometry
+            .as_ref()
+            .map_or(PositionKind::Static, |g| g.position);
+        if geometry.is_some() && !(absolute && ancestor_position == PositionKind::Static) {
             if Some(ancestor) != body && is_scroll_container(context, ancestor)? {
                 return Ok(true);
             }

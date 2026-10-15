@@ -136,6 +136,10 @@ fn the_nearest_container_keeps_the_viewport_inside_a_scroller() {
     let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
     host.geometry
         .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.geometry
+        .insert(scroller, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.geometry
+        .insert(body, StubHost::boxed(rect, rect, PositionKind::Static));
     host.viewport = Ok(Some((100.0, 100.0)));
     // With a visible root, the body's overflow belongs to the viewport.
     host.computed
@@ -210,6 +214,27 @@ fn the_nearest_container_follows_the_containing_block_chain() {
 }
 
 #[test]
+fn an_ancestor_without_a_box_does_not_confine() {
+    let (mut host, _, _, body) = StubHost::page();
+    let contents = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, contents).unwrap();
+    let target = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(contents, target).unwrap();
+    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    host.geometry
+        .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.computed
+        .insert((contents, "overflow-y".to_owned()), "auto".to_owned());
+    host.viewport = Ok(Some((100.0, 100.0)));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.firstChild.firstChild.scrollIntoView({container: 'nearest'});\
+         scrollY === 300",
+    );
+}
+
+#[test]
 fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
     let (mut host, html, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
@@ -217,6 +242,8 @@ fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
     let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
     host.geometry
         .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.geometry
+        .insert(body, StubHost::boxed(rect, rect, PositionKind::Static));
     host.viewport = Ok(Some((100.0, 100.0)));
     host.computed
         .insert((body, "overflow-y".to_owned()), "auto".to_owned());
