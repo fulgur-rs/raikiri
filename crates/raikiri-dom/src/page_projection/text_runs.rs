@@ -6,7 +6,7 @@ use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
 use raikiri_style::property::{
-    ColumnCountValue, CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextShadowColor,
+    ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
 };
 use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
@@ -612,23 +612,10 @@ pub(super) fn box_paint_shift(
     // flex and grid, and of boxes on lines. The body, floats and table parts
     // and column fragments are placed without it, and the painter adds it, as
     // it adds the block offset that manual column placement leaves out.
-    let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
-        && document
-            .layout_parent_of(id)
-            .is_none_or(|parent| !cascade.computed[parent].display.is_flex_or_grid_container());
-    let painted_inset = Some(id) == body
-        || float
-        || fragmented
-        || matches!(
-            cv.display,
-            DisplayValue::TableCaption
-                | DisplayValue::TableCell
-                | DisplayValue::TableRow
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-        );
-    let (mut dx, mut dy) = if painted_inset && !cv.display.is_inline_level() {
+    let painted_inset =
+        crate::layout::placed_without_relative_offset(document, cascade, body, id, cv)
+            || (fragmented && !cv.display.is_inline_level());
+    let (mut dx, mut dy) = if painted_inset {
         crate::layout::used_relative_offset(document, cascade, cv, id)
     } else if node.needs_relative_block_paint_offset() {
         (
@@ -638,7 +625,7 @@ pub(super) fn box_paint_shift(
     } else {
         (0.0, 0.0)
     };
-    if !transformable(document, id, cv) || cv.transform.is_empty() {
+    if !crate::layout::is_transformable(document, id, cv) || cv.transform.is_empty() {
         return Ok(BoxShift {
             offset: (dx, dy),
             general: false,
@@ -675,24 +662,6 @@ pub(super) fn box_paint_shift(
         offset: (dx, dy),
         general: false,
     })
-}
-
-/// Whether the element's `transform` applies to it.
-pub(super) fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-    // Non-replaced inline and table-column boxes are not transformable.
-    let Some(node) = document.get_node(id) else {
-        return false; // cov:ignore: ancestors of a laid-out paragraph are arena nodes
-    };
-    !matches!(
-        cv.display,
-        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && (cv.display != DisplayValue::Inline
-        || node.is_inline_svg_root()
-        || matches!(
-            node.tag_name(),
-            Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-        ))
 }
 
 /// How many columns a multicol container lays its content out in; 1 for
@@ -831,7 +800,7 @@ pub(super) fn paint_shift(
             // ancestor neither moves the fixed box in layout, which places it
             // against the page area, nor in the painter, which places it from
             // its insets.
-            if (transformable(document, id, cv) && !cv.transform.is_empty())
+            if (crate::layout::is_transformable(document, id, cv) && !cv.transform.is_empty())
                 || !cv.filter.is_empty()
             {
                 return Err(TextRunOmission::FixedPlacement);

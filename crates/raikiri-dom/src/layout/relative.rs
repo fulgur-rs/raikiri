@@ -9,7 +9,7 @@ use super::{BoxParentScope, box_parent};
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::node::Node;
-use raikiri_style::property::{DisplayValue, PositionValue, WritingMode};
+use raikiri_style::property::{DisplayValue, FloatValue, PositionValue, WritingMode};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::NodeKind;
 
@@ -105,6 +105,33 @@ pub(crate) fn used_relative_insets(
         ),
         Precedence::LeftTop => (left.or(right), top.or(bottom)),
     }
+}
+
+/// Whether layout places `node_id` without its relative offset, which the
+/// painter applies instead: the body (`body`), a float outside a flex or
+/// grid container, and a table caption, cell, row or row group. Inline-level
+/// boxes are placed on their lines with the offset.
+pub fn placed_without_relative_offset(
+    document: &Document,
+    cascade: &CascadeResult,
+    body: Option<usize>,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
+        && document
+            .layout_parent_of(node_id)
+            .is_none_or(|parent| !cascade.computed[parent].display.is_flex_or_grid_container());
+    let table_part = matches!(
+        cv.display,
+        DisplayValue::TableCaption
+            | DisplayValue::TableCell
+            | DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    );
+    (body == Some(node_id) || float || table_part) && !cv.display.is_inline_level()
 }
 
 /// Which of two opposing insets wins.
