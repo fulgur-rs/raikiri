@@ -156,5 +156,3 @@ css/css-text/text-group-align/text-group-align-start-vlr.html | text-group-align
 css/css-text/text-group-align/text-group-align-start.html | text-group-align is not implemented; it matched only while support/test-helpers.css was not loaded | RAIKIRI-317 | 2026-10-14 | 2026-12-14
 css/css-writing-modes/text-combine-upright-compression-001.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
 css/css-writing-modes/text-combine-upright-shadow.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
-css/css-writing-modes/wm-propagation-body-041.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
-css/css-writing-modes/wm-propagation-body-050.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
