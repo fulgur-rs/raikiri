@@ -859,13 +859,9 @@ const COINCIDENT_STEP: f32 = 1e-5;
 /// transitions with nothing to interpolate.
 const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 
-/// Exact samples between two approximated stops when either lies outside
-/// the sRGB gamut, before each substep is refined further.
-const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
-
-/// Exact samples along a whole segment between two stops when either stop
-/// lies outside the sRGB gamut, before each gap is refined further.
-const OUT_OF_GAMUT_SEGMENT_STEPS: usize = 64;
+/// Exact samples across the whole brush, from offset 0 to 1, before each
+/// gap is refined further.
+const BRUSH_GRID_STEPS: usize = 64;
 
 /// Largest premultiplied channel error, about half an 8-bit level, that a
 /// drawn substep may have against the clipped ramp at its middle.
@@ -896,68 +892,44 @@ fn clamp_srgb(color: AlphaColor<Srgb>) -> AlphaColor<Srgb> {
     AlphaColor::<Srgb>::new(color.components.map(|channel| channel.clamp(0.0, 1.0)))
 }
 
-/// Push exact clipped samples strictly between `start` and `end`: `steps`
-/// evenly spaced gaps, each then refined by [`refine_clipped`].
-fn clipped_samples(
-    sample: &impl Fn(f32) -> AlphaColor<Srgb>,
-    start: (f32, AlphaColor<Srgb>),
-    end: (f32, AlphaColor<Srgb>),
-    steps: usize,
-    min_width: f32,
-    out: &mut Vec<(f32, AlphaColor<Srgb>)>,
-) {
-    let mut previous = start;
-    for step in 1..=steps {
-        let next = if step == steps {
-            end
-        } else {
-            let t = start.0 + (end.0 - start.0) * step as f32 / steps as f32;
-            (t, sample(t))
-        };
-        refine_clipped(sample, previous, next, min_width, out);
-        if step < steps {
-            out.push(next);
-        }
-        previous = next;
-    }
-}
-
-/// Push clipped samples strictly between `start` and `end` until a renderer
-/// interpolating linearly between neighbors stays within
+/// Push clipped samples strictly inside the part of the brush cell
+/// `lo..hi` that lies in `segment`, at the cell's midpoints, halving it
+/// until a renderer interpolating linearly between neighbors stays within
 /// [`CLIP_TOLERANCE`] of the clipped ramp at each middle. A channel far
-/// outside the gamut crosses into it within a sliver of the step, which
-/// fixed substeps cannot find. Halving stops at `min_width`, the width of
-/// [`MIN_EXPANDED_SEGMENT`] in the brush: anything narrower draws as a hard
-/// transition, like the steps between coincident stops.
-fn refine_clipped(
-    sample: &impl Fn(f32) -> AlphaColor<Srgb>,
-    start: (f32, AlphaColor<Srgb>),
-    end: (f32, AlphaColor<Srgb>),
-    min_width: f32,
+/// outside the gamut crosses into it within a sliver of a grid cell, which
+/// the grid alone cannot find. Halving stops at [`MIN_EXPANDED_SEGMENT`]:
+/// anything narrower draws as a hard transition, like the steps between
+/// coincident stops. `at` samples the clipped ramp at a brush offset.
+fn refine_cell(
+    at: &impl Fn(f32) -> (f32, AlphaColor<Srgb>),
+    segment: (f32, f32),
+    (lo, hi): (f32, f32),
     out: &mut Vec<(f32, AlphaColor<Srgb>)>,
 ) {
-    if end.0 - start.0 < min_width {
+    let (start, end) = (lo.max(segment.0), hi.min(segment.1));
+    if end <= start || hi - lo < MIN_EXPANDED_SEGMENT {
         return;
     }
-    let t = (start.0 + end.0) / 2.0;
-    let middle = sample(t);
     let premultiplied = |color: AlphaColor<Srgb>| {
         let [r, g, b, a] = color.components;
         [r * a, g * a, b * a, a]
     };
-    let (from, to, at) = (
-        premultiplied(start.1),
-        premultiplied(end.1),
-        premultiplied(middle),
+    let (from, to, middle) = (
+        premultiplied(at(start).1),
+        premultiplied(at(end).1),
+        premultiplied(at((start + end) / 2.0).1),
     );
-    if (0..4)
-        .all(|channel| ((from[channel] + to[channel]) / 2.0 - at[channel]).abs() <= CLIP_TOLERANCE)
-    {
+    if (0..4).all(|channel| {
+        ((from[channel] + to[channel]) / 2.0 - middle[channel]).abs() <= CLIP_TOLERANCE
+    }) {
         return;
     }
-    refine_clipped(sample, start, (t, middle), min_width, out);
-    out.push((t, middle));
-    refine_clipped(sample, (t, middle), end, min_width, out);
+    let mid = (lo + hi) / 2.0;
+    refine_cell(at, segment, (lo, mid), out);
+    if mid > segment.0 && mid < segment.1 {
+        out.push(at(mid));
+    }
+    refine_cell(at, segment, (mid, hi), out);
 }
 
 /// Approximate interpolation in `space` with dense sRGB stops.
@@ -990,7 +962,6 @@ pub(super) fn expand_stops(
         }
         let exact = from.interpolate(to, space, direction);
         let sample = |t: f32| clamp_srgb(exact.eval(t).to_alpha_color::<Srgb>());
-        let min_width = MIN_EXPANDED_SEGMENT / span;
         let mut push_samples = |samples: Vec<(f32, AlphaColor<Srgb>)>| {
             for (t, color) in samples {
                 expanded.push((
@@ -999,45 +970,27 @@ pub(super) fn expand_stops(
                 ));
             }
         };
-        let (from_srgb, to_srgb) = (from.to_alpha_color::<Srgb>(), to.to_alpha_color::<Srgb>());
-        if !in_gamut(from_srgb) || !in_gamut(to_srgb) {
-            // The approximation below bounds its error before clipping, which
-            // a stop far outside the gamut may never meet. The clipped ramp
-            // is bounded, so sample it exactly instead.
-            let start = (0.0, clamp_srgb(from_srgb));
-            let mut samples = vec![start];
-            clipped_samples(
-                &sample,
-                start,
-                (1.0, clamp_srgb(to_srgb)),
-                OUT_OF_GAMUT_SEGMENT_STEPS,
-                min_width,
-                &mut samples,
-            );
-            push_samples(samples);
-            continue;
-        }
-        let mut previous: Option<(f32, AlphaColor<Srgb>)> = None;
-        for (t, color) in peniko::color::gradient::<Srgb>(from, to, space, direction, 0.01) {
-            let color = color.un_premultiply();
-            let mut samples = Vec::new();
-            // The approximation error is bounded before clipping, but a
-            // channel leaving the gamut bends the clipped curve within one
-            // step. Sample such a step exactly so the drawn colors follow it.
-            if let Some((previous_t, previous_color)) = previous
-                && (!in_gamut(previous_color) || !in_gamut(color))
-            {
-                let start = (previous_t, clamp_srgb(previous_color));
-                let end = (t, clamp_srgb(color));
-                let steps = OUT_OF_GAMUT_SUBSTEPS;
-                clipped_samples(&sample, start, end, steps, min_width, &mut samples);
+        // Sample the clipped ramp exactly at brush offsets that do not
+        // depend on where the segment starts or ends: the points of a fixed
+        // grid, refined by halving its cells. A segment split by a stop that
+        // lies on the ramp is then sampled where the whole one is, except in
+        // the one cell holding the split.
+        let mut samples = vec![(0.0, sample(0.0))];
+        let at = |offset: f32| {
+            let t = ((offset - from_offset) / span).clamp(0.0, 1.0);
+            (t, sample(t))
+        };
+        let first = (from_offset * BRUSH_GRID_STEPS as f32).floor() as i64;
+        let last = (to_offset * BRUSH_GRID_STEPS as f32).ceil() as i64;
+        for cell in first..last {
+            let lo = cell as f32 / BRUSH_GRID_STEPS as f32;
+            let hi = (cell + 1) as f32 / BRUSH_GRID_STEPS as f32;
+            refine_cell(&at, (from_offset, to_offset), (lo, hi), &mut samples);
+            if hi > from_offset && hi < to_offset {
+                samples.push(at(hi));
             }
-            if t < 1.0 {
-                samples.push((t, clamp_srgb(color)));
-            }
-            push_samples(samples);
-            previous = Some((t, color));
         }
+        push_samples(samples);
     }
     if let Some((offset, color)) = stops.last() {
         expanded.push((*offset, *color));
