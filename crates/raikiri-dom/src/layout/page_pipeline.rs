@@ -3647,6 +3647,25 @@ pub fn layout_pages_with_page_geometry_and_control(
         let layout = document.nodes[node_id].unrounded_layout;
         let old_top = layout.location.y - delta;
         let old_bottom = old_top + layout.size.height;
+        follow_ifc_block(document, root, node_id, old_top, old_bottom, delta);
+    }
+
+    /// The content after `block`, a block child of the paragraph `root` that
+    /// spanned `old_top..old_bottom`, moves down by `delta`: the lines after
+    /// it and the paragraph's boxes after it in source order. A box inside
+    /// `block` that moves to a later page takes the rest of the paragraph
+    /// along this way even though `block` itself stays.
+    fn follow_ifc_block(
+        document: &mut Document,
+        root: usize,
+        block: usize,
+        old_top: f32,
+        old_bottom: f32,
+        delta: f32,
+    ) {
+        if delta == 0.0 || !delta.is_finite() {
+            return;
+        }
         let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
             return;
         };
@@ -3656,7 +3675,7 @@ pub fn layout_pages_with_page_geometry_and_control(
         let Some(&(_, first_after)) = lines
             .block_line_starts
             .iter()
-            .find(|(block, _)| *block == node_id)
+            .find(|(child, _)| *child == block)
         else {
             return;
         };
@@ -3671,7 +3690,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             .iter()
             .scan(false, |after, b| {
                 let later = *after;
-                *after |= b.node == node_id;
+                *after |= b.node == block;
                 Some((b.node, b.kind, later))
             })
             .collect();
@@ -5745,8 +5764,10 @@ pub fn layout_pages_with_page_geometry_and_control(
                         // parent lays the moved box out among its siblings.
                         // A box pulled back over the break by a negative
                         // margin still leaves the flow after it at the break.
+                        // A paragraph's content after a block on its lines
+                        // follows the same way, also when the moved box sits
+                        // deeper inside that block.
                         let flow_delta = node_delta.max(shift_delta);
-                        let paragraph = ifc_paragraph_of_block(document, node_id);
                         let mut child = node_id;
                         let mut next = document.parent_of(node_id);
                         while let Some(parent) = next
@@ -5756,10 +5777,25 @@ pub fn layout_pages_with_page_geometry_and_control(
                             if cascade.computed[parent].display == DisplayValue::Contents {
                                 continue;
                             }
-                            if Some(parent) != paragraph
+                            let paragraph = ifc_paragraph_of_block(document, child) == Some(parent);
+                            if !paragraph
                                 && !stacks_children_in_block_flow(document, cascade, parent)
                             {
                                 break;
+                            }
+                            // The moved box itself already took the lines
+                            // after it along.
+                            if paragraph && child != node_id {
+                                let layout = document.nodes[child].unrounded_layout;
+                                let top = layout.location.y;
+                                follow_ifc_block(
+                                    document,
+                                    parent,
+                                    child,
+                                    top,
+                                    top + layout.size.height,
+                                    flow_delta,
+                                );
                             }
                             shift_later_block_siblings(
                                 document, cascade, parent, child, flow_delta,

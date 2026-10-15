@@ -402,6 +402,29 @@ fn boxes_after_a_paragraph_follow_a_forced_break_inside_it() {
 }
 
 #[test]
+fn a_paragraph_follows_a_forced_break_inside_a_wrapper_on_its_lines() {
+    // The forced break is inside a block wrapper among the paragraph's
+    // lines, so the wrapper itself stays; the paragraph's content after the
+    // wrapper and the boxes after the paragraph still follow the break.
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let paragraph = block(doc, body, "display:block;font-size:10px;line-height:10px");
+        doc.append_text(paragraph, "x");
+        let wrapper = block(doc, paragraph, "display:block");
+        ids.push(block(
+            doc,
+            wrapper,
+            "display:block;height:20px;break-before:page",
+        ));
+        ids.push(block(doc, paragraph, "display:block;height:10px"));
+        ids.push(block(doc, body, "display:block;height:10px"));
+    });
+    let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
+    assert_eq!(ys, vec![100.0, 120.0, 130.0]);
+}
+
+#[test]
 fn a_grid_item_in_an_explicit_auto_row_grows_the_grid() {
     let mut ids = Vec::new();
     let (doc, _) = paged_body(|doc, body| {
