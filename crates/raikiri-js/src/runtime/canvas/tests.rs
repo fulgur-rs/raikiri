@@ -590,12 +590,25 @@ fn draw_image_scales_to_the_destination_rectangle() {
 }
 
 #[test]
+fn draw_image_paints_the_pixels_whose_centers_it_covers() {
+    let (mut rt, canvas) = draw_rt(true);
+    // Pixel 0's center (0.5) lies left of 0.7, so the draw starts at pixel
+    // 1; pixel 2's center (2.5) is past the right edge at 2.4.
+    rt.evaluate("ctx.drawImage(img, 0, 0, 1, 1, 0.7, 0, 1.7, 1);")
+        .unwrap();
+    let rows = pixels(rt, canvas);
+    assert_eq!(rows[0], [CLEAR, RED, CLEAR, CLEAR]);
+}
+
+#[test]
 fn draw_image_clips_a_source_rectangle_outside_the_image() {
     let (mut rt, canvas) = draw_rt(true);
     // Only the source column 1 of row 0 lies in the image, so only the
     // first destination pixel is painted.
-    rt.evaluate("ctx.drawImage(img, 1, 0, 4, 1, 0, 0, 4, 1); ctx.drawImage(img, 0, 0, 0, 1, 0, 1, 4, 1);")
-        .unwrap();
+    rt.evaluate(
+        "ctx.drawImage(img, 1, 0, 4, 1, 0, 0, 4, 1); ctx.drawImage(img, 0, 0, 0, 1, 0, 1, 4, 1);",
+    )
+    .unwrap();
     let rows = pixels(rt, canvas);
     assert_eq!(rows[0], [GREEN, CLEAR, CLEAR, CLEAR]);
     assert_eq!(rows[1], [CLEAR; 4]);

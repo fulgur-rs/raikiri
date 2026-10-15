@@ -568,7 +568,12 @@ fn the_default_host_loads_no_images() {
          img.src = 'ok.png'; document.body.innerHTML = 'x'; true",
     );
     ok_after_tasks(&mut rt, "log.join() === 'error'");
-    assert!(rt.try_into_host::<NoImages>().is_ok());
+    let mut host = rt.try_into_host::<NoImages>().ok().unwrap();
+    // Nor does it keep any pixels to draw.
+    assert!(
+        host.image_pixels("https://example.test/dir/ok.png")
+            .is_none()
+    );
 }
 
 #[test]

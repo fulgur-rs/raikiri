@@ -605,7 +605,8 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     if sw == 0.0 || sh == 0.0 || dw == 0.0 || dh == 0.0 {
         return Ok(JsValue::undefined());
     }
-    let Some((canvas_w, canvas_h)) = with_state(context, |s| s.host.document().canvas_size(canvas))?
+    let Some((canvas_w, canvas_h)) =
+        with_state(context, |s| s.host.document().canvas_size(canvas))?
     else {
         // cov:ignore: a 2d context only exists for a canvas element.
         return Ok(JsValue::undefined());
