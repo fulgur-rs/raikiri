@@ -112,7 +112,6 @@ pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
-pub(crate) use sanitize::sanitize_taffy_layout;
 
 #[doc(hidden)]
 pub use fixed::generates_inline_box;

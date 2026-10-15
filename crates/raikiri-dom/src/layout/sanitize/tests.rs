@@ -1,6 +1,13 @@
 use super::*;
 use taffy::Style;
 
+/// Whether `v` sits exactly on the symmetric clamp boundary of [`MAX_TAFFY_MAGNITUDE`].
+/// `sanitize_finite` rounds out-of-range finite values exactly to `±MAX_TAFFY_MAGNITUDE`, so this
+/// tells whether the clamp fired on a field. `NaN` takes a separate path that rounds to `0.0`.
+fn taffy_magnitude_is_saturated(v: f32) -> bool {
+    v == MAX_TAFFY_MAGNITUDE || v == -MAX_TAFFY_MAGNITUDE
+}
+
 #[test]
 fn multicol_definite_dimension_resolves_calc_via_the_taffy_calc_resolver() {
     let mut doc = Document::new();
@@ -735,15 +742,13 @@ fn content_box_violation_resets_subtree_to_zero_layout() {
 /// **Direct check of behavior reversed by this change (formerly
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`)**.
 /// Use a directly constructed maximally-uncontained value (`location.x == MAX_TAFFY_MAGNITUDE` vs.
-/// `parent.size.width == 100.0`) that satisfies the gate of `child_within_parent_border_box` ("its own
+/// `parent.size.width == 100.0`) that satisfies the gate of the former containment check ("its own
 /// `child.location` is saturated") and would have been reset as a containment violation in the old
-/// implementation. Since this change made `axis_ok` unconditionally `true` regardless of sign, this
+/// implementation. Since this change made the former per-axis check unconditionally `true` regardless of sign, this
 /// fixture is no longer reset — even though it is clearly outside the parent border box. This is kept as a
-/// regression check to show that "even by directly constructing the fixture, this invariant can no longer
-/// be broken" (see the "Reason why it became unconditionally accepted regardless of sign" section in the
-/// doc of `child_within_parent_border_box`, and it is intended to be used as material for a future
-/// follow-up (a problem explicitly deferred separately) to determine "whether this check itself should be
-/// maintained" to confirm "what the current function actually does").
+/// regression check that a saturated child outside its parent is kept; the containment check itself
+/// has since been removed (see "Parent-child containment is not checked" in
+/// [`enforce_layout_invariants`]'s doc).
 #[test]
 fn saturated_child_outside_parent_is_not_reset() {
     let mut doc = Document::new();
@@ -908,7 +913,7 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
 /// `saturated_child_outside_parent_resets_subtree_to_zero_layout`
 /// This was a check (renamed to `saturated_child_outside_parent_is_not_reset` and inverted with this
 /// change) paired with "saturated AND containment violation → reset" to indicate that "we are checking the
-/// conjunction 'gate AND containment violation' rather than just 'gate'." With this change, `axis_ok`
+/// conjunction 'gate AND containment violation' rather than just 'gate'." With this change, the former per-axis check
 /// unconditionally became `true` regardless of its sign, so this conjunction no longer holds — a reset
 /// will not occur regardless of actual containment (whether it's exactly within the boundary or clearly
 /// outside). The assert in this test itself continues to pass (because this fixture happened to be a
@@ -916,7 +921,7 @@ fn legitimate_negative_margin_overflow_is_not_reset() {
 /// "containment is not being looked at in the first place." For the paired regression check demonstrating
 /// this fact, see `saturated_child_outside_parent_is_not_reset`. For a similar check using an actual
 /// nested percentage chain, see `nested_percentage_wide_child_chain_is_not_reset` (a regression that was
-/// the direct reason for choosing the current `child_within_parent_border_box`, which only looks at
+/// the direct reason for choosing the former containment check, which only looks at
 /// origin, not extent).
 #[test]
 fn saturated_but_contained_layout_is_not_reset() {
@@ -940,7 +945,7 @@ fn saturated_but_contained_layout_is_not_reset() {
         margin: Rect::zero(),
     };
     // child.location itself is exactly at the saturation boundary — trigger the gate
-    // (`child_within_parent_border_box` axis unit gate). Since it's the same value as parent.size, it's
+    // (the former containment check axis unit gate). Since it's the same value as parent.size, it's
     // exactly "contained" at the boundary by `<=`.
     doc.nodes[child].unrounded_layout = TaffyLayout {
         order: 1,
@@ -994,7 +999,7 @@ fn saturated_but_contained_layout_is_not_reset() {
 /// violation, `x` axis not saturated, legitimate negative margin `-30`) was meaningful as a check to
 /// demonstrate the detection capability of the `y` axis — showing that re-checking only the `y` axis could
 /// explain the reason for the reset, and that the legitimate negative value of the `x` axis would be
-/// ignored. With this change, `axis_ok` became unconditionally `true` regardless of sign, so the `y` axis
+/// ignored. With this change, the former per-axis check became unconditionally `true` regardless of sign, so the `y` axis
 /// no longer re-checks containment just by being saturated — the fact of "not being contained" itself can
 /// no longer be a reason for a reset.
 ///
@@ -1160,8 +1165,7 @@ fn saturated_but_contained_axis_with_legitimate_negative_margin_on_other_axis_is
 /// is saturated, while **the child itself is not saturated at all** but has a legitimate negative margin
 /// (`location.x = -30`). The old gate (which would check if any one of `parent.size` / `child.size` /
 /// `child.location` was saturated) incorrectly reset this — directly reproducing the field-unit problem
-/// explained in section 1 of `child_within_parent_border_box`'s doc, "Reasons for limiting the gate to
-/// axis units and `child.location` itself".
+/// that led the former containment check to gate on each axis's own `child.location`.
 #[test]
 fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
     let mut doc = Document::new();
@@ -1221,7 +1225,7 @@ fn saturated_parent_size_with_legitimate_negative_margin_child_is_not_reset() {
 /// task: `width: 200%` nested `DEPTH`-ish levels deep is
 /// **legitimate** CSS (each level is, by design, twice its parent — the
 /// child's origin never moves off `(0, 0)`), yet an earlier version of
-/// `child_within_parent_border_box` checked *extent*
+/// the former containment check checked *extent*
 /// (`location + size <= parent.size`) rather than just `location`, so it
 /// flagged the transition depth where one level's saturated `size` first
 /// exceeded its still-unsaturated parent's `size` — even though nothing
@@ -1270,7 +1274,7 @@ fn nested_percentage_wide_child_chain_is_not_reset() {
 }
 
 /// Minimal synthetic check for the new negative-
-/// saturation branch of `child_within_parent_border_box`, isolated
+/// saturation branch of the former containment check, isolated
 /// from any real CSS pipeline (mirrors how
 /// `saturated_but_contained_layout_is_not_reset` pins the positive-
 /// saturation pass path). `child.location.x` is placed exactly at
@@ -1280,8 +1284,8 @@ fn nested_percentage_wide_child_chain_is_not_reset() {
 /// **unreachable as a pass**: no negative value ever satisfies `>= 0.0`,
 /// so the old code reset this unconditionally regardless of
 /// `parent.size`. This test pins that the sign-based branch introduced
-/// later (see `child_within_parent_border_box`'s
-/// doc, "The reason why it became unconditional accept regardless of sign") treats
+/// later (see "Parent-child containment is not checked" in
+/// [`enforce_layout_invariants`]'s doc) treats
 /// saturated-negative as unconditionally ok, the same way
 /// unsaturated-negative already was — and, since a later change,
 /// the same way saturated-positive now is too.
@@ -1444,7 +1448,7 @@ fn saturated_negative_margin_percentage_child_is_not_reset() {
 /// (`1e7 * 100 = 1e9`), and `sanitize_taffy_layout` clamps the resulting
 /// raw `location.x` to exactly `MAX_TAFFY_MAGNITUDE` on write.
 /// `parent.size.width` stays `100.0` — nowhere near saturated. Before
-/// this fix, `axis_ok` re-checked `location.x <=
+/// this fix, the former per-axis check re-checked `location.x <=
 /// parent.size.width` for saturated positive locations
 /// (`1e7 <= 100.0` → false) and reset the whole child subtree to a zero
 /// layout, discarding spec-legal content — this is the exact repro that

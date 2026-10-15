@@ -431,11 +431,11 @@ pub struct Document {
     /// "silent clamp" site).
     ///
     /// Owned (`Vec`, no borrowed observer) rather than a closure field —
-    /// deliberately, not as a simplification of convenience. `<Document as
-    /// taffy::LayoutPartialTree>::set_unrounded_layout` is the sole choke
-    /// point that writes non-finite-clamped geometry into the arena
-    /// ([`crate::layout::sanitize_taffy_layout`]'s doc), but its signature is
-    /// fixed by the `taffy` trait — it cannot receive an extra observer
+    /// deliberately, not as a simplification of convenience.
+    /// [`Document::store_unrounded_layout`] is the choke point that writes
+    /// non-finite-clamped layouts into the arena, and taffy's
+    /// `<Document as taffy::LayoutPartialTree>::set_unrounded_layout` reaches
+    /// it through a signature fixed by the `taffy` trait — it cannot receive an extra observer
     /// parameter. Storing a borrowed `&mut dyn FnMut` here instead would
     /// require adding a lifetime parameter to `Document` itself, which is a
     /// public-shape break every consumer of this type would have to absorb
