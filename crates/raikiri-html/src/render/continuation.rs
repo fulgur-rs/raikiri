@@ -294,9 +294,16 @@ fn relayout_from(
     )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
     document.set_clearance_page_values(None);
     cascade.page_values = page_values;
-    // The token was found on the earlier layout's page, and the copy breaks
-    // no line or box before it, so the measuring page holds it too.
-    let Some(token_y) = document.page_token_offset(0, start.token) else {
+    // The token was found on the earlier layout's page, and the copy lays out
+    // the same source before it, so one of the measuring pages holds it. Its
+    // offset counts from the first measuring page, as content taller than
+    // one measuring page runs onto the next.
+    let first_origin = measured.first().map_or(0.0, |slice| slice.content_origin_y);
+    let Some(token_y) = measured.iter().find_map(|slice| {
+        document
+            .page_token_offset(slice.page_index, start.token)
+            .map(|offset| slice.content_origin_y - first_origin + offset)
+    }) else {
         return Ok(None); // cov:ignore: defensive; the copy lays out the same source before the token
     };
     // The copy's first page ends where the resumed page begins, so that the
