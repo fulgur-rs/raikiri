@@ -59,7 +59,8 @@ fn content_width(geometry: ResolvedPageGeometry) -> f32 {
 const WIDTH_TOLERANCE: f32 = 0.01;
 /// Where a relayout's page start may land from where the earlier layout had it.
 const POSITION_TOLERANCE: f32 = 0.5;
-/// The height of the single page the relayout is first measured on.
+/// The room the page the relayout is first measured on leaves beyond where
+/// the earlier layout placed the page start.
 const MEASURE_HEIGHT: f32 = 1.0e6;
 /// Relayouts of one continuation before its page schedule must be stable.
 const MAX_SCHEDULE_PASSES: usize = 3;
@@ -267,20 +268,24 @@ fn relayout_from(
     // The changes of named page still give the boxes after them clearance,
     // as in the later layout.
     document.set_clearance_page_values(Some(page_values.clone()));
+    // The measuring page holds everything the earlier layout placed before
+    // the token, with room to spare, so the measurement does not need more
+    // pages than the document's page limit allows to reach the token.
+    let measure_height = slices[page].content_origin_y + start.offset + MEASURE_HEIGHT;
     let measure_control = PageLayoutControl::for_geometry_discovery(inputs.max_pages)
         .with_abort_check(inputs.abort_check);
     let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
         &mut document,
         &cascade,
         geometry.page_box,
-        &[MEASURE_HEIGHT],
+        &[measure_height],
         &[],
         inputs.resolver,
         inputs.base_url,
         &measure_control,
     )?; // cov:ignore: only a cancellation landing in this pass fails it; the first layout already met the same work limits
     let mut measure_box = geometry.page_box;
-    measure_box.height = MEASURE_HEIGHT + geometry.page_box.height;
+    measure_box.height = measure_height + geometry.page_box.height;
     let measure_geometries: Vec<_> = measured
         .iter()
         .map(|_| (measure_box, geometry.margins, geometry.content_insets))

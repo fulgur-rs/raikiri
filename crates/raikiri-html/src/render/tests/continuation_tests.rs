@@ -303,24 +303,11 @@ fn a_named_page_of_another_width_is_laid_out_at_its_own_width() {
     assert_eq!(widths, vec![400.0]);
 }
 
-#[test]
-fn a_named_page_after_content_taller_than_the_measuring_page_is_laid_out_at_its_own_width() {
-    // The content before the named page is taller than the page the
-    // relayout first measures on, so the measurement finds the page start
-    // on a later measuring page.
-    let out = run("<style>\
-        @page { size: 200px 1200000px; margin: 0 }\
-        @page wide { size: 400px 200px }\
-        body { margin: 0 } div { font: 10px/10px Ahem }\
-        </style><div style='height:1100000px'></div>\
-        <div style='page:wide'>second</div>");
-    assert_eq!(out.slices.len(), 2);
-    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
-    assert_eq!(out.continuations.len(), 1);
-    assert_eq!(out.continuations[0].first_page, 1);
-    let (document, _) = out.layout_for_page(1);
-    let widths: Vec<f32> = document
-        .page_fragments(1)
+/// The widths of the `div` boxes on page `page_index`.
+fn div_widths(out: &PipelineOutput, page_index: u32) -> Vec<f32> {
+    let (document, _) = out.layout_for_page(page_index);
+    document
+        .page_fragments(page_index)
         .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
         .filter(|fragment| {
             document
@@ -329,8 +316,73 @@ fn a_named_page_after_content_taller_than_the_measuring_page_is_laid_out_at_its_
                 == Some("div")
         })
         .map(|fragment| fragment.rect().width)
-        .collect();
-    assert_eq!(widths, vec![400.0]);
+        .collect()
+}
+
+#[test]
+fn a_named_page_after_a_tall_first_page_is_laid_out_at_its_own_width_within_the_page_limit() {
+    // The content before the named page is taller than the measuring room
+    // alone, and the document has exactly as many pages as its limit, so
+    // the measuring page has to hold the content before the page start.
+    let html = "<style>\
+        @page { size: 200px 2200000px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div style='height:2100000px'></div>\
+        <div style='page:wide'>second</div>";
+    let resources = RenderResources::new().fonts(super::ahem_fonts());
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(2))
+                .build(),
+        )
+        .build();
+    let out = match run_pipeline(
+        &parse(html),
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+            resume: None,
+        },
+    )
+    .expect("layout")
+    {
+        PipelineRun::Completed(out) => *out,
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("completed layout"),
+    };
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_widths(&out, 1), vec![400.0]);
+    assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
+}
+
+#[test]
+fn a_named_page_after_content_that_grows_past_the_measuring_page_is_laid_out_at_its_own_width() {
+    // The paragraph before the narrow named page takes one line on the
+    // wide first page and fifteen at the named page's width, so in the
+    // relayout it grows past the room of the measuring page and the
+    // measurement finds the page start on a later measuring page.
+    let out = run(&format!(
+        "<style>\
+        @page {{ size: 4000px 300000px; margin: 0 }}\
+        @page narrow {{ size: 200px 200px }}\
+        body {{ margin: 0 }} p, div {{ margin: 0; font: 10px/10px Ahem }}\
+        </style><p style='line-height:100000px'>{}</p>\
+        <div style='page:narrow'>second</div>",
+        words(60).join(" ")
+    ));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("narrow"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_widths(&out, 1), vec![200.0]);
     assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
 }
 
