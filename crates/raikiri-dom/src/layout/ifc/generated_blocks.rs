@@ -8,9 +8,12 @@
 //! padding, border and margin at the end token. The lines between the tokens
 //! are the box's lines, set in by its inline-side edges.
 
-use raikiri_style::property::{BoxSizing, ClearValue, Contain, DisplayValue, OverflowValue, Sides};
+use raikiri_style::property::{
+    BoxSizing, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue, Sides,
+};
 use raikiri_style::{
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
+    ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedValues,
 };
 use taffy::{BlockContext, CollapsibleMarginSet};
 
@@ -491,12 +494,15 @@ pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>)
 
 /// Whether a block-level box styled by `cv` establishes an independent
 /// formatting context: any display other than a plain block or list item, a
-/// scroll container, or layout or paint containment.
+/// scroll container, a multi-column container, or layout or paint
+/// containment.
 fn establishes_formatting_context(cv: &ComputedValues) -> bool {
     let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
     !matches!(cv.display, DisplayValue::Block | DisplayValue::ListItem)
         || !visible(cv.overflow.x)
         || !visible(cv.overflow.y)
+        || !matches!(cv.column_count, ColumnCountValue::Auto)
+        || !matches!(cv.column_width, ComputedColumnWidth::Auto)
         || cv.contain.contains(Contain::LAYOUT)
         || cv.contain.contains(Contain::PAINT)
 }
