@@ -13,7 +13,15 @@ fn block(css: &str) -> GeneratedBlock {
         raikiri_style::StyleNodeId::new(fixture.root as u64),
         raikiri_style::PseudoElem::Before,
     )];
-    GeneratedBlock::new(1, 2, cv)
+    GeneratedBlock::new(
+        1,
+        2,
+        cv,
+        (
+            shodo::style::LineOptions::default(),
+            raikiri_style::ComputedTextIndent::Px(5.0),
+        ),
+    )
 }
 
 #[test]
@@ -445,4 +453,199 @@ fn a_line_overflowing_below_the_box_does_not_cut_it() {
     };
     assert_eq!((piece.border_box.y, piece.border_box.height), (0.0, 5.0));
     assert!(piece.has_block_start_edge && piece.has_block_end_edge);
+}
+
+/// The inline start of the first glyph run of each line.
+fn line_starts(lines: &[shodo::Line]) -> Vec<f32> {
+    lines
+        .iter()
+        .map(|line| {
+            line.fragments()
+                .find_map(|fragment| match fragment {
+                    shodo::Fragment::GlyphRun(run) => Some(run.inline_start()),
+                    _ => None,
+                })
+                .expect("a glyph run")
+        })
+        .collect()
+}
+
+#[test]
+fn the_lines_of_a_block_box_take_its_own_alignment_and_indent() {
+    let starts = |before: &str| {
+        let (lines, _) = placed(
+            &format!("div::before {{ content: 'B B B'; display: block; {before} }}"),
+            &format!("{TEN_PX}; text-indent: 7px"),
+            "A",
+        );
+        line_starts(&lines)
+    };
+    // The box inherits the paragraph's indent, which it may override; the
+    // line after the box is not the paragraph's first.
+    assert_eq!(starts(""), [7.0, 0.0]);
+    assert_eq!(starts("text-indent: 20px"), [20.0, 0.0]);
+    // A percentage indent is of the box's own width.
+    assert_eq!(starts("text-indent: 10%; margin-left: 20px"), [28.0, 0.0]);
+    assert_eq!(starts("text-align: right; text-indent: 0"), [50.0, 0.0]);
+    // Only the box's first line is indented, unless the indent hangs.
+    assert_eq!(starts("width: 30px; text-indent: 10px"), [10.0, 0.0, 0.0]);
+    assert_eq!(
+        starts("width: 30px; text-indent: 20px hanging"),
+        [0.0, 20.0, 0.0]
+    );
+    // A box of the opposite direction aligns to its own start and end.
+    assert_eq!(starts("direction: rtl; text-indent: 0"), [50.0, 0.0]);
+    assert_eq!(
+        starts("direction: rtl; text-indent: 0; text-align: end"),
+        [0.0, 0.0]
+    );
+}
+
+#[test]
+fn start_and_end_alignments_resolve_to_the_box_sides() {
+    use shodo::style::{LineOptions, TextAlign, TextAlignLast};
+    let aligned = |text_align, text_align_last, rtl| {
+        let mut options = LineOptions {
+            text_align,
+            text_align_last,
+            ..LineOptions::default()
+        };
+        align_physically(&mut options, rtl);
+        (options.text_align, options.text_align_last)
+    };
+    assert_eq!(
+        aligned(TextAlign::Start, TextAlignLast::End, true),
+        (TextAlign::Right, TextAlignLast::Left)
+    );
+    assert_eq!(
+        aligned(TextAlign::End, TextAlignLast::Start, false),
+        (TextAlign::Right, TextAlignLast::Left)
+    );
+    // The last line of justified text goes to the box's start.
+    assert_eq!(
+        aligned(TextAlign::Justify, TextAlignLast::Auto, true),
+        (TextAlign::Justify, TextAlignLast::Right)
+    );
+    assert_eq!(
+        aligned(TextAlign::Center, TextAlignLast::Auto, true),
+        (TextAlign::Center, TextAlignLast::Auto)
+    );
+}
+
+#[test]
+fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() {
+    let block = block("");
+    let mut bfc = taffy::BlockFormattingContext::new();
+    let ctx = bfc.root_block_context();
+    let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+    let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
+    let first = |open: &OpenBlock, lines| {
+        let (options, first) = open.line_options(lines);
+        assert_eq!(options.text_indent.length, 5.0);
+        first
+    };
+    assert!(first(&open, 0));
+    assert!(!first(&open, 1));
+    // No line of the box fits the first fragmentainer: its first line is
+    // still to come.
+    let open = open.after(0).continued(40.0);
+    assert!(first(&open, 0));
+    // A line of the box was laid out before the break.
+    assert!(!first(&open.after(1).continued(40.0), 0));
+}
+
+#[test]
+fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture(
+        "div::before { content: 'B B B B'; display: block; text-indent: 5px; width: 20px }",
+        "font: 10px/10px Ahem",
+        |_, _| {},
+    );
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    // Fragmentainers two lines tall: the box's first two lines fill the
+    // first, its last two go on in the second.
+    let lines = crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+        &mut fixture.doc,
+        fixture.root,
+        crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
+        crate::fragment::FragmentationContext {
+            available_width: 200.0,
+            available_height: Some(20.0),
+            column_fill: raikiri_style::property::ColumnFillValue::Auto,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        },
+        false,
+    );
+    assert_eq!(line_starts(&lines.lines), [5.0, 0.0, 0.0, 0.0]);
+}
+
+/// Where each line of a `white-space: pre-wrap` paragraph starts when its
+/// fragmentainers are two lines tall: two short lines, then a line of eight
+/// glyphs that opens the second fragmentainer beside a 20px float.
+fn line_starts_beside_a_float_in_the_second_fragmentainer(text_indent: &str) -> Vec<f32> {
+    let style = format!(
+        "font: 10px/10px Ahem; white-space: pre-wrap; width: 100px; text-indent: {text_indent}"
+    );
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture("", &style, |doc, root| {
+        doc.append_text(root, "A\nA\n");
+        crate::layout::ifc::test_support::span(doc, root, "float: left; width: 20px; height: 10px");
+        doc.append_text(root, "AAAAAAAA");
+    });
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    let lines = crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+        &mut fixture.doc,
+        fixture.root,
+        crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
+        crate::fragment::FragmentationContext {
+            available_width: 200.0,
+            available_height: Some(20.0),
+            column_fill: raikiri_style::property::ColumnFillValue::Auto,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        },
+        false,
+    );
+    line_starts(&lines.lines)
+}
+
+#[test]
+fn a_line_opening_a_later_fragmentainer_is_not_the_paragraphs_first_line() {
+    // Unindented, the 80px line fits beside the float.
+    assert_eq!(
+        line_starts_beside_a_float_in_the_second_fragmentainer("10px"),
+        [10.0, 0.0, 20.0]
+    );
+}
+
+#[test]
+fn a_line_after_a_forced_break_in_an_earlier_fragmentainer_keeps_its_indent() {
+    // With its each-line indent the line no longer fits and moves below the
+    // float.
+    assert_eq!(
+        line_starts_beside_a_float_in_the_second_fragmentainer("10px each-line"),
+        [10.0, 10.0, 10.0]
+    );
 }
