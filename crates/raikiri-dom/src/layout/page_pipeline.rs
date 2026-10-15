@@ -5495,11 +5495,27 @@ fn paginate_flow(
                         let (target_top, target_y) = if forced_before {
                             (page_top, page_top + margin_top)
                         } else {
+                            // Only the collapsed margin is truncated, not
+                            // clearance or other space in the gap.
+                            let previous_style = &document.nodes[previous].style;
+                            let previous_margin = used_style_length_percentage_auto(
+                                previous_style.margin.bottom,
+                                content_width,
+                            )
+                            .or_else(|| {
+                                used_computed_length_percentage_or_auto(
+                                    cascade.computed[previous].margin.bottom,
+                                    content_width,
+                                )
+                            })
+                            .unwrap_or(0.0);
+                            let margin_start =
+                                previous_bottom.max(effective_y - margin_top.max(previous_margin));
                             // The forced break at the start of a kept
                             // margin is not an edge inside it.
                             let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
-                            let first_edge = (page_index_for_y(previous_bottom + edge_slack) + 1)
-                                .min(natural_page);
+                            let first_edge =
+                                (page_index_for_y(margin_start + edge_slack) + 1).min(natural_page);
                             (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;
