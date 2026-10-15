@@ -1593,6 +1593,7 @@ css/CSS2/pagination/float-page-break-inside-avoid-7-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-1-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-2-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-3-print.html
+css/CSS2/pagination/rowgroup-page-break-inside-avoid-4-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-5-print.html
 css/CSS2/pagination/rowgroup-page-break-inside-avoid-7-print.html
 # --- CSS2 relative block positioning exact 800x600 PASS-only (+14) ---

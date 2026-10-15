@@ -1221,6 +1221,12 @@ pub(crate) fn pagination_child_order(
     if computed.display.is_flex_container() {
         return flex_pagination_child_order(document, cascade, parent_id);
     }
+    if matches!(
+        computed.display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        return table_pagination_child_order(document, cascade, parent_id);
+    }
     let is_single_column_grid =
         computed.display.is_grid_container() && document.nodes[parent_id].grid_column_count == 1;
     if !is_single_column_grid {
@@ -1256,6 +1262,43 @@ pub(crate) fn pagination_child_order(
             }
         }
     }
+    children
+}
+
+/// A table's children in the order the table lays them out: captions above
+/// the grid, the first header group, the other groups and rows in source
+/// order, the first footer group, then captions below the grid (CSS 2.1
+/// §17.4 and §17.5).
+fn table_pagination_child_order(
+    document: &Document,
+    cascade: &CascadeResult,
+    table: usize,
+) -> Vec<usize> {
+    let mut children = document.nodes[table].children.clone();
+    let first = |display: DisplayValue| {
+        children
+            .iter()
+            .copied()
+            .find(|&id| cascade.computed[id].display == display)
+    };
+    let header = first(DisplayValue::TableHeaderGroup);
+    let footer = first(DisplayValue::TableFooterGroup);
+    children.sort_by_key(|&id| {
+        let computed = &cascade.computed[id];
+        if computed.display == DisplayValue::TableCaption {
+            if computed.caption_side == raikiri_style::property::CaptionSideValue::Top {
+                0u8
+            } else {
+                4
+            }
+        } else if Some(id) == header {
+            1
+        } else if Some(id) == footer {
+            3
+        } else {
+            2
+        }
+    });
     children
 }
 
