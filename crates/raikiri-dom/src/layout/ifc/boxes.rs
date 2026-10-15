@@ -284,9 +284,12 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             has_next,
             carried_block,
         );
-        carried_block = outcome
-            .open_block
-            .map(|open| open.continued(fragmentainer_height.unwrap_or_default()));
+        carried_block = outcome.open_block.map(|open| {
+            open.continued(
+                fragmentainer_height.unwrap_or_default(),
+                outcome.lines.lines.len(),
+            )
+        });
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
@@ -577,10 +580,16 @@ fn run_boxes_segment(
         // The lines of a generated block take its own alignment and indent.
         // Its content is part of the paragraph's text, so its lines keep the
         // paragraph's base direction.
-        let line_options = open_block
+        let (line_options, first_line) = match open_block
             .as_ref()
-            .and_then(|open| open.line_options(lines.len()))
-            .unwrap_or(options);
+            .map(|open| open.line_options(lines.len()))
+        {
+            Some(Some(own)) => own,
+            // The paragraph's lines inside a box start after its start
+            // token, never as the paragraph's first line.
+            Some(None) => (options, false),
+            None => (options, lines.is_empty()),
+        };
         let mut constraint = LineConstraint::from_physical_insets(
             width,
             space.inline_start,
@@ -712,10 +721,8 @@ fn run_boxes_segment(
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
                 // Its own floats keep the place they have at this offset.
-                let first = open_block
-                    .as_ref()
-                    .map_or(lines.is_empty(), |open| open.is_first_line(lines.len()));
-                let indent = if first {
+                // A hanging indent is on every line but the first.
+                let indent = if first_line != line_options.text_indent.hanging {
                     line_options.text_indent.length
                 } else {
                     0.0

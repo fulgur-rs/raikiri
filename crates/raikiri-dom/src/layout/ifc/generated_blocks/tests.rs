@@ -245,7 +245,7 @@ fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
         let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
         // The box fills two 40px fragmentainers, 70px of content, then its
         // lines take 30px of the next.
-        let open = open.continued(40.0).continued(40.0);
+        let open = open.continued(40.0, 0).continued(40.0, 0);
         y = 30.0;
         close(&block, open, flow(&mut y, &mut pending, &mut leading, &ctx));
         (y, pending.resolve())
@@ -485,4 +485,29 @@ fn the_lines_of_a_block_box_take_its_own_alignment_and_indent() {
         starts("width: 30px; text-indent: 20px hanging"),
         [0.0, 20.0, 0.0]
     );
+}
+
+#[test]
+fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() {
+    let block = block("").with_lines(Some((
+        shodo::style::LineOptions::default(),
+        raikiri_style::ComputedTextIndent::Px(5.0),
+    )));
+    let mut bfc = taffy::BlockFormattingContext::new();
+    let ctx = bfc.root_block_context();
+    let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
+    let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
+    let first = |open: &OpenBlock, lines| {
+        let (options, first) = open.line_options(lines).expect("own options");
+        assert_eq!(options.text_indent.length, 5.0);
+        first
+    };
+    assert!(first(&open, 0));
+    assert!(!first(&open, 1));
+    // No line of the box fits the first fragmentainer: its first line is
+    // still to come.
+    let open = open.continued(40.0, 0);
+    assert!(first(&open, 0));
+    // A line of the box was laid out before the break.
+    assert!(!first(&open.continued(40.0, 1), 0));
 }

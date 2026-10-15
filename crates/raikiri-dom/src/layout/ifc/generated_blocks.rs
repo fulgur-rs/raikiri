@@ -51,7 +51,7 @@ pub(crate) struct GeneratedBlock {
     clear: taffy::Clear,
     /// The box's own line options and raw `text-indent`, from its computed
     /// style; `None` keeps the paragraph's.
-    lines: Option<(LineOptions, ComputedTextIndent)>,
+    own_lines: Option<(LineOptions, ComputedTextIndent)>,
 }
 
 impl GeneratedBlock {
@@ -84,14 +84,14 @@ impl GeneratedBlock {
                 ClearValue::Both => taffy::Clear::Both,
                 _ => taffy::Clear::None,
             },
-            lines: None,
+            own_lines: None,
         }
     }
 
     /// The box with its lines set by `options` and the raw `indent`, its
     /// own `text-align`, `text-indent` and the like.
     pub(crate) fn with_lines(mut self, lines: Option<(LineOptions, ComputedTextIndent)>) -> Self {
-        self.lines = lines;
+        self.own_lines = lines;
         self
     }
 
@@ -399,7 +399,7 @@ pub(crate) struct OpenBlock {
     rtl: bool,
     /// The box's own line options, with its `text-indent` resolved against
     /// its content width.
-    lines: Option<LineOptions>,
+    own_options: Option<LineOptions>,
     /// The box goes on from an earlier fragmentainer, where its first line
     /// was laid out.
     continues: bool,
@@ -407,8 +407,9 @@ pub(crate) struct OpenBlock {
 
 impl OpenBlock {
     /// The box as it goes on at the top of the next fragmentainer, after a
-    /// fragmentainer that ends at `end`: the box fills it to there.
-    pub(crate) fn continued(self, end: f32) -> Self {
+    /// fragmentainer that ends at `end` and holds `lines` lines of the
+    /// paragraph: the box fills it to there.
+    pub(crate) fn continued(self, end: f32, lines: usize) -> Self {
         let top = self.content_top.unwrap_or(self.flow_top);
         Self {
             lines_before: 0,
@@ -416,28 +417,24 @@ impl OpenBlock {
             starts_paragraph: false,
             has_clearance: false,
             consumed: self.consumed + (end - top).max(0.0),
-            continues: true,
+            continues: self.continues || lines > self.lines_before,
             ..self
         }
     }
 
     /// The line options of the box's next line, after `lines` lines of the
-    /// paragraph; `None` when the box keeps the paragraph's.
-    pub(crate) fn line_options(&self, lines: usize) -> Option<LineOptions> {
-        let mut options = self.lines?;
+    /// paragraph, and whether it is the box's first line; `None` when the
+    /// box keeps the paragraph's options.
+    pub(crate) fn line_options(&self, lines: usize) -> Option<(LineOptions, bool)> {
+        let mut options = self.own_options?;
+        let first = lines == self.lines_before && !self.continues;
         // The engine starts the line after the box's start token as one after
         // a forced break, not as a first line: its `text-indent` is the
         // box's first-line indent only when it applies to such lines too.
-        if self.is_first_line(lines) {
+        if first {
             options.text_indent.each_line = true;
         }
-        Some(options)
-    }
-
-    /// The next line, after `lines` lines of the paragraph, is the box's
-    /// first.
-    pub(crate) fn is_first_line(&self, lines: usize) -> bool {
-        lines == self.lines_before && !self.continues
+        Some((options, first))
     }
 
     /// The line space `space` of a line of the box, set in by the box's
@@ -537,7 +534,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         consumed: 0.0,
         inline,
         rtl: flow.rtl,
-        lines: block.lines.map(|(mut options, indent)| {
+        own_options: block.own_lines.map(|(mut options, indent)| {
             // A percentage `text-indent` refers to the box's own width
             // (CSS Text 3 §8.1).
             let content = (flow.width - inline.0 - inline.1).max(0.0);
