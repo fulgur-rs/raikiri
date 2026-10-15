@@ -363,19 +363,39 @@ fn an_empty_source_is_complete_while_its_error_is_queued() {
 #[test]
 fn a_base_element_sets_the_url_images_resolve_against() {
     let (mut host, _) = host();
-    host.document.set_base_url(Some(
-        url::Url::parse("https://example.test/dir/sub/").unwrap(),
-    ));
     host.images
-        .insert("https://example.test/dir/sub/ok.png".to_owned());
+        .insert("https://example.test/assets/ok.png".to_owned());
     let mut rt = DomRuntime::new(host).unwrap();
     ok(
         &mut rt,
         "var log = []; var img = document.createElement('img');\
-         img.onload = function () { log.push('load'); }; img.src = 'ok.png';\
-         img.src === 'https://example.test/dir/sub/ok.png'",
+         img.onload = function () { log.push('load'); };\
+         var base = document.createElement('base');\
+         base.setAttribute('href', '/assets/');\
+         document.head.appendChild(base);\
+         img.src = 'ok.png'; var live = img.src;\
+         base.setAttribute('href', 'http://[');\
+         var invalid = img.src; base.remove(); \
+         live === 'https://example.test/assets/ok.png' \
+         && invalid === 'https://example.test/dir/ok.png' \
+         && img.src === 'https://example.test/dir/ok.png'",
     );
     ok_after_tasks(&mut rt, "log.join() === 'load'");
+}
+
+#[test]
+fn a_host_without_a_document_url_uses_the_parsed_base() {
+    let (mut host, _) = host();
+    host.document_url = None;
+    host.document.set_base_url(Some(
+        url::Url::parse("https://example.test/dir/sub/").unwrap(),
+    ));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var img = document.createElement('img'); img.src = 'ok.png';\
+         img.src === 'https://example.test/dir/sub/ok.png'",
+    );
 }
 
 /// A host that keeps [`DocumentHost::load_image`]'s default loads nothing,

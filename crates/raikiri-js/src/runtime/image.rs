@@ -29,17 +29,38 @@ pub(crate) fn is_html_image(document: &raikiri_dom::Document, index: usize) -> b
     })
 }
 
+/// The document base URL (HTML §2.4.1), computed from the live tree so a
+/// script that adds, removes, or changes `<base href>` is seen: the first
+/// HTML `<base>` with an `href` in tree order, parsed against the document
+/// URL, else the document URL itself. A host with no document URL falls
+/// back to the base the parser recorded.
+fn document_base_url(document: &raikiri_dom::Document, url: Option<String>) -> Option<url::Url> {
+    let fallback = url.and_then(|url| url::Url::parse(&url).ok());
+    let Some(fallback) = fallback else {
+        return document.base_url().cloned();
+    };
+    let mut stack = vec![document.root_index()];
+    while let Some(index) = stack.pop() {
+        let Some(node) = document.get_node(index) else {
+            continue; // cov:ignore: children always hold valid arena indices.
+        };
+        if node.tag_name() == Some("base")
+            && document.element_namespace_uri(index) == Some(HTML_NS)
+            && let Some(href) = document.element_attribute(index, "href")
+        {
+            return Some(fallback.join(href).unwrap_or(fallback));
+        }
+        stack.extend(node.children.iter().rev());
+    }
+    Some(fallback)
+}
+
 /// Parse `src` relative to the document base URL (HTML "encoding-parse a
-/// URL"), the one `<base href>` sets and layout resolves images against,
-/// else the document URL; `None` when it does not parse, which HTML treats
-/// as a failed request.
+/// URL"); `None` when it does not parse, which HTML treats as a failed
+/// request.
 fn resolve_source(context: &mut Context, src: &str) -> JsResult<Option<String>> {
     let base = with_state(context, |s| {
-        s.host.document().base_url().cloned().or_else(|| {
-            s.host
-                .document_url()
-                .and_then(|url| url::Url::parse(&url).ok())
-        })
+        document_base_url(s.host.document(), s.host.document_url())
     })?;
     Ok(url::Url::options()
         .base_url(base.as_ref())
