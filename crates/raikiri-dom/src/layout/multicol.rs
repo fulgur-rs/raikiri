@@ -1489,6 +1489,34 @@ fn record_nested_ifc_box_fragments(
                 }
             }
 
+            // A paragraph that is the subtree root owns its fragments: the
+            // one it was placed with, and one at the top of each later
+            // column it continues in.
+            let root_owns_fragments = node_id == subtree_root
+                && tree.fragment_tree.fragments[parent_fragment].node_id == node_id;
+            // Its ranges give each line its block offset in the paragraph,
+            // so lines in a later column would be drawn that far below the
+            // column top. Draw each range from its own fragment instead.
+            // That leaves the first column as it was only when its range
+            // starts at the paragraph's top; a nested column container's
+            // ranges are its own columns, which it places itself.
+            if root_owns_fragments
+                && tree.nodes[node_id].multicol.is_none()
+                && let (Some(ranges), Some(lines)) = (&line_ranges, &lines)
+                && ranges
+                    .iter()
+                    .any(|range| range.fragmentainer != root_column)
+                && ranges.iter().all(|range| {
+                    lines.lines.get(range.line_start).is_some_and(|first| {
+                        range.y == first.block_offset()
+                            && (range.fragmentainer != root_column || first.block_offset() == 0.0)
+                    })
+                })
+                && let Some(root) = tree.nodes[node_id].ifc.as_mut()
+            {
+                root.multicol_fragment_origins_recorded = true;
+            }
+
             let mut path = Vec::new();
             let mut current = node_id;
             while current != subtree_root {
@@ -1560,10 +1588,7 @@ fn record_nested_ifc_box_fragments(
                 let column_clip_height = height.max(tail_line_bottom).max(overflow_float_bottom);
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
-                if node_id == subtree_root
-                    && let Some(range) = line_range
-                    && tree.fragment_tree.fragments[parent_fragment].node_id == node_id
-                {
+                if root_owns_fragments && let Some(range) = line_range {
                     let base = tree.fragment_tree.fragments[parent_fragment];
                     let fragment_index = entries.range.map_or(0, |(index, _)| index);
                     let fragment_count = line_ranges.as_ref().map_or(1, Vec::len);
