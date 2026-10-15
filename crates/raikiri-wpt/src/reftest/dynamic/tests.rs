@@ -284,3 +284,35 @@ fn focus_sidecar_survives_adjacent_text_node_serialization() {
     assert_eq!(document.focused_element(), Some(target));
     assert_eq!(document.focus_visible_element(), None);
 }
+
+#[test]
+fn focus_sidecar_is_dropped_when_reparsing_restructures_the_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("focused-row.html");
+    std::fs::write(&path, "").unwrap();
+    // A script-built `<tr>` directly under `<table>` reparses inside an
+    // implied `<tbody>`, so its element-child path reaches the `<tbody>`.
+    let html = "<!DOCTYPE html><html><head></head><body><table></table><script>const row = document.createElement('tr'); row.setAttribute('tabindex', '0'); document.querySelector('table').appendChild(row); row.focus();</script></body></html>";
+    let prepared = prepare(html, &path, "", crate::reftest::ReftestConfig::default())
+        .expect("focused document should prepare");
+    let focused = prepared
+        .focused_path
+        .as_ref()
+        .expect("focus should be recorded");
+    assert_eq!(focused.path, [0, 1, 0, 0]);
+    assert_eq!(focused.tags, ["html", "body", "table", "tr"]);
+
+    let parsed = raikiri_html::parse(
+        prepared.html.as_bytes(),
+        &raikiri::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let mut document = parsed.dom;
+    super::super::restore_focus(&mut document, focused);
+
+    assert_eq!(document.focused_element(), None);
+}

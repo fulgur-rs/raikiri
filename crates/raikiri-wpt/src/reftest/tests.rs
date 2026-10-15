@@ -498,6 +498,7 @@ fn focus_sidecar_is_restored_after_geometry_reparse() {
     };
     let focused = |path: &[usize], visible| dynamic::FocusedPath {
         path: path.to_vec(),
+        tags: ["html", "body", "div"].map(str::to_owned).to_vec(),
         visible,
     };
     let render = |html: &str, focused_path: Option<&dynamic::FocusedPath>| {

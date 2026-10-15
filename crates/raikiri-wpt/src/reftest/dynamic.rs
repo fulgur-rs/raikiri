@@ -31,6 +31,10 @@ pub(crate) struct FocusedPath {
     /// Element-child path from the document root. Counting only elements
     /// keeps it stable when serialization merges text nodes.
     pub path: Vec<usize>,
+    /// Tag name of the element each `path` step reaches. Reparsing can
+    /// restructure the tree (e.g. insert an implied `<tbody>`), so a step
+    /// whose tag differs means the path no longer names the same element.
+    pub tags: Vec<String>,
     /// Whether the element indicates focus.
     pub visible: bool,
 }
@@ -70,9 +74,11 @@ fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationSt
 fn focused_path(document: &raikiri_dom::Document) -> Option<FocusedPath> {
     let root = document.root_index();
     let mut path = Vec::new();
+    let mut tags = Vec::new();
     let mut current = document.focused_element()?;
     while current != root {
         let parent = document.parent_of(current)?;
+        tags.push(document.get_node(current)?.tag_name()?.to_owned());
         let position = document
             .get_node(parent)?
             .children
@@ -87,8 +93,10 @@ fn focused_path(document: &raikiri_dom::Document) -> Option<FocusedPath> {
         current = parent;
     }
     path.reverse();
+    tags.reverse();
     Some(FocusedPath {
         path,
+        tags,
         visible: document.focus_visible_element().is_some(),
     })
 }
