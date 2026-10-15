@@ -6,6 +6,7 @@ use image::{DynamicImage, ImageDecoder, ImageReader, Limits};
 use raikiri_svg::SvgDocument;
 use raikiri_traits::{
     DecodedImage, ImageIntrinsicSize, ImageRasterSize, RenderWarning, ResourceKind, WarningKind,
+    png_with_repaired_crcs,
 };
 use url::Url;
 
@@ -33,7 +34,8 @@ pub(super) fn decode_background_raster(
             .saturating_add(DECODER_ALLOCATION_HEADROOM)
             .min(DECODER_ALLOCATION_HARD_LIMIT),
     );
-    let mut reader = ImageReader::new(Cursor::new(bytes));
+    let bytes = png_with_repaired_crcs(bytes);
+    let mut reader = ImageReader::new(Cursor::new(&*bytes));
     reader.limits(limits);
     let decoder = reader
         .with_guessed_format()

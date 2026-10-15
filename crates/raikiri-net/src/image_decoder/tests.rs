@@ -49,3 +49,12 @@ fn rejects_output_over_budget_before_normalization() {
     assert!(ImageDecoder.decode(TINY_PNG, 7).is_err());
     assert_eq!(ImageDecoder.decode(TINY_PNG, 8).unwrap().rgba.len(), 8);
 }
+
+#[test]
+fn decodes_a_png_whose_chunk_crc_is_wrong() {
+    let mut corrupt = TINY_PNG.to_vec();
+    // The IDAT chunk's CRC follows the signature, IHDR, and IDAT's 16 data bytes.
+    corrupt[8 + 25 + 8 + 16] ^= 0xFF;
+    let decoded = ImageDecoder.decode(&corrupt, 32 * 1024 * 1024).unwrap();
+    assert_eq!(decoded.rgba, vec![255, 0, 0, 255, 0, 255, 0, 255]);
+}

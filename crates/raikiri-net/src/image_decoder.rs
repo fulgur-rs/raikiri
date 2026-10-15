@@ -3,7 +3,7 @@
 use std::io::Cursor;
 
 use image::{DynamicImage, ImageDecoder as _, ImageReader, Limits};
-use raikiri_traits::DecodedImage;
+use raikiri_traits::{DecodedImage, png_with_repaired_crcs};
 
 /// Decodes supported raster bytes into the shared straight RGBA8 contract.
 ///
@@ -25,7 +25,8 @@ impl ImageDecoder {
                 .saturating_add(16 * 1024 * 1024)
                 .min(512 * 1024 * 1024),
         );
-        let mut reader = ImageReader::new(Cursor::new(bytes));
+        let bytes = png_with_repaired_crcs(bytes);
+        let mut reader = ImageReader::new(Cursor::new(&*bytes));
         reader.limits(limits);
         let decoder = reader
             .with_guessed_format()
