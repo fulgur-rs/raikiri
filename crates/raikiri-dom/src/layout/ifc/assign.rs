@@ -71,16 +71,7 @@ pub(crate) fn is_layout_root(doc: &Document, idx: usize) -> bool {
 /// out, so it is never a paragraph (the body is the root of its own content).
 fn is_above_the_layout_root(doc: &Document, idx: usize) -> bool {
     doc.nodes[idx].tag_name() == Some("html")
-        && crate::layout::find_body(doc).is_some_and(|body| {
-            let mut ancestor = doc.parent_of(body);
-            while let Some(id) = ancestor {
-                if id == idx {
-                    return true;
-                }
-                ancestor = doc.parent_of(id);
-            }
-            false
-        })
+        && crate::layout::find_body(doc).is_some_and(|body| doc.is_ancestor_or_self(idx, body))
 }
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
@@ -391,18 +382,12 @@ fn text_outside_paragraphs(doc: &Document, cascade: &CascadeResult) -> Option<us
         {
             return false;
         }
-        let mut ancestor = doc.parent_of(idx);
-        while let Some(id) = ancestor {
+        !doc.ancestors(idx).any(|id| {
             let element = &doc.nodes[id];
-            if element.kind() == NodeKind::Element
+            element.kind() == NodeKind::Element
                 && (element.is_non_rendered_html_element()
                     || cascade.computed[id].display == DisplayValue::None)
-            {
-                return false;
-            }
-            ancestor = doc.parent_of(id);
-        }
-        true
+        })
     })
 }
 

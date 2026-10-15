@@ -1423,8 +1423,7 @@ fn fragmentation_context_for_ifc(
     }
 
     let mut has_row_flex = false;
-    let mut ancestor = tree.parent_of(idx);
-    while let Some(node_id) = ancestor {
+    for node_id in tree.ancestors(idx) {
         let node = &tree.nodes[node_id];
         if let Some(multicol) = node.multicol {
             return (has_row_flex && multicol.horizontal).then_some(context);
@@ -1434,7 +1433,6 @@ fn fragmentation_context_for_ifc(
                 node.style.flex_direction,
                 taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse
             );
-        ancestor = tree.parent_of(node_id);
     }
     None // cov:ignore: the unsupported ancestor path remains outside the ignored nested flex-float WPT scope.
 }

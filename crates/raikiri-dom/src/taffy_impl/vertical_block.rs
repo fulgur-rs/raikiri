@@ -66,12 +66,11 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     if is_table_box(tree.nodes[idx].display) {
         return None;
     }
-    let mut node = Some(idx);
-    while let Some(id) = node {
-        if tree.nodes[id].multicol.is_some() {
-            return None;
-        }
-        node = tree.parent_of(id);
+    if tree
+        .inclusive_ancestors(idx)
+        .any(|id| tree.nodes[id].multicol.is_some())
+    {
+        return None;
     }
     Some(right_to_left)
 }
@@ -289,10 +288,9 @@ pub(super) fn compute_vertical_block(
     // Percentages of the container's padding refer to the inline size of
     // its containing block (CSS Writing Modes 4 §7.1): the physical height
     // of a vertical parent, the physical width of a horizontal one.
-    let mut parent = tree.parent_of(idx);
-    while let Some(id) = parent.filter(|&id| tree.nodes[id].display == DisplayValue::Contents) {
-        parent = tree.parent_of(id);
-    }
+    let parent = tree
+        .ancestors(idx)
+        .find(|&id| tree.nodes[id].display != DisplayValue::Contents);
     // A flex item is measured without a main-axis parent size; the flex
     // container's definite size is recorded for its percentage edges.
     let flex_basis = super::flex_item_percent_basis(tree, idx).unwrap_or(Size::NONE);
