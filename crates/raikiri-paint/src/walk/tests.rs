@@ -6194,6 +6194,52 @@ fn a_narrower_page_along_the_x_axis_holds_its_band_against_its_right_edge() {
 }
 
 #[test]
+fn a_page_along_the_x_axis_laid_out_at_its_own_width_is_not_shifted_again() {
+    // A copy of the document laid out again at a later page's width is
+    // painted with the first page's width still given for fixed boxes.
+    let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
+        <div style='width:30px;background:green'></div></body></html>";
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let mut page = PageBox::new();
+    page.width = 60.0;
+    page.height = 100.0;
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    assert_eq!(pages.len(), 1);
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        page,
+        pages[0].content_origin_y,
+        0,
+        1,
+        true,
+        None,
+        None,
+        100.0,
+    )
+    .unwrap();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        60,
+        100,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 60 + x) * 4..][..4];
+    assert_eq!(pixel(45, 50), &[0, 128, 0, 255]);
+    assert_ne!(pixel(15, 50), &[0, 128, 0, 255]);
+}
+
+#[test]
 fn a_viewport_fixed_box_keeps_its_page_position_on_a_narrower_page_along_the_x_axis() {
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
         <div style='width:100px'></div><div style='width:30px'></div>\

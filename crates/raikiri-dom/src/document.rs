@@ -581,6 +581,14 @@ impl Document {
         self.ifc.is_some()
     }
 
+    /// Width of the page area the most recent layout was made in, or `None`
+    /// before any layout.
+    #[doc(hidden)]
+    pub fn laid_out_page_area_width(&self) -> Option<f32> {
+        let width = self.fixed_page_area.0;
+        (width > 0.0).then_some(width)
+    }
+
     /// Lower the cap shared by retained layout fragments and break-flow or
     /// page-projection work. A value above the current cap is ignored, so the
     /// built-in bound can only tighten.

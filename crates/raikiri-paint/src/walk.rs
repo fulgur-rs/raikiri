@@ -2073,15 +2073,18 @@ pub(crate) fn paint_document_impl(
         // whole page height: every box is on the page along y, and the
         // caller clips the page to its band. Flowing right to left, the
         // band starts at the page area's right edge, so on a page whose area
-        // is narrower or wider than the one layout used it moves with that
-        // edge.
+        // is narrower or wider than the one this document was laid out in it
+        // moves with that edge.
         Some(right_to_left) => (
             -FLOW_EXTENT,
             FLOW_EXTENT,
             margins.left
                 + insets.left
                 + if right_to_left {
-                    content_origin_y + content_width - fixed_content_width
+                    let layout_width = document
+                        .laid_out_page_area_width()
+                        .unwrap_or(fixed_content_width);
+                    content_origin_y + content_width - layout_width
                 } else {
                     -content_origin_y
                 },
