@@ -117,6 +117,13 @@ pub trait DocumentHost: 'static {
     fn is_visible(&mut self, _node: usize) -> Result<bool, HostError> {
         Ok(true)
     }
+    /// The viewport's width and height in CSS pixels, or `None` when the
+    /// embedder has no viewport. The default has none.
+    ///
+    /// Spec: <https://drafts.csswg.org/cssom-view/#viewport>
+    fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
+        Ok(None)
+    }
     /// Serialized computed value of `property` on `node`, or `None` when the
     /// property is not supported. Called after [`Self::flush`].
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError>;

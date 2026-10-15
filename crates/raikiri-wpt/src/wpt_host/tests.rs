@@ -1191,3 +1191,19 @@ fn an_overflowing_scroll_container_takes_focus() {
     );
     assert_eq!(focused, ",,scroller");
 }
+
+#[test]
+fn scroll_into_view_aligns_the_viewport_with_the_element() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style><div style='height:2000px'></div>\
+         <div id=target style='height:50px'></div><div style='height:2000px'></div>",
+    );
+    let offsets = text(
+        &mut rt,
+        "var t = document.getElementById('target'); t.scrollIntoView();\
+         var start = scrollY; t.scrollIntoView(false);\
+         start + ',' + scrollY",
+    );
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(offsets, format!("2000,{}", 2050.0 - height));
+}

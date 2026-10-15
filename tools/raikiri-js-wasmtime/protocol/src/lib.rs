@@ -5,7 +5,7 @@ use raikiri_js::runtime::{
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -63,6 +63,8 @@ pub enum HostOperation {
     Rendered(usize),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Visible(usize),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Viewport,
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {
@@ -77,6 +79,8 @@ pub enum HostValue {
     Document(LogicalSnapshot),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Flag(bool),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Size(Option<(f64, f64)>),
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LimitsDto {

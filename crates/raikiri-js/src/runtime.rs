@@ -28,6 +28,7 @@ pub(crate) mod interfaces;
 pub(crate) mod node;
 pub(crate) mod query;
 pub(crate) mod scripts;
+pub(crate) mod scroll_into_view;
 pub(crate) mod selection;
 pub(crate) mod style;
 pub(crate) mod stylesheet;

@@ -410,6 +410,9 @@ fn the_default_rendering_check_asks_for_a_box() {
     // The default visibility check reports every element visible.
     host.0.invisible.insert(body);
     assert!(host.is_visible(body).unwrap());
+    // The default host has no viewport.
+    host.0.viewport = Ok(Some((1.0, 1.0)));
+    assert_eq!(host.viewport_size().unwrap(), None);
     host.0.fail_geometry = true;
     assert!(host.is_being_rendered(body).is_err());
 }
