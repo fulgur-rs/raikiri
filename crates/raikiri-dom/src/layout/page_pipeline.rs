@@ -5496,18 +5496,12 @@ fn paginate_flow(
                             (page_top, page_top + margin_top)
                         } else {
                             // Only the collapsed margin is truncated, not
-                            // clearance or other space in the gap.
-                            let previous_style = &document.nodes[previous].style;
+                            // clearance or other space in the gap. An `auto`
+                            // block margin is zero.
                             let previous_margin = used_style_length_percentage_auto(
-                                previous_style.margin.bottom,
+                                document.nodes[previous].style.margin.bottom,
                                 content_width,
                             )
-                            .or_else(|| {
-                                used_computed_length_percentage_or_auto(
-                                    cascade.computed[previous].margin.bottom,
-                                    content_width,
-                                )
-                            })
                             .unwrap_or(0.0);
                             let margin_start =
                                 previous_bottom.max(effective_y - margin_top.max(previous_margin));
