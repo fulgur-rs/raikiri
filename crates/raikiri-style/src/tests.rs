@@ -23,6 +23,21 @@ fn common_report_pseudo_selectors_parse_without_forgiving_invalid_lists() {
 }
 
 #[test]
+fn focus_states_are_user_action_states() {
+    use selectors::parser::NonTSPseudoClass as _;
+    for state in [
+        PseudoClass::Hover,
+        PseudoClass::Active,
+        PseudoClass::Focus,
+        PseudoClass::FocusWithin,
+        PseudoClass::FocusVisible,
+    ] {
+        assert!(state.is_user_action_state(), "{state:?}");
+    }
+    assert!(!PseudoClass::Link.is_user_action_state());
+}
+
+#[test]
 fn atom_precomputed_hash_is_deterministic() {
     let a1 = Atom::from("btn");
     let a2 = Atom::from("btn");

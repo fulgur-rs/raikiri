@@ -89,7 +89,13 @@ fn only_connected_focusable_areas_take_focus() {
          && takes(make('video', {controls: ''})) && !takes(make('video'))\
          && takes(first) && !takes(second) && !takes(make('summary'))\
          && !takes(make('button', {}, inert))\
-         && !takes(document.createElement('button')) && !takes(make('div'))",
+         && !takes(document.createElement('button')) && !takes(make('div'))\
+         && document.createElement('summary').tabIndex === -1\
+         && (function () {\
+              var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');\
+              svg.setAttribute('tabindex', '0'); document.body.appendChild(svg);\
+              HTMLElement.prototype.focus.call(svg);\
+              return document.activeElement !== svg; })()",
     );
 }
 

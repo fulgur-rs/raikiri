@@ -487,3 +487,14 @@ fn filtered_nth_edge_scaling_probe() {
         doc.class_reads.get()
     );
 }
+
+#[test]
+fn a_dom_that_reports_no_focus_matches_no_focus_state() {
+    let (mut doc, parent, children) = fixture(1);
+    doc.doc.focused = Some(children[0].0 as usize);
+    let focus = crate::SelectorQuery::parse(":focus").unwrap();
+    // `CountingDoc` keeps the trait's default `focused_element`, so the
+    // focus recorded on the wrapped document stays invisible to matching.
+    assert!(!focus.matches(&doc, children[0], &[parent]));
+    assert!(focus.matches(&doc.doc, children[0], &[parent]));
+}
