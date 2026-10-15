@@ -4637,3 +4637,7 @@ css/css-page/page-box-009-print.html
 # --- margins spanning several pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once a margin that crosses several page edges breaks at the first one instead of filling blank pages; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-name-orthogonal-writing-002-print.html
+
+# --- percentage page margins in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
+# Pass once the page area that viewport units resolve against maps flow-relative @page margins and padding through the root's writing mode; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-box-008-print.html

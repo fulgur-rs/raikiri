@@ -2263,6 +2263,14 @@ fn parsed_page_viewport(html: &str, width: f32, height: f32) -> (f32, f32) {
 }
 
 #[test]
+fn vertical_root_maps_flow_relative_page_margins_onto_the_viewport() {
+    // In vertical-rl the block axis is horizontal, so the block-start and
+    // block-end margins and padding narrow the page area's width.
+    let html = "<style>html{writing-mode:vertical-rl}@page{size:400px 800px;margin-block:8% 20%;margin-inline:2% 6%;padding-block:8% 20%;padding-inline:2% 6%}</style>";
+    assert_eq!(parsed_page_viewport(html, 800.0, 600.0), (176.0, 672.0));
+}
+
+#[test]
 fn invalid_page_declaration_does_not_prevent_valid_viewport_size_resolution() {
     for declarations in [
         "size:50vw 50vh;margin:0;foo:\"bad\n;",
