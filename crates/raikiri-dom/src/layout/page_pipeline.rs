@@ -6810,10 +6810,16 @@ fn generated_box_separates(
             .and_then(|parent| document.ifc_layout_node(parent))
             .is_some_and(|node| {
                 let width = node.unrounded_layout.size.width;
+                // A box the line loop placed holds lines or clearance, either
+                // of which keeps the margins apart, like the content that
+                // `has_in_flow_content` counts.
                 node.ifc.as_ref().is_some_and(|ifc| {
                     ifc.generated_blocks
                         .iter()
                         .any(|block| block.start == id && block.separates_margins(width, vertical))
+                        || ifc.lines.as_ref().is_some_and(|lines| {
+                            lines.placed_blocks.iter().any(|placed| placed.node == id)
+                        })
                 })
             })
     };

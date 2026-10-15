@@ -15588,9 +15588,10 @@ fn a_margin_after_a_contents_sibling_with_a_flow_root_before_box_is_truncated() 
 }
 
 /// Lays out a 20px box, then an empty forced-break section and a 30px
-/// top margin box with white space around them, nested by `inside_contents` (`"section"` or `"last"`) in
-/// a `display: contents` span whose generated box is styled by `pseudo_css`;
-/// returns the y of the margin box.
+/// top margin box with white space around them. A `display: contents` span
+/// whose generated box is styled by `pseudo_css` holds the section or the
+/// margin box, or lies between them, as `inside_contents` (`"section"`,
+/// `"last"` or `"between"`) says. Returns the y of the margin box.
 fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_css: &str) -> f32 {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -15630,6 +15631,9 @@ fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_cs
     );
     // Collapsible white space generates no box between the boxes.
     doc.append_text(section_parent, "\n  ");
+    if inside_contents == "between" {
+        span(&mut doc);
+    }
     let last_parent = if inside_contents == "last" {
         span(&mut doc)
     } else {
@@ -15696,6 +15700,32 @@ fn a_margin_inside_a_contents_element_after_a_forced_break_box_is_kept() {
     // the last box inside it.
     assert_eq!(
         forced_break_around_a_contents_generated_box("last", ""),
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_a_zero_height_before_box_with_text_is_truncated() {
+    // The `::before` box of the span holds a line box, so the margins do not
+    // collapse through it even with a zero height.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "between",
+            "span::before { content: \"x\"; display: block; height: 0 }"
+        ),
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_an_empty_before_box_is_kept() {
+    // The empty `::before` box of the span lets the margins collapse through
+    // it, so the margin after it still follows the forced break.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "between",
+            "span::before { content: \"\"; display: block }"
+        ),
         130.0
     );
 }
