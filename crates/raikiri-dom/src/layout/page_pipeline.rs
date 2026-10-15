@@ -5472,9 +5472,11 @@ fn paginate_flow(
                     // top leaves its collapsed margin after the break.
                     // A later, unforced page edge inside that margin still
                     // truncates it.
-                    let after_forced_break = forced_break_margin_box.is_some_and(|owner| {
+                    let follows_forced_break = forced_break_margin_box.is_some_and(|owner| {
                         forced_margin_reaches(document, cascade, owner, previous, node_id)
-                    }) && (previous_bottom - page_top).abs() <= 0.001;
+                    });
+                    let after_forced_break =
+                        follows_forced_break && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001
@@ -5486,11 +5488,19 @@ fn paginate_flow(
                     {
                         // A forced break that already coincides with this
                         // page edge sits before the margin, which therefore
-                        // stays on the new page.
-                        let target_y = if forced_before {
-                            page_top + margin_top
+                        // stays on the new page. Otherwise the margin breaks
+                        // at the first page edge inside it, and the rest of
+                        // it is truncated together with the blank pages it
+                        // would fill.
+                        let (target_top, target_y) = if forced_before {
+                            (page_top, page_top + margin_top)
                         } else {
-                            page_top
+                            // The forced break at the start of a kept
+                            // margin is not an edge inside it.
+                            let edge_slack = if follows_forced_break { 0.001 } else { -0.001 };
+                            let first_edge = (page_index_for_y(previous_bottom + edge_slack) + 1)
+                                .min(natural_page);
+                            (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;
                         margins_moved_boxes |= delta != 0.0;
@@ -5498,10 +5508,10 @@ fn paginate_flow(
                         follow_moved_ifc_block(document, node_id, delta);
                         flow_shift += delta;
                         effective_y += delta;
-                        if target_y < page_top {
+                        if target_y < target_top {
                             // Descendants follow the negative margin; later
                             // siblings still follow the forced break boundary.
-                            pending_underflow = Some((node_id, page_top - target_y));
+                            pending_underflow = Some((node_id, target_top - target_y));
                         } else {
                             natural_page = page_index_for_y(effective_y);
                         }

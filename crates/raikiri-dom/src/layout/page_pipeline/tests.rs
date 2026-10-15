@@ -15743,3 +15743,27 @@ fn a_margin_after_a_contents_sibling_with_inline_before_content_on_a_zero_height
         100.0
     );
 }
+
+#[test]
+fn a_margin_spanning_several_pages_breaks_at_the_first_page_edge() {
+    // The 1000px margin crosses the edge at 100 first; the rest of it is
+    // truncated instead of filling blank pages.
+    assert_eq!(
+        page_box_positions(&["height:20px;margin-bottom:1000px", "height:20px"]),
+        (vec![0.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_kept_margin_spanning_several_pages_breaks_at_the_next_unforced_edge() {
+    // The margin after the forced break at 100 is kept up to the unforced
+    // edge at 200, where the rest of it is truncated.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:450px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
