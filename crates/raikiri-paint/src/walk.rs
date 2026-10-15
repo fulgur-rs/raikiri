@@ -2930,12 +2930,12 @@ pub(crate) fn paint_document_impl(
                 let child_transform_x = transform_x + own_transform_x;
                 let child_transform_y = transform_y + own_transform_y;
                 let is_fixed = matches!(cv.position, PositionValue::Fixed);
-                // A transform/filter ancestor establishes a fixed-position
-                // containing block. Such descendants keep the legacy local
-                // geometry; only viewport-fixed boxes repeat per page.
+                // A fixed box below a containing block for fixed boxes keeps
+                // its local geometry, as layout places it; only viewport-fixed
+                // boxes repeat per page.
                 let fixed_in_viewport = is_fixed && !inside_fixed_containing_block;
                 let establishes_fixed_containing_block =
-                    (transformable && !cv.transform.is_empty()) || !cv.filter.is_empty();
+                    raikiri_dom::establishes_fixed_containing_block(document, node_id, cv);
                 let (fixed_dx, fixed_dy) = if fixed_in_viewport {
                     fixed_position_px(
                         cv,

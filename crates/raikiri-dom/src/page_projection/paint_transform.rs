@@ -316,17 +316,21 @@ impl MotionCache {
         // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
         let mut path = Vec::new();
         let mut contains = false;
+        // Layout and the painter look for the containing block from the
+        // body down, so the elements above it never contain fixed boxes.
         for node in document.inclusive_ancestors(id) {
             if let Some(&known) = self.fixed_container.get(&node) {
                 contains = known;
                 break;
             }
             path.push(node);
+            if crate::layout::ifc::assign::is_layout_root(document, node) {
+                break;
+            }
         }
         for &node in path.iter().rev() {
             contains |= cascade.computed.get(node).is_some_and(|cv| {
-                (crate::layout::is_transformable(document, node, cv) && !cv.transform.is_empty())
-                    || !cv.filter.is_empty()
+                crate::layout::establishes_fixed_containing_block(document, node, cv)
             });
             self.fixed_container.insert(node, contains);
         }

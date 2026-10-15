@@ -14,8 +14,10 @@
 //! along the DOM ancestors land on the page area. An axis whose insets are
 //! both `auto` keeps the static position taffy gave it.
 //!
-//! A transformed or filtered ancestor is the containing block of its fixed
-//! descendants (CSS Transforms 1 §3, Filter Effects 1 §5), and a positioned
+//! A transformed or filtered ancestor, or one that will change its transform
+//! or filter or contains layout or paint, is the containing block of its
+//! fixed descendants (CSS Transforms 1 §3, Filter Effects 1 §5, CSS Will
+//! Change 1 §2, CSS Containment 2 §3), and a positioned
 //! ancestor that of its absolutely positioned descendants (CSS 2.1 §10.1).
 //! When that ancestor is not the box's parent, the box is laid out again the
 //! same way against the ancestor's padding box. A containing block that is an
@@ -86,25 +88,33 @@ fn containable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
 }
 
 /// Whether `id` is the containing block of its fixed-position descendants.
-fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+pub fn establishes_fixed_containing_block(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
     // spec: https://drafts.fxtf.org/filter-effects-1/#FilterProperty
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
     // spec: https://www.w3.org/TR/css-will-change-1/#will-change
     // A box that is not generated contains nothing (CSS Display 3 §2.5).
-    let transformable = is_transformable(document, id, cv);
-    let containable = containable(document, id, cv);
+    // The style is looked at first: almost no element sets any of these.
+    let transform = !cv.transform.is_empty() || cv.will_change.contains(WillChange::TRANSFORM);
+    let filter = !cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER);
+    let contain = cv.contain.contains_positioned_descendants()
+        || cv.will_change.contains(WillChange::CONTAIN);
+    if cv.display == DisplayValue::Contents || !(transform || filter || contain) {
+        return false;
+    }
     // A filter on the document root does not make it a containing block.
-    let root = document
-        .parent_of(id)
-        .is_some_and(|parent| document.parent_of(parent).is_none());
-    cv.display != DisplayValue::Contents
-        && ((transformable
-            && (!cv.transform.is_empty() || cv.will_change.contains(WillChange::TRANSFORM)))
-            || (!root && (!cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER)))
-            || (containable
-                && (cv.contain.contains_positioned_descendants()
-                    || cv.will_change.contains(WillChange::CONTAIN))))
+    let root = || {
+        document
+            .parent_of(id)
+            .is_some_and(|parent| document.parent_of(parent).is_none())
+    };
+    (transform && is_transformable(document, id, cv))
+        || (filter && !root())
+        || (contain && containable(document, id, cv))
 }
 
 /// Whether `id` is the containing block of its absolutely positioned
@@ -286,7 +296,8 @@ fn visit_out_of_flow_boxes(
     mut visit: impl FnMut(&mut Document, usize, Point<f32>, ContainingBlock),
 ) {
     let root_cv = cascade.computed.get(root);
-    // A transformed or filtered body contains its fixed descendants.
+    // A body that is a containing block for fixed boxes contains its fixed
+    // descendants.
     let fixed_cb = match root_cv {
         Some(cv) if establishes_fixed_containing_block(document, root, cv) => {
             containing_block_of(document, root, cv, Point::ZERO)

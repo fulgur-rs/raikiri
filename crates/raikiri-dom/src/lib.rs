@@ -107,11 +107,13 @@ pub use layout::{
     resolve_initial_page_context, validate_layout_depth,
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
+#[doc(hidden)]
+pub use layout::placed_without_relative_offset;
 pub use layout::{RootBox, root_box};
 #[doc(hidden)]
 pub use layout::{StandaloneAlign, StandaloneStyle, StandaloneText};
 #[doc(hidden)]
-pub use layout::{is_transformable, placed_without_relative_offset};
+pub use layout::{establishes_fixed_containing_block, is_transformable};
 pub use margin_boxes::{
     DeferredGlyph, DeferredSlot, DeferredValue, MarginBox, MarginBoxBackgroundImage,
     MarginBoxBorder, MarginBoxNamedValues, MarginBoxPageContext, MarginBoxRunning, MarginBoxText,
