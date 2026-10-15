@@ -346,6 +346,11 @@ impl Iterator for TaffyChildIter<'_> {
     }
 }
 
+/// The number of children from which taffy's walks over a container's
+/// children by index read them from a list; walking fewer children from
+/// the start each time costs less than building the list.
+const WALKED_CHILDREN_MIN: usize = 32;
+
 impl TraversePartialTree for Document {
     type ChildIter<'a> = TaffyChildIter<'a>;
 
@@ -354,12 +359,32 @@ impl TraversePartialTree for Document {
     }
 
     fn child_count(&self, node_id: NodeId) -> usize {
+        // Taffy counts a container's children before it walks them by
+        // index. For a container with many children the walk reads them
+        // from one list, so it costs O(k), not O(k²); the list is dropped
+        // when the walk reaches the last child.
+        let parent = usize::from(node_id);
+        let mut walks = self.taffy_child_walks.borrow_mut();
+        walks.remove(&parent);
         // Must match the filter of `child_ids`.
-        TaffyChildIter::new(self, node_id).count()
+        let count = TaffyChildIter::new(self, node_id).count();
+        if count >= WALKED_CHILDREN_MIN {
+            walks.insert(parent, TaffyChildIter::new(self, node_id).collect());
+        }
+        count
     }
 
     fn get_child_id(&self, node_id: NodeId, index: usize) -> NodeId {
         // Filtered index: return the nth child in the same view as child_ids.
+        let parent = usize::from(node_id);
+        let mut walks = self.taffy_child_walks.borrow_mut();
+        if let Some(&child) = walks.get(&parent).and_then(|children| children.get(index)) {
+            if walks[&parent].len() == index + 1 {
+                walks.remove(&parent);
+            }
+            return child;
+        }
+        drop(walks);
         TaffyChildIter::new(self, node_id)
             .nth(index)
             .expect("get_child_id: index out of range")
