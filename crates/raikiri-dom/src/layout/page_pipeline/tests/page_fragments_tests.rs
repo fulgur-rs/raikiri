@@ -783,8 +783,9 @@ fn a_text_that_starts_below_the_first_line_splits_at_its_own_lines() {
     // Lines (Ahem 10px, width 40): "aa", "bbbb", "cccc", "dddd". The span's
     // text owns lines 1-3 (tops 10, 20, 30); a 30px page holds the first
     // three lines, so the span's text has two lines on page 0 and one on
-    // page 1, counted from its own first line.
-    let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px");
+    // page 1, counted from its own first line. `widows: 1` keeps that
+    // natural break.
+    let (mut doc, _cascade, root) = ahem_paragraph("", "width:40px;widows:1");
     doc.append_text(root, "aa ");
     let span = doc.append_element(
         Some(root),
@@ -3445,4 +3446,106 @@ fn a_paragraph_of_several_text_nodes_split_within_its_constraints_stays() {
         fragments[1].last(),
         Some(&(1, Some(PageFragmentLineRange::new(0, 1))))
     );
+}
+
+#[test]
+fn a_nested_paragraph_breaks_between_earlier_lines_for_its_widows() {
+    // Lines at 15, 25 and 35 on a 40px page: with `orphans: 1` the break
+    // moves up a line, so "aaaa" stays and the last two lines start page 1.
+    // The section grows to hold them and the flow after follows.
+    let laid_out = paragraph_after_a_spacer(Some(""), 15.0, "orphans:1;widows:2", 40.0);
+    assert_eq!(
+        laid_out.fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
+        ]
+    );
+    assert_eq!(laid_out.section, (15.0, 45.0));
+    assert_eq!(laid_out.after_top, 60.0);
+}
+
+/// `html > body > (spacer, flex)`: a 15px spacer, then a row flex container
+/// whose first item is the Ahem paragraph ("aaaa bbbb cccc", width 40, line
+/// height 10) and whose second item, 5px tall, sits beside it in a 50px
+/// container (`wrap` off) or on the next flex line of a 40px one (`wrap` on). Returns the text's fragments and
+/// the second item's top.
+fn flex_item_paragraph_after_a_spacer(
+    wrap: bool,
+    root_css: &str,
+) -> (Vec<(u32, Option<PageFragmentLineRange>)>, f32) {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:15px"),
+    );
+    let flex_css = if wrap {
+        "display:flex;flex-wrap:wrap;width:40px"
+    } else {
+        "display:flex;flex-wrap:nowrap;width:50px"
+    };
+    let flex = doc.append_element(Some(body), "div", Style::default(), Some(flex_css));
+    let style = format!(
+        "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:{};{root_css}",
+        if wrap { "100%" } else { "40px" }
+    );
+    let item = doc.append_element(Some(flex), "div", Style::default(), Some(style.as_str()));
+    let text = doc.append_text(item, "aaaa bbbb cccc");
+    let second_css = format!(
+        "display:block;height:5px;width:{}",
+        if wrap { "100%" } else { "10px" }
+    );
+    let second = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some(second_css.as_str()),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    assert!(doc.nodes[item].is_ifc_root());
+    (
+        text_fragments(&doc, &cascade, page, &slices, text),
+        absolute_rect(&doc, second).1,
+    )
+}
+
+#[test]
+fn a_flex_item_alone_on_its_line_breaks_between_earlier_lines_for_its_widows() {
+    // The item's last two lines start page 1; the next flex line follows.
+    let (fragments, second_top) = flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2");
+    assert_eq!(
+        fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 1))),
+            (1, Some(PageFragmentLineRange::new(1, 3))),
+        ]
+    );
+    assert_eq!(second_top, 60.0);
+}
+
+#[test]
+fn a_flex_item_beside_another_keeps_its_natural_break() {
+    // Moving the item's lines would grow the flex line under the item
+    // beside it, so the item keeps its natural split.
+    let (fragments, second_top) = flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2");
+    assert_eq!(
+        fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+    assert_eq!(second_top, 15.0);
 }
