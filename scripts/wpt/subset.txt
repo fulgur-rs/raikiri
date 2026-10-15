@@ -21,3 +21,8 @@ images
 /wpt
 # The root CLI eagerly reads every command registry, including docs/commands.json.
 /docs/commands.json
+# Web Animations helpers (testcommon.js, resources/timing-utils.js) that CSS
+# tests load for waitForAnimationFrames / waitForCompositorReady, without
+# the web-animations tests themselves.
+/web-animations/testcommon.js
+/web-animations/resources

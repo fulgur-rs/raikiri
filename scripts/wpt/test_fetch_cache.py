@@ -70,6 +70,13 @@ class FetchCacheTests(unittest.TestCase):
         self._write(self.wpt_source, "tools/wptrunner/README.rst", "wptrunner root\n")
         self._write(self.wpt_source, "wpt", "wpt CLI\n")
         self._write(self.wpt_source, "docs/commands.json", "{}\n")
+        self._write(self.wpt_source, "web-animations/testcommon.js", "animation helpers\n")
+        self._write(
+            self.wpt_source, "web-animations/resources/timing-utils.js", "timing helpers\n"
+        )
+        self._write(
+            self.wpt_source, "web-animations/timing-model/test.html", "animation test\n"
+        )
         self._write(self.wpt_source, "outside/not-sparse.txt", "outside roots\n")
         self._write(
             self.wpt_source, "html/dom/resources/nested.js", "nested per-test resources\n"
@@ -131,7 +138,8 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(
             (self.cache / ".git" / "info" / "sparse-checkout").read_text(),
             "acid\ncss\nfonts\nimages\n/common\n"
-            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n"
+            "/web-animations/testcommon.js\n/web-animations/resources\n",
         )
         self.assertEqual(
             (self.cache / ".git" / "info" / "sparse-checkout").stat().st_mode & 0o222,
@@ -144,6 +152,9 @@ class FetchCacheTests(unittest.TestCase):
         self.assertTrue((self.cache / "tools/wptrunner/README.rst").exists())
         self.assertTrue((self.cache / "wpt").exists())
         self.assertTrue((self.cache / "docs/commands.json").exists())
+        self.assertTrue((self.cache / "web-animations/testcommon.js").exists())
+        self.assertTrue((self.cache / "web-animations/resources/timing-utils.js").exists())
+        self.assertFalse((self.cache / "web-animations/timing-model/test.html").exists())
         self.assertFalse((self.cache / "html/dom/resources/nested.js").exists())
         main_link = self.project / "target/wpt"
         self.assertTrue(main_link.is_symlink())
@@ -197,8 +208,29 @@ class FetchCacheTests(unittest.TestCase):
         self.assertEqual(
             sparse_file.read_text(encoding="utf-8"),
             "acid\ncss\nfonts\nimages\n/common\n"
-            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n"
+            "/web-animations/testcommon.js\n/web-animations/resources\n",
         )
+        self.assertEqual(sparse_file.stat().st_mode & 0o222, 0)
+
+    def test_fetch_migrates_the_locked_previous_sparse_root_set(self) -> None:
+        first = self._fetch(self.project)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        sparse_file = self.cache / ".git" / "info" / "sparse-checkout"
+        sparse_file.chmod(0o644)
+        sparse_file.write_text(
+            "acid\ncss\nfonts\nimages\n/common\n"
+            "/resources\n/tools\n/wpt\n/docs/commands.json\n",
+            encoding="utf-8",
+        )
+        sparse_file.chmod(0o444)
+
+        migrated = self._fetch(self.project)
+
+        self.assertEqual(migrated.returncode, 0, migrated.stderr)
+        self.assertTrue(sparse_file.read_text(encoding="utf-8").endswith(
+            "/web-animations/testcommon.js\n/web-animations/resources\n"
+        ))
         self.assertEqual(sparse_file.stat().st_mode & 0o222, 0)
 
     def test_fetch_refuses_legacy_physical_checkout_without_creating_duplicate(self) -> None:
