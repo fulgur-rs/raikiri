@@ -501,3 +501,48 @@ fn a_footer_written_before_the_body_moves_without_the_body_rows() {
     assert_eq!(span(&doc, table), (60.0, 122.0));
     assert_eq!(span(&doc, after), (122.0, 132.0));
 }
+
+#[test]
+fn a_footer_inside_a_contents_wrapper_moves_without_the_body_rows() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px"),
+        );
+        let wrapper = doc.append_element(
+            Some(table),
+            "div",
+            Style::default(),
+            Some("display:contents"),
+        );
+        let footer = doc.append_element(
+            Some(wrapper),
+            "tfoot",
+            Style::default(),
+            Some("display:table-footer-group"),
+        );
+        let footer_row = append_row(doc, footer, "", 20.0).0;
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        let body_row = append_row(doc, group, "", 20.0).0;
+        ids.extend([footer_row, body_row]);
+    });
+    let [footer_row, body_row] = ids[..] else {
+        unreachable!()
+    };
+    assert_eq!(span(&doc, body_row), (62.0, 82.0));
+    assert_eq!(span(&doc, footer_row), (100.0, 120.0));
+}

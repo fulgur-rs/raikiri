@@ -1280,7 +1280,22 @@ fn table_pagination_child_order(
     cascade: &CascadeResult,
     table: usize,
 ) -> Vec<usize> {
-    let mut children = document.nodes[table].children.clone();
+    // Table layout lays out the children of `display: contents` wrappers as
+    // the table's own children before it picks the header and footer.
+    let mut pending: Vec<_> = document.nodes[table]
+        .children
+        .iter()
+        .rev()
+        .copied()
+        .collect();
+    let mut children = Vec::new();
+    while let Some(child) = pending.pop() {
+        if cascade.computed[child].display == DisplayValue::Contents {
+            pending.extend(document.nodes[child].children.iter().rev().copied());
+        } else {
+            children.push(child);
+        }
+    }
     let first = |display: DisplayValue| {
         children
             .iter()
