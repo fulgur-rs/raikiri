@@ -35,6 +35,35 @@ fn run(html: &str) -> PipelineOutput {
     }
 }
 
+/// Lay out `html` with at most `max_pages` document pages.
+fn run_with_page_limit(html: &str, max_pages: u32) -> PipelineOutput {
+    let resources = RenderResources::new().fonts(super::ahem_fonts());
+    let config = LayoutConfig::builder()
+        .limits(
+            raikiri_traits::RenderLimits::builder()
+                .max_document_pages(Some(max_pages))
+                .build(),
+        )
+        .build();
+    match run_pipeline(
+        &parse(html),
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: false,
+            resume: None,
+        },
+    )
+    .expect("layout")
+    {
+        PipelineRun::Completed(out) => *out,
+        PipelineRun::Aborted | PipelineRun::NotResumed => panic!("completed layout"),
+    }
+}
+
 fn parse(html: &str) -> HtmlDocument {
     crate::parse_html_with_resources(html.as_bytes(), &RenderResources::new()).expect("parse")
 }
@@ -303,6 +332,84 @@ fn a_named_page_of_another_width_is_laid_out_at_its_own_width() {
     assert_eq!(widths, vec![400.0]);
 }
 
+/// The widths of the `div` boxes on page `page_index`.
+fn div_widths(out: &PipelineOutput, page_index: u32) -> Vec<f32> {
+    let (document, _) = out.layout_for_page(page_index);
+    document
+        .page_fragments(page_index)
+        .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+        .filter(|fragment| {
+            document
+                .get_node(fragment.node().0 as usize)
+                .and_then(|node| node.tag_name())
+                == Some("div")
+        })
+        .map(|fragment| fragment.rect().width)
+        .collect()
+}
+
+#[test]
+fn a_named_page_after_a_tall_first_page_is_laid_out_at_its_own_width_within_the_page_limit() {
+    // The content before the named page is taller than the measuring room
+    // alone, and the document has exactly as many pages as its limit, so
+    // the measuring page has to hold the content before the page start.
+    let html = "<style>\
+        @page { size: 200px 2200000px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div style='height:2100000px'></div>\
+        <div style='page:wide'>second</div>";
+    let out = run_with_page_limit(html, 2);
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_widths(&out, 1), vec![400.0]);
+    assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
+}
+
+/// A paragraph of `count` words that takes one or two lines on the wide
+/// first page and a line for every four words at the narrow named page's
+/// width, followed by a box on the named page.
+fn growing_paragraph(count: usize) -> String {
+    format!(
+        "<style>\
+        @page {{ size: 4000px 300000px; margin: 0 }}\
+        @page narrow {{ size: 200px 200px }}\
+        body {{ margin: 0 }} p, div {{ margin: 0; font: 10px/10px Ahem }}\
+        </style><p style='line-height:100000px'>{}</p>\
+        <div style='page:narrow'>second</div>",
+        words(count).join(" ")
+    )
+}
+
+#[test]
+fn a_named_page_after_content_that_grows_past_the_measuring_page_is_laid_out_at_its_own_width() {
+    // In the relayout the paragraph grows past the room of the measuring
+    // page, so the measurement finds the page start on a later measuring
+    // page.
+    let out = run(&growing_paragraph(60));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("narrow"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_widths(&out, 1), vec![200.0]);
+    assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
+}
+
+#[test]
+fn content_that_grows_past_more_measuring_pages_than_the_page_limit_is_measured_again() {
+    // The paragraph grows past more measuring pages than the document's
+    // two-page limit, so the measurement stops before the page start and is
+    // repeated on a taller page.
+    let out = run_with_page_limit(&growing_paragraph(120), 2);
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(div_widths(&out, 1), vec![200.0]);
+    assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
+}
+
 #[test]
 fn a_float_below_its_block_does_not_spill_onto_a_relaid_out_page() {
     // The float hangs below its block on the wide page. A relayout of the
@@ -516,4 +623,66 @@ fn generated_overflow_leaves_a_paragraph_body_at_its_max_height() {
     assert!(pages.len() > 1);
     assert_eq!(pages[0], Some((20.0, 12.0)));
     assert!(pages[1..].iter().all(Option::is_none), "{pages:?}");
+}
+
+#[test]
+fn a_cancellation_while_measuring_a_continuation_aborts_the_run() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Cancels the run on its third image, which the continuation's
+    /// measurement resolves after the probe and the first layout.
+    struct AbortOnThirdResolve {
+        controller: raikiri_traits::AbortController,
+        calls: AtomicUsize,
+    }
+
+    impl raikiri_traits::ReplacedResolver for AbortOnThirdResolve {
+        fn resolve(
+            &self,
+            _request: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                self.controller.abort();
+            }
+            Ok(raikiri_traits::ResolvedIntrinsic {
+                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                disposition: raikiri_traits::ResolveDisposition::Ok,
+            })
+        }
+    }
+
+    let controller = raikiri_traits::AbortController::new();
+    let resolver = AbortOnThirdResolve {
+        controller: raikiri_traits::AbortController {
+            signal: controller.signal.clone(),
+        },
+        calls: AtomicUsize::new(0),
+    };
+    let resources = RenderResources::new()
+        .fonts(super::ahem_fonts())
+        .replaced_resolver(&resolver);
+    let html = "<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div>first</div><div style='page:wide'>\
+        <img src='https://example.invalid/image.png' style='display:block;height:30px'>\
+        second</div>";
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let result = run_pipeline(
+        &parse(html),
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+            resume: None,
+        },
+    );
+    assert!(matches!(result, Ok(PipelineRun::Aborted)));
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
 }
