@@ -2655,14 +2655,29 @@ fn resolve_table_rect(
 // Fixed layout (CSS 2.1 §17.5.2.1)
 // ---------------------------------------------------------------------------
 
+/// The width a first-row cell or a `<col>` gives its column in fixed table
+/// layout, against the table width `avail`; `None` leaves the column auto.
+fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
+    // spec: https://drafts.csswg.org/css-tables-3/#distributing-width-to-columns
+    // spec: https://github.com/w3c/csswg-drafts/issues/94
+    // A `calc()` that sums a percentage and a length counts as `auto`, even
+    // in fixed table layout. The style layer folds a `calc()` with only a
+    // percentage or only a length into that percentage or length, so every
+    // `calc()` left here is such a sum.
+    if width.into_raw().is_calc() {
+        return None;
+    }
+    resolve_dimension(width, Some(avail))
+}
+
 /// Fixed column sizing: no content measurement.
 ///
 /// `avail` is the table width net of padding + outer (collapsed) borders.
 /// Per §17.5.2.1, a first-row cell with `colspan == 1` and a specified
 /// `width` (length or percentage-of-table-width) fixes its column; all
-/// remaining columns divide the leftover equally. Specified widths in
-/// non-first rows, `colspan > 1` first-row widths, and `col`-element widths
-/// are ignored (module-doc scope limit). Leftover underflow clamps unfixed
+/// remaining columns divide the leftover equally. A `<col>` width fixes a
+/// column that no such cell fixed. Specified widths in non-first rows and
+/// `colspan > 1` first-row widths are ignored. Leftover underflow clamps unfixed
 /// columns to zero (the table overflows rather than shrinking fixed
 /// columns).
 fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
@@ -2674,7 +2689,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         }
         let c = cell.col_start as usize;
         if c < n && fixed[c].is_none() {
-            fixed[c] = resolve_dimension(cell.specified_width, Some(avail));
+            fixed[c] = fixed_column_width(cell.specified_width, avail);
         }
     }
     // `<col>` widths fix columns with no first-row cell width (CSS 2.1 §17.5.2.1).
@@ -2686,7 +2701,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         }
         let minimum = resolve_dimension(sz.min_width, None);
         let maximum = resolve_dimension(sz.max_width, None);
-        let v = resolve_dimension(sz.width, Some(avail)).or(minimum);
+        let v = fixed_column_width(sz.width, avail).or(minimum);
         if let Some(mut x) = v {
             if let Some(minimum) = minimum {
                 x = f32_max_compat(x, minimum);
