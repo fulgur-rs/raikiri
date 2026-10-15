@@ -5828,10 +5828,11 @@ fn paginate_flow(
         };
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
-        // A box with no block size and no in-flow content lets its
+        // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
-        let margins_collapse_through =
-            height <= 0.0 && !has_in_flow_content(document, cascade, node_id);
+        let margins_collapse_through = height <= 0.0
+            && margins_may_collapse_through(document, cascade, node_id)
+            && !has_in_flow_content(document, cascade, node_id);
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -6766,11 +6767,23 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
             // they make, which the line check above has already counted.
             false
         } else {
-            display != DisplayValue::Block
+            !margins_may_collapse_through(document, cascade, child)
                 || node.unrounded_layout.size.height > 0.0
                 || has_in_flow_content(document, cascade, child)
         }
     })
+}
+
+/// Whether `id` is a block box that establishes no independent formatting
+/// context, the only kind whose margins can collapse through it when it is
+/// empty (CSS 2 §8.3.1).
+fn margins_may_collapse_through(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let computed = &cascade.computed[id];
+    let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
+    computed.display == DisplayValue::Block
+        && visible(computed.overflow.x)
+        && visible(computed.overflow.y)
+        && document.nodes[id].multicol.is_none()
 }
 
 #[cfg(test)]
