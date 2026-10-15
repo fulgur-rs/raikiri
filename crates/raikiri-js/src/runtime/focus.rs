@@ -389,7 +389,7 @@ fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
         return is_being_rendered(context, index);
     };
     for image in images {
-        if is_being_rendered(context, image)? {
+        if is_being_rendered(context, image)? && is_visible(context, image)? {
             return Ok(true);
         }
     }

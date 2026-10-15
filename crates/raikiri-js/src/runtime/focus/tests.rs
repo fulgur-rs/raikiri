@@ -265,7 +265,15 @@ fn elements_that_are_not_rendered_do_not_take_or_keep_focus() {
     let document = &mut host.document;
     let hidden = document.create_detached_element("div").unwrap();
     document.append_child(body, hidden).unwrap();
+    let veiled = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(veiled, "usemap", "#veiled")
+        .unwrap();
+    document.append_child(body, veiled).unwrap();
+    let button = document.create_detached_element("button").unwrap();
+    document.append_child(body, button).unwrap();
     host.unrendered.insert(hidden);
+    host.invisible.extend([veiled, button]);
     let mut rt = DomRuntime::new(host).unwrap();
     ok(
         &mut rt,
@@ -391,6 +399,9 @@ fn the_default_rendering_check_asks_for_a_box() {
     let mut host = GeometryOnly(stub);
     assert!(host.is_being_rendered(body).unwrap());
     assert!(!host.is_being_rendered(0).unwrap());
+    // The default visibility check reports every element visible.
+    host.0.invisible.insert(body);
+    assert!(host.is_visible(body).unwrap());
     host.0.fail_geometry = true;
     assert!(host.is_being_rendered(body).is_err());
 }
@@ -425,8 +436,10 @@ fn an_area_takes_focus_through_a_rendered_image_using_its_map() {
          make('img', {usemap: '#i', inert: ''});\
          var hiddenMap = make('map', {name: 'hidden'}), unseen = make('area', {href: '#'}, hiddenMap);\
          var nameless = make('area', {href: '#'}, make('map', {id: ''})); make('img', {usemap: '#'});\
+         var shrouded = make('area', {href: '#'}, make('map', {name: 'veiled'}));\
          !takes(loose) && !before && !unhashed && linked && !takes(plain)\
            && !takes(shadowed) && !takes(held) && !takes(unseen) && !takes(nameless)\
+           && !takes(shrouded) && !takes(document.body.children[2])\
            && area.tabIndex === 0",
     );
 }

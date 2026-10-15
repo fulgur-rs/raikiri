@@ -21,6 +21,9 @@ pub(crate) struct StubHost {
     /// Elements whose subtrees [`DocumentHost::is_being_rendered`] reports
     /// as not rendered, as if they had `display: none`.
     pub unrendered: HashSet<usize>,
+    /// Elements [`DocumentHost::is_visible`] reports as invisible, as if
+    /// they computed `visibility: hidden`.
+    pub invisible: HashSet<usize>,
     /// [`DocumentHost::document_url`]'s return value; tests set this
     /// directly (`host.document_url = Some(...)`) before building a runtime.
     pub document_url: Option<String>,
@@ -59,6 +62,7 @@ impl StubHost {
                 fail_geometry: false,
                 fail_computed: false,
                 unrendered: HashSet::new(),
+                invisible: HashSet::new(),
                 document_url: None,
                 scripts: HashMap::new(),
                 images: HashSet::new(),
@@ -136,6 +140,9 @@ impl DocumentHost for StubHost {
             current = self.document.parent_of(index);
         }
         Ok(true)
+    }
+    fn is_visible(&mut self, node: usize) -> Result<bool, HostError> {
+        Ok(!self.invisible.contains(&node))
     }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         if self.fail_computed {
