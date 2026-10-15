@@ -550,6 +550,7 @@ impl<'a> PositionedLines<'a> {
 /// fragment of a line, and the other fragments in visual order, so the
 /// base text locates the segment. An annotation over a base that draws
 /// nothing goes before the first run after the base text, or last.
+/// Annotations over the same base keep the order they are given in.
 fn insert_annotation_runs<'a>(
     runs: &mut Vec<PositionedRun<'a>>,
     annotations: Vec<(Range<usize>, Vec<PositionedRun<'a>>)>,
@@ -574,6 +575,9 @@ fn insert_annotation_runs<'a>(
                     .map(|(index, _)| index)
             })
             .unwrap_or(runs.len());
+        // Annotations already placed there, such as an earlier level over
+        // the same base, keep their place before this one.
+        let at = at + own[at..].iter().take_while(|own| !**own).count();
         let count = annotation.len();
         runs.splice(at..at, annotation);
         own.splice(at..at, std::iter::repeat_n(false, count));

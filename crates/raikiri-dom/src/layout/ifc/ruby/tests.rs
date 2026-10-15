@@ -656,6 +656,32 @@ fn annotation_runs_keep_their_place_in_tree_order() {
 }
 
 #[test]
+fn annotation_levels_over_one_base_keep_their_tree_order() {
+    let mut ids = (0, 0, 0);
+    let fixture = block_fixture("line-height:40px", |doc, root| {
+        let container = ruby(doc, root);
+        let base = rb(doc, container, "a");
+        let over = element(doc, container, "rtc", "display:ruby-text-container");
+        let first = rt(doc, over, "x");
+        let under = element(
+            doc,
+            container,
+            "rtc",
+            "display:ruby-text-container;ruby-position:under",
+        );
+        let second = rt(doc, under, "y");
+        ids = (
+            doc.nodes[base].children[0],
+            doc.nodes[first].children[0],
+            doc.nodes[second].children[0],
+        );
+    });
+    let runs = runs(fixture);
+    let order: Vec<usize> = runs.iter().map(|run| run.0).collect();
+    assert_eq!(order, [ids.0, ids.1, ids.2], "{runs:?}");
+}
+
+#[test]
 fn annotation_runs_follow_their_bases_in_reordered_lines() {
     let mut ids = (0, 0, 0, 0);
     let fixture = block_fixture("line-height:20px", |doc, root| {
@@ -1207,4 +1233,26 @@ fn annotations_take_their_base_direction_from_their_own_style() {
     // left-to-right text that starts the annotation sits.
     assert_eq!(order, [ids.0, ids.1], "{runs:?}");
     assert!(runs[1].2.0 < runs[0].2.0, "{runs:?}");
+}
+
+#[test]
+fn plaintext_annotations_take_their_base_direction_from_their_text() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aaaa");
+        let annotation = element(
+            doc,
+            container,
+            "rt",
+            "display:ruby-text;font-size:5px;unicode-bidi:plaintext",
+        );
+        ids.0 = doc.append_text(annotation, "\u{5D0}");
+        ids.1 = doc.append_text(annotation, "x");
+    });
+    let runs = runs(fixture);
+    let x = |id: usize| runs.iter().find(|run| run.0 == id).expect("run").2.0;
+    // The first strong character is right-to-left, so the annotation is
+    // right-to-left and the text after it sits to its left.
+    assert!(x(ids.1) < x(ids.0), "{runs:?}");
 }

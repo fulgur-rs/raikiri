@@ -605,9 +605,11 @@ impl Content<'_, '_> {
             owner,
             self.fonts,
         )?; // cov:ignore: inline_style rejects only keywords added to its style enums after it was written.
-        // The content's own `direction` is its base direction.
+        // The content's own `direction` and `unicode-bidi` give its base
+        // direction.
         Ok(shodo::style::ParagraphStyle {
             direction: root.direction,
+            unicode_bidi_plaintext: root.unicode_bidi == shodo::style::UnicodeBidi::Plaintext,
             root,
             ..shodo::style::ParagraphStyle::default()
         })
