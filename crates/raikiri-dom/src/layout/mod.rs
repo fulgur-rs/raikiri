@@ -114,6 +114,7 @@ pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};
 pub(crate) use sanitize::sanitize_taffy;
 pub(crate) use sanitize::sanitize_taffy_layout;
 
+pub use fixed::{establishes_fixed_containing_block, is_transformable};
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::inline_boxes::{BoxRect, InlineBoxPiece};
@@ -147,6 +148,7 @@ pub use page_pipeline::{
     layout_single_page, layout_single_page_with_resolver,
     layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
 };
+pub use relative::placed_without_relative_offset;
 #[doc(hidden)]
 pub use relative::used_relative_offset;
 pub(crate) use relative::{Precedence, used_relative_insets};

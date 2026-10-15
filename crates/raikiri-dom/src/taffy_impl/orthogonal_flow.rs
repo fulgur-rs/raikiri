@@ -20,11 +20,7 @@ use taffy::{
 };
 
 use crate::document::Document;
-use raikiri_style::property::{DisplayValue, WritingMode};
-
-fn is_vertical(mode: WritingMode) -> bool {
-    matches!(mode, WritingMode::VerticalRl | WritingMode::VerticalLr)
-}
+use raikiri_style::property::DisplayValue;
 
 /// Whether `idx` is an in-flow block-level box with an auto width in a
 /// vertical writing mode, its own or inherited, under a horizontal block
@@ -40,12 +36,12 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
                 node.display,
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
             ))
-        && is_vertical(used_writing_mode(tree, idx))
+        && used_writing_mode(tree, idx).is_vertical()
         && tree.taffy_parent_of(idx).is_some_and(|parent| {
             matches!(
                 tree.nodes[parent].style.display,
                 Display::Block | Display::FlowRoot
-            ) && !is_vertical(used_writing_mode(tree, parent))
+            ) && !used_writing_mode(tree, parent).is_vertical()
         })
 }
 

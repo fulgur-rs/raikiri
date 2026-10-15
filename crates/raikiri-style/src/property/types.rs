@@ -4866,6 +4866,15 @@ pub enum WritingMode {
     SidewaysLr,
 }
 
+impl WritingMode {
+    /// Whether the inline axis is vertical, including sideways text.
+    /// CSS Writing Modes 4 defines both sideways modes as vertical writing
+    /// modes with horizontal typography.
+    pub const fn is_vertical(self) -> bool {
+        !matches!(self, Self::HorizontalTb)
+    }
+}
+
 css_keywords!(WritingMode {
     HorizontalTb => "horizontal-tb",
     VerticalRl => "vertical-rl",

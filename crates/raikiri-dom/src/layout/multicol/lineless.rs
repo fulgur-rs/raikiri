@@ -77,22 +77,13 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         .then_some(children)
 }
 
-/// Whether the used writing mode of `id`, declared on it or inherited from
-/// the nearest ancestor that declares one, is horizontal.
+/// Whether the bridged CSS writing mode of `id` is horizontal.
 fn inherits_horizontal(tree: &Document, id: usize) -> bool {
-    let mut current = Some(id);
-    while let Some(id) = current {
-        if tree.nodes[id].authored_writing_mode.is_some() {
-            return is_horizontal(&tree.nodes[id]);
-        }
-        current = tree.parent_of(id);
-    }
-    true
+    is_horizontal(&tree.nodes[id])
 }
 
 fn is_horizontal(node: &crate::Node) -> bool {
-    node.authored_writing_mode
-        .is_none_or(|mode| mode == raikiri_style::property::WritingMode::HorizontalTb)
+    !node.used_writing_mode.is_vertical()
 }
 
 /// The block-start and block-end margins of a child, when they are

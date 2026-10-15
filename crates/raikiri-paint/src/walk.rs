@@ -26,11 +26,10 @@ use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor,
     BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient,
-    CssColor, CssPosition, CssPositionOffset, DisplayValue, FloatValue, Gradient,
-    GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
-    ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
-    PropertyValue, Sides, TextShadowColor, UnboundedColor, VerticalAlign, Visibility, VisualBox,
-    WritingMode, ZIndexValue,
+    CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
+    HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
+    UnboundedColor, VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -2905,23 +2904,14 @@ pub(crate) fn paint_document_impl(
                 // relative insets. Keep the legacy paint offset for the body
                 // root, floats, explicit multicol fragments and manually
                 // placed table parts. Those paths still use paint-side insets.
-                let is_float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
-                    && document.layout_parent_of(node_id).is_none_or(|parent| {
-                        !cascade.computed[parent].display.is_flex_or_grid_container()
-                    });
-                let needs_paint_inset = node_id == body_id
-                    || is_float
-                    || is_fragment_visit
-                    || matches!(
-                        cv.display,
-                        DisplayValue::TableCaption
-                            | DisplayValue::TableCell
-                            | DisplayValue::TableRow
-                            | DisplayValue::TableRowGroup
-                            | DisplayValue::TableHeaderGroup
-                            | DisplayValue::TableFooterGroup
-                    );
-                let (pos_dx, pos_dy) = if needs_paint_inset && !cv.display.is_inline_level() {
+                let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
+                    document,
+                    cascade,
+                    Some(body_id),
+                    node_id,
+                    cv,
+                ) || (is_fragment_visit && !cv.display.is_inline_level());
+                let (pos_dx, pos_dy) = if needs_paint_inset {
                     raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
@@ -2933,17 +2923,7 @@ pub(crate) fn paint_document_impl(
                 } else {
                     (0.0, 0.0)
                 };
-                // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-                // Non-replaced inline and table-column boxes are not transformable.
-                let transformable = !matches!(
-                    cv.display,
-                    DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) && (cv.display != DisplayValue::Inline
-                    || node.is_inline_svg_root()
-                    || matches!(
-                        node.tag_name(),
-                        Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-                    ));
+                let transformable = raikiri_dom::is_transformable(document, node_id, cv);
                 let (own_transform_x, own_transform_y) = if transformable {
                     transform_translation(cv, layout.size.width, layout.size.height)
                 } else {
@@ -2952,12 +2932,12 @@ pub(crate) fn paint_document_impl(
                 let child_transform_x = transform_x + own_transform_x;
                 let child_transform_y = transform_y + own_transform_y;
                 let is_fixed = matches!(cv.position, PositionValue::Fixed);
-                // A transform/filter ancestor establishes a fixed-position
-                // containing block. Such descendants keep the legacy local
-                // geometry; only viewport-fixed boxes repeat per page.
+                // A fixed box below a containing block for fixed boxes keeps
+                // its local geometry, as layout places it; only viewport-fixed
+                // boxes repeat per page.
                 let fixed_in_viewport = is_fixed && !inside_fixed_containing_block;
                 let establishes_fixed_containing_block =
-                    (transformable && !cv.transform.is_empty()) || !cv.filter.is_empty();
+                    raikiri_dom::establishes_fixed_containing_block(document, node_id, cv);
                 let (fixed_dx, fixed_dy) = if fixed_in_viewport {
                     fixed_position_px(
                         cv,

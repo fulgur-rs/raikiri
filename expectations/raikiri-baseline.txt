@@ -441,6 +441,7 @@ css/css-break/widows-block-in-inline-001.html
 # --- css-break min-block-size Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
 css/css-break/break-inside-avoid-min-block-size-2.html
 # --- css-break flexbox print Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
+css/css-break/flexbox/multi-line-row-flex-fragmentation-080-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-065-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-066-print.html
 css/css-break/flexbox/single-line-column-flex-fragmentation-068a-print.html
@@ -4603,3 +4604,11 @@ css/css-values/viewport-page-print.html
 # --- later pages of another content width laid out again (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
 # Pass once the harness relays pages of another width out from the document; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-004-print.html
+
+# --- scripts that clone nodes and edit character data (WPT pin 97ea26e2, EXACT, Linux, 2026-10-14) ---
+# Pass once cloneNode, importNode, the CharacterData edit methods, and splitText run; KEEP in two audit-vacuous-passes runs.
+css/css-flexbox/flex-item-contains-size-layout-001.html
+css/css-pseudo/first-letter-punctuation-dynamic.html
+css/css-pseudo/marker-content-022.html
+css/css-tables/border-collapse-dynamic-col-001.html
+css/cssom/stylesheet-replacedata-dynamic.html

@@ -568,7 +568,8 @@ fn a_translucent_after_holds_its_images() {
 fn a_translucent_after_groups_only_its_page() {
     let document = lay_out(
         "<p>AAAA BBBB CCCC DDDD</p>",
-        "p{margin:0}p::after{content:'E';opacity:.5}",
+        // `widows: 1` keeps the natural break after the third line.
+        "p{margin:0;widows:1}p::after{content:'E';opacity:.5}",
     );
     assert_eq!(
         composited(&document.page(0).unwrap()),

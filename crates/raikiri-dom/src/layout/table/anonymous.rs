@@ -176,6 +176,8 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     node.border_spacing = source.border_spacing;
     node.caption_side = source.caption_side;
     node.authored_writing_mode = source.authored_writing_mode;
+    node.used_writing_mode = source.used_writing_mode;
+    node.under_vertical_writing = source.under_vertical_writing;
     node
 }
 

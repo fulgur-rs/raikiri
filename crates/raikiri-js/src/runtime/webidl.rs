@@ -123,6 +123,15 @@ pub(crate) fn this_character_data(this: &JsValue, context: &mut Context) -> JsRe
     }
 }
 
+/// Brand check for `Text` members.
+pub(crate) fn this_text(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_node(this, context)?;
+    match kind_of(context, index)? {
+        NodeKind::Text => Ok(index),
+        _ => Err(type_error("'this' is not a Text node")),
+    }
+}
+
 /// Brand check for `ProcessingInstruction` members.
 pub(crate) fn this_processing_instruction(
     this: &JsValue,
@@ -288,8 +297,15 @@ pub(crate) fn with_state<T>(context: &mut Context, f: impl FnOnce(&mut State) ->
 /// returns the error the binding should propagate in place of creating the
 /// node.
 pub(crate) fn guard_node_budget(context: &mut Context) -> JsResult<()> {
+    guard_node_budget_for(context, 1)
+}
+
+/// [`guard_node_budget`] for a binding that creates `additional` nodes at
+/// once (`cloneNode`, `importNode`): refuse when they would take the
+/// document past [`event_loop::Limits::max_nodes`].
+pub(crate) fn guard_node_budget_for(context: &mut Context, additional: usize) -> JsResult<()> {
     let over_budget = with_state(context, |s| {
-        s.host.document().node_count() >= s.event_loop.limits.max_nodes
+        s.host.document().node_count().saturating_add(additional) > s.event_loop.limits.max_nodes
     })?;
     if over_budget {
         let reason = event_loop::abort(context, event_loop::Abort::Nodes);

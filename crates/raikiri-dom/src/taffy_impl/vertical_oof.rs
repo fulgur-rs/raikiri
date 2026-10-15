@@ -22,21 +22,9 @@ use crate::document::Document;
 use crate::node::NodeFlags;
 use raikiri_style::property::WritingMode;
 
-/// The writing mode in effect at `node`: the nearest authored value on the
-/// node or an ancestor, or `horizontal-tb`.
+/// The writing mode resolved against the DOM by the last style bridge.
 pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if let Some(mode) = tree.nodes[id].authored_writing_mode {
-            return mode;
-        }
-        current = tree.parent_of(id);
-    }
-    WritingMode::HorizontalTb
-}
-
-fn is_vertical(mode: WritingMode) -> bool {
-    matches!(mode, WritingMode::VerticalRl | WritingMode::VerticalLr)
+    tree.nodes[node].used_writing_mode
 }
 
 fn is_absolute(tree: &Document, node: usize) -> bool {
@@ -61,7 +49,7 @@ pub(super) fn containing_block_inline_size(
             .children
             .iter()
             .any(|&child| is_absolute(tree, child))
-        || !is_vertical(used_writing_mode(tree, node))
+        || !used_writing_mode(tree, node).is_vertical()
     {
         return None;
     }
@@ -166,7 +154,7 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
         return;
     }
     let mode = used_writing_mode(tree, node);
-    if !is_vertical(mode) {
+    if !mode.is_vertical() {
         return;
     }
     let style = &tree.nodes[node].style;
@@ -194,7 +182,7 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
         });
         let layout = &mut tree.nodes[child].unrounded_layout;
         layout.location.x = match mode {
-            WritingMode::VerticalRl => {
+            WritingMode::VerticalRl | WritingMode::SidewaysRl => {
                 border_box.width - border.right - padding.right - margin.right - layout.size.width
             }
             _ => border.left + padding.left + margin.left,

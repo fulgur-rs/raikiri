@@ -17,9 +17,10 @@ use super::collections::{CollectionSource, html_collection, node_list};
 use super::interfaces::{Members, wrap, wrap_optional};
 use super::node::{js_str, mark_dirty};
 use super::webidl::{
-    arg_node, arg_node_or_null, arg_required_node_or_null, dom_string, guard_node_budget,
-    node_index, this_character_data, this_child_node, this_document, this_node, this_parent_node,
-    this_processing_instruction, throw_dom_exception, unreachable_mutation_error, with_state,
+    arg_node, arg_node_or_null, arg_required_node_or_null, arg_unsigned_long, dom_string,
+    guard_node_budget, guard_node_budget_for, node_index, this_character_data, this_child_node,
+    this_document, this_node, this_parent_node, this_processing_instruction, this_text,
+    throw_dom_exception, unreachable_mutation_error, with_state,
 };
 
 /// Map a raikiri-dom mutation-validity failure to the `DOMException` it
@@ -428,6 +429,38 @@ fn contains(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult
     Ok(JsValue::from(found))
 }
 
+/// DOM §4.4 "clone a node" for `cloneNode` and `importNode`: a detached
+/// copy of `index` (and its subtree when `deep`), checked against the node
+/// budget before any node is allocated.
+///
+/// The runtime holds exactly one document, so copying the Document itself
+/// (which DOM allows for `cloneNode`) is not supported and throws
+/// `NotSupportedError`, the error `importNode` gives a Document anyway.
+fn clone_into_wrapper(context: &mut Context, index: usize, deep: bool) -> JsResult<JsValue> {
+    let count = with_state(context, |s| s.host.document().clone_node_count(index, deep))?;
+    if count == 0 {
+        return Err(throw_dom_exception(
+            context,
+            "NotSupportedError",
+            "a document cannot be cloned",
+        ));
+    }
+    guard_node_budget_for(context, count)?;
+    let copy = with_state(context, |s| s.host.document_mut().clone_node(index, deep))?
+        // cov:ignore: `clone_node_count` above returned non-zero, so the same
+        // node is cloneable.
+        .ok_or_else(unreachable_mutation_error)?;
+    mark_dirty(context)?;
+    Ok(wrap(context, copy)?.into())
+}
+
+/// `Node.cloneNode(subtree)`.
+fn clone_node(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_node(this, context)?;
+    let deep = args.first().is_some_and(JsValue::to_boolean);
+    clone_into_wrapper(context, index, deep)
+}
+
 pub(crate) const NODE_TREE_MEMBERS: Members = Members {
     getters: &[
         ("childNodes", child_nodes),
@@ -446,6 +479,7 @@ pub(crate) const NODE_TREE_MEMBERS: Members = Members {
         ("removeChild", 1, remove_child),
         ("replaceChild", 2, replace_child),
         ("contains", 1, contains),
+        ("cloneNode", 0, clone_node),
     ],
 };
 
@@ -837,17 +871,60 @@ fn length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVa
     Ok(JsValue::from(len as u32))
 }
 
-fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_character_data(this, context)?;
-    let addition = dom_string(args, 0, context)?;
-    let current = with_state(context, |s| {
+/// A node's character data as UTF-16 code units, the unit every
+/// `CharacterData` offset and count is measured in (DOM §4.10).
+fn data_units(context: &mut Context, index: usize) -> JsResult<Vec<u16>> {
+    with_state(context, |s| {
         s.host
             .document()
             .character_data(index)
-            .map(str::to_owned)
+            .map(|d| d.encode_utf16().collect())
             .unwrap_or_default()
+    })
+}
+
+/// A required `DOMString` argument as UTF-16 code units; a missing argument
+/// is a `TypeError`.
+fn arg_dom_string_units(args: &[JsValue], i: usize, context: &mut Context) -> JsResult<Vec<u16>> {
+    let value = args.get(i).ok_or_else(|| {
+        JsError::from(
+            boa_engine::JsNativeError::typ().with_message("a required argument is missing"),
+        )
     })?;
-    let updated = current + &addition;
+    Ok(value.to_string(context)?.to_vec())
+}
+
+fn offset_error(context: &mut Context) -> JsError {
+    throw_dom_exception(
+        context,
+        "IndexSizeError",
+        "offset is greater than the data's length",
+    )
+}
+
+/// DOM §4.10 "replace data": replace `count` code units at `offset` with
+/// `data`, clamping `count` to the end of the data.
+///
+/// raikiri-dom stores data as a Rust string, which cannot hold an unpaired
+/// surrogate: one left by the edit (from `data`, or from an offset that
+/// splits a pair) is stored as U+FFFD.
+fn replace_data_at(
+    context: &mut Context,
+    index: usize,
+    offset: usize,
+    count: usize,
+    data: &[u16],
+) -> JsResult<()> {
+    let units = data_units(context, index)?;
+    if offset > units.len() {
+        return Err(offset_error(context));
+    }
+    let end = offset.saturating_add(count).min(units.len());
+    let mut updated: Vec<u16> = Vec::with_capacity(units.len() - (end - offset) + data.len());
+    updated.extend_from_slice(&units[..offset]);
+    updated.extend_from_slice(data);
+    updated.extend_from_slice(&units[end..]);
+    let updated = String::from_utf16_lossy(&updated);
     let result = with_state(context, |s| {
         let result = s.host.document_mut().set_character_data(index, &updated);
         if result.is_ok() {
@@ -856,18 +933,123 @@ fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsRes
         result
     })?;
     if result.is_err() {
-        // cov:ignore: `this_character_data` above already confirmed a Text,
-        // Comment, or ProcessingInstruction index.
+        // cov:ignore: every caller passes an index its brand check already
+        // confirmed as a Text, Comment, or ProcessingInstruction.
         return Err(unreachable_mutation_error());
     }
-    mark_dirty(context)?;
+    mark_dirty(context)
+}
+
+/// DOM §4.10 "substring data": `count` code units from `offset`, clamped
+/// to the end of the data. The result keeps the exact code units, so a
+/// range that splits a surrogate pair returns the lone half.
+fn substring_units(
+    context: &mut Context,
+    index: usize,
+    offset: usize,
+    count: usize,
+) -> JsResult<Vec<u16>> {
+    let units = data_units(context, index)?;
+    if offset > units.len() {
+        return Err(offset_error(context));
+    }
+    let end = offset.saturating_add(count).min(units.len());
+    Ok(units[offset..end].to_vec())
+}
+
+fn substring_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_character_data(this, context)?;
+    let offset = arg_unsigned_long(args, 0, context)?;
+    let count = arg_unsigned_long(args, 1, context)?;
+    let units = substring_units(context, index, offset, count)?;
+    Ok(JsValue::from(boa_engine::JsString::from(&units[..])))
+}
+
+fn append_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_character_data(this, context)?;
+    let addition = arg_dom_string_units(args, 0, context)?;
+    let length = with_state(context, |s| {
+        s.host
+            .document()
+            .character_data(index)
+            .map_or(0, |d| d.encode_utf16().count())
+    })?;
+    replace_data_at(context, index, length, 0, &addition)?;
+    Ok(JsValue::undefined())
+}
+
+fn insert_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_character_data(this, context)?;
+    let offset = arg_unsigned_long(args, 0, context)?;
+    let data = arg_dom_string_units(args, 1, context)?;
+    replace_data_at(context, index, offset, 0, &data)?;
+    Ok(JsValue::undefined())
+}
+
+fn delete_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_character_data(this, context)?;
+    let offset = arg_unsigned_long(args, 0, context)?;
+    let count = arg_unsigned_long(args, 1, context)?;
+    replace_data_at(context, index, offset, count, &[])?;
+    Ok(JsValue::undefined())
+}
+
+fn replace_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_character_data(this, context)?;
+    let offset = arg_unsigned_long(args, 0, context)?;
+    let count = arg_unsigned_long(args, 1, context)?;
+    let data = arg_dom_string_units(args, 2, context)?;
+    replace_data_at(context, index, offset, count, &data)?;
     Ok(JsValue::undefined())
 }
 
 pub(crate) const CHARACTER_DATA_MEMBERS: Members = Members {
     getters: &[("length", length)],
     accessors: &[("data", data, set_data)],
-    methods: &[("appendData", 1, append_data)],
+    methods: &[
+        ("substringData", 2, substring_data),
+        ("appendData", 1, append_data),
+        ("insertData", 2, insert_data),
+        ("deleteData", 2, delete_data),
+        ("replaceData", 3, replace_data),
+    ],
+};
+
+// ---- Text ---------------------------------------------------------------
+
+/// `Text.splitText(offset)` (DOM §4.11 "split a Text node"): the data from
+/// `offset` on moves into a new Text node, inserted right after this one
+/// when it has a parent.
+fn split_text(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let index = this_text(this, context)?;
+    let offset = arg_unsigned_long(args, 0, context)?;
+    let tail = String::from_utf16_lossy(&substring_units(context, index, offset, usize::MAX)?);
+    guard_node_budget(context)?;
+    let result = with_state(context, |s| {
+        let document = s.host.document_mut();
+        let new_node = document.create_detached_text(&tail);
+        let result = match document.parent_of(index) {
+            Some(parent) => {
+                let next = next_sibling_index(document, index);
+                let result = document.pre_insert(parent, new_node, next);
+                if result.is_ok() {
+                    super::stylesheet::note_child_list_change(s, parent, &[new_node]);
+                }
+                result
+            }
+            None => Ok(()),
+        };
+        result.map(|()| new_node)
+    })?;
+    let new_node = result.map_err(|e| map_mutation_error(context, e))?;
+    replace_data_at(context, index, offset, usize::MAX, &[])?;
+    Ok(wrap(context, new_node)?.into())
+}
+
+pub(crate) const TEXT_MEMBERS: Members = Members {
+    getters: &[],
+    accessors: &[],
+    methods: &[("splitText", 1, split_text)],
 };
 
 // ---- ProcessingInstruction ----------------------------------------------
@@ -928,6 +1110,31 @@ fn create_document_fragment(
     Ok(wrap(context, index)?.into())
 }
 
+/// `Document.importNode(node, options)`: a copy of `node`. The second
+/// argument is either the legacy `deep` boolean or an `ImportNodeOptions`
+/// dictionary, whose `selfOnly` member asks for a shallow copy. There is
+/// only one document, so the copy needs no adopting.
+fn import_node(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    this_document(this, context)?;
+    let node = arg_node(args, 0, context)?;
+    // WebIDL `(boolean or ImportNodeOptions) options = false`: a missing or
+    // `undefined` argument takes the default, `null` converts to an empty
+    // dictionary (a deep copy), an object is read as the dictionary, and any
+    // other value converts to the boolean.
+    let deep = match args.get(1) {
+        None => false,
+        Some(value) if value.is_undefined() => false,
+        Some(value) if value.is_null() => true,
+        Some(value) => match value.as_object() {
+            Some(options) => !options
+                .get(boa_engine::js_string!("selfOnly"), context)?
+                .to_boolean(),
+            None => value.to_boolean(),
+        },
+    };
+    clone_into_wrapper(context, node, deep)
+}
+
 pub(crate) const DOCUMENT_CREATE_MEMBERS: Members = Members {
     getters: &[],
     accessors: &[],
@@ -935,6 +1142,7 @@ pub(crate) const DOCUMENT_CREATE_MEMBERS: Members = Members {
         ("createTextNode", 1, create_text_node),
         ("createComment", 1, create_comment),
         ("createDocumentFragment", 0, create_document_fragment),
+        ("importNode", 1, import_node),
     ],
 };
 
