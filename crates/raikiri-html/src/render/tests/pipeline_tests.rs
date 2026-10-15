@@ -2049,12 +2049,13 @@ fn pipeline_counts_the_padding_after_a_bodys_own_lines() {
 
 #[test]
 fn pipeline_counts_the_padding_after_a_nested_float_in_a_formatting_context_body() {
-    // The 80px float inside the first block ends below the 1px last block;
-    // the flow-root body encloses it, and its 40px padding reaches the
-    // second page.
+    // The 80px float inside the first block ends below that block's 1px
+    // content and the 1px last block; the flow-root body encloses it, and
+    // its 40px padding reaches the second page.
     let doc = parse(
         "<style>@page{size:200px 100px;margin:0} body{margin:0;display:flow-root;padding-bottom:40px}</style>\
-         <div><div style='float:left;width:10px;height:80px'></div></div><div style='height:1px'></div>",
+         <div><div style='float:left;width:10px;height:80px'></div><div style='height:1px'></div></div>\
+         <div style='height:1px'></div>",
     );
     assert_eq!(run(&doc).slices.len(), 2);
 }
