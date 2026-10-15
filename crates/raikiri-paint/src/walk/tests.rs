@@ -6560,6 +6560,9 @@ fn flow_band_membership_handles_empty_and_unbounded_boxes() {
     // A box narrower than the rounding allowance keeps its overlap.
     assert!(band.holds_box(Affine::IDENTITY, (20.0, 0.0, 0.005, 10.0)));
     assert!(!band.holds_box(Affine::IDENTITY, (19.995, 0.0, 0.005, 10.0)));
+    // One centered on the edge between two pages stays on both.
+    assert!(band.holds_box(Affine::IDENTITY, (19.995, 0.0, 0.01, 10.0)));
+    assert!(band.holds_box(Affine::IDENTITY, (79.995, 0.0, 0.01, 10.0)));
 }
 
 #[test]

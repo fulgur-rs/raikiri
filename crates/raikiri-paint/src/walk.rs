@@ -1833,9 +1833,10 @@ impl FlowBand {
         if rect.width() <= 0.0 {
             return rect.x0 >= left && rect.x0 <= right;
         }
-        // The allowance absorbs rounding at the page area's edges, but never
-        // more than half a box, so a box narrower than it keeps its overlap.
-        let tolerance = FLOW_BAND_TOLERANCE.min(rect.width() / 2.0);
+        // The allowance absorbs rounding at the page area's edges, but stays
+        // under half a box, so a box narrower than it keeps its overlap, even
+        // one centered on the edge between two pages.
+        let tolerance = FLOW_BAND_TOLERANCE.min(rect.width() / 4.0);
         rect.x0 < right - tolerance && rect.x1 > left + tolerance
     }
 
