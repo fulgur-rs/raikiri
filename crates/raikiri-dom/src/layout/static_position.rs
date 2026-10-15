@@ -25,7 +25,9 @@ use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto};
 ///
 /// Run it before fixed boxes are placed in the page area: that placement
 /// fixes their offsets from their parents, so moving an ancestor afterwards
-/// would carry them along.
+/// would carry them along. Run it again after, for the boxes inside fixed
+/// boxes that placement lays out again; the pass computes each position
+/// from scratch, so the boxes it already placed do not move.
 // spec: https://www.w3.org/TR/CSS2/visudet.html#abs-non-replaced-width
 pub(super) fn realign_inline_level_abspos_static_positions(
     document: &mut Document,
@@ -138,11 +140,19 @@ pub(super) fn realign_inline_level_abspos_static_positions(
                     right = right.min(float_layout.location.x - float_layout.margin.left);
                 }
             }
-            let point = left + (right - left).max(0.0) * share;
-            let x = if rtl {
-                point - margin_right - child_layout.size.width
+            // An atomic inline sits on the line as its margin box. An empty
+            // inline box is a point; the content of a non-empty one is not
+            // measured here.
+            let hypothetical_width = if child.display == DisplayValue::Inline {
+                0.0
             } else {
-                point + margin_left
+                margin_left + child_layout.size.width + margin_right
+            };
+            let start = left + (right - left - hypothetical_width).max(0.0) * share;
+            let x = if rtl {
+                start + hypothetical_width - margin_right - child_layout.size.width
+            } else {
+                start + margin_left
             };
             document.nodes[child_id].unrounded_layout.location.x = x;
         }

@@ -191,3 +191,67 @@ fn fixed_descendants_stay_where_the_page_area_puts_them() {
     assert_eq!(absolute_rect(&doc, abs), (100.0, 50.0, 40.0, 10.0));
     assert_eq!(absolute_rect(&doc, fixed), (5.0, 6.0, 20.0, 10.0));
 }
+
+#[test]
+fn an_atomic_inline_is_aligned_as_its_margin_box() {
+    assert_eq!(
+        abs_rect(
+            "text-align:center",
+            "float:left",
+            "display:inline-block;margin-left:10px"
+        ),
+        (110.0, 50.0, 40.0, 10.0)
+    );
+    assert_eq!(
+        abs_rect(
+            "direction:rtl;text-align:right",
+            "float:right",
+            "display:inline-block;margin-right:10px"
+        ),
+        (100.0, 50.0, 40.0, 10.0)
+    );
+    // A box wider than its line starts at the line's start.
+    assert_eq!(
+        abs_rect(
+            "text-align:center",
+            "float:left",
+            "display:inline-block;width:180px"
+        ),
+        (50.0, 50.0, 180.0, 10.0)
+    );
+}
+
+#[test]
+fn a_fixed_box_laid_out_again_keeps_its_children_aligned() {
+    let mut doc = Document::new();
+    let add = |doc: &mut Document, parent: usize, css: &str| {
+        doc.append_element(Some(parent), "div", Style::default(), Some(css))
+    };
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let narrow = add(&mut doc, body, "display:block;width:100px");
+    // The fixed box is 50px wide against its parent, then 400px against the
+    // page area.
+    let fixed = add(
+        &mut doc,
+        narrow,
+        "display:block;position:fixed;left:0;top:0;width:50%;height:100px;text-align:center",
+    );
+    add(&mut doc, fixed, "display:block;height:50px");
+    let abs = add(
+        &mut doc,
+        fixed,
+        "display:inline;position:absolute;width:40px;height:10px",
+    );
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade");
+    with_ahem(&mut doc);
+    layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, fixed).2, 400.0);
+    assert_eq!(absolute_rect(&doc, abs), (200.0, 50.0, 40.0, 10.0));
+}
