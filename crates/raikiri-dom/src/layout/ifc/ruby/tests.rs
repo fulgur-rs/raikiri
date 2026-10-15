@@ -1354,3 +1354,31 @@ fn white_space_in_collapsed_annotation_containers_collapses() {
     // text after the ruby follows its two bases on a line of its own height.
     assert_eq!(z, (20.0, 13.0), "{runs:?}");
 }
+
+#[test]
+fn floated_rubies_take_their_first_letter() {
+    let (mut container, mut text) = (0, 0);
+    let fixture = sheet_fixture("ruby::first-letter { font-size: 20px }", "", |doc, root| {
+        container = element(doc, root, "ruby", "display:ruby;float:left");
+        let base = rb(doc, container, "AB");
+        rt(doc, container, "x");
+        text = doc.nodes[base].children[0];
+    });
+    let (mut doc, cascade) = (fixture.doc, fixture.cascade);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = PositionedLines::new(&doc, &cascade, container, None).expect("lines");
+    let xs: Vec<f32> = lines
+        .lines()
+        .flat_map(|line| {
+            line.runs
+                .iter()
+                .filter(|run| run.owner == text)
+                .filter_map(|run| run.glyphs.first().map(|glyph| glyph.x))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    // A floated ruby is a block container, so its `::first-letter` sets `A`
+    // at 20px before `B`.
+    assert_eq!(xs.len(), 2, "{xs:?}");
+    assert_eq!(xs[1] - xs[0], 20.0, "{xs:?}");
+}

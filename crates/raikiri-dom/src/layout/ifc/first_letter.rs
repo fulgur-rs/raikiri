@@ -569,6 +569,7 @@ pub(crate) fn typographic_origins(
                 || matches!(
                     cv.display,
                     DisplayValue::Block
+                        | DisplayValue::BlockRuby
                         | DisplayValue::FlowRoot
                         | DisplayValue::ListItem
                         | DisplayValue::TableCell
