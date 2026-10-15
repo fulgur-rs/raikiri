@@ -5,8 +5,9 @@ use smol_str::SmolStr;
 
 use crate::Atom;
 use crate::cascade::{
-    ResolvedAgainstInherited, cascade_rank, resolve_against_inherited, resolve_css_wide_color_font,
-    resolve_custom_property_environment, resolve_page_deferred_value, resolve_relative_weight,
+    ResolvedAgainstInherited, apply_value, cascade_rank, resolve_against_inherited,
+    resolve_css_wide_color_font, resolve_custom_property_environment, resolve_page_deferred_value,
+    resolve_relative_weight,
 };
 use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_properties};
 use crate::logical::{FlowMapping, LogicalSide};
@@ -22,7 +23,7 @@ use crate::resolve::{
 };
 use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
-use crate::specified::INITIAL_BORDER;
+use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 
 use super::absolutize::absolutize_in_page_context;
 use super::types::*;
@@ -232,25 +233,7 @@ impl PageMarginBoxCascadeResult {
             })
             .collect();
         let resolved_value = |value: &PropertyValue| {
-            if let PropertyValue::Deferred(deferred) = value
-                && matches!(
-                    deferred.key,
-                    PropertyKey::Color
-                        | PropertyKey::BackgroundColor
-                        | PropertyKey::FontSize
-                        | PropertyKey::Margin
-                        | PropertyKey::MarginTop
-                        | PropertyKey::MarginRight
-                        | PropertyKey::MarginBottom
-                        | PropertyKey::MarginLeft
-                        | PropertyKey::Padding
-                        | PropertyKey::PaddingTop
-                        | PropertyKey::PaddingRight
-                        | PropertyKey::PaddingBottom
-                        | PropertyKey::PaddingLeft
-                        | PropertyKey::TextShadow
-                )
-            {
+            if let PropertyValue::Deferred(deferred) = value {
                 resolve_page_deferred_value(deferred, custom_properties.as_ref())
             } else {
                 Some(value.clone())
@@ -350,7 +333,22 @@ impl PageMarginBoxCascadeResult {
             .into_values()
             .map(|(_, index)| candidates[index])
             .collect();
-        winners.sort_unstable_by_key(|(rule_index, decl_index, _, _)| (*rule_index, *decl_index));
+        // In cascade order, so that a winning longhand applied after an
+        // overlapping shorthand overrides it only when it takes precedence.
+        winners.sort_unstable_by_key(|&(rule_index, decl_index, rule, decl)| {
+            let layer = crate::layer::LayerPosition {
+                attached: false,
+                rank: rule.layer_order,
+            };
+            (
+                cascade_rank(rule.origin, decl.important),
+                layer.priority(decl.important),
+                rule.specificity,
+                rule.source_order,
+                rule_index,
+                decl_index,
+            )
+        });
         merged.declarations = winners
             .into_iter()
             .filter_map(|(_, _, _, decl)| {
@@ -462,6 +460,17 @@ pub struct PageCascadeResult {
     /// Matching margin-box at-rules in source order.
     margin_boxes: Vec<PageMarginBoxCascadeResult>,
     margin_box_inheritance: MarginBoxInheritance,
+    /// The page context's computed values and the resolve context its
+    /// margin boxes compute in. `None` for a result not built by the page
+    /// cascade.
+    page_style: Option<Arc<PageStyle>>,
+}
+
+/// The page context as a parent style: what margin boxes inherit from.
+#[derive(Debug, Clone, PartialEq)]
+struct PageStyle {
+    computed: ComputedValues,
+    context: ResolveContext,
 }
 
 impl PageCascadeResult {
@@ -829,8 +838,9 @@ impl PageCascadeResult {
 
     /// Cascade a margin-box slot against this page's computed inheritance values.
     ///
-    /// Color, background-color and font-size defaulting and variable substitution
-    /// are resolved before returning declarations to the layout/paint consumer.
+    /// Color, background-color and font-size defaulting and variable
+    /// substitution are resolved before returning the declarations. Use
+    /// [`Self::margin_box_style`] for the computed values.
     pub fn cascade_margin_box(
         &self,
         slot: PageMarginBoxSlot,
@@ -839,6 +849,33 @@ impl PageCascadeResult {
             &self.margin_boxes,
             slot,
             &self.margin_box_inheritance,
+        )
+    }
+
+    /// The computed values of a margin box whose cascaded rule, from
+    /// [`Self::cascade_margin_box`], is `rule`: its winning declarations
+    /// computed over the page context, which is the margin context's
+    /// inheritance parent (CSS Paged Media 3 §6).
+    ///
+    /// `normal_line_height` measures `line-height: normal` for the `lh`
+    /// unit; see [`crate::CascadeResult::margin_box_style`].
+    pub fn margin_box_style(
+        &self,
+        rule: &PageMarginBoxCascadeResult,
+        normal_line_height: Option<&dyn NormalLineHeight>,
+    ) -> ComputedValues {
+        static INITIAL_PAGE_STYLE: LazyLock<PageStyle> = LazyLock::new(|| PageStyle {
+            computed: ComputedValues::initial(),
+            context: ResolveContext::new(ComputedLength(crate::computed::INITIAL_FONT_SIZE_PX)),
+        });
+        let page = self.page_style.as_deref().unwrap_or(&INITIAL_PAGE_STYLE);
+        computed_over(
+            &page.computed,
+            rule.declarations
+                .iter()
+                .map(|declaration| declaration.value.clone()),
+            &page.context,
+            normal_line_height,
         )
     }
 
@@ -1575,6 +1612,18 @@ pub(crate) fn cascade_page_with_normal_line_height(
             )
         })
         .collect();
+    // The winners in cascade order, for applying overlapping shorthands and
+    // longhands to the page context's computed values.
+    let mut cascade_order: Vec<_> = best
+        .iter()
+        .map(|(&key, winner)| {
+            (
+                (winner.0, winner.1, winner.2, winner.3, winner_indices[&key]),
+                key,
+            )
+        })
+        .collect();
+    cascade_order.sort_unstable_by_key(|&(precedence, _)| precedence);
     let mut resolved: HashMap<PropertyKey, ResolvedAgainstInherited> = best
         .into_iter()
         .filter_map(|(k, (_, _, _, _, value))| {
@@ -1750,24 +1799,39 @@ pub(crate) fn cascade_page_with_normal_line_height(
         line_height: own_line_height,
         custom_properties,
     };
+    let declarations: HashMap<PropertyKey, PropertyValue> = resolved
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                absolutize_in_page_context(
+                    v,
+                    font_size,
+                    own_line_height,
+                    &ctx,
+                    border_styles,
+                    outline_style,
+                    overflow_pair,
+                ),
+            )
+        })
+        .collect();
+    // Only margin boxes inherit from the page context's computed values.
+    let page_style = (!margin_boxes.is_empty()).then(|| {
+        Arc::new(PageStyle {
+            computed: computed_over(
+                inherited,
+                cascade_order
+                    .iter()
+                    .filter_map(|(_, key)| declarations.get(key).cloned()),
+                &ctx,
+                normal_line_height,
+            ),
+            context: ctx,
+        })
+    });
     PageCascadeResult {
-        declarations: resolved
-            .into_iter()
-            .map(|(k, v)| {
-                (
-                    k,
-                    absolutize_in_page_context(
-                        v,
-                        font_size,
-                        own_line_height,
-                        &ctx,
-                        border_styles,
-                        outline_style,
-                        overflow_pair,
-                    ),
-                )
-            })
-            .collect(),
+        declarations,
         size: size_best
             .map(|candidate| absolutize_page_size(candidate.5, font_size, own_line_height, &ctx)),
         marks: marks_best.map(|candidate| candidate.5),
@@ -1776,7 +1840,34 @@ pub(crate) fn cascade_page_with_normal_line_height(
         page_orientation: rotation_best.map(|candidate| candidate.5),
         margin_boxes,
         margin_box_inheritance,
+        page_style,
     }
+}
+
+/// The computed values of a box whose winning declarations are `values`,
+/// over the parent style `parent`. CSS-wide keywords default against
+/// `parent`; every other value computes as for an element.
+fn computed_over(
+    parent: &ComputedValues,
+    values: impl Iterator<Item = PropertyValue>,
+    ctx: &ResolveContext,
+    normal_line_height: Option<&dyn NormalLineHeight>,
+) -> ComputedValues {
+    let mut specified = SpecifiedValues::inherit_from(parent);
+    for value in values {
+        let value = match value {
+            // `resolve_against_inherited` takes the root's line height as
+            // the `lh` basis of `font-size`, which holds for the page
+            // context only. Finalizing resolves it against `parent`.
+            value @ (PropertyValue::FontSize(_)
+            | PropertyValue::FontSizeCalc(_)
+            | PropertyValue::FontSizeRelative(_)
+            | PropertyValue::FontSizeKeyword(_)) => value,
+            value => resolve_against_inherited(value, parent, ctx).into_property_value(),
+        };
+        apply_value(value, &mut specified);
+    }
+    specified.finalize_with(parent, ctx, normal_line_height)
 }
 
 /// The page context's own computed `font-size` — the `em` basis for phase 3.

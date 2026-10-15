@@ -72,7 +72,7 @@ fn layout_page(doc: &Document, cascade: &CascadeResult, page_box: PageBox) -> Ve
 }
 
 #[test]
-fn inherited_margin_box_font_uses_root_computed_family() {
+fn margin_box_font_uses_root_computed_family() {
     let mut document = Document::new();
     let style = document.append_element(
         Some(document.root_index()),
@@ -85,18 +85,19 @@ fn inherited_margin_box_font_uses_root_computed_family() {
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let rule = cascade
         .page
-        .margin_boxes()
-        .first()
+        .cascade_margin_box(PageMarginBoxSlot::TopLeft)
         .expect("the @page fixture has a margin box");
+    let style = cascade.margin_box_style(&cascade.page, &rule);
 
+    assert_eq!(style.font_size.px(), 16.0);
     assert_eq!(
-        inherited_margin_box_font(&document, &cascade, &cascade.page, rule),
-        (16.0, FontFamilyName::generic("serif"))
+        style.font_family.first(),
+        Some(&FontFamilyName::generic("serif"))
     );
 }
 
 #[test]
-fn inherited_margin_box_font_resolves_keywords_and_calc() {
+fn margin_box_font_size_resolves_keywords_and_calc() {
     // `@page` and margin-box `<absolute-size>` keywords resolve against the
     // default 16px `medium`; a margin-box keyword does not scale the page's.
     // The page cascade has already computed the page keyword to px, while
@@ -152,11 +153,8 @@ fn inherited_margin_box_font_resolves_keywords_and_calc() {
             .page
             .cascade_margin_box(PageMarginBoxSlot::TopLeft)
             .expect("the @page fixture has a margin box");
-        assert_eq!(
-            inherited_margin_box_font(&document, &cascade, &cascade.page, &rule),
-            (expected, FontFamilyName::generic("serif")),
-            "{css}"
-        );
+        let style = cascade.margin_box_style(&cascade.page, &rule);
+        assert_eq!(style.font_size.px(), expected, "{css}");
     }
 }
 
