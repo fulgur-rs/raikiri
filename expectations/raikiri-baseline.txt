@@ -4628,3 +4628,4 @@ css/css-pseudo/first-letter-punctuation-dynamic.html
 css/css-pseudo/marker-content-022.html
 css/css-tables/border-collapse-dynamic-col-001.html
 css/cssom/stylesheet-replacedata-dynamic.html
+css/css-page/page-box-009-print.html
