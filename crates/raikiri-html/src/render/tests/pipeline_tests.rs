@@ -2220,3 +2220,31 @@ fn pipeline_clears_floats_after_a_named_page_inside_a_static_absolute_box() {
     );
     assert_eq!(tops_by_id(&run(&doc), &["after"]), [20.0]);
 }
+
+#[test]
+fn pipeline_clears_floats_after_a_reordered_container_in_pagination_order() {
+    // `order` puts the named item last, so the container ends on page `x`
+    // and the box after it starts below the 350px float, exactly as when
+    // the items come in that order in the source.
+    for display in ["flex;flex-direction:column", "grid"] {
+        let tops = |items: &str| {
+            let doc = parse(&format!(
+                "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;line-height:10px}}</style>\
+                 <div style='float:left;width:50px;height:350px'></div>\
+                 <div style='display:{display}'>{items}</div>\
+                 <div id=c style='height:10px'>c</div>"
+            ));
+            tops_by_id(&run(&doc), &["a", "b", "c"])
+        };
+        let reordered = tops(
+            "<div style='order:2'><div id=a style='page:x;height:10px'>a</div></div>\
+             <div id=b style='height:10px;order:1'>b</div>",
+        );
+        let in_source_order = tops(
+            "<div id=b style='height:10px'>b</div>\
+             <div><div id=a style='page:x;height:10px'>a</div></div>",
+        );
+        assert_eq!(reordered, in_source_order, "{display}");
+        assert!(reordered[2] >= 350.0, "{display}: {reordered:?}");
+    }
+}

@@ -2925,11 +2925,12 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
     let child_boxes = |document: &Document, parent: usize, static_absolute: bool| {
         let mut boxes = Vec::new();
         // `None` stands for the `::before` content of a flattened element.
-        let mut pending: Vec<Option<usize>> = document.nodes[parent]
-            .children
-            .iter()
+        // The children are taken in the order pagination visits them, which
+        // follows `order` in a flex or grid container.
+        let mut pending: Vec<Option<usize>> = pagination_child_order(document, cascade, parent)
+            .into_iter()
             .rev()
-            .map(|&child| Some(child))
+            .map(Some)
             .collect();
         while let Some(item) = pending.pop() {
             let Some(child) = item else {
