@@ -847,7 +847,6 @@ fn layout_single_page_with_table_projection(
     // Step 2b: resolve `ch` lengths of box properties with the inline
     // engine's fonts before taffy sizes the boxes.
     prepare_ch_box_values_before_taffy(document, cascade);
-    crate::layout::ifc::assign::prepare_legacy_inside_markers_before_taffy(document, cascade)?;
     // Step 3: <body> lookup
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
@@ -868,8 +867,6 @@ fn layout_single_page_with_table_projection(
     };
     let body_insets = BodyInlineInsets::resolve(document, cascade, body_id, body_percent_basis);
 
-    // Establish the foundational multicolumn fragmentainer projection after
-    // text shaping, so direct text can be split by its actual line count.
     // Boxes with an `auto` width chain up to the body take the body's content
     // width, which its horizontal margins, padding and borders narrow.
     // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
@@ -999,7 +996,6 @@ fn layout_single_page_with_table_projection(
     // pass is idempotent, so the boxes placed above stay where they are.
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     propagate_float_bottoms_to_auto_height_ancestors(document, cascade);
-    refresh_projected_multicol_text_fragments(document);
     // Step 5b: check semantic parent-child geometry invariants and replace
     // any invalid subtree with the deterministic fallback (zero). Step 5
     // (`sanitize_taffy_layout` via `set_unrounded_layout`) guarantees only

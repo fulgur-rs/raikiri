@@ -12,9 +12,9 @@ pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 /// Dispatch a multicolumn container through the nested fragmentation seam.
 ///
 /// Taffy still resolves the ordinary box and intrinsic sizes, while this
-/// seam owns nested child placement, fragmentainer breaks, and fragment-tree
-/// records. Standalone and deferred out-of-flow cases continue through the
-/// PR #79 projection so their exact geometry remains unchanged.
+/// seam owns child placement, fragmentainer breaks, and fragment-tree
+/// records. Cases that no column strategy supports keep the ordinary block
+/// layout.
 // cov:ignore: nested recursive layout is exercised by the ignored nested WPT reftests.
 pub(crate) fn compute_multicol_layout(
     tree: &mut Document,
@@ -839,9 +839,8 @@ fn layout_column_group(
                     vertical_margins_are_collapsible: TaffyLine::FALSE,
                 };
 
-                // prepare_multicol_layout gives direct text a temporary used height
-                // for its page-level projection. A nested width probe must measure the
-                // shaped layout again instead of reusing that stale height.
+                // A direct text child is measured again against the column
+                // width instead of reusing a height cached for another width.
                 if matches!(tree.nodes[child].data, NodeData::Text(_)) {
                     tree.nodes[child].style.size.height = Dimension::auto();
                     tree.nodes[child].cache.clear();
@@ -1374,6 +1373,8 @@ fn record_nested_ifc_box_fragments(
         return Some(());
     };
     let subtree_has_float = multicol_subtree_has_float(tree, subtree_root);
+    // The column the subtree root was placed in by its multicol container.
+    let root_column = tree.fragment_tree.fragments[parent_fragment].fragmentainer;
     let mut existing_fragments = std::collections::HashMap::<(usize, usize), usize>::new();
     // Both scopes are properties of a node's ancestor chain. Carry them down
     // the traversal instead of walking to the root again for every node.
@@ -1516,7 +1517,7 @@ fn record_nested_ifc_box_fragments(
 
             for (column, entries) in columns {
                 let column_x =
-                    context.column_offset_x(column) - context.column_offset_x(context.column_index);
+                    context.column_offset_x(column) - context.column_offset_x(root_column);
                 let line_range = entries.range.map(|(_, range)| range);
                 let line_bottom = line_range
                     .and_then(|range| {
@@ -1537,7 +1538,24 @@ fn record_nested_ifc_box_fragments(
                     .map(|bottom| node_offset_y + bottom)
                     .unwrap_or(0.0);
                 let column_clip_height = height.max(tail_line_bottom).max(overflow_float_bottom);
-                let column_delta = column.saturating_sub(context.column_index) as f32 * height;
+                // A slice of this paragraph in a later column than the
+                // subtree root starts at the top of that column: move the
+                // path up by the block offset of its first line below the
+                // root's column-top position. Earlier content can leave the
+                // previous column short of its end (widows and orphans), so
+                // whole column heights would drift.
+                let column_delta = match line_range {
+                    Some(range) if !nested_row_flex_scope => {
+                        if column == root_column {
+                            0.0
+                        } else {
+                            tree.nodes[subtree_root].unrounded_layout.location.y - context.origin_y
+                                + node_offset_y
+                                + range.y
+                        }
+                    }
+                    _ => column.saturating_sub(context.column_index) as f32 * height,
+                };
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
                 if node_id == subtree_root
@@ -2151,179 +2169,6 @@ fn refresh_nested_text_fragments_in(
     }
 }
 
-// The foundational projection turns a block multicol container with inline
-// children into a flex row. Its IFC descendants are not reached by the nested
-// multicol dispatcher, so assign their line ranges after flex has placed them.
-// cov:ignore: projected text ranges are exercised by ignored CSS Break WPT reftests.
-pub(crate) fn refresh_projected_multicol_text_fragments(tree: &mut Document) {
-    let containers: Vec<usize> = tree
-        .nodes
-        .iter()
-        .enumerate()
-        .filter_map(|(node_id, node)| {
-            (node.multicol.is_some()
-                && node.display == raikiri_style::property::DisplayValue::Block
-                && node.style.display == Display::Flex
-                && !node.is_ifc_root())
-            .then_some(node_id)
-        })
-        .collect();
-
-    for container_id in containers {
-        let Some(style) = tree.nodes[container_id].multicol else {
-            continue;
-        };
-        let container_layout = tree.nodes[container_id].unrounded_layout;
-        let (parent_width, parent_height) = tree
-            .layout_parent_of(container_id)
-            .map(|parent| {
-                let layout = tree.nodes[parent].unrounded_layout;
-                (Some(layout.size.width), Some(layout.size.height))
-            })
-            .unwrap_or((None, None));
-        let content_width = multicol_content_width(
-            tree,
-            container_id,
-            container_layout.size.width,
-            parent_width,
-        );
-        let available_height = if style.height_definite {
-            multicol_definite_dimension(
-                tree,
-                tree.nodes[container_id].style.size.height,
-                parent_height,
-            )
-            .map(|height| {
-                multicol_authored_content_height(
-                    tree,
-                    container_id,
-                    height,
-                    parent_width,
-                    container_layout.size.width,
-                )
-            })
-        } else {
-            None
-        }
-        .or_else(|| {
-            multicol_max_fragmentainer_height(
-                tree,
-                container_id,
-                container_layout.size.height,
-                parent_height,
-                parent_width,
-            )
-        });
-        let Some(context) = FragmentationContext::resolve(content_width, available_height, style)
-        else {
-            continue;
-        };
-        let column_step = context.column_width + context.column_gap;
-        if !column_step.is_finite() || column_step <= 0.0 {
-            continue;
-        }
-
-        // Carry each node's inline offset from the container down the walk
-        // instead of summing it over the ancestors of every paragraph.
-        let offset_below = |tree: &Document, parent: usize, parent_offset: Option<f32>, child| {
-            if tree.layout_parent_of(child) == Some(parent) {
-                parent_offset.map(|offset| offset + tree.nodes[child].unrounded_layout.location.x)
-            } else {
-                layout_offset_from_ancestor(tree, child, container_id) // cov:ignore: arena children share their layout parent.
-            }
-        };
-        let mut pending: Vec<_> = tree.nodes[container_id]
-            .children
-            .iter()
-            .map(|&child| (child, offset_below(tree, container_id, Some(0.0), child)))
-            .collect();
-        while let Some((node_id, inline_offset)) = pending.pop() {
-            let node = &tree.nodes[node_id];
-            if !node.is_in_document() || node.style.display == Display::None {
-                continue;
-            }
-            if node_id != container_id && node.multicol.is_some() {
-                continue;
-            }
-            if node.is_ifc_root() {
-                let committed_ranges = node
-                    .ifc
-                    .as_ref()
-                    .and_then(|root| root.lines.as_ref())
-                    .and_then(|lines| lines.fragmentainer_line_ranges.clone());
-                if node
-                    .ifc
-                    .as_ref()
-                    .is_some_and(|root| root.multicol_fragments.is_none())
-                    && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
-                {
-                    let extents: Vec<(f32, f32)> = lines
-                        .lines
-                        .iter()
-                        .map(|line| (line.block_offset(), line.block_offset() + line.block_size()))
-                        .collect();
-                    let ranges = if let Some(committed) = committed_ranges {
-                        committed
-                    } else if !extents.is_empty()
-                        && let Some(inline_offset) = inline_offset
-                    {
-                        let first_column = ((inline_offset.max(0.0) / column_step).floor()
-                            as usize)
-                            .min(context.column_count.saturating_sub(1));
-                        let local_context = context.in_column(
-                            first_column,
-                            context.origin_x + context.column_offset_x(first_column),
-                            context.origin_y,
-                        );
-                        line_ranges_in_columns(&extents, local_context, false)
-                            .into_iter()
-                            .map(|(start, end, column)| MulticolTextFragment {
-                                line_start: start,
-                                line_end: end,
-                                fragmentainer: column,
-                                x: context.column_offset_x(column)
-                                    - context.column_offset_x(first_column),
-                                y: extents[start].0,
-                            })
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
-                    if let Some(root) = tree.nodes[node_id].ifc.as_mut() {
-                        root.multicol_fragments = Some(ranges);
-                    }
-                }
-            }
-            pending.extend(
-                tree.nodes[node_id]
-                    .children
-                    .iter()
-                    .map(|&child| (child, offset_below(tree, node_id, inline_offset, child))),
-            );
-        }
-    }
-}
-
-fn layout_offset_from_ancestor(tree: &Document, node_id: usize, ancestor: usize) -> Option<f32> {
-    let mut current = node_id;
-    let mut inline_offset = 0.0;
-    while current != ancestor {
-        inline_offset += tree.nodes[current].unrounded_layout.location.x;
-        current = tree.layout_parent_of(current)?;
-    }
-    Some(inline_offset)
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct MulticolMetrics {
-    /// Used inline size of one column.
-    column_width: f32,
-    /// Used number of columns.
-    column_count: usize,
-    /// Used gap between adjacent columns.
-    column_gap: f32,
-}
-
 /// Visit every node of the arena once, each parent before its children.
 fn visit_top_down(doc: &Document, mut visit: impl FnMut(Option<usize>, usize)) {
     let mut resolved = vec![false; doc.nodes.len()];
@@ -2483,66 +2328,6 @@ impl AncestorFacts {
 }
 
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-// `container_width` is the node's cascade-derived content width.
-fn multicol_metrics_with_width(
-    cascade: &CascadeResult,
-    node_id: usize,
-    container_width: f32,
-) -> Option<MulticolMetrics> {
-    let cv = &cascade.computed[node_id];
-    let declared_count = match cv.column_count {
-        ColumnCountValue::Auto => None,
-        ColumnCountValue::Count(value) if value > 0 => Some(value as usize),
-        ColumnCountValue::Count(_) => None,
-        _ => None,
-    };
-    let declared_width = match cv.column_width {
-        ComputedColumnWidth::Auto => None,
-        ComputedColumnWidth::Px(value) if value.is_finite() && value > 0.0 => Some(value),
-        ComputedColumnWidth::Px(_) => None,
-    };
-    if declared_count.is_none() && declared_width.is_none() {
-        return None;
-    }
-    if !container_width.is_finite() || container_width <= 0.0 {
-        return None;
-    }
-    // CSS Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
-    // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
-    // resolves column-gap normal on a multicol container to 1em of the
-    // container font size. This differs from flex and grid, where normal
-    // behaves as 0, so the generic gap bridge keeps its own normal-to-0 mapping.
-    let column_gap = match cv.column_gap {
-        ComputedLengthPercentageOrNormal::Px(value) if value.is_finite() => value.max(0.0),
-        ComputedLengthPercentageOrNormal::Percent(value) if value.is_finite() => {
-            (container_width * value / 100.0).max(0.0)
-        }
-        ComputedLengthPercentageOrNormal::Calc(calc)
-            if calc.px.is_finite() && calc.percent.is_finite() =>
-        {
-            (calc.px + container_width * calc.percent / 100.0).max(0.0)
-        }
-        ComputedLengthPercentageOrNormal::Normal => {
-            let em = cv.font_size.px();
-            if em.is_finite() { em.max(0.0) } else { 0.0 }
-        }
-        _ => 0.0,
-    };
-    let column_count = declared_count.unwrap_or_else(|| {
-        let width = declared_width.unwrap_or(container_width).max(1.0);
-        (((container_width + column_gap) / (width + column_gap)).floor() as usize).max(1)
-    });
-    let available =
-        (container_width - column_gap * (column_count.saturating_sub(1) as f32)).max(0.0);
-    let column_width = (available / column_count as f32).max(0.0);
-    (column_width.is_finite() && column_width > 0.0).then_some(MulticolMetrics {
-        column_width,
-        column_count,
-        column_gap,
-    })
-}
-
-// cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 pub(crate) fn line_height_px(cv: &ComputedValues) -> f32 {
     let font_size = cv.font_size.px().max(0.0);
     match cv.line_height {
@@ -2552,13 +2337,6 @@ pub(crate) fn line_height_px(cv: &ComputedValues) -> f32 {
     }
 }
 
-/// Apply the small fragmentainer model used by the foundational multicol pass.
-///
-/// Inline element children use a flex-row projection so each item occupies one
-/// column. Direct text keeps its DOM node and receives explicit line ranges;
-/// paint emits those ranges at the corresponding column offset. Descendants
-/// below another multicol container are left to the recursive Taffy seam so
-/// their used widths are not guessed from a page fallback.
 /// The line ranges of a multicol container's own paragraph in its columns,
 /// and the height the lines need: the tallest column. The lines fill the
 /// columns of `context` by its column height when it is definite, else they
@@ -2615,6 +2393,11 @@ pub(crate) fn root_column_fragments(
     (fragments, height)
 }
 
+/// Give `auto`-width blocks outside any multicol container the width of their
+/// authored containing block before layout. Descendants of a multicol
+/// container are left to the multicol dispatch in `compute_multicol_layout`,
+/// which supplies their used widths, so they are not guessed from a page
+/// fallback.
 // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
 pub(crate) fn prepare_multicol_layout(
     doc: &mut Document,
@@ -2665,226 +2448,6 @@ pub(crate) fn prepare_multicol_layout(
             doc.nodes[idx].style.size.width = Dimension::length(width);
         }
     }
-    for idx in 0..doc.nodes.len() {
-        if doc.nodes[idx].kind() != NodeKind::Element {
-            continue;
-        }
-        if ancestors.multicol_ancestor[idx] || ancestors.vertical[idx] {
-            continue;
-        }
-        let Some(metrics) = multicol_metrics_with_width(cascade, idx, ancestors.content_width[idx])
-        else {
-            continue;
-        };
-        // A container whose own content is a paragraph of the inline engine
-        // breaks its lines at the column width and splits them in columns
-        // when it is laid out; none of the projections below apply to it.
-        if doc.nodes[idx].is_ifc_root() {
-            continue;
-        }
-        let direct_breaks = doc.nodes[idx]
-            .children
-            .iter()
-            .filter(|&&child| {
-                doc.nodes[child].kind() == NodeKind::Element
-                    && doc.nodes[child].tag_name() == Some("br")
-                    && doc.nodes[child].is_in_document()
-            })
-            .count();
-        // A fixed-height auto-fill multicol can place an oversized direct
-        // child in one column and let it overflow through the next column.
-        // Project that narrow case as a row-wrapping flex flow: each child
-        // owns one column's inline slot while its block overflow remains
-        // visible, matching the class-B break at the fragmentainer edge.
-        let fixed_fragmentainer_height = match cascade.computed[idx].height {
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() && value > 0.0 => {
-                Some(value)
-            }
-            _ => None,
-        };
-        let element_children: Vec<usize> = doc.nodes[idx]
-            .children
-            .iter()
-            .copied()
-            .filter(|&child| {
-                doc.nodes[child].kind() == NodeKind::Element
-                    && doc.nodes[child].is_in_document()
-                    && doc.nodes[child].style.display != Display::None
-            })
-            .collect();
-        let has_oversized_direct_child = fixed_fragmentainer_height.is_some_and(|height| {
-            element_children.iter().any(|&child| {
-                style_dimension_length(doc.nodes[child].style.size.height)
-                    .is_some_and(|child_height| child_height > height + 0.001)
-            })
-        });
-        let has_oversized_nested_inline_child = fixed_fragmentainer_height.is_some_and(|height| {
-            element_children.iter().any(|&child| {
-                let mut pending = vec![child];
-                while let Some(descendant) = pending.pop() {
-                    if cascade.computed[descendant].display.is_inline_flow_box()
-                        && style_dimension_length(doc.nodes[descendant].style.size.height)
-                            .is_some_and(|descendant_height| descendant_height > height + 0.001)
-                    {
-                        return true;
-                    }
-                    pending.extend(doc.nodes[descendant].children.iter().copied());
-                }
-                false
-            })
-        });
-        // The projection is valid for direct-`br` lines, the narrow two-child
-        // nested inline-block fixture, and the fixed-height border-break
-        // candidate. A longer nested flow (as in tall-line-000) owns a
-        // parallel flow and stays on the normal multicol path.
-        let has_direct_br_in_each_child = element_children.iter().all(|&child| {
-            doc.nodes[child]
-                .children
-                .iter()
-                .any(|&grandchild| doc.nodes[grandchild].tag_name() == Some("br"))
-        });
-        let has_two_child_nested_inline_flow =
-            element_children.len() == 2 && has_oversized_nested_inline_child;
-        let has_border_break_candidate = fixed_fragmentainer_height.is_some_and(|height| {
-            element_children.windows(2).any(|pair| {
-                let first = style_dimension_length(doc.nodes[pair[0]].style.size.height);
-                let second = style_dimension_length(doc.nodes[pair[1]].style.size.height);
-                let cv = &cascade.computed[pair[1]];
-                let border = cv.border.top.width().px() + cv.border.bottom.width().px();
-                first.is_some_and(|first| first > 0.0)
-                    && second.is_some_and(|second| second + border >= height - 0.001)
-                    && border > 0.0
-            })
-        });
-        if has_oversized_direct_child && has_direct_br_in_each_child
-            || has_two_child_nested_inline_flow
-            || has_border_break_candidate
-        {
-            let style = &mut doc.nodes[idx].style;
-            style.display = Display::Flex;
-            style.flex_direction = TaffyFlexDirection::Row;
-            style.flex_wrap = TaffyFlexWrap::Wrap;
-            style.align_items = Some(TaffyAlignItems::FLEX_START);
-            style.align_content = Some(TaffyAlignContent::FLEX_START);
-            style.justify_content = None;
-            style.gap.width = LengthPercentage::length(metrics.column_gap);
-            style.gap.height = LengthPercentage::length(0.0);
-            for &child in &doc.nodes[idx].children.clone() {
-                if doc.nodes[child].kind() != NodeKind::Element
-                    || !doc.nodes[child].is_in_document()
-                {
-                    continue;
-                }
-                let has_direct_br = doc.nodes[child]
-                    .children
-                    .iter()
-                    .any(|&grandchild| doc.nodes[grandchild].tag_name() == Some("br"));
-                let child_has_explicit_height =
-                    style_dimension_length(doc.nodes[child].style.size.height).is_some();
-                let child_line_height = line_height_px(&cascade.computed[child]);
-                let child_style = &mut doc.nodes[child].style;
-                child_style.flex_grow = 0.0;
-                child_style.flex_shrink = 0.0;
-                let horizontal_border = cascade.computed[child].border.left.width().px()
-                    + cascade.computed[child].border.right.width().px();
-                let child_content_width = (metrics.column_width - horizontal_border).max(0.0);
-                child_style.size.width = Dimension::length(child_content_width);
-                if !child_has_explicit_height && has_direct_br {
-                    child_style.size.height = Dimension::length(child_line_height);
-                }
-                child_style.min_size.width = LengthPercentageAuto::length(0.0);
-                child_style.flex_basis = Dimension::length(child_content_width);
-            }
-        }
-        let mut column_height: f32 = 0.0;
-        if direct_breaks > 0 {
-            let line_height = line_height_px(&cascade.computed[idx]);
-            column_height =
-                (direct_breaks.div_ceil(metrics.column_count) as f32 * line_height).max(0.0);
-        }
-        if column_height > 0.0
-            && matches!(
-                cascade.computed[idx].height,
-                ComputedLengthPercentageOrAuto::Auto
-            )
-        {
-            doc.nodes[idx].style.size.height = Dimension::length(column_height);
-        }
-
-        let has_inline_flow_children = doc.nodes[idx].children.iter().any(|&child| {
-            doc.nodes[child].is_in_document()
-                && doc.nodes[child].kind() == NodeKind::Element
-                && supports_foundational_inline_projection(cascade, child)
-        });
-        let has_ruby_child = doc.nodes[idx].children.iter().any(|&child| {
-            doc.nodes[child].is_in_document()
-                && doc.nodes[child].kind() == NodeKind::Element
-                && doc.nodes[child].tag_name() == Some("ruby")
-        });
-        if has_inline_flow_children || direct_breaks > 0 {
-            let style = &mut doc.nodes[idx].style;
-            style.display = Display::Flex;
-            // Ruby annotations are a single vertical fragment. In a
-            // multicol container, column-direction wrapping places one ruby
-            // item per column instead of treating each pair as a horizontal
-            // line followed by a new row.
-            style.flex_direction = if has_ruby_child && metrics.column_count > 2 {
-                TaffyFlexDirection::Column
-            } else {
-                TaffyFlexDirection::Row
-            };
-            style.flex_wrap = TaffyFlexWrap::Wrap;
-            style.align_items = Some(TaffyAlignItems::FLEX_START);
-            style.align_content = Some(TaffyAlignContent::FLEX_START);
-            style.justify_content = None;
-            style.gap.width = LengthPercentage::length(metrics.column_gap);
-            style.gap.height = LengthPercentage::length(0.0);
-            for &child in &doc.nodes[idx].children.clone() {
-                if !doc.nodes[child].is_in_document() {
-                    continue;
-                }
-                let is_ruby_break = has_ruby_child
-                    && metrics.column_count == 2
-                    && doc.nodes[child].tag_name() == Some("br");
-                let child_width = if is_ruby_break {
-                    0.0
-                } else if has_ruby_child && doc.nodes[child].tag_name() == Some("ruby") {
-                    doc.nodes[child]
-                        .children
-                        .iter()
-                        .find_map(|&grandchild| {
-                            style_dimension_length(doc.nodes[grandchild].style.size.width)
-                        })
-                        .unwrap_or(metrics.column_width)
-                } else {
-                    metrics.column_width
-                };
-                let ruby_under = has_ruby_child
-                    && metrics.column_count == 2
-                    && doc.nodes[child].tag_name() == Some("ruby")
-                    && cascade.computed[child].ruby_position == RubyPosition::Under;
-                let child_style = &mut doc.nodes[child].style;
-                child_style.flex_grow = 0.0;
-                child_style.flex_shrink = 0.0;
-                child_style.size.width = Dimension::length(child_width);
-                if ruby_under {
-                    child_style.margin.top = LengthPercentageAuto::length(25.0);
-                }
-                child_style.min_size.width = LengthPercentageAuto::length(0.0);
-                child_style.flex_basis = Dimension::length(child_width);
-            }
-        }
-    }
-}
-
-/// Whether this child's display can enable the foundational column
-/// projection. Flex/grid containers do not enable that specialized path,
-/// which rewrites child widths and flex bases. Contents can enable it
-/// without generating a box of its own.
-fn supports_foundational_inline_projection(cascade: &CascadeResult, idx: usize) -> bool {
-    let display = cascade.computed[idx].display;
-    (display.is_inline_level() && !display.is_flex_or_grid_container())
-        || display == DisplayValue::Contents
 }
 
 #[cfg(test)]

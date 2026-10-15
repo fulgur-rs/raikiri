@@ -129,7 +129,8 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
                         | DisplayValue::InlineBlock
                         | DisplayValue::FlowRoot
                         | DisplayValue::ListItem
-                ))
+                )
+                || block_in_inline_wrapper(tree, id))
             || node.has_logical_min_block_size
         {
             return false;
@@ -186,6 +187,29 @@ fn atomic(tree: &Document, id: usize) -> bool {
             BreakInside::Avoid | BreakInside::AvoidColumn
         )
         || !has_rendered_element_child(tree, id)
+}
+
+/// An inline box that holds only block-level boxes and no line of its own.
+/// Block-in-inline splitting leaves no inline fragment with content around
+/// those blocks (CSS 2.1, 9.2.1.1), so the box flows like a block wrapper.
+fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
+    let node = &tree.nodes[id];
+    node.display == DisplayValue::Inline
+        && node.style.display == Display::Block
+        && node.ifc.is_none()
+        && has_rendered_element_child(tree, id)
+        && node.children.iter().all(|&child| {
+            let child = &tree.nodes[child];
+            !child.is_in_document()
+                || child.style.display == Display::None
+                || match &child.data {
+                    NodeData::Text(text) => text.text_content.trim().is_empty(),
+                    NodeData::Element(_) => {
+                        !child.display.is_inline_level() && child.display != DisplayValue::Contents
+                    }
+                    _ => true,
+                }
+        })
 }
 
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {

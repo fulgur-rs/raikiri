@@ -15,15 +15,12 @@ impl Document {
     pub fn standalone_marker_image_rect(
         &self,
         computed: &raikiri_style::ComputedValues,
-        node_id: usize,
         origin: (f32, f32),
         padding_left: f32,
         size: raikiri_traits::ImageRasterSize,
     ) -> raikiri_traits::PaintRect {
         let offset = match computed.list_style_position {
-            raikiri_style::ListStylePosition::Inside => {
-                padding_left - self.legacy_inside_marker_advance(node_id)
-            }
+            raikiri_style::ListStylePosition::Inside => padding_left,
             _ => padding_left - size.width - 4.0,
         };
         raikiri_traits::PaintRect::new(origin.0 + offset, origin.1, size.width, size.height)
@@ -36,7 +33,6 @@ impl Document {
         &self,
         content: &str,
         computed: &raikiri_style::ComputedValues,
-        node_id: usize,
         padding_left: f32,
     ) -> Option<(crate::StandaloneText, f32)> {
         let size = computed.font_size.px();
@@ -62,9 +58,7 @@ impl Document {
             return None;
         }
         let offset = match computed.list_style_position {
-            raikiri_style::ListStylePosition::Inside => {
-                padding_left - self.legacy_inside_marker_advance(node_id)
-            }
+            raikiri_style::ListStylePosition::Inside => padding_left,
             _ => padding_left - width - 4.0,
         };
         Some((shaped, offset))

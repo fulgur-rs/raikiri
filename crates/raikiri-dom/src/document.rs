@@ -318,8 +318,6 @@ pub struct Document {
     /// whether the pseudo-element is `::after`, and the index of the image
     /// among the images of its `content` list.
     content_images: std::collections::HashMap<(usize, bool, usize), PreparedImage>,
-    /// Measured marker advances reserved by the current legacy layout pass.
-    pub(crate) legacy_inside_marker_advances: std::collections::HashMap<usize, f32>,
     /// Named-counter snapshots of the tree, built once for the element
     /// cascade whose [`CascadeResult::element_generation`] is stored beside
     /// them and shared by layout, page projection and paint (see
@@ -650,7 +648,6 @@ impl Document {
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
-            legacy_inside_marker_advances: Default::default(),
             counter_snapshot_cache: std::sync::OnceLock::new(),
             root: 0,
             layout_dirty: false,
@@ -1965,7 +1962,6 @@ impl Document {
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
-            legacy_inside_marker_advances: _,
             counter_snapshot_cache: _,
             root: _,
             layout_dirty: _,
@@ -3304,16 +3300,6 @@ impl Document {
         self.list_marker_images
             .get(&element)
             .map(|marker| &marker.url)
-    }
-
-    /// Inline space reserved before legacy ruby/multicol list-item content.
-    /// The painter subtracts it from the used padding to recover the marker origin.
-    #[doc(hidden)]
-    pub fn legacy_inside_marker_advance(&self, element: usize) -> f32 {
-        self.legacy_inside_marker_advances
-            .get(&element)
-            .copied()
-            .unwrap_or(0.0)
     }
 
     /// CSS dimensions of a prepared marker, independent of raster rounding.

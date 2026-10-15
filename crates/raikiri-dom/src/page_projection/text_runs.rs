@@ -143,7 +143,7 @@ pub(super) fn prepare_markers(
             continue;
         }
         if let Some((shaped, offset_x)) =
-            document.shape_list_marker_text(&content, style, owner, layout.padding.left)
+            document.shape_list_marker_text(&content, style, layout.padding.left)
         {
             // CSS Lists 3 §3.1: an outside marker sits on the baseline of
             // its item's first line. When the item lays out its own first

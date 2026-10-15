@@ -1471,7 +1471,6 @@ fn paint_list_marker_with_snapshots(
         let marker_height = size.map_or(decoded.height as f32, |size| size.height);
         let marker_rect = document.standalone_marker_image_rect(
             computed,
-            node_id,
             (paint_x, paint_y),
             padding_left,
             raikiri_traits::ImageRasterSize {
@@ -1497,7 +1496,7 @@ fn paint_list_marker_with_snapshots(
         return;
     }
     let Some((shaped, offset_x)) =
-        document.shape_list_marker_text(&content, computed, node_id, padding_left)
+        document.shape_list_marker_text(&content, computed, padding_left)
     else {
         return;
     };

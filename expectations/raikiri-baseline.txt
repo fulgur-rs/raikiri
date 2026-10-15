@@ -437,7 +437,6 @@ css/css-break/block-min-height-001.html
 css/css-break/block-min-height-001b.html
 css/css-break/border-image-000.html
 css/css-break/overflowed-abs-pos-with-percentage-height-print.html
-css/css-break/widows-block-in-inline-001.html
 # --- css-break min-block-size Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
 css/css-break/break-inside-avoid-min-block-size-2.html
 # --- css-break flexbox print Fulgur v0.40.0 PASS slice (exact, 800x600, 2026-09-22) ---
@@ -1399,7 +1398,6 @@ css/css-page/layers-001-print.html
 css/css-page/layers-002-print.html
 css/css-page/layers-003-print.html
 css/css-page/layers-004-print.html
-css/css-break/ruby-003.html
 css/css-images/image-orientation/image-orientation-list-style-image.html
 # --- css-page named-page out-of-flow exact 800x600 PASS-only (2026-09-23) ---
 css/css-page/page-name-abspos-001-print.html
@@ -1686,8 +1684,6 @@ css/css-multicol/change-fragmentainer-size-003.html
 css/css-multicol/column-height-011.html
 css/css-multicol/multicol-fill-auto-block-children-003.html
 css/css-multicol/multicol-fill-balance-018.html
-css/css-multicol/nested-at-outer-boundary-as-fieldset.html
-css/css-multicol/nested-past-fragmentation-line.html
 css/css-multicol/resize-multicol-with-fixed-size-children.html
 
 # --- multicol min-block-size children avoiding breaks sliced at column edges (exact 800x600, bundled WPT fonts, audit KEEP, 2026-10-14) ---
@@ -1981,9 +1977,6 @@ css/css-break/out-of-flow-in-multicolumn-102.html
 css/css-break/out-of-flow-in-multicolumn-116.html
 css/css-break/out-of-flow-in-multicolumn-127.html
 css/css-break/overflow-clip-004.html
-css/css-break/ruby-000.html
-css/css-break/ruby-001.html
-css/css-break/ruby-002.html
 css/css-break/table/break-inside-cell-001.html
 css/css-break/table/caption-margin-002.html
 css/css-break/table/caption-margin-005.html

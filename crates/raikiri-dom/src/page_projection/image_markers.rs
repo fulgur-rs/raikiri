@@ -165,7 +165,6 @@ pub(super) fn prepare(
                         id,
                         document.standalone_marker_image_rect(
                             style,
-                            owner,
                             (x, y),
                             layout.padding.left,
                             *size,

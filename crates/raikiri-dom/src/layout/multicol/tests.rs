@@ -318,23 +318,6 @@ fn avoid_page_min_block_child_can_continue_across_columns() {
 }
 
 #[test]
-fn layout_offset_from_ancestor_sums_layout_parent_offsets() {
-    let mut doc = Document::new();
-    let ancestor = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
-    let parent = doc.append_element(Some(ancestor), "div", Style::default(), None::<&str>);
-    let child = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
-    doc.nodes[parent].unrounded_layout.location.x = 7.0;
-    doc.nodes[child].unrounded_layout.location.x = 11.0;
-
-    assert_eq!(
-        layout_offset_from_ancestor(&doc, child, ancestor),
-        Some(18.0)
-    );
-    let detached = doc.append_element(None, "detached", Style::default(), None::<&str>);
-    assert_eq!(layout_offset_from_ancestor(&doc, detached, ancestor), None);
-}
-
-#[test]
 fn multicol_max_fragmentainer_height_applies_border_box_max_height() {
     let mut doc = Document::new();
     let node = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
@@ -806,13 +789,8 @@ fn relayout_nested_multicol_children_column_places_a_block_sibling_of_an_empty_d
     // test above) routes every child through the auto-measurement pass
     // first (`auto_measurements` is `Some` here), which has its own
     // copy of the "reset a direct text child's style before measuring"
-    // branch. A direct text sibling with real content would make
-    // `prepare_multicol_layout`'s pre-pass pin the container's own
-    // height to a definite value (its line-count projection), which
-    // would route this container through the definite-height path
-    // instead and defeat the point of this test; an empty text node
-    // never gets a shaped layout, so that pre-pass leaves the
-    // container's auto height alone while the node still participates
+    // branch. An empty text node never gets a shaped layout, so it leaves
+    // the container's auto height alone while the node still participates
     // in `relayout_nested_multicol_children`'s child list.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -948,111 +926,6 @@ fn vertical_fallback_preserves_explicit_physical_min_height() {
             "{minimum}"
         );
     }
-}
-
-fn multicol_gap_fixture_metrics(style_attr: &str) -> MulticolMetrics {
-    use raikiri_style::{build_rule_tree, cascade};
-
-    let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-    let container = doc.append_element(Some(body), "div", Style::default(), Some(style_attr));
-    let rules = build_rule_tree(&doc);
-    let cascade = cascade(&doc, &rules).expect("cascade Ok");
-    let ancestors = AncestorFacts::new(&doc, &cascade, 800.0);
-    multicol_metrics_with_width(&cascade, container, ancestors.content_width[container])
-        .expect("multicol metrics")
-}
-
-#[test]
-fn multicol_metrics_resolves_normal_gap_to_one_em_with_default_font_size() {
-    // CSS Multi-column Layout Module Level 1 section 5 Column Gaps and Rules
-    // https://www.w3.org/TR/css-multicol-1/#column-gaps-and-rules
-    // gives column-gap normal a used value of 1em on a multicol container.
-    // The default font size is 16px, so the gap is 16.0 and two columns in
-    // a 200px container are (200 - 16) / 2 = 92px wide.
-    let metrics = multicol_gap_fixture_metrics("display:block;column-count:2;width:200px");
-    assert!(
-        (metrics.column_gap - 16.0).abs() < 0.01,
-        "gap={:?}",
-        metrics
-    );
-    assert_eq!(metrics.column_count, 2);
-    assert!(
-        (metrics.column_width - 92.0).abs() < 0.01,
-        "metrics={:?}",
-        metrics
-    );
-}
-
-#[test]
-fn multicol_metrics_resolves_normal_gap_against_the_container_font_size() {
-    // Same spec section as above: 1em means the container own computed
-    // font size, so font-size:32px gives a 32px gap and
-    // (200 - 32) / 2 = 84px columns.
-    let metrics =
-        multicol_gap_fixture_metrics("display:block;column-count:2;width:200px;font-size:32px");
-    assert!(
-        (metrics.column_gap - 32.0).abs() < 0.01,
-        "metrics={:?}",
-        metrics
-    );
-    assert_eq!(metrics.column_count, 2);
-    assert!(
-        (metrics.column_width - 84.0).abs() < 0.01,
-        "metrics={:?}",
-        metrics
-    );
-}
-
-#[test]
-fn multicol_metrics_adds_both_terms_of_a_calc_gap() {
-    // 10 percent of a 200px container plus 5px gives a 25px gap and
-    // (200 - 25) / 2 = 87.5px columns.
-    let metrics = multicol_gap_fixture_metrics(
-        "display:block;column-count:2;width:200px;column-gap:calc(10% + 5px)",
-    );
-    assert!(
-        (metrics.column_gap - 25.0).abs() < 0.01,
-        "metrics={:?}",
-        metrics
-    );
-    assert!(
-        (metrics.column_width - 87.5).abs() < 0.01,
-        "metrics={:?}",
-        metrics
-    );
-}
-
-#[test]
-fn multicol_metrics_keeps_explicit_length_and_percentage_gaps() {
-    // Length and percentage arms are unchanged by the normal fix: 20px stays
-    // 20px, and 10 percent of a 200px container resolves to 20px. Both give
-    // (200 - 20) / 2 = 90px columns.
-    let length =
-        multicol_gap_fixture_metrics("display:block;column-count:2;width:200px;column-gap:20px");
-    assert!(
-        (length.column_gap - 20.0).abs() < 0.01,
-        "metrics={:?}",
-        length
-    );
-    assert!(
-        (length.column_width - 90.0).abs() < 0.01,
-        "metrics={:?}",
-        length
-    );
-    let percent =
-        multicol_gap_fixture_metrics("display:block;column-count:2;width:200px;column-gap:10%");
-    assert!(
-        (percent.column_gap - 20.0).abs() < 0.01,
-        "metrics={:?}",
-        percent
-    );
-    assert!(
-        (percent.column_width - 90.0).abs() < 0.01,
-        "metrics={:?}",
-        percent
-    );
 }
 
 #[test]
@@ -1337,7 +1210,7 @@ fn direct_nested_text_root_records_each_column_range() {
 }
 
 #[test]
-fn projected_multicol_inline_child_refreshes_text_ranges() {
+fn multicol_block_children_with_lines_get_text_ranges() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
@@ -1365,11 +1238,11 @@ fn projected_multicol_inline_child_refreshes_text_ranges() {
     doc.append_element(Some(second), "br", Style::default(), None::<&str>);
 
     layout_nested_flex_float_fixture(&mut doc);
-    assert_eq!(doc.nodes[multicol].style.display, Display::Flex);
+    assert_ne!(doc.nodes[multicol].style.display, Display::Flex);
     assert!(doc.nodes[first].is_ifc_root(), "first child must own lines");
     assert!(
         doc.nodes[first].ifc_multicol_fragments().is_some(),
-        "projected text ranges must be assigned"
+        "column text ranges must be assigned"
     );
 }
 

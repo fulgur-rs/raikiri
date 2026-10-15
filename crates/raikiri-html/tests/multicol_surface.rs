@@ -1207,3 +1207,38 @@ fn balance_all_balances_every_row_of_a_continued_nested_container() {
         ]
     );
 }
+
+#[test]
+fn a_paragraph_inside_an_inline_wrapper_resumes_at_the_next_column_top_after_widows() {
+    let document = lay_out(
+        "<div class=mc><p>A<br>B</p><span><p>C<br>D<br>E<br>F</p></span></div>",
+        ".mc{width:170px;column-count:3;column-gap:10px;height:60px;column-fill:auto;orphans:2;widows:2}",
+    );
+    // One line is left after A and B, too few for the orphans, so the
+    // second paragraph starts the next column. Its last column keeps two
+    // lines for the widows, leaving the second column one line short; the
+    // third column still starts at its top.
+    assert_eq!(
+        text_origins(&document),
+        [
+            ("A".into(), (0.0, 16.0)),
+            ("B".into(), (0.0, 36.0)),
+            ("C".into(), (60.0, 16.0)),
+            ("D".into(), (60.0, 36.0)),
+            ("E".into(), (120.0, 16.0)),
+            ("F".into(), (120.0, 36.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_forced_break_inside_an_inline_wrapper_moves_the_next_block_to_the_next_column() {
+    let document = lay_out(
+        "<div class=mc><span><div style='break-after:column'>A</div></span><span><div>B</div></span></div>",
+        ".mc{height:60px;column-fill:auto}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [("A".into(), (0.0, 16.0)), ("B".into(), (60.0, 16.0))]
+    );
+}

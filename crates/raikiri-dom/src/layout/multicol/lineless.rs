@@ -205,17 +205,21 @@ fn place_within(
         }
         let mut pieces = Vec::new();
         let mut gap = pending_margin.max(item.margin_top);
-        let fits_after_gap = if item.splittable {
+        // A box that must stay whole but fits in a whole column moves to the
+        // next column like a box that avoids breaks, rather than being cut.
+        let splittable = item.splittable
+            && !(keep_whole && item.whole && item.height <= column_height + EPSILON);
+        let fits_after_gap = if splittable {
             cursor + gap < column_height - EPSILON
         } else {
             cursor + gap + item.height <= column_height + EPSILON
         };
         // A gap that fills the column leaves no room for a box that avoids
         // breaks either, so it starts the next column with the gap truncated.
-        let gap_fills_column = !item.splittable && gap >= column_height - EPSILON;
+        let gap_fills_column = !splittable && gap >= column_height - EPSILON;
         if (cursor > 0.0 || gap_fills_column)
             && !fits_after_gap
-            && (item.height > 0.0 || !item.splittable)
+            && (item.height > 0.0 || !splittable)
         {
             column += 1;
             if column >= max_columns {
@@ -228,9 +232,8 @@ fn place_within(
         pending_margin = item.margin_bottom;
         // A box that avoids breaks but is taller than a whole column breaks
         // anyway (CSS Fragmentation 3, 4.4), unless painting cannot slice it.
-        let breaks_anyway =
-            !item.splittable && !item.whole && item.height > column_height + EPSILON;
-        if item.splittable || breaks_anyway {
+        let breaks_anyway = !splittable && !item.whole && item.height > column_height + EPSILON;
+        if splittable || breaks_anyway {
             let mut left = item.height;
             loop {
                 let room = column_height - cursor;
