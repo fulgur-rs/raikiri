@@ -2068,22 +2068,35 @@ fn expand_css_viewport_units_with_axes(
         vertical: bool,
     }
 
-    fn unit_value(unit: &str, basis: Basis) -> Option<f32> {
+    /// The viewport extent that one hundred `unit`s span.
+    fn unit_extent(unit: &str, basis: Basis) -> Option<f32> {
         let Basis {
             width,
             height,
             vertical,
         } = basis;
-        let value = match unit {
-            "vw" | "svw" | "lvw" | "dvw" => width / 100.0,
-            "vh" | "svh" | "lvh" | "dvh" => height / 100.0,
-            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height) / 100.0,
-            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height) / 100.0,
-            "vi" | "svi" | "lvi" | "dvi" => (if vertical { height } else { width }) / 100.0,
-            "vb" | "svb" | "lvb" | "dvb" => (if vertical { width } else { height }) / 100.0,
+        let extent = match unit {
+            "vw" | "svw" | "lvw" | "dvw" => width,
+            "vh" | "svh" | "lvh" | "dvh" => height,
+            "vmin" | "svmin" | "lvmin" | "dvmin" => width.min(height),
+            "vmax" | "svmax" | "lvmax" | "dvmax" => width.max(height),
+            "vi" | "svi" | "lvi" | "dvi" => {
+                if vertical {
+                    height
+                } else {
+                    width
+                }
+            }
+            "vb" | "svb" | "lvb" | "dvb" => {
+                if vertical {
+                    width
+                } else {
+                    height
+                }
+            }
             _ => return None,
         };
-        Some(value)
+        Some(extent)
     }
 
     type Edits = Vec<(std::ops::Range<usize>, String)>;
@@ -2104,11 +2117,15 @@ fn expand_css_viewport_units_with_axes(
     ) {
         match token {
             cssparser::Token::Dimension { value, unit, .. } => {
-                if let Some(scale) = unit_value(&unit.to_ascii_lowercase(), basis)
-                    && (value * scale).is_finite()
+                // Multiply before dividing, as the cascade does, so `100vw`
+                // is the viewport width exactly. Scaling by a precomputed
+                // `width / 100` rounds twice: 100 * (420 / 100) is 419.99997.
+                if let Some(px) = unit_extent(&unit.to_ascii_lowercase(), basis)
+                    .map(|extent| extent * value / 100.0)
+                    && px.is_finite()
                 {
                     let end = input.position().byte_index();
-                    edits.push((start..end, format!("{:.6}px", value * scale)));
+                    edits.push((start..end, format!("{px:.6}px")));
                 }
             }
             cssparser::Token::Function(name) if name.eq_ignore_ascii_case("url") => {}

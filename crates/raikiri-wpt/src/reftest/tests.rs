@@ -112,6 +112,18 @@ fn expand_viewport_units_preserves_utf8_text() {
 }
 
 #[test]
+fn full_viewport_lengths_expand_to_the_exact_viewport_size() {
+    // 420 / 100 is not representable in f32, so scaling by it first left
+    // `100vw` a hair short of the 420px page area.
+    let input = "<style>.page { width: 100vw; height: 100vh; inline-size: 50vmax }</style>";
+    let expanded = expand_css_viewport_units_with_media_basis(input, 420.0, 480.0, 420.0, 480.0);
+    assert_eq!(
+        expanded,
+        "<style>.page { width: 420.000000px; height: 480.000000px; inline-size: 240.000000px }</style>"
+    );
+}
+
+#[test]
 fn resource_url_absolutization_handles_optional_and_invalid_bases() {
     let html = r#"<img src="support/colors-16x8.png"><img src='support/other.png'>"#;
     assert_eq!(absolutize_wpt_resource_urls(html, None, None), html);
