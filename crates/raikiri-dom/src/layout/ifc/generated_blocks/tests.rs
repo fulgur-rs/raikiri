@@ -21,6 +21,7 @@ fn block(css: &str) -> GeneratedBlock {
             shodo::style::LineOptions::default(),
             raikiri_style::ComputedTextIndent::Px(5.0),
         ),
+        false,
     )
 }
 

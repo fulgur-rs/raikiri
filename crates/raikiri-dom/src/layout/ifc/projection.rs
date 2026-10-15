@@ -370,6 +370,22 @@ fn push_generated(
     let id = NodeId(generated_node_id(element, pseudo) as u64);
     let inline_level = pseudo == PseudoElem::Marker
         || (cv.display.is_inline_level() || matches!(cv.display, DisplayValue::Contents));
+    // A writing mode other than its box parent's makes the box an orthogonal
+    // flow (CSS Writing Modes 4 §7.3). A `display: contents` element has no
+    // box, so the box parent is its own.
+    let box_owner = if cascade.computed[element].display == DisplayValue::Contents {
+        crate::layout::box_parent(
+            doc,
+            cascade,
+            element,
+            crate::layout::BoxParentScope::Document,
+        )
+        .unwrap_or(element)
+    } else {
+        element
+    };
+    let orthogonal = cv.cssom_writing_mode.is_vertical()
+        != cascade.computed[box_owner].cssom_writing_mode.is_vertical();
     let block = match (!inline_level)
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
@@ -380,7 +396,13 @@ fn push_generated(
             if rtl != images.rtl {
                 super::generated_blocks::align_physically(&mut options, rtl);
             }
-            Some(GeneratedBlock::new(id.0, end, cv, (options, indent)))
+            Some(GeneratedBlock::new(
+                id.0,
+                end,
+                cv,
+                (options, indent),
+                orthogonal,
+            ))
         }
         None => None,
     };

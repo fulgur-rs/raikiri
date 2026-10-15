@@ -4097,6 +4097,10 @@ fn paginate_flow(
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
     let mut previous_block_bottoms: HashMap<usize, (usize, f32)> = HashMap::new();
+    // The empty box whose block-end margin still adjoins the latest forced
+    // break: the forced-break box itself, or an empty box right after it.
+    // A margin collapsed through it follows the break and is kept.
+    let mut forced_break_margin_box: Option<usize> = None;
     let mut margins_moved_boxes = false;
     // Named class-A boxes at one source coordinate form one page transition.
     // This coalesces zero-height named runs such as a/b/c/d/e without creating
@@ -4942,6 +4946,14 @@ fn paginate_flow(
         };
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
+        // Set when a forced break starts this box's page, which makes the box
+        // the owner of the margins after the break.
+        let mut starts_after_forced_break = false;
+        // A block box with no block size and no in-flow content lets its
+        // block-start and block-end margins collapse through it.
+        let margins_collapse_through = height <= 0.0
+            && margins_may_collapse_through(document, cascade, node_id)
+            && !has_in_flow_content(document, cascade, node_id);
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -5415,6 +5427,10 @@ fn paginate_flow(
                     effective_y += node_delta;
                 }
                 current_page = target_page;
+                if forced_transition {
+                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    starts_after_forced_break = true;
+                }
                 if pending_break_applies {
                     pending_break_source = None;
                 }
@@ -5427,6 +5443,12 @@ fn paginate_flow(
                 } else {
                     page_index_for_y(effective_y)
                 };
+                // A forced break that coincides with a page edge also starts
+                // that page.
+                if forced_before {
+                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    starts_after_forced_break = true;
+                }
                 // An unforced break that falls inside the collapsed margin
                 // between this box and its preceding sibling truncates that
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
@@ -5446,9 +5468,17 @@ fn paginate_flow(
                     let previous_bottom = effective_y - gap;
                     // A border box ending exactly at the break still has
                     // an adjoining margin on the following page.
+                    // An empty box that a forced break placed at the page
+                    // top leaves its collapsed margin after the break.
+                    // A later, unforced page edge inside that margin still
+                    // truncates it.
+                    let after_forced_break = forced_break_margin_box.is_some_and(|owner| {
+                        forced_margin_reaches(document, cascade, owner, previous, node_id)
+                    }) && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001
+                        && !after_forced_break
                         // Only a margin between adjoining siblings is
                         // truncated; a box that is not a candidate may lie
                         // between two nested candidates.
@@ -5501,6 +5531,21 @@ fn paginate_flow(
             && let Some(parent_id) =
                 box_parent(document, cascade, node_id, BoxParentScope::Document)
         {
+            // An empty box right after the forced-break box passes the
+            // break on to the margin after it; any other box ends it.
+            if !starts_after_forced_break {
+                let follows_forced_box = forced_break_margin_box.is_some_and(|owner| {
+                    previous_block_bottoms
+                        .get(&parent_id)
+                        .is_some_and(|&(previous, _)| {
+                            forced_margin_reaches(document, cascade, owner, previous, node_id)
+                        })
+                });
+                forced_break_margin_box = (follows_forced_box
+                    && collapses_with_previous_block
+                    && margins_collapse_through)
+                    .then_some(node_id);
+            }
             if collapses_with_previous_block {
                 previous_block_bottoms.insert(parent_id, (node_id, raw_y + height));
             } else {
@@ -6692,6 +6737,191 @@ pub fn layout_single_page_with_resolver_and_base_url(
     document.mark_in_document_flags();
     resolve_document_images(document, cascade, resolver, base_url)?;
     layout_single_page(document, cascade, page_box)
+}
+
+/// Whether `id` holds in-flow content that keeps its margins from collapsing
+/// through it (CSS 2 §8.3.1). A line box counts, including one holding only
+/// generated content such as an inside marker or `::before`, and so does a
+/// block-level `::before` or `::after` box with padding, border or height,
+/// or one the paragraph placed as a box of its own, as with clearance.
+/// Out-of-flow children do not count, text and inline children count only
+/// through their lines, and an empty block child whose own margins collapse
+/// through it does not count.
+fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    // On transposed axes the paragraph's width is its inline size, while the
+    // generated boxes keep their physical styles.
+    let vertical = document.pagination_on_transposed_axes;
+    let has_paragraph_content = document.ifc_layout_node(id).is_some_and(|node| {
+        let width = node.unrounded_layout.size.width;
+        node.ifc.as_ref().is_some_and(|ifc| {
+            ifc.generated_blocks
+                .iter()
+                .any(|block| block.separates_margins(width, vertical))
+                || ifc
+                    .lines
+                    .as_ref()
+                    .is_some_and(|lines| !lines.lines.is_empty() || !lines.placed_blocks.is_empty())
+        })
+    });
+    if has_paragraph_content {
+        return true;
+    }
+    let mut boxes = Vec::new();
+    for &child in &document.nodes[id].children {
+        push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
+    }
+    boxes.into_iter().any(|child| {
+        let node = &document.nodes[child];
+        let display = cascade.computed[child].display;
+        if node.kind() == NodeKind::Text || display.is_inline_level() {
+            // Text and inline-level boxes are content only through the lines
+            // they make, which the line check above has already counted.
+            false
+        } else {
+            !margins_may_collapse_through(document, cascade, child)
+                || node.unrounded_layout.size.height > 0.0
+                || has_in_flow_content(document, cascade, child)
+        }
+    })
+}
+
+/// Whether the margins of `owner`, an empty box after a forced break, reach
+/// the block-start margin of `node_id` through the block-end margin of
+/// `previous`, its preceding sibling box: `previous` is `owner` itself or an
+/// ancestor whose boxes down to `owner` are all empty, so that the margins
+/// collapse through each of them (CSS 2 §8.3.1), and no generated box lies
+/// between `previous` and `node_id` to keep the margins apart.
+fn forced_margin_reaches(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    previous: usize,
+    node_id: usize,
+) -> bool {
+    if generated_box_separates(document, cascade, node_id, previous) {
+        return false;
+    }
+    let mut id = owner;
+    while id != previous {
+        match box_parent(document, cascade, id, BoxParentScope::Document) {
+            Some(parent)
+                if document.nodes[parent].unrounded_layout.size.height <= 0.0
+                    && margins_may_collapse_through(document, cascade, parent)
+                    && !has_in_flow_content(document, cascade, parent) =>
+            {
+                id = parent;
+            }
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// Whether a `::before` or `::after` box of a `display: contents` element
+/// between `previous` and `node_id`, its following sibling box, keeps their
+/// margins apart. Such a box has no node of its own: it is a block or inline
+/// content in the paragraph of the shared box parent (see
+/// [`has_in_flow_content`]).
+fn generated_box_separates(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    previous: usize,
+) -> bool {
+    use raikiri_style::PseudoElem;
+
+    let separates = |element: usize, pseudo: PseudoElem| {
+        let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
+        let vertical = document.pagination_on_transposed_axes;
+        box_parent(document, cascade, element, BoxParentScope::Document)
+            .and_then(|parent| document.ifc_layout_node(parent))
+            .is_some_and(|node| {
+                let width = node.unrounded_layout.size.width;
+                // A block box the line loop placed holds lines or clearance,
+                // and inline content puts text on a line; either keeps the
+                // margins apart, like the content that `has_in_flow_content`
+                // counts.
+                node.ifc.as_ref().is_some_and(|ifc| {
+                    ifc.generated_blocks
+                        .iter()
+                        .any(|block| block.start == id && block.separates_margins(width, vertical))
+                        || ifc.lines.as_ref().is_some_and(|lines| {
+                            lines.placed_blocks.iter().any(|placed| placed.node == id)
+                                || lines.lines.iter().any(|line| {
+                                    super::ifc::text_lines::glyph_owners(line)
+                                        .contains(&(id as usize))
+                                })
+                        })
+                })
+            })
+    };
+    let is_contents = |id: usize| {
+        document.nodes[id].kind() == NodeKind::Element
+            && cascade.computed[id].display == DisplayValue::Contents
+    };
+    // Walks the boxes before `id` in reverse order, the generated boxes of
+    // `display: contents` elements included, until `previous`.
+    fn scan(
+        document: &Document,
+        id: usize,
+        previous: usize,
+        is_contents: &dyn Fn(usize) -> bool,
+        separates: &dyn Fn(usize, PseudoElem) -> bool,
+    ) -> Option<bool> {
+        if id == previous {
+            return Some(false);
+        }
+        if !is_contents(id) {
+            return None;
+        }
+        if separates(id, PseudoElem::After) {
+            return Some(true);
+        }
+        document.nodes[id]
+            .children
+            .iter()
+            .rev()
+            .find_map(|&child| scan(document, child, previous, is_contents, separates))
+            .or_else(|| separates(id, PseudoElem::Before).then_some(true))
+    }
+    let mut current = node_id;
+    while let Some(parent) = document.parent_of(current) {
+        let siblings = &document.nodes[parent].children;
+        let index = siblings
+            .iter()
+            .position(|&id| id == current)
+            .unwrap_or(siblings.len());
+        if let Some(found) = siblings[..index]
+            .iter()
+            .rev()
+            .find_map(|&id| scan(document, id, previous, &is_contents, &separates))
+        {
+            return found;
+        }
+        // `previous` shares the box parent of `node_id`, so the walk finds it
+        // before it leaves the `display: contents` ancestors.
+        if !is_contents(parent) || separates(parent, PseudoElem::Before) {
+            return is_contents(parent);
+        }
+        current = parent;
+    }
+    false // cov:ignore: the document node is never a `display: contents` element, so the walk returns before it runs out of parents
+}
+
+/// Whether `id` is a block box (a list item included) that establishes no
+/// independent formatting context, the only kind whose margins can collapse
+/// through it when it is empty (CSS 2 §8.3.1).
+fn margins_may_collapse_through(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let computed = &cascade.computed[id];
+    let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
+    matches!(
+        computed.display,
+        DisplayValue::Block | DisplayValue::ListItem
+    ) && visible(computed.overflow.x)
+        && visible(computed.overflow.y)
+        && document.nodes[id].multicol.is_none()
+        && !establishes_containment_context(computed)
+        && !super::page::establishes_orthogonal_flow(document, cascade, id)
 }
 
 #[cfg(test)]

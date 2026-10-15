@@ -9,10 +9,12 @@
 //! are the box's lines, set in by its inline-side edges.
 
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
-use raikiri_style::property::{BoxSizing, ClearValue, Sides};
+use raikiri_style::property::{
+    BoxSizing, ClearValue, ColumnCountValue, Contain, DisplayValue, OverflowValue, Sides,
+};
 use raikiri_style::{
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedTextIndent,
-    ComputedValues,
+    ComputedColumnWidth, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
+    ComputedTextIndent, ComputedValues,
 };
 use shodo::style::LineOptions;
 use taffy::{BlockContext, CollapsibleMarginSet};
@@ -82,6 +84,9 @@ pub(crate) struct GeneratedBlock {
     max_height: ComputedLengthPercentageOrAuto,
     border_box: bool,
     clear: taffy::Clear,
+    /// Whether the box establishes an independent formatting context, which
+    /// keeps margins from collapsing through it.
+    formatting_root: bool,
     /// The box's own line options and raw `text-indent`, from its computed
     /// style.
     own_lines: (LineOptions, ComputedTextIndent),
@@ -90,12 +95,14 @@ pub(crate) struct GeneratedBlock {
 impl GeneratedBlock {
     /// The geometry of the generated box styled by `cv`, marked by the tokens
     /// `start` and `end`, whose lines are set by the line options and raw
-    /// `text-indent` in `lines`.
+    /// `text-indent` in `lines`; `orthogonal` says its writing mode is
+    /// orthogonal to its box parent's.
     pub(crate) fn new(
         start: u64,
         end: u64,
         cv: &ComputedValues,
         lines: (LineOptions, ComputedTextIndent),
+        orthogonal: bool,
     ) -> Self {
         Self {
             start,
@@ -123,6 +130,7 @@ impl GeneratedBlock {
                 ClearValue::Both => taffy::Clear::Both,
                 _ => taffy::Clear::None,
             },
+            formatting_root: orthogonal || establishes_formatting_context(cv),
             own_lines: lines,
         }
     }
@@ -154,8 +162,21 @@ impl GeneratedBlock {
     /// height counts only against the definite `definite_height` of the
     /// containing block (CSS 2.1 10.5).
     fn used_height(&self, content: f32, edges: f32, definite_height: Option<f32>) -> f32 {
+        let sizes = [self.height, self.min_height, self.max_height];
+        self.used_size(sizes, content, edges, definite_height)
+    }
+
+    /// The content-box size along one axis, from that axis's `[size, min,
+    /// max]` properties: see [`Self::used_height`].
+    fn used_size(
+        &self,
+        [size, min_size, max_size]: [ComputedLengthPercentageOrAuto; 3],
+        content: f32,
+        edges: f32,
+        definite: Option<f32>,
+    ) -> f32 {
         let content_box = |value| {
-            length_or_auto(value, definite_height).map(|size: f32| {
+            length_or_auto(value, definite).map(|size: f32| {
                 if self.border_box {
                     (size - edges).max(0.0)
                 } else {
@@ -163,14 +184,38 @@ impl GeneratedBlock {
                 }
             })
         };
-        let mut height = content_box(self.height).unwrap_or(content);
-        if let Some(max) = content_box(self.max_height) {
-            height = height.min(max);
+        let mut used = content_box(size).unwrap_or(content);
+        if let Some(max) = content_box(max_size) {
+            used = used.min(max);
         }
-        if let Some(min) = content_box(self.min_height) {
-            height = height.max(min);
+        if let Some(min) = content_box(min_size) {
+            used = used.max(min);
         }
-        height.max(0.0)
+        used.max(0.0)
+    }
+
+    /// Whether the box keeps margins from collapsing through it even with no
+    /// content (CSS 2.1 8.3.1): it establishes an independent formatting
+    /// context, has block-axis padding or border, or has a used block size
+    /// above zero. `inline_size` is the containing block's inline size, and
+    /// `vertical` says the block axis is horizontal, so that the box's left
+    /// and right sides and its width are on it.
+    pub(crate) fn separates_margins(&self, inline_size: f32, vertical: bool) -> bool {
+        let edges = self.edges(inline_size);
+        let (block_edges, sizes) = if vertical {
+            (
+                edges.left + edges.right,
+                [self.width, self.min_width, self.max_width],
+            )
+        } else {
+            (
+                edges.top + edges.bottom,
+                [self.height, self.min_height, self.max_height],
+            )
+        };
+        self.formatting_root
+            || block_edges > 0.0
+            || self.used_size(sizes, 0.0, block_edges, None) > 0.0
     }
 
     /// The physical left and right insets of the box's lines from the
@@ -640,6 +685,21 @@ pub(crate) fn close(
         first_line: open.lines_before,
         end_line: flow.lines.len(),
     })
+}
+
+/// Whether a block-level box styled by `cv` establishes an independent
+/// formatting context: any display other than a plain block or list item, a
+/// scroll container, a multi-column container, or layout or paint
+/// containment.
+fn establishes_formatting_context(cv: &ComputedValues) -> bool {
+    let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
+    !matches!(cv.display, DisplayValue::Block | DisplayValue::ListItem)
+        || !visible(cv.overflow.x)
+        || !visible(cv.overflow.y)
+        || !matches!(cv.column_count, ColumnCountValue::Auto)
+        || !matches!(cv.column_width, ComputedColumnWidth::Auto)
+        || cv.contain.contains(Contain::LAYOUT)
+        || cv.contain.contains(Contain::PAINT)
 }
 
 #[cfg(test)]

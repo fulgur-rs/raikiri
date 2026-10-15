@@ -10351,6 +10351,1001 @@ fn a_forced_break_keeps_the_top_margin() {
 }
 
 #[test]
+fn a_forced_break_keeps_a_margin_collapsed_through_an_empty_box() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_at_a_page_edge_keeps_a_margin_collapsed_through_an_empty_box() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:100px",
+            "break-before:page",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_margin_after_a_box_pulled_back_to_a_forced_page_edge_is_truncated() {
+    // The third box ends at the page edge, so the last margin follows its
+    // border box, not the forced break, and is truncated.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:-10px;height:10px",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 90.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_forced_break_keeps_a_margin_collapsed_through_two_empty_boxes() {
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "height:0",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 100.0, 130.0], 2)
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_box_after_a_pulled_back_box_is_truncated() {
+    // The third box separates the empty fourth box, and the margin after
+    // it, from the forced break.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:-10px;height:10px",
+            "height:0",
+            "margin-top:30px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 90.0, 100.0, 100.0], 2)
+    );
+}
+
+#[test]
+fn a_kept_margin_after_a_forced_break_is_truncated_at_the_next_page_edge() {
+    // The 150px margin crosses the unforced edge at 200, which truncates it.
+    assert_eq!(
+        page_box_positions(&[
+            "height:20px",
+            "break-before:page",
+            "margin-top:150px;height:20px",
+        ]),
+        (vec![0.0, 100.0, 200.0], 3)
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_content_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_text(forced, "x");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The text keeps the margins of the forced-break box from collapsing
+    // through it, so the last box's margin does not follow the break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_forced_break_flow_root_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flow-root;width:100px;height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // A flow root establishes a formatting context, so its margins do not
+    // collapse through it even when it is empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_forced_break_contained_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;contain:layout;width:100px;height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // Layout containment establishes a formatting context, so the margins
+    // do not collapse through the box even when it is empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_forced_break_list_item_is_kept() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:list-item;list-style:none;width:100px;height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // An empty list item without a marker lets its margins collapse through
+    // it, so the margin after it still follows the forced break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+#[test]
+fn a_margin_after_a_forced_break_box_with_an_empty_overflow_hidden_child_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:hidden"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty child with hidden overflow keeps margins from collapsing through it,
+    // so the forced-break box is not empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_only_an_empty_inline_child_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(Some(forced), "span", Style::default(), None::<&str>);
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // An empty inline makes no line, so the forced-break box stays empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_an_inline_block_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "span",
+        Style::default(),
+        Some("display:inline-block;width:10px;height:10px"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The inline-block makes a line, which keeps the margins of the
+    // forced-break box from collapsing through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_list_item_with_an_inside_marker_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;display:list-item;list-style-position:inside;list-style-type:'X';height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The inside marker makes a line, which keeps the margins of the
+    // forced-break box from collapsing through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_before_content_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "section::before { content: \"a\" }");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The generated `::before` text makes a line, which keeps the margins
+    // of the forced-break box from collapsing through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_a_block_before_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "section::before { content: \"\"; display: block; height: 10px }",
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The block-level `::before` box keeps the margins of the forced-break
+    // box from collapsing through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_a_flow_root_before_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "section::before { content: \"\"; display: flow-root }",
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty flow-root `::before` box establishes a formatting context, so
+    // the margins of the forced-break box do not collapse through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_an_empty_block_before_box_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "section::before { content: \"\"; display: block }");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty block-level `::before` box lets margins collapse through it,
+    // so the forced-break box stays empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_only_an_empty_block_child_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(Some(forced), "div", Style::default(), Some("display:block"));
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty child lets its margins collapse through it, so the
+    // forced-break box stays empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_forced_break_box_with_a_bordered_empty_child_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;height:0;border-top:1px solid"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The child's border keeps margins from collapsing through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_preserved_white_space_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;white-space:pre;break-before:page"),
+    );
+    doc.append_text(forced, "   ");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // Preserved white space still makes a line, which keeps the margins of
+    // the forced-break box from collapsing through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_only_collapsible_white_space_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;break-before:page"),
+    );
+    doc.append_text(forced, "   ");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // Collapsible white space makes no line, so the box stays empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_only_a_hidden_child_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;break-before:page"),
+    );
+    doc.append_element(Some(forced), "span", Style::default(), Some("display:none"));
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_only_an_absolutely_positioned_child_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;position:absolute;width:10px;height:10px"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_forced_break_box_with_only_a_floated_child_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:10px;height:10px"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
 fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -13988,5 +14983,763 @@ fn a_forced_break_on_a_wrapped_row_flex_item_moves_same_line_siblings() {
             (50.0, 100.0, 50.0, 20.0),
             (0.0, 30.0, 50.0, 20.0)
         ]
+    );
+}
+
+/// Paginate a vertical-rl document on 100px pages: a 20px box, a forced-break
+/// `section` with no block size whose `::before` is styled `before_css`, and
+/// a last 20px box with a 30px block-start margin. Returns the last box's
+/// physical x.
+fn vertical_forced_break_with_before_box(before_css: &str) -> f32 {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:100px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:0;height:100px;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        format!("section::before {{ content: \"\"; display: block; {before_css} }}").as_str(),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:100px;margin-right:30px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    crate::layout::test_support::absolute_rect(&doc, last).0
+}
+
+#[test]
+fn a_vertical_before_box_with_a_block_size_keeps_margins_from_collapsing_through() {
+    // In vertical-rl the block size is the physical width: the 10px wide
+    // `::before` box keeps the forced-break box's margins apart, so the margin
+    // after it is truncated at the page edge.
+    assert_eq!(vertical_forced_break_with_before_box("width:10px"), -20.0);
+}
+
+#[test]
+fn a_vertical_before_box_with_only_an_inline_size_lets_margins_collapse_through() {
+    // A physical height is the inline size in vertical-rl, so the empty
+    // `::before` box still lets the margins collapse through, and the margin
+    // after the forced break is kept.
+    assert_eq!(
+        vertical_forced_break_with_before_box("width:0;height:10px"),
+        -50.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "section::before { content: \"\"; display: block; writing-mode: vertical-rl }",
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty `::before` box in an orthogonal writing mode establishes a
+    // formatting context, so the margins do not collapse through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_forced_break_orthogonal_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl;width:100px;height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // An orthogonal flow establishes a formatting context, so the margins
+    // do not collapse through the box even when it is empty.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_a_multicol_before_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "section::before { content: \"\"; display: block; column-count: 2 }",
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty multi-column `::before` box establishes a formatting
+    // context, so the margins do not collapse through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_forced_break_box_with_a_cleared_empty_child_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:10px;height:10px"),
+    );
+    doc.append_element(
+        Some(forced),
+        "div",
+        Style::default(),
+        Some("display:block;clear:both"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The cleared child's clearance keeps margins from collapsing through
+    // the forced-break box (CSS 2 §8.3.1).
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_wrapper_of_a_forced_break_box_is_kept() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px"),
+    );
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The forced-break box's margins collapse through its empty wrapper, so
+    // the margin after the wrapper still follows the forced break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_a_cleared_after_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(section),
+        "div",
+        Style::default(),
+        Some("display:block;float:left;width:10px;height:10px"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "section::after { content: \"\"; display: block; clear: both }",
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty `::after` box gets clearance past the float, which keeps the
+    // margins from collapsing through it (CSS 2 §8.3.1).
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_zero_height_forced_break_box_with_an_orthogonal_before_box_of_a_contents_element_is_truncated()
+ {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let section = doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(section),
+        "span",
+        Style::default(),
+        Some("display:contents;writing-mode:vertical-rl"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "span::before { content: \"\"; display: block; writing-mode: vertical-rl }",
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The `::before` box of a `display: contents` element is orthogonal to
+    // its box parent, the section, so it establishes a formatting context and
+    // the margins do not collapse through it.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_an_empty_box_after_a_forced_break_after_is_kept() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px;break-after:page"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:0"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The empty box after the forced break lets its margins collapse through
+    // it, so the margin after it still follows the forced break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_bordered_wrapper_of_a_forced_break_box_follows_the_border() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let wrapper = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;border-bottom:1px solid"),
+    );
+    doc.append_element(
+        Some(wrapper),
+        "div",
+        Style::default(),
+        Some("display:block;height:0;break-before:page"),
+    );
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The wrapper's bottom border separates the forced-break box's margins
+    // from the margin after the wrapper, which therefore starts below the
+    // border instead of at the forced break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        131.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_a_flow_root_before_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(body),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "span::before { content: \"\"; display: flow-root }");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The `::before` box of the `display: contents` sibling establishes a
+    // formatting context between the forced-break box and the last box, so
+    // the margin after it no longer follows the forced break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+/// Lays out a 20px box, then an empty forced-break section and a 30px
+/// top margin box with white space around them. A `display: contents` span
+/// whose generated box is styled by `pseudo_css` holds the section or the
+/// margin box, or lies between them, as `inside_contents` (`"section"`,
+/// `"last"` or `"between"`) says. Returns the y of the margin box.
+fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_css: &str) -> f32 {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let span = |doc: &mut Document| {
+        doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        )
+    };
+    let section_parent = if inside_contents == "section" {
+        span(&mut doc)
+    } else {
+        body
+    };
+    doc.append_element(
+        Some(section_parent),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    // Collapsible white space generates no box between the boxes.
+    doc.append_text(section_parent, "\n  ");
+    if inside_contents == "between" {
+        span(&mut doc);
+    }
+    let last_parent = if inside_contents == "last" {
+        span(&mut doc)
+    } else {
+        body
+    };
+    doc.append_text(last_parent, "\n  ");
+    let last = doc.append_element(
+        Some(last_parent),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(style, pseudo_css);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    doc.get_node(last).unwrap().unrounded_layout.location.y
+}
+
+#[test]
+fn a_margin_after_a_flow_root_after_box_of_a_contents_wrapper_of_a_forced_break_box_is_truncated() {
+    // The `::after` box of the span lies between the forced-break box and
+    // the last box and establishes a formatting context.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "section",
+            "span::after { content: \"\"; display: flow-root }"
+        ),
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_wrapper_of_a_forced_break_box_is_kept() {
+    // The span generates no box, so the margins of the forced-break box still
+    // reach the last box.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box("section", ""),
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_flow_root_before_box_of_its_contents_parent_is_truncated() {
+    // The `::before` box of the span that holds the last box lies between it
+    // and the forced-break box.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "last",
+            "span::before { content: \"\"; display: flow-root }"
+        ),
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_inside_a_contents_element_after_a_forced_break_box_is_kept() {
+    // The span generates no box, so the margins of the forced-break box reach
+    // the last box inside it.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box("last", ""),
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_a_zero_height_before_box_with_text_is_truncated() {
+    // The `::before` box of the span holds a line box, so the margins do not
+    // collapse through it even with a zero height.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "between",
+            "span::before { content: \"x\"; display: block; height: 0 }"
+        ),
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_an_empty_before_box_is_kept() {
+    // The empty `::before` box of the span lets the margins collapse through
+    // it, so the margin after it still follows the forced break.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "between",
+            "span::before { content: \"\"; display: block }"
+        ),
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_inline_before_content_on_a_zero_height_line_is_truncated()
+{
+    // The text of the span's inline `::before` makes a line box, which keeps
+    // the margins apart even with no height.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "between",
+            "body { line-height: 0 } span::before { content: \"x\" }"
+        ),
+        100.0
     );
 }
