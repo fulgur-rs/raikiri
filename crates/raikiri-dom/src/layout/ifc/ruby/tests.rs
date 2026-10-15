@@ -1306,3 +1306,26 @@ fn relatively_positioned_base_containers_move_their_bases() {
     assert!(offsets.contains(&(ids.0, (20.0, 0.0))), "{offsets:?}");
     assert!(offsets.contains(&(ids.1, (0.0, 0.0))), "{offsets:?}");
 }
+
+#[test]
+fn annotation_runs_keep_their_reading_order() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aaaa");
+        let annotation = element(
+            doc,
+            container,
+            "rt",
+            "display:ruby-text;font-size:5px;direction:rtl",
+        );
+        ids.0 = doc.append_text(annotation, "x");
+        ids.1 = doc.append_text(annotation, "y");
+    });
+    let runs: Vec<_> = runs(fixture).into_iter().filter(|run| run.1).collect();
+    let order: Vec<usize> = runs.iter().map(|run| run.0).collect();
+    // Left-to-right text in a right-to-left annotation is drawn left to
+    // right, and its runs still come in reading order.
+    assert_eq!(order, [ids.0, ids.1], "{runs:?}");
+    assert!(runs[0].2.0 < runs[1].2.0, "{runs:?}");
+}

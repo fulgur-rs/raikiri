@@ -538,6 +538,10 @@ impl<'a> PositionedLines<'a> {
                 _ => {}
             }
         }
+        // shodo gives the annotation line's runs in visual order; they share
+        // the annotation's place in the paragraph's text, so their order
+        // here is their reading order.
+        own.sort_by_key(|run| run.run.text_range().start);
         insert_annotation_runs(&mut own, nested_annotations);
         runs.append(&mut own);
     }
