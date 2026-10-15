@@ -1023,13 +1023,15 @@ fn style_sheet_insert_rule(
         ranks[..index].iter().all(|&before| before <= rank)
             && ranks[index..].iter().all(|&after| after >= rank)
     };
-    // A layer statement may sit among the leading `@import` rules (CSS
-    // Cascade 5 §6.4.3), though not before a `@namespace` rule, which must
-    // precede every other at-rule (CSS Namespaces §2), or among the other
-    // rules.
+    // A layer statement may sit before and among the `@import` rules, and
+    // before the `@namespace` rules but not between those and the imports
+    // (CSS Cascade 5 §6.4.3), or among the other rules.
     let ordered = if is_layer_statement(&rule.prelude, rule.has_block) {
+        let after_import = rules[..index]
+            .iter()
+            .any(|rule| is_at_rule(&rule.prelude, "import"));
         let leading = ranks[..index].iter().all(|&before| before == 0)
-            && !ranks[index..].contains(&NAMESPACE_RANK);
+            && !(after_import && ranks[index..].contains(&NAMESPACE_RANK));
         leading || fits(OTHER_RANK)
     } else {
         fits(order_rank(&rule.prelude))

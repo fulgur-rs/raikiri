@@ -2565,7 +2565,9 @@ fn style_sheet_layer_statements_and_namespace_removal_keep_rule_order() {
         &mut rt,
         "(function() { try { ns.sheet.insertRule('@layer d', 1); return false; } \
          catch (e) { return e.name === 'HierarchyRequestError'; } })() && \
-         ns.sheet.insertRule('@layer d', 2) === 2",
+         ns.sheet.insertRule('@layer d', 2) === 2 && \
+         ns.sheet.insertRule('@layer e', 0) === 0 && ns.sheet.cssRules[1].cssText.startsWith('@import') && \
+         ns.sheet.deleteRule(0) === undefined",
     );
     // A namespace rule stays while the sheet has rules other than imports
     // and namespaces, and goes once only those are left.
