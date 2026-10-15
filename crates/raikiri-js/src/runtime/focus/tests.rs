@@ -510,3 +510,21 @@ fn the_document_has_event_handler_attributes() {
            && typeof document.onclick === 'function'",
     );
 }
+
+#[test]
+fn settling_the_page_runs_the_focus_fixup_without_a_frame_callback() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var detail; b.onblur = function (e) { detail = e.detail; };\
+         b.focus(); b.setAttribute('disabled', ''); document.activeElement === b",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && detail === 0\
+         && document.createElementNS('http://www.w3.org/1998/Math/MathML', 'a').tabIndex === 0\
+         && document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi').tabIndex === -1",
+    );
+}

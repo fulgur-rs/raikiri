@@ -113,7 +113,10 @@ fn default_tab_index(document: &Document, index: usize) -> i32 {
         ) => true,
         Some("summary") => is_details_summary(document, index),
         Some(_) => false,
-        None => tag_in(document, index, SVG_NS) == Some("a"),
+        None => {
+            tag_in(document, index, SVG_NS) == Some("a")
+                || tag_in(document, index, MATHML_NS) == Some("a")
+        }
     };
     if zero { 0 } else { -1 }
 }

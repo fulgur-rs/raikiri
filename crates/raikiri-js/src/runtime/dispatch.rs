@@ -1027,6 +1027,7 @@ pub(crate) fn fire_focus_event(
     let time_stamp = now(context)?;
     let mut data = new_event_data(kind.to_owned(), bubbles, false, true, true, time_stamp);
     data.view_is_window = true;
+    data.detail = JsValue::from(0);
     data.related_target = related.map(Some);
     let proto = protos(context).focus_event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);

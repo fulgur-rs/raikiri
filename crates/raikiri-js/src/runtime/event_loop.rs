@@ -544,7 +544,10 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
             return Ok(()); // cov:ignore: the loop never runs inside a binding
         };
         let task = match next {
-            Next::Idle => return Ok(()),
+            // The page settling is a rendering opportunity too, so the
+            // focus fixup runs even when no frame callback asked for one.
+            Next::Idle if !fix_up_focus(context)? => return Ok(()),
+            Next::Idle => continue,
             Next::Abort(reason) => return Err(abort(context, reason)),
             Next::Run(task) => task,
         };
@@ -634,11 +637,21 @@ fn run_animation_frame(context: &mut Context) -> Result<(), Abort> {
         // Each callback is its own "clean up after running script".
         microtask_checkpoint(context)?;
     }
-    // The rendering update's focus fixup: a focused element that stopped
-    // being focusable (disabled, inert) loses focus, with blur events.
+    fix_up_focus(context)?;
+    Ok(())
+}
+
+/// The rendering update's focus fixup: a focused element that stopped
+/// being focusable (disabled, inert, no longer rendered) loses focus, with
+/// blur events. Returns whether focus changed.
+fn fix_up_focus(context: &mut Context) -> Result<bool, Abort> {
+    let focused =
+        |context: &mut Context| with_state(context, |s| s.host.document().focused_element()).ok();
+    let before = focused(context);
     let result = super::focus::fix_up_focus(context).map(|()| JsValue::undefined());
     settle(context, result)?;
-    microtask_checkpoint(context)
+    microtask_checkpoint(context)?;
+    Ok(focused(context) != before)
 }
 
 fn callable_arg(args: &[JsValue], what: &str) -> JsResult<JsObject> {
