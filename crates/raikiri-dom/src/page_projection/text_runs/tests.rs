@@ -1120,3 +1120,78 @@ fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
     assert_eq!(offset(math), (10.0, 0.0));
     assert_eq!(offset(floated), (10.0, 0.0));
 }
+
+/// shodo sets an inter-character annotation beside horizontal text upright,
+/// so its reported glyphs need no orientation: they stand one below the
+/// other at their placed positions.
+#[test]
+fn inter_character_annotation_glyphs_are_reported_upright_one_below_the_other() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0;font:10px/20px Ahem"),
+    );
+    let ruby = document.append_element(
+        Some(body),
+        "ruby",
+        taffy::Style::default(),
+        Some("display:ruby;ruby-position:inter-character"),
+    );
+    let base = document.append_element(
+        Some(ruby),
+        "rb",
+        taffy::Style::default(),
+        Some("display:ruby-base"),
+    );
+    document.append_text(base, "aa");
+    let annotation = document.append_element(
+        Some(ruby),
+        "rt",
+        taffy::Style::default(),
+        Some("display:ruby-text;font-size:5px;text-orientation:sideways"),
+    );
+    document.append_text(annotation, "xx");
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    let page = raikiri_traits::PageBox::A4;
+    crate::layout_single_page(&mut document, &cascade, page).unwrap();
+    document
+        .project_pages(
+            &cascade,
+            page,
+            &[crate::PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            }],
+            &[],
+        )
+        .unwrap();
+    let runs = document.page_text_runs(&cascade, 0);
+    let annotation = runs
+        .iter()
+        .find(|run| run.text == "xx")
+        .expect("annotation");
+    let mut pen = annotation.origin.0;
+    let positions: Vec<(f32, f32)> = annotation
+        .glyphs
+        .iter()
+        .map(|glyph| {
+            let position = (pen + glyph.x_offset, annotation.origin.1 + glyph.y_offset);
+            pen += glyph.advance;
+            position
+        })
+        .collect();
+    assert_eq!(positions.len(), 2, "{positions:?}");
+    assert_eq!(positions[0].0, positions[1].0, "{positions:?}");
+    assert_eq!(positions[1].1 - positions[0].1, 5.0, "{positions:?}");
+    assert!(document.omitted_text_run_roots(&cascade).is_empty());
+}
