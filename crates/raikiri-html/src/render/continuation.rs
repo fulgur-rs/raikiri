@@ -269,8 +269,8 @@ fn relayout_from(
         vec![PageValue::Auto; document.node_count()],
     );
     // The changes of named page still give the boxes after them clearance,
-    // as in the later layout.
-    document.set_clearance_page_values(Some(page_values.clone()));
+    // as in the later layout: preparing the cascade had the document keep
+    // them.
     // The measuring page holds everything the earlier layout placed before
     // the token, with room to spare. Content that grows at this width can
     // still run past it, onto more measuring pages than the document's page
@@ -326,7 +326,6 @@ fn relayout_from(
             .map_or(first_origin, |slice| slice.content_origin_y);
         measure_height = 2.0 * (last_origin - first_origin + measure_height);
     }
-    document.set_clearance_page_values(None);
     cascade.page_values = page_values;
     // The token was found on the earlier layout's page, and the copy lays out
     // the same source before it, so one of the measuring pages holds it.
