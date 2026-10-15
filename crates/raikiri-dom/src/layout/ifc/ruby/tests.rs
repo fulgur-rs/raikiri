@@ -1185,3 +1185,26 @@ fn ruby_segments_are_kept_or_report_the_item_budget() {
         }
     }
 }
+
+#[test]
+fn annotations_take_their_base_direction_from_their_own_style() {
+    let mut ids = (0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "aaaa");
+        let annotation = element(
+            doc,
+            container,
+            "rt",
+            "display:ruby-text;font-size:5px;direction:rtl",
+        );
+        ids.0 = doc.append_text(annotation, "x");
+        ids.1 = doc.append_text(annotation, "\u{5D0}");
+    });
+    let runs: Vec<_> = runs(fixture).into_iter().filter(|run| run.1).collect();
+    let order: Vec<usize> = runs.iter().map(|run| run.0).collect();
+    // A right-to-left line lists its runs from its right end, where the
+    // left-to-right text that starts the annotation sits.
+    assert_eq!(order, [ids.0, ids.1], "{runs:?}");
+    assert!(runs[1].2.0 < runs[0].2.0, "{runs:?}");
+}

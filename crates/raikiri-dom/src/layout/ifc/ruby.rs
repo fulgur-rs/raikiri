@@ -598,14 +598,17 @@ impl Content<'_, '_> {
     /// The style of a paragraph of ruby content whose text starts from the
     /// style of `owner`.
     fn paragraph(&self, owner: usize) -> Result<shodo::style::ParagraphStyle, IfcError> {
+        let root = styled(
+            self.doc,
+            self.cascade,
+            &self.cascade.computed[owner],
+            owner,
+            self.fonts,
+        )?; // cov:ignore: inline_style rejects only keywords added to its style enums after it was written.
+        // The content's own `direction` is its base direction.
         Ok(shodo::style::ParagraphStyle {
-            root: styled(
-                self.doc,
-                self.cascade,
-                &self.cascade.computed[owner],
-                owner,
-                self.fonts,
-            )?, // cov:ignore: inline_style rejects only keywords added to its style enums after it was written.
+            direction: root.direction,
+            root,
             ..shodo::style::ParagraphStyle::default()
         })
     }
