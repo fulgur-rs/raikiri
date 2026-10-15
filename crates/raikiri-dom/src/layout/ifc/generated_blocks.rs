@@ -282,6 +282,10 @@ pub(crate) struct OpenBlock {
     /// token when padding, border or clearance separate the margin from the
     /// content, else at the box's first line.
     content_top: Option<f32>,
+    /// Where the content box starts without padding, border or clearance:
+    /// below the margins collapsed at its top. A float may push the box's
+    /// first line further down, but not the box (CSS 2.1 9.5).
+    flow_top: f32,
     /// The margins collapsed at the box's top: those above it with its own.
     top_set: CollapsibleMarginSet,
     /// The box starts the paragraph: nothing is above it.
@@ -299,17 +303,15 @@ pub(crate) struct OpenBlock {
 
 impl OpenBlock {
     /// The box as it goes on at the top of the next fragmentainer, after a
-    /// fragmentainer whose `lines` end at `end`: the box fills it to there.
-    pub(crate) fn continued(self, lines: &[shodo::Line], end: f32) -> Self {
-        let top = self
-            .content_top
-            .or_else(|| lines.get(self.lines_before).map(|line| line.block_offset()));
+    /// fragmentainer that ends at `end`: the box fills it to there.
+    pub(crate) fn continued(self, end: f32) -> Self {
+        let top = self.content_top.unwrap_or(self.flow_top);
         Self {
             lines_before: 0,
             content_top: Some(0.0),
             starts_paragraph: false,
             has_clearance: false,
-            consumed: self.consumed + top.map_or(0.0, |top| (end - top).max(0.0)),
+            consumed: self.consumed + (end - top).max(0.0),
             ..self
         }
     }
@@ -403,6 +405,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
     OpenBlock {
         lines_before: flow.lines.len(),
         content_top,
+        flow_top: hypothetical,
         top_set,
         starts_paragraph: flow.at_start,
         has_clearance: clearance.is_some(),
@@ -421,7 +424,7 @@ pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>)
     let first_line = flow.lines.get(open.lines_before);
     let content_top = open
         .content_top
-        .or_else(|| first_line.map(|line| line.block_offset()));
+        .or_else(|| first_line.map(|_| open.flow_top));
     let content = content_top.map_or(0.0, |top| (*flow.y - top).max(0.0));
     let height = (block.used_height(
         open.consumed + content,

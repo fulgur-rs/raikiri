@@ -358,3 +358,14 @@ fn a_block_after_wider_than_its_element_keeps_out_of_a_float() {
     // The 100px line does not fit beside the float: it goes below it.
     assert_eq!(runs(&document)[1].2.1, 56.0);
 }
+
+#[test]
+fn a_float_pushes_the_lines_of_a_block_after_down_but_not_its_height() {
+    let document = lay_out(
+        "<div><span></span></div>",
+        "span{float:left;width:100%;height:40px}div::after{content:'X';display:block;height:20px}",
+    );
+    // As an ordinary block: the box sits beside the float at the top of the
+    // div, and its line overflows it below the float.
+    assert_eq!(boxes(&document, "div"), vec![(0, 0.0, 100.0, 40.0)]);
+}

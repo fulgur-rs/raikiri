@@ -270,12 +270,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             has_next,
             carried_block,
         );
-        carried_block = outcome.open_block.map(|open| {
-            open.continued(
-                &outcome.lines.lines,
-                fragmentainer_height.unwrap_or_default(),
-            )
-        });
+        carried_block = outcome
+            .open_block
+            .map(|open| open.continued(fragmentainer_height.unwrap_or_default()));
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();

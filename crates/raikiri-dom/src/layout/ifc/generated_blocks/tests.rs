@@ -245,7 +245,7 @@ fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
         let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
         // The box fills two 40px fragmentainers, 70px of content, then its
         // lines take 30px of the next.
-        let open = open.continued(&[], 40.0).continued(&[], 40.0);
+        let open = open.continued(40.0).continued(40.0);
         y = 30.0;
         close(&block, open, flow(&mut y, &mut pending, &mut leading, &ctx));
         (y, pending.resolve())
