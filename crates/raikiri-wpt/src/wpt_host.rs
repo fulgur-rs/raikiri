@@ -296,10 +296,27 @@ impl DocumentHost for WptDocumentHost {
     }
 
     /// Decode the image again through the same checkout-rooted provider as
-    /// [`Self::load_image`], at the size layout gives it by default.
-    fn image_pixels(&mut self, url: &str) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+    /// [`Self::load_image`], rasterized at its concrete object size against
+    /// `default_size`.
+    fn image_pixels(
+        &mut self,
+        url: &str,
+        default_size: (f64, f64),
+    ) -> Option<std::sync::Arc<raikiri_traits::DecodedImage>> {
+        use raikiri_traits::ImagePixelSource;
+
         let (resolver, parsed) = self.resolve_image(url).ok()?;
-        raikiri_traits::ImagePixelSource::get_decoded(&resolver, &parsed)
+        let natural = resolver.intrinsic_size(&parsed)?;
+        let (width, height) =
+            raikiri_dom::image_geometry::default_sized_object(natural, default_size);
+        resolver.get_decoded_at_size(
+            &parsed,
+            raikiri_traits::ImageRasterSize {
+                width: width as f32,
+                height: height as f32,
+            },
+            None,
+        )
     }
 
     fn flush(&mut self) -> Result<(), HostError> {

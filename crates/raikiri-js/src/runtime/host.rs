@@ -183,9 +183,13 @@ pub trait DocumentHost: 'static {
         Err(HostError("image loading is not supported".into()))
     }
     /// The decoded pixels of an image [`Self::load_image`] loaded, for
-    /// drawing it into a canvas; `None` when the host does not keep them.
-    /// The default keeps none, so such an image draws nothing.
-    fn image_pixels(&mut self, _url: &str) -> Option<Arc<DecodedImage>> {
+    /// drawing it into a canvas, rasterized at its concrete object size: the
+    /// CSS Images 3 default sizing algorithm with `default_size` (the
+    /// canvas's output bitmap size, in CSS px) as the default object size, so
+    /// an image without natural dimensions sizes against the canvas. `None`
+    /// when the host does not keep the pixels. The default keeps none, so
+    /// such an image draws nothing.
+    fn image_pixels(&mut self, _url: &str, _default_size: (f64, f64)) -> Option<Arc<DecodedImage>> {
         None
     }
     /// Type-erased shared access to the concrete host, for downcasting a

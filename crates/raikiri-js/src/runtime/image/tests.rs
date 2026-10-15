@@ -571,7 +571,7 @@ fn the_default_host_loads_no_images() {
     let mut host = rt.try_into_host::<NoImages>().ok().unwrap();
     // Nor does it keep any pixels to draw.
     assert!(
-        host.image_pixels("https://example.test/dir/ok.png")
+        host.image_pixels("https://example.test/dir/ok.png", (300.0, 150.0))
             .is_none()
     );
 }

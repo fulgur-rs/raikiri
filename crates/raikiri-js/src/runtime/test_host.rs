@@ -41,6 +41,9 @@ pub(crate) struct StubHost {
     /// [`DocumentHost::image_pixels`]' pixels, by URL; a URL with no entry
     /// has none.
     pub image_pixels: HashMap<String, Arc<DecodedImage>>,
+    /// The default object size each [`DocumentHost::image_pixels`] call
+    /// passed, in call order.
+    pub image_pixel_default_sizes: Vec<(f64, f64)>,
 }
 
 impl StubHost {
@@ -76,6 +79,7 @@ impl StubHost {
                 scripts: HashMap::new(),
                 images: HashSet::new(),
                 image_pixels: HashMap::new(),
+                image_pixel_default_sizes: Vec::new(),
             },
             html,
             head,
@@ -192,7 +196,8 @@ impl DocumentHost for StubHost {
             Err(HostError(format!("no image registered for {url}")))
         }
     }
-    fn image_pixels(&mut self, url: &str) -> Option<Arc<DecodedImage>> {
+    fn image_pixels(&mut self, url: &str, default_size: (f64, f64)) -> Option<Arc<DecodedImage>> {
+        self.image_pixel_default_sizes.push(default_size);
         self.image_pixels.get(url).cloned()
     }
     fn as_any(&self) -> &dyn Any {

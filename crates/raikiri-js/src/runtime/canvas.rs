@@ -500,8 +500,14 @@ fn image_source(value: &JsValue, context: &mut Context) -> JsResult<ImageSource>
 /// "Check the usability of the image argument" (HTML Standard §4.12.5.1.15),
 /// then read its pixels: `Ok(None)` when there is nothing to draw (an image
 /// not yet loaded, or one whose pixels the host does not keep), and an
-/// `InvalidStateError` for a broken image or a zero-area canvas.
-fn source_pixels(context: &mut Context, source: ImageSource) -> JsResult<Option<SourcePixels>> {
+/// `InvalidStateError` for a broken image or a zero-area canvas. An image is
+/// sized with the destination's output bitmap size, `bitmap_size`, as its
+/// default object size.
+fn source_pixels(
+    context: &mut Context,
+    source: ImageSource,
+    bitmap_size: (u32, u32),
+) -> JsResult<Option<SourcePixels>> {
     match source {
         ImageSource::Image(index) => {
             let loaded = with_state(context, |s| s.loaded_images.get(&index).cloned())?;
@@ -513,7 +519,8 @@ fn source_pixels(context: &mut Context, source: ImageSource) -> JsResult<Option<
                     "the image is broken",
                 )),
                 Some(Some(url)) => {
-                    let image = with_state(context, |s| s.host.image_pixels(&url))?;
+                    let default_size = (f64::from(bitmap_size.0), f64::from(bitmap_size.1));
+                    let image = with_state(context, |s| s.host.image_pixels(&url, default_size))?;
                     Ok(image.map(|image| SourcePixels {
                         width: image.width,
                         height: image.height,
@@ -589,7 +596,9 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     if numbers.iter().any(|number| !number.is_finite()) {
         return Ok(JsValue::undefined());
     }
-    let Some(pixels) = source_pixels(context, source)? else {
+    let (canvas_w, canvas_h) = with_state(context, |s| s.host.document().canvas_size(canvas))?
+        .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
+    let Some(pixels) = source_pixels(context, source, (canvas_w, canvas_h))? else {
         return Ok(JsValue::undefined());
     };
     let (image_w, image_h) = (f64::from(pixels.width), f64::from(pixels.height));
@@ -609,8 +618,6 @@ fn draw_image(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResu
     if sw == 0.0 || sh == 0.0 || dw == 0.0 || dh == 0.0 {
         return Ok(JsValue::undefined());
     }
-    let (canvas_w, canvas_h) = with_state(context, |s| s.host.document().canvas_size(canvas))?
-        .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
     // The destination pixels the rectangle touches, clipped to the bitmap
     // so every coordinate fits an `i32`.
     let left = dx.floor().max(0.0);

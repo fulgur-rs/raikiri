@@ -695,6 +695,15 @@ fn draw_image_skips_unavailable_images_and_rejects_broken_ones() {
 }
 
 #[test]
+fn draw_image_sizes_images_against_the_canvas_bitmap() {
+    let (mut rt, _) = draw_rt(true);
+    rt.evaluate("c.width = 7; ctx.drawImage(img, 0, 0);")
+        .unwrap();
+    let host = rt.try_into_host::<StubHost>().ok().unwrap();
+    assert_eq!(host.image_pixel_default_sizes, [(7.0, 4.0)]);
+}
+
+#[test]
 fn draw_image_draws_nothing_when_the_host_keeps_no_pixels() {
     let (mut rt, canvas) = draw_rt(false);
     rt.evaluate("ctx.drawImage(img, 0, 0);").unwrap();

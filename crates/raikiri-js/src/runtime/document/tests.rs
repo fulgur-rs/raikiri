@@ -33,6 +33,7 @@ fn rt_over(document: raikiri_dom::Document) -> DomRuntime {
         document_url: None,
         images: std::collections::HashSet::new(),
         image_pixels: std::collections::HashMap::new(),
+        image_pixel_default_sizes: Vec::new(),
         scripts: std::collections::HashMap::new(),
     };
     DomRuntime::new(host).unwrap()
