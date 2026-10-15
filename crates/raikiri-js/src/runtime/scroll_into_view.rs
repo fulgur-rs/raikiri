@@ -158,7 +158,10 @@ fn is_scroll_container(context: &mut Context, index: usize) -> JsResult<bool> {
 fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) -> JsResult<bool> {
     let (body, mut current) = with_state(context, |s| {
         let document = s.host.document();
-        let body = first_element_child(document, root, Some("body"));
+        // Only an HTML `body` under `html` hands its overflow to the
+        // viewport.
+        let html = document.get_node(root).and_then(|n| n.tag_name()) == Some("html");
+        let body = first_element_child(document, root, Some("body")).filter(|_| html);
         (body, document.parent_of(index))
     })?;
     let mut root_visible = true;

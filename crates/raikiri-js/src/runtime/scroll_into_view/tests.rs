@@ -235,6 +235,35 @@ fn an_ancestor_without_a_box_does_not_confine() {
 }
 
 #[test]
+fn only_an_html_root_hands_the_body_overflow_to_the_viewport() {
+    // A `body` child of a non-HTML document element.
+    let (mut host, html, _, _) = StubHost::page();
+    let root = host.document.root_index();
+    host.document.detach_from_parent(html);
+    let svg = host.document.create_detached_element("svg").unwrap();
+    host.document.attach_child(root, svg);
+    host.document.mark_in_document_flags();
+    let body = host.document.create_detached_element("body").unwrap();
+    host.document.append_child(svg, body).unwrap();
+    let target = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, target).unwrap();
+    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    host.geometry
+        .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.geometry
+        .insert(body, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.computed
+        .insert((body, "overflow-y".to_owned()), "auto".to_owned());
+    host.viewport = Ok(Some((100.0, 100.0)));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.documentElement.firstChild.firstChild.scrollIntoView({container: 'nearest'});\
+         scrollY === 0",
+    );
+}
+
+#[test]
 fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
     let (mut host, html, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
