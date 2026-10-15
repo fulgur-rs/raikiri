@@ -164,3 +164,33 @@ fn a_row_group_with_content_outside_its_rows_keeps_its_top() {
     assert_eq!(span(&doc, group), (62.0, 130.0));
     assert_eq!(span(&doc, table), (60.0, 132.0));
 }
+
+#[test]
+fn a_collapsed_table_grows_over_its_own_moved_row() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-collapse:collapse"),
+        );
+        // Rows directly in the table, without a row group.
+        ids.push(table);
+        ids.push(append_row(doc, table, "", 20.0).0);
+        ids.push(append_row(doc, table, "", 30.0).0);
+    });
+    let [table, first, last] = ids[..] else {
+        unreachable!()
+    };
+    assert_eq!(span(&doc, first), (60.0, 80.0));
+    assert_eq!(span(&doc, last), (100.0, 130.0));
+    // Collapsed borders keep no spacing below the last row.
+    assert_eq!(span(&doc, table), (60.0, 130.0));
+}
