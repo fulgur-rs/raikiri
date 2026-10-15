@@ -938,6 +938,7 @@ fn layout_single_page_with_table_projection(
         height: content_height,
     };
     document.fixed_page_area = (content_width, content_height);
+    super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
     place_fixed_boxes_in_page_area(document, cascade, body_id, page_area);
     // Laying those boxes out again can fail a table or exhaust the
     // fragment budget like the root layout above.
