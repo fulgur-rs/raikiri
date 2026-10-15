@@ -117,3 +117,20 @@ fn focus_follows_the_element_while_it_is_in_the_tree() {
     doc.set_focused_element(None);
     assert_eq!(doc.focused_element(), None);
 }
+
+#[test]
+fn moving_the_focused_element_clears_focus() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let div = doc.append_element(Some(html), "div", Style::default(), None::<&str>);
+    let button = doc.append_element(Some(html), "button", Style::default(), None::<&str>);
+    doc.set_focused_element(Some(button));
+    doc.append_child(div, button).unwrap();
+    assert_eq!(doc.parent_of(button), Some(div));
+    assert_eq!(doc.focused_element(), None);
+    // Moving a node outside the focused subtree keeps focus.
+    let span = doc.append_element(Some(html), "span", Style::default(), None::<&str>);
+    doc.set_focused_element(Some(button));
+    doc.append_child(div, span).unwrap();
+    assert_eq!(doc.focused_element(), Some(button));
+}

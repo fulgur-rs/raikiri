@@ -1134,6 +1134,10 @@ impl Document {
         if let Some(node) = self.nodes.get_mut(child) {
             node.parent = None;
         }
+        // Removal clears focus even when the node is inserted again right
+        // away, as `appendChild` and `insertBefore` moves do (HTML removing
+        // steps; only `moveBefore` preserves it).
+        self.fix_up_focus();
         self.invalidate_layout_cache();
         self.flags_dirty = true;
         Some(parent)

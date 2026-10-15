@@ -746,3 +746,15 @@ fn an_element_with_a_scrollable_region_takes_focus() {
     .unwrap();
     assert!(rt.evaluate("document.body.children[0].focus()").is_err());
 }
+
+#[test]
+fn moving_the_focused_element_clears_focus() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var d = document.body.appendChild(document.createElement('div'));\
+         b.focus(); var focused = document.activeElement === b;\
+         d.appendChild(b); focused && document.activeElement === document.body",
+    );
+}
