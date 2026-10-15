@@ -389,3 +389,26 @@ fn ch_spacing_and_indent_are_measured_through_the_callback() {
         Some("normal".to_owned())
     );
 }
+
+#[test]
+fn overflow_axes_serialize_separately() {
+    let mut computed = ComputedValues::initial();
+    computed.overflow = crate::property::OverflowXY {
+        x: crate::property::OverflowValue::Hidden,
+        y: crate::property::OverflowValue::Scroll,
+    };
+    let mut ch_advance = |_: &ChFontKey| -> f32 { panic!("overflow has no ch lengths") };
+    let serialize = |name, ch_advance: &mut dyn FnMut(&ChFontKey) -> f32| {
+        ComputedProperty::from_name(name)
+            .unwrap()
+            .serialize(&computed, ch_advance)
+    };
+    assert_eq!(
+        serialize("overflow-x", &mut ch_advance).as_deref(),
+        Some("hidden")
+    );
+    assert_eq!(
+        serialize("overflow-y", &mut ch_advance).as_deref(),
+        Some("scroll")
+    );
+}

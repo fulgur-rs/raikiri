@@ -1156,3 +1156,19 @@ fn flush_resolves_against_a_base_element_added_after_the_parse() {
     host.flush().unwrap();
     assert_eq!(host.setup.document_base_url, Some(page));
 }
+
+#[test]
+fn an_overflowing_scroll_container_takes_focus() {
+    let (_dir, mut rt) = runtime(
+        "<div id=scroller style='overflow:auto;height:50px'><div style='height:200px'></div></div>\
+         <div id=clipped style='overflow:hidden;height:50px'><div style='height:200px'></div></div>\
+         <div id=short style='overflow:scroll;height:50px'></div>",
+    );
+    let focused = text(
+        &mut rt,
+        "['clipped', 'short', 'scroller'].map(function (id) {\
+           document.getElementById(id).focus(); return document.activeElement.id;\
+         }).join()",
+    );
+    assert_eq!(focused, ",,scroller");
+}

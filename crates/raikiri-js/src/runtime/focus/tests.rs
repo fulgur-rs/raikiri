@@ -691,3 +691,58 @@ fn focus_members_reject_elements_outside_html_svg_and_mathml() {
            && !plain.hasAttribute('tabindex')",
     );
 }
+
+#[test]
+fn an_element_with_a_scrollable_region_takes_focus() {
+    use crate::runtime::host::PositionKind;
+
+    let (mut host, _, _, body) = StubHost::page();
+    let rect = StubHost::dom_rect(0.0, 0.0, 100.0, 100.0);
+    let mut overflowing = StubHost::boxed(rect, rect, PositionKind::Static);
+    overflowing.scroll_width = 300.0;
+    overflowing.scroll_height = 300.0;
+    let mut scrollers = Vec::new();
+    for _ in 0..4 {
+        let div = host.document.create_detached_element("div").unwrap();
+        host.document.append_child(body, div).unwrap();
+        scrollers.push(div);
+    }
+    // Overflowing on an `auto` axis, on a `hidden` axis only, with no
+    // computed `overflow`, and without a box.
+    for &div in &scrollers[..3] {
+        host.geometry.insert(div, overflowing);
+    }
+    let computed = [
+        (scrollers[0], "overflow-x", "hidden"),
+        (scrollers[0], "overflow-y", "auto"),
+        (scrollers[1], "overflow-x", "hidden"),
+        (scrollers[1], "overflow-y", "hidden"),
+    ];
+    for (div, property, value) in computed {
+        host.computed
+            .insert((div, property.to_owned()), value.to_owned());
+    }
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var c = document.body.children; c[0].focus();\
+         var scrolled = document.activeElement === c[0]; c[0].blur();\
+         c[1].focus(); c[2].focus(); c[3].focus();\
+         scrolled && document.activeElement === document.body",
+    );
+
+    let (mut host, _, _, body) = StubHost::page();
+    let div = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, div).unwrap();
+    host.geometry.insert(div, overflowing);
+    host.fail_computed = true;
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(rt.evaluate("document.body.children[0].focus()").is_err());
+    with_state(rt.context_mut(), |s| {
+        let host = s.host.as_any_mut().downcast_mut::<StubHost>().unwrap();
+        host.fail_computed = false;
+        host.fail_geometry = true;
+    })
+    .unwrap();
+    assert!(rt.evaluate("document.body.children[0].focus()").is_err());
+}

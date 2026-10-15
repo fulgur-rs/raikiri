@@ -204,24 +204,31 @@ fn is_connected_and_not_inert(document: &Document, index: usize) -> bool {
     false
 }
 
-/// Whether the HTML, SVG or MathML element `index` is a focusable area:
-/// connected, not inert, not actually disabled, and focusable through a
-/// valid `tabindex`, by default (an SVG link counts), or as an HTML
-/// editing host. Whether it is being rendered is not checked, since that
-/// needs a layout.
+/// Whether the HTML, SVG or MathML element `index` can be the DOM anchor
+/// of a focusable area: connected, not inert and not actually disabled.
+/// Whether it is being rendered is not checked, since that needs a layout.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
-fn is_focusable(document: &Document, index: usize) -> bool {
+fn can_anchor_focus(document: &Document, index: usize) -> bool {
     let html = html_tag(document, index).is_some();
     let foreign = tag_in(document, index, SVG_NS).or(tag_in(document, index, MATHML_NS));
-    let attr = |name| document.element_attribute(index, name);
     (html || foreign.is_some())
         && !is_actually_disabled(document, index)
         && is_connected_and_not_inert(document, index)
-        && (attr("tabindex").and_then(integer_digits).is_some()
-            || is_foreign_link(document, index)
-            || focusable_by_default(document, index)
-            || html && attr("contenteditable").is_some_and(is_editing_host_value))
+}
+
+/// Whether the element `index` is focusable on its own, without layout:
+/// through a valid `tabindex`, by default (an SVG link counts), or as an
+/// HTML editing host.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
+fn is_focusable(document: &Document, index: usize) -> bool {
+    let attr = |name| document.element_attribute(index, name);
+    attr("tabindex").and_then(integer_digits).is_some()
+        || is_foreign_link(document, index)
+        || focusable_by_default(document, index)
+        || html_tag(document, index).is_some()
+            && attr("contenteditable").is_some_and(is_editing_host_value)
 }
 
 /// The element children of `index`, then their descendants, in tree
@@ -367,6 +374,35 @@ fn is_visible(context: &mut Context, index: usize) -> JsResult<bool> {
     visible.map_err(|error| host_failure(context, error))
 }
 
+/// Whether the element `index` has a scrollable region: a box whose
+/// scrollable overflow exceeds its padding box on an axis the user can
+/// scroll (`overflow` `auto` or `scroll`).
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
+fn is_scrollable_region(context: &mut Context, index: usize) -> JsResult<bool> {
+    ensure_flushed(context)?;
+    let geometry = with_state(context, |s| s.host.box_geometry(index))?;
+    let Some(geometry) = geometry.map_err(|error| host_failure(context, error))? else {
+        return Ok(false);
+    };
+    let padding = geometry.padding_box;
+    let axes = [
+        ("overflow-x", geometry.scroll_width > padding.width),
+        ("overflow-y", geometry.scroll_height > padding.height),
+    ];
+    for (property, overflows) in axes {
+        if !overflows {
+            continue;
+        }
+        let value = with_state(context, |s| s.host.computed_value(index, property))?;
+        let value = value.map_err(|error| host_failure(context, error))?;
+        if matches!(value.as_deref(), Some("auto" | "scroll")) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether `index` is a focusable area that is being rendered. An
 /// `<area>` is focusable through its shape in an image map, so it needs an
 /// associated `<img>` that is being rendered and is not inert.
@@ -380,8 +416,14 @@ fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
             images.retain(|&image| is_connected_and_not_inert(document, image));
             images
         });
-        (is_focusable(document, index), images)
+        let anchor = can_anchor_focus(document, index);
+        (anchor.then(|| is_focusable(document, index)), images)
     })?;
+    let focusable = match focusable {
+        Some(true) => true,
+        Some(false) => is_scrollable_region(context, index)?,
+        None => false,
+    };
     if !focusable || !is_visible(context, index)? {
         return Ok(false);
     }
