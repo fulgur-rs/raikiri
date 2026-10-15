@@ -490,13 +490,17 @@ fn focus_sidecar_is_restored_after_geometry_reparse() {
             "<html><head><style>{page_rules} html,body{{margin:0}} div{{height:550px;background:red}} {focus_rule}</style></head><body>text<div tabindex=\"0\"></div></body></html>"
         )
     };
-    let source = document("div:focus{background:green}");
+    let source = document("div:focus-visible{background:green}");
     let expected = document("div{background:green}");
     let engine = InlineEngineChoice {
         require_inline_fonts: false,
         print_page_margin: false,
     };
-    let render = |html: &str, focused_path: Option<&[usize]>| {
+    let focused = |path: &[usize], visible| dynamic::FocusedPath {
+        path: path.to_vec(),
+        visible,
+    };
+    let render = |html: &str, focused_path: Option<&dynamic::FocusedPath>| {
         render_raikiri_pages_inner_with_canvases(
             html,
             800,
@@ -511,10 +515,12 @@ fn focus_sidecar_is_restored_after_geometry_reparse() {
         )
         .expect("document should render")
     };
-    let rendered = render(&source, Some(&[0, 1, 0]));
+    let rendered = render(&source, Some(&focused(&[0, 1, 0], true)));
     let reference = render(&expected, None);
     // A path that no longer reaches a node leaves nothing focused.
-    let unfocused = render(&source, Some(&[0, 1, 7]));
+    let unfocused = render(&source, Some(&focused(&[0, 1, 7], true)));
+    // Focus that does not indicate itself does not match `:focus-visible`.
+    let hidden = render(&source, Some(&focused(&[0, 1, 0], false)));
     let red = render(&document(""), None);
 
     assert!(rendered.pages.len() >= 2);
@@ -524,6 +530,9 @@ fn focus_sidecar_is_restored_after_geometry_reparse() {
     }
     for (unfocused_page, red_page) in unfocused.pages.iter().zip(&red.pages) {
         assert_eq!(unfocused_page.rgba, red_page.rgba);
+    }
+    for (hidden_page, red_page) in hidden.pages.iter().zip(&red.pages) {
+        assert_eq!(hidden_page.rgba, red_page.rgba);
     }
 }
 

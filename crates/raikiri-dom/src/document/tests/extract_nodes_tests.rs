@@ -90,6 +90,17 @@ fn focus_follows_the_element_while_it_is_in_the_tree() {
     assert_eq!(doc.focused_element(), None);
     doc.set_focused_element(Some(button));
     assert_eq!(doc.focused_element(), Some(button));
+    let visible = |doc: &Document| raikiri_style::StyleDom::focus_visible_element(doc);
+    assert_eq!(
+        visible(&doc),
+        Some(raikiri_style::StyleNodeId::new(button as u64))
+    );
+    doc.set_focus_visible(false);
+    assert_eq!(doc.focused_element(), Some(button));
+    assert_eq!(visible(&doc), None);
+    // Moving focus indicates it again.
+    doc.set_focused_element(Some(button));
+    assert_eq!(doc.focus_visible_element(), Some(button));
     // An extracted copy keeps focus on the copied element.
     assert_eq!(
         doc.extract_nodes(&[0, html, button]).focused_element(),

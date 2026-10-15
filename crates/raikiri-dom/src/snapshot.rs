@@ -28,6 +28,10 @@ pub struct LogicalSnapshot {
     /// The element a script focused; see [`Document::focused_element`].
     #[cfg_attr(feature = "snapshot-serde", serde(default))]
     pub focused: Option<usize>,
+    /// Whether the focused element does not indicate focus; see
+    /// [`Document::set_focus_visible`].
+    #[cfg_attr(feature = "snapshot-serde", serde(default))]
+    pub focus_hidden: bool,
 }
 /// Node contents and ordered children without derived state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -213,6 +217,7 @@ impl Document {
                 selected
             },
             focused: self.focused,
+            focus_hidden: self.focus_hidden,
             quirks: match self.quirks_mode() {
                 QuirksMode::NoQuirks => 0,
                 QuirksMode::LimitedQuirks => 1,
@@ -288,6 +293,7 @@ impl Document {
                 .and_then(|url| url::Url::parse(url).ok()),
         );
         doc.set_focused_element(snapshot.focused);
+        doc.set_focus_visible(!snapshot.focus_hidden);
         // `validate` rejected a selected URL that does not parse.
         for (element, src, url) in snapshot.selected_image_urls {
             if let Ok(url) = url::Url::parse(&url) {

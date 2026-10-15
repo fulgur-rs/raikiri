@@ -497,4 +497,6 @@ fn a_dom_that_reports_no_focus_matches_no_focus_state() {
     // focus recorded on the wrapped document stays invisible to matching.
     assert!(!focus.matches(&doc, children[0], &[parent]));
     assert!(focus.matches(&doc.doc, children[0], &[parent]));
+    let visible = crate::SelectorQuery::parse(":focus-visible").unwrap();
+    assert!(!visible.matches(&doc, children[0], &[parent]));
 }

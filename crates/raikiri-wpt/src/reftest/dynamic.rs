@@ -20,9 +20,19 @@ pub(super) struct PreparedDynamic {
     pub animation_styles: Vec<AnimationStyleSidecar>,
     /// Script-created highlight ranges expressed against the serialized tree.
     pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
-    /// Element-child path of the element script left focused. Counting
-    /// only elements keeps it stable when serialization merges text nodes.
-    pub focused_path: Option<Vec<usize>>,
+    /// The element script left focused.
+    pub focused_path: Option<FocusedPath>,
+}
+
+/// The element script left focused, so reparsing serialized HTML keeps
+/// `:focus`, `:focus-within` and `:focus-visible` as script left them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FocusedPath {
+    /// Element-child path from the document root. Counting only elements
+    /// keeps it stable when serialization merges text nodes.
+    pub path: Vec<usize>,
+    /// Whether the element indicates focus.
+    pub visible: bool,
 }
 
 fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationStyleSidecar> {
@@ -57,7 +67,7 @@ fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationSt
     styles
 }
 
-fn focused_path(document: &raikiri_dom::Document) -> Option<Vec<usize>> {
+fn focused_path(document: &raikiri_dom::Document) -> Option<FocusedPath> {
     let root = document.root_index();
     let mut path = Vec::new();
     let mut current = document.focused_element()?;
@@ -77,7 +87,10 @@ fn focused_path(document: &raikiri_dom::Document) -> Option<Vec<usize>> {
         current = parent;
     }
     path.reverse();
-    Some(path)
+    Some(FocusedPath {
+        path,
+        visible: document.focus_visible_element().is_some(),
+    })
 }
 
 fn node_path(document: &raikiri_dom::Document, node: usize) -> Option<Vec<usize>> {

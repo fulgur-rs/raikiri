@@ -96,7 +96,19 @@ fn only_connected_focusable_areas_take_focus() {
                 && !takes(make('button', {}, make('legend', {}, outerLegend).appendChild(\
                      make('fieldset', {disabled: ''}))))\
                 && takes(make('textarea', {}, outerLegend))\
-                && takes(make('button', {}, make('fieldset')));\
+                && takes(make('button', {}, make('fieldset')))\
+                && !takes(make('fieldset', {disabled: '', tabindex: '0'}))\
+                && !takes(make('fieldset', {tabindex: '0'}, fieldset))\
+                && takes(make('fieldset', {tabindex: '0'}));\
+            })()\
+         && (function () {\
+              var select = make('select'), group = make('optgroup', {tabindex: '0'}, select);\
+              var off = make('optgroup', {tabindex: '0', disabled: ''}, select);\
+              return takes(group) && !takes(off)\
+                && takes(make('option', {tabindex: '0'}, group))\
+                && !takes(make('option', {tabindex: '0', disabled: ''}, group))\
+                && !takes(make('option', {tabindex: '0'}, off))\
+                && takes(make('option', {tabindex: '0'}, select));\
             })()\
          && takes(make('span', {tabindex: '-1'})) && !takes(make('span', {tabindex: 'x'}))\
          && takes(make('span', {contenteditable: ''}))\
@@ -116,9 +128,9 @@ fn only_connected_focusable_areas_take_focus() {
                 for (var name in attrs) el.setAttribute(name, attrs[name]);\
                 document.body.appendChild(el); return el; }\
               var math = document.createElementNS('http://www.w3.org/1998/Math/MathML', 'mi');\
-              math.setAttribute('tabindex', '0'); document.body.appendChild(math);\
-              HTMLElement.prototype.focus.call(math);\
-              return document.activeElement !== math\
+              document.body.appendChild(math);\
+              return math instanceof MathMLElement && !takes(math)\
+                && (math.tabIndex = 0, takes(math))\
                 && svg('svg') instanceof SVGElement && !takes(svg('svg'))\
                 && takes(svg('svg', {tabindex: '0'})) && takes(svg('a', {href: '#'}))\
                 && !takes(svg('a', {'xlink:href': '#'})) && !takes(svg('a'))\
@@ -372,4 +384,75 @@ fn the_default_rendering_check_asks_for_a_box() {
     assert!(!host.is_being_rendered(0).unwrap());
     host.0.fail_geometry = true;
     assert!(host.is_being_rendered(body).is_err());
+}
+
+#[test]
+fn an_area_takes_focus_through_a_rendered_image_using_its_map() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let hidden = document.create_detached_element("img").unwrap();
+    document.set_element_attribute(hidden, "usemap", "#hidden");
+    document.append_child(body, hidden).unwrap();
+    host.unrendered.insert(hidden);
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "function make(tag, attrs, parent) { var el = document.createElement(tag);\
+           for (var name in attrs) el.setAttribute(name, attrs[name]);\
+           (parent || document.body).appendChild(el); return el; }\
+         function takes(el) { el.focus(); var got = document.activeElement === el;\
+           if (got) el.blur(); return got; }\
+         var loose = make('area', {href: '#'});\
+         var map = make('map', {name: 'm'}), area = make('area', {href: '#'}, make('span', {}, map));\
+         var plain = make('area', {}, map);\
+         var before = takes(area);\
+         var image = make('img', {usemap: 'm'}); var unhashed = takes(area);\
+         image.setAttribute('usemap', '#m'); var linked = takes(area);\
+         var other = make('map', {id: 'o'}), late = make('map', {name: 'o'});\
+         var shadowed = make('area', {href: '#'}, late); make('img', {usemap: '#o'});\
+         var inert = make('map', {id: 'i'}), held = make('area', {href: '#'}, inert);\
+         make('img', {usemap: '#i', inert: ''});\
+         var hiddenMap = make('map', {name: 'hidden'}), unseen = make('area', {href: '#'}, hiddenMap);\
+         !takes(loose) && !before && !unhashed && linked && !takes(plain)\
+           && !takes(shadowed) && !takes(held) && !takes(unseen) && area.tabIndex === 0",
+    );
+}
+
+#[test]
+fn focus_options_convert_and_decide_focus_visibility() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var order = [];\
+         b.focus({ get preventScroll() { order.push('prevent'); return 1; },\
+                   get focusVisible() { order.push('visible'); return 0; } });\
+         var hidden = document.activeElement === b && b.matches(':focus')\
+           && !b.matches(':focus-visible');\
+         b.focus(); var kept = !b.matches(':focus-visible');\
+         b.focus({focusVisible: true}); var shown = b.matches(':focus-visible');\
+         b.blur(); b.focus(null); var again = b.matches(':focus-visible');\
+         var thrown = false;\
+         try { b.focus({ get preventScroll() { throw new Error('x'); } }); }\
+         catch (e) { thrown = e.message === 'x'; }\
+         var typed = false;\
+         try { b.focus(1); } catch (e) { typed = e instanceof TypeError; }\
+         var span = document.body.appendChild(document.createElement('span'));\
+         span.focus({focusVisible: false});\
+         hidden && kept && shown && again && thrown && typed\
+           && order.join() === 'visible,prevent' && b.matches(':focus-visible')",
+    );
+}
+
+#[test]
+fn a_focus_handler_that_moves_focus_keeps_the_new_element_visible() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var a = document.body.appendChild(document.createElement('button'));\
+         var b = document.body.appendChild(document.createElement('button'));\
+         a.onfocus = function () { b.focus(); };\
+         a.focus({focusVisible: false});\
+         document.activeElement === b && b.matches(':focus-visible')",
+    );
 }

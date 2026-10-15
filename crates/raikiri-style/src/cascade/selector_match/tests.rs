@@ -159,6 +159,20 @@ fn focus_states_match_the_focused_element_and_its_ancestors() {
             "{selector} {id}"
         );
     }
+    // Focus that does not indicate itself keeps `:focus` but not
+    // `:focus-visible`.
+    doc.focus_hidden = true;
+    let id = StyleNodeId::new(inner as u64);
+    assert!(
+        crate::SelectorQuery::parse(":focus")
+            .unwrap()
+            .matches(&doc, id, &[])
+    );
+    assert!(
+        !crate::SelectorQuery::parse(":focus-visible")
+            .unwrap()
+            .matches(&doc, id, &[])
+    );
 }
 
 #[test]

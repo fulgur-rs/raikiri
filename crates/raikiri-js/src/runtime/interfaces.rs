@@ -14,6 +14,7 @@ use super::webidl::{dom_string, with_state};
 
 pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
 pub(crate) const SVG_NS: &str = "http://www.w3.org/2000/svg";
+pub(crate) const MATHML_NS: &str = "http://www.w3.org/1998/Math/MathML";
 
 /// Native data of every node wrapper. The index is never exposed to scripts.
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -46,6 +47,7 @@ pub(crate) struct Protos {
     pub html_style_element: JsObject,
     pub svg_element: JsObject,
     pub svg_style_element: JsObject,
+    pub mathml_element: JsObject,
     pub canvas_rendering_context_2d: JsObject,
     pub character_data: JsObject,
     pub text: JsObject,
@@ -414,13 +416,15 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &html_element,
         &style_element_members,
     )?;
-    // `SVGElement` carries the event handler and focus members it shares
-    // with `HTMLElement` (`GlobalEventHandlers`, `HTMLOrSVGElement`).
-    let svg_element_members = [
+    // `SVGElement` and `MathMLElement` carry the event handler and focus
+    // members they share with `HTMLElement` (`GlobalEventHandlers`,
+    // `HTMLOrSVGOrMathMLElement`).
+    let shared_element_members = [
         &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
         &super::focus::HTML_ELEMENT_FOCUS_MEMBERS,
     ];
-    let svg_element = derived(context, "SVGElement", &element, &svg_element_members)?;
+    let svg_element = derived(context, "SVGElement", &element, &shared_element_members)?;
+    let mathml_element = derived(context, "MathMLElement", &element, &shared_element_members)?;
     // SVG 2 `SVGStyleElement` also includes `LinkStyle`.
     let svg_style_result = derived(
         context,
@@ -662,6 +666,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         html_style_element: html_style_element.prototype,
         svg_element: svg_element.prototype,
         svg_style_element: svg_style_element.prototype,
+        mathml_element: mathml_element.prototype,
         canvas_rendering_context_2d: canvas_2d.prototype,
         character_data: character_data.prototype,
         text: text.prototype,
@@ -731,7 +736,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
 
 /// The interface prototype matching the node at `index`.
 fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
-    let (kind, html, svg, canvas, image, style, svg_style) = with_state(context, |s| {
+    let (kind, html, svg, mathml, canvas, image, style, svg_style) = with_state(context, |s| {
         let doc = s.host.document();
         let node = doc.get_node(index);
         let kind = node.map(|n| n.kind());
@@ -742,7 +747,17 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         let is_style = node.and_then(|n| n.tag_name()) == Some("style");
         let svg = namespace == Some(SVG_NS);
         let svg_style = is_style && svg;
-        (kind, html, svg, canvas, image, html && is_style, svg_style)
+        let mathml = namespace == Some(MATHML_NS);
+        (
+            kind,
+            html,
+            svg,
+            mathml,
+            canvas,
+            image,
+            html && is_style,
+            svg_style,
+        )
     })?;
     let p = protos(context);
     Ok(match kind {
@@ -752,6 +767,7 @@ fn prototype_for(context: &mut Context, index: usize) -> JsResult<JsObject> {
         Some(NodeKind::Element) if svg_style => p.svg_style_element.clone(),
         Some(NodeKind::Element) if html => p.html_element.clone(),
         Some(NodeKind::Element) if svg => p.svg_element.clone(),
+        Some(NodeKind::Element) if mathml => p.mathml_element.clone(),
         Some(NodeKind::Element) => p.element.clone(),
         Some(NodeKind::Text) => p.text.clone(),
         Some(NodeKind::Comment) => p.comment.clone(),

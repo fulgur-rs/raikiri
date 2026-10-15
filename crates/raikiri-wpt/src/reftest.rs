@@ -151,9 +151,9 @@ pub(crate) struct PrintRenderResources<'a> {
     /// Script-created ranges identified by a child-index path, so reparsing
     /// serialized HTML can resolve them to its new arena indices.
     pub(crate) custom_highlight_ranges: Option<&'a [CustomHighlightPathRange]>,
-    /// Element-child path of the element script left focused, so reparsing
-    /// serialized HTML keeps `:focus` and `:focus-within` matching it.
-    pub(crate) focused_path: Option<&'a [usize]>,
+    /// The element script left focused, so reparsing serialized HTML keeps
+    /// the focus states matching it.
+    pub(crate) focused_path: Option<&'a dynamic::FocusedPath>,
     /// Fail instead of falling back to the installed fonts when the inline
     /// engine cannot get the WPT fonts.
     pub(crate) require_inline_fonts: bool,
@@ -2916,12 +2916,12 @@ fn restore_animation_styles(
     Ok(())
 }
 
-/// Focus the element at `path`, an element-child path from the document
-/// root into the reparsed tree. A path that no longer reaches an element
-/// leaves the document unfocused.
-fn restore_focus(document: &mut raikiri_dom::Document, path: &[usize]) {
+/// Focus the element at `focused`'s element-child path from the document
+/// root into the reparsed tree, with its focus visibility. A path that no
+/// longer reaches an element leaves the document unfocused.
+fn restore_focus(document: &mut raikiri_dom::Document, focused: &dynamic::FocusedPath) {
     let mut node = document.root_index();
-    for child_index in path {
+    for child_index in &focused.path {
         let child = document.get_node(node).and_then(|parent| {
             parent
                 .children
@@ -2939,6 +2939,7 @@ fn restore_focus(document: &mut raikiri_dom::Document, path: &[usize]) {
         }
     }
     document.set_focused_element(Some(node));
+    document.set_focus_visible(focused.visible);
 }
 
 /// The fonts and page setup of one rendering.
@@ -2969,7 +2970,7 @@ fn render_raikiri_pages_inner_with_canvases(
     animation_styles: Option<&[AnimationStyleSidecar]>,
     canvas_bitmaps: Option<Vec<raikiri_dom::CanvasBitmap>>,
     custom_highlight_ranges: Option<&[CustomHighlightPathRange]>,
-    focused_path: Option<&[usize]>,
+    focused_path: Option<&dynamic::FocusedPath>,
 ) -> Result<RenderedDocument, Box<dyn std::error::Error>> {
     // URL construction requires an absolute directory. Normalize caller
     // paths here so resource and stylesheet loading work for relative test
@@ -4233,7 +4234,7 @@ where
         Some(&test_prepared.animation_styles),
         Some(test_prepared.canvases),
         Some(&test_prepared.custom_highlight_ranges),
-        test_prepared.focused_path.as_deref(),
+        test_prepared.focused_path.as_ref(),
     )
     .map_err(map_raster_or_raikiri_error)?;
     let ref_doc = render_raikiri_pages_inner_with_canvases(
@@ -4250,7 +4251,7 @@ where
         Some(&ref_prepared.animation_styles),
         Some(ref_prepared.canvases),
         Some(&ref_prepared.custom_highlight_ranges),
-        ref_prepared.focused_path.as_deref(),
+        ref_prepared.focused_path.as_ref(),
     )
     .map_err(map_raster_or_raikiri_error)?;
     let (test_selection, reference_selection) = selections;

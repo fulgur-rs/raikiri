@@ -29,6 +29,7 @@ fn rich_document() -> Document {
         url::Url::parse("https://example.test/a.png").unwrap(),
     );
     doc.set_focused_element(Some(img));
+    doc.set_focus_visible(false);
     doc
 }
 
@@ -207,6 +208,7 @@ fn reject_empty_arena_and_root_out_of_bounds() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(empty.validate(100).is_err());
@@ -244,6 +246,7 @@ fn reject_non_document_root_kind() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     // Root points at Text, so validation must fail even though node 0 is a Document.
@@ -312,6 +315,7 @@ fn reject_leaf_children() {
             base_url: None,
             selected_image_urls: Vec::new(),
             focused: None,
+            focus_hidden: false,
             stylesheets: Vec::new(),
         };
         assert!(bad.validate(100).is_err());
@@ -349,6 +353,7 @@ fn reject_template_link_variants() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(bad_tag.validate(100).is_err());
@@ -395,6 +400,7 @@ fn reject_template_link_variants() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(bad_target.validate(100).is_err());
@@ -422,6 +428,7 @@ fn reject_edge_to_root_and_self_loop() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(back_to_root.validate(100).is_err());
@@ -443,6 +450,7 @@ fn reject_edge_to_root_and_self_loop() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(self_loop.validate(100).is_err());
@@ -472,6 +480,7 @@ fn reject_detached_cycle_without_repeated_parent() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     assert!(cycle.validate(100).is_err());
@@ -510,6 +519,7 @@ fn snapshot_error_displays_its_reason() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
         stylesheets: Vec::new(),
     };
     let err = bad.validate(100).unwrap_err();

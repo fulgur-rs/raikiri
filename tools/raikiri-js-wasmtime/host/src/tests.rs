@@ -371,6 +371,7 @@ fn hostile_flush_rejects_invalid_snapshot() {
         base_url: None,
         selected_image_urls: Vec::new(),
         focused: None,
+        focus_hidden: false,
     };
     assert!(roundtrip_response(&mut b, HostOperation::Flush(empty)).is_err());
 }

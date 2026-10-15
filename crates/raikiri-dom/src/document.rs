@@ -316,6 +316,9 @@ pub struct Document {
     pub(crate) selected_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     /// The element a script focused; see [`Document::focused_element`].
     pub(crate) focused: Option<usize>,
+    /// Whether the focused element was focused with `focusVisible: false`,
+    /// so it does not indicate focus; see [`Document::set_focus_visible`].
+    pub(crate) focus_hidden: bool,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, PreparedImage>,
@@ -658,6 +661,7 @@ impl Document {
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
             focused: None,
+            focus_hidden: false,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
@@ -1976,6 +1980,7 @@ impl Document {
             resolved_image_urls,
             selected_image_urls,
             focused,
+            focus_hidden,
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
@@ -2053,6 +2058,7 @@ impl Document {
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
         document.focused = focused.and_then(|old| new_of_old.get(&old).copied());
+        document.focus_hidden = *focus_hidden;
         document.list_marker_images = remap_keys(list_marker_images, nodes);
         document.content_images = content_images
             .iter()
@@ -3539,6 +3545,22 @@ impl Document {
     /// caller decides whether the element is focusable.
     pub fn set_focused_element(&mut self, element: Option<usize>) {
         self.focused = element;
+        self.focus_hidden = false;
+    }
+
+    /// Whether the focused element indicates focus, matching
+    /// `:focus-visible`. Moving focus makes it visible again; `focus()` with
+    /// `focusVisible: false` hides it.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#dom-focusoptions-focusvisible>
+    pub fn set_focus_visible(&mut self, visible: bool) {
+        self.focus_hidden = !visible;
+    }
+
+    /// The focused element when it indicates focus; see
+    /// [`Document::set_focus_visible`].
+    pub fn focus_visible_element(&self) -> Option<usize> {
+        self.focused_element().filter(|_| !self.focus_hidden)
     }
 
     /// The focused element while it is an element in this document's tree.

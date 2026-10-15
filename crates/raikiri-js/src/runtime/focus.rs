@@ -5,11 +5,12 @@
 //! the cascade reads it for `:focus`, `:focus-within` and `:focus-visible`.
 //! There is no user input here, so focus only ever moves by script.
 
-use boa_engine::{Context, JsResult, JsValue};
+use boa_engine::{Context, JsResult, JsValue, js_string};
 use raikiri_dom::{Document, NodeKind};
 
-use super::dispatch::fire_focus_event;
-use super::interfaces::{HTML_NS, Members, SVG_NS, wrap_optional};
+use super::dispatch::{dict_arg, fire_focus_event};
+use super::events::dict_flag;
+use super::interfaces::{HTML_NS, MATHML_NS, Members, SVG_NS, wrap_optional};
 use super::node::{mark_dirty, write_attribute};
 use super::style::ensure_flushed;
 use super::webidl::{host_failure, this_document, this_element, with_state};
@@ -117,26 +118,32 @@ fn default_tab_index(document: &Document, index: usize) -> i32 {
     if zero { 0 } else { -1 }
 }
 
-/// Whether the form control `index` is disabled: by its own `disabled`
-/// attribute, or by a `<fieldset disabled>` ancestor unless it is inside
-/// that fieldset's first `<legend>` child.
+/// Whether `index` is actually disabled. A `button`, `input`, `select`,
+/// `textarea` or `fieldset` is disabled by its own `disabled` attribute,
+/// or by a `<fieldset disabled>` ancestor unless it is inside that
+/// fieldset's first `<legend>` child; an `optgroup` by its own attribute;
+/// an `option` by its own or its parent `optgroup`'s.
 ///
-/// Spec: <https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-disabled>
-fn is_disabled_control(document: &Document, index: usize) -> bool {
-    if !matches!(
-        html_tag(document, index),
-        Some("button" | "input" | "select" | "textarea")
-    ) {
-        return false;
+/// Spec: <https://html.spec.whatwg.org/multipage/semantics-other.html#concept-element-disabled>
+fn is_actually_disabled(document: &Document, index: usize) -> bool {
+    let disabled = |element| document.element_attribute(element, "disabled").is_some();
+    match html_tag(document, index) {
+        Some("optgroup") => return disabled(index),
+        Some("option") => {
+            return disabled(index)
+                || document.parent_of(index).is_some_and(|parent| {
+                    html_tag(document, parent) == Some("optgroup") && disabled(parent)
+                });
+        }
+        Some("button" | "input" | "select" | "textarea" | "fieldset") => {}
+        _ => return false,
     }
-    if document.element_attribute(index, "disabled").is_some() {
+    if disabled(index) {
         return true;
     }
     let mut child = index;
     while let Some(parent) = document.parent_of(child) {
-        if html_tag(document, parent) == Some("fieldset")
-            && document.element_attribute(parent, "disabled").is_some()
-        {
+        if html_tag(document, parent) == Some("fieldset") && disabled(parent) {
             let first_legend = document.get_node(parent).and_then(|fieldset| {
                 fieldset
                     .children
@@ -153,37 +160,97 @@ fn is_disabled_control(document: &Document, index: usize) -> bool {
     false
 }
 
-/// Whether the HTML or SVG element `index` is a focusable area: connected,
-/// not inert, not a disabled form control, and focusable by default (an
-/// SVG link counts), through a valid `tabindex`, or as an HTML editing
-/// host. Whether it is being rendered is
-/// not checked, since that needs a layout.
-///
-/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
-fn is_focusable(document: &Document, index: usize) -> bool {
-    let svg = tag_in(document, index, SVG_NS).is_some();
-    if html_tag(document, index).is_none() && !svg {
-        return false;
-    }
-    let attr = |name| document.element_attribute(index, name);
-    if is_disabled_control(document, index) {
-        return false;
-    }
+/// Whether `index` is in the document and neither it nor an ancestor is
+/// `inert`.
+fn is_connected_and_not_inert(document: &Document, index: usize) -> bool {
     let mut ancestor = Some(index);
-    let mut connected = false;
     while let Some(current) = ancestor {
         if current == document.root_index() {
-            connected = true;
-        } else if document.element_attribute(current, "inert").is_some() {
+            return true;
+        }
+        if document.element_attribute(current, "inert").is_some() {
             return false;
         }
         ancestor = document.parent_of(current);
     }
-    connected
+    false
+}
+
+/// Whether the HTML, SVG or MathML element `index` is a focusable area:
+/// connected, not inert, not actually disabled, and focusable through a
+/// valid `tabindex`, by default (an SVG link counts), or as an HTML
+/// editing host. Whether it is being rendered is not checked, since that
+/// needs a layout.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
+fn is_focusable(document: &Document, index: usize) -> bool {
+    let html = html_tag(document, index).is_some();
+    if !html
+        && tag_in(document, index, SVG_NS).is_none()
+        && tag_in(document, index, MATHML_NS).is_none()
+    {
+        return false;
+    }
+    let attr = |name| document.element_attribute(index, name);
+    !is_actually_disabled(document, index)
+        && is_connected_and_not_inert(document, index)
         && (attr("tabindex").and_then(parse_integer).is_some()
             || is_svg_link(document, index)
             || focusable_by_default(document, index)
-            || !svg && attr("contenteditable").is_some_and(is_editing_host_value))
+            || html && attr("contenteditable").is_some_and(is_editing_host_value))
+}
+
+/// The element children of `index`, then their descendants, in tree
+/// order.
+fn elements_in_tree_order(document: &Document) -> Vec<usize> {
+    let mut elements = Vec::new();
+    let mut stack = vec![document.root_index()];
+    while let Some(index) = stack.pop() {
+        let Some(node) = document.get_node(index) else {
+            continue;
+        };
+        if node.kind() == NodeKind::Element {
+            elements.push(index);
+        }
+        stack.extend(node.children.iter().rev());
+    }
+    elements
+}
+
+/// The `<img>` elements whose image map is the `<map>` ancestor of the
+/// `<area>` element `area`. An image's `usemap` is a hash-name reference to
+/// the first `<map>` in tree order whose `id` or `name` matches.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/image-maps.html#image-map>
+fn image_map_images(document: &Document, area: usize) -> Vec<usize> {
+    let mut map = document.parent_of(area);
+    while let Some(candidate) = map
+        && html_tag(document, candidate) != Some("map")
+    {
+        map = document.parent_of(candidate);
+    }
+    let Some(map) = map else {
+        return Vec::new();
+    };
+    let elements = elements_in_tree_order(document);
+    let map_named = |name: &str| {
+        elements.iter().copied().find(|&element| {
+            html_tag(document, element) == Some("map")
+                && (document.element_attribute(element, "id") == Some(name)
+                    || document.element_attribute(element, "name") == Some(name))
+        })
+    };
+    elements
+        .iter()
+        .copied()
+        .filter(|&image| {
+            html_tag(document, image) == Some("img")
+                && document
+                    .element_attribute(image, "usemap")
+                    .and_then(|usemap| usemap.split_once('#'))
+                    .is_some_and(|(_, name)| map_named(name) == Some(map))
+        })
+        .collect()
 }
 
 /// HTML "focus update steps" for a move from the current focus to `next`
@@ -219,12 +286,33 @@ fn is_being_rendered(context: &mut Context, index: usize) -> JsResult<bool> {
     rendered.map_err(|error| host_failure(context, error))
 }
 
-/// Whether `index` is a focusable area that is being rendered.
+/// Whether `index` is a focusable area that is being rendered. An
+/// `<area>` is focusable through its shape in an image map, so it needs an
+/// associated `<img>` that is being rendered and is not inert.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
 fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
-    Ok(
-        with_state(context, |s| is_focusable(s.host.document(), index))?
-            && is_being_rendered(context, index)?,
-    )
+    let (focusable, images) = with_state(context, |s| {
+        let document = s.host.document();
+        let images = (html_tag(document, index) == Some("area")).then(|| {
+            let mut images = image_map_images(document, index);
+            images.retain(|&image| is_connected_and_not_inert(document, image));
+            images
+        });
+        (is_focusable(document, index), images)
+    })?;
+    if !focusable {
+        return Ok(false);
+    }
+    let Some(images) = images else {
+        return is_being_rendered(context, index);
+    };
+    for image in images {
+        if is_being_rendered(context, image)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The rendering update's focus fixup: clear focus, firing `blur` and
@@ -242,12 +330,44 @@ pub(crate) fn fix_up_focus(context: &mut Context) -> JsResult<()> {
     Ok(())
 }
 
+/// `focus(options)`'s `FocusOptions` dictionary, converted in member
+/// order: `focusVisible` (absent as `None`), then `preventScroll`, which
+/// has nothing to prevent here.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusoptions>
+fn focus_visible_option(args: &[JsValue], context: &mut Context) -> JsResult<Option<bool>> {
+    let Some(options) = dict_arg(args, 0)? else {
+        return Ok(None);
+    };
+    let visible = options.get(js_string!("focusVisible"), context)?;
+    dict_flag(context, &options, "preventScroll")?;
+    Ok((!visible.is_undefined()).then(|| visible.to_boolean()))
+}
+
 /// `HTMLElement.focus(options)`: focus the element if it is a focusable
-/// area; otherwise do nothing. `preventScroll` has nothing to prevent.
-fn focus(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+/// area; otherwise do nothing. An explicit `focusVisible` decides whether
+/// the element indicates focus (`:focus-visible`); without one, script
+/// focus always indicates it.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#dom-focus>
+fn focus(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
-    if can_take_focus(context, index)? {
-        move_focus(context, Some(index))?;
+    let visible = focus_visible_option(args, context)?;
+    if !can_take_focus(context, index)? {
+        return Ok(JsValue::undefined());
+    }
+    move_focus(context, Some(index))?;
+    if let Some(visible) = visible
+        && with_state(context, |s| {
+            let document = s.host.document_mut();
+            let focused = document.focused_element() == Some(index);
+            if focused {
+                document.set_focus_visible(visible);
+            }
+            focused
+        })?
+    {
+        mark_dirty(context)?;
     }
     Ok(JsValue::undefined())
 }

@@ -164,7 +164,7 @@ fn target_key_to_js(context: &mut Context, key: Option<Option<usize>>) -> JsResu
 /// The `EventInit`/`CustomEventInit`/`ErrorEventInit` dictionary argument:
 /// `undefined`/absent/`null` all mean "every member at its default"; any
 /// other non-object value cannot convert to a dictionary type.
-fn dict_arg(args: &[JsValue], i: usize) -> JsResult<Option<JsObject>> {
+pub(crate) fn dict_arg(args: &[JsValue], i: usize) -> JsResult<Option<JsObject>> {
     match args.get(i) {
         None => Ok(None),
         Some(v) if v.is_undefined() || v.is_null() => Ok(None),
@@ -1158,14 +1158,15 @@ fn set_handler_callback(
     })
 }
 
-/// Whether element `index` has event handler content attributes: HTML
-/// and SVG elements both include `GlobalEventHandlers`.
+/// Whether element `index` has event handler content attributes: HTML,
+/// SVG and MathML elements all include `GlobalEventHandlers`.
 ///
-/// Spec: <https://svgwg.org/svg2-draft/types.html#InterfaceSVGElement>
+/// Spec: <https://svgwg.org/svg2-draft/types.html#InterfaceSVGElement>,
+/// <https://w3c.github.io/mathml-core/#dom-mathmlelement>
 fn has_event_handlers(doc: &raikiri_dom::Document, index: usize) -> bool {
     matches!(
         doc.element_namespace_uri(index),
-        Some(super::interfaces::HTML_NS | super::interfaces::SVG_NS)
+        Some(super::interfaces::HTML_NS | super::interfaces::SVG_NS | super::interfaces::MATHML_NS)
     )
 }
 
