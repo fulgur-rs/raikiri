@@ -369,6 +369,10 @@ pub struct Document {
     /// Cascade generation used by the most recent successful layout. Resolved
     /// order projections and Grid row placements are valid only for this run.
     pub(crate) layout_cascade_generation: Option<u64>,
+    /// The children of each container with many children whose walk by
+    /// index taffy has started and not finished, listed when taffy counted
+    /// them.
+    pub(crate) taffy_child_walks: std::cell::RefCell<HashMap<usize, Vec<taffy::NodeId>>>,
     /// Used left and right margins of `<body>` that the most recent layout
     /// carried as inline padding of the synthetic body root.
     pub(crate) body_inline_margins: (f32, f32),
@@ -683,6 +687,7 @@ impl Document {
             ifc: None,
             normal_line_height: None,
             layout_cascade_generation: None,
+            taffy_child_walks: Default::default(),
             body_inline_margins: (0.0, 0.0),
             body_block_start_margin: 0.0,
             fixed_page_area: None,
@@ -2020,6 +2025,7 @@ impl Document {
             ifc,
             normal_line_height,
             layout_cascade_generation: _,
+            taffy_child_walks: _,
             body_inline_margins: _,
             body_block_start_margin: _,
             fixed_page_area: _,
