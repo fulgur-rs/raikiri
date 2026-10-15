@@ -22,7 +22,7 @@ fn rich_document() -> Document {
         url::Url::parse("https://example.test/dir/page.html").unwrap(),
     ));
     doc.add_stylesheet("p {color:blue}", StylesheetKind::Author);
-    let img = doc.append_element(None, "img", Default::default(), None::<&str>);
+    let img = doc.append_element(Some(0), "img", Default::default(), None::<&str>);
     doc.select_image_url(
         img,
         "a.png",
@@ -536,4 +536,17 @@ fn logical_snapshot_maps_all_quirks_modes() {
     assert_eq!(doc.logical_snapshot().quirks, 1);
     doc.set_quirks_mode(QuirksMode::Quirks);
     assert_eq!(doc.logical_snapshot().quirks, 2);
+}
+
+#[test]
+fn detached_focus_is_dropped_on_rebuild() {
+    let mut doc = Document::new();
+    let body = doc.append_element(None, "body", Default::default(), None::<&str>);
+    let loose = doc.create_detached_element("button").unwrap();
+    let mut snapshot = doc.logical_snapshot();
+    snapshot.focused = Some(loose);
+    let mut rebuilt = Document::from_logical_snapshot(snapshot, 100).unwrap();
+    rebuilt.append_child(body, loose).unwrap();
+    assert_eq!(rebuilt.focused_element(), None);
+    assert_eq!(rebuilt.logical_snapshot().focused, None);
 }

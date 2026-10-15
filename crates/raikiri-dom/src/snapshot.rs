@@ -370,6 +370,9 @@ impl Document {
         }
         doc.flags_dirty = true;
         doc.mark_in_document_flags();
+        // A focused node outside the document tree is dropped now, so
+        // appending it later cannot bring the focus back without `focus()`.
+        doc.fix_up_focus();
         Ok(doc)
     }
 }
