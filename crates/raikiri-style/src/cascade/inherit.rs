@@ -737,9 +737,7 @@ pub(crate) fn walk_from<D: StyleDom>(
                 None if is_element => Some(
                     ResolveContext::with_root_line_height(computed.font_size, computed.lh_basis())
                         .with_viewport(viewport.0, viewport.1)
-                        .with_vertical_root(
-                            computed.cssom_writing_mode != WritingMode::HorizontalTb,
-                        ),
+                        .with_vertical_root(computed.cssom_writing_mode.is_vertical()),
                 ),
                 None => None,
             };

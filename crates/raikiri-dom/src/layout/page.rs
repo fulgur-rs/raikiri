@@ -1279,12 +1279,11 @@ pub(crate) fn establishes_orthogonal_flow(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    use raikiri_style::property::WritingMode;
     let vertical = |id: usize| {
         cascade
             .computed
             .get(id)
-            .is_some_and(|computed| computed.cssom_writing_mode != WritingMode::HorizontalTb)
+            .is_some_and(|computed| computed.cssom_writing_mode.is_vertical())
     };
     if cascade
         .computed

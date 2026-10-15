@@ -102,3 +102,30 @@ fn vertical_absolute_box_without_inline_content_keeps_the_block_path_position() 
     // path, so the static position stays where that path puts it.
     assert_eq!(absolute_rect(&doc, absolute), (0.0, 0.0, 15.0, 20.0));
 }
+
+#[test]
+fn sideways_absolute_text_uses_the_vertical_block_start_edge() {
+    for (mode, expected_x) in [("sideways-rl", 15.0), ("sideways-lr", 0.0)] {
+        let mut doc = Document::new();
+        let body = doc.append_element(
+            Some(0),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        let parent = doc.append_element(Some(body), "div", Style::default(),
+            Some(format!("display:block;position:relative;writing-mode:{mode};width:30px;height:35px;font:10px Ahem")));
+        let child = doc.append_element(
+            Some(parent),
+            "div",
+            Style::default(),
+            Some("display:block;position:absolute;width:15px;height:20px"),
+        );
+        doc.append_text(child, "x");
+        doc.mark_in_document_flags();
+        let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+        // The content's shaping fallback does not change block progression.
+        assert_eq!(absolute_rect(&doc, child), (expected_x, 0.0, 15.0, 20.0));
+    }
+}

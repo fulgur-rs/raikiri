@@ -3,7 +3,7 @@
 use crate::Document;
 use raikiri_style::{
     CascadeResult,
-    property::{BreakBetween, DisplayValue, FloatValue, PositionValue, WritingMode},
+    property::{BreakBetween, DisplayValue, FloatValue, PositionValue},
 };
 use std::collections::{BTreeMap, HashMap};
 
@@ -52,8 +52,8 @@ impl HeaderRepeats {
             let cv = &cascade.computed[table];
             if node.is_display_none()
                 || cv.display != DisplayValue::Table
-                || cv.writing_mode != WritingMode::HorizontalTb
-                || cv.cssom_writing_mode != WritingMode::HorizontalTb
+                || cv.writing_mode.is_vertical()
+                || cv.cssom_writing_mode.is_vertical()
                 || cv.float != FloatValue::None
                 || !matches!(cv.position, PositionValue::Static | PositionValue::Relative)
             {
