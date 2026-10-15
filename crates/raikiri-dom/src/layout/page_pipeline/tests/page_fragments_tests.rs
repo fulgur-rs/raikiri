@@ -3624,3 +3624,21 @@ fn an_absolutely_positioned_child_stays_when_a_flex_item_breaks_earlier() {
     );
     assert_eq!(doc.nodes[positioned].unrounded_layout.location.y, 35.0);
 }
+
+#[test]
+fn a_later_text_on_a_moved_line_follows_the_earlier_break() {
+    // "aaaa " stays on page 0; the span's text starts on the moved second
+    // line, so both its lines begin page 1.
+    let (_, fragments) = inline_runs_after_a_spacer(
+        Some(""),
+        &[(false, "aaaa "), (true, "bbbb cccc")],
+        "orphans:1;widows:2",
+    );
+    assert_eq!(
+        fragments,
+        [
+            vec![(0, Some(PageFragmentLineRange::new(0, 1)))],
+            vec![(1, Some(PageFragmentLineRange::new(0, 2)))],
+        ]
+    );
+}

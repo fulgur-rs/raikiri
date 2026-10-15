@@ -5133,15 +5133,19 @@ pub fn layout_pages_with_page_geometry_and_control(
             // break.
             // A paragraph that is a flex item alone on its line cannot move
             // as a unit, but its later lines can move down inside it.
-            let flex_line_paragraph = paragraph_root.filter(|&root| {
-                line_block_parent.is_none()
-                    && !uses_positioned_coordinates
-                    && !candidate.is_float_descendant
-                    && !candidate.is_out_of_flow_descendant
-                    && is_flex_item_alone_on_its_line(document, cascade, root, body_id)
-            });
+            let flex_line_paragraph = paragraph_root
+                .filter(|_| {
+                    line_block_parent.is_none()
+                        && !uses_positioned_coordinates
+                        && !candidate.is_float_descendant
+                        && !candidate.is_out_of_flow_descendant
+                })
+                .and_then(|root| {
+                    flex_container_of_item_alone_on_its_line(document, cascade, root, body_id)
+                        .map(|container| (root, container))
+                });
             if let Some((block_id, nested)) =
-                line_block_parent.or(flex_line_paragraph.map(|root| (root, true)))
+                line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
                 && checked_orphans_widows.insert(block_id)
                 && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
             {
@@ -5189,38 +5193,39 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 ifc.boxes.is_empty() && ifc.multicol_fragments.is_none()
                             })
                         && line > 0
-                });
-                if let Some(line) = earlier_break {
-                    let target_page = current_page.saturating_add(1);
-                    check_candidate_page!('candidate_loop, target_page);
-                    let shift = page_origin(target_page) - (effective_y + line_metrics[line].0);
-                    if shift.is_finite() && shift > 0.0 {
-                        shift_ifc_lines_from(document, block_id, line, shift);
-                        if flex_line_paragraph == Some(block_id) {
-                            shift_later_flex_lines(document, cascade, block_id, shift);
-                        }
-                        if nested {
-                            grow_ancestors_for_shift(
-                                document,
-                                cascade,
-                                block_id,
-                                shift,
-                                body_id,
-                                &parent_of,
-                                &mut pending_bounded_shifts,
-                                &mut pending_context_growth,
-                                page_before_candidate,
-                            );
-                        }
-                        if text_lines
-                            .get(node_id)
-                            .and_then(|owned| owned.lines.last())
-                            .is_some_and(|last| last.line >= line)
-                        {
-                            height += shift;
-                        }
-                        pending_line_split = Some((block_id, line, shift));
+                })
+                .map(|line| {
+                    let target_y = page_origin(current_page.saturating_add(1));
+                    (line, target_y - (effective_y + line_metrics[line].0))
+                })
+                .filter(|(_, shift)| shift.is_finite() && *shift > 0.0);
+                if let Some((line, shift)) = earlier_break {
+                    check_candidate_page!('candidate_loop, current_page.saturating_add(1));
+                    shift_ifc_lines_from(document, block_id, line, shift);
+                    if let Some((item, container)) = flex_line_paragraph {
+                        shift_later_flex_lines(document, cascade, container, item, shift);
                     }
+                    if nested {
+                        grow_ancestors_for_shift(
+                            document,
+                            cascade,
+                            block_id,
+                            shift,
+                            body_id,
+                            &parent_of,
+                            &mut pending_bounded_shifts,
+                            &mut pending_context_growth,
+                            page_before_candidate,
+                        );
+                    }
+                    if text_lines
+                        .get(node_id)
+                        .and_then(|owned| owned.lines.last())
+                        .is_some_and(|last| last.line >= line)
+                    {
+                        height += shift;
+                    }
+                    pending_line_split = Some((block_id, line, shift));
                 } else if line_block_parent.is_some()
                     && starts_on_page
                     && fits_on_page
@@ -6760,38 +6765,35 @@ fn placed_in_block_flow(
     }
 }
 
-/// Whether `item` is a flex item alone on its line of a row flex container
-/// that is itself placed in plain block flow (see [`placed_in_block_flow`]):
-/// lines moved down inside it grow it and its flex line without moving
-/// another item beside it, and the lines after it follow.
-fn is_flex_item_alone_on_its_line(
+/// The row flex container of `item` when `item` is a flex item alone on
+/// its line and the container is itself placed in plain block flow (see
+/// [`placed_in_block_flow`]): lines moved down inside the item grow it and
+/// its flex line without moving another item beside it, and the lines after
+/// it follow.
+fn flex_container_of_item_alone_on_its_line(
     document: &Document,
     cascade: &CascadeResult,
     item: usize,
     body_id: usize,
-) -> bool {
+) -> Option<usize> {
     if !height_follows_content(document, item)
         || matches!(
             cascade.computed[item].position,
             PositionValue::Absolute | PositionValue::Fixed
         )
     {
-        return false;
+        return None;
     }
-    let Some(container) = document.layout_parent_of(item) else {
-        return false;
-    };
-    let computed = &cascade.computed[container];
-    if computed.display != DisplayValue::Flex
-        || !matches!(
-            computed.flex_direction,
-            FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-        )
-        || !height_follows_content(document, container)
-        || !placed_in_block_flow(document, cascade, container, body_id)
-    {
-        return false;
-    }
+    let container = document.layout_parent_of(item).filter(|&container| {
+        let computed = &cascade.computed[container];
+        computed.display == DisplayValue::Flex
+            && matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            )
+            && height_follows_content(document, container)
+            && placed_in_block_flow(document, cascade, container, body_id)
+    })?;
     let layout = document.nodes[item].unrounded_layout;
     let (top, bottom) = (layout.location.y, layout.location.y + layout.size.height);
     document.nodes[container]
@@ -6809,20 +6811,19 @@ fn is_flex_item_alone_on_its_line(
             other.location.y + other.size.height <= top + 0.001
                 || other.location.y >= bottom - 0.001
         })
+        .then_some(container)
 }
 
-/// Moves the flex lines below `item`, a flex item alone on its line that
-/// grew by `shift` at its block-end edge, down by `shift`: in a row flex
-/// container they follow the line that grew.
+/// Moves the flex lines of `container` below `item`, a flex item alone on
+/// its line that grew by `shift` at its block-end edge, down by `shift`: in
+/// a row flex container they follow the line that grew.
 fn shift_later_flex_lines(
     document: &mut Document,
     cascade: &CascadeResult,
+    container: usize,
     item: usize,
     shift: f32,
 ) {
-    let Some(container) = document.layout_parent_of(item) else {
-        return;
-    };
     let layout = document.nodes[item].unrounded_layout;
     // The item has already grown, so its old bottom is `shift` higher.
     let old_bottom = layout.location.y + layout.size.height - shift;
