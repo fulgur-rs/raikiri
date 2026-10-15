@@ -51,12 +51,14 @@ pub(crate) fn follow_moved_rows(
                 move_top(document, part, delta);
             }
         }
-        // A caption above the grid keeps the table's top edge where it is,
-        // and so may content outside the rows, wrapped in an anonymous row.
+        // A caption above the grid keeps the table's top edge where it is
+        // (an absolutely positioned one is out of the table's flow), and so
+        // may content outside the rows, wrapped in an anonymous row.
         let top_caption = document.nodes[table].children.iter().any(|&id| {
             !document.nodes[id].is_display_none()
                 && document.nodes[id].display == DisplayValue::TableCaption
                 && document.nodes[id].caption_side == CaptionSideValue::Top
+                && document.nodes[id].style.position != taffy::Position::Absolute
         });
         let anonymous_rows = groups
             .iter()
@@ -107,10 +109,11 @@ fn move_top(document: &mut Document, id: usize, delta: f32) {
     if !delta.is_finite() || delta <= 0.0 || document.anonymous_table_cells(id).next().is_some() {
         return;
     }
+    // A box shorter than the move ends up empty above its first row, and
+    // grows over its rows again when the table is finished.
     let layout = &mut document.nodes[id].unrounded_layout;
-    let delta = delta.min(layout.size.height);
     layout.location.y += delta;
-    layout.size.height -= delta;
+    layout.size.height = (layout.size.height - delta).max(0.0);
     if let Some(grid) = &mut document.nodes[id].table_grid_box {
         grid.height = (grid.height - delta).max(0.0);
     }

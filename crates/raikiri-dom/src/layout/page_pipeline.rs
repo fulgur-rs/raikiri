@@ -4418,13 +4418,15 @@ pub fn layout_pages_with_page_geometry_and_control(
             }
         }
         for (table, (row, row_y)) in table_first_rows {
-            // A caption above the grid stays on the current page. Content
+            // A caption above the grid stays on the current page; an
+            // absolutely positioned one is out of the table's flow. Content
             // outside the rows, wrapped in an anonymous row, may come before
             // the first row.
             if document.nodes[table].children.iter().any(|&child| {
                 cascade.computed[child].display == DisplayValue::TableCaption
                     && cascade.computed[child].caption_side
                         == raikiri_style::property::CaptionSideValue::Top
+                    && document.nodes[child].style.position != taffy::Position::Absolute
                     || document.anonymous_table_cells(child).next().is_some()
             }) || document.anonymous_table_cells(table).next().is_some()
             {
@@ -5707,7 +5709,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                     } else if forced_transition {
                         // The forced break is before the box's margin box, so a
                         // positive block-start margin remains on the new page.
-                        target_y + margin_top.max(0.0)
+                        // A table's first row keeps the table's top edge above it.
+                        target_y + margin_top.max(0.0) + table_row_lead
                     } else if row_group_overflow {
                         target_y + row_group.map_or(0.0, |(_, lead)| lead) + relative_offset
                     } else if table_row_overflow {

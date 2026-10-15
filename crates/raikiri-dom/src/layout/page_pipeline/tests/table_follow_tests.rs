@@ -194,3 +194,55 @@ fn a_collapsed_table_grows_over_its_own_moved_row() {
     // Collapsed borders keep no spacing below the last row.
     assert_eq!(span(&doc, table), (60.0, 130.0));
 }
+
+#[test]
+fn a_short_table_moves_with_its_first_row_after_a_forced_break() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:10px"),
+        );
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some("display:table;width:100px;border-spacing:2px;border:3px solid"),
+        );
+        let group = doc.append_element(
+            Some(table),
+            "tbody",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        ids.extend([table, group]);
+        ids.push(append_row(doc, group, "break-before:page", 20.0).0);
+        ids.push(append_row(doc, group, "", 10.0).0);
+    });
+    let [table, group, first, last] = ids[..] else {
+        unreachable!()
+    };
+    // The row moves farther than the table is tall; the table's border and
+    // spacing still start the new page above it.
+    assert_eq!(span(&doc, first), (105.0, 125.0));
+    assert_eq!(span(&doc, last), (127.0, 137.0));
+    assert_eq!(span(&doc, group), (105.0, 137.0));
+    assert_eq!(span(&doc, table), (100.0, 142.0));
+}
+
+#[test]
+fn an_absolutely_positioned_caption_does_not_hold_the_table_top() {
+    let (doc, ids) = table_after_spacer(
+        "border:3px solid",
+        Some("position:absolute"),
+        "",
+        &[50.0, 10.0],
+    );
+    let [table, _, first, ..] = ids[..] else {
+        unreachable!()
+    };
+    assert_eq!(span(&doc, first), (105.0, 155.0));
+    assert_eq!(span(&doc, table), (100.0, 172.0));
+}
