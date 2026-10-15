@@ -3473,6 +3473,7 @@ fn a_nested_paragraph_breaks_between_earlier_lines_for_its_widows() {
 fn flex_item_paragraph_after_a_spacer(
     wrap: bool,
     root_css: &str,
+    second_extra_css: &str,
 ) -> (Vec<(u32, Option<PageFragmentLineRange>)>, f32) {
     use crate::layout::test_support::ifc_ahem_fonts;
     let mut doc = crate::Document::new();
@@ -3497,7 +3498,7 @@ fn flex_item_paragraph_after_a_spacer(
     let item = doc.append_element(Some(flex), "div", Style::default(), Some(style.as_str()));
     let text = doc.append_text(item, "aaaa bbbb cccc");
     let second_css = format!(
-        "display:block;height:5px;width:{}",
+        "display:block;height:5px;width:{};{second_extra_css}",
         if wrap { "100%" } else { "10px" }
     );
     let second = doc.append_element(
@@ -3524,7 +3525,8 @@ fn flex_item_paragraph_after_a_spacer(
 #[test]
 fn a_flex_item_alone_on_its_line_breaks_between_earlier_lines_for_its_widows() {
     // The item's last two lines start page 1; the next flex line follows.
-    let (fragments, second_top) = flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2");
+    let (fragments, second_top) =
+        flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2", "");
     assert_eq!(
         fragments,
         [
@@ -3539,7 +3541,8 @@ fn a_flex_item_alone_on_its_line_breaks_between_earlier_lines_for_its_widows() {
 fn a_flex_item_beside_another_keeps_its_natural_break() {
     // Moving the item's lines would grow the flex line under the item
     // beside it, so the item keeps its natural split.
-    let (fragments, second_top) = flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2");
+    let (fragments, second_top) =
+        flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "");
     assert_eq!(
         fragments,
         [
@@ -3641,4 +3644,20 @@ fn a_later_text_on_a_moved_line_follows_the_earlier_break() {
             vec![(1, Some(PageFragmentLineRange::new(0, 2)))],
         ]
     );
+}
+
+#[test]
+fn a_flex_item_sharing_its_line_with_a_lower_item_keeps_its_natural_break() {
+    // The item beside it sits below the paragraph's box through its margin,
+    // but on the same flex line, so it is not moved as a later line.
+    let (fragments, second_top) =
+        flex_item_paragraph_after_a_spacer(false, "orphans:1;widows:2", "margin-top:40px");
+    assert_eq!(
+        fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+    assert_eq!(second_top, 55.0);
 }

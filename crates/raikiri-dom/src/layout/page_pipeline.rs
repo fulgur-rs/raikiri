@@ -6794,8 +6794,22 @@ fn flex_container_of_item_alone_on_its_line(
             && height_follows_content(document, container)
             && placed_in_block_flow(document, cascade, container, body_id)
     })?;
+    // An item that takes the whole main size leaves no room for another on
+    // its line; vertical separation alone can come from cross-axis margins
+    // or alignment of items that do share it.
     let layout = document.nodes[item].unrounded_layout;
-    let (top, bottom) = (layout.location.y, layout.location.y + layout.size.height);
+    let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
+    let line = document.nodes[container].unrounded_layout;
+    let line_width = line.size.width
+        - line.padding.left
+        - line.padding.right
+        - line.border.left
+        - line.border.right;
+    if outer_width < line_width - 0.001 {
+        return None;
+    }
+    let top = layout.location.y - layout.margin.top;
+    let bottom = layout.location.y + layout.size.height + layout.margin.bottom;
     document.nodes[container]
         .children
         .iter()
@@ -6808,8 +6822,8 @@ fn flex_container_of_item_alone_on_its_line(
         })
         .all(|&child| {
             let other = document.nodes[child].unrounded_layout;
-            other.location.y + other.size.height <= top + 0.001
-                || other.location.y >= bottom - 0.001
+            other.location.y + other.size.height + other.margin.bottom <= top + 0.001
+                || other.location.y - other.margin.top >= bottom - 0.001
         })
         .then_some(container)
 }
