@@ -408,11 +408,13 @@ impl FirstLetter {
                 let parent_box = (box_id != 0).then_some(box_id);
                 box_id = generated_node_id(origin, PseudoElem::FirstLetter);
                 let inline = styled(doc, cascade, &cv, context_node, fonts)?;
-                let mut edges = style::inline_edges(&cv, context_node, fonts)?;
+                let (mut edges, mut edge_percents) = style::inline_edges(&cv, context_node, fonts)?;
                 if self.started && !continuing_box {
                     edges.margin.inline_start = 0.0;
                     edges.border.inline_start = 0.0;
                     edges.padding.inline_start = 0.0;
+                    edge_percents.margin.inline_start = 0.0;
+                    edge_percents.padding.inline_start = 0.0;
                 }
                 let container = |owner| {
                     crate::generated_content::generated_origin(owner)
@@ -426,6 +428,8 @@ impl FirstLetter {
                     edges.margin.inline_end = 0.0;
                     edges.border.inline_end = 0.0;
                     edges.padding.inline_end = 0.0;
+                    edge_percents.margin.inline_end = 0.0;
+                    edge_percents.padding.inline_end = 0.0;
                 }
                 if !continuing_box {
                     // Shodo shapes the retained range with its ordinary source style
@@ -467,6 +471,7 @@ impl FirstLetter {
                         &inline,
                         edges,
                     );
+                    builder.set_inline_edge_percents(edge_percents);
                     self.open_boxes += 1;
                 }
                 if let Some(error) = builder.error() {

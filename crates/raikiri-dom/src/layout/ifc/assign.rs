@@ -189,9 +189,15 @@ fn needs_ifc_layout(
                         // An edge the engine cannot map yet keeps the
                         // paragraph out at projection; counting it here only
                         // lets projection decide.
-                        let edged = style::inline_edges(cv, id, fonts).map_or(true, |e| {
-                            e.inline_start_total() + e.inline_end_total() != 0.0
-                        });
+                        let edged =
+                            style::inline_edges(cv, id, fonts).map_or(true, |(e, percents)| {
+                                let percent = |sides: shodo::node::Sides| {
+                                    sides.inline_start != 0.0 || sides.inline_end != 0.0
+                                };
+                                e.inline_start_total() + e.inline_end_total() != 0.0
+                                    || percent(percents.margin)
+                                    || percent(percents.padding)
+                            });
                         if edged {
                             return Ok(true);
                         }

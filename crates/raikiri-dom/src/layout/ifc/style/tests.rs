@@ -248,7 +248,8 @@ fn inline_edges_in_ch_are_measured() {
         fixture.root,
         &fonts(),
     )
-    .expect("edges");
+    .expect("edges")
+    .0;
     assert_eq!(edges.padding.inline_start, 20.0);
     assert_eq!(edges.margin.inline_end, 10.0);
 }
@@ -267,9 +268,28 @@ fn inline_edges_in_calc_ch_add_the_rest_of_the_sum() {
         &fonts(),
     )
     .expect("edges");
+    let (edges, percents) = edges;
     assert_eq!(edges.padding.inline_start, 23.0);
-    // A percentage needs the containing block, as for other calc() edges.
-    assert_eq!(edges.margin.inline_end, 0.0);
+    assert_eq!(percents.padding.inline_start, 0.0);
+    // The percentage waits for the containing block's inline size.
+    assert_eq!(edges.margin.inline_end, 10.0);
+    assert_eq!(percents.margin.inline_end, 0.1);
+}
+
+#[test]
+fn inline_edges_in_calc_ch_with_a_percentage_keep_a_negative_padding_sum() {
+    let fixture = block_fixture("padding-left:calc(1ch + 10% - 100px)", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (edges, percents) = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    // Only the sum against the basis is clamped, by the engine.
+    assert_eq!(edges.padding.inline_start, -90.0);
+    assert_eq!(percents.padding.inline_start, 0.1);
 }
 
 #[test]
@@ -285,7 +305,8 @@ fn inline_edges_in_calc_ch_clamp_negative_padding_but_not_margin() {
         fixture.root,
         &fonts(),
     )
-    .expect("edges");
+    .expect("edges")
+    .0;
     assert_eq!(edges.padding.inline_start, 0.0);
     assert_eq!(edges.margin.inline_start, -90.0);
 }
@@ -301,7 +322,8 @@ fn inline_edges_in_ch_use_the_declaring_element_font() {
         doc.append_text(inner, "y");
     });
     let inner = fixture.doc.nodes[fixture.root].children[0];
-    let edges = inline_edges(&fixture.cascade.computed[inner], inner, &fonts()).expect("edges");
+    let (edges, _) =
+        inline_edges(&fixture.cascade.computed[inner], inner, &fonts()).expect("edges");
     assert_eq!(edges.padding.inline_end, 20.0);
     assert_eq!(edges.margin.inline_start, 40.0);
 }
@@ -397,7 +419,7 @@ fn sideways_writing_modes_keep_cssom_values_with_horizontal_layout_fallback() {
         let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
         let paragraph = paragraph_style(cv, fixture.root, root).expect("layout fallback");
         assert_eq!(paragraph.writing_mode, WritingMode::HorizontalTb, "{mode}");
-        let edges = inline_edges(cv, fixture.root, &fonts()).expect("edge fallback");
+        let (edges, _) = inline_edges(cv, fixture.root, &fonts()).expect("edge fallback");
         assert_eq!(
             (edges.padding.inline_start, edges.padding.inline_end),
             (2.0, 3.0)
@@ -443,6 +465,7 @@ fn inline_edges_swap_sides_for_rtl() {
             &fonts(),
         )
         .expect("edges")
+        .0
     };
     let ltr = edges("ltr");
     assert_eq!((ltr.margin.inline_start, ltr.margin.inline_end), (1.0, 2.0));
@@ -546,7 +569,8 @@ fn inline_edges_follow_vertical_writing_mode_and_direction() {
             fixture.root,
             &fonts(),
         )
-        .expect("vertical");
+        .expect("vertical")
+        .0;
         assert_eq!(edges.margin, expected_margin, "{css}");
         assert_eq!(edges.padding, expected_padding, "{css}");
         assert_eq!(edges.border, expected_border, "{css}");
@@ -554,21 +578,75 @@ fn inline_edges_follow_vertical_writing_mode_and_direction() {
 }
 
 #[test]
-fn percentage_and_calc_edges_and_spacing_are_taken_as_their_absolute_part() {
+fn percentage_and_calc_edges_keep_their_percentage_apart() {
     let fixture = block_fixture(
-        "padding-left:10%;margin-right:calc(5% + 2px);letter-spacing:10%",
+        "padding-left:10%;padding-right:calc(20% + 3px);margin-left:25%;margin-right:calc(5% + 2px);margin-top:50%;letter-spacing:10%",
         |doc, root| {
             doc.append_text(root, "x");
         },
     );
     let cv = &fixture.cascade.computed[fixture.root];
-    let edges = inline_edges(cv, fixture.root, &fonts()).expect("edges");
+    let (edges, percents) = inline_edges(cv, fixture.root, &fonts()).expect("edges");
     assert_eq!(
-        (edges.padding.inline_start, edges.margin.inline_end),
-        (0.0, 0.0)
+        (edges.padding.inline_start, percents.padding.inline_start),
+        (0.0, 0.1)
     );
+    assert_eq!(
+        (edges.padding.inline_end, percents.padding.inline_end),
+        (3.0, 0.2)
+    );
+    assert_eq!(
+        (edges.margin.inline_start, percents.margin.inline_start),
+        (0.0, 0.25)
+    );
+    assert_eq!(
+        (edges.margin.inline_end, percents.margin.inline_end),
+        (2.0, 0.05)
+    );
+    assert_eq!(
+        (edges.margin.block_start, percents.margin.block_start),
+        (0.0, 0.5)
+    );
+    // Letter spacing keeps its absolute part only.
     let style = inline_style(cv, fixture.root, &fonts()).expect("style");
     assert_eq!(style.letter_spacing, cv.letter_spacing.px());
+}
+
+#[test]
+fn percentage_edges_follow_the_logical_sides() {
+    let percents = |css: &str| {
+        let fixture = block_fixture(&format!("{css};padding-left:10%"), |doc, root| {
+            doc.append_text(root, "x");
+        });
+        inline_edges(
+            &fixture.cascade.computed[fixture.root],
+            fixture.root,
+            &fonts(),
+        )
+        .expect("edges")
+        .1
+        .padding
+    };
+    assert_eq!(percents("direction:ltr").inline_start, 0.1);
+    assert_eq!(percents("direction:rtl").inline_end, 0.1);
+    assert_eq!(percents("writing-mode:vertical-rl").block_end, 0.1);
+}
+
+#[test]
+fn absolute_edges_have_no_percentage() {
+    let fixture = block_fixture("padding:3px;margin:4px auto", |doc, root| {
+        doc.append_text(root, "x");
+    });
+    let (edges, percents) = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    assert!(percents.is_zero());
+    assert_eq!(edges.padding.inline_start, 3.0);
+    assert_eq!(edges.margin.block_start, 4.0);
+    assert_eq!(edges.margin.inline_start, 0.0);
 }
 
 #[test]

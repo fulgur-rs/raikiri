@@ -425,10 +425,10 @@ fn push_generated(
     } else {
         None
     };
-    let edges = if inline_level && pseudo != PseudoElem::Marker {
+    let (edges, edge_percents) = if inline_level && pseudo != PseudoElem::Marker {
         style::inline_edges(cv, element, fonts)?
     } else {
-        InlineEdges::default()
+        Default::default()
     };
     if let Some(block) = &block {
         builder.push_block_in_inline(NodeId(block.start));
@@ -436,7 +436,9 @@ fn push_generated(
     }
     let empty = text.is_empty() && !has_images;
     if !empty {
-        builder.open_inline(id, &inline_style, edges);
+        builder
+            .open_inline(id, &inline_style, edges)
+            .set_inline_edge_percents(edge_percents);
     }
     if !inline_level && block.is_none() && pseudo == PseudoElem::After {
         builder.push_forced_break(id);
@@ -1157,7 +1159,7 @@ fn project_children_builder(
                     )?; // cov:ignore: ruby content fails only on the style and counter errors the plain inline path reports for the same content.
                     continue;
                 }
-                let edges = style::inline_edges(cv, id, fonts)?;
+                let (edges, edge_percents) = style::inline_edges(cv, id, fonts)?;
                 let inline_style = styled(doc, cascade, cv, id, fonts)?;
                 push_relative_offset(
                     &mut offsets,
@@ -1195,7 +1197,9 @@ fn project_children_builder(
                         id as u64,
                         cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
                     );
-                    builder.open_inline(NodeId(id as u64), &inline_style, edges);
+                    builder
+                        .open_inline(NodeId(id as u64), &inline_style, edges)
+                        .set_inline_edge_percents(edge_percents);
                     push_generated(
                         &mut builder,
                         doc,

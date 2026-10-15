@@ -20,7 +20,17 @@ use std::sync::atomic::AtomicUsize;
 #[derive(Clone)]
 pub(crate) struct IfcRoot {
     /// `Paragraph` is a cheap clone over shared data, so it is held directly.
+    ///
+    /// Percentage margins and padding of its inline boxes are resolved
+    /// against zero, as intrinsic sizing requires (CSS Sizing 3 §5.2.1).
     pub(crate) paragraph: Paragraph,
+    /// The paragraph the lines are broken from: [`Self::paragraph`] with its
+    /// percentage margins and padding resolved against [`Self::edge_basis`].
+    /// The same paragraph when it has none.
+    pub(crate) line_paragraph: Paragraph,
+    /// The containing block inline size [`Self::line_paragraph`] was
+    /// resolved for, set by [`Self::resolve_percent_edges`].
+    pub(crate) edge_basis: f32,
     /// Writing mode used to shape the paragraph.
     pub(crate) writing_mode: WritingMode,
     pub(crate) options: LineOptions,
@@ -310,7 +320,9 @@ impl IfcRoot {
         let Projected { paragraph, meta } = projected;
         let letter_style_index = Arc::new(LetterStyleIndex::new(&meta.letter_styles));
         Self {
+            line_paragraph: paragraph.clone(),
             paragraph,
+            edge_basis: 0.0,
             writing_mode: meta.writing_mode,
             options: meta.options,
             indent: meta.indent,
@@ -349,10 +361,48 @@ impl IfcRoot {
         }
     }
 
+    /// Resolve the percentage margins and padding of the inline boxes against
+    /// `basis`, the inline size of the containing block the lines are laid
+    /// out in, for [`Self::line_paragraph`]. The paragraph is rebuilt only
+    /// when it has such edges and the basis changed.
+    pub(crate) fn resolve_percent_edges(
+        &mut self,
+        basis: f32,
+        cx: &mut LayoutContext,
+        fonts: &FontCollection,
+    ) {
+        if !self.paragraph.has_percent_edges() {
+            return;
+        }
+        // The engine takes a non-finite or negative basis as zero.
+        let basis = if basis.is_finite() && basis > 0.0 {
+            basis
+        } else {
+            0.0
+        };
+        if basis.to_bits() == self.edge_basis.to_bits() {
+            return;
+        }
+        self.edge_basis = basis;
+        self.line_paragraph = if basis == 0.0 {
+            self.paragraph.clone()
+        } else {
+            // A rebuild over the resource limits keeps the percentages at
+            // zero: the lines still lay out, only without those edges. The
+            // basis is recorded either way, so the rebuild is not retried
+            // for every layout at this width.
+            self.paragraph
+                .with_edge_basis(basis, cx, fonts)
+                .unwrap_or_else(|_| self.paragraph.clone())
+        };
+    }
+
     /// A copy without the stored lines, for measuring with lines of its own.
     pub(crate) fn without_lines(&self) -> Self {
         Self {
             paragraph: self.paragraph.clone(),
+            line_paragraph: self.line_paragraph.clone(),
+            edge_basis: self.edge_basis,
             writing_mode: self.writing_mode,
             options: self.options,
             indent: self.indent,
