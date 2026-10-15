@@ -115,37 +115,11 @@ pub(crate) struct ProjectedMeta {
     pub(crate) first_line_opacity: Option<f32>,
 }
 
-/// Whether `node` or one of its ancestors has an authored vertical writing
-/// mode. Such text is laid out horizontally, without autospacing: real
-/// vertical writing is not supported.
-fn under_vertical_writing(doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
-    use raikiri_style::property::WritingMode;
-    let mut current = Some(node);
-    while let Some(id) = current {
-        if matches!(
-            cascade
-                .authored_writing_modes
-                .get(id)
-                .and_then(|mode| *mode),
-            Some(
-                WritingMode::VerticalRl
-                    | WritingMode::VerticalLr
-                    | WritingMode::SidewaysRl
-                    | WritingMode::SidewaysLr
-            )
-        ) {
-            return true;
-        }
-        current = doc.parent_of(id);
-    }
-    false
-}
-
 /// The text style of `node` with its document context: its `lang`, and no
 /// autospacing under a vertical writing mode.
 pub(super) fn styled(
     doc: &Document,
-    cascade: &CascadeResult,
+    _cascade: &CascadeResult,
     cv: &ComputedValues,
     node: usize,
     fonts: &FontCollection,
@@ -153,7 +127,7 @@ pub(super) fn styled(
     let mut inline = style::inline_style(cv, node, fonts)?;
     inline.lang = language_of(doc, node);
     style::resolve_auto_emphasis_position(cv, &mut inline);
-    if under_vertical_writing(doc, cascade, node) {
+    if doc.nodes[node].under_vertical_writing {
         inline.text_autospace = shodo::style::TextAutospace::NoAutospace;
     }
     Ok(inline)
@@ -395,25 +369,10 @@ fn push_generated(
     let has_images = pieces
         .iter()
         .any(|piece| matches!(piece, GeneratedPiece::Image(_)));
-    let atomic = pseudo != PseudoElem::Marker
-        && matches!(
-            cv.display,
-            DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        );
+    let atomic = pseudo != PseudoElem::Marker && cv.display.is_atomic_inline_level();
     let id = NodeId(generated_node_id(element, pseudo) as u64);
     let inline_level = pseudo == PseudoElem::Marker
-        || matches!(
-            cv.display,
-            DisplayValue::Inline
-                | DisplayValue::Contents
-                | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        );
+        || (cv.display.is_inline_level() || matches!(cv.display, DisplayValue::Contents));
     let block = (!inline_level)
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
@@ -562,13 +521,7 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
         return Some(IfcBoxKind::Float);
     }
     // An inline-level table is an atomic inline too (CSS 2.1 17.4).
-    let inline_block = matches!(
-        cv.display,
-        DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    );
+    let inline_block = cv.display.is_atomic_inline_level();
     let tag = node.tag_name().unwrap_or("");
     let replaced = cv.display == DisplayValue::Inline
         && (ATOMIC_TAGS.contains(&tag) || REPLACED_BOX_TAGS.contains(&tag));
@@ -582,21 +535,21 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     // paragraph would be wrapped in an anonymous table (CSS 2.1 17.2.1),
     // which raikiri does not create; it is laid out as a block between the
     // lines, as taffy's block algorithm lays a block child out.
-    if matches!(
-        cv.display,
-        DisplayValue::Block
-            | DisplayValue::FlowRoot
-            | DisplayValue::Flex
-            | DisplayValue::Grid
-            | DisplayValue::ListItem
-            | DisplayValue::Table
-            | DisplayValue::TableRowGroup
-            | DisplayValue::TableHeaderGroup
-            | DisplayValue::TableFooterGroup
-            | DisplayValue::TableRow
-            | DisplayValue::TableCell
-            | DisplayValue::TableCaption
-    ) {
+    if cv.display.is_block_flex_or_grid_container()
+        || matches!(
+            cv.display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Table
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableCell
+                | DisplayValue::TableCaption
+        )
+    {
         return Some(IfcBoxKind::Block);
     }
     None

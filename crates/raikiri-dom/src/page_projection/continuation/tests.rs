@@ -16,7 +16,9 @@ fn page_box(width: f32, height: f32) -> PageBox {
 
 fn paragraph() -> (Document, CascadeResult, usize) {
     let mut text = 0;
-    let (doc, cascade, _) = ahem_paragraph_with("", |doc, root| {
+    // `widows: 1` keeps the natural break, so a page starts at the first line
+    // that does not fit.
+    let (doc, cascade, _) = ahem_paragraph_with("widows:1", |doc, root| {
         text = doc.append_text(root, WORDS);
     });
     (doc, cascade, text)

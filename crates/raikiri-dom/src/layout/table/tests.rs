@@ -329,6 +329,59 @@ fn anonymous_block_direction_reaches_the_native_callback() {
 }
 
 #[test]
+fn laying_out_an_anonymous_cell_puts_its_source_owner_back() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(0),
+        "div",
+        Style::default(),
+        Some("display:table;border-spacing:0"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let block = doc.append_element(
+        Some(row),
+        "div",
+        Style::default(),
+        Some("display:block;width:20px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    assert_eq!(doc.table_objects.cells.len(), 1);
+    let cell = &doc.table_objects.cells[0];
+    assert_eq!(cell.owner, row);
+    let view_children = cell.node.children.clone();
+    let row_children = doc.nodes[row].children.clone();
+    let row_display = doc.nodes[row].display;
+    let mut inputs = column_probe_input();
+    inputs.known_dimensions.width = Some(100.0);
+    // A single layout of the cell key: an even number of them would hide a
+    // missing swap back.
+    let key = doc.table_objects.arena_len;
+    let output =
+        taffy::LayoutPartialTree::compute_child_layout(&mut doc, taffy::NodeId::from(key), inputs);
+    assert_eq!(
+        output.size,
+        Size {
+            width: 100.0,
+            height: 10.0
+        }
+    );
+    // The source row is back in its slot, and the view, laid out in the
+    // row's place, is back in the cell.
+    assert_eq!(doc.nodes[row].children, row_children);
+    assert_eq!(doc.nodes[row].display, row_display);
+    let cell = &doc.table_objects.cells[0];
+    assert_eq!(cell.node.children, view_children);
+    assert_eq!(doc.parent_of(block), Some(row));
+}
+
+#[test]
 fn anonymous_blocks_keep_source_coordinates_in_the_table_callback_without_fonts() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
@@ -1853,6 +1906,162 @@ fn explicit_table_height_respects_box_sizing() {
             table_layout.size.height
         );
     }
+}
+
+#[test]
+fn table_calc_minimum_sizes_resolve_against_the_containing_block() {
+    // The table algorithm receives indefinite known dimensions, so it must
+    // resolve its own calc bounds rather than rely on an outer Taffy clamp.
+    for (box_sizing, expected) in [
+        (
+            "content-box",
+            Size {
+                width: 76.0,
+                height: 66.0,
+            },
+        ),
+        (
+            "border-box",
+            Size {
+                width: 60.0,
+                height: 50.0,
+            },
+        ),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+        let table = doc.append_element(
+            Some(body),
+            "table",
+            Style::default(),
+            Some(&format!(
+                "display:table;border-spacing:0;box-sizing:{box_sizing};\
+                 padding:5px;border:3px solid black;\
+                 min-width:calc(50% + 10px);min-height:calc(50% + 10px)"
+            )),
+        );
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display:table-cell"),
+        );
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+        let mut inputs = column_probe_input();
+        inputs.parent_size = Size {
+            width: Some(100.0),
+            height: Some(80.0),
+        };
+        let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+        assert_eq!(output.size, expected);
+        assert_eq!(
+            doc.nodes[cell].unrounded_layout.size,
+            Size {
+                width: expected.width - 16.0,
+                height: expected.height - 16.0,
+            }
+        );
+    }
+}
+
+// WPT css/css-values/calc-width-table-fixed-1 and
+// css/css-tables/fixed-layout-calc-width-001: a calc() width that sums a
+// percentage and a length leaves its column auto even in fixed layout.
+#[test]
+fn fixed_table_first_row_mixed_calc_width_leaves_the_column_auto() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(false, "calc(25% + 10px)"),
+        (100.0, 100.0, 100.0)
+    );
+}
+
+#[test]
+fn fixed_table_col_mixed_calc_width_leaves_the_column_auto() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(true, "calc(25% + 10px)"),
+        (100.0, 100.0, 100.0)
+    );
+}
+
+// A calc() width with a single kind of term folds into the plain length or
+// percentage it stands for, which fixes its column.
+#[test]
+fn fixed_table_length_only_calc_width_fixes_the_column() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(false, "calc(2 * 30px)"),
+        (60.0, 140.0, 60.0)
+    );
+}
+
+#[test]
+fn fixed_table_percentage_only_calc_width_fixes_the_column() {
+    assert_eq!(
+        fixed_table_calc_column_geometry(true, "calc(2 * 12.5%)"),
+        (50.0, 150.0, 50.0)
+    );
+}
+
+fn fixed_table_calc_column_geometry(from_column: bool, width: &str) -> (f32, f32, f32) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;table-layout:fixed;width:200px;border-spacing:0"),
+    );
+    if from_column {
+        doc.append_element(
+            Some(table),
+            "col",
+            Style::default(),
+            Some(&format!("display:table-column;width:{width}")),
+        );
+    }
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let first = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some(&if from_column {
+            "display:table-cell".to_owned()
+        } else {
+            format!("display:table-cell;width:{width}")
+        }),
+    );
+    let second = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::apply_computed_to_style(&mut doc, &computed).unwrap();
+    let mut inputs = column_probe_input();
+    inputs.parent_size.width = Some(200.0);
+    let output = super::compute_table_layout(&mut doc, taffy::NodeId::from(table), inputs);
+    assert_eq!(output.size.width, 200.0);
+    (
+        doc.nodes[first].unrounded_layout.size.width,
+        doc.nodes[second].unrounded_layout.size.width,
+        doc.nodes[second].unrounded_layout.location.x,
+    )
 }
 
 #[test]

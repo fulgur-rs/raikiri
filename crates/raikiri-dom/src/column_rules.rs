@@ -113,10 +113,8 @@ pub(crate) fn prepare(
             layout.border.left + layout.padding.left,
             layout.border.top + layout.padding.top,
         );
-        let content_width =
-            (layout.size.width - origin.0 - layout.border.right - layout.padding.right).max(0.0);
-        let height =
-            (layout.size.height - origin.1 - layout.border.bottom - layout.padding.bottom).max(0.0);
+        let content_width = layout.content_box_width().max(0.0);
+        let height = layout.content_box_height().max(0.0);
         let owner = if let Some(style) = node.multicol {
             if style.horizontal
                 && values.column_rule.width().px() > 0.0

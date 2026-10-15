@@ -2851,11 +2851,67 @@ fn resolve_relative_calc_with(
     ctx: &ResolveContext,
     lh_term: impl Fn(f32, Option<ComputedLength>) -> Option<f32>,
 ) -> Option<ComputedLengthPercentageOrAuto> {
+    let px = relative_calc_length_px(value, font_size, own_line_height, ctx, lh_term)?;
+    Some(if value.percent == 0.0 {
+        ComputedLengthPercentageOrAuto::Px(px)
+    } else if px == 0.0 {
+        ComputedLengthPercentageOrAuto::Percent(value.percent)
+    } else {
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: value.percent,
+            px,
+        })
+    })
+}
+
+/// The `ch` coefficient of a relative `calc()` and the rest of the sum, its
+/// length terms absolutized as [`resolve_relative_calc`] does and its
+/// percentage kept, for a layout consumer that measures `ch` with the
+/// declaring font.
+///
+/// `None` when the value has no `ch` term, or when the rest has an `lh` term
+/// without a basis or is not finite.
+pub(crate) fn relative_calc_ch_parts(
+    value: RelativeCalcLengthPercentage,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+) -> Option<(f32, CalcLengthPercentage)> {
+    let (factor, rest) = value.split_ch()?;
+    let px = relative_calc_length_px(
+        rest,
+        font_size,
+        own_line_height,
+        ctx,
+        |coefficient, basis| resolve_lh_multiplier(coefficient, basis).map(ComputedLength::px),
+    )?;
+    Some((
+        factor,
+        CalcLengthPercentage {
+            percent: rest.percent,
+            px,
+        },
+    ))
+}
+
+/// The length terms of a relative `calc()` summed in CSS px, or `None` when
+/// `lh_term` gives `None` or the sum is not finite.
+fn relative_calc_length_px(
+    value: RelativeCalcLengthPercentage,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    ctx: &ResolveContext,
+    lh_term: impl Fn(f32, Option<ComputedLength>) -> Option<f32>,
+) -> Option<f32> {
     let viewport = |length: Length| ctx.viewport_length(length).unwrap_or(0.0);
     let mut px = value.px;
     for (unit, coefficient) in value.relative_terms() {
         px += match unit {
             RelativeCalcUnit::Em => coefficient * font_size.0,
+            // Style has no font metrics; this is the `0.5em` fallback of a
+            // plain `ch` length, which layout replaces where it measures the
+            // declaring font.
+            RelativeCalcUnit::Ch => coefficient * font_size.0 * 0.5,
             RelativeCalcUnit::Rem => coefficient * ctx.root_font_size.0,
             RelativeCalcUnit::Lh => lh_term(coefficient, own_line_height)?,
             RelativeCalcUnit::Rlh => lh_term(coefficient, ctx.root_line_height)?,
@@ -2867,19 +2923,7 @@ fn resolve_relative_calc_with(
             RelativeCalcUnit::Vmax => viewport(Length::Vmax(coefficient)),
         };
     }
-    if !px.is_finite() {
-        return None;
-    }
-    Some(if value.percent == 0.0 {
-        ComputedLengthPercentageOrAuto::Px(px)
-    } else if px == 0.0 {
-        ComputedLengthPercentageOrAuto::Percent(value.percent)
-    } else {
-        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
-            percent: value.percent,
-            px,
-        })
-    })
+    px.is_finite().then_some(px)
 }
 
 /// Absolutize a one-axis `<position>` offset (**phase 3**, using this node's

@@ -310,7 +310,7 @@ pub enum FixtureError {
     /// platforms via `fcntl(fd, F_GETPATH, ..)` — so firing here means an
     /// intermediate-directory swap happened inside the window between the
     /// open and this fd-based recheck. Mirrors
-    /// `raikiri_dom::fonts::FontReadReject::PathEscapePostOpen`.
+    /// [`raikiri_traits::io::RejectReason::PathEscapePostOpen`].
     PathEscapePostOpen {
         /// fd-derived canonical path (post-open) that fell outside the root.
         canonical: PathBuf,

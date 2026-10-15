@@ -8109,6 +8109,51 @@ fn ch_box_values_resolve_through_the_engine() {
 }
 
 #[test]
+fn calc_ch_box_values_add_the_measured_advance_to_the_rest_of_the_sum() {
+    // Ahem's "0" advance is 1 em (10px here) and the containing block is
+    // 800px wide, so each sum is hand-computable.
+    for (css, expected) in [
+        ("width:calc(10ch + 5px)", (105.0, 10.0, 0.0, 0.0)),
+        ("width:calc(50% + 2ch)", (420.0, 10.0, 0.0, 0.0)),
+        ("width:calc(1ch - 50%)", (0.0, 10.0, 0.0, 0.0)),
+        ("height:calc(3ch - 1em)", (800.0, 20.0, 0.0, 0.0)),
+        ("padding-left:calc(2ch + 1px)", (800.0, 10.0, 21.0, 0.0)),
+        ("margin-left:calc(5% - 1ch)", (770.0, 10.0, 0.0, 30.0)),
+        (
+            "width:10px;min-width:calc(2ch + 50%)",
+            (420.0, 10.0, 0.0, 0.0),
+        ),
+        (
+            "height:100px;max-height:calc(1ch + 2px)",
+            (800.0, 12.0, 0.0, 0.0),
+        ),
+    ] {
+        assert_eq!(ch_box_size(css), expected, "{css}");
+    }
+}
+
+#[test]
+fn ch_box_values_reach_every_padding_and_margin_side() {
+    // Ahem's "0" advance is 1 em, 10px here, so each side is hand-computable.
+    let (mut doc, cascade, root) = ahem_paragraph(
+        "aa",
+        "padding:1ch calc(2ch + 1px) 3ch 4ch;margin:1ch calc(2ch - 1px) 3ch 4ch",
+    );
+    lay_out(&mut doc, &cascade);
+    let layout = doc.nodes[root].unrounded_layout;
+    let padding = layout.padding;
+    let margin = layout.margin;
+    assert_eq!(
+        (padding.top, padding.right, padding.bottom, padding.left),
+        (10.0, 21.0, 30.0, 40.0)
+    );
+    assert_eq!(
+        (margin.top, margin.right, margin.bottom, margin.left),
+        (10.0, 19.0, 30.0, 40.0)
+    );
+}
+
+#[test]
 fn ch_min_max_constraints_use_the_selected_ahem_zero_advance() {
     let widths = [
         "font-size:16px;width:100px;max-width:4ch",
@@ -8201,6 +8246,7 @@ fn measure_ch_advance_uses_the_engine_fonts() {
         size: raikiri_style::ComputedLength(16.0),
         weight: 400.0,
         style: raikiri_style::property::FontStyle::Normal,
+        optical_sizing: raikiri_style::property::FontOpticalSizing::Auto,
     };
     assert_eq!(
         crate::layout::measure_ch_advance(&ifc_ahem_fonts(), &key),
@@ -8216,6 +8262,7 @@ fn measure_normal_line_height_uses_the_engine_fonts() {
         size: raikiri_style::ComputedLength(20.0),
         weight: 400.0,
         style: raikiri_style::property::FontStyle::Normal,
+        optical_sizing: raikiri_style::property::FontOpticalSizing::Auto,
     };
     assert_eq!(
         crate::layout::measure_normal_line_height(&ifc_ahem_fonts(), &key),
@@ -13831,4 +13878,65 @@ fn a_mixed_calc_grid_track_resolves_against_the_container() {
     assert_eq!(doc.nodes[first].unrounded_layout.size.width, 90.0);
     assert_eq!(doc.nodes[second].unrounded_layout.location.x, 90.0);
     assert_eq!(doc.nodes[second].unrounded_layout.size.width, 110.0);
+}
+
+#[test]
+fn a_forced_break_on_a_wrapped_row_flex_item_moves_same_line_siblings() {
+    use crate::layout::test_support::absolute_rect;
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:10px"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;flex-wrap:wrap;width:100px;align-items:flex-start"),
+    );
+    let first = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:none;width:50px;height:20px"),
+    );
+    let breaking = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:none;width:50px;height:20px;break-before:page"),
+    );
+    let next_line = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;flex:none;width:50px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &computed, page).expect("pagination");
+    assert_eq!(slices.len(), 2);
+    let positions = [first, breaking, next_line].map(|id| absolute_rect(&doc, id));
+    assert_eq!(
+        positions,
+        [
+            (0.0, 100.0, 50.0, 20.0),
+            (50.0, 100.0, 50.0, 20.0),
+            (0.0, 30.0, 50.0, 20.0)
+        ]
+    );
 }

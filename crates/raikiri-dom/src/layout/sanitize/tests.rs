@@ -1854,10 +1854,15 @@ fn layout_pages_moves_fitting_text_block_for_orphans_and_widows() {
     );
     assert_eq!(line_count, 3);
 
-    let (_, paragraph_y, _, _) = paginate(&format!("{common};orphans:1;widows:2"));
-    assert!(
-        paragraph_y >= 50.0 - 0.001,
-        "widows:2 should also move a 3-line fitting paragraph when only one line would remain, got y={paragraph_y}"
+    // With `orphans: 1` the break can move up a line instead: "a" stays on
+    // page one and "b" and "c" start page two, so the paragraph stays and
+    // grows by the 10px it moved them.
+    let (pages, paragraph_y, following_y, _) = paginate(&format!("{common};orphans:1;widows:2"));
+    assert_eq!(pages, 2);
+    assert_eq!(paragraph_y, 30.0, "the first line stays on page one");
+    assert_eq!(
+        following_y, 70.0,
+        "the following content follows the two lines moved to page two"
     );
 }
 

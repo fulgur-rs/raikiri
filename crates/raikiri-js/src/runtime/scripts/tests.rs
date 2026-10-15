@@ -639,6 +639,41 @@ fn assert_node_budget_aborts(loop_body: &str) {
 }
 
 #[test]
+fn node_budget_limit_refuses_a_deep_clone_before_copying_any_node() {
+    let (mut host, _, _, body) = StubHost::page();
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var d = document.createElement('div'); d.append('a', 'b', 'c'); d.cloneNode(true);",
+    );
+    let before = host.document.node_count();
+
+    // The script itself creates five nodes (the div, three Text nodes, and
+    // the fragment `append` wraps them in), leaving room for two more: the
+    // four-node copy does not fit.
+    let mut rt = runtime_with(
+        Limits {
+            max_nodes: before + 7,
+            ..Default::default()
+        },
+        host,
+    );
+    let report = rt.run_document();
+
+    assert_eq!(report.aborted, Some(Abort::Nodes), "{report:?}");
+    let node_count = with_state(rt.context_mut(), |s| s.host.document().node_count()).unwrap();
+    assert_eq!(node_count, before + 5);
+}
+
+#[test]
+fn node_budget_limit_covers_split_text() {
+    assert_node_budget_aborts(
+        "var t = document.createTextNode('ab'); for (;;) { t.splitText(0); }",
+    );
+}
+
+#[test]
 fn node_budget_limit_covers_the_textcontent_setter() {
     assert_node_budget_aborts("for (;;) { document.body.textContent = 'x'; }");
 }

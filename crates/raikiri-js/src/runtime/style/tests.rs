@@ -2341,3 +2341,28 @@ fn page_rule_background_edits_keep_page_validation() {
          rule.style.length === 1",
     );
 }
+
+#[test]
+fn urls_read_back_as_quoted_strings_in_every_property() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var e = document.createElement('div'); var s = e.style; \
+         s.listStyleImage = 'url(dot.png)'; \
+         s.borderImageSource = \"url('frame.png')\"; \
+         s.setProperty('mask-image', 'url(mask.svg)'); \
+         s.filter = 'url(f.svg#blur) blur(2px)'; \
+         s.clipPath = 'URL(clip.svg)'; \
+         s.setProperty('--x', 'url(c.png)');",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "s.listStyleImage === 'url(\"dot.png\")' && \
+         s.borderImageSource === 'url(\"frame.png\")' && \
+         s.getPropertyValue('mask-image') === 'url(\"mask.svg\")' && \
+         s.filter === 'url(\"f.svg#blur\") blur(2px)' && \
+         s.clipPath === 'url(\"clip.svg\")' && \
+         s.getPropertyValue('--x') === 'url(c.png)'",
+    );
+}

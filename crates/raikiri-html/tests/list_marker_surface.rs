@@ -561,10 +561,11 @@ fn floated_and_positioned_children_do_not_supply_the_first_line() {
 #[test]
 fn a_marker_beside_a_line_crossing_the_page_edge_stays_on_its_baseline() {
     // The line starts on this page, so the marker keeps its baseline even
-    // though the line box reaches past the page edge.
+    // though the line box reaches past the page edge. The item is taller
+    // than a page, so it is not moved to the next page as a unit.
     let document = lay_out(
         "<div style=\"height:25px\"></div>\
-         <ol><li style=\"font:80px/80px Ahem\">A</li></ol>",
+         <ol><li style=\"font:80px/80px Ahem;padding-bottom:30px\">A</li></ol>",
         "li::marker{font-size:70px}",
     );
     assert_eq!(

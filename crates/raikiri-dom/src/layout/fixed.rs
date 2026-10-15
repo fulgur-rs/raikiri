@@ -57,8 +57,9 @@ pub(super) fn generates_inline_box(document: &Document, id: usize, cv: &Computed
         })
 }
 
-/// Whether the element's `transform` applies to it.
-fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+/// Whether the element's `transform` applies to it: layout makes it the
+/// containing block of its fixed descendants, and the painter moves it.
+pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
     !matches!(
@@ -91,7 +92,7 @@ fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &Compu
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
     // spec: https://www.w3.org/TR/css-will-change-1/#will-change
     // A box that is not generated contains nothing (CSS Display 3 §2.5).
-    let transformable = transformable(document, id, cv);
+    let transformable = is_transformable(document, id, cv);
     let containable = containable(document, id, cv);
     // A filter on the document root does not make it a containing block.
     let root = document
@@ -151,10 +152,7 @@ struct Area {
 
 /// Whether the writing mode `id` lays its lines out in is vertical.
 fn is_vertical(document: &Document, id: usize) -> bool {
-    !matches!(
-        crate::taffy_impl::used_writing_mode(document, id),
-        WritingMode::HorizontalTb
-    )
+    crate::taffy_impl::used_writing_mode(document, id).is_vertical()
 }
 
 /// Lay out the fixed boxes below the taffy root `root`, and the nested

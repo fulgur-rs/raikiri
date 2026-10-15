@@ -39,5 +39,8 @@ pub use serialize_content::serialize_content_value;
 mod serialize_math_sum;
 pub use serialize_math_sum::serialize_math_sums;
 
+mod serialize_url;
+pub use serialize_url::serialize_urls;
+
 #[cfg(test)]
 mod tests;

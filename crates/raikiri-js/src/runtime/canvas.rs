@@ -199,8 +199,8 @@ fn serialize_canvas_color([r, g, b, a]: [u8; 4]) -> String {
 /// or 300 when missing or unparsable.
 fn canvas_width(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_canvas(this, context)?;
-    let (width, _) =
-        with_state(context, |s| s.host.document().canvas_size(index))?.unwrap_or((300, 150));
+    let (width, _) = with_state(context, |s| s.host.document().canvas_size(index))?
+        .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
     Ok(JsValue::from(width))
 }
 
@@ -228,8 +228,8 @@ fn set_canvas_width(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
 /// value, or 150 when missing or unparsable.
 fn canvas_height(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_canvas(this, context)?;
-    let (_, height) =
-        with_state(context, |s| s.host.document().canvas_size(index))?.unwrap_or((300, 150));
+    let (_, height) = with_state(context, |s| s.host.document().canvas_size(index))?
+        .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
     Ok(JsValue::from(height))
 }
 

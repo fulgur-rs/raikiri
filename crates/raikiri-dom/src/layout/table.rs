@@ -132,24 +132,7 @@ struct RowPassLayout {
 // ---------------------------------------------------------------------------
 
 fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
-    let mut current = Some(doc.ifc_source_owner(table_idx));
-    while let Some(id) = current {
-        if let Some(mode) = doc.nodes[id].authored_writing_mode {
-            return mode;
-        }
-        current = doc.parent_of(id);
-    }
-    WritingMode::HorizontalTb
-}
-
-fn is_vertical_writing_mode(mode: WritingMode) -> bool {
-    matches!(
-        mode,
-        WritingMode::VerticalRl
-            | WritingMode::VerticalLr
-            | WritingMode::SidewaysRl
-            | WritingMode::SidewaysLr
-    )
+    doc.nodes[doc.ifc_source_owner(table_idx)].used_writing_mode
 }
 
 fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool) -> f32 {
@@ -217,7 +200,7 @@ fn layout_table_caption(
         .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption)?;
     let style = doc.nodes[caption_id].style.clone();
     // Let block layout apply authored sizes in their box-sizing domain.
-    let vertical = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    let vertical = table_writing_mode(doc, table_idx).is_vertical();
     let inline_basis = if vertical {
         parent_height.unwrap_or(0.0)
     } else {
@@ -357,7 +340,7 @@ fn position_table_caption(
         Size::ZERO
     };
     let mode = table_writing_mode(doc, table_idx);
-    let vertical = is_vertical_writing_mode(mode);
+    let vertical = mode.is_vertical();
     let before =
         caption_id.is_some_and(|id| doc.nodes[id].caption_side != CaptionSideValue::Bottom);
     let right_to_left = matches!(mode, WritingMode::VerticalRl | WritingMode::SidewaysRl);
@@ -479,7 +462,7 @@ fn compute_table_layout_checked(
         resolve_collapsed_cell_borders(doc, &grid, index);
         resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
-    let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -1754,7 +1737,7 @@ fn resolve_column_widths(
             && cell.specified_width.tag() == CompactLength::LENGTH_TAG
             && col_len[c].is_none()
         {
-            col_len[c] = Some(cell.specified_width.value());
+            col_len[c] = resolve_dimension(cell.specified_width, None);
         }
     }
     for c in 0..n {
@@ -1786,14 +1769,11 @@ fn resolve_column_widths(
         if c >= n {
             break;
         }
-        let is_len = |d: Dimension| d.tag() == CompactLength::LENGTH_TAG;
-        let min_w = is_len(sz.min_width).then(|| sz.min_width.value());
-        let max_w = is_len(sz.max_width).then(|| sz.max_width.value());
+        let min_w = resolve_dimension(sz.min_width, None);
+        let max_w = resolve_dimension(sz.max_width, None);
         // Base width: definite length always; percent only when occupied.
-        let mut base: Option<f32> = None;
-        if is_len(sz.width) {
-            base = Some(sz.width.value());
-        } else if sz.width.tag() == CompactLength::PERCENT_TAG && occupied[c] {
+        let base = resolve_dimension(sz.width, None);
+        if base.is_none() && sz.width.tag() == CompactLength::PERCENT_TAG && occupied[c] {
             col_pct[c] = f32_max_compat(col_pct[c], sz.width.value());
         }
         // Clamp base by min/max (min wins over max).
@@ -2082,8 +2062,8 @@ fn resolve_row_heights(
             .style
             .size
             .height;
-        if h.tag() == CompactLength::LENGTH_TAG {
-            row_heights[r] = f32_max_compat(row_heights[r], h.value());
+        if let Some(height) = resolve_dimension(h, None) {
+            row_heights[r] = f32_max_compat(row_heights[r], height);
         }
     }
     for cell in &mut grid.cells {
@@ -2365,8 +2345,7 @@ fn place_cells(
                     .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
             )
         };
-        let vertical_cell =
-            vertical_writing && is_vertical_writing_mode(table_writing_mode(doc, cell.node_id));
+        let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
         let collapsed_empty = cell_height == 0.0
             && doc
                 .ifc_layout_node(cell.node_id)
@@ -2484,7 +2463,7 @@ fn reposition_cells_for_vertical_writing(
         layout.size.width = cell_width;
         layout.size.height = height;
         let cell_writing_mode = table_writing_mode(doc, cell.node_id);
-        if !is_vertical_writing_mode(cell_writing_mode) {
+        if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
             doc.table_layout_node_mut(cell.node_id).unrounded_layout =
@@ -2634,25 +2613,11 @@ fn reposition_cells_for_vertical_writing(
 // ---------------------------------------------------------------------------
 
 fn resolve_dimension(d: Dimension, basis: Option<f32>) -> Option<f32> {
-    match d.tag() {
-        x if x == CompactLength::LENGTH_TAG => Some(d.value()),
-        x if x == CompactLength::PERCENT_TAG => basis.map(|b| b * d.value()),
-        x if x == CompactLength::AUTO_TAG => None,
-        _ => None,
-    }
+    super::resolve_dimension(d, basis)
 }
 
 fn resolve_length(lp: taffy::style::LengthPercentage, basis: Option<f32>) -> f32 {
-    // LengthPercentage in style.padding / border — Dimension-like but wrapped
-    let raw = lp.into_raw();
-    match raw.tag() {
-        x if x == CompactLength::LENGTH_TAG => raw.value(),
-        x if x == CompactLength::PERCENT_TAG => basis.map(|b| b * raw.value()).unwrap_or(0.0),
-        _ if raw.is_calc() => basis
-            .map(|b| crate::taffy_impl::resolve_calc(raw.calc_value(), b))
-            .unwrap_or(0.0),
-        _ => 0.0,
-    }
+    super::resolve_length_percentage(lp, basis).unwrap_or(0.0)
 }
 
 /// Resolve a table's padding or border widths (`rect`) against the width of
@@ -2674,14 +2639,29 @@ fn resolve_table_rect(
 // Fixed layout (CSS 2.1 §17.5.2.1)
 // ---------------------------------------------------------------------------
 
+/// The width a first-row cell or a `<col>` gives its column in fixed table
+/// layout, against the table width `avail`; `None` leaves the column auto.
+fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
+    // spec: https://drafts.csswg.org/css-tables-3/#distributing-width-to-columns
+    // spec: https://github.com/w3c/csswg-drafts/issues/94
+    // A `calc()` that sums a percentage and a length counts as `auto`, even
+    // in fixed table layout. The style layer folds a `calc()` with only a
+    // percentage or only a length into that percentage or length, so every
+    // `calc()` left here is such a sum.
+    if width.into_raw().is_calc() {
+        return None;
+    }
+    resolve_dimension(width, Some(avail))
+}
+
 /// Fixed column sizing: no content measurement.
 ///
 /// `avail` is the table width net of padding + outer (collapsed) borders.
 /// Per §17.5.2.1, a first-row cell with `colspan == 1` and a specified
 /// `width` (length or percentage-of-table-width) fixes its column; all
-/// remaining columns divide the leftover equally. Specified widths in
-/// non-first rows, `colspan > 1` first-row widths, and `col`-element widths
-/// are ignored (module-doc scope limit). Leftover underflow clamps unfixed
+/// remaining columns divide the leftover equally. A `<col>` width fixes a
+/// column that no such cell fixed. Specified widths in non-first rows and
+/// `colspan > 1` first-row widths are ignored. Leftover underflow clamps unfixed
 /// columns to zero (the table overflows rather than shrinking fixed
 /// columns).
 fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
@@ -2693,11 +2673,7 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         }
         let c = cell.col_start as usize;
         if c < n && fixed[c].is_none() {
-            fixed[c] = match cell.specified_width.tag() {
-                x if x == CompactLength::LENGTH_TAG => Some(cell.specified_width.value()),
-                x if x == CompactLength::PERCENT_TAG => Some(cell.specified_width.value() * avail),
-                _ => None,
-            };
+            fixed[c] = fixed_column_width(cell.specified_width, avail);
         }
     }
     // `<col>` widths fix columns with no first-row cell width (CSS 2.1 §17.5.2.1).
@@ -2707,24 +2683,17 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
         if c >= n || fixed[c].is_some() {
             continue;
         }
-        let is_len = |d: Dimension| d.tag() == CompactLength::LENGTH_TAG;
-        let mut v: Option<f32> = None;
-        if is_len(sz.width) {
-            v = Some(sz.width.value());
-        } else if sz.width.tag() == CompactLength::PERCENT_TAG {
-            v = Some(sz.width.value() * avail);
-        }
-        if v.is_none() && is_len(sz.min_width) {
-            v = Some(sz.min_width.value());
-        }
+        let minimum = resolve_dimension(sz.min_width, None);
+        let maximum = resolve_dimension(sz.max_width, None);
+        let v = fixed_column_width(sz.width, avail).or(minimum);
         if let Some(mut x) = v {
-            if is_len(sz.min_width) {
-                x = f32_max_compat(x, sz.min_width.value());
+            if let Some(minimum) = minimum {
+                x = f32_max_compat(x, minimum);
             }
-            if is_len(sz.max_width)
-                && !(is_len(sz.min_width) && sz.min_width.value() > sz.max_width.value())
+            if let Some(maximum) = maximum
+                && !minimum.is_some_and(|minimum| minimum > maximum)
             {
-                x = x.min(sz.max_width.value());
+                x = x.min(maximum);
             }
             fixed[c] = Some(x);
         }

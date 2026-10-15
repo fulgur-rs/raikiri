@@ -302,12 +302,10 @@ pub(crate) fn rebreak_roots(doc: &mut Document, cascade: &CascadeResult, max_adv
     let Some(mut state) = doc.ifc.take() else {
         return;
     };
-    let parent_of: Vec<Option<usize>> = (0..doc.nodes.len()).map(|id| doc.parent_of(id)).collect();
     let roots: Vec<usize> = (0..doc.nodes.len())
         .filter(|&id| doc.nodes[id].ifc.is_some())
         .collect();
-    let widths =
-        crate::layout::multicol::ResolvedChWidths::new(doc, cascade, &parent_of, max_advance);
+    let widths = crate::layout::multicol::AncestorFacts::new(doc, cascade, max_advance);
     for id in roots {
         // A root inside a `min-content` box keeps the lines its intrinsic
         // width was measured with; no page width applies to it.

@@ -16,7 +16,8 @@
 //! - every ancestor of the page start is a block container in the normal
 //!   flow whose height follows its content, so that the content before the
 //!   start sits in preceding sibling blocks and leaving it out moves only
-//!   where those ancestors begin;
+//!   where those ancestors begin, and none of them is transformed about an
+//!   origin that depends on where it begins;
 //! - the body does not reach the page of the start, as it spans the page
 //!   area from the top of the first page;
 //! - the page start is the top of a line or a box, not a line straddling
@@ -207,6 +208,13 @@ fn skipped_before(
             if dom.get_node(parent)?.kind() == NodeKind::Element
                 && !is_layout_root_or_above(dom, parent)
                 && !has_content_height(cascade.computed.get(parent)?)
+            {
+                return None;
+            }
+            // A transform turns a box about an origin found from its whole
+            // border box, which starts higher than a relayout begins it.
+            if dom.get_node(parent)?.kind() == NodeKind::Element
+                && !cascade.computed.get(parent)?.transform.is_empty()
             {
                 return None;
             }

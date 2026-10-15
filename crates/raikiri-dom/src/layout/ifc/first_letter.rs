@@ -552,17 +552,17 @@ pub(crate) fn typographic_origins(
         let transparent =
             cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
         if !transparent
-            && (!matches!(
-                cv.display,
-                DisplayValue::Block
-                    | DisplayValue::FlowRoot
-                    | DisplayValue::ListItem
-                    | DisplayValue::InlineBlock
-                    | DisplayValue::TableCell
-                    | DisplayValue::TableCaption
-                    | DisplayValue::Inline
-                    | DisplayValue::Contents
-            ) || !super::assign::can_be_ifc_root(doc, cascade, id))
+            && (!(cv.display.is_inline_flow_box()
+                || matches!(
+                    cv.display,
+                    DisplayValue::Block
+                        | DisplayValue::FlowRoot
+                        | DisplayValue::ListItem
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                        | DisplayValue::Contents
+                ))
+                || !super::assign::can_be_ifc_root(doc, cascade, id))
         {
             break;
         }

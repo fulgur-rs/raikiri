@@ -122,3 +122,16 @@ fn multi_token_keyword_tables_round_trip_through_the_property_parser() {
         );
     }
 }
+
+#[test]
+fn sideways_modes_have_a_vertical_inline_axis() {
+    for (mode, expected) in [
+        (WritingMode::HorizontalTb, false),
+        (WritingMode::VerticalRl, true),
+        (WritingMode::VerticalLr, true),
+        (WritingMode::SidewaysRl, true),
+        (WritingMode::SidewaysLr, true),
+    ] {
+        assert_eq!(mode.is_vertical(), expected);
+    }
+}

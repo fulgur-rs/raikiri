@@ -24,11 +24,10 @@ use raikiri_dom::{CounterSnapshot, Document, FragmentRect, StandaloneAlign};
 use raikiri_style::property::{
     AnglePercentage, BackgroundImage, BackgroundLayerSpec, Border, BorderColor,
     BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, ColumnCountValue, ConicGradient,
-    CssColor, CssPosition, CssPositionOffset, DisplayValue, FloatValue, Gradient,
-    GradientStopColor, HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace,
-    ObjectFit, OutlineColor, OutlineStyle, OverflowValue, PositionValue, PropertyKey,
-    PropertyValue, Sides, TextShadowColor, VerticalAlign, Visibility, VisualBox, WritingMode,
-    ZIndexValue,
+    CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
+    HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
+    OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
+    VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -2891,13 +2890,7 @@ pub(crate) fn paint_document_impl(
                 // 2.7), and `vertical-align` does not apply to it even though
                 // the cascade keeps its `inline` display.
                 let blockified_item = document.layout_parent_of(node_id).is_some_and(|parent| {
-                    matches!(
-                        cascade.computed[parent].display,
-                        DisplayValue::Flex
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::Grid
-                            | DisplayValue::InlineGrid
-                    )
+                    cascade.computed[parent].display.is_flex_or_grid_container()
                 });
                 let own_shift = if placed_by_inline_engine || blockified_item {
                     0.0
@@ -2909,59 +2902,26 @@ pub(crate) fn paint_document_impl(
                 // relative insets. Keep the legacy paint offset for the body
                 // root, floats, explicit multicol fragments and manually
                 // placed table parts. Those paths still use paint-side insets.
-                let is_float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
-                    && document.layout_parent_of(node_id).is_none_or(|parent| {
-                        !matches!(
-                            cascade.computed[parent].display,
-                            DisplayValue::Flex
-                                | DisplayValue::InlineFlex
-                                | DisplayValue::Grid
-                                | DisplayValue::InlineGrid
-                        )
-                    });
-                let needs_paint_inset = node_id == body_id
-                    || is_float
-                    || is_fragment_visit
-                    || matches!(
-                        cv.display,
-                        DisplayValue::TableCaption
-                            | DisplayValue::TableCell
-                            | DisplayValue::TableRow
-                            | DisplayValue::TableRowGroup
-                            | DisplayValue::TableHeaderGroup
-                            | DisplayValue::TableFooterGroup
-                    );
-                let (pos_dx, pos_dy) = if needs_paint_inset
-                    && !matches!(
-                        cv.display,
-                        DisplayValue::Inline
-                            | DisplayValue::InlineBlock
-                            | DisplayValue::InlineFlex
-                            | DisplayValue::InlineGrid
-                            | DisplayValue::InlineTable
-                    ) {
-                    raikiri_dom::used_relative_offset(document, cv, node_id)
+                let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
+                    document,
+                    cascade,
+                    Some(body_id),
+                    node_id,
+                    cv,
+                ) || (is_fragment_visit && !cv.display.is_inline_level());
+                let (pos_dx, pos_dy) = if needs_paint_inset {
+                    raikiri_dom::used_relative_offset(document, cascade, cv, node_id)
                 } else if node.needs_relative_block_paint_offset() {
                     // The foundational column post-pass replaces only Y;
                     // the existing X location already includes its inset.
                     (
                         0.0,
-                        raikiri_dom::used_relative_offset(document, cv, node_id).1,
+                        raikiri_dom::used_relative_offset(document, cascade, cv, node_id).1,
                     )
                 } else {
                     (0.0, 0.0)
                 };
-                // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-                // Non-replaced inline and table-column boxes are not transformable.
-                let transformable = !matches!(
-                    cv.display,
-                    DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-                ) && (cv.display != DisplayValue::Inline
-                    || node.is_inline_svg_root()
-                    || matches!(
-                        node.tag_name(),
-                        Some("img" | "canvas" | "video" | "iframe" | "object" | "embed")
-                    ));
+                let transformable = raikiri_dom::is_transformable(document, node_id, cv);
                 let (own_transform_x, own_transform_y) = if transformable {
                     transform_translation(cv, layout.size.width, layout.size.height)
                 } else {
@@ -3536,7 +3496,9 @@ pub(crate) fn paint_document_impl(
                         let bitmap = if let Some(bitmap) = document.canvas_bitmap_ref(node_id) {
                             bitmap
                         } else {
-                            let (w, h) = document.canvas_size(node_id).unwrap_or((300, 150));
+                            let (w, h) = document
+                                .canvas_size(node_id)
+                                .unwrap_or(raikiri_dom::document::DEFAULT_CANVAS_SIZE);
                             fallback_bitmap = raikiri_dom::CanvasBitmap::transparent(w, h);
                             &fallback_bitmap
                         };
@@ -4093,13 +4055,11 @@ pub(crate) fn paint_document_impl(
                     let child_fragment_clip_height = match own_multicol_clip_height {
                         Some(clip_height)
                             if document.get_node(child).is_some_and(|child_node| {
-                                matches!(
-                                    cascade.computed[child].display,
-                                    DisplayValue::Grid
-                                        | DisplayValue::InlineGrid
-                                        | DisplayValue::Table
-                                        | DisplayValue::InlineTable
-                                ) && child_node.kind() == NodeKind::Element
+                                (cascade.computed[child].display.is_grid_container()
+                                    || matches!(
+                                        cascade.computed[child].display,
+                                        DisplayValue::Table | DisplayValue::InlineTable
+                                    )) && child_node.kind() == NodeKind::Element
                             }) =>
                         {
                             Some(clip_height)
@@ -7279,7 +7239,9 @@ fn vertical_align_shift_px(
     display: DisplayValue,
     parent_font_size_px: f32,
 ) -> f32 {
-    if !matches!(display, DisplayValue::Inline | DisplayValue::InlineBlock) {
+    // Preserve the legacy paint-side scope to inline flow boxes. The caller
+    // already excludes atomic boxes aligned by the inline engine.
+    if !display.is_inline_flow_box() {
         return 0.0;
     }
     match va {

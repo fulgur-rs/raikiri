@@ -467,7 +467,13 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
         Some("display:block;width:20px;height:10px"),
     );
     let children = doc.nodes[table].children.clone();
-    for mode in ["horizontal-tb", "vertical-rl", "horizontal-tb"] {
+    for mode in [
+        "horizontal-tb",
+        "vertical-rl",
+        "sideways-rl",
+        "sideways-lr",
+        "horizontal-tb",
+    ] {
         doc.set_element_inline_style(
             table,
             Some(format!("display:table;border-spacing:0;writing-mode:{mode}").into()),
@@ -491,6 +497,11 @@ fn prototypes_exclude_real_canvas_payloads_and_rebuild_with_source_changes() {
             assert_eq!(
                 cell.authored_writing_mode,
                 doc.nodes[table].authored_writing_mode
+            );
+            assert_eq!(cell.used_writing_mode, doc.nodes[table].used_writing_mode);
+            assert_eq!(
+                cell.under_vertical_writing,
+                doc.nodes[table].under_vertical_writing
             );
         }
         assert_eq!(doc.nodes[table].children, children);

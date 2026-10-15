@@ -861,6 +861,7 @@ pub(crate) fn serialize_relative_calc_length_percentage(
 ) -> String {
     let unit_name = |unit| match unit {
         RelativeCalcUnit::Em => "em",
+        RelativeCalcUnit::Ch => "ch",
         RelativeCalcUnit::Rem => "rem",
         RelativeCalcUnit::Lh => "lh",
         RelativeCalcUnit::Rlh => "rlh",
