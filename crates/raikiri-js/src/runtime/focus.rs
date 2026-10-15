@@ -206,12 +206,11 @@ fn elements_in_tree_order(document: &Document) -> Vec<usize> {
     let mut elements = Vec::new();
     let mut stack = vec![document.root_index()];
     while let Some(index) = stack.pop() {
-        if let Some(node) = document.get_node(index) {
-            if node.kind() == NodeKind::Element {
-                elements.push(index);
-            }
-            stack.extend(node.children.iter().rev());
+        let node = document.get_node(index);
+        if node.is_some_and(|node| node.kind() == NodeKind::Element) {
+            elements.push(index);
         }
+        stack.extend(node.into_iter().flat_map(|node| node.children.iter().rev()));
     }
     elements
 }
@@ -292,25 +291,17 @@ fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
     if previous == next {
         return Ok(());
     }
-    if let Some(previous) = previous
-        && !focus_phase(
-            context,
-            None,
-            previous,
-            next,
-            [("blur", false), ("focusout", true)],
-        )?
-    {
-        return Ok(());
+    if let Some(previous) = previous {
+        let blur = [("blur", false), ("focusout", true)];
+        let cleared = focus_phase(context, None, previous, next, blur);
+        if !cleared? {
+            return Ok(());
+        }
     }
     if let Some(next) = next {
-        focus_phase(
-            context,
-            Some(next),
-            next,
-            previous,
-            [("focus", false), ("focusin", true)],
-        )?;
+        let focus = [("focus", false), ("focusin", true)];
+        let focused = focus_phase(context, Some(next), next, previous, focus);
+        focused?;
     }
     Ok(())
 }
