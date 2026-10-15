@@ -1232,7 +1232,11 @@ fn is_supported_at_rule(prelude: &str, has_block: bool) -> bool {
     } else if named(&["namespace"]) {
         !has_block
     } else if named(&["layer"]) {
-        true
+        let mut input = ParserInput::new(prelude);
+        let mut parser = Parser::new(&mut input);
+        let _ = parser.next();
+        let names = &prelude[parser.position().byte_index()..];
+        raikiri_style::is_valid_layer_prelude(names, has_block)
     } else {
         has_block && named(&["media", "supports", "page", "font-face", "counter-style"])
     }

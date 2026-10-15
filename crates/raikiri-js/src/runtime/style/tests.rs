@@ -2427,6 +2427,10 @@ fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
         "'@namespace foo'",
         "'@page :foo {}'",
         "'svg|rect {}'",
+        "'@layer initial'",
+        "'@layer'",
+        "'@layer a, b {}'",
+        "'@layer a.'",
     ] {
         ok(
             &mut rt,

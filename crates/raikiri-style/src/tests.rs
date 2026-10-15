@@ -407,3 +407,15 @@ fn first_letter_legacy_and_modern_selectors_serialize_canonically() {
         assert_eq!(output, "div::first-letter");
     }
 }
+
+#[test]
+fn layer_preludes_follow_the_layer_name_grammar() {
+    use crate::is_valid_layer_prelude;
+    assert!(is_valid_layer_prelude(" a, b.c ", false));
+    assert!(is_valid_layer_prelude("", true));
+    assert!(is_valid_layer_prelude(" a ", true));
+    assert!(!is_valid_layer_prelude("", false));
+    assert!(!is_valid_layer_prelude(" a, b", true));
+    assert!(!is_valid_layer_prelude(" initial", false));
+    assert!(!is_valid_layer_prelude(" a.", false));
+}

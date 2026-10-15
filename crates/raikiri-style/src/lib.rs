@@ -58,6 +58,7 @@ pub use property::{
 };
 
 mod layer;
+pub use layer::is_valid_layer_prelude;
 mod logical;
 
 pub mod rule;
