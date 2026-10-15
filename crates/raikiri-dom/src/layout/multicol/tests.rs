@@ -2549,3 +2549,132 @@ fn parent_lookup_matches_arena_edges_through_detached_and_fragment_mutations() {
     assert_eq!(doc.parent_of(text), Some(child));
     assert_parents(&doc);
 }
+
+#[test]
+fn a_paragraph_continued_in_a_later_column_starts_at_its_top() {
+    // Orphans keep the paragraph out of the first column, and widows leave
+    // the second one a line short: the third column still starts with the
+    // fifth line at its top.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;width:300px;columns:3;column-gap:0;column-fill:auto;height:50px;\
+             orphans:3;widows:3;font-size:10px;line-height:10px",
+        ),
+    );
+    let first = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block"),
+    );
+    for _ in 0..3 {
+        doc.append_text(first, "a");
+        doc.append_element(Some(first), "br", Style::default(), None::<&str>);
+    }
+    let second = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block"),
+    );
+    for _ in 0..7 {
+        doc.append_text(second, "b");
+        doc.append_element(Some(second), "br", Style::default(), None::<&str>);
+    }
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = raikiri_traits::PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    layout_single_page(&mut doc, &cascade, page).expect("layout Ok");
+
+    let ranges: Vec<_> = doc.nodes[second]
+        .ifc_multicol_fragments()
+        .expect("column ranges")
+        .iter()
+        .map(|range| (range.line_start, range.line_end, range.fragmentainer))
+        .collect();
+    assert_eq!(ranges, [(0, 4, 1), (4, 7, 2)]);
+    let line_tops = |column| {
+        let positioned =
+            crate::PositionedLines::new(&doc, &cascade, second, Some(column)).expect("lines");
+        positioned
+            .all_lines()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                Some(positioned.line_offset(index)?.1 + line.block_offset())
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(line_tops(1), [0.0, 10.0, 20.0, 30.0]);
+    assert_eq!(line_tops(2), [0.0, 10.0, 20.0]);
+    // Each column holds a fragment of the paragraph at its top; the first
+    // one runs to the column's end.
+    let fragments: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == second)
+        .map(|fragment| {
+            (
+                fragment.fragmentainer,
+                fragment.rect.y,
+                fragment.rect.height,
+            )
+        })
+        .collect();
+    assert_eq!(fragments, [(1, 0.0, 50.0), (2, 0.0, 30.0)]);
+}
+
+#[test]
+fn a_nested_column_container_keeps_its_own_fragment_height() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some(
+            "display:block;width:300px;columns:3;column-gap:0;column-fill:auto;height:80px;\
+             font-size:10px;line-height:10px",
+        ),
+    );
+    let first = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block"),
+    );
+    for _ in 0..2 {
+        doc.append_text(first, "a");
+        doc.append_element(Some(first), "br", Style::default(), None::<&str>);
+    }
+    let nested = doc.append_element(
+        Some(multicol),
+        "div",
+        Style::default(),
+        Some("display:block;columns:2;column-gap:0;height:20px"),
+    );
+    for _ in 0..4 {
+        doc.append_text(nested, "b");
+        doc.append_element(Some(nested), "br", Style::default(), None::<&str>);
+    }
+    layout_nested_flex_float_fixture(&mut doc);
+
+    let heights: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == nested)
+        .map(|fragment| fragment.rect.height)
+        .collect();
+    assert_eq!(heights.first(), Some(&20.0));
+}
