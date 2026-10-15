@@ -1,6 +1,6 @@
 mod break_flow;
 mod constrained_chain;
-mod lineless;
+pub(crate) mod lineless;
 mod paged_spanning;
 mod paragraph_group;
 pub(super) mod spanning;

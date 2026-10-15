@@ -10479,6 +10479,51 @@ fn a_margin_after_a_zero_height_forced_break_box_with_content_is_truncated() {
 }
 
 #[test]
+fn a_forced_break_box_with_only_a_hidden_child_keeps_the_margin_after_it() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let forced = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;break-before:page"),
+    );
+    doc.append_element(Some(forced), "span", Style::default(), Some("display:none"));
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        130.0
+    );
+}
+
+#[test]
 fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;

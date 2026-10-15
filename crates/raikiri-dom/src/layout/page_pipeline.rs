@@ -5830,7 +5830,8 @@ fn paginate_flow(
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
         // A box with no block size and no content lets its block-start and
         // block-end margins collapse through it.
-        let margins_collapse_through = height <= 0.0 && document.nodes[node_id].children.is_empty();
+        let margins_collapse_through =
+            height <= 0.0 && !super::multicol::lineless::has_rendered_content(document, node_id);
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
