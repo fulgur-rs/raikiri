@@ -3651,7 +3651,8 @@ pub fn layout_pages_with_page_geometry_and_control(
     }
 
     /// The content after `block`, a block child of the paragraph `root` that
-    /// spanned `old_top..old_bottom`, moves down by `delta`: the lines after
+    /// spanned `old_top..old_bottom`, moves down by a finite, nonzero
+    /// `delta`: the lines after
     /// it and the paragraph's boxes after it in source order. A box inside
     /// `block` that moves to a later page takes the rest of the paragraph
     /// along this way even though `block` itself stays.
@@ -3663,9 +3664,6 @@ pub fn layout_pages_with_page_geometry_and_control(
         old_bottom: f32,
         delta: f32,
     ) {
-        if delta == 0.0 || !delta.is_finite() {
-            return;
-        }
         let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
             return;
         };
