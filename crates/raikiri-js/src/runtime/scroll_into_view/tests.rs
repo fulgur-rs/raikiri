@@ -53,11 +53,45 @@ fn dictionary_members_convert_in_order_and_reject_unknown_values() {
            Object.defineProperty(options, name, {get: function () { log.push(name); }});\
          });\
          t.scrollIntoView(options);\
-         function throws(arg) { try { t.scrollIntoView(arg); } catch (e) { return e instanceof TypeError; } }\
-         log.join() === 'behavior,block,container,inline'\
-           && throws({block: 'top'}) && throws({inline: 'left'})\
-           && throws({container: 'self'}) && throws({behavior: 'fast'})",
+         var rejected = [];\
+         function rejects(arg) {\
+           t.scrollIntoView(arg).catch(function (e) { rejected.push(e instanceof TypeError); });\
+         }\
+         rejects({block: 'top'}); rejects({inline: 'left'});\
+         rejects({container: 'self'}); rejects({behavior: 'fast'});\
+         Element.prototype.scrollIntoView.call({}).catch(function (e) {\
+           rejected.push(e instanceof TypeError);\
+         });\
+         log.join() === 'behavior,block,container,inline'",
     );
+    ok(&mut rt, "rejected.join() === 'true,true,true,true,true'");
+}
+
+#[test]
+fn the_promise_resolves_to_a_non_interrupted_result() {
+    let mut rt = page(PositionKind::Static, &[]);
+    ok(
+        &mut rt,
+        "var t = document.body.firstChild, results = [];\
+         var scrolled = t.scrollIntoView();\
+         var unboxed = document.body.appendChild(document.createElement('p')).scrollIntoView();\
+         [scrolled, unboxed].forEach(function (p) {\
+           p.then(function (r) { results.push(r.interrupted); });\
+         });\
+         scrolled instanceof Promise && unboxed instanceof Promise",
+    );
+    ok(&mut rt, "results.join() === 'false,false'");
+}
+
+#[test]
+fn an_engine_limit_in_the_options_still_aborts() {
+    let mut rt = page(PositionKind::Static, &[]);
+    let result = rt.evaluate(
+        "var options = {};\
+         Object.defineProperty(options, 'block', {get: function f() { return f(); }});\
+         document.body.firstChild.scrollIntoView(options)",
+    );
+    assert!(result.is_err());
 }
 
 #[test]
@@ -68,6 +102,27 @@ fn elements_without_a_box_or_fixed_do_not_scroll() {
         "document.body.firstChild.scrollIntoView();\
          var hidden = document.body.appendChild(document.createElement('p'));\
          hidden.scrollIntoView(); scrollX === 0 && scrollY === 0",
+    );
+}
+
+#[test]
+fn elements_inside_a_fixed_ancestor_do_not_scroll() {
+    let (mut host, _, _, body) = StubHost::page();
+    let frame = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, frame).unwrap();
+    let target = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(frame, target).unwrap();
+    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    host.geometry
+        .insert(frame, StubHost::boxed(rect, rect, PositionKind::Fixed));
+    host.geometry
+        .insert(target, StubHost::boxed(rect, rect, PositionKind::Absolute));
+    host.viewport = Ok(Some((100.0, 100.0)));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.firstChild.firstChild.scrollIntoView();\
+         scrollX === 0 && scrollY === 0",
     );
 }
 

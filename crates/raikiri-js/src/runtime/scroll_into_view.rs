@@ -1,12 +1,15 @@
 //! `Element.scrollIntoView` (CSSOM View §6.1). Only the viewport keeps a
-//! scroll offset in this runtime (see `super::window`), so the viewport is
+//! scroll offset in this runtime (see [`super::window`]), so the viewport is
 //! the one scrolling box the element is scrolled into; element scroll
 //! containers keep their origin. `scroll-margin` and `scroll-padding` are
 //! not applied.
 //!
 //! Spec: <https://drafts.csswg.org/cssom-view/#dom-element-scrollintoview>
 
-use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue};
+use boa_engine::object::ObjectInitializer;
+use boa_engine::object::builtins::JsPromise;
+use boa_engine::property::Attribute;
+use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, js_string};
 
 use super::geometry::box_geometry;
 use super::host::PositionKind;
@@ -163,24 +166,58 @@ fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) 
     Ok(false)
 }
 
+/// Whether an ancestor of `index` is fixed-position, which keeps `index`
+/// fixed with respect to the viewport too. An ancestor with no box does
+/// not count.
+fn has_fixed_ancestor(context: &mut Context, index: usize) -> JsResult<bool> {
+    let mut current = with_state(context, |s| s.host.document().parent_of(index))?;
+    while let Some(ancestor) = current {
+        if box_geometry(context, ancestor)?.is_some_and(|g| g.position == PositionKind::Fixed) {
+            return Ok(true);
+        }
+        current = with_state(context, |s| s.host.document().parent_of(ancestor))?;
+    }
+    Ok(false)
+}
+
 /// `Element.scrollIntoView(arg)`: scroll the viewport so the element's
 /// border box is aligned as `block` and `inline` ask, along the axes of
 /// the document element's writing mode. An element without a box, a
-/// fixed-position one (the viewport does not move it), or one that
+/// fixed-position one or one inside a fixed-position ancestor (the
+/// viewport does not move either), or one that
 /// `container: "nearest"` confines to an inner scroll container leaves the
-/// viewport where it is. Every `behavior` scrolls instantly.
+/// viewport where it is. Every `behavior` scrolls instantly, so the
+/// returned promise resolves to a non-interrupted `ScrollResult`.
 pub(crate) fn scroll_into_view(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
+    let promise = match scroll(this, args, context) {
+        Ok(()) => {
+            let result = ObjectInitializer::new(context)
+                .property(js_string!("interrupted"), false, Attribute::all())
+                .build();
+            JsPromise::resolve(result, context)?
+        }
+        // An operation returning a promise reports a thrown exception
+        // through it (WebIDL §3.2.6); an uncatchable one still aborts.
+        Err(error) if error.as_engine().is_none() => JsPromise::reject(error, context)?,
+        Err(error) => return Err(error),
+    };
+    Ok(promise.into())
+}
+
+/// The scroll behind [`scroll_into_view`], which wraps its outcome in the
+/// returned promise.
+fn scroll(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<()> {
     let index = this_element(this, context)?;
     let options = options(args.first(), context)?;
     let Some(geometry) = box_geometry(context, index)? else {
-        return Ok(JsValue::undefined());
+        return Ok(());
     };
-    if geometry.position == PositionKind::Fixed {
-        return Ok(JsValue::undefined());
+    if geometry.position == PositionKind::Fixed || has_fixed_ancestor(context, index)? {
+        return Ok(());
     }
     let root = with_state(context, |s| {
         let document = s.host.document();
@@ -188,10 +225,10 @@ pub(crate) fn scroll_into_view(
     })?;
     // cov:ignore: an element with a box is connected, so the document has a root.
     let Some(root) = root else {
-        return Ok(JsValue::undefined());
+        return Ok(());
     };
     if options.nearest_container && has_inner_scroll_container(context, index, root)? {
-        return Ok(JsValue::undefined());
+        return Ok(());
     }
     let writing_mode = read_computed(context, root, "writing-mode")?;
     let direction = read_computed(context, root, "direction")?;
@@ -232,7 +269,7 @@ pub(crate) fn scroll_into_view(
         s.viewport_scroll_x = clamp_viewport_offset(x);
         s.viewport_scroll_y = clamp_viewport_offset(y);
     })?;
-    Ok(JsValue::undefined())
+    Ok(())
 }
 
 #[cfg(test)]
