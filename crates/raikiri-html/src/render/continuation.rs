@@ -167,17 +167,23 @@ fn continue_from(
             segment
                 .document
                 .page_content_before(segment.cascade, page as u32, start.token);
-        // Continue no box from the earlier layout. The body then has no
-        // fragment on the resumed page when it starts above it, as after a
-        // resumed stream, whose shorter dropped page would otherwise leave
-        // it one there.
+        // Continue only the body from the earlier layout: it spans the
+        // paginated content, so its fragments go on across the resumed page.
+        // Other boxes crossing the start begin anew in the copy.
+        let body = raikiri_dom::paint_rules::find_paint_root(segment.document);
+        let crossing: Vec<CrossingBox> = segment
+            .document
+            .crossing_boxes(page as u32)
+            .into_iter()
+            .filter(|crossing| Some(crossing.node.0 as usize) == body)
+            .collect();
         let Some((continuation, pages)) = relayout_from(
             inputs,
             slices,
             geometries,
             page,
             start,
-            Some(&[]),
+            Some(&crossing),
             Some(&before),
         )?
         else {

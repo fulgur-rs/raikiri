@@ -100,9 +100,9 @@ pub(super) fn resume_point(
     }
     let inside = inside_subtrees(dom, &skipped);
     let node_count = dom.node_count();
-    // The boxes crossing the page start continue their fragments. The body
-    // spans one page area from the top of the first page, so a relayout
-    // that begins it above the resumed page cannot tell how far it reaches.
+    // The boxes crossing the page start continue their fragments, except
+    // the body, which is left to a full layout: it begins above the resumed
+    // page, in content the relayout leaves out.
     let body = layout_root(dom, start.token.node());
     let earlier_fragments = layout_document.crossing_boxes(page);
     if earlier_fragments

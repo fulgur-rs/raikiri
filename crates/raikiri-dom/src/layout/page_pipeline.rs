@@ -2448,10 +2448,9 @@ pub(crate) fn project_slices_with_control(
     }
 
     // A relayout resumed at a page start continues the fragments the boxes
-    // crossing that start had before it. The body spans one page area from
-    // the top of the relayout's first page, which the relayout drops; when
-    // it did not cross the start in the earlier layout, it has no fragment
-    // after it.
+    // crossing that start had before it. The body begins on the relayout's
+    // first page, which the relayout drops; when it did not cross the start
+    // in the earlier layout, it has no fragment after it.
     if let Some(earlier) = &document.earlier_fragments
         && let Some(first) = pages.first_mut()
     {
@@ -6264,6 +6263,22 @@ pub fn layout_pages_with_page_geometry_and_control(
             let end_page = page_index_for_end(end);
             control.check_discovery_page_index(end_page)?;
             max_page = max_page.max(end_page);
+        }
+    }
+    // Layout sizes the body to the page area, so its box ends on the first
+    // page. Its borders and background follow the paginated content onto
+    // the pages after that.
+    if !control.page_limit_reached.get()
+        && cascade.computed[body_id].display != DisplayValue::Contents
+    {
+        let end = body_border_box_end(document, cascade, body_id, root_flow_offset, content_height);
+        let root_y = document
+            .parent_of(body_id)
+            .map_or(0.0, |root| document.nodes[root].unrounded_layout.location.y);
+        let layout = &mut document.nodes[body_id].unrounded_layout;
+        let height = end - root_y - layout.location.y;
+        if height.is_finite() && height > layout.size.height {
+            layout.size.height = height;
         }
     }
     // Pages past the last one the normal flow reached hold only boxes outside

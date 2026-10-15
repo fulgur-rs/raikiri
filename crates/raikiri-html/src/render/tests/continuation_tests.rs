@@ -374,3 +374,62 @@ fn a_float_continuing_onto_a_page_counts_as_content_before_its_start() {
         .collect();
     assert_eq!(floats.len(), 1, "{before:?}");
 }
+
+/// The body's box fragment on each page, as (top, height).
+fn body_on_pages(out: &PipelineOutput) -> Vec<Option<(f32, f32)>> {
+    (0..out.slices.len() as u32)
+        .map(|page| {
+            let (document, _) = out.layout_for_page(page);
+            document
+                .page_fragments(page)
+                .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Box)
+                .find(|fragment| {
+                    document
+                        .get_node(fragment.node().0 as usize)
+                        .and_then(|node| node.tag_name())
+                        == Some("body")
+                })
+                .map(|fragment| (fragment.rect().y, fragment.rect().height))
+        })
+        .collect()
+}
+
+#[test]
+fn a_bordered_body_reaches_every_relaid_out_page() {
+    // 14 blocks of 40px below a 1px border: the later pages start at the
+    // top of their first block, so the body's bottom border ends 81px down
+    // the fourth page.
+    let blocks = "<div style='height:40px'>x</div>".repeat(14);
+    let out = run(&format!(
+        "{PAGES}<style>body {{ border: 1px solid }}</style>{blocks}"
+    ));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 81.0)),
+        ]
+    );
+}
+
+#[test]
+fn a_bordered_body_reaches_every_page_of_one_width() {
+    let blocks = "<div style='height:40px'>x</div>".repeat(14);
+    let out = run(&format!(
+        "{}<style>body {{ border: 1px solid }}</style>{blocks}",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert!(out.continuations.is_empty());
+    assert_eq!(
+        body_on_pages(&out),
+        vec![
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 160.0)),
+            Some((20.0, 82.0)),
+        ]
+    );
+}
