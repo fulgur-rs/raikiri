@@ -18,11 +18,11 @@ pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
     let images = with_state(context, |s| {
         s.dirty = true;
         s.generation = s.generation.wrapping_add(1);
-        !s.inert_images.is_empty() || !s.image_requests.is_empty()
+        !s.inert_images.is_empty() || !s.active_images.is_empty()
     })?;
     // Every tree mutation marks the document dirty, so this is where an
-    // image moved into template contents stops loading and one moved out
-    // of them starts.
+    // image moved into template contents turns inert and one moved out of
+    // them updates its image data again.
     if images {
         super::image::settle_moved_images(context)?;
     }

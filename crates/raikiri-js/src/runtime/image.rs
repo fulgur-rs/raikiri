@@ -90,10 +90,12 @@ pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult
         let adopted =
             !s.inert_images.contains(&index) || tree_root(document, index) == document.root_index();
         if !adopted || in_template_contents(document, index) {
+            s.active_images.remove(&index);
             s.inert_images.insert(index);
             return None;
         }
         s.inert_images.remove(&index);
+        s.active_images.insert(index);
         document.element_attribute(index, "src").map(str::to_owned)
     })?;
     let request = with_state(context, |s| {
@@ -210,21 +212,23 @@ pub(crate) fn remember_inert_images(context: &mut Context, root: usize) -> JsRes
     })
 }
 
-/// After a tree mutation, cancel the pending request of each image that was
-/// moved into template contents (adopting it into their inert document),
-/// remembering it instead, then start the request of each remembered inert
-/// image that is now in this document's tree. Merely removing one from
-/// template contents does not adopt it, so a detached one keeps waiting.
+/// After a tree mutation, make each image that was moved into template
+/// contents (adopting it into their inert document) inert again, cancelling
+/// any request it still had pending, then update the image data of each
+/// remembered inert image that is now in this document's tree. Merely
+/// removing one from template contents does not adopt it, so a detached one
+/// keeps waiting.
 pub(crate) fn settle_moved_images(context: &mut Context) -> JsResult<()> {
     let adopted = with_state(context, |s| {
         let document = s.host.document();
         let moved_in = s
-            .image_requests
-            .keys()
+            .active_images
+            .iter()
             .copied()
             .filter(|&index| in_template_contents(document, index))
             .collect::<Vec<_>>();
         for index in moved_in {
+            s.active_images.remove(&index);
             s.image_requests.remove(&index);
             s.inert_images.insert(index);
         }

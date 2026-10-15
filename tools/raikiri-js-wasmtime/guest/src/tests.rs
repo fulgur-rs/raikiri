@@ -117,6 +117,7 @@ fn hostile_geometry_and_fragment_validation_are_rejected() {
                         quirks: 0,
                         stylesheets: Vec::new(),
                         base_url: None,
+                        selected_image_urls: Vec::new(),
                     })
                 }
                 _ => HostValue::Unit,

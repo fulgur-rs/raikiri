@@ -369,6 +369,7 @@ fn hostile_flush_rejects_invalid_snapshot() {
         quirks: 0,
         stylesheets: Vec::new(),
         base_url: None,
+        selected_image_urls: Vec::new(),
     };
     assert!(roundtrip_response(&mut b, HostOperation::Flush(empty)).is_err());
 }

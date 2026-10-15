@@ -105,6 +105,10 @@ pub(crate) struct State {
     /// `<img>` elements in template contents whose request waits until they
     /// are moved out.
     pub inert_images: HashSet<usize>,
+    /// `<img>` elements whose image data was last updated in this document,
+    /// with or without a request still pending: moving one into template
+    /// contents makes it inert again.
+    pub active_images: HashSet<usize>,
     /// The Window's live Selection object, created on first access.
     pub selection_object: Option<JsObject>,
     /// Ranges currently held by the singleton Selection object.
@@ -362,6 +366,7 @@ impl DomRuntime {
             image_requests: HashMap::new(),
             next_image_request: 0,
             inert_images: HashSet::new(),
+            active_images: HashSet::new(),
             selection_object: None,
             selection_ranges: Vec::new(),
             custom_highlights: HashMap::new(),

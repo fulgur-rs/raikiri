@@ -375,6 +375,12 @@ fn moving_an_image_into_template_contents_cancels_its_request() {
     // It is remembered like any other image in template contents.
     ok(&mut rt, "document.body.appendChild(img); !img.complete");
     ok_after_tasks(&mut rt, "log.join() === 'load'");
+    // A settled image moved through template contents loads again once it
+    // is back in the document, and not while it is inert.
+    ok(&mut rt, "log = []; inner.appendChild(img); img.complete");
+    ok_after_tasks(&mut rt, "log.length === 0");
+    ok(&mut rt, "document.body.appendChild(img); !img.complete");
+    ok_after_tasks(&mut rt, "log.join() === 'load'");
 }
 
 #[test]
