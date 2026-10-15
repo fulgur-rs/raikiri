@@ -4633,3 +4633,7 @@ css/cssom/stylesheet-replacedata-dynamic.html
 # --- text overflowing into the right page padding (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once flowed text on pages that follow the y axis is clipped at the page border box's right edge; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-009-print.html
+
+# --- margins spanning several pages (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
+# Pass once a margin that crosses several page edges breaks at the first one instead of filling blank pages; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-name-orthogonal-writing-002-print.html
