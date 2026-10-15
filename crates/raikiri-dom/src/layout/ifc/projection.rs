@@ -370,13 +370,18 @@ fn push_generated(
     let id = NodeId(generated_node_id(element, pseudo) as u64);
     let inline_level = pseudo == PseudoElem::Marker
         || (cv.display.is_inline_level() || matches!(cv.display, DisplayValue::Contents));
-    let block = (!inline_level)
+    let block = match (!inline_level)
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
-        .map(|end| {
-            GeneratedBlock::new(id.0, end, cv)
-                .with_lines(style::line_options(cv, element, fonts).ok())
-        });
+    {
+        Some(end) => Some(GeneratedBlock::new(
+            id.0,
+            end,
+            cv,
+            style::line_options(cv, element, fonts)?,
+        )),
+        None => None,
+    };
     if text.is_empty() && !has_images && block.is_none() {
         if atomic {
             first_letter.stop();

@@ -13,7 +13,15 @@ fn block(css: &str) -> GeneratedBlock {
         raikiri_style::StyleNodeId::new(fixture.root as u64),
         raikiri_style::PseudoElem::Before,
     )];
-    GeneratedBlock::new(1, 2, cv)
+    GeneratedBlock::new(
+        1,
+        2,
+        cv,
+        (
+            shodo::style::LineOptions::default(),
+            raikiri_style::ComputedTextIndent::Px(5.0),
+        ),
+    )
 }
 
 #[test]
@@ -489,16 +497,13 @@ fn the_lines_of_a_block_box_take_its_own_alignment_and_indent() {
 
 #[test]
 fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() {
-    let block = block("").with_lines(Some((
-        shodo::style::LineOptions::default(),
-        raikiri_style::ComputedTextIndent::Px(5.0),
-    )));
+    let block = block("");
     let mut bfc = taffy::BlockFormattingContext::new();
     let ctx = bfc.root_block_context();
     let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
     let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
     let first = |open: &OpenBlock, lines| {
-        let (options, first) = open.line_options(lines).expect("own options");
+        let (options, first) = open.line_options(lines);
         assert_eq!(options.text_indent.length, 5.0);
         first
     };
