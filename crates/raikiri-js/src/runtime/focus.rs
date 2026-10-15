@@ -251,13 +251,14 @@ fn image_map_images(document: &Document, area: usize) -> Vec<usize> {
         .collect()
 }
 
-/// Make `focused` the focused element (`None` clears it), then fire the
-/// two `events` at `target` with `related` as `relatedTarget` while focus
-/// stays there. Returns whether it still does: a listener that moves focus
-/// ends the transition, since what is left of it no longer holds.
+/// Make `focused` the focused element (`None` clears it), indicating focus
+/// when `visible`, then fire the two `events` at `target` with `related`
+/// as `relatedTarget` while focus stays there. Returns whether it still
+/// does: a listener that moves focus ends the transition, since what is
+/// left of it no longer holds.
 fn focus_phase(
     context: &mut Context,
-    focused: Option<usize>,
+    (focused, visible): (Option<usize>, bool),
     target: usize,
     related: Option<usize>,
     events: [(&str, bool); 2],
@@ -266,7 +267,9 @@ fn focus_phase(
         with_state(context, |s| s.host.document().focused_element() == focused)
     };
     with_state(context, |s| {
-        s.host.document_mut().set_focused_element(focused)
+        let document = s.host.document_mut();
+        document.set_focused_element(focused);
+        document.set_focus_visible(visible);
     })?;
     // `:focus` and `:focus-within` change with it.
     mark_dirty(context)?;
@@ -283,24 +286,38 @@ fn focus_phase(
 /// (`None` to clear it): with focus cleared, `blur` then `focusout` at the
 /// old element; then with focus on the new one, `focus` then `focusin`
 /// there. Each is a `FocusEvent` whose `relatedTarget` is the other
-/// element.
+/// element. `visible` decides whether the new element indicates focus,
+/// already while its events run; `None` keeps the indication of an
+/// element that already has focus and indicates it on a new one.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focus-update-steps>
-fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
+fn move_focus(context: &mut Context, next: Option<usize>, visible: Option<bool>) -> JsResult<()> {
     let previous = with_state(context, |s| s.host.document().focused_element())?;
     if previous == next {
+        let changed = with_state(context, |s| {
+            let document = s.host.document_mut();
+            let before = document.focus_visible_element();
+            if let Some(visible) = visible {
+                document.set_focus_visible(visible);
+            }
+            document.focus_visible_element() != before
+        })?;
+        if changed {
+            mark_dirty(context)?;
+        }
         return Ok(());
     }
     if let Some(previous) = previous {
         let blur = [("blur", false), ("focusout", true)];
-        let cleared = focus_phase(context, None, previous, next, blur);
+        let cleared = focus_phase(context, (None, true), previous, next, blur);
         if !cleared? {
             return Ok(());
         }
     }
     if let Some(next) = next {
         let focus = [("focus", false), ("focusin", true)];
-        let focused = focus_phase(context, Some(next), next, previous, focus);
+        let state = (Some(next), visible.unwrap_or(true));
+        let focused = focus_phase(context, state, next, previous, focus);
         focused?;
     }
     Ok(())
@@ -353,7 +370,7 @@ pub(crate) fn fix_up_focus(context: &mut Context) -> JsResult<()> {
     if let Some(focused) = focused
         && !can_take_focus(context, focused)?
     {
-        move_focus(context, None)?;
+        move_focus(context, None, None)?;
     }
     Ok(())
 }
@@ -384,19 +401,7 @@ fn focus(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
     if !can_take_focus(context, index)? {
         return Ok(JsValue::undefined());
     }
-    move_focus(context, Some(index))?;
-    if let Some(visible) = visible
-        && with_state(context, |s| {
-            let document = s.host.document_mut();
-            let focused = document.focused_element() == Some(index);
-            if focused {
-                document.set_focus_visible(visible);
-            }
-            focused
-        })?
-    {
-        mark_dirty(context)?;
-    }
+    move_focus(context, Some(index), visible)?;
     Ok(JsValue::undefined())
 }
 
@@ -404,7 +409,7 @@ fn focus(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
 fn blur(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     if with_state(context, |s| s.host.document().focused_element())? == Some(index) {
-        move_focus(context, None)?;
+        move_focus(context, None, None)?;
     }
     Ok(JsValue::undefined())
 }

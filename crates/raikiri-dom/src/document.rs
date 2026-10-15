@@ -2059,6 +2059,8 @@ impl Document {
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
         document.focused = focused.and_then(|old| new_of_old.get(&old).copied());
         document.focus_hidden = *focus_hidden;
+        // A focused element copied without its ancestors is detached.
+        document.fix_up_focus();
         document.list_marker_images = remap_keys(list_marker_images, nodes);
         document.content_images = content_images
             .iter()

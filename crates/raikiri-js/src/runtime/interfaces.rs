@@ -387,6 +387,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &query::PARENT_NODE_QUERY_MEMBERS,
         &query::DOCUMENT_QUERY_MEMBERS,
         &super::focus::DOCUMENT_FOCUS_MEMBERS,
+        &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
     ];
     let document = derived(context, "Document", &node_i, &document_members)?;
     let fragment_members = [

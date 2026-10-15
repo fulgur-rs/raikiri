@@ -331,14 +331,14 @@ fn ui_event_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let (bubbles, cancelable, composed) = event_init(context, dict.as_ref())?;
     let (view_is_window, detail) = match &dict {
         Some(d) => {
-            let view = dict_view(context, d)?;
+            // WebIDL converts dictionary members in lexicographic order.
             let detail = dict_any(context, d, "detail")?;
             let detail = if detail.is_undefined() {
                 0
             } else {
                 detail.to_i32(context)?
             };
-            (view, detail)
+            (dict_view(context, d)?, detail)
         }
         None => (false, 0),
     };

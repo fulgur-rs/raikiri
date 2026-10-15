@@ -107,6 +107,9 @@ fn focus_follows_the_element_while_it_is_in_the_tree() {
         Some(2)
     );
     assert_eq!(doc.extract_nodes(&[0, html]).focused_element(), None);
+    // Without its ancestor, the copied element is detached and loses focus,
+    // so attaching it later does not bring focus back.
+    assert_eq!(doc.extract_nodes(&[0, button]).focused, None);
     for unfocusable in [detached, text, usize::MAX] {
         doc.set_focused_element(Some(unfocusable));
         assert_eq!(doc.focused_element(), None);

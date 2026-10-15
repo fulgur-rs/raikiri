@@ -214,7 +214,11 @@ fn focus_and_ui_event_constructors_read_their_dictionaries() {
          && nullView.view === null && new FocusEvent('n').relatedTarget === null\
          && throws(function () { new UIEvent('x', {view: {}}); })\
          && throws(function () { new FocusEvent('x', {relatedTarget: {}}); })\
-         && throws(function () { FocusEvent('x'); })",
+         && throws(function () { FocusEvent('x'); })\
+         && (function () { var order = [];\
+              new UIEvent('x', { get view() { order.push('view'); return null; },\
+                                 get detail() { order.push('detail'); return 1; } });\
+              return order.join() === 'detail,view'; })()",
     );
 }
 
@@ -445,7 +449,11 @@ fn focus_options_convert_and_decide_focus_visibility() {
          try { b.focus(1); } catch (e) { typed = e instanceof TypeError; }\
          var span = document.body.appendChild(document.createElement('span'));\
          span.focus({focusVisible: false});\
-         hidden && kept && shown && again && thrown && typed\
+         var c = document.body.appendChild(document.createElement('button')), seen;\
+         c.onfocus = function () { seen = c.matches(':focus-visible'); };\
+         c.focus({focusVisible: false}); var quiet = seen === false;\
+         b.focus();\
+         hidden && kept && shown && again && thrown && typed && quiet\
            && order.join() === 'visible,prevent' && b.matches(':focus-visible')",
     );
 }
@@ -488,5 +496,17 @@ fn a_listener_that_moves_focus_stops_the_older_transition() {
          log = []; a.focus();\
          first && second && document.activeElement === document.body\
            && log.join() === 'd:blur,d:focusout,a:focus,a:blur,a:focusout'",
+    );
+}
+
+#[test]
+fn the_document_has_event_handler_attributes() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var calls = 0; document.onclick = function () { calls++; };\
+         document.dispatchEvent(new Event('click'));\
+         'onfocus' in document && 'onblur' in document && calls === 1\
+           && typeof document.onclick === 'function'",
     );
 }
