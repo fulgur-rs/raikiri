@@ -758,3 +758,27 @@ fn moving_the_focused_element_clears_focus() {
          d.appendChild(b); focused && document.activeElement === document.body",
     );
 }
+
+#[test]
+fn an_invisible_area_takes_focus_through_a_visible_image() {
+    let (mut host, _, _, body) = StubHost::page();
+    let document = &mut host.document;
+    let map = document.create_detached_element("map").unwrap();
+    document.set_element_attribute(map, "name", "m").unwrap();
+    document.append_child(body, map).unwrap();
+    let area = document.create_detached_element("area").unwrap();
+    document.set_element_attribute(area, "href", "#").unwrap();
+    document.append_child(map, area).unwrap();
+    let image = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(image, "usemap", "#m")
+        .unwrap();
+    document.append_child(body, image).unwrap();
+    host.invisible.insert(area);
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var area = document.body.children[0].firstChild; area.focus();\
+         document.activeElement === area",
+    );
+}

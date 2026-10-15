@@ -424,11 +424,12 @@ fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
         Some(false) => is_scrollable_region(context, index)?,
         None => false,
     };
-    if !focusable || !is_visible(context, index)? {
+    if !focusable {
         return Ok(false);
     }
+    // An image-map shape has no box of its own; only its image must show.
     let Some(images) = images else {
-        return is_being_rendered(context, index);
+        return Ok(is_visible(context, index)? && is_being_rendered(context, index)?);
     };
     for image in images {
         if is_being_rendered(context, image)? && is_visible(context, image)? {
