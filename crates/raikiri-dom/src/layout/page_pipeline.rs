@@ -1788,15 +1788,29 @@ pub(crate) fn project_slices_with_control(
         })
         .collect();
 
+    // Pages of a root whose blocks stack on vertical axes cut the flow along
+    // x; every placement below is made in flow space, where the flow runs
+    // down, and turned back to layout space on its page.
+    let flow_axis =
+        pages_follow_x_axis(document, cascade).map_or(FlowAxis::Y, |right_to_left| FlowAxis::X {
+            right_to_left,
+            width: pages.first().map_or(0.0, |page| page.content_box.width),
+        });
+
     // Each page's slice of the shared flow space: from its origin to the next
-    // page's origin, or its content height for the last page.
+    // page's origin, or its content extent along the flow for the last page.
     for (page_slot, page) in pages.iter_mut().enumerate() {
+        page.flow_axis = flow_axis;
         let page_start = page.content_origin_y;
+        let extent = match flow_axis {
+            FlowAxis::Y => page.content_box.height,
+            FlowAxis::X { .. } => page.content_box.width,
+        };
         let page_end = ordered_slices
             .get(page_slot + 1)
             .map(|next| next.content_origin_y)
             .filter(|next| next.is_finite() && *next > page_start)
-            .unwrap_or(page_start + page.content_box.height);
+            .unwrap_or(page_start + extent);
         page.flow_range = (page_start.is_finite() && page_end.is_finite() && page_end > page_start)
             .then_some((page_start, page_end));
     }
@@ -1836,6 +1850,9 @@ pub(crate) fn project_slices_with_control(
         height: f32,
         content_insets: Option<PageFragmentInsets>,
         line_metrics: Option<Vec<(f32, f32)>>,
+        /// The lines of `line_metrics` stack along x, from the block-start
+        /// edge of their paragraph.
+        lines_along_x: bool,
         line_start_offset: u32,
         is_repeat: bool,
         fragmentainer: u32,
@@ -1844,8 +1861,42 @@ pub(crate) fn project_slices_with_control(
         own_overflow_source: Option<usize>,
     }
 
+    impl PageFragmentSource {
+        /// This source with its geometry in the flow space of `axis`.
+        fn in_flow_space(&self, axis: FlowAxis) -> Self {
+            let (abs_x, abs_y, width, height) =
+                axis.to_flow((self.abs_x, self.abs_y, self.width, self.height));
+            let along_flow = self.lines_along_x == matches!(axis, FlowAxis::X { .. });
+            Self {
+                abs_x,
+                abs_y,
+                width,
+                height,
+                content_insets: self.content_insets.map(|insets| axis.sides_to_flow(insets)),
+                // Lines that stack across the flow all share the source's
+                // extent along it.
+                line_metrics: self.line_metrics.as_ref().map(|metrics| {
+                    if along_flow {
+                        metrics.clone()
+                    } else {
+                        vec![(0.0, height); metrics.len()]
+                    }
+                }),
+                fragment_clip: self.fragment_clip.map(|clip| {
+                    let (x, y, width, height) =
+                        axis.to_flow((clip.x, clip.y, clip.width, clip.height));
+                    PaintRect::new(x, y, width, height)
+                }),
+                ..self.clone()
+            }
+        }
+    }
+
     let mut nodes = Vec::new();
     let mut ifc_origin: HashMap<usize, (f32, f32)> = HashMap::new();
+    // The content width of each paragraph whose lines stack along x, and
+    // whether they stack from right to left.
+    let mut ifc_vertical: HashMap<usize, (f32, bool)> = HashMap::new();
     // Each inline element's rectangle is the union of its pieces after
     // pagination moves their lines.
     let mut ifc_piece_bounds: HashMap<usize, HashMap<usize, Vec<(BoxRect, u32)>>> = HashMap::new();
@@ -2042,6 +2093,8 @@ pub(crate) fn project_slices_with_control(
                 ),
                 x: abs_x,
                 y: abs_y,
+                width: 0.0,
+                lines_along_x: false,
                 is_repeat,
                 fragmentainer: None,
                 fragment_clip: visit.fragment_clip,
@@ -2069,11 +2122,28 @@ pub(crate) fn project_slices_with_control(
                 root_y + root_layout.border.top + root_layout.padding.top,
             );
             ifc_origin.insert(root_id, origin);
+            if let Some(mode) = root_node.ifc_writing_mode()
+                && mode.is_vertical()
+            {
+                ifc_vertical.insert(
+                    root_id,
+                    (
+                        root_layout.content_box_width(),
+                        matches!(
+                            mode,
+                            shodo::geometry::WritingMode::VerticalRl
+                                | shodo::geometry::WritingMode::SidewaysRl
+                        ),
+                    ),
+                );
+            }
             if origin.0.is_finite() && origin.1.is_finite() {
                 text_roots.push(ProjectedTextRoot {
                     node: root_id,
                     x: origin.0,
                     y: origin.1,
+                    width: root_layout.content_box_width(),
+                    lines_along_x: ifc_vertical.contains_key(&root_id),
                     is_repeat,
                     fragmentainer: visit.fragment.map(|index| fragments[index].fragmentainer),
                     fragment_clip: visit.fragment_clip,
@@ -2176,6 +2246,7 @@ pub(crate) fn project_slices_with_control(
                     )
                 }),
                 line_metrics: (node.kind() == NodeKind::Text).then(Vec::new),
+                lines_along_x: false,
                 line_start_offset: 0,
                 is_repeat,
                 fragmentainer: visit
@@ -2202,11 +2273,36 @@ pub(crate) fn project_slices_with_control(
                         .unwrap_or((abs_x, abs_y));
                     let first_top = owned.lines.first().map_or(0.0, |line| line.top);
                     let last_bottom = owned.lines.last().map_or(0.0, |line| line.bottom);
+                    let block_extent = finite_nonnegative(last_bottom - first_top);
+                    let inline_extent = finite_nonnegative(owned.width);
+                    // Lines are measured along the paragraph's block axis,
+                    // from its block-start content edge.
+                    let (abs_x, abs_y, width, height) = match ifc_vertical.get(&owned.root) {
+                        Some(&(content_width, true)) => (
+                            root_x + content_width - last_bottom,
+                            root_y + offset_x,
+                            block_extent,
+                            inline_extent,
+                        ),
+                        Some(_) => (
+                            root_x + first_top,
+                            root_y + offset_x,
+                            block_extent,
+                            inline_extent,
+                        ),
+                        None => (
+                            root_x + offset_x,
+                            root_y + first_top,
+                            inline_extent,
+                            block_extent,
+                        ),
+                    };
                     nodes.push(PageFragmentSource {
-                        abs_x: root_x + offset_x,
-                        abs_y: root_y + first_top,
-                        width: finite_nonnegative(owned.width),
-                        height: finite_nonnegative(last_bottom - first_top),
+                        abs_x,
+                        abs_y,
+                        width,
+                        height,
+                        lines_along_x: ifc_vertical.contains_key(&owned.root),
                         line_metrics: Some(
                             owned
                                 .lines
@@ -2310,6 +2406,7 @@ pub(crate) fn project_slices_with_control(
         .all(|pair| pair[0].1 <= pair[1].1 && pair[0].2 <= pair[1].2);
     for source in &nodes {
         work.check()?;
+        let source = &source.in_flow_space(flow_axis);
         let header_placements = document
             .table_objects
             .headers
@@ -2408,35 +2505,46 @@ pub(crate) fn project_slices_with_control(
             let Some(page) = pages.get_mut(page_slot) else {
                 continue; // cov:ignore: placements are indexed from the same slices used to build pages.
             };
+            let to_page = |rect: (f32, f32, f32, f32)| {
+                let (x, y, width, height) = flow_axis.to_layout(rect);
+                PageFragmentRect::new(x, y, width, height)
+            };
+            let rect = to_page((source.abs_x, y, source.width, fragment_height));
+            // A page cuts boxes only along the flow; across it, the whole box
+            // is the placed one.
+            let (item_box_y, item_box_height) = match flow_axis {
+                FlowAxis::Y => (box_y, source.height),
+                FlowAxis::X { .. } => (rect.y, rect.height),
+            };
             let mut item = PageFragmentItem::new(
                 source.node_id,
-                PageFragmentRect::new(source.abs_x, y, source.width, fragment_height),
+                rect,
                 kind,
                 fragment_index as u32,
                 fragment_count,
                 source.is_repeat || is_table_header,
             )
             .with_page_index(page.page_index)
-            .with_box_extent(box_y, source.height)
+            .with_box_extent(item_box_y, item_box_height)
             .with_content_rect(source.content_insets.map(|insets| {
-                PageFragmentRect::new(
+                to_page((
                     source.abs_x + insets.left,
                     box_y + insets.top,
                     (source.width - insets.left - insets.right).max(0.0),
                     (source.height - insets.top - insets.bottom).max(0.0),
-                )
+                ))
             }));
             item.is_table_header_repeat = is_table_header;
             item.fragmentainer = source.fragmentainer;
             item.overflow_chain = source.overflow_chain;
             item.own_overflow_source = source.own_overflow_source;
             item.fragment_clip = source.fragment_clip.map(|clip| {
-                PageFragmentRect::new(
+                to_page((
                     clip.x,
                     clip.y + box_y - source.abs_y,
                     clip.width,
                     clip.height,
-                )
+                ))
             });
             page.items.push(match line_range {
                 Some(range) => item.with_line_range(PageFragmentLineRange::new(

@@ -79,6 +79,8 @@ fn marker_projection_propagates_the_fixed_counter_snapshot_budget() {
         node: crate::generated_content::generated_node_id(owner, PseudoElem::Marker),
         x: 0.0,
         y: 0.0,
+        width: 0.0,
+        lines_along_x: false,
         is_repeat: false,
         fragmentainer: None,
         fragment_clip: None,

@@ -1067,8 +1067,9 @@ impl Document {
                 clip.y += shift - page.content_origin_y;
                 repeat = true;
             }
-            clip.x += page.content_box.x;
-            clip.y += page.content_box.y - if repeat { 0.0 } else { page.content_origin_y };
+            let (dx, dy) = page.flow_shift(repeat);
+            clip.x += page.content_box.x + dx;
+            clip.y += page.content_box.y + dy;
             for &index in &indices {
                 line_clips.insert(
                     TextLineId {

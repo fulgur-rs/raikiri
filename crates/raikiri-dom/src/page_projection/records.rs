@@ -91,6 +91,8 @@ pub(crate) struct PageFragment {
     /// The page's slice of the shared flow space, from `content_origin_y` to
     /// where the next page starts; `None` for an empty or non-finite slice.
     pub(crate) flow_range: Option<(f32, f32)>,
+    /// The physical axis the shared flow space runs along.
+    pub(crate) flow_axis: FlowAxis,
     /// Resolved page name, if the page context selected one.
     pub(crate) page_name: Option<String>,
     /// Physical orientation derived from the resolved page box.
@@ -121,6 +123,7 @@ impl PageFragment {
             content_box: geometry.content_box,
             content_origin_y,
             flow_range: None,
+            flow_axis: FlowAxis::Y,
             page_name,
             orientation: geometry.orientation,
             items: Vec::new(),
@@ -155,10 +158,129 @@ impl PageFragment {
         )
     }
 
+    /// How far layout-space content moves to its place on this page,
+    /// relative to the page's content box. Content repeated on every page
+    /// does not move.
+    pub(crate) fn flow_shift(&self, repeat: bool) -> (f32, f32) {
+        if repeat {
+            (0.0, 0.0)
+        } else {
+            self.flow_axis.page_shift(self.content_origin_y)
+        }
+    }
+
     /// Whether this page contains no visible node placements.
     #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.items.is_empty()
+    }
+}
+
+/// The physical axis along which the shared flow space, and so the pages
+/// cutting it, runs.
+///
+/// Layout space is physical. Along `Y`, the flow coordinate of a point is
+/// its y. Along `X`, the pages of a root whose blocks stack on vertical axes
+/// follow the root's block axis across a page area `width` wide: the flow
+/// coordinate of a point is its distance from the right edge of that area
+/// when the flow runs right to left, and its x otherwise.
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub(crate) enum FlowAxis {
+    /// The flow runs down the page.
+    #[default]
+    Y,
+    /// The flow runs across the page.
+    X {
+        /// The flow runs from right to left.
+        right_to_left: bool,
+        /// Width of the page area the flow runs across.
+        width: f32,
+    },
+}
+
+impl FlowAxis {
+    /// `(x, y, width, height)` of a layout-space rectangle in flow space,
+    /// where the flow runs down the y axis.
+    pub(crate) fn to_flow(self, rect: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+        let (x, y, width, height) = rect;
+        match self {
+            Self::Y => rect,
+            Self::X {
+                right_to_left: true,
+                width: area,
+            } => (y, area - x - width, height, width),
+            Self::X { .. } => (y, x, height, width),
+        }
+    }
+
+    /// The layout-space rectangle of a flow-space one: the inverse of
+    /// [`Self::to_flow`]. Applied to a rectangle placed on a page, whose
+    /// flow coordinate is relative to the page's slice, it gives the
+    /// rectangle relative to the page's content box.
+    pub(crate) fn to_layout(self, rect: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
+        let (x, y, width, height) = rect;
+        match self {
+            Self::Y => rect,
+            Self::X {
+                right_to_left: true,
+                width: area,
+            } => (area - y - height, x, height, width),
+            Self::X { .. } => (y, x, height, width),
+        }
+    }
+
+    /// The flow-space sides `(top, right, bottom, left)` of layout-space
+    /// insets.
+    pub(crate) fn sides_to_flow(self, insets: PageFragmentInsets) -> PageFragmentInsets {
+        let PageFragmentInsets {
+            top,
+            right,
+            bottom,
+            left,
+        } = insets;
+        match self {
+            Self::Y => insets,
+            Self::X {
+                right_to_left: true,
+                ..
+            } => PageFragmentInsets::new(right, bottom, left, top),
+            Self::X { .. } => PageFragmentInsets::new(left, bottom, right, top),
+        }
+    }
+
+    /// The extent along the flow that decides which page owns the line of
+    /// `root` from `top` to `bottom`, which are the line's block-axis edges
+    /// measured as `root.y` plus the line's offset from the content box's
+    /// block-start edge. A page owns the line holding its center.
+    ///
+    /// Along x, the lines of a paragraph on vertical axes stack along the
+    /// flow from the block-start edge of its content box; a paragraph on
+    /// horizontal axes is never cut by these pages, so each of its lines
+    /// goes with the paragraph's content box.
+    pub(crate) fn line_extent(self, root: &ProjectedTextRoot, top: f32, bottom: f32) -> (f32, f32) {
+        if self == Self::Y {
+            return (top, bottom);
+        }
+        let (_, start, _, extent) = self.to_flow((root.x, root.y, root.width, 0.0));
+        if root.lines_along_x {
+            (start + (top - root.y), start + (bottom - root.y))
+        } else {
+            (start, start + extent)
+        }
+    }
+
+    /// How far layout-space content moves to its place on the page whose
+    /// slice of the flow starts at `start`, relative to the page's content
+    /// box.
+    pub(crate) fn page_shift(self, start: f32) -> (f32, f32) {
+        match self {
+            Self::Y => (0.0, -start),
+            Self::X {
+                right_to_left: true,
+                ..
+            } => (start, 0.0),
+            Self::X { .. } => (-start, 0.0),
+        }
     }
 }
 
@@ -172,6 +294,10 @@ pub(crate) struct ProjectedTextRoot {
     pub(crate) x: f32,
     /// Top edge of the content box.
     pub(crate) y: f32,
+    /// Width of the content box; zero for a marker.
+    pub(crate) width: f32,
+    /// The paragraph's lines stack along x, from its block-start edge.
+    pub(crate) lines_along_x: bool,
     /// The paragraph is inside a subtree repeated on every page.
     pub(crate) is_repeat: bool,
     /// Restrict this placement to its committed column, when reached through a fragment.
@@ -551,13 +677,9 @@ pub(crate) struct PlacementOverflowClipSource {
 impl OverflowClipSource {
     pub(crate) fn on_page(self, node: NodeId, page: &PageFragment) -> OverflowClip {
         let mut border_box = self.border_box;
-        border_box.x += page.content_box.x;
-        let origin_y = if self.is_repeat {
-            0.0
-        } else {
-            page.content_origin_y
-        };
-        border_box.y = page.content_box.y + border_box.y - origin_y;
+        let (dx, dy) = page.flow_shift(self.is_repeat);
+        border_box.x += page.content_box.x + dx;
+        border_box.y += page.content_box.y + dy;
         OverflowClip {
             node,
             border_box,
