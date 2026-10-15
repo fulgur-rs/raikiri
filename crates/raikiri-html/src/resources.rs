@@ -635,7 +635,7 @@ impl<'a> RenderResources<'a> {
     }
 
     /// Preload the page-context and page-margin-box background images of one
-    /// page.
+    /// page, and its border image.
     pub(crate) fn preload_page_context_background_images(
         &self,
         page: &PageCascadeResult,
@@ -655,6 +655,11 @@ impl<'a> RenderResources<'a> {
                     .take(MAX_PAINTED_BACKGROUND_LAYERS)
                     .filter_map(background_url),
             );
+        }
+        if let Some(PropertyValue::BorderImageSource(image)) =
+            page.declarations().get(&PropertyKey::BorderImageSource)
+        {
+            raw_urls.extend(background_url(image));
         }
         let margin_box_rules = page.margin_boxes();
         let mut seen_slots = Vec::new();

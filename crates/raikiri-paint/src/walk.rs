@@ -289,10 +289,17 @@ pub(crate) fn paint_root_element_border(
 /// double-border handling with normal boxes.  The outer border edge is inside
 /// the physical page margins; page padding and the border itself then inset
 /// ordinary document flow from that edge.
+///
+/// A `border-image` replaces the four border styles where it can be drawn
+/// (CSS Backgrounds 3 §6), as on an element.
 pub(crate) fn paint_page_border(
+    image_cache: &crate::walk::ImageBrushCache,
     scene: &mut impl PaintScene,
+    document: &Document,
     cascade: &CascadeResult,
     page_box: PageBox,
+    pixel_source: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
 ) {
     let declarations = cascade.page.declarations();
     if matches!(
@@ -303,9 +310,12 @@ pub(crate) fn paint_page_border(
     ) {
         return;
     }
+    // The page context inherits `color` from the root element.
     let current_color = match declarations.get(&PropertyKey::Color) {
         Some(PropertyValue::Color(color)) => *color,
-        _ => CssColor::BLACK,
+        _ => find_html(document)
+            .and_then(|node_id| cascade.computed.get(node_id))
+            .map_or(CssColor::BLACK, |computed| computed.color),
     };
     let ctx = ResolveContext::initial();
 
@@ -360,6 +370,25 @@ pub(crate) fn paint_page_border(
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let border_box_width = (page_box.width - margins.left - margins.right).max(0.0);
     let border_box_height = (page_box.height - margins.top - margins.bottom).max(0.0);
+    if let Some(image) = cascade.page.border_image() {
+        let mut cv = ComputedValues::initial();
+        cv.color = current_color;
+        if paint_element_border_image(
+            image_cache,
+            scene,
+            border_box_width,
+            border_box_height,
+            margins.left,
+            margins.top,
+            &cv,
+            &image,
+            &borders,
+            pixel_source,
+            warnings,
+        ) {
+            return;
+        }
+    }
     paint_element_border(
         scene,
         border_box_width,

@@ -12,9 +12,9 @@ use crate::computed::{ComputedValues, CustomPropertyEnvironment, empty_custom_pr
 use crate::logical::{FlowMapping, LogicalSide};
 use crate::media::MediaContext;
 use crate::property::{
-    BackgroundImage, BorderStyle, CssColor, CustomProperty, Direction, Length,
-    LengthPercentageOrCalc, OutlineStyle, OverflowValue, OverflowXY, PropertyKey, PropertyValue,
-    Sides, TextOrientation, WritingMode,
+    BackgroundImage, BorderImageOutsetSide, BorderImageWidthSide, BorderStyle, CssColor,
+    CustomProperty, Direction, Length, LengthPercentageOrCalc, OutlineStyle, OverflowValue,
+    OverflowXY, PropertyKey, PropertyValue, Sides, TextOrientation, WritingMode,
 };
 use crate::resolve::{
     ComputedLength, ComputedLineHeight, NormalLineHeight, ResolveContext, resolve_length,
@@ -710,9 +710,69 @@ impl PageCascadeResult {
         &self.declarations
     }
 
-    /// Visits URL-bearing page and page-margin-box background images mutably.
+    /// The page context's `border-image`, or `None` when it names no source
+    /// image (CSS Backgrounds 3 §6).
     ///
-    /// These backgrounds are cascaded before an embedder resolves relative
+    /// The declarations hold the longhands with their lengths already
+    /// absolutized in the page context, so only the computed shape is built
+    /// here.
+    pub fn border_image(&self) -> Option<crate::computed::ComputedBorderImage> {
+        let source = match self.declarations.get(&PropertyKey::BorderImageSource) {
+            Some(PropertyValue::BorderImageSource(source))
+                if !matches!(source, BackgroundImage::None) =>
+            {
+                source.clone()
+            }
+            _ => return None,
+        };
+        let mut image = crate::computed::ComputedBorderImage::initial();
+        image.source = source;
+        if let Some(PropertyValue::BorderImageSlice(slice)) =
+            self.declarations.get(&PropertyKey::BorderImageSlice)
+        {
+            image.slice = *slice;
+        }
+        let ctx = ResolveContext::initial();
+        if let Some(PropertyValue::BorderImageWidth(sides)) =
+            self.declarations.get(&PropertyKey::BorderImageWidth)
+        {
+            image.width = sides.map(|side| match side {
+                BorderImageWidthSide::LengthPercentage(length) => {
+                    BorderImageWidthSide::LengthPercentage(
+                        crate::resolve::resolve_non_negative_length_percentage_or_calc(
+                            length,
+                            ComputedLength(16.0),
+                            None,
+                            &ctx,
+                        ),
+                    )
+                }
+                BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
+                BorderImageWidthSide::Auto => BorderImageWidthSide::Auto,
+            });
+        }
+        if let Some(PropertyValue::BorderImageOutset(sides)) =
+            self.declarations.get(&PropertyKey::BorderImageOutset)
+        {
+            image.outset = sides.map(|side| match side {
+                BorderImageOutsetSide::Length(length) => BorderImageOutsetSide::Length(
+                    resolve_length(length, ComputedLength(16.0), None, &ctx).px(),
+                ),
+                BorderImageOutsetSide::Number(number) => BorderImageOutsetSide::Number(number),
+            });
+        }
+        if let Some(PropertyValue::BorderImageRepeat(repeat)) =
+            self.declarations.get(&PropertyKey::BorderImageRepeat)
+        {
+            image.repeat = *repeat;
+        }
+        Some(image)
+    }
+
+    /// Visits URL-bearing page and page-margin-box background images, and the
+    /// page's border image, mutably.
+    ///
+    /// These images are cascaded before an embedder resolves relative
     /// resource URLs. This narrow visitor lets the embedder replace those URLs
     /// without exposing the declaration maps for unrestricted mutation.
     pub fn for_each_background_image_mut(&mut self, mut visitor: impl FnMut(&mut BackgroundImage)) {
@@ -720,6 +780,11 @@ impl PageCascadeResult {
             self.declarations.get_mut(&PropertyKey::BackgroundImage)
         {
             Arc::make_mut(images).iter_mut().for_each(&mut visitor);
+        }
+        if let Some(PropertyValue::BorderImageSource(image)) =
+            self.declarations.get_mut(&PropertyKey::BorderImageSource)
+        {
+            visitor(image);
         }
         for margin_box in &mut self.margin_boxes {
             for declaration in &mut margin_box.declarations {
