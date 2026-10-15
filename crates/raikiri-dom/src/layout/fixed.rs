@@ -57,13 +57,18 @@ pub(super) fn generates_inline_box(document: &Document, id: usize, cv: &Computed
         })
 }
 
-/// Whether the element's `transform` applies to it.
-fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+/// Whether the element's `transform` applies to it: layout makes it the
+/// containing block of its fixed descendants, and the painter moves it.
+pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-    // Non-replaced inline and table-column boxes are not transformable.
+    // Non-replaced inline and table-column boxes are not transformable, nor
+    // is an element that generates no box.
     !matches!(
         cv.display,
-        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
+        DisplayValue::TableColumn
+            | DisplayValue::TableColumnGroup
+            | DisplayValue::Contents
+            | DisplayValue::None
     ) && !generates_inline_box(document, id, cv)
 }
 
@@ -91,7 +96,7 @@ fn establishes_fixed_containing_block(document: &Document, id: usize, cv: &Compu
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
     // spec: https://www.w3.org/TR/css-will-change-1/#will-change
     // A box that is not generated contains nothing (CSS Display 3 §2.5).
-    let transformable = transformable(document, id, cv);
+    let transformable = is_transformable(document, id, cv);
     let containable = containable(document, id, cv);
     // A filter on the document root does not make it a containing block.
     let root = document

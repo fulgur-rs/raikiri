@@ -324,22 +324,13 @@ fn relative_offset_is_painted(
     if !matches!(computed.position, PositionValue::Relative) {
         return false;
     }
-    let float = matches!(computed.float, FloatValue::Left | FloatValue::Right)
-        && document
-            .layout_parent_of(node_id)
-            .is_none_or(|parent| !cascade.computed[parent].display.is_flex_or_grid_container());
-    let inline_level = computed.display.is_inline_level();
-    let table_part = matches!(
-        computed.display,
-        DisplayValue::TableCaption
-            | DisplayValue::TableCell
-            | DisplayValue::TableRow
-            | DisplayValue::TableRowGroup
-            | DisplayValue::TableHeaderGroup
-            | DisplayValue::TableFooterGroup
-    );
-    ((node_id == body_id || float || table_part) && !inline_level)
-        || document.nodes[node_id].needs_relative_block_paint_offset()
+    super::relative::placed_without_relative_offset(
+        document,
+        cascade,
+        Some(body_id),
+        node_id,
+        computed,
+    ) || document.nodes[node_id].needs_relative_block_paint_offset()
 }
 
 /// The block-end edge of the body's border box in page coordinates.
