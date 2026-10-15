@@ -93,6 +93,15 @@ fn outside_normal_flow(document: &Document, cascade: &CascadeResult, node: usize
     })
 }
 
+/// Whether the box of `node` paints outside its border box, with an outline
+/// or an outer shadow, and so shows even without a height.
+fn paints_outside_border_box(cascade: &CascadeResult, node: usize) -> bool {
+    cascade.computed.get(node).is_some_and(|computed| {
+        computed.outline.width().px() > 0.0
+            || computed.box_shadow.iter().any(|shadow| !shadow.inset)
+    })
+}
+
 /// The first DOM text of paragraph line `line` of the inline formatting
 /// root `root`, as a text node and a byte offset in it.
 fn line_start(document: &Document, root: usize, line: usize) -> Option<(usize, u32)> {
@@ -246,9 +255,11 @@ impl Document {
             .items
             .iter()
             .filter(|item| !item.is_repeat && !item.is_table_header_repeat)
-            // An empty box shows nothing wherever it lands.
+            // An empty box shows nothing wherever it lands, unless it paints
+            // outside its border box.
             .filter(|item| {
-                item.rect.height > 0.0
+                (item.rect.height > 0.0
+                    || paints_outside_border_box(cascade, item.node_id.0 as usize))
                     && (item.fragment_index == 0
                         || outside_normal_flow(self, cascade, item.node_id.0 as usize))
             })

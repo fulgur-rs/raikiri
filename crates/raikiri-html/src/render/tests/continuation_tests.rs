@@ -686,3 +686,46 @@ fn a_cancellation_while_measuring_a_continuation_aborts_the_run() {
     assert!(matches!(result, Ok(PipelineRun::Aborted)));
     assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
 }
+
+/// Whether page `page_index` has a fragment of the element with id `id`.
+fn page_has_id(out: &PipelineOutput, page_index: u32, id: &str) -> bool {
+    let (document, _) = out.layout_for_page(page_index);
+    document.page_fragments(page_index).any(|fragment| {
+        document
+            .get_node(fragment.node().0 as usize)
+            .and_then(|node| node.attribute("id"))
+            == Some(id)
+    })
+}
+
+#[test]
+fn a_box_of_no_height_that_paints_does_not_move_onto_a_relaid_out_page() {
+    // The relayout drops the forced break after the empty box, which then
+    // lands on the resumed page. With an outline or an outer shadow it
+    // would paint there as well as on the page before, so the page keeps
+    // the earlier layout. Without one it shows nothing, and the page is
+    // laid out at its own width.
+    for (style, paints) in [
+        ("outline:2px solid red", true),
+        ("box-shadow:0 0 0 2px red", true),
+        ("box-shadow:inset 0 0 0 2px red", false),
+        ("", false),
+    ] {
+        let out = run(&format!(
+            "{PAGES}<div>first</div>\
+            <div id='empty' style='height:0;break-after:page;{style}'></div>\
+            <div>second</div>"
+        ));
+        assert_eq!(out.slices.len(), 2, "{style}");
+        assert!(page_has_id(&out, 0, "empty"), "{style}");
+        assert_eq!(
+            page_lines(&out, 1),
+            vec![vec!["second".to_owned()]],
+            "{style}"
+        );
+        assert_eq!(out.continuations.len(), usize::from(!paints), "{style}");
+        if paints {
+            assert!(!page_has_id(&out, 1, "empty"), "{style}");
+        }
+    }
+}
