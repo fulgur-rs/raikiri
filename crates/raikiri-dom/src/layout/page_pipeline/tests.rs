@@ -2484,6 +2484,46 @@ fn layout_pages_joins_a_non_empty_named_box_to_a_preceding_zero_height_named_box
     assert!((c_y - 100.0).abs() < 0.01, "c starts page 1: y={c_y}");
 }
 
+#[test]
+fn layout_pages_keeps_an_empty_box_at_a_full_page_end_on_that_page() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let mut boxes = Vec::new();
+    for style in [
+        "display:block;height:100px",
+        "display:block;height:0px",
+        "display:block;page:b;height:10px",
+    ] {
+        boxes.push(doc.append_element(Some(body), "div", Style::default(), Some(style)));
+    }
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    // The empty box at the end of the full first page fits on it, so the
+    // named box starts the second page rather than a third one after a page
+    // holding nothing but the empty box.
+    let names: Vec<_> = slices
+        .iter()
+        .map(|slice| slice.page_name.as_deref())
+        .collect();
+    assert_eq!(names, [None, Some("b")]);
+    let named_y = doc.nodes[boxes[2]].unrounded_layout.location.y;
+    // cov:ignore: panic-message text is only executed when the assertion fails.
+    assert!(
+        (named_y - 100.0).abs() < 0.01,
+        "b starts page 1: y={named_y}"
+    );
+}
+
 /// Lay out `children` (inline styles) under `body` on 100x100 pages and
 /// return the page names, with the body itself styled by `body_style`.
 fn named_page_slices(body_style: &str, children: &[(&str, &[&str])]) -> Vec<Option<String>> {

@@ -6301,7 +6301,14 @@ fn paginate_flow(
                     pending_break_source = None;
                 }
             } else if effective_y.is_finite() && effective_y >= 0.0 {
-                let mut natural_page = page_index_for_y(effective_y);
+                // A box with no block size at a page's end still fits on
+                // that page, so it does not open the next one: a forced
+                // break after it would otherwise leave it alone on a page.
+                let mut natural_page = if height <= 0.001 {
+                    page_index_for_end(effective_y)
+                } else {
+                    page_index_for_y(effective_y)
+                };
                 // An unforced break that falls inside the collapsed margin
                 // between this box and its preceding sibling truncates that
                 // margin (CSS Fragmentation 3 §5.2): the box starts at the
