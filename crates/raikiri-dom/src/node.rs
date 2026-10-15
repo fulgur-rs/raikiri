@@ -815,6 +815,29 @@ impl Node {
         self.ifc.as_ref()?.typographic_parent(box_id)
     }
 
+    /// The pieces of the block-level `::before` and `::after` boxes of an
+    /// ifc root, in the root's content box with pagination's moves applied.
+    /// Every box has at least one piece. Their inline pieces on the lines
+    /// carry their text, not their boxes. A paragraph split into columns
+    /// has none: its generated blocks are painted as their line pieces.
+    #[doc(hidden)]
+    pub fn ifc_generated_block_pieces(&self) -> Vec<crate::layout::GeneratedBlockPiece> {
+        // Columns place their lines apart; their boxes stay on the lines.
+        let Some(lines) = self
+            .ifc
+            .as_ref()
+            .filter(|root| root.multicol_fragments.is_none())
+            .and_then(|root| root.lines.as_ref())
+        else {
+            return Vec::new();
+        };
+        lines
+            .placed_blocks
+            .iter()
+            .flat_map(|placed| placed.pieces(&lines.lines, |index| lines.shift_of(index)))
+            .collect()
+    }
+
     /// Pieces of the inline elements of an ifc root on its lines, in the
     /// root's content box; `None` for a node without lines.
     #[doc(hidden)]

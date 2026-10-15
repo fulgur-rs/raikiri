@@ -1865,6 +1865,8 @@ fn push_paragraph<'a>(
                         clip_owner: NodeId::new(clip as u64),
                         has_start_edge: piece.has_start_edge,
                         has_end_edge: piece.has_end_edge,
+                        has_block_start_edge: piece.has_block_start_edge,
+                        has_block_end_edge: piece.has_block_end_edge,
                     }));
                 }
                 // The `::before` images wait for the first-letter slot that
@@ -2043,6 +2045,8 @@ fn push_pseudo_group<'a>(
             clip_owner: NodeId::new(clip as u64),
             has_start_edge: piece.has_start_edge,
             has_end_edge: piece.has_end_edge,
+            has_block_start_edge: piece.has_block_start_edge,
+            has_block_end_edge: piece.has_block_end_edge,
         }));
     };
     let letters = first_letter_pieces(document, items, root);

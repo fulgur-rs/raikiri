@@ -280,13 +280,84 @@ pub(crate) fn hold_ifc_lines<'a>(
     // One set of groups serves every other line, so an element or
     // pseudo-element split over lines composites its complete paint at once
     // (CSS Color 4 §3.3).
-    let rest_pieces: Vec<_> = pieces_by_line
+    let mut rest_pieces: Vec<_> = pieces_by_line
         .iter()
         .skip(usize::from(first_line.is_some()))
         .flatten()
         .cloned()
         .collect();
+    // A block-level `::before` or `::after` paints its own box, cut along
+    // the block axis where pagination cuts its lines. Its pieces on the
+    // lines hold only its text.
+    let blocks: Vec<_> = root_node
+        .ifc_generated_block_pieces()
+        .into_iter()
+        .map(|block| {
+            (
+                raikiri_dom::InlineBoxPiece {
+                    node: block.node,
+                    line: block.line,
+                    border_box: block.border_box,
+                    content_box: block.content_box,
+                    has_start_edge: block.has_block_start_edge,
+                    has_end_edge: block.has_block_end_edge,
+                    parent: None,
+                    source_container: None,
+                    source_owner: None,
+                },
+                typographic::BackgroundSlice {
+                    outer: block.joined_border_box,
+                    content: block.joined_content_box,
+                },
+            )
+        })
+        .collect();
+    let block_nodes: std::collections::HashSet<usize> =
+        blocks.iter().map(|(piece, _)| piece.node).collect();
+    rest_pieces.extend(blocks.iter().map(|(piece, _)| *piece));
     let mut rest = typographic::TypographicPaint::new(paragraph, root_node, &rest_pieces);
+    for (piece, joined) in &blocks {
+        let Some(cv) = computed_for_id(cascade, piece.node)
+            .filter(|cv| cv.visibility == raikiri_style::property::Visibility::Visible)
+        else {
+            continue;
+        };
+        let outer = piece.border_box;
+        if outer.width <= 0.0 || outer.height <= 0.0 {
+            continue;
+        }
+        let (dx, dy) = cumulative_offset(document, root_id, positioned.offsets, piece.node);
+        let (x, y) = (base.x + dx, base.y + base.shift_y + dy);
+        if let Some(band) = flow_band {
+            let center = paragraph_center.unwrap_or_else(|| {
+                kurbo::Point::new(
+                    f64::from(x + outer.x + outer.width / 2.0),
+                    f64::from(y + outer.y + outer.height / 2.0),
+                )
+            });
+            if !band.holds_line_center(paint_transform, center) {
+                continue;
+            }
+        }
+        let group = rest.piece_group(piece);
+        // The piece's edges are along the block axis: its progression runs
+        // down the page.
+        crate::walk::paint_inline_box(
+            image_cache,
+            rest.box_target(group, piece),
+            cv,
+            piece,
+            Some(joined),
+            crate::walk::InlineProgression {
+                vertical: true,
+                reversed: false,
+            },
+            x,
+            y,
+            pixel_source,
+            warnings,
+        );
+    }
     for positioned_line in positioned.lines() {
         let line_index = positioned_line.index;
         let paint = match first_line.as_mut() {
@@ -340,8 +411,9 @@ pub(crate) fn hold_ifc_lines<'a>(
         // (CSS 2.1 Appendix E: an inline box's background and borders, then
         // its text).
         for (piece_index, piece) in pieces_by_line[line_index].iter().enumerate() {
-            if generated_origin(piece.node)
-                .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
+            if block_nodes.contains(&piece.node)
+                || generated_origin(piece.node)
+                    .is_some_and(|(_, pseudo)| pseudo == raikiri_style::PseudoElem::Marker)
             {
                 continue;
             }

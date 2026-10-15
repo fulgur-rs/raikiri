@@ -53,11 +53,13 @@ fn raster(body: &str, css: &str) -> Vec<u8> {
     )
 }
 
-fn compare(body: &str, css: &str, after_x: u32, after_y: u32) {
+/// Compare the page with one holding a red box at the origin and a blue one
+/// at `after_x, after_y`, both `width` wide and 20px tall.
+fn compare(body: &str, css: &str, after_x: u32, after_y: u32, width: u32) {
     let actual = raster(body, css);
     let expected = raster(
         &format!(
-            "<div style='position:absolute;left:0;top:0;width:20px;height:20px;background:red'></div><div style='position:absolute;left:{after_x}px;top:{after_y}px;width:20px;height:20px;background:blue'></div>"
+            "<div style='position:absolute;left:0;top:0;width:{width}px;height:20px;background:red'></div><div style='position:absolute;left:{after_x}px;top:{after_y}px;width:{width}px;height:20px;background:blue'></div>"
         ),
         "",
     );
@@ -78,9 +80,12 @@ fn inline_generated_backgrounds_match_literal_rectangles() {
         "div::before{content:'B';background:red}div::after{content:'C';background:blue}",
         40,
         0,
+        20,
     );
 }
 
+/// A block-level `::before` or `::after` paints its whole border box, as
+/// wide as the paragraph, not the width of its text.
 #[test]
 fn block_generated_backgrounds_match_literal_rectangles() {
     compare(
@@ -88,5 +93,6 @@ fn block_generated_backgrounds_match_literal_rectangles() {
         "div::before{display:block;content:'B';background:red}div::after{display:block;content:'C';background:blue}",
         0,
         40,
+        100,
     );
 }

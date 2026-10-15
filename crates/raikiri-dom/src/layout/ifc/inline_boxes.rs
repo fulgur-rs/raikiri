@@ -47,6 +47,37 @@ pub struct InlineBoxPiece {
     pub source_owner: Option<usize>,
 }
 
+/// The part of a block-level `::before` or `::after` box between two cuts
+/// that pagination makes in its paragraph's lines, in the paragraph's
+/// content box with the cut's block offset applied.
+///
+/// The box is sliced along the block axis (CSS Fragmentation 3
+/// `box-decoration-break: slice`): a piece without an edge has no border,
+/// padding or corner radius on that side, and its background is laid out
+/// over the joined box.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GeneratedBlockPiece {
+    /// The inline engine's id of the pseudo-element.
+    pub node: usize,
+    /// The paragraph line the piece goes with: its first line, or for a
+    /// piece without one, the line nearest to it.
+    pub line: usize,
+    /// Border box of the piece.
+    pub border_box: BoxRect,
+    /// Content box of the piece.
+    pub content_box: BoxRect,
+    /// Border box of the whole box, moved as the piece is.
+    pub joined_border_box: BoxRect,
+    /// Content box of the whole box, moved as the piece is.
+    pub joined_content_box: BoxRect,
+    /// How far pagination moved the piece along the block axis.
+    pub shift: f32,
+    /// The piece holds the block-start edge of the box.
+    pub has_block_start_edge: bool,
+    /// The piece holds the block-end edge of the box.
+    pub has_block_end_edge: bool,
+}
+
 /// Map a line-local logical rectangle into the root's physical content box.
 fn physical(
     rect: LogicalRect,

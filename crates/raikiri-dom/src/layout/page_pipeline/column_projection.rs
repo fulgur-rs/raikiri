@@ -54,7 +54,10 @@ impl<'a, 'b> ProjectionWork<'a, 'b> {
 
 pub(crate) type ParagraphCache = HashMap<usize, ParagraphProjection>;
 /// A line piece of a generated box, or of an inline element when the kind is
-/// `None`, with its owner, line offset, shift, and line top and height.
+/// `None`, with its owner, line offset, shift, and line top and height. A
+/// piece of a block-level generated box gives its own top and height
+/// instead, and whether it holds the block-start and block-end edges of
+/// its box.
 pub(crate) type PreparedGeneratedPiece = (
     usize,
     Option<crate::GeneratedKind>,
@@ -63,7 +66,22 @@ pub(crate) type PreparedGeneratedPiece = (
     f32,
     f32,
     f32,
+    Option<(bool, bool)>,
 );
+
+/// The kind of generated box a `::before` or `::after` id names.
+fn generated_kind(node: usize) -> Option<(usize, crate::GeneratedKind)> {
+    let (owner, pseudo) = crate::generated_content::generated_origin(node)?;
+    Some((
+        owner,
+        match pseudo {
+            raikiri_style::PseudoElem::Before => crate::GeneratedKind::Before,
+            raikiri_style::PseudoElem::After => crate::GeneratedKind::After,
+            raikiri_style::PseudoElem::FirstLetter => crate::GeneratedKind::FirstLetter,
+            _ => return None,
+        },
+    ))
+}
 
 /// A content image with the top and height of its line, its line index, and
 /// its rectangle from the root's content-box origin.
@@ -255,6 +273,44 @@ impl ParagraphProjection {
             } else {
                 HashSet::new()
             };
+        // A block-level `::before` or `::after` paints its own box; its
+        // pieces on the lines only hold its text.
+        let blocks = node.ifc_generated_block_pieces();
+        let block_nodes: HashSet<usize> = blocks.iter().map(|block| block.node).collect();
+        for block in blocks {
+            work.check()?;
+            let Some((owner, kind)) = generated_kind(block.node) else {
+                continue; // cov:ignore: only `::before` and `::after` are laid out as blocks
+            };
+            let visible = block.border_box.width > 0.0
+                && block.border_box.height > 0.0
+                && crate::generated_content::computed_for_id(cascade, block.node).is_some_and(
+                    |style| style.visibility == raikiri_style::property::Visibility::Visible,
+                );
+            if !visible {
+                continue;
+            }
+            result.generated.push((
+                owner,
+                Some(kind),
+                crate::layout::InlineBoxPiece {
+                    node: block.node,
+                    line: block.line,
+                    border_box: block.border_box,
+                    content_box: block.content_box,
+                    has_start_edge: true,
+                    has_end_edge: true,
+                    parent: None,
+                    source_container: None,
+                    source_owner: None,
+                },
+                (0.0, block.shift),
+                block.shift,
+                block.border_box.y - block.shift,
+                block.border_box.height,
+                Some((block.has_block_start_edge, block.has_block_end_edge)),
+            ));
+        }
         for piece in pieces {
             work.check()?;
             if multicol {
@@ -273,24 +329,13 @@ impl ParagraphProjection {
                 .unwrap_or(0.0);
             let column = line_columns[piece.line];
             let generated = crate::generated_content::generated_origin(piece.node);
-            if let Some((owner, kind)) = generated
-                .and_then(|(owner, pseudo)| {
-                    Some((
-                        owner,
-                        Some(match pseudo {
-                            raikiri_style::PseudoElem::Before => crate::GeneratedKind::Before,
-                            raikiri_style::PseudoElem::After => crate::GeneratedKind::After,
-                            raikiri_style::PseudoElem::FirstLetter => {
-                                crate::GeneratedKind::FirstLetter
-                            }
-                            _ => return None,
-                        }),
-                    ))
-                })
+            if let Some((owner, kind)) = generated_kind(piece.node)
+                .map(|(owner, kind)| (owner, Some(kind)))
                 .or_else(|| {
                     (generated.is_none() && split.contains(&piece.node))
                         .then_some((piece.node, None))
                 })
+                && !block_nodes.contains(&piece.node)
                 && piece.border_box.width > 0.0
                 && piece.border_box.height > 0.0
                 && generated_piece_style(
@@ -313,6 +358,7 @@ impl ParagraphProjection {
                     shift,
                     line.block_offset(),
                     line.block_size(),
+                    None,
                 );
                 result.generated.push(data);
                 result.generated_columns.entry(column).or_default().push((
@@ -323,6 +369,7 @@ impl ParagraphProjection {
                     shift,
                     data.5,
                     data.6,
+                    data.7,
                 ));
             }
             let rect = BoxRect {

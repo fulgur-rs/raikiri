@@ -8,6 +8,7 @@
 //! padding, border and margin at the end token. The lines between the tokens
 //! are the box's lines, set in by its inline-side edges.
 
+use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
 use raikiri_style::property::{BoxSizing, ClearValue, Sides};
 use raikiri_style::{
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
@@ -236,6 +237,90 @@ fn length_or_auto(value: ComputedLengthPercentageOrAuto, basis: Option<f32>) -> 
     }
 }
 
+/// The box of a block-level `::before` or `::after` as the line loop placed
+/// it, in the paragraph's content box, before pagination moves any line.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PlacedBlock {
+    /// The inline engine's id of the pseudo-element.
+    pub(crate) node: u64,
+    /// Border box.
+    pub(crate) border_box: BoxRect,
+    /// Content box: the border box less its border and padding.
+    pub(crate) content_box: BoxRect,
+    /// The first of the box's lines.
+    pub(crate) first_line: usize,
+    /// The line after the box's last one.
+    pub(crate) end_line: usize,
+}
+
+impl PlacedBlock {
+    /// The box cut where pagination moves its lines by a different amount
+    /// than the line before them. `line_count` is the number of lines of the
+    /// paragraph; `shift_of` gives how far pagination moved a line. A part
+    /// above the box's first line moves with the line before the box, so a
+    /// box without lines stays with the content above it.
+    pub(crate) fn pieces(
+        &self,
+        lines: &[shodo::Line],
+        shift_of: impl Fn(usize) -> f32,
+    ) -> Vec<GeneratedBlockPiece> {
+        let nearest = self.first_line.min(lines.len().saturating_sub(1));
+        let bottom = self.border_box.y + self.border_box.height;
+        let mut cuts = Vec::new();
+        let mut start = (
+            self.border_box.y,
+            shift_of(self.first_line.saturating_sub(1)),
+            nearest,
+        );
+        for (index, line) in lines
+            .iter()
+            .enumerate()
+            .take(self.end_line)
+            .skip(self.first_line)
+        {
+            let shift = shift_of(index);
+            if index == self.first_line && line.block_offset() <= start.0 {
+                // The box starts with this line: it moves the top too.
+                start = (start.0, shift, index);
+            } else if shift != start.1 {
+                cuts.push((start, line.block_offset()));
+                start = (line.block_offset(), shift, index);
+            }
+        }
+        cuts.push((start, bottom));
+        let count = cuts.len();
+        cuts.into_iter()
+            .enumerate()
+            .map(|(index, ((top, shift, line), end))| {
+                let moved = |rect: BoxRect| BoxRect {
+                    y: rect.y + shift,
+                    ..rect
+                };
+                let slice = |rect: BoxRect| {
+                    let y0 = rect.y.max(top);
+                    let y1 = (rect.y + rect.height).min(end);
+                    moved(BoxRect {
+                        y: y0,
+                        height: (y1 - y0).max(0.0),
+                        ..rect
+                    })
+                };
+                GeneratedBlockPiece {
+                    node: self.node as usize,
+                    line,
+                    border_box: slice(self.border_box),
+                    content_box: slice(self.content_box),
+                    joined_border_box: moved(self.border_box),
+                    joined_content_box: moved(self.content_box),
+                    shift,
+                    has_block_start_edge: index == 0,
+                    has_block_end_edge: index + 1 == count,
+                }
+            })
+            .collect()
+    }
+}
+
 /// Which token of a generated block the line loop met.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Token<'a> {
@@ -417,8 +502,13 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
 
 /// Place the bottom of `block` at its end token: the box's height, from its
 /// lines unless it has one of its own, and its bottom padding, border and
-/// margin. `open` is the state its start token left.
-pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>) {
+/// margin. `open` is the state its start token left. Returns the box as
+/// placed, unless its margins collapse through it.
+pub(crate) fn close(
+    block: &GeneratedBlock,
+    open: OpenBlock,
+    flow: Flow<'_, '_>,
+) -> Option<PlacedBlock> {
     let margins = block.margins(flow.width);
     let edges = block.edges(flow.width);
     let first_line = flow.lines.get(open.lines_before);
@@ -438,13 +528,34 @@ pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>)
         (height > 0.0 || edges.bottom > 0.0).then(|| *flow.y + flow.pending.resolve())
     }) else {
         *flow.pending = flow.pending.collapse_with_margin(margins.bottom);
-        return;
+        return None;
     };
     if open.starts_paragraph && !open.has_clearance {
         *flow.leading_block_margin = Some(open.top_set);
     }
     *flow.y = top + height + edges.bottom;
     *flow.pending = CollapsibleMarginSet::from_margin(margins.bottom);
+    // The inline insets hold the margins with the edges inside them.
+    let left = open.inline.0 - edges.left;
+    let right = flow.width - open.inline.1 + edges.right;
+    let border_box = BoxRect {
+        x: left,
+        y: top - edges.top,
+        width: (right - left).max(0.0),
+        height: edges.top + height + edges.bottom,
+    };
+    Some(PlacedBlock {
+        node: block.start,
+        border_box,
+        content_box: BoxRect {
+            x: left + edges.left,
+            y: top,
+            width: (right - left - edges.left - edges.right).max(0.0),
+            height,
+        },
+        first_line: open.lines_before,
+        end_line: flow.lines.len(),
+    })
 }
 
 #[cfg(test)]

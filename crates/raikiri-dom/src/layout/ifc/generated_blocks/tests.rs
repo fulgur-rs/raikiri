@@ -257,3 +257,153 @@ fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
     assert_eq!(close_after("max-height: 50px"), (0.0, 0.0));
     assert_eq!(close_after(""), (30.0, 0.0));
 }
+
+/// The paragraph `text` styled `root_css`, laid out with the generated
+/// blocks of `sheet`: its lines and the boxes the line loop placed.
+fn placed(sheet: &str, root_css: &str, text: &str) -> (Vec<shodo::Line>, Vec<PlacedBlock>) {
+    let mut fixture =
+        crate::layout::ifc::test_support::sheet_fixture(sheet, root_css, |doc, root| {
+            doc.append_text(root, text);
+        });
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    let lines = fixture.doc.nodes[fixture.root]
+        .ifc
+        .as_ref()
+        .and_then(|root| root.lines.as_ref())
+        .expect("lines");
+    (lines.lines.to_vec(), lines.placed_blocks.clone())
+}
+
+const TEN_PX: &str = "font: 10px/10px Ahem; width: 100px";
+
+#[test]
+fn the_line_loop_records_the_border_box_of_a_block_before() {
+    let (lines, blocks) = placed(
+        "div::before { content: 'B B'; display: block; width: 10px; margin-left: 4px; \
+         padding: 5px 1px 3px; border-top: 2px solid }",
+        TEN_PX,
+        "A",
+    );
+    assert_eq!(lines.len(), 3);
+    let [block] = blocks.as_slice() else {
+        panic!("one placed block: {blocks:?}")
+    };
+    assert_eq!(
+        block.border_box,
+        BoxRect {
+            x: 4.0,
+            y: 0.0,
+            width: 12.0,
+            height: 30.0
+        }
+    );
+    assert_eq!(
+        block.content_box,
+        BoxRect {
+            x: 5.0,
+            y: 7.0,
+            width: 10.0,
+            height: 20.0
+        }
+    );
+    assert_eq!((block.first_line, block.end_line), (0, 2));
+}
+
+#[test]
+fn an_empty_block_after_is_placed_below_the_lines_and_one_collapsed_through_is_not() {
+    let (_, blocks) = placed(
+        "div::after { content: ''; display: block; height: 4px }",
+        TEN_PX,
+        "A",
+    );
+    let [block] = blocks.as_slice() else {
+        panic!("one placed block: {blocks:?}")
+    };
+    assert_eq!(block.border_box.y, 10.0);
+    assert_eq!(block.border_box.height, 4.0);
+    assert_eq!((block.first_line, block.end_line), (1, 1));
+    let (_, blocks) = placed(
+        "div::after { content: ''; display: block; margin: 5px }",
+        TEN_PX,
+        "A",
+    );
+    assert!(blocks.is_empty());
+}
+
+#[test]
+fn a_vertical_paragraph_places_no_block_box() {
+    let (_, blocks) = placed(
+        "div::before { content: 'X'; display: block; background: red }",
+        "writing-mode: vertical-rl; height: 60px; font: 10px/10px Ahem",
+        "AA",
+    );
+    assert!(blocks.is_empty());
+}
+
+#[test]
+fn a_block_box_is_cut_where_pagination_moves_its_lines() {
+    let (lines, blocks) = placed(
+        "div::before { content: 'B B'; display: block; width: 10px; \
+         padding: 5px 0 3px; border-top: 2px solid }",
+        TEN_PX,
+        "A",
+    );
+    let block = blocks[0];
+    // Unmoved, the box is one piece with both edges.
+    let [whole] = block.pieces(&lines, |_| 0.0)[..] else {
+        panic!("one piece")
+    };
+    assert_eq!(whole.border_box, block.border_box);
+    assert_eq!(whole.line, 0);
+    assert!(whole.has_block_start_edge && whole.has_block_end_edge);
+    // The box's second line, 17px down, goes 7px further down with the
+    // rest of the box below it.
+    let pieces = block.pieces(&lines, |index| if index >= 1 { 7.0 } else { 0.0 });
+    let [top, bottom] = pieces[..] else {
+        panic!("two pieces: {pieces:?}")
+    };
+    assert_eq!((top.border_box.y, top.border_box.height), (0.0, 17.0));
+    assert_eq!((top.content_box.y, top.content_box.height), (7.0, 10.0));
+    assert_eq!((top.line, top.shift), (0, 0.0));
+    assert!(top.has_block_start_edge && !top.has_block_end_edge);
+    assert_eq!(
+        (bottom.border_box.y, bottom.border_box.height),
+        (24.0, 13.0)
+    );
+    assert_eq!(
+        (bottom.content_box.y, bottom.content_box.height),
+        (24.0, 10.0)
+    );
+    assert_eq!((bottom.line, bottom.shift), (1, 7.0));
+    assert!(!bottom.has_block_start_edge && bottom.has_block_end_edge);
+    assert_eq!(bottom.joined_border_box.y, 7.0);
+    assert_eq!(bottom.joined_content_box.y, 14.0);
+    // A move of every line also moves the edges above the first one.
+    let [moved] = block.pieces(&lines, |_| 5.0)[..] else {
+        panic!("one piece")
+    };
+    assert_eq!(moved.border_box.y, 5.0);
+}
+
+#[test]
+fn a_box_without_lines_moves_with_the_line_above_it() {
+    let (lines, blocks) = placed(
+        "div::after { content: ''; display: block; height: 4px }",
+        TEN_PX,
+        "A",
+    );
+    let pieces = blocks[0].pieces(&lines, |index| if index >= 1 { 9.0 } else { 3.0 });
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    assert_eq!(
+        (piece.border_box.y, piece.line, piece.shift),
+        (13.0, 0, 3.0)
+    );
+    assert!(piece.has_block_start_edge && piece.has_block_end_edge);
+}
