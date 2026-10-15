@@ -590,3 +590,62 @@ fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
     );
     assert_eq!(line_starts(&lines.lines), [5.0, 0.0, 0.0, 0.0]);
 }
+
+/// Where each line of a `white-space: pre-wrap` paragraph starts when its
+/// fragmentainers are two lines tall: two short lines, then a line of eight
+/// glyphs that opens the second fragmentainer beside a 20px float.
+fn line_starts_beside_a_float_in_the_second_fragmentainer(text_indent: &str) -> Vec<f32> {
+    let style = format!(
+        "font: 10px/10px Ahem; white-space: pre-wrap; width: 100px; text-indent: {text_indent}"
+    );
+    let mut fixture = crate::layout::ifc::test_support::sheet_fixture("", &style, |doc, root| {
+        doc.append_text(root, "A\nA\n");
+        crate::layout::ifc::test_support::span(doc, root, "float: left; width: 20px; height: 10px");
+        doc.append_text(root, "AAAAAAAA");
+    });
+    layout_single_page(
+        with_ahem(&mut fixture.doc),
+        &fixture.cascade,
+        page_box_800x600(),
+    )
+    .expect("layout");
+    let lines = crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+        &mut fixture.doc,
+        fixture.root,
+        crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
+        crate::fragment::FragmentationContext {
+            available_width: 200.0,
+            available_height: Some(20.0),
+            column_fill: raikiri_style::property::ColumnFillValue::Auto,
+            column_width: 100.0,
+            column_count: 2,
+            column_gap: 0.0,
+            column_index: 0,
+            origin_x: 0.0,
+            origin_y: 0.0,
+            orphans: 1,
+            widows: 1,
+        },
+        false,
+    );
+    line_starts(&lines.lines)
+}
+
+#[test]
+fn a_line_opening_a_later_fragmentainer_is_not_the_paragraphs_first_line() {
+    // Unindented, the 80px line fits beside the float.
+    assert_eq!(
+        line_starts_beside_a_float_in_the_second_fragmentainer("10px"),
+        [10.0, 0.0, 20.0]
+    );
+}
+
+#[test]
+fn a_line_after_a_forced_break_in_an_earlier_fragmentainer_keeps_its_indent() {
+    // With its each-line indent the line no longer fits and moves below the
+    // float.
+    assert_eq!(
+        line_starts_beside_a_float_in_the_second_fragmentainer("10px each-line"),
+        [10.0, 10.0, 10.0]
+    );
+}

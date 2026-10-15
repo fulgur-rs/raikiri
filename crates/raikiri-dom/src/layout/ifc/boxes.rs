@@ -61,6 +61,25 @@ struct RunBoxesOutcome {
     atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
     /// The generated block still open where the segment stopped.
     open_block: Option<generated_blocks::OpenBlock>,
+    /// Where the next segment's first line starts.
+    next_start: LineStart,
+}
+
+/// What the engine knows of the line a break token starts, for the indent it
+/// gives that line (CSS Text 3 §8.1).
+#[derive(Clone, Copy, Debug)]
+struct LineStart {
+    /// The paragraph's first line.
+    first: bool,
+    /// A line after a forced break or a block.
+    after_forced: bool,
+}
+
+impl LineStart {
+    const PARAGRAPH: Self = Self {
+        first: true,
+        after_forced: false,
+    };
 }
 
 struct FragmentedFloatOutput<'a> {
@@ -190,6 +209,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
     };
 
     let mut token = root.line_paragraph.start_token();
+    let mut next_start = LineStart::PARAGRAPH;
     let mut all_lines = Vec::new();
     let mut block_line_starts = Vec::new();
     let mut shifts = super::root::LineShifts::default();
@@ -283,7 +303,9 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             Some(column),
             has_next,
             carried_block,
+            next_start,
         );
+        next_start = outcome.next_start;
         carried_block = outcome
             .open_block
             .map(|open| open.continued(fragmentainer_height.unwrap_or_default()));
@@ -470,6 +492,7 @@ fn run_boxes(
         None,
         false,
         None,
+        LineStart::PARAGRAPH,
     );
     if perform {
         truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
@@ -501,6 +524,7 @@ fn run_boxes_segment(
     fragmentainer: Option<usize>,
     has_next_fragmentainer: bool,
     mut open_block: Option<generated_blocks::OpenBlock>,
+    start: LineStart,
 ) -> RunBoxesOutcome {
     let FlowGeometry {
         width,
@@ -556,7 +580,7 @@ fn run_boxes_segment(
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
     // The next line follows a forced break or a block: the engine treats it
     // as such for `text-indent: each-line`.
-    let mut after_forced = false;
+    let mut after_forced = start.after_forced;
 
     loop {
         calls += 1;
@@ -581,7 +605,7 @@ fn run_boxes_segment(
         // Its content is part of the paragraph's text, so its lines keep the
         // paragraph's base direction.
         let (line_options, first_line) = open_block.as_ref().map_or_else(
-            || (options, lines.is_empty()),
+            || (options, start.first && lines.is_empty()),
             |open| open.line_options(lines.len()),
         );
         let mut constraint = LineConstraint::from_physical_insets(
@@ -971,6 +995,10 @@ fn run_boxes_segment(
     };
     // A box still open goes on with the lines it has laid out here.
     let open_block = open_block.map(|open| open.after(lines.len()));
+    let next_start = LineStart {
+        first: start.first && lines.is_empty(),
+        after_forced,
+    };
     RunBoxesOutcome {
         lines: IfcLines {
             width,
@@ -989,6 +1017,7 @@ fn run_boxes_segment(
         continuation,
         atomic_outputs: atomics.outputs,
         open_block,
+        next_start,
     }
 }
 
