@@ -451,6 +451,14 @@ fn clone_into_wrapper(context: &mut Context, index: usize, deep: bool) -> JsResu
         // node is cloneable.
         .ok_or_else(unreachable_mutation_error)?;
     mark_dirty(context)?;
+    // Each copied `src` is an attribute append, so every copied `<img>`
+    // starts its own request.
+    super::image::update_images_below(context, copy)?;
+    if with_state(context, |s| {
+        super::image::is_html_image(s.host.document(), copy)
+    })? {
+        super::image::update_image_data(context, copy)?;
+    }
     Ok(wrap(context, copy)?.into())
 }
 

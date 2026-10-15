@@ -301,7 +301,21 @@ pub(crate) fn write_attribute(
             &message,
         ));
     }
-    mark_dirty(context)
+    mark_dirty(context)?;
+    note_image_source_change(context, index, name)
+}
+
+/// A changed `src` on an `<img>` restarts its request (HTML "relevant
+/// mutations" for the image data).
+fn note_image_source_change(context: &mut Context, index: usize, name: &str) -> JsResult<()> {
+    if name.eq_ignore_ascii_case("src")
+        && with_state(context, |s| {
+            super::image::is_html_image(s.host.document(), index)
+        })?
+    {
+        super::image::update_image_data(context, index)?;
+    }
+    Ok(())
 }
 
 fn set_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -329,6 +343,7 @@ fn remove_attribute(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     })?;
     if matches!(removed, Ok(Some(_))) {
         mark_dirty(context)?;
+        note_image_source_change(context, index, &name)?;
         super::dispatch::sync_event_handler_for_attribute(context, index, &name, None)?;
     }
     Ok(JsValue::undefined())
@@ -458,6 +473,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     })?;
     mark_dirty(context)?;
     super::dispatch::sync_event_handlers_in_subtree(context, index)?;
+    super::image::update_images_below(context, index)?;
     Ok(JsValue::undefined())
 }
 

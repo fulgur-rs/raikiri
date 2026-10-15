@@ -146,6 +146,17 @@ pub trait DocumentHost: 'static {
     fn fetch_script(&mut self, _url: &str) -> Result<String, HostError> {
         Err(HostError("script fetching is not supported".into()))
     }
+    /// Load the image at a resolved `<img>` `src` URL; `Ok` when it loads
+    /// and decodes. The runtime only fires the element's `load` or `error`
+    /// event from the result: layout resolves the image on its own. The
+    /// default implementation always fails, matching a host that loads no
+    /// images, so every request fires `error`.
+    ///
+    /// As with [`Self::fetch_script`], this [`HostError`] is never thrown
+    /// into script or counted in [`super::RunReport::host_failures`].
+    fn load_image(&mut self, _url: &str) -> Result<(), HostError> {
+        Err(HostError("image loading is not supported".into()))
+    }
     /// Type-erased shared access to the concrete host, for downcasting a
     /// boxed [`DocumentHost`] back to the embedder's own type (see
     /// [`super::DomRuntime::try_into_host`]). Implement as `self`.

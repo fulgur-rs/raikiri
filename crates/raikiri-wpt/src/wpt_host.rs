@@ -258,6 +258,25 @@ impl DocumentHost for WptDocumentHost {
         self.script_source(url)
     }
 
+    /// Load and decode the image the way layout will, through the same
+    /// checkout-rooted file provider, so `load` fires exactly for the images
+    /// the page renders and `error` for the broken ones.
+    fn load_image(&mut self, url: &str) -> Result<(), HostError> {
+        let parsed = raikiri::Url::parse(url)
+            .map_err(|_| HostError(format!("{url}: not an absolute URL")))?;
+        let resolver = raikiri_net::ImageResolver::new(
+            crate::reftest::local_resources::WptFileNetworkProvider::new(
+                self.canonical_root.clone(),
+            ),
+        );
+        raikiri_traits::ReplacedResolver::resolve(
+            &resolver,
+            raikiri_traits::ResolverRequest::new(&parsed),
+        )
+        .map(drop)
+        .map_err(|error| HostError(format!("{url}: {error}")))
+    }
+
     fn flush(&mut self) -> Result<(), HostError> {
         #[cfg(test)]
         self.flushes.set(self.flushes.get() + 1);

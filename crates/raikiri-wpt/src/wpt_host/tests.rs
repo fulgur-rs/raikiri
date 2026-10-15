@@ -1028,3 +1028,30 @@ fn a_live_flush_lays_out_an_image_that_fails_to_load_as_broken() {
     let mut host = WptDocumentHost::new(setup, dir.path());
     host.flush().unwrap();
 }
+
+/// A 1x1 green PNG, and the same bytes as a `data:` URL.
+const GREEN_PNG_BYTES: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 2, 0,
+    0, 0, 144, 119, 83, 222, 0, 0, 0, 12, 73, 68, 65, 84, 120, 156, 99, 96, 104, 96, 0, 0, 1, 4, 0,
+    129, 112, 246, 199, 165, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+const GREEN_PNG: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgaGAAAAEEAIFw9selAAAAAElFTkSuQmCC";
+
+#[test]
+fn load_image_decodes_data_and_checkout_images_and_rejects_the_rest() {
+    let (_dir, root) = script_root();
+    std::fs::write(root.join("css/page/broken.png"), "not a png").unwrap();
+    let mut host = host_at(&root.join("css/page"), &root);
+    host.load_image(GREEN_PNG).unwrap();
+    std::fs::write(root.join("css/page/green.png"), GREEN_PNG_BYTES).unwrap();
+    host.load_image(&file_url(&root.join("css/page/green.png")))
+        .unwrap();
+    host.load_image("file:///css/page/green.png").unwrap();
+    for url in [
+        file_url(&root.join("css/page/missing.png")),
+        file_url(&root.join("css/page/broken.png")),
+        "not a url".to_owned(),
+    ] {
+        assert!(host.load_image(&url).is_err(), "{url}");
+    }
+}

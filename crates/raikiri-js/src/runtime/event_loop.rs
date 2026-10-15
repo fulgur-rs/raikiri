@@ -525,6 +525,14 @@ fn poll_async_job(job: NativeAsyncJob, context: &mut Context) -> JsResult<JsValu
     }
 }
 
+/// Queue `job` as a task due now, behind every task already due; it runs
+/// the next time the event loop drains.
+pub(crate) fn queue_native_task(context: &mut Context, job: NativeJob) -> JsResult<()> {
+    with_state(context, |state| {
+        state.event_loop.queue_task(0.0, Task::Native(job));
+    })
+}
+
 /// Run tasks and microtasks until both queues are empty or a limit is hit.
 pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
     if let Some(reason) = aborted(context) {
