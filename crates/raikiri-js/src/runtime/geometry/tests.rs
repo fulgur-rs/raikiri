@@ -477,6 +477,8 @@ fn get_client_rects_lists_the_border_box_or_nothing() {
          (list[0].x = 7, list[0].x === 7) && (list[0] = 1, list[0] instanceof DOMRect) && \
          JSON.stringify(Object.keys(list)) === '[\"0\"]' && \
          delete list[0] === false && list[0] instanceof DOMRect && \
+         Object.getOwnPropertyDescriptor(list, '0').configurable === true && \
+         Object.getOwnPropertyDescriptor(list, '0').writable === false && \
          (function() { 'use strict'; try { delete list[0]; return false; } \
          catch (e) { return e instanceof TypeError; } })()",
     );

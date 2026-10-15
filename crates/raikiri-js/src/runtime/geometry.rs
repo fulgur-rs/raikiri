@@ -11,10 +11,11 @@
 use std::cell::Cell;
 
 use boa_engine::object::{JsObject, ObjectInitializer};
-use boa_engine::property::{Attribute, PropertyDescriptor};
+use boa_engine::property::Attribute;
 use boa_engine::{Context, Finalize, JsData, JsNativeError, JsResult, JsValue, Trace, js_string};
 
 use super::host::{BoxGeometry, DomRect, PositionKind};
+use super::indexed::{IndexedSource, indexed_object_retaining, this_indexed, this_indexed_item};
 use super::interfaces::{HTML_NS, Members, protos, wrap_optional};
 use super::node::first_element_child;
 use super::style::ensure_flushed;
@@ -118,58 +119,55 @@ pub(crate) fn new_dom_rect(context: &mut Context, r: DomRect) -> JsResult<JsObje
     Ok(JsObject::from_proto_and_data(Some(proto), data))
 }
 
-/// Native data behind a `DOMRectList`: its `DOMRect` objects, created
-/// with the list so each index returns the same object, and traced so a
-/// rect that refers back to its list does not keep either alive.
-#[derive(Trace, Finalize, JsData)]
-struct DomRectListData {
-    rects: Vec<JsObject>,
+/// What a `DOMRectList` enumerates. Its `DOMRect` objects are created
+/// with the list, so each index returns the same object, and the list
+/// retains them, so they are traced with it and a rect that refers back to
+/// its list keeps neither alive.
+struct DomRectListSource {
+    length: usize,
 }
 
-/// A new `DOMRectList` (Geometry Interfaces §3.1) over `rects`. The list
-/// never changes, so its indices are read-only own properties rather than
-/// a live indexed view. They are also non-configurable: a legacy platform
-/// object refuses to delete or redefine a supported index (WebIDL §3.9.4,
-/// §3.9.5), which plain properties can only express this way.
+impl IndexedSource for DomRectListSource {
+    fn length(&self, _: &mut Context) -> JsResult<usize> {
+        Ok(self.length)
+    }
+
+    // cov:ignore: every read goes through `retained_item`.
+    fn item(&self, _: usize, _: &mut Context) -> JsResult<Option<JsValue>> {
+        Ok(None)
+    }
+
+    fn retained_item(
+        &self,
+        index: usize,
+        retained: &[JsObject],
+        _: &mut Context,
+    ) -> JsResult<Option<JsValue>> {
+        Ok(retained.get(index).cloned().map(JsValue::from))
+    }
+}
+
+/// A new `DOMRectList` (Geometry Interfaces §3.1) over `rects`, a legacy
+/// platform object with an indexed getter (WebIDL §3.9): its indices are
+/// configurable yet cannot be deleted or redefined.
 pub(crate) fn dom_rect_list(context: &mut Context, rects: Vec<DomRect>) -> JsResult<JsObject> {
     let rects: Vec<JsObject> = rects
         .into_iter()
         .map(|rect| new_dom_rect(context, rect))
         .collect::<JsResult<_>>()?;
     let prototype = protos(context).dom_rect_list.clone();
-    let list = JsObject::from_proto_and_data(
-        Some(prototype),
-        DomRectListData {
-            rects: rects.clone(),
-        },
-    );
-    for (index, rect) in rects.into_iter().enumerate() {
-        let descriptor = PropertyDescriptor::builder()
-            .value(rect)
-            .writable(false)
-            .enumerable(true)
-            .configurable(false);
-        list.define_property_or_throw(index, descriptor, context)?;
-    }
-    Ok(list)
+    let source = DomRectListSource {
+        length: rects.len(),
+    };
+    indexed_object_retaining(context, prototype, source, rects)
 }
 
-fn this_rect_list(this: &JsValue) -> JsResult<Vec<JsObject>> {
-    this.as_object()
-        .and_then(|object| {
-            object
-                .downcast_ref::<DomRectListData>()
-                .map(|data| data.rects.clone())
-        })
-        .ok_or_else(|| {
-            JsNativeError::typ()
-                .with_message("'this' is not a DOMRectList")
-                .into()
-        })
-}
-
-fn dom_rect_list_length(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    Ok(this_rect_list(this)?.len().into())
+fn dom_rect_list_length(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    Ok(
+        this_indexed::<DomRectListSource>(this, context, "DOMRectList")?
+            .length
+            .into(),
+    )
 }
 
 fn dom_rect_list_item(
@@ -177,12 +175,10 @@ fn dom_rect_list_item(
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    let rects = this_rect_list(this)?;
+    this_indexed::<DomRectListSource>(this, context, "DOMRectList")?;
     let index = arg_unsigned_long(args, 0, context)?;
-    Ok(rects
-        .get(index)
-        .cloned()
-        .map_or_else(JsValue::null, JsValue::from))
+    let item = this_indexed_item::<DomRectListSource>(this, index, context, "DOMRectList")?;
+    Ok(item.unwrap_or_else(JsValue::null))
 }
 
 pub(crate) const DOM_RECT_LIST_MEMBERS: Members = Members {

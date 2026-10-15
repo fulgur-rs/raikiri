@@ -110,6 +110,20 @@ pub(crate) trait IndexedSource: 'static {
     /// The value at `index`, or `None` when `index` is not supported.
     fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>>;
 
+    /// The value at `index` of an indexed object that keeps `retained`
+    /// alive (see [`indexed_object_retaining`]). A source that serves
+    /// script objects, which it must not own, reads them from `retained`;
+    /// every other source keeps this default.
+    fn retained_item(
+        &self,
+        index: usize,
+        retained: &[JsObject],
+        context: &mut Context,
+    ) -> JsResult<Option<JsValue>> {
+        let _ = retained;
+        self.item(index, context)
+    }
+
     /// The supported property names right now, in specification order
     /// (DOM §4.2.10.2 for `HTMLCollection`: tree order, `id` then `name`
     /// per element, deduplicated). Empty when the interface supports no
@@ -146,6 +160,9 @@ pub(crate) trait IndexedSource: 'static {
 struct Indexed<S: IndexedSource> {
     #[unsafe_ignore_trace]
     source: Rc<S>,
+    /// Script objects the source serves, traced with the target so they
+    /// live exactly as long as the indexed object.
+    retained: Vec<JsObject>,
 }
 
 /// Engine functions captured before any script runs, so that later
@@ -221,10 +238,22 @@ pub(crate) fn indexed_object<S: IndexedSource>(
     prototype: JsObject,
     source: S,
 ) -> JsResult<JsObject> {
+    indexed_object_retaining(context, prototype, source, Vec::new())
+}
+
+/// [`indexed_object`], keeping `retained` alive for as long as the object
+/// and handing it to [`IndexedSource::retained_item`].
+pub(crate) fn indexed_object_retaining<S: IndexedSource>(
+    context: &mut Context,
+    prototype: JsObject,
+    source: S,
+    retained: Vec<JsObject>,
+) -> JsResult<JsObject> {
     let target = JsObject::from_proto_and_data(
         Some(prototype),
         Indexed {
             source: Rc::new(source),
+            retained,
         },
     );
     let proxy: JsObject = JsProxyBuilder::new(target.clone())
@@ -266,6 +295,35 @@ pub(crate) fn this_indexed<S: IndexedSource>(
         .as_object()
         .and_then(|t| t.downcast_ref::<Indexed<S>>().map(|d| d.source.clone()))
         .ok_or_else(error)
+}
+
+/// [`IndexedSource::retained_item`] of the indexed object `this`, after
+/// the same brand check as [`this_indexed`].
+pub(crate) fn this_indexed_item<S: IndexedSource>(
+    this: &JsValue,
+    index: usize,
+    context: &mut Context,
+    interface: &str,
+) -> JsResult<Option<JsValue>> {
+    let source = this_indexed::<S>(this, context, interface)?;
+    let object = this.as_object().ok_or_else(target_error)?;
+    let target = intrinsics(context)?.targets.clone().get(&object, context)?;
+    let target = target.as_object().ok_or_else(target_error)?;
+    item_at(&target, source.as_ref(), index, context)
+}
+
+/// The value at `index` of the indexed object whose target is `target`.
+fn item_at<S: IndexedSource>(
+    target: &JsObject,
+    source: &S,
+    index: usize,
+    context: &mut Context,
+) -> JsResult<Option<JsValue>> {
+    let retained = target
+        .downcast_ref::<Indexed<S>>()
+        .map(|data| data.retained.clone())
+        .unwrap_or_default();
+    source.retained_item(index, &retained, context)
 }
 
 /// The target object (trap argument 0) and its source.
@@ -389,7 +447,7 @@ fn get_trap<S: IndexedSource>(
 ) -> JsResult<JsValue> {
     let (target, source) = trap_target::<S>(args)?;
     if let Some(index) = array_index(args, context)? {
-        if let Some(value) = source.item(index, context)? {
+        if let Some(value) = item_at(&target, source.as_ref(), index, context)? {
             return Ok(value);
         }
         return forward(|i| &i.reflect_get, args, context);
@@ -482,7 +540,7 @@ fn get_own_property_descriptor_trap<S: IndexedSource>(
 ) -> JsResult<JsValue> {
     let (target, source) = trap_target::<S>(args)?;
     if let Some(index) = array_index(args, context)? {
-        if let Some(value) = source.item(index, context)? {
+        if let Some(value) = item_at(&target, source.as_ref(), index, context)? {
             let descriptor = JsObject::with_null_proto();
             descriptor.create_data_property_or_throw(js_string!("value"), value, context)?;
             descriptor.create_data_property_or_throw(js_string!("writable"), false, context)?;
