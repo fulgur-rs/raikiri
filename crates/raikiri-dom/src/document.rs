@@ -369,8 +369,9 @@ pub struct Document {
     /// Used block-start margin of `<body>` that the most recent layout placed
     /// inside the synthetic body root.
     pub(crate) body_block_start_margin: f32,
-    /// Width and height of the page area the most recent layout placed fixed
-    /// boxes against.
+    /// Width and height of the page area of the most recent layout: the
+    /// containing block of fixed boxes, and the initial containing block
+    /// orthogonal flows size against.
     pub(crate) fixed_page_area: (f32, f32),
     /// The laid-out border-box height of each auto-height box that the most
     /// recent layout then grew to hold a float descendant it does not
@@ -468,6 +469,9 @@ pub struct Document {
     /// The vertical box under a horizontal block container that is being
     /// laid out at its content-based width; see `taffy_impl::orthogonal_flow`.
     pub(crate) orthogonal_block_in_layout: Option<usize>,
+    /// Vertical block containers being laid out on transposed axes, the
+    /// innermost last; see [`crate::taffy_impl::TransposedBlock`].
+    pub(crate) transposed_blocks: Vec<crate::taffy_impl::TransposedBlock>,
     /// Block containers being laid out, each with the content-box width its
     /// children's percentage padding and borders resolve against; see
     /// [`crate::taffy_impl::BlockChildStyle`].
@@ -677,6 +681,7 @@ impl Document {
             fragmentation_stack: Vec::new(),
             vertical_oof_containing_blocks: Vec::new(),
             orthogonal_block_in_layout: None,
+            transposed_blocks: Vec::new(),
             block_item_percent_bases: Vec::new(),
             flex_item_percent_bases: Vec::new(),
             size_contained_measure: Vec::new(),
@@ -1988,6 +1993,7 @@ impl Document {
             fragmentation_stack: _,
             vertical_oof_containing_blocks: _,
             orthogonal_block_in_layout: _,
+            transposed_blocks: _,
             block_item_percent_bases: _,
             flex_item_percent_bases: _,
             size_contained_measure: _,

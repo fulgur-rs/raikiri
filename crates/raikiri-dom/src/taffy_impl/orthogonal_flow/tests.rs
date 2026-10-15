@@ -104,10 +104,11 @@ fn vertical_rl_block_keeps_its_absolute_child_on_the_block_start_edge() {
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     let container = absolute_rect(&doc, container);
     let absolute = absolute_rect(&doc, absolute);
-    // The empty container has no width; the absolute box keeps "dd ee" on
-    // one 50px column and ends at the container's right (block-start) edge.
+    // The empty container has no size, so the absolute box shrinks to its
+    // min-content inline size: "dd" and "ee" on two 20px columns, ending
+    // at the container's right (block-start) edge.
     assert_eq!(container, (8.0, 8.0, 0.0, 0.0));
-    assert_eq!(absolute, (-2.0, 8.0, 10.0, 50.0));
+    assert_eq!(absolute, (-12.0, 8.0, 20.0, 20.0));
 }
 
 #[test]
@@ -184,10 +185,12 @@ fn right_float_stays_inside_a_vertical_block() {
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     let container = absolute_rect(&doc, container);
     let float = absolute_rect(&doc, float);
-    // The float meets the right edge of the 50px-wide container, not of the
-    // body it was stretched across before.
+    // The float meets the block-start edge of the 50px-wide container, its
+    // right edge, not that of the body it was stretched across before. A
+    // right float goes to the line-right side, the bottom in `vertical-rl`
+    // (CSS Writing Modes 4 §6.2).
     assert_eq!(container, (8.0, 8.0, 50.0, 50.0));
-    assert_eq!(float, (38.0, 8.0, 20.0, 20.0));
+    assert_eq!(float, (38.0, 38.0, 20.0, 20.0));
 }
 
 #[test]

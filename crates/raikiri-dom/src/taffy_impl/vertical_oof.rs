@@ -50,6 +50,9 @@ pub(super) fn containing_block_inline_size(
             .iter()
             .any(|&child| is_absolute(tree, child))
         || !used_writing_mode(tree, node).is_vertical()
+        // A transposed block container hands its children its own used
+        // inline size.
+        || super::block_right_to_left(tree, node).is_some()
     {
         return None;
     }

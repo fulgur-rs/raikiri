@@ -1,5 +1,5 @@
 use super::*;
-use raikiri_style::property::ContentComponent;
+use raikiri_style::property::{ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 
 // cov:ignore: computed multicol bridge is exercised by ignored WPT reftests.
@@ -97,42 +97,48 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 /// What [`crate::layout::ifc::assign::assign_ifc_roots`] returns: a paragraph
 /// over a limit of the inline engine, or one it refuses when it is required
 /// for every paragraph.
+/// Whether `idx` lays out on vertical axes: a box in `vertical-rl` or
+/// `vertical-lr`. A multicol container and its contents run vertical writing
+/// on horizontal axes, and so do flex and grid containers: their algorithms
+/// place items on physical axes, together with the horizontally mapped
+/// logical margins.
+pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
+    let values = &cascade.computed[idx];
+    if !matches!(
+        values.cssom_writing_mode,
+        WritingMode::VerticalRl | WritingMode::VerticalLr
+    ) || values.display.is_flex_or_grid_container()
+    {
+        return false;
+    }
+    !values.multicol_flow
+}
+
+/// Whether the bridge gives `idx` its vertical axes: a box that
+/// [`lays_out_vertically`], except a table box, which keeps horizontal axes
+/// even in vertical writing.
+pub(crate) fn uses_vertical_axes(cascade: &CascadeResult, idx: usize) -> bool {
+    lays_out_vertically(cascade, idx)
+        && !crate::taffy_impl::is_table_box(cascade.computed[idx].display)
+}
+
 /// The vertical `inline-size` / `block-size` mapping of `idx`, when the box
-/// lays out vertical lines on its own axes. A multicol container and its
-/// contents run vertical writing on horizontal axes, so they keep the
-/// horizontal mapping in [`ComputedValues::width`] / [`ComputedValues::height`].
-/// So do flex and grid containers: their algorithms place items on physical
-/// axes, together with the horizontally mapped logical margins.
-pub(crate) fn vertical_logical_size<'a>(
-    doc: &Document,
-    cascade: &'a CascadeResult,
+/// lays out vertical lines on its own axes ([`lays_out_vertically`]). Other
+/// boxes keep the horizontal mapping in [`ComputedValues::width`] /
+/// [`ComputedValues::height`].
+pub(crate) fn vertical_logical_size(
+    cascade: &CascadeResult,
     idx: usize,
-) -> Option<&'a raikiri_style::VerticalLogicalSize> {
-    let size = cascade.computed[idx].vertical_logical_size.as_ref()?;
-    if cascade.computed[idx].display.is_flex_or_grid_container() {
-        return None;
-    }
-    let mut current = Some(idx);
-    while let Some(id) = current {
-        if cascade
-            .computed
-            .get(id)
-            .is_some_and(|values| multicol_style_from_computed(values).is_some())
-        {
-            return None;
-        }
-        current = doc.parent_of(id);
-    }
-    Some(size)
+) -> Option<&raikiri_style::VerticalLogicalSize> {
+    cascade.computed[idx]
+        .vertical_logical_size
+        .as_ref()
+        .filter(|_| lays_out_vertically(cascade, idx))
 }
 
 /// The computed values of `idx` with [`vertical_logical_size`] applied.
-fn vertical_logical_sized(
-    doc: &Document,
-    cascade: &CascadeResult,
-    idx: usize,
-) -> Option<ComputedValues> {
-    let size = vertical_logical_size(doc, cascade, idx)?;
+fn vertical_logical_sized(cascade: &CascadeResult, idx: usize) -> Option<ComputedValues> {
+    let size = vertical_logical_size(cascade, idx)?;
     let mut sized = cascade.computed[idx].clone();
     sized.width = size.width;
     sized.width_ch = size.width_ch.clone();
@@ -154,7 +160,7 @@ pub(crate) fn apply_computed_to_style(
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
         }
-        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let vertical_sized = vertical_logical_sized(cascade, idx);
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         // Preserve full DisplayValue for table dispatch before taffy collapses it.
         doc.nodes[idx].display = cv.display;
@@ -257,8 +263,9 @@ pub(crate) fn apply_computed_to_style(
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         doc.nodes[idx].needs_relative_block_paint_offset = false;
         let is_multicol_container = doc.nodes[idx].multicol.is_some();
+        let vertical_axes = uses_vertical_axes(cascade, idx);
         let style = &mut doc.nodes[idx].style;
-        bridge_direction(style, cv);
+        bridge_direction(style, cv, vertical_axes);
         bridge_display(style, cv);
         // CSS Multi-column Layout 1, 2: a multi-column container establishes
         // a new block formatting context, so the margins of its children do
@@ -271,7 +278,13 @@ pub(crate) fn apply_computed_to_style(
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_min_max_size(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
+        bridge_min_max_size(
+            style,
+            cv,
+            vertical_axes,
+            &mut doc.calc_values,
+            &mut doc.layout_warnings,
+        );
         bridge_border(style, cv, &mut doc.layout_warnings);
         bridge_box_sizing(style, cv);
         bridge_flex(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
@@ -306,7 +319,7 @@ pub(crate) fn apply_computed_to_style(
         }
         // The sizes bridged above, which a vertical box takes from its
         // logical sizing properties.
-        let vertical_sized = vertical_logical_sized(doc, cascade, idx);
+        let vertical_sized = vertical_logical_sized(cascade, idx);
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         let containment = size_containment(doc, idx, cv);
         doc.nodes[idx].size_containment = containment;
@@ -443,10 +456,14 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// Taffy uses this field for horizontal block alignment, table/grid ordering,
 /// and overflow direction.  Text direction is mapped separately, into the
 /// paragraph style of the inline engine.
-fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues) {
+///
+/// A box laid out on vertical axes with `text-orientation: upright` uses
+/// `ltr` whatever its `direction` (CSS Writing Modes 4 §5.1), as its
+/// logical margins and padding were mapped.
+fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes: bool) {
+    let upright = vertical_axes && cv.text_orientation == TextOrientation::Upright;
     style.direction = match cv.direction {
-        Direction::Ltr => TaffyDirection::Ltr,
-        Direction::Rtl => TaffyDirection::Rtl,
+        Direction::Rtl if !upright => TaffyDirection::Rtl,
         _ => TaffyDirection::Ltr,
     };
 }
@@ -814,6 +831,7 @@ fn bridge_known_image_intrinsic_size(
 fn bridge_min_max_size(
     style: &mut taffy::Style,
     cv: &ComputedValues,
+    vertical_axes: bool,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
@@ -821,11 +839,13 @@ fn bridge_min_max_size(
     // (as in bridge_size; cv's Auto naturally preserves defaults).
     // Keep calc() handles alive in the document arena just like width/height;
     // collapsing a max-width calc() to zero would spuriously clamp a <col>.
-    // The layout writing mode is normalized to horizontal-tb, just like
-    // inline-size/block-size. Keep a logical block minimum on that same
-    // layout axis when no physical min-height is present. Preserve an
-    // explicit physical constraint; CSSOM keeps the original axis mapping.
-    let min_height = if !cv.writing_mode.is_vertical()
+    // A vertical box laid out on horizontal axes (`vertical_axes` unset)
+    // keeps a logical block minimum on the horizontal block axis when no
+    // physical min-height is present, like its inline-size/block-size.
+    // Preserve an explicit physical constraint; CSSOM keeps the original
+    // axis mapping. A box laid out on vertical axes has its logical block
+    // minimum as its minimum width already.
+    let min_height = if !vertical_axes
         && cv.cssom_writing_mode.is_vertical()
         && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
     {

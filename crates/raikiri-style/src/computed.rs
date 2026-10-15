@@ -872,6 +872,16 @@ pub struct ComputedValues {
     /// share this layout fallback. [`crate::property::resolve_writing_mode`]
     /// performs the normalization. See [`WritingMode`] doc's Non-goal section.
     pub writing_mode: WritingMode,
+    /// Whether the element is a multicol container or inside one. Block
+    /// layout runs such boxes on horizontal axes in every writing mode, so
+    /// the flow-relative margins and padding of their children keep the
+    /// `horizontal-tb` mapping. Not a CSS property.
+    pub multicol_flow: bool,
+    /// Whether the box this element's children are placed in lays them out
+    /// on horizontal axes in every writing mode: a flex, grid or table box,
+    /// or a multicol flow. A `display: contents` or `display: none` element
+    /// has no box, so it passes on its parent's value. Not a CSS property.
+    pub horizontal_children: bool,
     /// CSSOM-facing computed `writing-mode` keyword. **inherited**, initial:
     /// [`WritingMode::HorizontalTb`] (CSS Writing Modes 4 §3.2). This retains the
     /// specified keyword while [`Self::writing_mode`] stays renderer-facing.
@@ -2175,6 +2185,8 @@ impl ComputedValues {
             // other 4 keywords never appear in this field regardless).
             writing_mode: WritingMode::HorizontalTb,
             cssom_writing_mode: WritingMode::HorizontalTb,
+            multicol_flow: false,
+            horizontal_children: false,
             ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: initial text-indent is `0`.
             text_indent: ComputedTextIndent::Px(0.0),

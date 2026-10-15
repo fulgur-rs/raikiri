@@ -1271,15 +1271,10 @@ pub(crate) fn apply_winners(
     mut svg_properties: Option<&mut Vec<SvgStyleProperty>>,
 ) {
     let mut deferred_resolver = DeferredResolver::new(custom_properties);
-    let flow = flow_mapping(
-        candidates,
-        inherited.writing_mode,
-        inherited.direction,
-        |value| match value {
-            PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred),
-            value => Some(value.clone()),
-        },
-    );
+    let flow = flow_mapping(candidates, inherited, |value| match value {
+        PropertyValue::Deferred(deferred) => deferred_resolver.resolve(deferred),
+        value => Some(value.clone()),
+    });
     pick_winners(candidates, winners, flow);
     // The drain below takes every slot, so the white-space winners are read
     // first; their applied values are collected during the drain.

@@ -67,6 +67,8 @@ pub(crate) fn own_heap_bytes(values: &ComputedValues, parent: &ComputedValues) -
         direction: _,
         writing_mode: _,
         cssom_writing_mode: _,
+        multicol_flow: _,
+        horizontal_children: _,
         ruby_position: _,
         text_indent: _,
         text_indent_ch_factor: _,

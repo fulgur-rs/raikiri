@@ -12,16 +12,15 @@
 //! "Abstract-to-Physical Mappings",
 //! <https://www.w3.org/TR/css-writing-modes-4/#logical-to-physical>).
 //!
-//! Elements map through their renderer-facing writing mode, which stays
-//! `horizontal-tb` while block layout only stacks blocks vertically (see
-//! [`crate::property::resolve_writing_mode`]). The page context maps through
-//! its specified writing mode, because the page box's margins and padding do
-//! not depend on block layout.
+//! Elements map through the writing mode block layout stacks their boxes
+//! in: `vertical-rl` and `vertical-lr` as specified, the sideways modes as
+//! `horizontal-tb`. The page context maps through its specified writing
+//! mode, because the page box's margins and padding do not depend on block
+//! layout.
 //!
 //! `text-orientation: upright` makes the used direction `ltr` in vertical
-//! writing modes (CSS Writing Modes 4 §5.1). The page context's mapping uses
-//! that used direction; elements map through `horizontal-tb`, where it does
-//! not apply.
+//! writing modes (CSS Writing Modes 4 §5.1), and both mappings use that used
+//! direction.
 
 use smol_str::SmolStr;
 

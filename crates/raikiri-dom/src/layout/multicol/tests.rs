@@ -929,7 +929,7 @@ fn vertical_fallback_preserves_explicit_physical_min_height() {
             Some(body),
             "div",
             Style::default(),
-            Some("display:block;width:200px;height:160px"),
+            Some("display:block;width:200px;height:160px;column-count:1"),
         );
         let child = doc.append_element(
             Some(parent),

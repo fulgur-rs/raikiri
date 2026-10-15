@@ -52,6 +52,64 @@ pub(crate) fn move_body_inline_margins_into_padding(
     doc.body_inline_margins = (insets.margin_left, insets.margin_right);
 }
 
+/// The used top and bottom margins of `<body>`, with percentages resolved
+/// against `percent_basis`, the inline size of the body's containing block,
+/// like its other margins; `auto` and negative margins are 0.
+/// Read them before the pipeline zeroes the body root's vertical margins.
+pub(crate) fn body_vertical_margins(
+    doc: &Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    percent_basis: f32,
+) -> (f32, f32) {
+    let style = &doc.nodes[body_id].style.margin;
+    let computed = &cascade.computed[body_id].margin;
+    let used = |margin: LengthPercentageAuto, computed: ComputedLengthPercentageOrAuto| {
+        used_style_length_percentage_auto(margin, percent_basis)
+            .or_else(|| used_computed_length_percentage_or_auto(computed, percent_basis))
+            .unwrap_or(0.0)
+            .max(0.0)
+    };
+    (
+        used(style.top, computed.top),
+        used(style.bottom, computed.bottom),
+    )
+}
+
+/// Carry the top and bottom `margins` of a `<body>` laid out on vertical
+/// axes into its layout as extra padding, as
+/// [`move_body_inline_margins_into_padding`] does with the left and right
+/// ones. In a vertical writing mode these are the inline margins: they never
+/// collapse and narrow the inline size of the body's content, while the
+/// block-start margin is the left or right one. Run it after
+/// [`apply_page_content_box_to_body`]: the page area height it sets stays
+/// the body's border-box height, so a `content-box` body's height becomes
+/// what is left inside its vertical padding and borders.
+pub(crate) fn move_body_vertical_margins_into_padding(
+    doc: &mut Document,
+    body_id: usize,
+    (top, bottom): (f32, f32),
+    percent_basis: f32,
+) {
+    let style = &mut doc.nodes[body_id].style;
+    let used = |edge: LengthPercentage| {
+        used_style_length_percentage(edge, percent_basis)
+            .unwrap_or(0.0)
+            .max(0.0)
+    };
+    let padding_top = used(style.padding.top) + top;
+    let padding_bottom = used(style.padding.bottom) + bottom;
+    let border = used(style.border.top) + used(style.border.bottom);
+    style.padding.top = LengthPercentage::length(padding_top);
+    style.padding.bottom = LengthPercentage::length(padding_bottom);
+    if style.box_sizing == TaffyBoxSizing::ContentBox
+        && let Some(height) = style.size.height.into_option()
+    {
+        style.size.height =
+            Dimension::length((height - padding_top - padding_bottom - border).max(0.0));
+    }
+}
+
 /// Used horizontal margins, padding and borders of `<body>`, resolved against
 /// the page content width (see [`move_body_inline_margins_into_padding`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]

@@ -48,18 +48,34 @@ fn column_rects(root_css: &str, column_css: &str) -> Vec<(f32, f32, f32, f32)> {
 fn vertical_rl_absolute_box_shrinks_to_its_containing_block_inline_size() {
     let in_flow = column_rects("writing-mode:vertical-rl", "");
     let absolute = column_rects("writing-mode:vertical-rl", "position:absolute");
-    // Each paragraph keeps "aa bb" on one 50px line instead of breaking at
-    // min-content, and the box sits on the block-start (right) edge.
-    assert_eq!(in_flow[0], (780.0, 0.0, 20.0, 50.0));
-    assert_eq!(absolute, in_flow);
+    // In flow, the box fills the 600px inline size of the root. Out of
+    // flow, it shrinks to fit: each paragraph keeps "aa bb" on one 50px
+    // line instead of breaking at min-content, and the box sits on the
+    // block-start (right) edge.
+    assert_eq!(in_flow[0], (780.0, 0.0, 20.0, 600.0));
+    assert_eq!(
+        absolute,
+        [
+            (780.0, 0.0, 20.0, 50.0),
+            (790.0, 0.0, 10.0, 50.0),
+            (780.0, 0.0, 10.0, 50.0)
+        ]
+    );
 }
 
 #[test]
 fn vertical_lr_absolute_box_starts_at_the_left_edge() {
     let in_flow = column_rects("writing-mode:vertical-lr", "");
     let absolute = column_rects("writing-mode:vertical-lr", "position:absolute");
-    assert_eq!(in_flow[0], (0.0, 0.0, 20.0, 50.0));
-    assert_eq!(absolute, in_flow);
+    assert_eq!(in_flow[0], (0.0, 0.0, 20.0, 600.0));
+    assert_eq!(
+        absolute,
+        [
+            (0.0, 0.0, 20.0, 50.0),
+            (0.0, 0.0, 10.0, 50.0),
+            (10.0, 0.0, 10.0, 50.0)
+        ]
+    );
 }
 
 #[test]
@@ -68,7 +84,9 @@ fn vertical_absolute_box_keeps_authored_physical_offsets() {
         "writing-mode:vertical-rl",
         "position:absolute;left:10px;top:30px",
     );
-    assert_eq!(rects[0], (10.0, 30.0, 20.0, 50.0));
+    // The containing block holds no in-flow content, so it is a zero-wide
+    // box on the right edge of the 800px root.
+    assert_eq!(rects[0], (810.0, 30.0, 20.0, 50.0));
 }
 
 #[test]
@@ -78,7 +96,7 @@ fn horizontal_absolute_box_is_unchanged() {
 }
 
 #[test]
-fn vertical_absolute_box_without_inline_content_keeps_the_block_path_position() {
+fn vertical_absolute_box_without_inline_content_starts_at_the_block_start_edge() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
@@ -98,9 +116,8 @@ fn vertical_absolute_box_without_inline_content_keeps_the_block_path_position() 
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    // An empty block in this container is laid out on the horizontal block
-    // path, so the static position stays where that path puts it.
-    assert_eq!(absolute_rect(&doc, absolute), (0.0, 0.0, 15.0, 20.0));
+    // The static position is on the block-start edge, the right one.
+    assert_eq!(absolute_rect(&doc, absolute), (15.0, 0.0, 15.0, 20.0));
 }
 
 #[test]

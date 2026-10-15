@@ -42,18 +42,60 @@ fn horizontal_rtl_swaps_the_inline_sides() {
 }
 
 #[test]
-fn vertical_elements_map_like_horizontal_ones_while_blocks_stack_vertically() {
-    // Block layout runs in horizontal-tb, so the block axis stays vertical.
+fn vertical_elements_map_the_block_axis_to_the_physical_x_axis() {
     assert_eq!(
         margins(&format!("writing-mode: vertical-rl; {ALL_FOUR}")),
-        sides(2.0, 3.0, 4.0, 1.0)
+        sides(1.0, 2.0, 3.0, 4.0)
     );
+    assert_eq!(
+        margins(&format!("writing-mode: vertical-lr; {ALL_FOUR}")),
+        sides(1.0, 4.0, 3.0, 2.0)
+    );
+    assert_eq!(
+        margins(&format!(
+            "writing-mode: vertical-rl; direction: rtl; {ALL_FOUR}"
+        )),
+        sides(3.0, 2.0, 1.0, 4.0)
+    );
+}
+
+#[test]
+fn upright_text_maps_vertical_inline_sides_as_ltr() {
+    assert_eq!(
+        margins(&format!(
+            "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; {ALL_FOUR}"
+        )),
+        sides(1.0, 2.0, 3.0, 4.0)
+    );
+}
+
+#[test]
+fn sideways_elements_map_like_horizontal_ones() {
+    // Block layout stacks the boxes of the sideways modes on horizontal axes.
     assert_eq!(
         margins(&format!(
             "writing-mode: sideways-lr; direction: rtl; {ALL_FOUR}"
         )),
         sides(2.0, 1.0, 4.0, 3.0)
     );
+}
+
+#[test]
+fn the_writing_mode_and_orientation_are_inherited_from_the_parent() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("writing-mode: vertical-rl; direction: rtl; text-orientation: upright"),
+    );
+    let child = doc.push_element(
+        parent,
+        "p",
+        Some("margin: 0; margin-block-start: 5px; margin-inline-start: 6px"),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    assert_eq!(result.computed[child].margin, sides(6.0, 5.0, 0.0, 0.0));
 }
 
 #[test]
@@ -275,5 +317,64 @@ fn a_rolled_back_logical_margin_falls_back_to_the_physical_side_it_maps_to() {
              @layer high { div { direction: rtl; margin-right: revert-layer } }"
         ),
         sides(0.0, 3.0, 0.0, 4.0)
+    );
+}
+
+/// The margins of a vertical `p` styled `ALL_FOUR` under the chain of
+/// ancestors styled `ancestors`, outermost first.
+fn nested_margins(ancestors: &[&str]) -> Sides<ComputedLengthPercentageOrAuto> {
+    let mut doc = TestDoc::new();
+    let mut parent = 0;
+    for style in ancestors {
+        parent = doc.push_element(parent, "div", Some(style));
+    }
+    let child = doc.push_element(parent, "p", Some(ALL_FOUR));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    result.computed[child].margin
+}
+
+#[test]
+fn children_placed_on_horizontal_axes_keep_the_horizontal_mapping() {
+    // Flex, grid, table and multicol containers place their children on
+    // horizontal axes in every writing mode, and so does a block inside a
+    // multicol container.
+    for ancestors in [
+        &["writing-mode: vertical-rl; display: flex"][..],
+        &["writing-mode: vertical-rl; display: grid"],
+        &["writing-mode: vertical-rl; display: table-cell"],
+        &["writing-mode: vertical-rl; column-count: 2"],
+        &[
+            "writing-mode: vertical-rl; column-width: 10px",
+            "display: block",
+        ],
+    ] {
+        assert_eq!(
+            nested_margins(ancestors),
+            sides(2.0, 3.0, 4.0, 1.0),
+            "{ancestors:?}"
+        );
+    }
+    assert_eq!(
+        nested_margins(&["writing-mode: vertical-rl; display: block"]),
+        sides(1.0, 2.0, 3.0, 4.0)
+    );
+}
+
+#[test]
+fn upright_text_under_a_horizontal_parent_keeps_the_ltr_mapping() {
+    // `text-orientation: upright` makes the used direction `ltr` in a
+    // vertical writing mode, also when a flex parent maps the logical sides
+    // onto horizontal axes.
+    assert_eq!(
+        nested_margins(&[
+            "writing-mode: vertical-rl; direction: rtl; text-orientation: upright; display: flex"
+        ]),
+        sides(2.0, 3.0, 4.0, 1.0)
+    );
+    // In a horizontal writing mode `text-orientation` has no effect.
+    assert_eq!(
+        nested_margins(&["direction: rtl; text-orientation: upright"]),
+        sides(2.0, 1.0, 4.0, 3.0)
     );
 }
