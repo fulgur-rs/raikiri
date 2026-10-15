@@ -462,16 +462,16 @@ fn body_border_box_end(
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
     let mut last_flow_margin = 0.0;
-    // Popped in document order, each with the offset of its parent's
-    // coordinates and whether it is nested in one of the body's blocks,
-    // where only floats count.
-    let mut children: Vec<(usize, f32, bool)> = body
+    // Popped in document order, each with the flow offset of its parent's
+    // coordinates, the height its insets resolve against, and whether it
+    // is nested in one of the body's blocks, where only floats count.
+    let mut children: Vec<(usize, f32, f32, bool)> = body
         .children
         .iter()
         .rev()
-        .map(|&child| (child, 0.0, false))
+        .map(|&child| (child, 0.0, body_content_height, false))
         .collect();
-    while let Some((child, offset, nested)) = children.pop() {
+    while let Some((child, offset, basis, nested)) = children.pop() {
         let node = &document.nodes[child];
         let child_computed = &cascade.computed[child];
         if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
@@ -484,7 +484,7 @@ fn body_border_box_end(
                 node.children
                     .iter()
                     .rev()
-                    .map(|&grandchild| (grandchild, offset, nested)),
+                    .map(|&grandchild| (grandchild, offset, basis, nested)),
             );
             continue;
         }
@@ -503,31 +503,37 @@ fn body_border_box_end(
             }
             continue;
         }
-        if encloses_floats && !holds_floats(document, cascade, child) {
-            let offset = offset + layout.location.y;
-            children.extend(
-                node.children
-                    .iter()
-                    .rev()
-                    .map(|&grandchild| (grandchild, offset, true)),
-            );
-        }
-        if nested {
-            continue;
-        }
         // Layout resolves the insets of relative and sticky boxes alike,
-        // against the body's content box.
+        // against the containing block's content box.
         let relative_shift = if matches!(
             child_computed.position,
             PositionValue::Relative | PositionValue::Sticky
         ) {
-            let inset = |value| used_computed_length_percentage_or_auto(value, body_content_height);
+            let inset = |value| used_computed_length_percentage_or_auto(value, basis);
             inset(child_computed.top)
                 .or_else(|| inset(child_computed.bottom).map(|bottom| -bottom))
                 .unwrap_or(0.0)
         } else {
             0.0
         };
+        if encloses_floats && !holds_floats(document, cascade, child) {
+            let offset = offset + layout.location.y - relative_shift;
+            let basis = (layout.size.height
+                - layout.padding.top
+                - layout.padding.bottom
+                - layout.border.top
+                - layout.border.bottom)
+                .max(0.0);
+            children.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&grandchild| (grandchild, offset, basis, true)),
+            );
+        }
+        if nested {
+            continue;
+        }
         let end =
             offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
         if end.is_finite() {

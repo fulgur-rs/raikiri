@@ -2077,3 +2077,14 @@ fn pipeline_leaves_out_floats_the_body_does_not_enclose() {
         assert_eq!(run(&doc).slices.len(), 1, "{body} {wrapper}");
     }
 }
+
+#[test]
+fn pipeline_leaves_a_relative_offset_out_of_a_nested_float_end() {
+    // The wrapper's 100px offset moves the 50px float without moving the
+    // flow: the body ends 110px down, with its padding, on the first page.
+    let doc = parse(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0;display:flow-root;padding-bottom:60px}</style>\
+         <div style='position:relative;top:100px'><div style='float:left;width:10px;height:50px'></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
