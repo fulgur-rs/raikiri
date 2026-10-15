@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::FormattingContext;
 
 /// Carry the used left and right margins of `<body>` into its layout as
 /// extra inline padding of the synthetic body root.
@@ -752,14 +753,17 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                 // first descendant selects the initial page as it does in the
                 // page pipeline. Its own `page` value is ignored.
                 if is_static_position_absolute(document, cascade, child_id) {
-                    let first_child = pagination_child_order(document, cascade, child_id)
-                        .into_iter()
-                        .find(|&grandchild| {
-                            !matches!(
-                                cascade.computed[grandchild].position,
-                                PositionValue::Absolute | PositionValue::Fixed
-                            ) && !is_floating_box_for_pagination(document, cascade, grandchild)
-                        });
+                    let child_order = if resolved_layout {
+                        pagination_child_order(document, cascade, child_id)
+                    } else {
+                        initial_page_child_order(document, cascade, child_id)
+                    };
+                    let first_child = child_order.into_iter().find(|&grandchild| {
+                        !matches!(
+                            cascade.computed[grandchild].position,
+                            PositionValue::Absolute | PositionValue::Fixed
+                        ) && !is_floating_box_for_pagination(document, cascade, grandchild)
+                    });
                     if let Some(first_child) = first_child
                         && let (_, Some(name)) = propagated_start_page_name_with_order(
                             document,
@@ -986,7 +990,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
         // sorts that flattened sequence. Taffy takes no `order` input, so the
         // sorted items replace the DOM children here.
         let mut children = Vec::new();
-        if matches!(parent.style.display, Display::Flex | Display::Grid) {
+        if parent.formatting_context.is_flex_or_grid() {
             let mut pending: Vec<usize> = parent.children.iter().rev().copied().collect();
             while let Some(child) = pending.pop() {
                 let node = &doc.nodes[child];
@@ -1061,14 +1065,14 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
 ) -> bool {
     let child = &document.nodes[child_id];
     child.is_in_document()
-        && child.style.display != Display::None
+        && !child.is_display_none()
         && child.style.position != TaffyPosition::Absolute
         && !matches!(
             &child.data,
             NodeData::Text(text)
                 if text.text_content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
         )
-        && document.nodes[parent_id].style.display == Display::Flex
+        && document.nodes[parent_id].formatting_context == FormattingContext::Flex
 }
 
 /// Return effective flex items in CSS order-modified order, reversed for
@@ -1217,32 +1221,29 @@ fn grid_pagination_children(document: &Document, parent_id: usize) -> Vec<usize>
     children
 }
 
-/// Child order shared by page-candidate collection and named-page propagation.
+/// Child order shared by page-candidate collection and named-page propagation,
+/// once layout has classified each box's formatting context (before that,
+/// [`initial_page_child_order`] reads the cascade instead).
 pub(crate) fn pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
     parent_id: usize,
 ) -> Vec<usize> {
-    let computed = &cascade.computed[parent_id];
-    if computed.display.is_flex_container() {
-        return flex_pagination_child_order(document, cascade, parent_id);
-    }
-    if matches!(
-        computed.display,
-        DisplayValue::Table | DisplayValue::InlineTable
-    ) {
-        return table_pagination_child_order(document, cascade, parent_id);
-    }
-    let is_single_column_grid =
-        computed.display.is_grid_container() && document.nodes[parent_id].grid_column_count == 1;
-    if !is_single_column_grid {
-        if computed.display.is_grid_container() {
-            // Multi-column pagination is not implemented, but named-page
-            // propagation and candidate traversal must retain Grid's
-            // order-modified child sequence.
+    match document.nodes[parent_id].formatting_context {
+        FormattingContext::Flex => {
+            return flex_pagination_child_order(document, cascade, parent_id);
+        }
+        FormattingContext::Table => {
+            return table_pagination_child_order(document, cascade, parent_id);
+        }
+        // Multi-column pagination is not implemented, but named-page
+        // propagation and candidate traversal must retain Grid's
+        // order-modified child sequence.
+        FormattingContext::Grid if document.nodes[parent_id].grid_column_count != 1 => {
             return grid_pagination_children(document, parent_id);
         }
-        return document.nodes[parent_id].children.clone();
+        FormattingContext::Grid => {}
+        _ => return document.nodes[parent_id].children.clone(),
     }
 
     let mut children = grid_pagination_children(document, parent_id);
