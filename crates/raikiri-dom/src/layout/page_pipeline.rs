@@ -6353,7 +6353,7 @@ fn paginate_flow(
                     // A later, unforced page edge inside that margin still
                     // truncates it.
                     let after_forced_break = forced_break_margin_box.is_some_and(|owner| {
-                        forced_margin_reaches(document, cascade, owner, previous)
+                        forced_margin_reaches(document, cascade, owner, previous, node_id)
                     }) && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
                         && effective_y > page_top + 0.001
@@ -6418,7 +6418,7 @@ fn paginate_flow(
                     previous_block_bottoms
                         .get(&parent_id)
                         .is_some_and(|&(previous, _)| {
-                            forced_margin_reaches(document, cascade, owner, previous)
+                            forced_margin_reaches(document, cascade, owner, previous, node_id)
                         })
                 });
                 forced_break_margin_box = (follows_forced_box
@@ -6785,15 +6785,21 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
 }
 
 /// Whether the margins of `owner`, an empty box after a forced break, reach
-/// the block-end margin of `previous`: `previous` is `owner` itself or an
+/// the block-start margin of `node_id` through the block-end margin of
+/// `previous`, its preceding sibling box: `previous` is `owner` itself or an
 /// ancestor whose boxes down to `owner` are all empty, so that the margins
-/// collapse through each of them (CSS 2 §8.3.1).
+/// collapse through each of them (CSS 2 §8.3.1), and no generated box lies
+/// between `previous` and `node_id` to keep the margins apart.
 fn forced_margin_reaches(
     document: &Document,
     cascade: &CascadeResult,
     owner: usize,
     previous: usize,
+    node_id: usize,
 ) -> bool {
+    if generated_box_separates(document, cascade, node_id, previous) {
+        return false;
+    }
     let mut id = owner;
     while id != previous {
         match box_parent(document, cascade, id, BoxParentScope::Document) {
@@ -6808,6 +6814,84 @@ fn forced_margin_reaches(
         }
     }
     true
+}
+
+/// Whether a block-level `::before` or `::after` box of a `display: contents`
+/// element between `previous` and `node_id`, its following sibling box, keeps
+/// their margins apart. Such a box has no node of its own: it is a block in
+/// the paragraph of the shared box parent (see [`has_in_flow_content`]).
+fn generated_box_separates(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    previous: usize,
+) -> bool {
+    use raikiri_style::PseudoElem;
+
+    let separates = |element: usize, pseudo: PseudoElem| {
+        let id = crate::generated_content::generated_node_id(element, pseudo) as u64;
+        let vertical = document.pagination_on_transposed_axes;
+        box_parent(document, cascade, element, BoxParentScope::Document)
+            .and_then(|parent| document.ifc_layout_node(parent))
+            .is_some_and(|node| {
+                let width = node.unrounded_layout.size.width;
+                node.ifc.as_ref().is_some_and(|ifc| {
+                    ifc.generated_blocks
+                        .iter()
+                        .any(|block| block.start == id && block.separates_margins(width, vertical))
+                })
+            })
+    };
+    let is_contents = |id: usize| {
+        document.nodes[id].kind() == NodeKind::Element
+            && cascade.computed[id].display == DisplayValue::Contents
+    };
+    // Walks the boxes before `id` in reverse order, the generated boxes of
+    // `display: contents` elements included, until `previous`.
+    fn scan(
+        document: &Document,
+        id: usize,
+        previous: usize,
+        is_contents: &dyn Fn(usize) -> bool,
+        separates: &dyn Fn(usize, PseudoElem) -> bool,
+    ) -> Option<bool> {
+        if id == previous {
+            return Some(false);
+        }
+        if !is_contents(id) {
+            return None;
+        }
+        if separates(id, PseudoElem::After) {
+            return Some(true);
+        }
+        for &child in document.nodes[id].children.iter().rev() {
+            if let Some(found) = scan(document, child, previous, is_contents, separates) {
+                return Some(found);
+            }
+        }
+        separates(id, PseudoElem::Before).then_some(true)
+    }
+    let mut current = node_id;
+    while let Some(parent) = document.parent_of(current) {
+        let siblings = &document.nodes[parent].children;
+        let index = siblings
+            .iter()
+            .position(|&id| id == current)
+            .unwrap_or(siblings.len());
+        for &id in siblings[..index].iter().rev() {
+            if let Some(found) = scan(document, id, previous, &is_contents, &separates) {
+                return found;
+            }
+        }
+        if !is_contents(parent) {
+            break;
+        }
+        if separates(parent, PseudoElem::Before) {
+            return true;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// Whether `id` is a block box (a list item included) that establishes no

@@ -15531,3 +15531,158 @@ fn a_margin_after_a_bordered_wrapper_of_a_forced_break_box_follows_the_border() 
         131.0
     );
 }
+
+#[test]
+fn a_margin_after_a_contents_sibling_with_a_flow_root_before_box_is_truncated() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    doc.append_element(
+        Some(body),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    doc.append_element(
+        Some(body),
+        "span",
+        Style::default(),
+        Some("display:contents"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(style, "span::before { content: \"\"; display: flow-root }");
+    let last = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    // The `::before` box of the `display: contents` sibling establishes a
+    // formatting context between the forced-break box and the last box, so
+    // the margin after it no longer follows the forced break.
+    assert_eq!(
+        doc.get_node(last).unwrap().unrounded_layout.location.y,
+        100.0
+    );
+}
+
+/// Lays out a 20px box, then an empty forced-break section and a 30px
+/// top margin box, nested by `inside_contents` (`"section"` or `"last"`) in
+/// a `display: contents` span whose generated box is styled by `pseudo_css`;
+/// returns the y of the margin box.
+fn forced_break_around_a_contents_generated_box(inside_contents: &str, pseudo_css: &str) -> f32 {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;height:20px"),
+    );
+    let span = |doc: &mut Document| {
+        doc.append_element(
+            Some(body),
+            "span",
+            Style::default(),
+            Some("display:contents"),
+        )
+    };
+    let section_parent = if inside_contents == "section" {
+        span(&mut doc)
+    } else {
+        body
+    };
+    doc.append_element(
+        Some(section_parent),
+        "section",
+        Style::default(),
+        Some("display:block;width:100px;height:0;break-before:page"),
+    );
+    let last_parent = if inside_contents == "last" {
+        span(&mut doc)
+    } else {
+        body
+    };
+    let last = doc.append_element(
+        Some(last_parent),
+        "div",
+        Style::default(),
+        Some("display:block;width:100px;margin-top:30px;height:20px"),
+    );
+    let style = doc.append_element(Some(0), "style", Style::default(), None::<&str>);
+    doc.append_text(style, pseudo_css);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    layout_pages(&mut doc, &cascade, page).unwrap();
+    doc.get_node(last).unwrap().unrounded_layout.location.y
+}
+
+#[test]
+fn a_margin_after_a_flow_root_after_box_of_a_contents_wrapper_of_a_forced_break_box_is_truncated() {
+    // The `::after` box of the span lies between the forced-break box and
+    // the last box and establishes a formatting context.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "section",
+            "span::after { content: \"\"; display: flow-root }"
+        ),
+        100.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_contents_wrapper_of_a_forced_break_box_is_kept() {
+    // The span generates no box, so the margins of the forced-break box still
+    // reach the last box.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box("section", ""),
+        130.0
+    );
+}
+
+#[test]
+fn a_margin_after_a_flow_root_before_box_of_its_contents_parent_is_truncated() {
+    // The `::before` box of the span that holds the last box lies between it
+    // and the forced-break box.
+    assert_eq!(
+        forced_break_around_a_contents_generated_box(
+            "last",
+            "span::before { content: \"\"; display: flow-root }"
+        ),
+        100.0
+    );
+}
