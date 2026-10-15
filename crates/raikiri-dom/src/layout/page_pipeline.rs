@@ -397,11 +397,24 @@ fn body_border_box_end(
         }
     };
     let min_height = used(computed.min_height).unwrap_or(0.0);
+    // Text of the body's own paragraph is located by its lines, which are
+    // not measured here, but a block-level `::before` or `::after` between
+    // or after them takes room of its own: the paragraph then ends where
+    // its content does. Like the body's in-flow children, that content
+    // counts past the body's `height` and `max-height`: the body's overflow
+    // is visible.
+    let generated_end = body
+        .ifc
+        .as_ref()
+        .filter(|root| !root.generated_blocks.is_empty())
+        .and_then(|root| root.lines.as_ref())
+        .map(|lines| top + edges_top + lines.shifted_height() + edges_bottom)
+        .unwrap_or(f32::NEG_INFINITY);
     // A definite height, even zero, fixes the border box; content
     // overflowing it is measured on its own.
     if let Some(height) = used(computed.height) {
         let height = used(computed.max_height).map_or(height, |max| height.min(max));
-        return border_box_end(height.max(min_height));
+        return border_box_end(height.max(min_height)).max(generated_end);
     }
     let min_end = if min_height > 0.0 {
         border_box_end(min_height)
@@ -409,24 +422,9 @@ fn body_border_box_end(
         f32::NEG_INFINITY
     };
     // Without block-end edges or a `min-height` an auto-height body ends
-    // with its content, which the flow already paginated. Text of the body's
-    // own paragraph is located by its lines, which are not measured here,
-    // but a block-level `::before` or `::after` between or after them takes
-    // room of its own: the paragraph then ends where its content does. Like
-    // the body's in-flow children, the content counts past a `max-height`:
-    // the body's overflow is visible.
+    // with its content, which the flow already paginated.
     if body.is_ifc_root() {
-        let Some(content_height) = body
-            .ifc
-            .as_ref()
-            .filter(|root| !root.generated_blocks.is_empty())
-            .and_then(|root| root.lines.as_ref())
-            .map(|lines| lines.shifted_height())
-        else {
-            return min_end;
-        };
-        let auto_end = top + edges_top + content_height + edges_bottom;
-        return min_end.max(auto_end);
+        return min_end.max(generated_end);
     }
     if edges_bottom <= 0.0 && min_height <= 0.0 {
         return min_end;

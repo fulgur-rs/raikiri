@@ -110,6 +110,11 @@ fn block_after_of_the_body_overflows_its_max_height_onto_the_pages() {
     );
     // As a trailing 250px div does: the body's overflow is visible.
     assert_eq!(document.page_count(), 5);
+    let document = lay_out(
+        "A",
+        "body{height:100px}body::after{content:'';display:block;height:250px}",
+    );
+    assert_eq!(document.page_count(), 5);
 }
 
 #[test]
