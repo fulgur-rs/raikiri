@@ -15767,3 +15767,95 @@ fn a_kept_margin_spanning_several_pages_breaks_at_the_next_unforced_edge() {
         (vec![0.0, 100.0, 200.0], 3)
     );
 }
+
+/// Lays out two sibling boxes styled by `first` and `second`, each holding a
+/// 20px child styled by the matching `children` entry when it is given, and
+/// returns the second box's y and the page count.
+fn nested_margin_layout(first: &str, second: &str, children: [Option<&str>; 2]) -> (f32, usize) {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let mut boxes = Vec::new();
+    for (style, child) in [first, second].into_iter().zip(children) {
+        let id = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:block;width:100px;{style}")),
+        );
+        if let Some(child) = child {
+            doc.append_element(
+                Some(id),
+                "div",
+                Style::default(),
+                Some(&format!("display:block;height:20px;{child}")),
+            );
+        }
+        boxes.push(id);
+    }
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).unwrap();
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).unwrap();
+    (
+        doc.get_node(boxes[1]).unwrap().unrounded_layout.location.y,
+        pages.len(),
+    )
+}
+
+#[test]
+fn a_margin_collapsed_from_a_last_child_breaks_at_the_first_page_edge() {
+    // The wrapper's last child carries the margin, which collapses through the
+    // wrapper's block-end edge.
+    assert_eq!(
+        nested_margin_layout("", "height:20px", [Some("margin-bottom:1000px"), None]),
+        (100.0, 2)
+    );
+}
+
+#[test]
+fn a_margin_collapsed_from_a_first_child_breaks_at_the_first_page_edge() {
+    assert_eq!(
+        nested_margin_layout("height:20px", "", [None, Some("margin-top:1000px")]),
+        (100.0, 2)
+    );
+}
+
+#[test]
+fn a_bordered_wrapper_keeps_its_last_childs_margin_inside() {
+    // The border separates the child's margin from the wrapper's, so the gap
+    // after the wrapper holds no margin to truncate.
+    assert_eq!(
+        nested_margin_layout(
+            "border-bottom:1px solid",
+            "height:20px",
+            [Some("margin-bottom:1000px"), None]
+        ),
+        (1021.0, 11)
+    );
+}
+
+#[test]
+fn a_last_child_margin_inside_a_fixed_height_box_does_not_join_the_gap() {
+    // The child's margin ends inside the 50px box, so only the 200px margin
+    // of the next box fills the gap; it breaks at the edge at 100.
+    assert_eq!(
+        nested_margin_layout(
+            "height:50px",
+            "margin-top:200px;height:20px",
+            [Some("margin-bottom:1000px"), None]
+        ),
+        (100.0, 2)
+    );
+}
