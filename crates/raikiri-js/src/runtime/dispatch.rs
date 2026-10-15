@@ -1250,8 +1250,9 @@ fn compile_content_handler(
 
 /// Sync one event handler content attribute change for element `index`.
 /// `name` is the attribute name as passed to set or remove (any case for
-/// HTML elements). `value` is the new value, or `None` for removal.
-/// Names without an on prefix and non-HTML elements are no-ops.
+/// HTML elements, exact case for SVG and MathML ones). `value` is the new
+/// value, or `None` for removal. Names without an on prefix and elements
+/// outside those namespaces are no-ops.
 ///
 /// The compiled function replaces the same handler slot the matching on
 /// IDL accessor manages, so content and IDL writes overwrite each other in
@@ -1262,18 +1263,25 @@ pub(crate) fn sync_event_handler_for_attribute(
     name: &str,
     value: Option<&str>,
 ) -> JsResult<()> {
-    let (has_handlers, exists) = with_state(context, |s| {
+    let (has_handlers, exists, is_html) = with_state(context, |s| {
         let doc = s.host.document();
         (
             has_event_handlers(doc, index),
             doc.get_node(index).is_some(),
+            doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS),
         )
     })?;
     if !has_handlers || !exists {
         return Ok(());
     }
-    let lower = name.to_ascii_lowercase();
-    let Some(kind) = lower.strip_prefix("on").filter(|rest| !rest.is_empty()) else {
+    // Only HTML elements fold attribute names to lowercase; a foreign
+    // element's `onFocus` is a different attribute from `onfocus`.
+    let name = if is_html {
+        name.to_ascii_lowercase()
+    } else {
+        name.to_owned()
+    };
+    let Some(kind) = name.strip_prefix("on").filter(|rest| !rest.is_empty()) else {
         return Ok(());
     };
     let storage = with_state(context, |s| {

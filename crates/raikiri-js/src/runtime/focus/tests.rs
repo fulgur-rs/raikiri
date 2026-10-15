@@ -423,8 +423,10 @@ fn an_area_takes_focus_through_a_rendered_image_using_its_map() {
          var inert = make('map', {id: 'i'}), held = make('area', {href: '#'}, inert);\
          make('img', {usemap: '#i', inert: ''});\
          var hiddenMap = make('map', {name: 'hidden'}), unseen = make('area', {href: '#'}, hiddenMap);\
+         var nameless = make('area', {href: '#'}, make('map', {id: ''})); make('img', {usemap: '#'});\
          !takes(loose) && !before && !unhashed && linked && !takes(plain)\
-           && !takes(shadowed) && !takes(held) && !takes(unseen) && area.tabIndex === 0",
+           && !takes(shadowed) && !takes(held) && !takes(unseen) && !takes(nameless)\
+           && area.tabIndex === 0",
     );
 }
 
@@ -565,4 +567,58 @@ fn tasks_a_fixup_listener_queues_still_run() {
     );
     rt.run_until_idle().unwrap();
     ok(&mut rt, "fired && document.activeElement === b");
+}
+
+#[test]
+fn foreign_handler_attributes_keep_their_case() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = [], ns = 'http://www.w3.org/2000/svg';\
+         var rect = document.body.appendChild(document.createElementNS(ns, 'rect'));\
+         rect.setAttribute('tabindex', '0');\
+         rect.onfocus = function () { log.push('focus'); };\
+         rect.setAttribute('onFocus', 'log.push(\"mixed\")'); rect.removeAttribute('onFocus');\
+         var button = document.body.appendChild(document.createElement('button'));\
+         button.setAttribute('onFocus', 'log.push(\"html\")');\
+         rect.focus(); button.focus();\
+         log.join() === 'focus,html' && typeof rect.onfocus === 'function'",
+    );
+}
+
+#[test]
+fn the_idle_fixup_runs_again_when_its_listeners_leave_focus_invalid() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var blurs = 0; b.focus(); b.setAttribute('disabled', '');\
+         b.onblur = function () { blurs++; if (blurs === 1) {\
+           b.removeAttribute('disabled'); b.focus(); } };\
+         b.onfocus = function () { b.setAttribute('disabled', ''); };\
+         true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && blurs === 2",
+    );
+}
+
+#[test]
+fn listeners_that_keep_focus_invalid_cannot_stop_the_page_settling() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var b = document.body.appendChild(document.createElement('button'));\
+         var blurs = 0; b.focus(); b.setAttribute('disabled', '');\
+         b.onblur = function () { blurs++; b.removeAttribute('disabled'); b.focus(); };\
+         b.onfocus = function () { b.setAttribute('disabled', ''); };\
+         true",
+    );
+    rt.run_until_idle().unwrap();
+    ok(
+        &mut rt,
+        "document.activeElement === document.body && blurs === 16 && !b.matches(':focus')",
+    );
 }

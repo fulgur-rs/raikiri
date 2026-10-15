@@ -269,7 +269,7 @@ fn image_map_images(document: &Document, area: usize) -> Vec<usize> {
                 && document
                     .element_attribute(image, "usemap")
                     .and_then(|usemap| usemap.split_once('#'))
-                    .is_some_and(|(_, name)| map_named(name) == Some(map))
+                    .is_some_and(|(_, name)| !name.is_empty() && map_named(name) == Some(map))
         })
         .collect()
 }
@@ -389,17 +389,26 @@ fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
 
 /// The rendering update's focus fixup: clear focus, firing `blur` and
 /// `focusout`, when the focused element is no longer a focusable area.
-/// Leaving the document already cleared it without events.
+/// Leaving the document already cleared it without events. With `events`
+/// false the focus is cleared silently instead. Returns whether the focus
+/// needed fixing.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/webappapis.html#update-the-rendering>
-pub(crate) fn fix_up_focus(context: &mut Context) -> JsResult<()> {
+pub(crate) fn fix_up_focus(context: &mut Context, events: bool) -> JsResult<bool> {
     let focused = with_state(context, |s| s.host.document().focused_element())?;
-    if let Some(focused) = focused
-        && !can_take_focus(context, focused)?
-    {
-        move_focus(context, None, None)?;
+    let Some(focused) = focused else {
+        return Ok(false);
+    };
+    if can_take_focus(context, focused)? {
+        return Ok(false);
     }
-    Ok(())
+    if events {
+        move_focus(context, None, None)?;
+    } else {
+        with_state(context, |s| s.host.document_mut().set_focused_element(None))?;
+        mark_dirty(context)?;
+    }
+    Ok(true)
 }
 
 /// `focus(options)`'s `FocusOptions` dictionary, converted in member
