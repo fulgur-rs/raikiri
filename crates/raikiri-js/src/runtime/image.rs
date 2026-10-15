@@ -11,7 +11,7 @@
 //! Spec: <https://html.spec.whatwg.org/multipage/images.html#update-the-image-data>
 
 use boa_engine::job::NativeJob;
-use boa_engine::{Context, JsNativeError, JsResult, JsValue};
+use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
 use raikiri_dom::NodeKind;
 
 use super::dispatch;
@@ -237,15 +237,19 @@ pub(crate) const HTML_IMAGE_ELEMENT_MEMBERS: Members = Members {
 /// new `<img>`, with its `width` and `height` attributes set from the
 /// arguments that were given.
 pub(crate) fn image_constructor(
-    this: &JsValue,
+    new_target: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
-    if this.is_undefined() {
-        return Err(JsNativeError::typ()
-            .with_message("Constructor Image requires 'new'")
-            .into());
-    }
+    let new_target = new_target
+        .as_object()
+        .ok_or_else(|| JsNativeError::typ().with_message("Constructor Image requires 'new'"))?;
+    // WebIDL legacy factory functions build the object from NewTarget's
+    // `prototype`, falling back to the interface prototype when it is not
+    // an object, so subclasses of `Image` keep their own prototype.
+    let prototype = new_target
+        .get(js_string!("prototype"), context)?
+        .as_object();
     let mut sizes = Vec::new();
     for (name, value) in ["width", "height"].into_iter().zip(args) {
         if !value.is_undefined() {
@@ -263,7 +267,11 @@ pub(crate) fn image_constructor(
         write_attribute(context, index, name, &value.to_string())?;
     }
     mark_dirty(context)?;
-    Ok(wrap(context, index)?.into())
+    let wrapper = wrap(context, index)?;
+    if let Some(prototype) = prototype {
+        wrapper.set_prototype(Some(prototype));
+    }
+    Ok(wrapper.into())
 }
 
 #[cfg(test)]

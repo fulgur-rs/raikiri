@@ -432,3 +432,18 @@ fn the_default_host_loads_no_images() {
     ok_after_tasks(&mut rt, "log.join() === 'error'");
     assert!(rt.try_into_host::<NoImages>().is_ok());
 }
+
+#[test]
+fn image_subclasses_keep_their_own_prototype() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "class Fancy extends Image { hello() { return 'hi'; } }\
+         var f = new Fancy(2);\
+         function Plain() {} Plain.prototype = null;\
+         var p = Reflect.construct(Image, [], Plain);\
+         f instanceof Fancy && f instanceof HTMLImageElement && f.hello() === 'hi' \
+         && f.getAttribute('width') === '2' \
+         && Object.getPrototypeOf(p) === HTMLImageElement.prototype",
+    );
+}
