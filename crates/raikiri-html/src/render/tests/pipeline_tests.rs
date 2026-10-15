@@ -2100,3 +2100,20 @@ fn pipeline_treats_a_percentage_offset_against_an_auto_height_as_auto() {
     );
     assert_eq!(run(&doc).slices.len(), 1);
 }
+
+#[test]
+fn pipeline_places_a_float_in_an_inline_in_its_paragraph() {
+    // The body's lines hold the float, which sits in the body's
+    // coordinates 50px down after the first line, whatever inline holds
+    // it: it ends at 130px and the body, with its padding, at 190px.
+    for float in [
+        "<span style='float:left;width:10px;height:80px'></span>",
+        "<span><span style='float:left;width:10px;height:80px'></span></span>",
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:250px 250px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:60px;line-height:50px}}</style>\
+             a<br>b{float}"
+        ));
+        assert_eq!(run(&doc).slices.len(), 1, "{float}");
+    }
+}

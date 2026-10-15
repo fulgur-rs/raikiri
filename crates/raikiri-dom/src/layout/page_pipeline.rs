@@ -463,7 +463,9 @@ fn body_border_box_end(
     let mut last_flow_margin = 0.0;
     // Popped in document order, each with the flow offset of its parent's
     // coordinates and whether it is nested in one of the body's blocks,
-    // where only floats count.
+    // where only floats count. Boxes inside an inline formatting context
+    // are placed in the coordinates of its root, so its inlines add no
+    // offset.
     let mut children: Vec<(usize, f32, bool)> = body
         .children
         .iter()
@@ -477,8 +479,15 @@ fn body_border_box_end(
             continue;
         }
         let layout = &node.unrounded_layout;
+        let in_ifc = document
+            .parent_of(child)
+            .is_some_and(|parent| in_inline_context(document, cascade, parent));
         if child_computed.display == DisplayValue::Contents {
-            let offset = offset + layout.location.y;
+            let offset = if in_ifc {
+                offset
+            } else {
+                offset + layout.location.y
+            };
             children.extend(
                 node.children
                     .iter()
@@ -504,7 +513,11 @@ fn body_border_box_end(
         }
         let relative_shift = layout_relative_offset_y(document, cascade, body_id, child);
         if encloses_floats && !holds_floats(document, cascade, child) {
-            let offset = offset + layout.location.y - relative_shift;
+            let offset = if in_ifc {
+                offset
+            } else {
+                offset + layout.location.y - relative_shift
+            };
             children.extend(
                 node.children
                     .iter()
@@ -7243,6 +7256,18 @@ fn float_context_root(
         current = parent;
     }
     body_id
+}
+
+/// Whether `node_id` is the root of an inline formatting context or an
+/// inline inside one, whose boxes sit in the root's coordinates.
+fn in_inline_context(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    std::iter::successors(Some(node_id), |&id| document.parent_of(id))
+        .find(|&id| {
+            let display = cascade.computed[id].display;
+            document.nodes[id].is_ifc_root()
+                || !(display.is_inline_flow() || display == DisplayValue::Contents)
+        })
+        .is_some_and(|id| document.nodes[id].is_ifc_root())
 }
 
 /// Whether the box `node_id` establishes an independent block formatting
