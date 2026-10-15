@@ -7,6 +7,7 @@ mod candidate_text_tests;
 mod grid_parent_tests;
 pub(super) mod link_ancestor_tests;
 mod paged_spanning_tests;
+mod table_follow_tests;
 
 fn committed_column_projection(style: &str) -> (Document, CascadeResult) {
     let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(

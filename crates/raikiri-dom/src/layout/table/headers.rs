@@ -301,96 +301,116 @@ fn absolute_position(document: &Document, node: usize) -> (f32, f32) {
 
 pub(crate) fn finish_boxes(document: &mut Document, headers: &HeaderRepeats) {
     for header in headers.headers.values() {
-        let table = header.table;
-        let table_origin = absolute_position(document, table);
-        let mut parts = Vec::new();
-        let mut pending = document.nodes[table].children.clone();
-        while let Some(id) = pending.pop() {
-            match document.nodes[id].display {
-                DisplayValue::TableRow
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup => {
-                    parts.push(id);
-                    pending.extend(document.nodes[id].children.iter().copied());
+        finish_table_boxes(document, header.table, header.gap);
+    }
+}
+
+/// Grows the rows, row groups and box of `table` over the cells that
+/// pagination moved, and refreshes the cell rectangles that clip each part's
+/// background. `gap` is the spacing kept below the last row.
+pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32) {
+    let table_origin = absolute_position(document, table);
+    let mut parts = Vec::new();
+    let mut pending = document.nodes[table].children.clone();
+    while let Some(id) = pending.pop() {
+        match document.nodes[id].display {
+            DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup => {
+                parts.push(id);
+                pending.extend(document.nodes[id].children.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    let mut cells_by_part: HashMap<usize, Vec<raikiri_traits::PaintRect>> = HashMap::new();
+    let mut table_bottom = table_origin.1;
+    for &part in parts.iter().chain(std::iter::once(&table)) {
+        // A source row's own cells, then the anonymous cells wrapping the
+        // rest of its content, or of a group's or the table's content
+        // that has no row; anonymous cells are placed in their owner.
+        let mut cells = Vec::new();
+        if document.nodes[part].display == DisplayValue::TableRow {
+            for &cell in &document.nodes[part].children {
+                let node = &document.nodes[cell];
+                if node.display == DisplayValue::TableCell && !node.is_display_none() {
+                    let (x, y) = absolute_position(document, cell);
+                    let size = node.unrounded_layout.size;
+                    cells.push((x, y, size, node.hides_empty_table_cell));
                 }
-                _ => {}
             }
         }
-        let mut cells_by_part: HashMap<usize, Vec<raikiri_traits::PaintRect>> = HashMap::new();
-        let mut table_bottom = table_origin.1;
-        for &part in parts.iter().chain(std::iter::once(&table)) {
-            // A source row's own cells, then the anonymous cells wrapping the
-            // rest of its content, or of a group's or the table's content
-            // that has no row; anonymous cells are placed in their owner.
-            let mut cells = Vec::new();
+        let part_origin = absolute_position(document, part);
+        for (_, node) in document.anonymous_table_cells(part) {
+            let layout = node.unrounded_layout;
+            cells.push((
+                part_origin.0 + layout.location.x,
+                part_origin.1 + layout.location.y,
+                layout.size,
+                node.hides_empty_table_cell,
+            ));
+        }
+        if cells.is_empty() {
+            // A row without cells still takes its own used height, which the
+            // parts around it enclose.
             if document.nodes[part].display == DisplayValue::TableRow {
-                for &cell in &document.nodes[part].children {
-                    let node = &document.nodes[cell];
-                    if node.display == DisplayValue::TableCell && !node.is_display_none() {
-                        let (x, y) = absolute_position(document, cell);
-                        let size = node.unrounded_layout.size;
-                        cells.push((x, y, size, node.hides_empty_table_cell));
-                    }
+                let bottom = part_origin.1 + document.nodes[part].unrounded_layout.size.height;
+                table_bottom = table_bottom.max(bottom);
+                let owners: Vec<usize> = document
+                    .inclusive_ancestors(part)
+                    .skip(1)
+                    .take_while(|&id| id != table)
+                    .collect();
+                for id in owners {
+                    let top = absolute_position(document, id).1;
+                    let height = &mut document.nodes[id].unrounded_layout.size.height;
+                    *height = height.max(bottom - top);
                 }
             }
-            let part_origin = absolute_position(document, part);
-            for (_, node) in document.anonymous_table_cells(part) {
-                let layout = node.unrounded_layout;
-                cells.push((
-                    part_origin.0 + layout.location.x,
-                    part_origin.1 + layout.location.y,
-                    layout.size,
-                    node.hides_empty_table_cell,
-                ));
-            }
-            if cells.is_empty() {
-                continue;
-            }
-            // The traversal above reaches rows only through explicit
-            // table-part parents, so every ancestor before the table owns
-            // the row's cell-background intersections. Only their heights
-            // change below, so their positions are taken once.
-            let owners: Vec<(usize, (f32, f32))> = document
-                .inclusive_ancestors(part)
-                .take_while(|&id| id != table)
-                .map(|id| (id, absolute_position(document, id)))
-                .collect();
-            for (x, y, size, hidden) in cells {
-                table_bottom = table_bottom.max(y + size.height);
-                for &(id, origin) in &owners {
-                    let bottom = y + size.height - origin.1;
-                    document.nodes[id].unrounded_layout.size.height =
-                        document.nodes[id].unrounded_layout.size.height.max(bottom);
-                    if !hidden {
-                        cells_by_part
-                            .entry(id)
-                            .or_default()
-                            .push(raikiri_traits::PaintRect::new(
-                                x - origin.0,
-                                y - origin.1,
-                                size.width,
-                                size.height,
-                            ));
-                    }
+            continue;
+        }
+        // The traversal above reaches rows only through explicit
+        // table-part parents, so every ancestor before the table owns
+        // the row's cell-background intersections. Only their heights
+        // change below, so their positions are taken once.
+        let owners: Vec<(usize, (f32, f32))> = document
+            .inclusive_ancestors(part)
+            .take_while(|&id| id != table)
+            .map(|id| (id, absolute_position(document, id)))
+            .collect();
+        for (x, y, size, hidden) in cells {
+            table_bottom = table_bottom.max(y + size.height);
+            for &(id, origin) in &owners {
+                let bottom = y + size.height - origin.1;
+                document.nodes[id].unrounded_layout.size.height =
+                    document.nodes[id].unrounded_layout.size.height.max(bottom);
+                if !hidden {
+                    cells_by_part
+                        .entry(id)
+                        .or_default()
+                        .push(raikiri_traits::PaintRect::new(
+                            x - origin.0,
+                            y - origin.1,
+                            size.width,
+                            size.height,
+                        ));
                 }
             }
         }
-        let layout = &mut document.nodes[table].unrounded_layout;
-        layout.size.height = layout.size.height.max(
-            table_bottom - table_origin.1
-                + header.gap
-                + layout.padding.bottom
-                + layout.border.bottom,
-        );
-        let table_height = layout.size.height;
-        if let Some(grid) = &mut document.nodes[table].table_grid_box {
-            grid.height = (table_height - grid.y).max(grid.height);
-        }
-        for (id, cells) in cells_by_part {
-            if let Some(clips) = document.table_objects.part_background_cells.get_mut(&id) {
-                *clips = cells;
-            }
+    }
+    let layout = &mut document.nodes[table].unrounded_layout;
+    layout.size.height = layout
+        .size
+        .height
+        .max(table_bottom - table_origin.1 + gap + layout.padding.bottom + layout.border.bottom);
+    let table_height = layout.size.height;
+    if let Some(grid) = &mut document.nodes[table].table_grid_box {
+        grid.height = (table_height - grid.y).max(grid.height);
+    }
+    for (id, cells) in cells_by_part {
+        if let Some(clips) = document.table_objects.part_background_cells.get_mut(&id) {
+            *clips = cells;
         }
     }
 }
