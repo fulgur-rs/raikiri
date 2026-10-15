@@ -318,3 +318,58 @@ fn svg_elements_run_focus_handlers_from_properties_and_attributes() {
          log.join() === 'focus,blur' && typeof rect.onblur === 'function'",
     );
 }
+
+#[test]
+fn the_default_rendering_check_asks_for_a_box() {
+    use crate::runtime::host::{BoxGeometry, DocumentHost, HostError};
+    use std::any::Any;
+
+    // Keeps every default method, unlike `StubHost`.
+    struct GeometryOnly(StubHost);
+    impl DocumentHost for GeometryOnly {
+        fn document(&self) -> &raikiri_dom::Document {
+            self.0.document()
+        }
+        fn document_mut(&mut self) -> &mut raikiri_dom::Document {
+            self.0.document_mut()
+        }
+        fn flush(&mut self) -> Result<(), HostError> {
+            self.0.flush()
+        }
+        fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+            self.0.box_geometry(node)
+        }
+        fn computed_value(
+            &mut self,
+            node: usize,
+            property: &str,
+        ) -> Result<Option<String>, HostError> {
+            self.0.computed_value(node, property)
+        }
+        fn parse_fragment(
+            &mut self,
+            tag: &str,
+            ns: &str,
+            markup: &str,
+        ) -> Result<raikiri_dom::Document, HostError> {
+            self.0.parse_fragment(tag, ns, markup)
+        }
+        fn as_any(&self) -> &dyn Any {
+            self
+        }
+        fn as_any_mut(&mut self) -> &mut dyn Any {
+            self
+        }
+        fn into_any(self: Box<Self>) -> Box<dyn Any> {
+            self
+        }
+    }
+
+    let (mut stub, _, _, body) = StubHost::page();
+    stub.geometry.insert(body, BoxGeometry::default());
+    let mut host = GeometryOnly(stub);
+    assert!(host.is_being_rendered(body).unwrap());
+    assert!(!host.is_being_rendered(0).unwrap());
+    host.0.fail_geometry = true;
+    assert!(host.is_being_rendered(body).is_err());
+}

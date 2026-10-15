@@ -4,6 +4,7 @@ use raikiri_js::runtime::{
     Abort, BoxGeometry, DomRect, Limits, PositionKind, RunOptions, RunReport,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+// cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
 pub const VERSION: u32 = 3;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
