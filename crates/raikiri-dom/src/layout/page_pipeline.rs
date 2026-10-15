@@ -3667,6 +3667,57 @@ impl PageNames {
     }
 }
 
+/// The last pages pagination has reached.
+#[derive(Default)]
+struct PageReach {
+    /// The last page any box reached.
+    max: u32,
+    /// The last page the normal flow (floats included) reached, apart from
+    /// absolutely positioned boxes and footnotes, which paint in parallel
+    /// flows.
+    flow_max: u32,
+}
+
+impl PageReach {
+    fn include(&mut self, page: u32, in_flow: bool) {
+        self.max = self.max.max(page);
+        if in_flow {
+            self.flow_max = self.flow_max.max(page);
+        }
+    }
+
+    /// Include `page`, a page a box reaches past the one it was placed on,
+    /// once the page limit allows it.
+    fn include_checked(
+        &mut self,
+        control: &PageLayoutControl<'_>,
+        page: u32,
+        in_flow: bool,
+    ) -> Result<(), LayoutError> {
+        control.check_discovery_page_index(page)?;
+        self.include(page, in_flow);
+        Ok(())
+    }
+}
+
+/// A box that starts on `start_page` runs on through `end_page`. The pages
+/// it continues onto keep the page type it started on until a later box
+/// names another, even when an enclosing box running onto them named them
+/// first; a box outside the normal flow names only pages no earlier box
+/// named.
+fn record_run_on(
+    reach: &mut PageReach,
+    page_names: &mut PageNames,
+    control: &PageLayoutControl<'_>,
+    start_page: u32,
+    end_page: u32,
+    in_flow: bool,
+) -> Result<(), LayoutError> {
+    reach.include_checked(control, end_page, in_flow)?;
+    page_names.continue_onto(start_page, control.capped_page_index(end_page), in_flow);
+    Ok(())
+}
+
 /// Break the laid-out flow of `document` into pages of `geometry` along y.
 /// `page_steps` and `page_widths` give the content height and width of each
 /// page area, as for [`layout_pages_with_page_geometry_and_control`].
@@ -4043,11 +4094,7 @@ fn paginate_flow(
     }
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
-    let mut max_page = 0_u32;
-    // The last page the normal flow (floats included) has reached, apart
-    // from absolutely positioned boxes and footnotes, which paint in
-    // parallel flows.
-    let mut flow_max_page = 0_u32;
+    let mut reach = PageReach::default();
     // Keep a break-after attached to its source box until its descendants
     // have been visited.  Applying it to the first flex child would turn a
     // break-after on the flex container into an extra blank page.
@@ -4846,10 +4893,7 @@ fn paginate_flow(
             }
             check_candidate_page!('candidate_loop, current_page);
             page_names.name_page(current_page);
-            max_page = max_page.max(current_page);
-            if !candidate.is_out_of_flow_descendant {
-                flow_max_page = flow_max_page.max(current_page);
-            }
+            reach.include(current_page, !candidate.is_out_of_flow_descendant);
             if name_participates_in_flow && height > 0.0 {
                 let context =
                     enclosing_column_context(node_id, document, cascade, &mut column_context_cache);
@@ -4865,21 +4909,14 @@ fn paginate_flow(
             if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
                 let end = (effective_y + height).max(effective_y);
                 if end.is_finite() && end > 0.0 {
-                    let end_page = page_index_for_end(end);
-                    control.check_discovery_page_index(end_page)?;
-                    max_page = max_page.max(end_page);
-                    if !candidate.is_out_of_flow_descendant {
-                        flow_max_page = flow_max_page.max(end_page);
-                    }
-                    // The pages a box continues onto keep the page type it
-                    // started on until a later box names another, even when
-                    // an enclosing box running onto them named them first.
-                    let names_end = control.capped_page_index(end_page);
-                    page_names.continue_onto(
+                    record_run_on(
+                        &mut reach,
+                        &mut page_names,
+                        control,
                         current_page,
-                        names_end,
+                        page_index_for_end(end),
                         !candidate.is_out_of_flow_descendant,
-                    );
+                    )?; // cov:ignore: LLVM coverage maps this multiline call's error exit to its own line.
                 }
             }
             if consumes_pending_break {
@@ -4918,7 +4955,7 @@ fn paginate_flow(
             materialize_y(document, node_id, target_y);
             *used += height;
             flow_shift -= height;
-            max_page = max_page.max(note_page);
+            reach.include(note_page, false);
             saw_child = true;
             continue;
         }
@@ -5159,7 +5196,7 @@ fn paginate_flow(
                     let margin_box_y = effective_y - margin_top.max(0.0);
                     if named_page_change
                         && page > current_page
-                        && flow_max_page >= page
+                        && reach.flow_max >= page
                         && margin_box_y.is_finite()
                     {
                         let margin_box_page = page_index_for_y(margin_box_y.max(0.0));
@@ -5622,10 +5659,7 @@ fn paginate_flow(
         check_candidate_page!('candidate_loop, current_page);
         page_names.name_page(current_page);
 
-        max_page = max_page.max(current_page);
-        if !candidate.is_out_of_flow_descendant {
-            flow_max_page = flow_max_page.max(current_page);
-        }
+        reach.include(current_page, !candidate.is_out_of_flow_descendant);
         if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
             // A box ending exactly at a page edge belongs to the preceding
             // page.  `f32::EPSILON` is too small at ordinary CSS coordinates
@@ -5649,21 +5683,14 @@ fn paginate_flow(
                     && style_dimension_length(document.nodes[node_id].style.size.height)
                         .is_some_and(|value| value >= 0.0);
                 if !monolithic_paper_fit {
-                    let end_page = page_index_for_end(end);
-                    control.check_discovery_page_index(end_page)?;
-                    max_page = max_page.max(end_page);
-                    if !candidate.is_out_of_flow_descendant {
-                        flow_max_page = flow_max_page.max(end_page);
-                    }
-                    // The pages a box continues onto keep the page type it
-                    // started on until a later box names another, even when
-                    // an enclosing box running onto them named them first.
-                    let names_end = control.capped_page_index(end_page);
-                    page_names.continue_onto(
+                    record_run_on(
+                        &mut reach,
+                        &mut page_names,
+                        control,
                         current_page,
-                        names_end,
+                        page_index_for_end(end),
                         !candidate.is_out_of_flow_descendant,
-                    );
+                    )?;
                 }
             }
         }
@@ -5727,9 +5754,7 @@ fn paginate_flow(
         let end =
             content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
         if end.is_finite() && end > 0.0 {
-            let end_page = page_index_for_end(end);
-            control.check_discovery_page_index(end_page)?;
-            max_page = max_page.max(end_page);
+            reach.include_checked(control, page_index_for_end(end), false)?;
         }
     }
     // Layout sizes the body to the page area, so its box ends on the first
@@ -5758,8 +5783,8 @@ fn paginate_flow(
     // Pages past the last one the normal flow reached hold only boxes outside
     // it, and keep the page type the flow ended on, whatever page type was
     // active when one of those boxes first reached them.
-    let names_end = control.capped_page_index(max_page);
-    page_names.continue_onto(flow_max_page, names_end, true);
+    let names_end = control.capped_page_index(reach.max);
+    page_names.continue_onto(reach.flow_max, names_end, true);
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
@@ -5798,11 +5823,11 @@ fn paginate_flow(
         }
     }
 
-    control.check_discovery_page_index(max_page)?;
+    control.check_discovery_page_index(reach.max)?;
     let last_page = if control.page_limit_reached.get() {
         control.max_pages.unwrap_or(0).saturating_sub(1)
     } else {
-        max_page
+        reach.max
     };
     Ok((0..=last_page)
         .map(|page_index| PageSlice {
