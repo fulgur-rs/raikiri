@@ -474,7 +474,8 @@ fn get_client_rects_lists_the_border_box_or_nothing() {
          list.length === 1 && list[0] instanceof DOMRect && list[0].x === 1 && \
          list[0].height === 20.4 && list.item(0).bottom === 22.4 && list.item(1) === null && \
          list[1] === undefined && [...list].length === 1 && list[0] === list.item(0) && \
-         (list[0].x = 7, list[0].x === 7)",
+         (list[0].x = 7, list[0].x === 7) && (list[0] = 1, list[0] instanceof DOMRect) && \
+         JSON.stringify(Object.keys(list)) === '[\"0\"]'",
     );
     ok(
         &mut rt,

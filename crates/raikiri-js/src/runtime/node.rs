@@ -464,7 +464,12 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 /// `class` attribute.
 fn set_class_list(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let list = class_list(this, &[], context)?;
-    super::token_list::set_token_list_value(&list, args, context)
+    let value = args.first().cloned().unwrap_or_default();
+    // An ordinary [[Set]], so a script-defined `value` on the list is honored.
+    if let Some(list) = list.as_object() {
+        list.set(JsString::from("value"), value, true, context)?;
+    }
+    Ok(JsValue::undefined())
 }
 
 /// `Element.namespaceURI` (DOM §4.9): `null` for an element created with a

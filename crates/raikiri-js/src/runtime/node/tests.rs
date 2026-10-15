@@ -510,6 +510,18 @@ fn class_list_assignment_forwards_to_its_value() {
         &mut rt,
         "document.body.getAttribute('class') === 'undefined'",
     );
+    // The assignment goes through an ordinary [[Set]] on the list.
+    ok(
+        &mut rt,
+        "var seen; Object.defineProperty(list, 'value', { set(v) { seen = v; }, configurable: true }); \
+         b.classList = 'r'; seen === 'r' && b.getAttribute('class') === 'undefined'",
+    );
+    ok(
+        &mut rt,
+        "Object.defineProperty(list, 'value', { set(v) { throw new RangeError('no'); } }); \
+         (function() { try { b.classList = 's'; return false; } \
+         catch (e) { return e instanceof RangeError; } })()",
+    );
 }
 
 #[test]

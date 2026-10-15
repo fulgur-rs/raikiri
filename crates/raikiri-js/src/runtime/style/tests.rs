@@ -2494,11 +2494,33 @@ fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
         );
     }
     ok(&mut rt, "ns.sheet.insertRule('p {}', 4) === 4");
+    // Strings, comments, and nested blocks left open at the end of the
+    // rule are closed too, so later rules stay separate.
+    rt.evaluate("el.textContent = '';").unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule(\"p { content: 'x\") === 0 && sheet.insertRule('q {}', 1) === 1 && \
+         sheet.cssRules.length === 2 && sheet.cssRules[1].selectorText === 'q' && \
+         sheet.insertRule('r { color: red /* note', 2) === 2 && \
+         sheet.insertRule('s { a: f(x', 3) === 3 && sheet.insertRule('t {}') === 0 && \
+         sheet.cssRules.length === 5 && sheet.cssRules[4].selectorText === 's'",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { sheet.insertRule('u {' + '('.repeat(300)); return false; } \
+         catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
     // Appending after a block cut off by the end of the sheet closes it.
     rt.evaluate("el.textContent = 'a { color: red';").unwrap();
     ok(
         &mut rt,
         "sheet.insertRule('b {}', 1) === 1 && el.textContent === 'a { color: red}\\nb {}'",
+    );
+    rt.evaluate("el.textContent = 'a { content: \"x';").unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule('b {}', 1) === 1 && sheet.cssRules.length === 2 && \
+         sheet.cssRules[1].selectorText === 'b'",
     );
 }
 

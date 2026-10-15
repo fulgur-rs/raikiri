@@ -1039,7 +1039,10 @@ fn style_sheet_insert_rule(
             if let Some(last) = rules.last() {
                 // A last rule cut off by the end of the sheet is closed, so
                 // the new rule does not land inside it.
-                updated.push_str(closing(&text[last.source.clone()], last.body.is_some()));
+                let source = &text[last.source.clone()];
+                if let Some(closed) = self_contained(source, last.body.is_some()) {
+                    updated.replace_range(last.source.clone(), &closed);
+                }
             }
             updated.push('\n');
             updated.push_str(&rule.text);
@@ -1115,10 +1118,9 @@ fn parse_single_rule(source: &str) -> Option<SingleRule> {
     {
         return None;
     }
-    let text = &trimmed[rule.source.clone()];
     Some(SingleRule {
         prelude: rule.prelude.clone(),
-        text: format!("{text}{}", closing(text, rule.body.is_some())),
+        text: self_contained(&trimmed[rule.source.clone()], rule.body.is_some())?,
     })
 }
 
@@ -1129,15 +1131,24 @@ fn only_trivia(text: &str) -> bool {
     parser.is_exhausted()
 }
 
-/// What closes `rule`, the source of one rule, when the end of its text
-/// cut it off: the `}` of an unclosed block, or the `;` an at-rule
-/// without a block needs before another rule.
-fn closing(rule: &str, has_block: bool) -> &'static str {
-    match (has_block, rule.ends_with('}'), rule.ends_with(';')) {
-        (true, false, _) => "}",
-        (false, _, false) => ";",
-        _ => "",
+/// `rule`, the source of one rule, made to end where it does even when
+/// more text follows it. A rule the end of its text cut off (inside a
+/// block, string, or comment, or an at-rule without its `;`) is serialized
+/// from its tokens with every construct EOF left open closed, as CSS
+/// Syntax closes them. `None` when blocks nest too deeply to serialize.
+fn self_contained(rule: &str, has_block: bool) -> Option<String> {
+    if parse_css_rules(&format!("{rule}\na{{}}")).len() == 2 {
+        return Some(rule.to_owned());
     }
+    let mut input = ParserInput::new(rule);
+    let mut closed = String::new();
+    if !serialize_tokens(&mut Parser::new(&mut input), &mut closed, 0) {
+        return None;
+    }
+    if !has_block && !closed.ends_with(';') {
+        closed.push(';');
+    }
+    Some(closed)
 }
 
 /// Whether the at-keyword of `prelude` is `name` (ASCII case-insensitive).
