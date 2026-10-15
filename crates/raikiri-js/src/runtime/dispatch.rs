@@ -99,6 +99,27 @@ pub(crate) struct EventData {
     /// `FocusEvent.relatedTarget`, in the `target` key convention.
     #[unsafe_ignore_trace]
     related_target: Option<Option<usize>>,
+    /// The most derived interface the event implements, which the
+    /// subclass getters check `this` against.
+    #[unsafe_ignore_trace]
+    interface: EventInterface,
+}
+
+/// The `Event` subclasses with members of their own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum EventInterface {
+    Event,
+    CustomEvent,
+    ErrorEvent,
+    UiEvent,
+    FocusEvent,
+}
+
+impl EventInterface {
+    /// Whether an event of this interface implements `other`.
+    fn implements(self, other: Self) -> bool {
+        self == other || (self == Self::FocusEvent && other == Self::UiEvent)
+    }
 }
 
 fn new_event_data(
@@ -133,6 +154,7 @@ fn new_event_data(
         error: JsValue::undefined(),
         view_is_window: false,
         related_target: None,
+        interface: EventInterface::Event,
     }
 }
 
@@ -265,6 +287,7 @@ pub(crate) fn custom_event_constructor(
     let time_stamp = now(context)?;
     let mut data = new_event_data(kind, bubbles, cancelable, composed, false, time_stamp);
     data.detail = detail;
+    data.interface = EventInterface::CustomEvent;
     let proto = protos(context).custom_event.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
@@ -297,6 +320,7 @@ pub(crate) fn error_event_constructor(
     data.lineno = lineno;
     data.colno = colno;
     data.error = error;
+    data.interface = EventInterface::ErrorEvent;
     let proto = protos(context).error_event.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
@@ -346,6 +370,7 @@ fn ui_event_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsR
     let mut data = new_event_data(kind, bubbles, cancelable, composed, false, time_stamp);
     data.view_is_window = view_is_window;
     data.detail = JsValue::from(detail);
+    data.interface = EventInterface::UiEvent;
     Ok(data)
 }
 
@@ -368,6 +393,7 @@ pub(crate) fn focus_event_constructor(
             )?))
         };
     }
+    data.interface = EventInterface::FocusEvent;
     let proto = protos(context).focus_event.clone();
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
@@ -416,12 +442,16 @@ fn get_time_stamp(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<Js
     with_event(this, |d| JsValue::from(d.time_stamp))
 }
 
-fn get_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| d.detail.clone())
+fn get_custom_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    with_event_of(this, EventInterface::CustomEvent, |d| d.detail.clone())
+}
+
+fn get_ui_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    with_event_of(this, EventInterface::UiEvent, |d| d.detail.clone())
 }
 
 fn get_view(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let is_window = with_event(this, |d| d.view_is_window)?;
+    let is_window = with_event_of(this, EventInterface::UiEvent, |d| d.view_is_window)?;
     Ok(if is_window {
         context.global_object().into()
     } else {
@@ -430,28 +460,30 @@ fn get_view(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
 }
 
 fn get_related_target(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let key = with_event(this, |d| d.related_target)?;
+    let key = with_event_of(this, EventInterface::FocusEvent, |d| d.related_target)?;
     target_key_to_js(context, key)
 }
 
 fn get_message(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| js_str(&d.message))
+    with_event_of(this, EventInterface::ErrorEvent, |d| js_str(&d.message))
 }
 
 fn get_filename(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| js_str(&d.filename))
+    with_event_of(this, EventInterface::ErrorEvent, |d| js_str(&d.filename))
 }
 
 fn get_lineno(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| JsValue::from(d.lineno))
+    with_event_of(this, EventInterface::ErrorEvent, |d| {
+        JsValue::from(d.lineno)
+    })
 }
 
 fn get_colno(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| JsValue::from(d.colno))
+    with_event_of(this, EventInterface::ErrorEvent, |d| JsValue::from(d.colno))
 }
 
 fn get_error(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
-    with_event(this, |d| d.error.clone())
+    with_event_of(this, EventInterface::ErrorEvent, |d| d.error.clone())
 }
 
 fn stop_propagation(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
@@ -493,6 +525,19 @@ fn with_event<T>(this: &JsValue, f: impl FnOnce(&EventData) -> T) -> JsResult<T>
         .ok_or_else(|| type_error("'this' is not an Event"))
 }
 
+/// [`with_event`] for a getter declared on `interface`: an event that does
+/// not implement it is a `TypeError`, per WebIDL's attribute getter steps.
+fn with_event_of<T>(
+    this: &JsValue,
+    interface: EventInterface,
+    f: impl FnOnce(&EventData) -> T,
+) -> JsResult<T> {
+    this.as_object()
+        .and_then(|o| event_data(&o, |d| d.interface.implements(interface).then(|| f(d))))
+        .flatten()
+        .ok_or_else(|| type_error("'this' does not implement the getter's interface"))
+}
+
 pub(crate) const EVENT_MEMBERS: Members = Members {
     getters: &[
         ("type", event_type),
@@ -516,13 +561,13 @@ pub(crate) const EVENT_MEMBERS: Members = Members {
 };
 
 pub(crate) const CUSTOM_EVENT_MEMBERS: Members = Members {
-    getters: &[("detail", get_detail)],
+    getters: &[("detail", get_custom_detail)],
     accessors: &[],
     methods: &[],
 };
 
 pub(crate) const UI_EVENT_MEMBERS: Members = Members {
-    getters: &[("view", get_view), ("detail", get_detail)],
+    getters: &[("view", get_view), ("detail", get_ui_detail)],
     accessors: &[],
     methods: &[],
 };
@@ -1029,6 +1074,7 @@ pub(crate) fn fire_focus_event(
     data.view_is_window = true;
     data.detail = JsValue::from(0);
     data.related_target = related.map(Some);
+    data.interface = EventInterface::FocusEvent;
     let proto = protos(context).focus_event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);
     dispatch(context, &event, Some(target))
@@ -1083,6 +1129,7 @@ pub(crate) fn report_exception(
     data.message = message.clone();
     data.filename = source.unwrap_or_default().to_owned();
     data.error = error_value;
+    data.interface = EventInterface::ErrorEvent;
     let proto = protos(context).error_event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);
     let outcome = dispatch(context, &event, None);

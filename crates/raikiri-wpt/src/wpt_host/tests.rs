@@ -261,16 +261,19 @@ fn box_geometry_returns_none_for_an_element_with_no_box() {
     assert_eq!(host.box_geometry(hidden).unwrap(), None);
 }
 
-/// Elements layout never renders, such as HTML `script` and SVG `defs` and
-/// `title` with their descendants, are not being rendered even though no
-/// stylesheet gives them `display: none`.
+/// Elements layout never renders, such as HTML `script`, elements HTML's
+/// `hidden` rendering rules hide, and SVG `defs` and `title` with their
+/// descendants, are not being rendered even though no stylesheet gives them
+/// `display: none`.
 #[test]
 fn non_rendered_html_elements_are_not_being_rendered() {
     let dir = tempfile::tempdir().unwrap();
     let setup = prepare_wpt_live_document(
         "<div id=shown>x</div><script id=code tabindex=0></script>\
          <svg><rect id=drawn width=5 height=5 /><defs><rect id=template tabindex=0 /></defs>\
-         <title id=label>t</title></svg>",
+         <title id=label>t</title></svg><button id=gone hidden></button>\
+         <div id=found hidden=UNTIL-FOUND>y</div><input id=field type=HIDDEN tabindex=0>\
+         <embed id=plugin hidden>",
         DEFAULT_REFTTEST_WIDTH,
         DEFAULT_REFTTEST_HEIGHT,
         dir.path(),
@@ -280,14 +283,20 @@ fn non_rendered_html_elements_are_not_being_rendered() {
     let mut host = WptDocumentHost::new(setup, dir.path());
     let shown = find_by_id(host.document(), "shown");
     let code = find_by_id(host.document(), "code");
-    let [drawn, template, label] =
-        ["drawn", "template", "label"].map(|id| find_by_id(host.document(), id));
+    let [drawn, template, label, gone, found, field, plugin] = [
+        "drawn", "template", "label", "gone", "found", "field", "plugin",
+    ]
+    .map(|id| find_by_id(host.document(), id));
     host.flush().unwrap();
     assert!(host.is_being_rendered(shown).unwrap());
     assert!(!host.is_being_rendered(code).unwrap());
     assert!(host.is_being_rendered(drawn).unwrap());
     assert!(!host.is_being_rendered(template).unwrap());
     assert!(!host.is_being_rendered(label).unwrap());
+    assert!(!host.is_being_rendered(gone).unwrap());
+    assert!(host.is_being_rendered(found).unwrap());
+    assert!(!host.is_being_rendered(field).unwrap());
+    assert!(host.is_being_rendered(plugin).unwrap());
 }
 
 /// CSSOM View metrics over a real layout, checked against CSS 2.1 box-model

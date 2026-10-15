@@ -637,3 +637,27 @@ fn an_out_of_range_tabindex_still_makes_an_element_focusable() {
          huge && document.activeElement === span && span.tabIndex === -1",
     );
 }
+
+#[test]
+fn event_subclass_getters_check_the_interface_of_this() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "function throws(proto, name, event) {\
+           try { Object.getOwnPropertyDescriptor(proto, name).get.call(event); return false; }\
+           catch (e) { return e instanceof TypeError; } }\
+         function reads(proto, name, event) {\
+           return Object.getOwnPropertyDescriptor(proto, name).get.call(event); }\
+         var plain = new Event('x'), focus = new FocusEvent('x', {detail: 2});\
+         throws(FocusEvent.prototype, 'relatedTarget', plain)\
+           && throws(FocusEvent.prototype, 'relatedTarget', new UIEvent('x'))\
+           && throws(UIEvent.prototype, 'view', plain)\
+           && throws(UIEvent.prototype, 'detail', new CustomEvent('x'))\
+           && throws(CustomEvent.prototype, 'detail', focus)\
+           && throws(ErrorEvent.prototype, 'message', plain)\
+           && reads(UIEvent.prototype, 'detail', focus) === 2\
+           && reads(FocusEvent.prototype, 'relatedTarget', focus) === null\
+           && reads(CustomEvent.prototype, 'detail', new CustomEvent('x', {detail: 3})) === 3\
+           && reads(ErrorEvent.prototype, 'lineno', new ErrorEvent('x', {lineno: 4})) === 4",
+    );
+}

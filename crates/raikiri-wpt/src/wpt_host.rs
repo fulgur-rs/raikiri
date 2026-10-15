@@ -440,8 +440,9 @@ impl DocumentHost for WptDocumentHost {
 
     /// Being rendered here means no inclusive ancestor computes to
     /// `display: none`, is an HTML element layout never renders, such as
-    /// `script`, whatever its computed display, or is an SVG never-rendered
-    /// element such as `defs`. A box placed off every page still counts, which the
+    /// `script`, whatever its computed display, is hidden by HTML's
+    /// rendering rules for `hidden` (which the bundled UA stylesheet does
+    /// not carry), or is an SVG never-rendered element such as `defs`. A box placed off every page still counts, which the
     /// page-scene geometry behind [`Self::box_geometry`] cannot tell apart.
     fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
         let Some(styles) = self.computed_styles.as_ref() else {
@@ -459,6 +460,7 @@ impl DocumentHost for WptDocumentHost {
                     .get_node(index)
                     .is_some_and(|node| node.is_non_rendered_html_element())
                 || is_never_rendered_svg_element(document, index)
+                || is_hidden_html_element(document, index)
             {
                 return Ok(false);
             }
@@ -641,6 +643,23 @@ fn is_never_rendered_svg_element(document: &raikiri_dom::Document, index: usize)
                         | "title"
                 )
             })
+}
+
+/// Whether `index` is an HTML element the HTML rendering rules hide: one
+/// with a `hidden` attribute not in the until-found state (except `embed`),
+/// or an `input` in the Hidden state.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/rendering.html#hidden-elements>
+fn is_hidden_html_element(document: &raikiri_dom::Document, index: usize) -> bool {
+    if document.element_namespace_uri(index) != Some("http://www.w3.org/1999/xhtml") {
+        return false;
+    }
+    let tag = document.get_node(index).and_then(|node| node.tag_name());
+    let attr = |name| document.element_attribute(index, name);
+    let hidden = attr("hidden").is_some_and(|value| !value.eq_ignore_ascii_case("until-found"));
+    (hidden && tag != Some("embed"))
+        || (tag == Some("input")
+            && attr("type").is_some_and(|ty| ty.eq_ignore_ascii_case("hidden")))
 }
 
 fn position_kind(value: &raikiri_style::property::PositionValue) -> PositionKind {
