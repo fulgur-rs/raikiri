@@ -69,12 +69,6 @@ pub(crate) type PreparedGeneratedPiece = (
     Option<(bool, bool)>,
 );
 
-/// Whether every fragment of a box styled `style` is decorated as a whole
-/// box: `box-decoration-break: clone`.
-pub(crate) fn clones_fragments(style: &raikiri_style::ComputedValues) -> bool {
-    style.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone
-}
-
 /// The kind of generated box a `::before` or `::after` id names.
 fn generated_kind(node: usize) -> Option<(usize, crate::GeneratedKind)> {
     let (owner, pseudo) = crate::generated_content::generated_origin(node)?;
@@ -289,22 +283,14 @@ impl ParagraphProjection {
             .filter_map(|block| generated_kind(block.node).map(|kind| (block, kind)));
         for (block, (owner, kind)) in kinds {
             work.check()?;
-            let style = crate::generated_content::computed_for_id(cascade, block.node);
             let visible = block.border_box.width > 0.0
                 && block.border_box.height > 0.0
-                && style.is_some_and(|style| {
-                    style.visibility == raikiri_style::property::Visibility::Visible
-                });
+                && crate::generated_content::computed_for_id(cascade, block.node).is_some_and(
+                    |style| style.visibility == raikiri_style::property::Visibility::Visible,
+                );
             if !visible {
                 continue;
             }
-            // A cloned fragment is decorated as a whole box (CSS
-            // Fragmentation 3 §5.4).
-            let edges = if style.is_some_and(clones_fragments) {
-                (true, true)
-            } else {
-                (block.has_block_start_edge, block.has_block_end_edge)
-            };
             result.generated.push((
                 owner,
                 Some(kind),
@@ -323,7 +309,7 @@ impl ParagraphProjection {
                 block.shift,
                 block.border_box.y - block.shift,
                 block.border_box.height,
-                Some(edges),
+                Some((block.has_block_start_edge, block.has_block_end_edge)),
             ));
         }
         for piece in pieces {

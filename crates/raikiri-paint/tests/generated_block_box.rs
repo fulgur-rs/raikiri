@@ -173,13 +173,3 @@ fn a_page_along_x_paints_the_block_box_of_its_horizontal_paragraph() {
     // starts.
     assert_eq!(pixel(&pixels, 70, 5), [255, 0, 0]);
 }
-
-#[test]
-fn a_cloned_block_before_paints_its_whole_box() {
-    let pixels = paint(
-        "div::before { content: ''; display: block; height: 10px; \
-         border-bottom: 2px solid lime; background: blue; box-decoration-break: clone }",
-    );
-    assert_eq!(pixel(&pixels, 50, 5), [0, 0, 255]);
-    assert_eq!(pixel(&pixels, 50, 11), [0, 255, 0]);
-}

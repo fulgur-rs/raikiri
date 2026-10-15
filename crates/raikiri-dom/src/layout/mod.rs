@@ -161,5 +161,5 @@ pub(crate) use page_pipeline::{
 };
 
 pub(crate) use page_pipeline::column_projection::{
-    ParagraphCache, ProjectionWork, clones_fragments, generated_piece_style,
+    ParagraphCache, ProjectionWork, generated_piece_style,
 };

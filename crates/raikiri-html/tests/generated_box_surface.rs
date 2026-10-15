@@ -120,29 +120,6 @@ fn an_empty_block_generated_box_paints_its_border_box() {
 }
 
 #[test]
-fn a_cloned_block_generated_box_keeps_its_edges_on_every_page() {
-    let document = lay_out(
-        "<div>A</div>",
-        "div::before{display:block;content:'B B B B';width:30px;background:red;box-decoration-break:clone}",
-    );
-    let edges: Vec<_> = document
-        .pages()
-        .flat_map(|page| {
-            page.paint_order_for_text_runs(&page.text_runs())
-                .into_iter()
-                .filter_map(|event| match event {
-                    PaintEvent::GeneratedBox(piece) => {
-                        Some((piece.has_block_start_edge, piece.has_block_end_edge))
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    assert_eq!(edges, vec![(true, true), (true, true)]);
-}
-
-#[test]
 fn a_block_generated_box_across_pages_drops_the_edges_at_the_cut() {
     let document = lay_out(
         "<div>A</div>",

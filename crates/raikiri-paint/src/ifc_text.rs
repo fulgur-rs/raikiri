@@ -277,7 +277,9 @@ pub(crate) fn hold_ifc_lines<'a>(
         .is_some_and(|(band, center)| !band.holds_line_center(paint_transform, center));
     // A block-level `::before` or `::after` paints its own box, cut along
     // the block axis where pagination cuts its lines. Its pieces on the
-    // lines hold only its text.
+    // lines hold only its text. Like other block boxes, it is sliced even
+    // under `box-decoration-break: clone`, as pagination reserves no room
+    // for cloned edges.
     let blocks: Vec<_> = root_node
         .ifc_generated_block_pieces()
         .into_iter()
@@ -342,14 +344,6 @@ pub(crate) fn hold_ifc_lines<'a>(
         if outer.width <= 0.0 || outer.height <= 0.0 {
             continue;
         }
-        // A cloned fragment is decorated as a whole box (CSS Fragmentation 3
-        // §5.4).
-        let clone = cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone;
-        let piece = &raikiri_dom::InlineBoxPiece {
-            has_start_edge: piece.has_start_edge || clone,
-            has_end_edge: piece.has_end_edge || clone,
-            ..*piece
-        };
         let (dx, dy) = cumulative_offset(document, root_id, positioned.offsets, piece.node);
         let (x, y) = (base.x + dx, base.y + base.shift_y + dy);
         let paint = match first_line.as_mut() {
