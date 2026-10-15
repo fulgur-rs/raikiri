@@ -177,3 +177,24 @@ fn ancestors_walk_parent_pointers_nearest_first() {
         vec![missing]
     );
 }
+
+#[test]
+fn preorder_yields_a_subtree_in_tree_order() {
+    let mut doc = Document::new();
+    let first = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let nested = doc.append_element(Some(first), "span", Style::default(), None::<&str>);
+    let text = doc.append_text(nested, "hi");
+    let second = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    assert_eq!(
+        doc.preorder(0).collect::<Vec<_>>(),
+        vec![0, first, nested, text, second]
+    );
+    assert_eq!(
+        doc.preorder(first).collect::<Vec<_>>(),
+        vec![first, nested, text]
+    );
+
+    // An out-of-range root is yielded alone.
+    let missing = doc.node_count() + 100;
+    assert_eq!(doc.preorder(missing).collect::<Vec<_>>(), vec![missing]);
+}

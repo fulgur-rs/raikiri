@@ -65,15 +65,12 @@ pub struct PageStart {
     pub offset: f32,
 }
 
-/// Preorder positions of every node reachable from the document root.
-fn preorder(document: &Document) -> Vec<u32> {
+/// The tree-order position of every node reachable from the document root,
+/// indexed by node id; `u32::MAX` for the others.
+fn tree_positions(document: &Document) -> Vec<u32> {
     let mut order = vec![u32::MAX; document.nodes.len()];
-    let mut next = 0_u32;
-    let mut stack = vec![document.root];
-    while let Some(id) = stack.pop() {
-        order[id] = next;
-        next = next.saturating_add(1);
-        stack.extend(document.nodes[id].children.iter().rev().copied());
+    for (position, id) in document.preorder(document.root).enumerate() {
+        order[id] = u32::try_from(position).unwrap_or(u32::MAX);
     }
     order
 }
@@ -129,14 +126,14 @@ impl Document {
         cascade: &CascadeResult,
         page_indices: impl IntoIterator<Item = u32>,
     ) -> Option<(u32, PageStart)> {
-        let order = preorder(self);
+        let order = tree_positions(self);
         page_indices.into_iter().find_map(|page_index| {
             Some((page_index, self.page_start_in(cascade, page_index, &order)?))
         })
     }
 
     /// [`Document::page_start`], given the source order `order` of
-    /// [`preorder`].
+    /// [`tree_positions`].
     fn page_start_in(
         &self,
         cascade: &CascadeResult,
@@ -240,7 +237,7 @@ impl Document {
         else {
             return Vec::new();
         };
-        let order = preorder(self);
+        let order = tree_positions(self);
         let target = token.node();
         let mut nodes: Vec<usize> = page
             .items
@@ -420,7 +417,7 @@ impl Document {
     ) {
         self.clearance_breaks = Some(ClearanceBreaks::of(cascade));
         let target = token.node();
-        let order = preorder(self);
+        let order = tree_positions(self);
         let target_order = order[target];
         let mut ancestors = vec![false; self.nodes.len()];
         for id in self.inclusive_ancestors(target) {
