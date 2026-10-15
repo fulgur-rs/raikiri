@@ -16,6 +16,9 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
+/// How many paragraphs resolved for earlier percentage bases a root keeps.
+const MAX_EDGE_PARAGRAPHS: usize = 3;
+
 /// A block laid out as one shodo paragraph.
 #[derive(Clone)]
 pub(crate) struct IfcRoot {
@@ -31,6 +34,10 @@ pub(crate) struct IfcRoot {
     /// The containing block inline size [`Self::line_paragraph`] was
     /// resolved for, set by [`Self::resolve_percent_edges`].
     pub(crate) edge_basis: f32,
+    /// Paragraphs resolved for earlier nonzero bases, most recent first. A
+    /// parent that probes a few widths before the final layout comes back
+    /// to them without shaping the paragraph again.
+    edge_paragraphs: Vec<(f32, Paragraph)>,
     /// Writing mode used to shape the paragraph.
     pub(crate) writing_mode: WritingMode,
     pub(crate) options: LineOptions,
@@ -323,6 +330,7 @@ impl IfcRoot {
             line_paragraph: paragraph.clone(),
             paragraph,
             edge_basis: 0.0,
+            edge_paragraphs: Vec::new(),
             writing_mode: meta.writing_mode,
             options: meta.options,
             indent: meta.indent,
@@ -364,7 +372,8 @@ impl IfcRoot {
     /// Resolve the percentage margins and padding of the inline boxes against
     /// `basis`, the inline size of the containing block the lines are laid
     /// out in, for [`Self::line_paragraph`]. The paragraph is rebuilt only
-    /// when it has such edges and the basis changed.
+    /// when it has such edges and the basis is neither the current one nor
+    /// one of the last few.
     pub(crate) fn resolve_percent_edges(
         &mut self,
         basis: f32,
@@ -383,18 +392,29 @@ impl IfcRoot {
         if basis.to_bits() == self.edge_basis.to_bits() {
             return;
         }
-        self.edge_basis = basis;
-        self.line_paragraph = if basis == 0.0 {
-            self.paragraph.clone()
-        } else {
+        let cached = self
+            .edge_paragraphs
+            .iter()
+            .position(|(cached, _)| cached.to_bits() == basis.to_bits());
+        let paragraph = match cached {
+            Some(index) => self.edge_paragraphs.remove(index).1,
+            None if basis == 0.0 => self.paragraph.clone(),
             // A rebuild over the resource limits keeps the percentages at
             // zero: the lines still lay out, only without those edges. The
             // basis is recorded either way, so the rebuild is not retried
             // for every layout at this width.
-            self.paragraph
+            None => self
+                .paragraph
                 .with_edge_basis(basis, cx, fonts)
-                .unwrap_or_else(|_| self.paragraph.clone())
+                .unwrap_or_else(|_| self.paragraph.clone()),
         };
+        let previous = std::mem::replace(&mut self.line_paragraph, paragraph);
+        // The base paragraph is at hand for a zero basis.
+        if self.edge_basis != 0.0 {
+            self.edge_paragraphs.insert(0, (self.edge_basis, previous));
+            self.edge_paragraphs.truncate(MAX_EDGE_PARAGRAPHS);
+        }
+        self.edge_basis = basis;
     }
 
     /// A copy without the stored lines, for measuring with lines of its own.
@@ -403,6 +423,9 @@ impl IfcRoot {
             paragraph: self.paragraph.clone(),
             line_paragraph: self.line_paragraph.clone(),
             edge_basis: self.edge_basis,
+            // The copy lays out at the basis already resolved; only the
+            // stored root resolves again.
+            edge_paragraphs: Vec::new(),
             writing_mode: self.writing_mode,
             options: self.options,
             indent: self.indent,

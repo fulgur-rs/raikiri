@@ -154,8 +154,15 @@ fn the_paragraph_is_rebuilt_only_when_the_basis_changes() {
     assert_eq!(copy.edge_basis, 300.0);
 
     root.resolve_percent_edges(200.0, &mut cx, &fonts);
-    assert_ne!(root.line_paragraph.id(), resolved);
+    let narrower = root.line_paragraph.id();
+    assert_ne!(narrower, resolved);
     assert_eq!(root.line_paragraph.edge_basis(), 200.0);
+
+    // A width probed before is not shaped again.
+    root.resolve_percent_edges(300.0, &mut cx, &fonts);
+    assert_eq!(root.line_paragraph.id(), resolved, "earlier basis reused");
+    root.resolve_percent_edges(200.0, &mut cx, &fonts);
+    assert_eq!(root.line_paragraph.id(), narrower, "earlier basis reused");
 
     // A zero, negative or non-finite basis is the base paragraph.
     for basis in [0.0, -1.0, f32::NAN] {
