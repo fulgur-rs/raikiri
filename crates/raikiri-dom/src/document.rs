@@ -378,6 +378,10 @@ pub struct Document {
     /// contain: the flow after such a box follows this height, not its grown
     /// one (CSS 2.1 §10.6.3).
     pub(crate) in_flow_heights: HashMap<usize, f32>,
+    /// Whether the paginator is running on the transposed axes of a document
+    /// whose root element lays out its blocks on vertical axes. Pagination
+    /// then treats the boxes laid out on horizontal axes as monolithic.
+    pub(crate) pagination_on_transposed_axes: bool,
     /// A forced line break the inline engine inserts before byte `offset`
     /// of text node `text`, so a relayout at another width starts a line
     /// exactly where a page began in an earlier layout.
@@ -665,6 +669,7 @@ impl Document {
             body_block_start_margin: 0.0,
             fixed_page_area: (0.0, 0.0),
             in_flow_heights: HashMap::new(),
+            pagination_on_transposed_axes: false,
             continuation_break: None,
             skipped_displays: Default::default(),
             earlier_fragments: None,
@@ -1980,6 +1985,7 @@ impl Document {
             body_block_start_margin: _,
             fixed_page_area: _,
             in_flow_heights: _,
+            pagination_on_transposed_axes: _,
             continuation_break: _,
             skipped_displays: _,
             earlier_fragments: _,

@@ -147,7 +147,7 @@ pub use page_pipeline::{
     layout_pages_with_page_steps, layout_pages_with_resolver,
     layout_pages_with_resolver_and_base_url, layout_pages_with_resolver_and_base_url_and_control,
     layout_single_page, layout_single_page_with_resolver,
-    layout_single_page_with_resolver_and_base_url, relayout_text_for_width,
+    layout_single_page_with_resolver_and_base_url, pages_follow_x_axis, relayout_text_for_width,
 };
 pub use relative::placed_without_relative_offset;
 #[doc(hidden)]

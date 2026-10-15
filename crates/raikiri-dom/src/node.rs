@@ -801,9 +801,14 @@ impl Node {
         }
         // Lines moved by pagination carry their pieces with them.
         for piece in &mut pieces {
-            let shift = lines.shift_of(piece.line);
-            piece.border_box.y += shift;
-            piece.content_box.y += shift;
+            let (dx, dy) = crate::layout::ifc::positioned_runs::block_shift(
+                root.writing_mode,
+                lines.shift_of(piece.line),
+            );
+            piece.border_box.x += dx;
+            piece.content_box.x += dx;
+            piece.border_box.y += dy;
+            piece.content_box.y += dy;
         }
         Some(pieces)
     }

@@ -1,5 +1,6 @@
 pub(crate) mod column_projection;
 mod sibling_shifts;
+mod transposed_flow;
 use column_projection::{ParagraphCache, ParagraphProjection, ProjectionWork};
 
 use super::ifc::boxes::IfcBoxKind;
@@ -3353,6 +3354,92 @@ pub fn layout_pages_with_page_geometry_and_control(
     })?;
     let margins = page_margins(cascade, page_box);
     let insets = page_content_insets(cascade, page_box);
+    let Some(axes) = transposed_flow::FlowAxes::of_root(document, cascade) else {
+        return paginate_flow(
+            document,
+            cascade,
+            body_id,
+            PageFlowGeometry {
+                page_box,
+                margins,
+                insets,
+            },
+            page_steps,
+            page_widths,
+            control,
+        );
+    };
+    // The pages of a document whose root lays out its blocks on vertical
+    // axes follow the physical x axis: each page takes the width of its page
+    // area from the flow. The paginator breaks along y, so it runs on the
+    // transposed document. The pages keep the inline size of the first page
+    // area.
+    let transposed = transposed_flow::TransposedDocument::transpose(
+        document,
+        body_id,
+        axes,
+        insets.page_area_width(margins, page_box),
+    );
+    let transposed_cascade = transposed.cascade(cascade);
+    let pages = paginate_flow(
+        document,
+        &transposed_cascade,
+        body_id,
+        PageFlowGeometry {
+            page_box: axes.page_box(page_box),
+            margins: axes.margins(margins),
+            insets: axes.insets(insets),
+        },
+        page_widths,
+        &[],
+        control,
+    );
+    transposed.restore(document);
+    pages
+}
+
+/// The direction in which the pages of `document` continue, when they follow
+/// the physical x axis: `Some(true)` when each page continues to the left of
+/// the one before it, as `vertical-rl` does, and `Some(false)` when it
+/// continues to the right, as `vertical-lr` does. `None` when the pages
+/// follow y.
+///
+/// A page then holds the slice of the flow from its
+/// [`PageSlice::content_origin_y`] along that axis: for `vertical-rl`, the
+/// boxes whose physical x lies between `-content_origin_y` and the page
+/// area width minus it.
+#[doc(hidden)]
+pub fn pages_follow_x_axis(document: &Document, cascade: &CascadeResult) -> Option<bool> {
+    transposed_flow::FlowAxes::of_root(document, cascade)
+        .map(transposed_flow::FlowAxes::right_to_left)
+}
+
+/// The page box, margins and insets a flow is paginated in.
+#[derive(Clone, Copy)]
+struct PageFlowGeometry {
+    page_box: PageBox,
+    margins: PageMargins,
+    insets: PageContentInsets,
+}
+
+/// Break the laid-out flow of `document` into pages of `geometry` along y.
+/// `page_steps` and `page_widths` give the content height and width of each
+/// page area, as for [`layout_pages_with_page_geometry_and_control`].
+#[allow(clippy::too_many_arguments)]
+fn paginate_flow(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    geometry: PageFlowGeometry,
+    page_steps: &[f32],
+    page_widths: &[f32],
+    control: &PageLayoutControl<'_>,
+) -> Result<Vec<PageSlice>, LayoutError> {
+    let PageFlowGeometry {
+        page_box,
+        margins,
+        insets,
+    } = geometry;
     // The body root sits at the top of the page content box, so the html
     // element's block-start margin is not represented in descendant
     // coordinates; carry it into the initial fragmentainer cursor. Margins of
