@@ -2422,6 +2422,11 @@ fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
         "'@namespace url(x) {}'",
         "'@unknown {}'",
         "'@media screen'",
+        "'@import foo'",
+        "'@import'",
+        "'@namespace foo'",
+        "'@page :foo {}'",
+        "'svg|rect {}'",
     ] {
         ok(
             &mut rt,
@@ -2569,9 +2574,18 @@ fn style_sheet_layer_statements_and_namespace_removal_keep_rule_order() {
         "(function() { try { ns.sheet.deleteRule(1); return false; } \
          catch (e) { return e.name === 'InvalidStateError' && ns.sheet.cssRules.length === 3; } })()",
     );
+    // A selector's namespace prefix resolves against the sheet's
+    // `@namespace` rules.
     ok(
         &mut rt,
-        "ns.sheet.deleteRule(2); ns.sheet.deleteRule(1); ns.sheet.cssRules.length === 1",
+        "ns.sheet.insertRule('svg|rect {}', 3) === 3 && ns.sheet.cssRules.length === 4 && \
+         (function() { try { ns.sheet.insertRule('math|mi {}', 4); return false; } \
+         catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    ok(
+        &mut rt,
+        "ns.sheet.deleteRule(3); ns.sheet.deleteRule(2); ns.sheet.deleteRule(1); \
+         ns.sheet.cssRules.length === 1",
     );
 }
 

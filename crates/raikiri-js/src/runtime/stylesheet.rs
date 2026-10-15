@@ -1000,7 +1000,7 @@ fn style_sheet_insert_rule(
             "rule index is out of range",
         ));
     }
-    let Some(rule) = parse_single_rule(&rule) else {
+    let Some(rule) = parse_single_rule(&rule, &namespace_header(&text, &rules)) else {
         return Err(throw_dom_exception(
             context,
             "SyntaxError",
@@ -1120,10 +1120,12 @@ struct SingleRule {
 }
 
 /// CSS Syntax "parse a rule": `source` must hold exactly one rule,
-/// surrounded by nothing but whitespace and comments. A rule cut off by
-/// the end of `source` is closed, so it ends where it would in `source`
-/// once more text follows it.
-fn parse_single_rule(source: &str) -> Option<SingleRule> {
+/// surrounded by nothing but whitespace and comments, that the cascade
+/// keeps. `namespaces` is the sheet's `@namespace` rules, so namespace
+/// prefixes in a selector resolve as they would in the sheet. A rule cut
+/// off by the end of `source` is closed, so it ends where it would in
+/// `source` once more text follows it.
+fn parse_single_rule(source: &str, namespaces: &str) -> Option<SingleRule> {
     let trimmed = source.trim_matches(|c: char| c.is_ascii_whitespace());
     let rules = parse_css_rules(trimmed);
     let [rule] = rules.as_slice() else {
@@ -1132,23 +1134,52 @@ fn parse_single_rule(source: &str) -> Option<SingleRule> {
     if !only_trivia(&trimmed[..rule.source.start]) || !only_trivia(&trimmed[rule.source.end..]) {
         return None;
     }
-    // A style rule whose selector does not parse is dropped by the
-    // cascade, so it is a syntax error here.
-    if !rule.prelude.starts_with('@') && raikiri_style::parse_selector_list(&rule.prelude).is_err()
-    {
-        return None;
-    }
-    // Likewise an at-rule the cascade does not keep, or one with a block
-    // where it takes none (or none where it needs one).
+    // An at-rule the cascade has no use for, or one with a block where it
+    // takes none (or none where it needs one), is a syntax error here.
     let has_block = rule.body.is_some();
     if rule.prelude.starts_with('@') && !is_supported_at_rule(&rule.prelude, has_block) {
+        return None;
+    }
+    let text = self_contained(&trimmed[rule.source.clone()], has_block)?;
+    // So is a rule the cascade drops, such as a style rule whose selector
+    // does not parse or an `@namespace` without its URL. The rules that
+    // must lead a sheet are checked on their own, the others after the
+    // sheet's namespaces.
+    let header =
+        if order_rank(&rule.prelude) < OTHER_RANK || is_layer_statement(&rule.prelude, has_block) {
+            ""
+        } else {
+            namespaces
+        };
+    if !cascade_keeps(header, &text) {
         return None;
     }
     Some(SingleRule {
         prelude: rule.prelude.clone(),
         has_block,
-        text: self_contained(&trimmed[rule.source.clone()], rule.body.is_some())?,
+        text,
     })
+}
+
+/// The `@namespace` rules of a sheet whose text is `text`, closed so more
+/// text can follow them.
+fn namespace_header(text: &str, rules: &[CssRuleInfo]) -> String {
+    rules
+        .iter()
+        .filter(|rule| order_rank(&rule.prelude) == NAMESPACE_RANK)
+        .filter_map(|rule| self_contained(&text[rule.source.clone()], false))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the cascade keeps `rule` when it follows `header`.
+fn cascade_keeps(header: &str, rule: &str) -> bool {
+    let kept = |source: &str| {
+        let mut tree = raikiri_style::RuleTree::empty();
+        tree.add_stylesheet(source, raikiri_style::Origin::Author);
+        tree.rules().len()
+    };
+    kept(&format!("{header}\n{rule}")) > kept(header)
 }
 
 /// Whether `text` is only whitespace and comments.
@@ -1189,7 +1220,14 @@ fn is_at_rule(prelude: &str, name: &str) -> bool {
 /// it has a block.
 fn is_supported_at_rule(prelude: &str, has_block: bool) -> bool {
     let named = |names: &[&str]| names.iter().any(|name| is_at_rule(prelude, name));
-    if named(&["import", "namespace"]) {
+    if named(&["import"]) {
+        // The cascade keeps an `@import` without a URL but never loads it.
+        !has_block && {
+            let mut input = ParserInput::new(prelude);
+            let mut parser = Parser::new(&mut input);
+            parser.next().is_ok() && parser.expect_url_or_string().is_ok()
+        }
+    } else if named(&["namespace"]) {
         !has_block
     } else if named(&["layer"]) {
         true
