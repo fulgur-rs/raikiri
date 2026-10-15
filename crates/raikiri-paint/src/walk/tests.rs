@@ -6240,6 +6240,28 @@ fn a_page_along_the_x_axis_laid_out_at_its_own_width_is_not_shifted_again() {
 }
 
 #[test]
+fn a_zero_width_page_area_still_counts_as_laid_out() {
+    let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+        @page { margin: 0 30px }</style></head><body style='margin:0'><div style='width:30px'></div></body></html>";
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(parsed.dom.laid_out_page_area_width(), None);
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let mut page = PageBox::new();
+    page.width = 60.0;
+    page.height = 100.0;
+    let _ = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page);
+    assert_eq!(parsed.dom.laid_out_page_area_width(), Some(0.0));
+}
+
+#[test]
 fn a_viewport_fixed_box_keeps_its_page_position_on_a_narrower_page_along_the_x_axis() {
     let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
         <div style='width:100px'></div><div style='width:30px'></div>\

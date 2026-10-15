@@ -681,7 +681,7 @@ fn used_columns(document: &Document, id: usize) -> usize {
 /// Whether the page area of some page differs from the one layout placed
 /// fixed boxes against.
 fn page_areas_vary(document: &Document, pages: &[PageFragment]) -> bool {
-    let (laid_out_width, laid_out_height) = document.fixed_page_area;
+    let (laid_out_width, laid_out_height) = document.fixed_page_area.unwrap_or_default();
     pages.iter().any(|page| {
         let (margins, insets) = (page.margins, page.content_insets);
         let width = page.page_box.width - margins.left - margins.right - insets.left - insets.right;

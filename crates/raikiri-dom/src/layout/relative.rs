@@ -72,7 +72,7 @@ pub(crate) fn used_relative_insets(
     };
     let width = || {
         if is_body() {
-            return Some(document.fixed_page_area.0);
+            return Some(document.fixed_page_area.unwrap_or_default().0);
         }
         let block = document.ifc_layout_node(block?.key)?;
         Some(if is_spanner(document, node_id) {
@@ -83,7 +83,7 @@ pub(crate) fn used_relative_insets(
     };
     let height = || {
         if is_body() {
-            return Some(document.fixed_page_area.1);
+            return Some(document.fixed_page_area.unwrap_or_default().1);
         }
         document.ifc_layout_node(block?.key)?.percent_basis_height
     };

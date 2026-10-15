@@ -365,7 +365,7 @@ fn shrinks_to_fit(tree: &Document, idx: usize, inputs: &LayoutInput) -> bool {
 /// its max-content size, unless the available space is smaller, then that
 /// space, but never below its min-content size (CSS Sizing 3 §5.1).
 fn fit_content_inline_size(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> f32 {
-    let page_height = tree.fixed_page_area.1;
+    let page_height = tree.fixed_page_area.unwrap_or_default().1;
     let style = &tree.nodes[usize::from(node_id)].style;
     // The transposed horizontal margins are the physical top and bottom.
     let margin = style
