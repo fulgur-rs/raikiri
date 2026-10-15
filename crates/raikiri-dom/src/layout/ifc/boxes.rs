@@ -574,6 +574,13 @@ fn run_boxes_segment(
         };
         let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
         let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
+        // The lines of a generated block take its own alignment and indent.
+        // Its content is part of the paragraph's text, so its lines keep the
+        // paragraph's base direction.
+        let line_options = open_block
+            .as_ref()
+            .and_then(|open| open.line_options(lines.len()))
+            .unwrap_or(options);
         let mut constraint = LineConstraint::from_physical_insets(
             width,
             space.inline_start,
@@ -598,7 +605,7 @@ fn run_boxes_segment(
             root.line_paragraph.next_line(
                 &mut state.layout_cx,
                 token,
-                &options,
+                &line_options,
                 &constraint,
                 &atomics.sizes,
             )
@@ -705,8 +712,11 @@ fn run_boxes_segment(
                 // A line that does not fit beside the floats is moved down
                 // until it fits or no float is left beside it (CSS 2.1 9.5).
                 // Its own floats keep the place they have at this offset.
-                let indent = if lines.is_empty() {
-                    options.text_indent.length
+                let first = open_block
+                    .as_ref()
+                    .map_or(lines.is_empty(), |open| open.is_first_line(lines.len()));
+                let indent = if first {
+                    line_options.text_indent.length
                 } else {
                     0.0
                 };

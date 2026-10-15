@@ -446,3 +446,43 @@ fn a_line_overflowing_below_the_box_does_not_cut_it() {
     assert_eq!((piece.border_box.y, piece.border_box.height), (0.0, 5.0));
     assert!(piece.has_block_start_edge && piece.has_block_end_edge);
 }
+
+/// The inline start of the first glyph run of each line.
+fn line_starts(lines: &[shodo::Line]) -> Vec<f32> {
+    lines
+        .iter()
+        .map(|line| {
+            line.fragments()
+                .find_map(|fragment| match fragment {
+                    shodo::Fragment::GlyphRun(run) => Some(run.inline_start()),
+                    _ => None,
+                })
+                .expect("a glyph run")
+        })
+        .collect()
+}
+
+#[test]
+fn the_lines_of_a_block_box_take_its_own_alignment_and_indent() {
+    let starts = |before: &str| {
+        let (lines, _) = placed(
+            &format!("div::before {{ content: 'B B B'; display: block; {before} }}"),
+            &format!("{TEN_PX}; text-indent: 7px"),
+            "A",
+        );
+        line_starts(&lines)
+    };
+    // The box inherits the paragraph's indent, which it may override; the
+    // line after the box is not the paragraph's first.
+    assert_eq!(starts(""), [7.0, 0.0]);
+    assert_eq!(starts("text-indent: 20px"), [20.0, 0.0]);
+    // A percentage indent is of the box's own width.
+    assert_eq!(starts("text-indent: 10%; margin-left: 20px"), [28.0, 0.0]);
+    assert_eq!(starts("text-align: right; text-indent: 0"), [50.0, 0.0]);
+    // Only the box's first line is indented, unless the indent hangs.
+    assert_eq!(starts("width: 30px; text-indent: 10px"), [10.0, 0.0, 0.0]);
+    assert_eq!(
+        starts("width: 30px; text-indent: 20px hanging"),
+        [0.0, 20.0, 0.0]
+    );
+}

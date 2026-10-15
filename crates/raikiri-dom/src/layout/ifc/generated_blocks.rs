@@ -11,8 +11,10 @@
 use super::inline_boxes::{BoxRect, GeneratedBlockPiece};
 use raikiri_style::property::{BoxSizing, ClearValue, Sides};
 use raikiri_style::{
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
+    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedTextIndent,
+    ComputedValues,
 };
+use shodo::style::LineOptions;
 use taffy::{BlockContext, CollapsibleMarginSet};
 
 /// Marks the end token of a block-level `::before` or `::after`: the id of
@@ -47,6 +49,9 @@ pub(crate) struct GeneratedBlock {
     max_height: ComputedLengthPercentageOrAuto,
     border_box: bool,
     clear: taffy::Clear,
+    /// The box's own line options and raw `text-indent`, from its computed
+    /// style; `None` keeps the paragraph's.
+    lines: Option<(LineOptions, ComputedTextIndent)>,
 }
 
 impl GeneratedBlock {
@@ -79,7 +84,15 @@ impl GeneratedBlock {
                 ClearValue::Both => taffy::Clear::Both,
                 _ => taffy::Clear::None,
             },
+            lines: None,
         }
+    }
+
+    /// The box with its lines set by `options` and the raw `indent`, its
+    /// own `text-align`, `text-indent` and the like.
+    pub(crate) fn with_lines(mut self, lines: Option<(LineOptions, ComputedTextIndent)>) -> Self {
+        self.lines = lines;
+        self
     }
 
     /// Margins in px against the containing block width `basis`; `auto` is
@@ -384,6 +397,12 @@ pub(crate) struct OpenBlock {
     pub(crate) inline: (f32, f32),
     /// The paragraph is right-to-left: the left side is the end side.
     rtl: bool,
+    /// The box's own line options, with its `text-indent` resolved against
+    /// its content width.
+    lines: Option<LineOptions>,
+    /// The box goes on from an earlier fragmentainer, where its first line
+    /// was laid out.
+    continues: bool,
 }
 
 impl OpenBlock {
@@ -397,8 +416,28 @@ impl OpenBlock {
             starts_paragraph: false,
             has_clearance: false,
             consumed: self.consumed + (end - top).max(0.0),
+            continues: true,
             ..self
         }
+    }
+
+    /// The line options of the box's next line, after `lines` lines of the
+    /// paragraph; `None` when the box keeps the paragraph's.
+    pub(crate) fn line_options(&self, lines: usize) -> Option<LineOptions> {
+        let mut options = self.lines?;
+        // The engine starts the line after the box's start token as one after
+        // a forced break, not as a first line: its `text-indent` is the
+        // box's first-line indent only when it applies to such lines too.
+        if self.is_first_line(lines) {
+            options.text_indent.each_line = true;
+        }
+        Some(options)
+    }
+
+    /// The next line, after `lines` lines of the paragraph, is the box's
+    /// first.
+    pub(crate) fn is_first_line(&self, lines: usize) -> bool {
+        lines == self.lines_before && !self.continues
     }
 
     /// The line space `space` of a line of the box, set in by the box's
@@ -487,6 +526,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         }
         None => *flow.pending = top_set,
     }
+    let inline = block.inline_insets(flow.width, flow.rtl, &edges);
     OpenBlock {
         lines_before: flow.lines.len(),
         content_top,
@@ -495,8 +535,16 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         starts_paragraph: flow.at_start,
         has_clearance: clearance.is_some(),
         consumed: 0.0,
-        inline: block.inline_insets(flow.width, flow.rtl, &edges),
+        inline,
         rtl: flow.rtl,
+        lines: block.lines.map(|(mut options, indent)| {
+            // A percentage `text-indent` refers to the box's own width
+            // (CSS Text 3 §8.1).
+            let content = (flow.width - inline.0 - inline.1).max(0.0);
+            options.text_indent.length = super::flow::resolve_indent(indent, content);
+            options
+        }),
+        continues: false,
     }
 }
 

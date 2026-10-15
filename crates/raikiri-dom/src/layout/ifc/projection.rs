@@ -373,7 +373,10 @@ fn push_generated(
     let block = (!inline_level)
         .then(|| super::generated_blocks::end_token_id(id.0))
         .flatten()
-        .map(|end| GeneratedBlock::new(id.0, end, cv));
+        .map(|end| {
+            GeneratedBlock::new(id.0, end, cv)
+                .with_lines(style::line_options(cv, element, fonts).ok())
+        });
     if text.is_empty() && !has_images && block.is_none() {
         if atomic {
             first_letter.stop();
