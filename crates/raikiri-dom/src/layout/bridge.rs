@@ -43,7 +43,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
         gap,
         gap_percent,
         height_definite: !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto),
-        horizontal: matches!(cv.writing_mode, WritingMode::HorizontalTb),
+        horizontal: !cv.writing_mode.is_vertical(),
         orphans: cv.orphans.max(1) as usize,
         widows: cv.widows.max(1) as usize,
     })
@@ -825,8 +825,8 @@ fn bridge_min_max_size(
     // inline-size/block-size. Keep a logical block minimum on that same
     // layout axis when no physical min-height is present. Preserve an
     // explicit physical constraint; CSSOM keeps the original axis mapping.
-    let min_height = if cv.writing_mode == WritingMode::HorizontalTb
-        && cv.cssom_writing_mode != WritingMode::HorizontalTb
+    let min_height = if !cv.writing_mode.is_vertical()
+        && cv.cssom_writing_mode.is_vertical()
         && matches!(cv.min_height, ComputedLengthPercentageOrAuto::Auto)
     {
         cv.min_block_size.unwrap_or(cv.min_height)

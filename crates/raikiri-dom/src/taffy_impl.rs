@@ -1810,8 +1810,7 @@ fn center_absolute_children_in_block_axis(
     if inputs.run_mode != RunMode::PerformLayout {
         return;
     }
-    let block_is_height =
-        used_writing_mode(tree, idx) == raikiri_style::property::WritingMode::HorizontalTb;
+    let block_is_height = !used_writing_mode(tree, idx).is_vertical();
     let style = &tree.nodes[idx].style;
     let border = style
         .border
