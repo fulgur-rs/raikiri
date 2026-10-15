@@ -311,6 +311,11 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].multicol_auto_width = true;
             doc.nodes[idx].has_logical_min_block_size = false;
         }
+        // Classified again once paragraph roots are assigned; until then a
+        // box is known by its Taffy display, so a failed pass leaves no
+        // classification from the previous one.
+        doc.nodes[idx].formatting_context =
+            FormattingContext::from_taffy_display(doc.nodes[idx].style.display);
     }
     // Whether a box is a non-atomic inline box depends on its parent's
     // display, which the loop above has now bridged for every node.
@@ -366,13 +371,13 @@ pub(crate) fn apply_computed_to_style(
 
 /// Classify how a bridged box lays out its contents. Any box whose content
 /// is a paragraph is laid out by the inline engine, including a table or
-/// multicol container and bare text, which takes its container's Taffy
-/// style. Taffy has no table or multicol display, so both are block
-/// containers to it.
+/// multicol container and a bare text root. Taffy has no table or multicol
+/// display, so both are block containers to it.
 fn classify_formatting_context(node: &Node) -> FormattingContext {
     match node.style.display {
         Display::None => FormattingContext::None,
         _ if node.flags.contains(NodeFlags::IS_IFC_ROOT) => FormattingContext::Inline,
+        _ if node.kind() != NodeKind::Element => FormattingContext::Text,
         Display::Flex => FormattingContext::Flex,
         Display::Grid => FormattingContext::Grid,
         _ if matches!(

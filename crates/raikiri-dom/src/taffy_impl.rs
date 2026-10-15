@@ -508,10 +508,10 @@ impl Document {
                 basis.width.filter(|_| inputs.parent_size.width.is_none())
             }
         });
-        let uncached = (self.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
-            && ifc_basis.is_some()
-            && has_percent_edge(&self.nodes[idx].style))
-            || self.size_contained_measure.last() == Some(&idx);
+        let paragraph = self.nodes[idx].formatting_context == FormattingContext::Inline;
+        let uncached =
+            (paragraph && ifc_basis.is_some() && has_percent_edge(&self.nodes[idx].style))
+                || self.size_contained_measure.last() == Some(&idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
@@ -520,7 +520,7 @@ impl Document {
         let edge_basis = flex_basis
             .filter(|_| {
                 inputs.parent_size.width.is_none()
-                    && !self.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
+                    && !paragraph
                     && !self.has_vertical_writing_mode(idx)
             })
             .and_then(|basis| basis.width)
@@ -592,7 +592,6 @@ impl Document {
             if formatting_context == FormattingContext::Multicol
                 && !empty
                 && tree.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH
-            // cov:ignore: exercised by ignored nested multicol WPT reftests
             {
                 return crate::layout::compute_multicol_layout(tree, node_id, inputs, block_ctx); // cov:ignore: exercised by ignored nested multicol WPT reftests
             }

@@ -355,18 +355,17 @@ pub struct TextData {
 /// How a box lays out its contents (CSS Display 3, 2: the inner display
 /// type, refined by the layout engine that handles it).
 ///
-/// The layout bridge classifies every element once per layout pass, after
-/// paragraph roots are assigned. A node built without the bridge takes the
-/// classification of its Taffy display.
+/// The layout bridge classifies every node once per layout pass, after
+/// paragraph roots are assigned. An element built without the bridge takes
+/// the classification of its Taffy display.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FormattingContext {
     /// The element generates no box.
     None,
-    /// A block container whose content is block-level boxes.
+    /// A block container whose content is block-level boxes. Whether it
+    /// establishes an independent block formatting context is left to its
+    /// Taffy display.
     Block,
-    /// A block container that establishes an independent block formatting
-    /// context.
-    FlowRoot,
     /// A block container whose content is a paragraph, laid out by the
     /// inline engine.
     Inline,
@@ -378,6 +377,9 @@ pub(crate) enum FormattingContext {
     Table,
     /// A multi-column container (CSS Multi-column Layout 1, 2).
     Multicol,
+    /// Character data outside any paragraph root. It generates no box of
+    /// its own and is measured as an empty leaf.
+    Text,
 }
 
 impl FormattingContext {
@@ -387,8 +389,7 @@ impl FormattingContext {
             taffy::Display::None => Self::None,
             taffy::Display::Flex => Self::Flex,
             taffy::Display::Grid => Self::Grid,
-            taffy::Display::FlowRoot => Self::FlowRoot,
-            taffy::Display::Block => Self::Block,
+            taffy::Display::Block | taffy::Display::FlowRoot => Self::Block,
         }
     }
 }
@@ -589,7 +590,10 @@ impl Node {
     /// here so the defaults live in one place.
     fn with_data(data: NodeData, style: Style) -> Self {
         Self {
-            formatting_context: FormattingContext::from_taffy_display(style.display),
+            formatting_context: match data {
+                NodeData::Element(_) => FormattingContext::from_taffy_display(style.display),
+                _ => FormattingContext::Text,
+            },
             style,
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
