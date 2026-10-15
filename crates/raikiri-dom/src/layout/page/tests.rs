@@ -752,6 +752,57 @@ fn first_page_name_skips_a_second_caption_that_table_layout_drops() {
 }
 
 #[test]
+fn first_page_name_skips_a_caption_inside_a_contents_wrapper() {
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(Some(body), "table", Style::default(), Some("display:table"));
+    let wrapper = doc.append_element(
+        Some(table),
+        "div",
+        Style::default(),
+        Some("display:contents"),
+    );
+    doc.append_element(
+        Some(wrapper),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;page:wrapped"),
+    );
+    doc.append_element(
+        Some(table),
+        "caption",
+        Style::default(),
+        Some("display:table-caption;page:caption"),
+    );
+    let group = doc.append_element(
+        Some(table),
+        "tbody",
+        Style::default(),
+        Some("display:table-row-group"),
+    );
+    let row = doc.append_element(
+        Some(group),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("table cascade Ok");
+
+    assert_eq!(first_page_name(&doc, &cascade).as_deref(), Some("caption"));
+}
+
+#[test]
 fn first_page_name_reads_a_static_position_absolute_box() {
     use raikiri_style::{build_rule_tree, cascade};
 

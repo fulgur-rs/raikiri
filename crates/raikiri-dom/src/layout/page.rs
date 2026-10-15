@@ -1304,9 +1304,14 @@ fn table_pagination_child_order(
     };
     let header = first(DisplayValue::TableHeaderGroup);
     let footer = first(DisplayValue::TableFooterGroup);
-    let caption = first(DisplayValue::TableCaption);
-    // Table layout renders only the first caption, so later captions have no
-    // box to paginate or to take a page name from.
+    // Table layout renders only the first caption among the table's own
+    // children, so other captions, including ones inside `display: contents`
+    // wrappers, have no box to paginate or to take a page name from.
+    let caption = document.nodes[table]
+        .children
+        .iter()
+        .copied()
+        .find(|&id| cascade.computed[id].display == DisplayValue::TableCaption);
     children.retain(|&id| {
         cascade.computed[id].display != DisplayValue::TableCaption || Some(id) == caption
     });
