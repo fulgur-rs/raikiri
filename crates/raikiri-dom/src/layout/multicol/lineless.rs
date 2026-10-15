@@ -106,7 +106,7 @@ fn has_block_edge_decorations(node: &crate::Node) -> bool {
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
 }
 
-pub(crate) fn has_rendered_content(tree: &Document, id: usize) -> bool {
+fn has_rendered_content(tree: &Document, id: usize) -> bool {
     tree.nodes[id].children.iter().any(|&child| {
         let node = &tree.nodes[child];
         node.is_in_document()

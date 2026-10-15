@@ -5828,10 +5828,9 @@ fn paginate_flow(
         };
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
-        // A box with no block size and no content lets its block-start and
-        // block-end margins collapse through it.
-        let margins_collapse_through =
-            height <= 0.0 && !super::multicol::lineless::has_rendered_content(document, node_id);
+        // A box with no block size and no in-flow content lets its
+        // block-start and block-end margins collapse through it.
+        let margins_collapse_through = height <= 0.0 && !has_in_flow_content(document, node_id);
         let style = &document.nodes[node_id].style;
         let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
             .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
@@ -6729,6 +6728,24 @@ pub fn layout_single_page_with_resolver_and_base_url(
     document.mark_in_document_flags();
     resolve_document_images(document, cascade, resolver, base_url)?;
     layout_single_page(document, cascade, page_box)
+}
+
+/// Whether `id` has a child that is rendered and in flow: a text run with
+/// non-whitespace content, or an element that is neither `display: none`,
+/// floated nor absolutely positioned. Out-of-flow children do not stop a
+/// box's margins from collapsing through it (CSS 2 §8.3.1).
+fn has_in_flow_content(document: &Document, id: usize) -> bool {
+    document.nodes[id].children.iter().any(|&child| {
+        let node = &document.nodes[child];
+        node.is_in_document()
+            && !node.is_display_none()
+            && match &node.data {
+                NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                _ => {
+                    node.style.position != TaffyPosition::Absolute && !node.style.float.is_floated()
+                }
+            }
+    })
 }
 
 #[cfg(test)]
