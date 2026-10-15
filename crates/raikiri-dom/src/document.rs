@@ -2596,6 +2596,40 @@ impl Document {
         true
     }
 
+    /// Composite `source` over the pixels of `x, y, w, h` (in bitmap px,
+    /// clipped to the bitmap) with source-over on straight-alpha bytes.
+    ///
+    /// `source` is called with each covered pixel's bitmap column and row
+    /// and returns the color to draw there, or `None` to leave the pixel
+    /// unchanged. Returns `false` for non-canvas nodes or when resource
+    /// limits prevent bitmap materialization.
+    pub fn canvas_composite_rect(
+        &mut self,
+        id: usize,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        mut source: impl FnMut(u32, u32) -> Option<[u8; 4]>,
+    ) -> bool {
+        let Some((bitmap, cols, rows)) = self.canvas_clip_rect_mut(id, x, y, w, h) else {
+            return false;
+        };
+        for row in rows {
+            for col in cols.clone() {
+                let Some(color) = source(col, row) else {
+                    continue;
+                };
+                let off = ((row * bitmap.width + col) as usize) * 4;
+                let pixel: &mut [u8; 4] = (&mut bitmap.rgba[off..off + 4])
+                    .try_into()
+                    .expect("a pixel is four bytes");
+                *pixel = source_over(color, *pixel);
+            }
+        }
+        true
+    }
+
     /// Clear `x, y, w, h` (in bitmap px, clipped) to transparent black.
     ///
     /// Unlike [`Document::canvas_fill_rect`] with a transparent color (which
@@ -2996,6 +3030,30 @@ impl Document {
         }
         document_url.cloned()
     }
+}
+
+/// Porter-Duff source-over of straight-alpha RGBA8 `source` onto
+/// `destination` (Compositing and Blending 1 §9.1.4), rounded to the
+/// nearest byte.
+fn source_over(source: [u8; 4], destination: [u8; 4]) -> [u8; 4] {
+    let source_alpha = u32::from(source[3]);
+    if source_alpha == 255 {
+        return source;
+    }
+    if source_alpha == 0 {
+        return destination;
+    }
+    // Alphas scaled by 255, so `out_alpha` is in 255² units.
+    let backdrop_alpha = u32::from(destination[3]) * (255 - source_alpha);
+    let out_alpha = source_alpha * 255 + backdrop_alpha;
+    let mut out = [0u8; 4];
+    for channel in 0..3 {
+        let premultiplied = u32::from(source[channel]) * source_alpha * 255
+            + u32::from(destination[channel]) * backdrop_alpha;
+        out[channel] = ((premultiplied + out_alpha / 2) / out_alpha).min(255) as u8;
+    }
+    out[3] = ((out_alpha + 127) / 255).min(255) as u8;
+    out
 }
 
 /// The entries of `map` for `nodes`, keyed by position in `nodes`.

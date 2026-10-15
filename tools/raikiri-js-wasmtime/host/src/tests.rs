@@ -398,6 +398,14 @@ fn hostile_fragment_and_fetch_propagate_host_errors() {
     assert!(roundtrip_response(&mut b, HostOperation::Fetch("http://x/".into())).is_err());
     // Likewise the default image loader fails every request.
     assert!(roundtrip_response(&mut b, HostOperation::LoadImage("http://x/".into())).is_err());
+    // ...and keeps no pixels, which crosses the bridge as no image.
+    assert!(matches!(
+        roundtrip_response(
+            &mut b,
+            HostOperation::ImagePixels("http://x/".into(), (1.0, 1.0))
+        ),
+        Ok(HostValue::Image(None))
+    ));
     assert!(
         roundtrip_response(
             &mut b,

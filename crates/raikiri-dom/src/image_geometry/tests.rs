@@ -36,6 +36,28 @@ fn absent_natural_dimensions_use_the_default_object_size_and_known_ratio() {
 }
 
 #[test]
+fn default_sized_objects_fall_back_to_the_given_default_size() {
+    let natural = |width, height, aspect_ratio| ImageIntrinsicSize {
+        width,
+        height,
+        aspect_ratio,
+    };
+    let canvas = (100.0, 100.0);
+    assert_eq!(
+        default_sized_object(natural(None, None, Some(2.0)), canvas),
+        (100.0, 50.0)
+    );
+    assert_eq!(
+        default_sized_object(natural(None, None, None), canvas),
+        canvas
+    );
+    assert_eq!(
+        default_sized_object(natural(Some(16.0), Some(8.0), None), canvas),
+        (16.0, 8.0)
+    );
+}
+
+#[test]
 fn empty_and_non_finite_content_boxes_have_no_object_rectangle() {
     let position = raikiri_style::ComputedValues::initial().object_position;
     let natural = ImageIntrinsicSize {

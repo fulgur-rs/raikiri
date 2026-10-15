@@ -58,8 +58,21 @@ pub fn object_image_rect(
 }
 
 fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
-    const DEFAULT_WIDTH: f64 = DEFAULT_OBJECT_SIZE.0 as f64;
-    const DEFAULT_HEIGHT: f64 = DEFAULT_OBJECT_SIZE.1 as f64;
+    default_sized_object(
+        natural,
+        (
+            f64::from(DEFAULT_OBJECT_SIZE.0),
+            f64::from(DEFAULT_OBJECT_SIZE.1),
+        ),
+    )
+}
+
+/// The concrete object size of an image with no specified size (CSS Images 3
+/// §5.3 "default sizing algorithm"): its natural dimensions, completed from
+/// its natural aspect ratio where only one is known, and otherwise taken
+/// from `default_size`, contain-fitting a ratio-only image into it.
+pub fn default_sized_object(natural: ImageIntrinsicSize, default_size: (f64, f64)) -> (f64, f64) {
+    let (default_width, default_height) = default_size;
     let valid = |value: Option<f32>| {
         value
             .filter(|value| value.is_finite() && *value > 0.0)
@@ -77,12 +90,12 @@ fn natural_object_size(natural: ImageIntrinsicSize) -> (f64, f64) {
         (Some(width), None, Some(ratio)) => (width, width / ratio),
         (None, Some(height), Some(ratio)) => (height * ratio, height),
         (None, None, Some(ratio)) => {
-            let width = DEFAULT_WIDTH.min(DEFAULT_HEIGHT * ratio);
+            let width = default_width.min(default_height * ratio);
             (width, width / ratio)
         }
-        (Some(width), None, _) => (width, DEFAULT_HEIGHT),
-        (None, Some(height), _) => (DEFAULT_WIDTH, height),
-        _ => (DEFAULT_WIDTH, DEFAULT_HEIGHT),
+        (Some(width), None, _) => (width, default_height),
+        (None, Some(height), _) => (default_width, height),
+        _ => (default_width, default_height),
     }
 }
 

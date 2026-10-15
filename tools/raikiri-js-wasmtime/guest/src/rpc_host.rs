@@ -93,6 +93,18 @@ impl DocumentHost for RpcDocumentHost {
             _ => Err(HostError("image response kind".into())),
         }
     }
+    /// Pixels that fail to arrive or decode draw nothing, the same as a
+    /// host that keeps none.
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
+    fn image_pixels(&mut self, url: &str, default_size: (f64, f64)) -> Option<ImagePixels> {
+        match self
+            .call(HostOperation::ImagePixels(url.into(), default_size))
+            .ok()?
+        {
+            HostValue::Image(image) => image?.into_native().ok(),
+            _ => None,
+        }
+    }
     fn parse_fragment(
         &mut self,
         tag: &str,

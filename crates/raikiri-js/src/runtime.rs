@@ -44,7 +44,9 @@ pub use selection::CustomHighlightRange;
 pub(crate) mod test_host;
 
 pub use event_loop::{Abort, Limits, RunOptions};
-pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
+pub use host::{BoxGeometry, DocumentHost, DomRect, HostError, ImagePixels, PositionKind};
+/// The decoded pixels an [`ImagePixels`] holds.
+pub use raikiri_traits::DecodedImage;
 pub use scripts::RunReport;
 
 /// Mutable runtime state shared by every native binding.
@@ -111,6 +113,11 @@ pub(crate) struct State {
     /// with or without a request still pending: moving one into template
     /// contents makes it inert again.
     pub active_images: HashSet<usize>,
+    /// The outcome of each `<img>`'s last finished request, by arena index:
+    /// the URL it loaded, or `None` when it failed (the image is broken). An
+    /// image is absent before its first request finishes and while a newer
+    /// one is pending.
+    pub loaded_images: HashMap<usize, Option<String>>,
     /// The Window's live Selection object, created on first access.
     pub selection_object: Option<JsObject>,
     /// Ranges currently held by the singleton Selection object.
@@ -369,6 +376,7 @@ impl DomRuntime {
             next_image_request: 0,
             inert_images: HashSet::new(),
             active_images: HashSet::new(),
+            loaded_images: HashMap::new(),
             selection_object: None,
             selection_ranges: Vec::new(),
             custom_highlights: HashMap::new(),
