@@ -539,8 +539,7 @@ fn run_boxes_segment(
     // are being laid out: its start token was met and its end token was not.
     // The tokens come in document order; the cursor is the block of the next.
     let mut block_cursor = 0;
-    // The boxes of the generated blocks closed so far. A fragmenting layout
-    // places each column's lines from that column's top, so it keeps none.
+    // The boxes of the generated blocks closed so far.
     let mut placed_blocks = Vec::new();
     let horizontal = root.writing_mode == WritingMode::HorizontalTb;
 
@@ -835,7 +834,6 @@ fn run_boxes_segment(
                                 block_cursor += 1;
                                 if let Some(open) = open_block.take()
                                     && let Some(placed) = generated_blocks::close(block, open, flow)
-                                    && fragmentainer.is_none()
                                 {
                                     placed_blocks.push(placed);
                                 }

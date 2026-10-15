@@ -4,13 +4,26 @@
 use anyrender::Scene;
 use raikiri_dom::{BundledFace, Document, build_bundled_font_collection, layout_single_page};
 use raikiri_style::{build_rule_tree, cascade};
-use raikiri_traits::PageBox;
+use raikiri_traits::{DecodedImage, ImagePixelSource, PageBox};
+use std::sync::Arc;
 use taffy::Style;
 
 const AHEM: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../raikiri-dom/tests/data/text-autospace/Ahem.ttf"
 ));
+
+/// A 1×1 red image.
+struct Red;
+impl ImagePixelSource for Red {
+    fn get_decoded(&self, _: &url::Url) -> Option<Arc<DecodedImage>> {
+        Some(Arc::new(DecodedImage {
+            width: 1,
+            height: 1,
+            rgba: vec![255, 0, 0, 255],
+        }))
+    }
+}
 
 /// Pixels of a 100×80 page holding `<div>A</div>` with the style sheet
 /// `css`, on 20px lines of 10px Ahem whose glyphs are transparent.
@@ -31,7 +44,7 @@ fn paint(css: &str) -> Vec<u8> {
     let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
     doc.append_text(
         style,
-        &format!(
+        format!(
             "html, body {{ display: block; margin: 0 }} \
              div {{ display: block; font: 10px/20px Ahem; color: transparent }} {css}"
         ),
@@ -46,7 +59,7 @@ fn paint(css: &str) -> Vec<u8> {
     page.height = 80.0;
     layout_single_page(&mut doc, &computed, page).unwrap();
     let mut scene = Scene::new();
-    raikiri_paint::paint_single_page(&mut scene, &doc, &computed, page).unwrap();
+    raikiri_paint::paint_single_page_with_images(&mut scene, &doc, &computed, page, &Red).unwrap();
     anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
         |out| {
             use anyrender::PaintScene;
@@ -105,4 +118,32 @@ fn a_hidden_block_before_paints_nothing() {
          visibility: hidden }",
     );
     assert_eq!(pixel(&pixels, 50, 5), [255, 255, 255]);
+}
+
+#[test]
+fn a_block_before_under_a_translucent_first_line_stays_below_the_text() {
+    let pixels = paint(
+        "div { color: black } div::first-line { opacity: 0.5 } \
+         div::before { content: 'B'; display: block; background: blue }",
+    );
+    // The box goes with its first line's paint, and is still painted over
+    // its whole width.
+    let [red, _, blue] = pixel(&pixels, 50, 10);
+    assert_eq!(blue, 255);
+    assert!(red < 255, "the box is painted: {red}");
+}
+
+#[test]
+fn a_transformed_block_before_with_an_image_turns_its_whole_box() {
+    let pixels = paint(
+        "div::before { content: url(file:///red.png); display: block; background: blue; \
+         transform: translateX(50px) }",
+    );
+    // The 100px-wide box moves right by half its width.
+    assert_eq!(
+        pixel(&pixels, 10, 0),
+        [255, 255, 255],
+        "left of the moved box"
+    );
+    assert_eq!(pixel(&pixels, 80, 0)[2], 255, "the moved box");
 }

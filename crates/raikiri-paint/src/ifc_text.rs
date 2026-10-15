@@ -270,22 +270,6 @@ pub(crate) fn hold_ifc_lines<'a>(
     // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
     // own.
     let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
-    let mut first_line = first_line_opacity.map(|opacity| {
-        let pieces = pieces_by_line.first().map_or(&[][..], Vec::as_slice);
-        (
-            typographic::TypographicPaint::new(paragraph, root_node, pieces),
-            opacity,
-        )
-    });
-    // One set of groups serves every other line, so an element or
-    // pseudo-element split over lines composites its complete paint at once
-    // (CSS Color 4 §3.3).
-    let mut rest_pieces: Vec<_> = pieces_by_line
-        .iter()
-        .skip(usize::from(first_line.is_some()))
-        .flatten()
-        .cloned()
-        .collect();
     // A block-level `::before` or `::after` paints its own box, cut along
     // the block axis where pagination cuts its lines. Its pieces on the
     // lines hold only its text.
@@ -314,7 +298,33 @@ pub(crate) fn hold_ifc_lines<'a>(
         .collect();
     let block_nodes: std::collections::HashSet<usize> =
         blocks.iter().map(|(piece, _)| piece.node).collect();
-    rest_pieces.extend(blocks.iter().map(|(piece, _)| *piece));
+    // A box goes with the paint of its first line, below the text of the
+    // lines after it.
+    let on_first_line =
+        |piece: &raikiri_dom::InlineBoxPiece| first_line_opacity.is_some() && piece.line == 0;
+    let mut first_line = first_line_opacity.map(|opacity| {
+        let mut pieces = pieces_by_line.first().cloned().unwrap_or_default();
+        pieces.extend(blocks.iter().map(|(piece, _)| *piece).filter(on_first_line));
+        (
+            typographic::TypographicPaint::new(paragraph, root_node, &pieces),
+            opacity,
+        )
+    });
+    // One set of groups serves every other line, so an element or
+    // pseudo-element split over lines composites its complete paint at once
+    // (CSS Color 4 §3.3).
+    let mut rest_pieces: Vec<_> = pieces_by_line
+        .iter()
+        .skip(usize::from(first_line.is_some()))
+        .flatten()
+        .cloned()
+        .collect();
+    rest_pieces.extend(
+        blocks
+            .iter()
+            .map(|(piece, _)| *piece)
+            .filter(|piece| !on_first_line(piece)),
+    );
     let mut rest = typographic::TypographicPaint::new(paragraph, root_node, &rest_pieces);
     for (piece, joined) in &blocks {
         let Some(cv) = computed_for_id(cascade, piece.node)
@@ -339,12 +349,31 @@ pub(crate) fn hold_ifc_lines<'a>(
                 continue;
             }
         }
-        let group = rest.piece_group(piece);
+        let paint = match first_line.as_mut() {
+            Some((first, _)) if on_first_line(piece) => first,
+            _ => &mut rest,
+        };
+        let group = paint.piece_group(piece);
+        // A box whose content is one image turns about its whole box.
+        if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
+            let whole = joined.outer;
+            paint.turn(
+                group,
+                piece,
+                crate::walk::element_transform(
+                    turned,
+                    x + whole.x,
+                    y + whole.y,
+                    whole.width,
+                    whole.height,
+                ),
+            );
+        }
         // The piece's edges are along the block axis: its progression runs
         // down the page.
         crate::walk::paint_inline_box(
             image_cache,
-            rest.box_target(group, piece),
+            paint.box_target(group, piece),
             cv,
             piece,
             Some(joined),

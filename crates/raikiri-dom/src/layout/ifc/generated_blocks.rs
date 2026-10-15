@@ -255,34 +255,27 @@ pub(crate) struct PlacedBlock {
 
 impl PlacedBlock {
     /// The box cut where pagination moves its lines by a different amount
-    /// than the line before them. `line_count` is the number of lines of the
-    /// paragraph; `shift_of` gives how far pagination moved a line. A part
-    /// above the box's first line moves with the line before the box, so a
-    /// box without lines stays with the content above it.
+    /// than the line before them. `lines` are the paragraph's lines;
+    /// `shift_of` gives how far pagination moved a line. The top of the box
+    /// moves with its first line, and a box without lines with the line
+    /// before it, so it stays with the content above it.
     pub(crate) fn pieces(
         &self,
         lines: &[shodo::Line],
         shift_of: impl Fn(usize) -> f32,
     ) -> Vec<GeneratedBlockPiece> {
-        let nearest = self.first_line.min(lines.len().saturating_sub(1));
+        let end_line = self.end_line.min(lines.len());
+        let anchor = if self.first_line < end_line {
+            self.first_line
+        } else {
+            self.first_line.saturating_sub(1)
+        };
         let bottom = self.border_box.y + self.border_box.height;
         let mut cuts = Vec::new();
-        let mut start = (
-            self.border_box.y,
-            shift_of(self.first_line.saturating_sub(1)),
-            nearest,
-        );
-        for (index, line) in lines
-            .iter()
-            .enumerate()
-            .take(self.end_line)
-            .skip(self.first_line)
-        {
+        let mut start = (self.border_box.y, shift_of(anchor), anchor);
+        for (index, line) in lines.iter().enumerate().take(end_line).skip(anchor + 1) {
             let shift = shift_of(index);
-            if index == self.first_line && line.block_offset() <= start.0 {
-                // The box starts with this line: it moves the top too.
-                start = (start.0, shift, index);
-            } else if shift != start.1 {
+            if shift != start.1 {
                 cuts.push((start, line.block_offset()));
                 start = (line.block_offset(), shift, index);
             }

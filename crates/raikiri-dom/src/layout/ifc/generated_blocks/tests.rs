@@ -407,3 +407,23 @@ fn a_box_without_lines_moves_with_the_line_above_it() {
     );
     assert!(piece.has_block_start_edge && piece.has_block_end_edge);
 }
+
+#[test]
+fn the_top_of_a_block_box_moves_with_its_first_line() {
+    let (lines, blocks) = placed(
+        "div::after { content: 'B'; display: block; padding-top: 5px; border-top: 1px solid }",
+        TEN_PX,
+        "A",
+    );
+    let block = blocks[0];
+    assert_eq!((block.first_line, block.end_line), (1, 2));
+    // Pagination moves the box's line, not the line above it: the top edge
+    // and padding go with the line.
+    let pieces = block.pieces(&lines, |index| if index >= 1 { 9.0 } else { 0.0 });
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    assert_eq!((piece.border_box.y, piece.border_box.height), (19.0, 16.0));
+    assert_eq!((piece.line, piece.shift), (1, 9.0));
+    assert!(piece.has_block_start_edge && piece.has_block_end_edge);
+}
