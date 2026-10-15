@@ -1290,8 +1290,18 @@ fn table_pagination_child_order(
         .collect();
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
+        let node = &document.nodes[child];
+        // Table layout drops these without a box, as it does for any
+        // non-rendered element whatever its `display`.
+        if !node.is_in_document()
+            || node.is_non_rendered_html_element()
+            || node.display == DisplayValue::None
+            || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
+        {
+            continue;
+        }
         if cascade.computed[child].display == DisplayValue::Contents {
-            pending.extend(document.nodes[child].children.iter().rev().copied());
+            pending.extend(node.children.iter().rev().copied());
         } else {
             children.push(child);
         }
