@@ -973,7 +973,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
         document.nodes.get(id).is_some_and(|node| {
             node.is_in_document()
                 && node.kind() != NodeKind::Text
-                && node.style.display != taffy::Display::None
+                && !node.is_display_none()
                 && node.style.position != taffy::Position::Absolute
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
@@ -1080,7 +1080,7 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
     let is_item = |id: usize| {
         document.nodes.get(id).is_some_and(|item| {
             item.is_in_document()
-                && item.style.display != taffy::Display::None
+                && !item.is_display_none()
                 && item.style.position != taffy::Position::Absolute
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })

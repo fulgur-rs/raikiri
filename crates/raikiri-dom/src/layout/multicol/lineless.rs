@@ -31,7 +31,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
     let mut children = Vec::new();
     for &child in &container.children {
         let node = &tree.nodes[child];
-        if !node.is_in_document() || node.style.display == Display::None {
+        if !node.is_in_document() || node.is_display_none() {
             continue;
         }
         // Text that renders gives the container lines, refused above, so any
@@ -110,7 +110,7 @@ fn has_rendered_content(tree: &Document, id: usize) -> bool {
     tree.nodes[id].children.iter().any(|&child| {
         let node = &tree.nodes[child];
         node.is_in_document()
-            && node.style.display != Display::None
+            && !node.is_display_none()
             && match &node.data {
                 NodeData::Text(text) => !text.text_content.trim().is_empty(),
                 _ => true,

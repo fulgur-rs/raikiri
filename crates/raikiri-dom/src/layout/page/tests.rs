@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::FormattingContext;
 use taffy::Style;
 
 // ── layout_single_page driver (Task 7) ──────────────────────
@@ -77,9 +78,9 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     let detached = doc.append_element(None, "div", Style::default(), None::<&str>);
 
     doc.mark_in_document_flags();
-    // `is_display_none` reads the bridged Taffy style rather than the
+    // `is_display_none` reads the bridged classification rather than the
     // cascade result, so make the defensive predicate explicit here.
-    doc.nodes[hidden].style.display = Display::None;
+    doc.nodes[hidden].formatting_context = FormattingContext::None;
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 

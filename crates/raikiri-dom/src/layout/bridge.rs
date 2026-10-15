@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::{FormattingContext, Node};
 use raikiri_style::property::{ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
 
@@ -355,7 +356,35 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
     }
+    // A text node or an anonymous table cell can be a paragraph root of its
+    // own, so every node layout may lay out is classified.
+    for node in doc.nodes.layout_nodes_mut() {
+        node.formatting_context = classify_formatting_context(node);
+    }
     Ok(())
+}
+
+/// Classify how a bridged box lays out its contents. Any box whose content
+/// is a paragraph is laid out by the inline engine, including a table or
+/// multicol container and bare text, which takes its container's Taffy
+/// style. Taffy has no table or multicol display, so both are block
+/// containers to it.
+fn classify_formatting_context(node: &Node) -> FormattingContext {
+    match node.style.display {
+        Display::None => FormattingContext::None,
+        _ if node.flags.contains(NodeFlags::IS_IFC_ROOT) => FormattingContext::Inline,
+        Display::Flex => FormattingContext::Flex,
+        Display::Grid => FormattingContext::Grid,
+        _ if matches!(
+            node.display,
+            DisplayValue::Table | DisplayValue::InlineTable
+        ) =>
+        {
+            FormattingContext::Table
+        }
+        _ if node.multicol.is_some() => FormattingContext::Multicol,
+        display => FormattingContext::from_taffy_display(display),
+    }
 }
 
 /// Resolve writing-mode ancestry once, before any bridge consumer runs.

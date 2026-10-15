@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::FormattingContext;
 use taffy::Style;
 
 fn fixture(markup: &str) -> (Document, raikiri_style::CascadeResult) {
@@ -749,7 +750,7 @@ fn unsupported_text_and_parallel_or_hidden_nodes_keep_the_scope_bounded() {
     doc.append_comment(Some(root), "opaque");
     doc.append_text(root, " ");
     let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
-    doc.nodes[hidden].style.display = Display::None;
+    doc.nodes[hidden].formatting_context = FormattingContext::None;
     let positioned = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     doc.nodes[positioned].style.position = TaffyPosition::Absolute;
     doc.mark_in_document_flags();

@@ -13,7 +13,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
         let mut children = tree.nodes[current].children.iter().copied().filter(|&id| {
             tree.nodes[id].is_in_document()
                 && tree.nodes[id].kind() == NodeKind::Element
-                && tree.nodes[id].style.display != Display::None
+                && !tree.nodes[id].is_display_none()
         });
         let child = children.next()?;
         if children.next().is_some() {

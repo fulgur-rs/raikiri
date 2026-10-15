@@ -29,7 +29,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             return false;
         }
         let node = &tree.nodes[id];
-        if !node.is_in_document() || node.style.display == Display::None {
+        if !node.is_in_document() || node.is_display_none() {
             continue;
         }
         // Rendered children are elements or text; flat-tree membership
@@ -202,7 +202,7 @@ fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
         && node.children.iter().all(|&child| {
             let child = &tree.nodes[child];
             !child.is_in_document()
-                || child.style.display == Display::None
+                || child.is_display_none()
                 || if child.kind() == NodeKind::Element {
                     !child.display.is_inline_level() && child.display != DisplayValue::Contents
                 } else {
@@ -231,7 +231,7 @@ fn in_paragraph_with_lines(tree: &Document, id: usize) -> bool {
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {
     tree.nodes[id].children.iter().any(|&child| {
         tree.nodes[child].is_in_document()
-            && tree.nodes[child].style.display != Display::None
+            && !tree.nodes[child].is_display_none()
             && matches!(tree.nodes[child].data, NodeData::Element(_))
     })
 }
@@ -258,7 +258,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
     let children = &tree.nodes[id].children;
     let in_flow = |&&child: &&usize| {
         tree.nodes[child].is_in_document()
-            && tree.nodes[child].style.display != Display::None
+            && !tree.nodes[child].is_display_none()
             && !tree.nodes[child].style.float.is_floated()
             && tree.nodes[child].style.position != TaffyPosition::Absolute
             && matches!(tree.nodes[child].data, NodeData::Element(_))
@@ -282,7 +282,7 @@ fn collect(
 ) {
     if tree.fragment_tree.limit_exceeded
         || !tree.nodes[id].is_in_document()
-        || tree.nodes[id].style.display == Display::None
+        || tree.nodes[id].is_display_none()
         || !matches!(tree.nodes[id].data, NodeData::Element(_))
         || tree.nodes[id].style.position == TaffyPosition::Absolute
     {
@@ -365,7 +365,7 @@ fn collect(
                 && !tree.nodes[id].children.iter().any(|&child| {
                     let child = &tree.nodes[child];
                     child.is_in_document()
-                        && child.style.display != Display::None
+                        && !child.is_display_none()
                         && matches!(&child.data, NodeData::Text(text) if !text.text_content.trim().is_empty())
                 })
                 && !matches!(
@@ -425,7 +425,7 @@ fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
         };
         *scanned = scanned.saturating_add(raw_cost);
         let element = matches!(node.data, NodeData::Element(_));
-        let hidden = node.style.display == Display::None;
+        let hidden = node.is_display_none();
         let collecting = *collect_children
             && in_document
             && element

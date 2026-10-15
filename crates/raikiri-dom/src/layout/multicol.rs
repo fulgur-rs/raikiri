@@ -324,7 +324,7 @@ fn space_min_constrained_children(
             .filter(|&child| {
                 tree.nodes[child].is_in_document()
                     && tree.nodes[child].kind() == NodeKind::Element
-                    && tree.nodes[child].style.display != Display::None
+                    && !tree.nodes[child].is_display_none()
             })
             .collect();
         // The minimum-sized child makes the list non-empty.
@@ -352,7 +352,7 @@ fn space_min_constrained_children(
             .filter(|&&child| {
                 tree.nodes[child].is_in_document()
                     && tree.nodes[child].kind() == NodeKind::Element
-                    && tree.nodes[child].style.display != Display::None
+                    && !tree.nodes[child].is_display_none()
             })
             .map(|&child| tree.nodes[child].unrounded_layout.size.height)
             .fold(0.0_f32, f32::max);
@@ -515,7 +515,7 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
     tree.nodes[node_id].children.iter().any(|&child| {
         tree.nodes[child].is_in_document()
             && tree.nodes[child].kind() == NodeKind::Element
-            && tree.nodes[child].style.display != Display::None
+            && !tree.nodes[child].is_display_none()
     })
 }
 
@@ -527,7 +527,7 @@ fn multicol_has_min_constrained_child(tree: &Document, node_id: usize) -> bool {
     tree.nodes[node_id].children.iter().any(|&child| {
         tree.nodes[child].is_in_document()
             && tree.nodes[child].kind() == NodeKind::Element
-            && tree.nodes[child].style.display != Display::None
+            && !tree.nodes[child].is_display_none()
             && tree.nodes[child].has_logical_min_block_size
             && !tree.nodes[child].style.min_size.height.is_auto()
     })
@@ -571,7 +571,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
             .filter(|&child| {
                 tree.nodes[child].is_in_document()
                     && tree.nodes[child].kind() == NodeKind::Element
-                    && tree.nodes[child].style.display != Display::None
+                    && !tree.nodes[child].is_display_none()
             });
         let Some(child) = children.next() else {
             return false;
@@ -626,9 +626,7 @@ fn relayout_nested_multicol_children(
         .children
         .iter()
         .copied()
-        .filter(|&child| {
-            tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None
-        })
+        .filter(|&child| tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none())
         .collect();
     let has_spanners = children
         .iter()
@@ -1163,9 +1161,7 @@ fn plan_nested_continuation(
         .children
         .iter()
         .copied()
-        .filter(|&id| {
-            tree.nodes[id].is_in_document() && tree.nodes[id].style.display != Display::None
-        })
+        .filter(|&id| tree.nodes[id].is_in_document() && !tree.nodes[id].is_display_none())
         .collect();
     if children.iter().any(|&id| spanning::is_spanner(tree, id)) {
         return None;
@@ -1735,8 +1731,7 @@ fn record_nested_ifc_box_fragments(
                 .iter()
                 .copied()
                 .filter(|&child| {
-                    tree.nodes[child].is_in_document()
-                        && tree.nodes[child].style.display != Display::None
+                    tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none()
                 })
                 .map(|child| {
                     (
@@ -1856,7 +1851,7 @@ fn multicol_subtree_has_float(tree: &Document, subtree_root: usize) -> bool {
     let mut pending = vec![subtree_root];
     while let Some(node_id) = pending.pop() {
         let node = &tree.nodes[node_id];
-        if !node.is_in_document() || node.style.display == Display::None {
+        if !node.is_in_document() || node.is_display_none() {
             continue;
         }
         if node.style.float.is_floated() {
@@ -2166,7 +2161,7 @@ fn refresh_nested_text_fragments_in(
     // This node has no paragraph, so no child has a placement in it.
     let children = tree.nodes[node_id].children.clone();
     for child in children {
-        if tree.nodes[child].is_in_document() && tree.nodes[child].style.display != Display::None {
+        if tree.nodes[child].is_in_document() && !tree.nodes[child].is_display_none() {
             let child_chain = chain.below(tree, child);
             refresh_nested_text_fragments_in(tree, child, context, child_chain, None);
         }
