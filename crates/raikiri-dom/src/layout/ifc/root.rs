@@ -35,6 +35,9 @@ pub(crate) struct IfcRoot {
     /// Fixed-size images of `::before` and `::after` content, independent of
     /// the DOM box arena.
     pub(crate) generated_atomics: Vec<(shodo::node::NodeId, shodo::AtomicSize)>,
+    /// Block-level `::before` and `::after` boxes of the paragraph, which the
+    /// line loop places between the lines at their tokens.
+    pub(crate) generated_blocks: Arc<[super::generated_blocks::GeneratedBlock]>,
     /// The root's `direction` is `rtl`: its lines start at the right edge.
     pub(crate) rtl: bool,
     /// Paint offsets of the relatively positioned inline elements of the
@@ -235,6 +238,17 @@ impl IfcLines {
         self.shifts.of(index)
     }
 
+    /// The block offset of the end of the paragraph's content from its
+    /// content-box top: its laid-out height, moved as its last line was.
+    pub(crate) fn shifted_height(&self) -> f32 {
+        self.height
+            + self
+                .lines
+                .len()
+                .checked_sub(1)
+                .map_or(0.0, |last| self.shift_of(last))
+    }
+
     /// The block offset of line `index` from the content-box top, with the
     /// pagination shift.
     pub(crate) fn line_top(&self, index: usize) -> f32 {
@@ -304,6 +318,7 @@ impl IfcRoot {
             boxes: meta.boxes,
             marker_atomic: meta.marker_atomic,
             generated_atomics: meta.generated_atomics,
+            generated_blocks: meta.generated_blocks.into(),
             rtl: meta.rtl,
             offsets: meta.offsets,
             percent_insets: meta.percent_insets,
@@ -345,6 +360,7 @@ impl IfcRoot {
             boxes: self.boxes.clone(),
             marker_atomic: self.marker_atomic,
             generated_atomics: self.generated_atomics.clone(),
+            generated_blocks: self.generated_blocks.clone(),
             rtl: self.rtl,
             offsets: self.offsets.clone(),
             percent_insets: self.percent_insets.clone(),

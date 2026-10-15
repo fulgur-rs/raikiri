@@ -2,6 +2,7 @@
 
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
+use super::generated_blocks;
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
@@ -58,6 +59,8 @@ struct RunBoxesOutcome {
     lines: IfcLines,
     continuation: Option<BreakToken>,
     atomic_outputs: Vec<(usize, taffy::LayoutOutput)>,
+    /// The generated block still open where the segment stopped.
+    open_block: Option<generated_blocks::OpenBlock>,
 }
 
 struct FragmentedFloatOutput<'a> {
@@ -214,6 +217,8 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
         .saturating_add(context.column_count)
         .clamp(1, MAX_IFC_FRAGMENTAINERS);
     let mut source_float_placements = Vec::new();
+    // A generated block that a column ends inside goes on in the next.
+    let mut carried_block = None;
     for offset in 0..column_budget {
         let column = context.column_index.saturating_add(offset);
         let has_next = offset + 1 < column_budget;
@@ -263,7 +268,11 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             segment_height,
             Some(column),
             has_next,
+            carried_block,
         );
+        carried_block = outcome
+            .open_block
+            .map(|open| open.continued(fragmentainer_height.unwrap_or_default()));
 
         let line_start = all_lines.len();
         let line_count = outcome.lines.lines.len();
@@ -445,6 +454,7 @@ fn run_boxes(
         None,
         None,
         false,
+        None,
     );
     if perform {
         truncate_for_text_overflow(tree, root, &mut outcome.lines.lines, geometry.width);
@@ -475,6 +485,7 @@ fn run_boxes_segment(
     fragmentainer_height: Option<f32>,
     fragmentainer: Option<usize>,
     has_next_fragmentainer: bool,
+    mut open_block: Option<generated_blocks::OpenBlock>,
 ) -> RunBoxesOutcome {
     let FlowGeometry {
         width,
@@ -521,6 +532,11 @@ fn run_boxes_segment(
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut continuation = None;
+    // `open_block` is the block-level `::before` or `::after` whose lines
+    // are being laid out: its start token was met and its end token was not.
+    // The tokens come in document order; the cursor is the block of the next.
+    let mut block_cursor = 0;
+    let horizontal = root.writing_mode == WritingMode::HorizontalTb;
 
     loop {
         calls += 1;
@@ -539,7 +555,7 @@ fn run_boxes_segment(
                 inline_size: width,
             }
         };
-        let space = shorten(base, &tentative);
+        let space = narrow_to_block(shorten(base, &tentative), open_block.as_ref(), width);
         let right_inset = (width - space.inline_start - space.inline_size).max(0.0);
         let mut constraint = LineConstraint::from_physical_insets(
             width,
@@ -552,6 +568,11 @@ fn run_boxes_segment(
                 Direction::Ltr
             },
         );
+        if open_block.is_some() {
+            // The lines of a generated block wider than the paragraph run out
+            // past its content box, which the physical insets cannot say.
+            constraint.available_inline_size = space.inline_size;
+        }
         constraint.block_offset = line_y;
         constraint.floats_placed_through = cursor;
         // The state is taken only for the engine call: measuring a float
@@ -651,7 +672,8 @@ fn run_boxes_segment(
                         inline_size: width,
                     }
                 };
-                let real = shorten(real_base, &tentative);
+                let real =
+                    narrow_to_block(shorten(real_base, &tentative), open_block.as_ref(), width);
                 if retries < MAX_SPACE_RETRIES && real != space {
                     assumed_height = height;
                     retries += 1;
@@ -774,6 +796,51 @@ fn run_boxes_segment(
                         },
                     ));
                 }
+                if let Some((index, edge)) =
+                    generated_blocks::token(&root.generated_blocks, node.0, block_cursor)
+                {
+                    block_cursor = index;
+                    // A generated block is laid out along a horizontal
+                    // root's block axis only; a vertical root breaks its
+                    // lines at the tokens.
+                    if horizontal {
+                        let at_start = lines.is_empty()
+                            && block_line_starts.is_empty()
+                            && y == 0.0
+                            && pending == CollapsibleMarginSet::ZERO
+                            && ceiling == f32::NEG_INFINITY;
+                        let flow = generated_blocks::Flow {
+                            y: &mut y,
+                            pending: &mut pending,
+                            leading_block_margin: &mut leading_block_margin,
+                            lines: &lines,
+                            ctx,
+                            width,
+                            top_edge,
+                            definite_height: geometry.definite_height,
+                            at_start,
+                            rtl: root.rtl,
+                        };
+                        match edge {
+                            generated_blocks::Token::Start(block) => {
+                                open_block = Some(generated_blocks::open(block, flow));
+                            }
+                            generated_blocks::Token::End(block) => {
+                                block_cursor += 1;
+                                if let Some(open) = open_block.take() {
+                                    generated_blocks::close(block, open, flow);
+                                }
+                            }
+                        }
+                    }
+                    token = token_after;
+                    withdrawn.clear();
+                    assumed_height = 0.0;
+                    retries = 0;
+                    moves = 0;
+                    calls = 0;
+                    continue;
+                }
                 let starts_paragraph = lines.is_empty()
                     && block_line_starts.is_empty()
                     && y == 0.0
@@ -880,6 +947,7 @@ fn run_boxes_segment(
         },
         continuation,
         atomic_outputs: atomics.outputs,
+        open_block,
     }
 }
 
@@ -978,6 +1046,16 @@ fn next_float_edge(ctx: &BlockContext<'_>, top_edge: f32, y: f32) -> Option<f32>
         ctx.cleared_threshold(Clear::Both)?
     };
     (edge > at).then_some(edge - top_edge)
+}
+
+/// The space of a line of the generated block `open`, if one is open, set
+/// in by its inline-side edges.
+fn narrow_to_block(
+    space: LineSpace,
+    open: Option<&generated_blocks::OpenBlock>,
+    width: f32,
+) -> LineSpace {
+    open.map_or(space, |open| open.narrow(space, width))
 }
 
 /// Take the tentative floats' margin boxes off the space of a line: a left
@@ -2086,6 +2164,20 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
         blocks: (0.0, 0.0),
     };
     if let Some(root) = tree.nodes[idx].ifc.as_ref() {
+        // Generated blocks set in only horizontal lines, so a vertical
+        // paragraph's inline extent takes nothing from them.
+        let blocks = if vertical {
+            &[][..]
+        } else {
+            &root.generated_blocks[..]
+        };
+        for width in blocks
+            .iter()
+            .map(generated_blocks::GeneratedBlock::intrinsic_width)
+        {
+            intrinsics.blocks.0 = intrinsics.blocks.0.max(width);
+            intrinsics.blocks.1 = intrinsics.blocks.1.max(width);
+        }
         for &(id, size) in root.marker_atomic.iter().chain(&root.generated_atomics) {
             intrinsics.engine.insert_atomic(
                 id,
