@@ -374,8 +374,8 @@ pub struct Document {
     pub(crate) body_block_start_margin: f32,
     /// Width and height of the page area of the most recent layout: the
     /// containing block of fixed boxes, and the initial containing block
-    /// orthogonal flows size against.
-    pub(crate) fixed_page_area: (f32, f32),
+    /// orthogonal flows size against; `None` before any layout.
+    pub(crate) fixed_page_area: Option<(f32, f32)>,
     /// The laid-out border-box height of each auto-height box that the most
     /// recent layout then grew to hold a float descendant it does not
     /// contain: the flow after such a box follows this height, not its grown
@@ -581,6 +581,13 @@ impl Document {
         self.ifc.is_some()
     }
 
+    /// Width of the page area the most recent layout was made in, or `None`
+    /// before any layout.
+    #[doc(hidden)]
+    pub fn laid_out_page_area_width(&self) -> Option<f32> {
+        self.fixed_page_area.map(|(width, _)| width)
+    }
+
     /// Lower the cap shared by retained layout fragments and break-flow or
     /// page-projection work. A value above the current cap is ignored, so the
     /// built-in bound can only tighten.
@@ -674,7 +681,7 @@ impl Document {
             layout_cascade_generation: None,
             body_inline_margins: (0.0, 0.0),
             body_block_start_margin: 0.0,
-            fixed_page_area: (0.0, 0.0),
+            fixed_page_area: None,
             in_flow_heights: HashMap::new(),
             pagination_on_transposed_axes: false,
             continuation_break: None,

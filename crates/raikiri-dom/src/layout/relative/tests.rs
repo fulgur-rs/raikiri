@@ -253,7 +253,7 @@ fn body_percentages_resolve_against_the_page_area() {
         None,
         "display:block;margin:0;position:relative;left:10%;top:10%",
     );
-    let (width, height) = document.fixed_page_area;
+    let (width, height) = document.fixed_page_area.expect("the body is laid out");
     let (dx, dy) = used_relative_offset(&document, &cascade, &cascade.computed[body], body);
     assert!((dx - width * 0.1).abs() < 1e-3 && (dy - height * 0.1).abs() < 1e-3);
 }
