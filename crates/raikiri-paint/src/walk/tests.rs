@@ -6489,3 +6489,92 @@ fn a_line_centered_on_a_page_boundary_belongs_to_the_page_starting_there() {
     assert!(lr.holds_line_center(Affine::IDENTITY, kurbo::Point::new(20.0, 5.0)));
     assert!(!lr.holds_line_center(Affine::IDENTITY, kurbo::Point::new(80.0, 5.0)));
 }
+
+/// The low and high ends, along `vertical`'s axis, of the border-image tiles
+/// one inline piece paints without a joined box.
+fn inline_border_image_tile_ends(
+    vertical: bool,
+    has_start_edge: bool,
+    has_end_edge: bool,
+) -> Vec<(f64, f64)> {
+    use kurbo::Shape;
+    let mut document = Document::new();
+    let span = document.append_element(
+        Some(document.root_index()),
+        "span",
+        Style::default(),
+        Some("border:5px solid blue;border-image:linear-gradient(lime,lime) 1"),
+    );
+    let rules = build_rule_tree(&document);
+    let cascade = cascade(&document, &rules).expect("cascade Ok");
+    let rect = raikiri_dom::BoxRect {
+        x: 0.0,
+        y: 0.0,
+        width: 40.0,
+        height: 40.0,
+    };
+    let piece = raikiri_dom::InlineBoxPiece {
+        node: span,
+        line: 0,
+        border_box: rect,
+        content_box: rect,
+        has_start_edge,
+        has_end_edge,
+        parent: None,
+        source_container: None,
+        source_owner: None,
+    };
+    let writing_mode = if vertical {
+        shodo::geometry::WritingMode::VerticalRl
+    } else {
+        shodo::geometry::WritingMode::HorizontalTb
+    };
+    let mut scene = Scene::new();
+    paint_inline_box(
+        &crate::walk::ImageBrushCache::default(),
+        &mut scene,
+        &cascade.computed[span],
+        &piece,
+        None,
+        InlineProgression::new(writing_mode, false),
+        0.0,
+        0.0,
+        None,
+        &mut Vec::new(),
+    );
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Fill(fill) => {
+                let bounds = fill
+                    .transform
+                    .transform_rect_bbox(fill.shape.bounding_box());
+                Some(if vertical {
+                    (bounds.y0, bounds.y1)
+                } else {
+                    (bounds.x0, bounds.x1)
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn an_inline_piece_without_a_joined_box_cuts_its_border_image_along_its_axis() {
+    for vertical in [false, true] {
+        // A whole box has corner tiles at both ends of the axis.
+        let whole = inline_border_image_tile_ends(vertical, true, true);
+        assert!(whole.iter().any(|&(low, _)| low >= 35.0), "{whole:?}");
+        assert!(whole.iter().any(|&(_, high)| high <= 5.0), "{whole:?}");
+        // The first piece of a broken box has none at its end ...
+        let first = inline_border_image_tile_ends(vertical, true, false);
+        assert!(!first.is_empty());
+        assert!(first.iter().all(|&(low, _)| low < 35.0), "{first:?}");
+        // ... and the last none at its start.
+        let last = inline_border_image_tile_ends(vertical, false, true);
+        assert!(!last.is_empty());
+        assert!(last.iter().all(|&(_, high)| high > 5.0), "{last:?}");
+    }
+}

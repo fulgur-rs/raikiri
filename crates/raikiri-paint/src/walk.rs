@@ -5689,13 +5689,16 @@ pub(crate) fn paint_element_border_image(
         border,
         pixel_source,
         warnings,
-        (f64::NEG_INFINITY, f64::INFINITY),
+        (
+            (f64::NEG_INFINITY, f64::INFINITY),
+            (f64::NEG_INFINITY, f64::INFINITY),
+        ),
     )
 }
 
 /// [`paint_element_border_image`] that emits only the parts and tiles
-/// crossing the horizontal range `visible`, for a caller that clips the
-/// image to that range anyway.
+/// crossing the horizontal and vertical ranges `visible`, for a caller that
+/// clips the image to that area anyway.
 #[allow(clippy::too_many_arguments)]
 fn paint_border_image_within(
     image_cache: &crate::walk::ImageBrushCache,
@@ -5707,9 +5710,10 @@ fn paint_border_image_within(
     border: &Sides<raikiri_style::resolve::ComputedBorder>,
     pixel_source: Option<&dyn ImagePixelSource>,
     warnings: &mut Vec<RenderWarning>,
-    visible: (f64, f64),
+    (visible_x, visible_y): ((f64, f64), (f64, f64)),
 ) -> bool {
-    let crosses = |x: f64, width: f64| x <= visible.1 && x + width >= visible.0;
+    let crosses = |x: f64, width: f64| x <= visible_x.1 && x + width >= visible_x.0;
+    let crosses_y = |y: f64, height: f64| y <= visible_y.1 && y + height >= visible_y.0;
     let border_box = (
         f64::from(abs_x),
         f64::from(abs_y),
@@ -5815,7 +5819,7 @@ fn paint_border_image_within(
                 let Some(crop) = crop else {
                     continue;
                 };
-                if !crosses(area_x, area_w) {
+                if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
                     continue;
                 }
                 let (brush, pixels) = if let Some(brush) = &shared {
@@ -5842,7 +5846,7 @@ fn paint_border_image_within(
                 let scale =
                     Affine::scale_non_uniform(part.tile_width / src_w, part.tile_height / src_h)
                         * Affine::translate((-src_x, -src_y));
-                for tile_y in &part.y {
+                for tile_y in part.y.iter().filter(|y| crosses_y(**y, part.tile_height)) {
                     for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
                         scene.fill(
                             Fill::NonZero,
@@ -5867,14 +5871,14 @@ fn paint_border_image_within(
             // Fill each tile, so `space` keeps its gaps transparent.
             for part in &geometry.parts {
                 let (area_x, area_y, area_w, area_h) = part.area;
-                if !crosses(area_x, area_w) {
+                if !crosses(area_x, area_w) || !crosses_y(area_y, area_h) {
                     continue;
                 }
                 scene.push_clip_layer(
                     Affine::IDENTITY,
                     &Rect::new(area_x, area_y, area_x + area_w, area_y + area_h),
                 );
-                for tile_y in &part.y {
+                for tile_y in part.y.iter().filter(|y| crosses_y(**y, part.tile_height)) {
                     for tile_x in part.x.iter().filter(|x| crosses(**x, part.tile_width)) {
                         scene.fill(
                             Fill::NonZero,
@@ -6181,9 +6185,69 @@ pub(crate) fn paintable_border_radius(
     }
 }
 
+/// The physical axis the line fragments of an inline element run along, and
+/// the end of it where the element starts.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct InlineProgression {
+    /// The fragments run along y, as in a vertical writing mode, rather than
+    /// along x.
+    pub(crate) vertical: bool,
+    /// The element starts at the high end of that axis: the right in
+    /// horizontal text, the bottom in vertical text.
+    pub(crate) reversed: bool,
+}
+
+impl InlineProgression {
+    /// The progression of an element whose own direction is right to left
+    /// when `rtl`, in a paragraph laid out in `writing_mode` (CSS Writing
+    /// Modes 4 §2.1: `sideways-lr` puts the inline start at the bottom).
+    pub(crate) fn new(writing_mode: shodo::geometry::WritingMode, rtl: bool) -> Self {
+        Self {
+            vertical: writing_mode.is_vertical(),
+            reversed: rtl != (writing_mode == shodo::geometry::WritingMode::SidewaysLr),
+        }
+    }
+
+    /// The start and size of `rect` along the axis.
+    pub(crate) fn span(self, rect: raikiri_dom::BoxRect) -> (f32, f32) {
+        if self.vertical {
+            (rect.y, rect.height)
+        } else {
+            (rect.x, rect.width)
+        }
+    }
+
+    /// `rect` with the start and size `span` along the axis.
+    pub(crate) fn with_span(
+        self,
+        mut rect: raikiri_dom::BoxRect,
+        (start, size): (f32, f32),
+    ) -> raikiri_dom::BoxRect {
+        if self.vertical {
+            rect.y = start;
+            rect.height = size;
+        } else {
+            rect.x = start;
+            rect.width = size;
+        }
+        rect
+    }
+
+    /// The page rectangle whose span along the axis is `along` and across it
+    /// is `across`.
+    fn rect(self, along: (f64, f64), across: (f64, f64)) -> Rect {
+        if self.vertical {
+            Rect::new(across.0, along.0, across.1, along.1)
+        } else {
+            Rect::new(along.0, across.0, along.1, across.1)
+        }
+    }
+}
+
 /// Paint the shadows, background, borders and outline of one piece of an
 /// inline element, the way the element visit paints a box. `x` and `y` are
-/// the page position of the paragraph's content box.
+/// the page position of the paragraph's content box; `progression` gives the
+/// axis the element's pieces run along.
 ///
 /// A side whose edge the piece does not carry (the element continues on
 /// another line there) has no border, padding or corner radius: the box is
@@ -6196,6 +6260,7 @@ pub(crate) fn paint_inline_box(
     cv: &ComputedValues,
     piece: &raikiri_dom::InlineBoxPiece,
     background_slice: Option<&crate::ifc_text::BackgroundSlice>,
+    progression: InlineProgression,
     x: f32,
     y: f32,
     pixel_source: Option<&dyn ImagePixelSource>,
@@ -6203,24 +6268,71 @@ pub(crate) fn paint_inline_box(
 ) {
     let outer = piece.border_box;
     let content = piece.content_box;
-    // The start edge is on the physical left when the element's own direction
-    // is left to right, whatever the paragraph's direction.
     // With `box-decoration-break: clone` every fragment is drawn as a whole
     // box (CSS Fragmentation 3 §5.4): the inline layout gives each fragment
     // both edges, and its background is laid out over its own box.
     let clone = cv.box_decoration_break == raikiri_style::property::BoxDecorationBreak::Clone;
     let background_slice = background_slice.filter(|_| !clone);
-    let (left_edge, right_edge) = if cv.direction == raikiri_style::property::Direction::Rtl {
+    // The edges at the low (left or top) and high (right or bottom) ends of
+    // the axis. The start edge is at the low end when the element's own
+    // direction is left to right, whatever the paragraph's direction.
+    let (low_edge, high_edge) = if progression.reversed {
         (piece.has_end_edge, piece.has_start_edge)
     } else {
         (piece.has_start_edge, piece.has_end_edge)
     };
     let mut border = cv.border;
-    if !left_edge {
-        border.left = border.left.without_line();
+    let square = raikiri_style::property::CornerRadius::circular(
+        raikiri_style::resolve::ComputedLengthPercentageOrCalc::Px(0.0),
+    );
+    // The same rule as the element visit: radii only for a box that draws a
+    // border or a background, and never under a transform or a filter.
+    let has_background_image = cv.has_background_image();
+    let joined_radius = |border: &Sides<raikiri_style::resolve::ComputedBorder>| {
+        let has_border = [&border.top, &border.right, &border.bottom, &border.left]
+            .iter()
+            .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
+        paintable_border_radius(
+            &cv.border_radius,
+            (has_border || cv.background_color.a > 0 || has_background_image)
+                && cv.transform.is_empty()
+                && cv.filter.is_empty(),
+        )
+    };
+    let full_radius = joined_radius(&cv.border);
+    if progression.vertical {
+        if !low_edge {
+            border.top = border.top.without_line();
+        }
+        if !high_edge {
+            border.bottom = border.bottom.without_line();
+        }
+    } else {
+        if !low_edge {
+            border.left = border.left.without_line();
+        }
+        if !high_edge {
+            border.right = border.right.without_line();
+        }
     }
-    if !right_edge {
-        border.right = border.right.without_line();
+    let mut radius = joined_radius(&border);
+    if !low_edge {
+        if progression.vertical {
+            radius.top_left = square;
+            radius.top_right = square;
+        } else {
+            radius.top_left = square;
+            radius.bottom_left = square;
+        }
+    }
+    if !high_edge {
+        if progression.vertical {
+            radius.bottom_left = square;
+            radius.bottom_right = square;
+        } else {
+            radius.top_right = square;
+            radius.bottom_right = square;
+        }
     }
     let padding = taffy::Rect {
         left: (content.x - outer.x - border.left.width().px()).max(0.0),
@@ -6232,34 +6344,24 @@ pub(crate) fn paint_inline_box(
             - border.bottom.width().px())
         .max(0.0),
     };
-    // The same rule as the element visit: radii only for a box that draws a
-    // border or a background, and never under a transform or a filter.
-    let has_border = [&border.top, &border.right, &border.bottom, &border.left]
-        .iter()
-        .any(|side| side.width().px() > 0.0 && side.style() != BorderStyle::None);
-    let has_background_image = cv.has_background_image();
-    let mut radius = paintable_border_radius(
-        &cv.border_radius,
-        (has_border || cv.background_color.a > 0 || has_background_image)
-            && cv.transform.is_empty()
-            && cv.filter.is_empty(),
-    );
-    let square = raikiri_style::property::CornerRadius::circular(
-        raikiri_style::resolve::ComputedLengthPercentageOrCalc::Px(0.0),
-    );
-    if !left_edge {
-        radius.top_left = square;
-        radius.bottom_left = square;
-    }
-    if !right_edge {
-        radius.top_right = square;
-        radius.bottom_right = square;
-    }
     let abs_x = x + outer.x;
     let abs_y = y + outer.y;
-    let shadow_slice = background_slice.filter(|slice| {
-        !cv.box_shadow.is_empty() && (slice.outer.x != outer.x || slice.outer.width != outer.width)
-    });
+    let (piece_start, piece_size) = progression.span(outer);
+    // The page coordinates of the piece's ends along the axis and across it.
+    let along_origin = if progression.vertical { y } else { x };
+    let piece_along = (
+        f64::from(along_origin + piece_start),
+        f64::from(along_origin + piece_start + piece_size),
+    );
+    let piece_across = if progression.vertical {
+        (f64::from(abs_x), f64::from(abs_x + outer.width))
+    } else {
+        (f64::from(abs_y), f64::from(abs_y + outer.height))
+    };
+    // A joined box that reaches past this piece along the axis.
+    let joined =
+        background_slice.filter(|slice| progression.span(slice.outer) != (piece_start, piece_size));
+    let shadow_slice = joined.filter(|_| !cv.box_shadow.is_empty());
     if let Some(slice) = shadow_slice {
         // Only artificial inline edges clip a sliced shadow. Its real outer
         // edges and its block-axis overflow remain visible.
@@ -6270,38 +6372,40 @@ pub(crate) fn paint_inline_box(
             overflow_x = overflow_x.max(shadow.offset_x.px().abs() + spread + blur + 1.0);
             overflow_y = overflow_y.max(shadow.offset_y.px().abs() + spread + blur + 1.0);
         }
-        let left = if slice.outer.x < outer.x {
-            abs_x
+        let (overflow_along, overflow_across) = if progression.vertical {
+            (f64::from(overflow_y), f64::from(overflow_x))
         } else {
-            x + slice.outer.x - overflow_x
+            (f64::from(overflow_x), f64::from(overflow_y))
         };
-        let right = if slice.outer.x + slice.outer.width > outer.x + outer.width {
-            abs_x + outer.width
+        let (slice_start, slice_size) = progression.span(slice.outer);
+        let low = if slice_start < piece_start {
+            piece_along.0
         } else {
-            x + slice.outer.x + slice.outer.width + overflow_x
+            f64::from(along_origin + slice_start) - overflow_along
+        };
+        let high = if slice_start + slice_size > piece_start + piece_size {
+            piece_along.1
+        } else {
+            f64::from(along_origin + slice_start + slice_size) + overflow_along
         };
         scene.push_clip_layer(
             Affine::IDENTITY,
-            &Rect::new(
-                f64::from(left),
-                f64::from(abs_y - overflow_y),
-                f64::from(right),
-                f64::from(abs_y + outer.height + overflow_y),
+            &progression.rect(
+                (low, high),
+                (
+                    piece_across.0 - overflow_across,
+                    piece_across.1 + overflow_across,
+                ),
             ),
         );
-        let joined_radius = paintable_border_radius(
-            &cv.border_radius,
-            (has_border || cv.background_color.a > 0 || has_background_image)
-                && cv.transform.is_empty()
-                && cv.filter.is_empty(),
-        );
+        let joined_box = progression.with_span(outer, (slice_start, slice_size));
         paint_element_box_shadows(
             scene,
-            slice.outer.width,
-            outer.height,
-            x + slice.outer.x,
-            abs_y,
-            &joined_radius,
+            joined_box.width,
+            joined_box.height,
+            x + joined_box.x,
+            y + joined_box.y,
+            &full_radius,
             &cv.box_shadow,
             cv.color,
         );
@@ -6318,41 +6422,38 @@ pub(crate) fn paint_inline_box(
             cv.color,
         );
     }
+    let piece_rect = Rect::new(
+        f64::from(abs_x),
+        f64::from(abs_y),
+        f64::from(abs_x + outer.width),
+        f64::from(abs_y + outer.height),
+    );
     // A typographic pseudo split across source owners has one background
     // positioning area. Slice that image before applying each owner's offset;
-    // fragment heights remain local when their inherited fonts differ.
-    let slice = background_slice.filter(|slice| {
-        has_background_image && (slice.outer.x != outer.x || slice.outer.width != outer.width)
-    });
+    // fragment sizes across the axis remain local when their inherited fonts
+    // differ.
+    let slice = joined.filter(|_| has_background_image);
     let mut background_outer = outer;
     let mut background_padding = padding;
     if let Some(slice) = slice {
-        background_outer.x = slice.outer.x;
-        background_outer.width = slice.outer.width;
-        background_padding.left =
-            (slice.content.x - slice.outer.x - cv.border.left.width().px()).max(0.0);
-        background_padding.right = ((slice.outer.x + slice.outer.width)
-            - (slice.content.x + slice.content.width)
-            - cv.border.right.width().px())
-        .max(0.0);
-        scene.push_clip_layer(
-            Affine::IDENTITY,
-            &Rect::new(
-                f64::from(abs_x),
-                f64::from(abs_y),
-                f64::from(abs_x + outer.width),
-                f64::from(abs_y + outer.height),
-            ),
-        );
+        background_outer = progression.with_span(outer, progression.span(slice.outer));
+        if progression.vertical {
+            background_padding.top =
+                (slice.content.y - slice.outer.y - cv.border.top.width().px()).max(0.0);
+            background_padding.bottom = ((slice.outer.y + slice.outer.height)
+                - (slice.content.y + slice.content.height)
+                - cv.border.bottom.width().px())
+            .max(0.0);
+        } else {
+            background_padding.left =
+                (slice.content.x - slice.outer.x - cv.border.left.width().px()).max(0.0);
+            background_padding.right = ((slice.outer.x + slice.outer.width)
+                - (slice.content.x + slice.content.width)
+                - cv.border.right.width().px())
+            .max(0.0);
+        }
+        scene.push_clip_layer(Affine::IDENTITY, &piece_rect);
     }
-    let background_radius = if slice.is_some() {
-        paintable_border_radius(
-            &cv.border_radius,
-            cv.transform.is_empty() && cv.filter.is_empty(),
-        )
-    } else {
-        radius
-    };
     paint_element_background_layers(
         image_cache,
         scene,
@@ -6360,24 +6461,21 @@ pub(crate) fn paint_inline_box(
             background_outer.width,
             background_outer.height,
             x + background_outer.x,
-            abs_y,
+            y + background_outer.y,
         ),
         cv.background_color,
         cv.background_layers(),
         cv.color,
-        &background_radius,
+        if slice.is_some() {
+            &full_radius
+        } else {
+            &radius
+        },
         if slice.is_some() { &cv.border } else { &border },
         &background_padding,
         pixel_source,
         warnings,
-        slice.map(|_| {
-            Rect::new(
-                f64::from(abs_x),
-                f64::from(abs_y),
-                f64::from(abs_x + outer.width),
-                f64::from(abs_y + outer.height),
-            )
-        }),
+        slice.map(|_| piece_rect),
     );
     if slice.is_some() {
         scene.pop_layer();
@@ -6386,38 +6484,33 @@ pub(crate) fn paint_inline_box(
     // over the joined box and clipped to this fragment (CSS Fragmentation 3
     // §5.4). Without a joined box, the fragment shows it on the edges it
     // keeps.
-    let joined = background_slice
-        .filter(|slice| slice.outer.x != outer.x || slice.outer.width != outer.width);
     let border_image_drawn = if let Some(joined) = joined {
         // Only the cuts between fragments clip the image; the outset beyond
         // the box's own edges stays visible (CSS Backgrounds 3 §6.4). The
         // image itself bounds what is drawn past those edges.
         const UNBOUNDED: f64 = 1.0e7;
-        let left = if left_edge {
-            -UNBOUNDED
-        } else {
-            f64::from(abs_x)
-        };
-        let right = if right_edge {
-            UNBOUNDED
-        } else {
-            f64::from(abs_x + outer.width)
-        };
+        let low = if low_edge { -UNBOUNDED } else { piece_along.0 };
+        let high = if high_edge { UNBOUNDED } else { piece_along.1 };
         scene.push_clip_layer(
             Affine::IDENTITY,
-            &Rect::new(left, -UNBOUNDED, right, UNBOUNDED),
+            &progression.rect((low, high), (-UNBOUNDED, UNBOUNDED)),
         );
+        let joined_box = progression.with_span(outer, progression.span(joined.outer));
         let drawn = paint_border_image_within(
             image_cache,
             scene,
-            (joined.outer.width, outer.height),
-            (x + joined.outer.x, abs_y),
+            (joined_box.width, joined_box.height),
+            (x + joined_box.x, y + joined_box.y),
             cv,
             &cv.border_image,
             &cv.border,
             pixel_source,
             warnings,
-            (left, right),
+            if progression.vertical {
+                ((f64::NEG_INFINITY, f64::INFINITY), (low, high))
+            } else {
+                ((low, high), (f64::NEG_INFINITY, f64::INFINITY))
+            },
         );
         scene.pop_layer();
         drawn
@@ -6425,23 +6518,37 @@ pub(crate) fn paint_inline_box(
         // A cut between line fragments shows no image: its widths and outset
         // are taken as zero there, whatever form `border-image-width` takes.
         let cut;
-        let image = if (left_edge && right_edge)
-            || matches!(cv.border_image.source, BackgroundImage::None)
-        {
-            &cv.border_image
-        } else {
-            let mut image = cv.border_image.clone();
-            if !left_edge {
-                image.width.left = BorderImageWidthSide::Number(0.0);
-                image.outset.left = BorderImageOutsetSide::Number(0.0);
-            }
-            if !right_edge {
-                image.width.right = BorderImageWidthSide::Number(0.0);
-                image.outset.right = BorderImageOutsetSide::Number(0.0);
-            }
-            cut = image;
-            &cut
-        };
+        let image =
+            if (low_edge && high_edge) || matches!(cv.border_image.source, BackgroundImage::None) {
+                &cv.border_image
+            } else {
+                let mut image = cv.border_image.clone();
+                let (low_width, low_outset, high_width, high_outset) = if progression.vertical {
+                    (
+                        &mut image.width.top,
+                        &mut image.outset.top,
+                        &mut image.width.bottom,
+                        &mut image.outset.bottom,
+                    )
+                } else {
+                    (
+                        &mut image.width.left,
+                        &mut image.outset.left,
+                        &mut image.width.right,
+                        &mut image.outset.right,
+                    )
+                };
+                if !low_edge {
+                    *low_width = BorderImageWidthSide::Number(0.0);
+                    *low_outset = BorderImageOutsetSide::Number(0.0);
+                }
+                if !high_edge {
+                    *high_width = BorderImageWidthSide::Number(0.0);
+                    *high_outset = BorderImageOutsetSide::Number(0.0);
+                }
+                cut = image;
+                &cut
+            };
         paint_element_border_image(
             image_cache,
             scene,

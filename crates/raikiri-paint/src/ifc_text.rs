@@ -233,17 +233,16 @@ pub(crate) fn hold_ifc_lines<'a>(
         .and_then(|node| node.ifc_inline_boxes())
         .unwrap_or_default();
     // A box split across lines is sliced from one joined box, which spans
-    // every line of the paragraph, including those on other pages. The join
-    // runs along the horizontal axis only, so fragments of vertical text
-    // keep painting their own boxes.
-    let all_slices = if vertical {
-        vec![None; pieces.len()]
-    } else {
-        typographic::background_slices(&pieces, |node| {
+    // every line of the paragraph, including those on other pages, along
+    // the paragraph's inline axis.
+    let progression = |node| {
+        crate::walk::InlineProgression::new(
+            writing_mode,
             computed_for_id(cascade, node)
-                .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl)
-        })
+                .is_some_and(|cv| cv.direction == raikiri_style::property::Direction::Rtl),
+        )
     };
+    let all_slices = typographic::background_slices(&pieces, progression);
     let mut pieces_by_line = vec![Vec::new(); positioned.all_lines().len()];
     let mut slices_by_line = vec![Vec::new(); positioned.all_lines().len()];
     for (piece, slice) in pieces.into_iter().zip(all_slices) {
@@ -384,9 +383,11 @@ pub(crate) fn hold_ifc_lines<'a>(
                 paint.box_target(group, piece),
                 cv,
                 piece,
-                (!vertical)
-                    .then(|| background_slices[piece_index].as_ref())
-                    .flatten(),
+                background_slices[piece_index].as_ref(),
+                crate::walk::InlineProgression::new(
+                    writing_mode,
+                    cv.direction == raikiri_style::property::Direction::Rtl,
+                ),
                 position.x + dx,
                 position.y + position.shift_y + dy - line_shift,
                 pixel_source,
