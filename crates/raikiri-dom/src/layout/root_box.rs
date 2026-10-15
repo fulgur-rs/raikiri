@@ -17,16 +17,16 @@ use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect, PaintTra
 ///
 /// Paged media cuts the root element across pages like any other box, and
 /// the canvas it paints on runs through every page as one surface. On the
-/// page whose flow starts at `content_origin_y`, the box sits that far
-/// higher than on the first page, so a later page shows the part of it that
-/// continues there, or nothing of it.
+/// page whose flow starts at `content_origin_y`, the box sits that far back
+/// along the flow from where it sits on the first page, so a later page
+/// shows the part of it that continues there, or nothing of it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub struct RootBox {
     /// The root element.
     pub node: NodeId,
-    /// The border box, in page coordinates. Its top is above the page on a
-    /// page after the first one.
+    /// The border box, in page coordinates. Its block-start edge is before
+    /// the page on a page after the first one.
     pub border_box: PaintRect,
     /// Used border widths.
     pub border: PaintInsets,
@@ -45,14 +45,19 @@ pub struct RootBox {
 ///
 /// The box is placed in the page area, inside the page margins, border and
 /// padding, moved in by the root's margins. A root with a definite `width`
-/// or `height` takes that size; otherwise its width fills the page area
-/// between its margins and its height fills the flow of all `page_count`
-/// pages, each as tall as this page's area, between its margins. Layout
-/// does not size the root by its content, so an auto height is the extent
-/// of the pages the flow runs through; pages of different sizes and a
-/// root margin cut at a page break are not followed. `auto` margins
-/// share what the root's used width leaves of the page area. A root with
-/// `display: none` generates no box.
+/// or `height` takes that size. Otherwise, across the pages it fills the
+/// page area between its margins, and along them it fills the flow of all
+/// `page_count` pages, each as long as this page's area, between its
+/// margins. Layout does not size the root by its content, so an auto size
+/// along the pages is the extent of the pages the flow runs through; pages
+/// of different sizes and a root margin cut at a page break are not
+/// followed. `auto` margins share what the root's used size leaves of the
+/// page area across the pages. A root with `display: none` generates no
+/// box.
+///
+/// The pages run down the flow, or across it along x for a root whose
+/// blocks stack on vertical axes; there, `content_origin_y` is the distance
+/// along x, and a later page sees the box moved by it.
 pub fn root_box(
     document: &Document,
     cascade: &CascadeResult,
@@ -72,13 +77,20 @@ pub fn root_box(
     let area_y = margins.top + insets.top;
     let area_width = insets.page_area_width(margins, page_box);
     let area_height = insets.page_area_height(margins, page_box);
+    // The pages of a root whose blocks stack on vertical axes follow the x
+    // axis: the root's block axis runs across them, and its inline axis
+    // down each page.
+    let pages_along_x = super::pages_follow_x_axis(document, cascade);
+    let inline_size = if pages_along_x.is_some() {
+        area_height
+    } else {
+        area_width
+    };
 
-    // Margins and padding resolve against the width of the root's
-    // containing block, the page area. Layout clamps the root's block-start
-    // margin to zero; the box follows it.
-    let margin = |value| used_computed_length_percentage_or_auto(value, area_width);
-    let margin_top = margin(computed.margin.top).unwrap_or(0.0).max(0.0);
-    let margin_bottom = margin(computed.margin.bottom).unwrap_or(0.0);
+    // Margins and padding resolve against the inline size of the root's
+    // containing block, the page area (CSS Writing Modes 4 §7.2). Layout
+    // clamps the root's block-start margin to zero; the box follows it.
+    let margin = |value| used_computed_length_percentage_or_auto(value, inline_size);
     let border = PaintInsets::new(
         computed.border.top.width().px(),
         computed.border.right.width().px(),
@@ -86,76 +98,54 @@ pub fn root_box(
         computed.border.left.width().px(),
     );
     let padding = PaintInsets::new(
-        computed.padding.top.resolve(area_width).max(0.0),
-        computed.padding.right.resolve(area_width).max(0.0),
-        computed.padding.bottom.resolve(area_width).max(0.0),
-        computed.padding.left.resolve(area_width).max(0.0),
+        computed.padding.top.resolve(inline_size).max(0.0),
+        computed.padding.right.resolve(inline_size).max(0.0),
+        computed.padding.bottom.resolve(inline_size).max(0.0),
+        computed.padding.left.resolve(inline_size).max(0.0),
     );
-    let horizontal_edges = border.left + border.right + padding.left + padding.right;
-    let vertical_edges = border.top + border.bottom + padding.top + padding.bottom;
-
-    // CSS 2.1 §10.3.3 and §10.4: the used width comes first, from a
-    // definite `width` or by filling what the margins leave, clamped by the
-    // width limits. The margins then solve the block-width equation with
-    // that width: `auto` margins share what is left, and are zero when the
-    // box overflows the page area; an over-constrained equation gives up
-    // the end margin of the root's direction.
-    let (margin_left, margin_right) = (margin(computed.margin.left), margin(computed.margin.right));
-    let width = definite_border_box_size(
-        computed,
-        computed.width,
-        computed.min_width,
-        computed.max_width,
-        area_width,
-        horizontal_edges,
-    )
-    .unwrap_or_else(|| {
-        let fill = area_width - margin_left.unwrap_or(0.0) - margin_right.unwrap_or(0.0);
-        clamp_auto_size(
-            computed,
-            (fill - horizontal_edges).max(0.0),
-            computed.min_width,
-            computed.max_width,
-            area_width,
-            horizontal_edges,
-        ) + horizontal_edges
-    });
-    let free = area_width - width - margin_left.unwrap_or(0.0) - margin_right.unwrap_or(0.0);
-    let rtl = matches!(computed.direction, Direction::Rtl);
-    let margin_left = match (margin_left, margin_right) {
-        (None, None) if free >= 0.0 => free / 2.0,
-        (None, Some(right)) if free >= 0.0 => area_width - width - right,
-        (Some(left), None) if free >= 0.0 => left,
-        (_, right) if rtl => area_width - width - right.unwrap_or(0.0),
-        (left, _) => left.unwrap_or(0.0),
+    let horizontal = Axis {
+        size: computed.width,
+        min: computed.min_width,
+        max: computed.max_width,
+        area: area_width,
+        edges: border.left + border.right + padding.left + padding.right,
+        margins: (margin(computed.margin.left), margin(computed.margin.right)),
     };
-    let height = definite_border_box_size(
-        computed,
-        computed.height,
-        computed.min_height,
-        computed.max_height,
-        area_height,
-        vertical_edges,
-    )
-    .unwrap_or_else(|| {
-        // The flow runs at least to the end of this page.
-        let flow = (area_height * page_count.max(1) as f32).max(content_origin_y + area_height);
-        let content = (flow - margin_top - margin_bottom - vertical_edges).max(0.0);
-        clamp_auto_size(
-            computed,
-            content,
-            computed.min_height,
-            computed.max_height,
-            area_height,
-            vertical_edges,
-        ) + vertical_edges
-    });
-    let border_box = PaintRect::new(
-        area_x + margin_left,
-        area_y + margin_top - content_origin_y,
-        width,
-        height,
-    );
+    let vertical = Axis {
+        size: computed.height,
+        min: computed.min_height,
+        max: computed.max_height,
+        area: area_height,
+        edges: border.top + border.bottom + padding.top + padding.bottom,
+        margins: (margin(computed.margin.top), margin(computed.margin.bottom)),
+    };
+    let rtl = matches!(computed.direction, Direction::Rtl);
+    let border_box = match pages_along_x {
+        None => {
+            let (margin_left, width) = horizontal.across_pages(computed, rtl);
+            let (margin_top, height) =
+                vertical.along_pages(computed, false, content_origin_y, page_count);
+            PaintRect::new(
+                area_x + margin_left,
+                area_y + margin_top - content_origin_y,
+                width,
+                height,
+            )
+        }
+        Some(right_to_left) => {
+            let (margin_top, height) = vertical.across_pages(computed, rtl);
+            let (margin_start, width) =
+                horizontal.along_pages(computed, right_to_left, content_origin_y, page_count);
+            // A later page sees the box moved by the flow before it, away
+            // from the side the pages continue to.
+            let x = if right_to_left {
+                area_x + area_width - margin_start - width + content_origin_y
+            } else {
+                area_x + margin_start - content_origin_y
+            };
+            PaintRect::new(x, area_y + margin_top, width, height)
+        }
+    };
     let transform = (!computed.transform.is_empty()).then(|| root_transform(computed, border_box));
     Some(RootBox {
         node: NodeId(root as u64),
@@ -164,6 +154,95 @@ pub fn root_box(
         padding,
         transform,
     })
+}
+
+/// The sizing inputs of the root along one physical axis.
+struct Axis {
+    size: ComputedLengthPercentageOrAuto,
+    min: ComputedLengthPercentageOrAuto,
+    max: ComputedLengthPercentageOrAuto,
+    /// Extent of the page area along the axis.
+    area: f32,
+    /// Border and padding on both sides.
+    edges: f32,
+    /// Used margins on the start and end side, in physical order; `None`
+    /// for `auto`.
+    margins: (Option<f32>, Option<f32>),
+}
+
+impl Axis {
+    /// The used start margin and border-box size of the root across the
+    /// pages, where each page holds all of it.
+    ///
+    /// CSS 2.1 §10.3.3 and §10.4: the used size comes first, from a
+    /// definite size or by filling what the margins leave, clamped by the
+    /// limits. The margins then solve the box equation with that size:
+    /// `auto` margins share what is left, and are zero when the box
+    /// overflows the page area; an over-constrained equation gives up the
+    /// end margin, the start one when `reversed`.
+    fn across_pages(&self, computed: &ComputedValues, reversed: bool) -> (f32, f32) {
+        let (start, end) = self.margins;
+        let size = definite_border_box_size(
+            computed, self.size, self.min, self.max, self.area, self.edges,
+        )
+        .unwrap_or_else(|| {
+            let fill = self.area - start.unwrap_or(0.0) - end.unwrap_or(0.0);
+            clamp_auto_size(
+                computed,
+                (fill - self.edges).max(0.0),
+                self.min,
+                self.max,
+                self.area,
+                self.edges,
+            ) + self.edges
+        });
+        let free = self.area - size - start.unwrap_or(0.0) - end.unwrap_or(0.0);
+        let start = match (start, end) {
+            (None, None) if free >= 0.0 => free / 2.0,
+            (None, Some(end)) if free >= 0.0 => self.area - size - end,
+            (Some(start), None) if free >= 0.0 => start,
+            (_, end) if reversed => self.area - size - end.unwrap_or(0.0),
+            (start, _) => start.unwrap_or(0.0),
+        };
+        (start, size)
+    }
+
+    /// The used block-start margin and border-box size of the root along
+    /// the flow of `page_count` pages, which starts at the end side when
+    /// `reversed`. The page holding the flow from `content_origin` is
+    /// among them.
+    ///
+    /// An auto size fills the flow of all the pages, each as long as this
+    /// page's area, between the margins. Layout does not size the root by
+    /// its content, so the flow is the extent of the pages it runs through;
+    /// pages of different sizes and a root margin cut at a page break are
+    /// not followed.
+    fn along_pages(
+        &self,
+        computed: &ComputedValues,
+        reversed: bool,
+        content_origin: f32,
+        page_count: u32,
+    ) -> (f32, f32) {
+        let (start, end) = if reversed {
+            (self.margins.1, self.margins.0)
+        } else {
+            self.margins
+        };
+        let start = start.unwrap_or(0.0).max(0.0);
+        let end = end.unwrap_or(0.0);
+        let size = definite_border_box_size(
+            computed, self.size, self.min, self.max, self.area, self.edges,
+        )
+        .unwrap_or_else(|| {
+            // The flow runs at least to the end of this page.
+            let flow = (self.area * page_count.max(1) as f32).max(content_origin + self.area);
+            let content = (flow - start - end - self.edges).max(0.0);
+            clamp_auto_size(computed, content, self.min, self.max, self.area, self.edges)
+                + self.edges
+        });
+        (start, size)
+    }
 }
 
 /// The first `<html>` element child of the document node.
