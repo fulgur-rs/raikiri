@@ -2011,7 +2011,7 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
     while let Some((id, y)) = stack.pop() {
         let node = &doc.nodes[id];
         if !node.is_in_document()
-            || node.style.display == taffy::Display::None
+            || node.is_display_none()
             || node.style.position == taffy::Position::Absolute
             || node.style.float != taffy::Float::None
         {

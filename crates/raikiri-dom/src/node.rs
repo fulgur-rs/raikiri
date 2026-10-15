@@ -352,6 +352,48 @@ pub struct TextData {
     pub(crate) text_content: SmolStr,
 }
 
+/// How a box lays out its contents (CSS Display 3, 2: the inner display
+/// type, refined by the layout engine that handles it).
+///
+/// The layout bridge classifies every node once per layout pass, after
+/// paragraph roots are assigned. An element built without the bridge takes
+/// the classification of its Taffy display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FormattingContext {
+    /// The element generates no box.
+    None,
+    /// A block container whose content is block-level boxes. Whether it
+    /// establishes an independent block formatting context is left to its
+    /// Taffy display.
+    Block,
+    /// A block container whose content is a paragraph, laid out by the
+    /// inline engine.
+    Inline,
+    /// A flex container.
+    Flex,
+    /// A grid container.
+    Grid,
+    /// A table wrapper box, laid out by the table engine (CSS 2.1, 17).
+    Table,
+    /// A multi-column container (CSS Multi-column Layout 1, 2).
+    Multicol,
+    /// Character data outside any paragraph root. It generates no box of
+    /// its own and is measured as an empty leaf.
+    Text,
+}
+
+impl FormattingContext {
+    /// The classification of a box known only by its Taffy display.
+    pub(crate) fn from_taffy_display(display: taffy::Display) -> Self {
+        match display {
+            taffy::Display::None => Self::None,
+            taffy::Display::Flex => Self::Flex,
+            taffy::Display::Grid => Self::Grid,
+            taffy::Display::Block | taffy::Display::FlowRoot => Self::Block,
+        }
+    }
+}
+
 /// Arena node implemented with a NodeData tagged union.
 ///
 /// Kind-independent fields needed by paint, cascade, and layout (children and
@@ -367,6 +409,10 @@ pub struct Node {
     /// but retains the full `DisplayValue` (including `Table` family) so table engine routing
     /// does not need post-bridge `style.display` which collapses table variants to `Block`.
     pub(crate) display: DisplayValue,
+    /// How this box lays out its contents. Layout dispatch and the other
+    /// consumers read this classification instead of re-deriving it from
+    /// [`Self::display`], [`Self::style`] and the paragraph root flag.
+    pub(crate) formatting_context: FormattingContext,
     /// Computed `table-layout` for the table engine. No `taffy::Style`
     /// counterpart exists (taffy 0.12 has no table layout), so the keyword
     /// is carried here alongside [`Self::display`] and read by
@@ -544,6 +590,10 @@ impl Node {
     /// here so the defaults live in one place.
     fn with_data(data: NodeData, style: Style) -> Self {
         Self {
+            formatting_context: match data {
+                NodeData::Element(_) => FormattingContext::from_taffy_display(style.display),
+                _ => FormattingContext::Text,
+            },
             style,
             display: DisplayValue::Inline,
             table_layout: TableLayoutValue::Auto,
@@ -1017,7 +1067,7 @@ impl Node {
         }
     }
 
-    /// Return whether this node has `taffy::Style.display == Display::None`.
+    /// Return whether this node generates no box (`display: none`).
     ///
     /// Paint uses this predicate to skip display:none subtrees. Treating size 0
     /// as a proxy would silently drop legitimate zero-size elements with
@@ -1025,7 +1075,7 @@ impl Node {
     /// minimal boolean predicate needed by paint is public (gradual exposure).
     #[inline]
     pub fn is_display_none(&self) -> bool {
-        self.style.display == taffy::Display::None
+        self.formatting_context == FormattingContext::None
     }
 
     /// Return whether a `text-overflow` ellipsis removed this atomic inline

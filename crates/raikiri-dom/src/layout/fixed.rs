@@ -337,7 +337,7 @@ fn visit_out_of_flow_boxes(
         .collect();
     while let Some((id, parent_origin, in_paragraph, abs_cb, fixed_cb)) = stack.pop() {
         let node = &document.nodes[id];
-        if !node.is_in_document() || node.style.display == Display::None {
+        if !node.is_in_document() || node.is_display_none() {
             continue;
         }
         let Some(cv) = cascade.computed.get(id) else {

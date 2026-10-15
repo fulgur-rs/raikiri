@@ -20,7 +20,7 @@ use taffy::{
 
 use crate::document::Document;
 use crate::layout::ifc::geometry::IfcAxes;
-use crate::node::{NodeData, NodeFlags};
+use crate::node::{FormattingContext, NodeData, NodeFlags};
 use raikiri_style::property::DisplayValue;
 
 /// The intrinsic size of a leaf: an `<img>`'s resolved size, `None` for any
@@ -508,10 +508,10 @@ impl Document {
                 basis.width.filter(|_| inputs.parent_size.width.is_none())
             }
         });
-        let uncached = (self.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
-            && ifc_basis.is_some()
-            && has_percent_edge(&self.nodes[idx].style))
-            || self.size_contained_measure.last() == Some(&idx);
+        let paragraph = self.nodes[idx].formatting_context == FormattingContext::Inline;
+        let uncached =
+            (paragraph && ifc_basis.is_some() && has_percent_edge(&self.nodes[idx].style))
+                || self.size_contained_measure.last() == Some(&idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against
@@ -520,7 +520,7 @@ impl Document {
         let edge_basis = flex_basis
             .filter(|_| {
                 inputs.parent_size.width.is_none()
-                    && !self.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
+                    && !paragraph
                     && !self.has_vertical_writing_mode(idx)
             })
             .and_then(|basis| basis.width)
@@ -533,23 +533,15 @@ impl Document {
             } else {
                 size_contained_inputs(tree, node_id, inputs)
             };
-            // Table dispatch uses preserved DisplayValue (not taffy's collapsed Display::Block).
-            // Taffy 0.12 has no table layout; we route to native table engine in parallel with
-            // Block/Flex/Grid (spec requires parallel Display::Block/Flex/Grid handling).
-            {
-                use crate::node::NodeFlags;
-                use raikiri_style::property::DisplayValue;
-                let dv = tree.nodes[idx].display;
-                // A table box that is an ifc root holds only inline content:
-                // the ifc branch below lays it out.
-                let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
-                if (dv == DisplayValue::Table || dv == DisplayValue::InlineTable) && !ifc_root {
+            let formatting_context = tree.nodes[idx].formatting_context;
+            match formatting_context {
+                FormattingContext::None => return LayoutOutput::HIDDEN,
+                // Taffy has no table layout; the table engine lays the
+                // wrapper box out.
+                FormattingContext::Table => {
                     return crate::layout::table::compute_table_layout(tree, node_id, inputs);
                 }
-            }
-            let display = tree.nodes[idx].style.display;
-            if display == Display::None {
-                return LayoutOutput::HIDDEN;
+                _ => {}
             }
             // Inline-block shrink-wrap: bridge_display collapses InlineBlock to
             // taffy Block, so without this a width:auto inline-block would
@@ -560,10 +552,11 @@ impl Document {
                 // A table box laid out as an ifc root is an anonymous cell's
                 // content inside the table wrapper, whose auto width shrinks to
                 // fit as well (CSS 2.1 17.5.2.2).
-                let ifc_table = matches!(
-                    tree.nodes[idx].display,
-                    DisplayValue::Table | DisplayValue::InlineTable
-                ) && tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT);
+                let ifc_table = formatting_context == FormattingContext::Inline
+                    && matches!(
+                        tree.nodes[idx].display,
+                        DisplayValue::Table | DisplayValue::InlineTable
+                    );
                 let inline_shrink_wrap = ifc_table
                     || (tree.nodes[idx].display.is_atomic_inline_level()
                         && tree.nodes[idx].display != DisplayValue::InlineTable);
@@ -594,15 +587,12 @@ impl Document {
             // Keep malformed/deeply recursive DOM from exhausting the layout
             // stack; the ordinary Taffy path remains the bounded fallback.
             const MAX_NESTED_MULTICOL_DEPTH: usize = 64;
-            // cov:ignore: exercised by ignored nested multicol WPT reftests
-            // A multicol container whose own content is a paragraph is laid
-            // out by the ifc branch below, which splits its lines in columns.
-            if tree.nodes[idx].multicol.is_some()
+            // A multicol container whose own content is a paragraph is
+            // classified as one and laid out by the ifc branch below, which
+            // splits its lines in columns.
+            if formatting_context == FormattingContext::Multicol
                 && !empty
-                && !tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT)
-                && tree.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH // cov:ignore: exercised by ignored nested multicol WPT reftests
-            // cov:ignore: exercised by ignored nested multicol WPT reftests
-                && matches!(display, Display::Block | Display::FlowRoot)
+                && tree.fragmentation_stack.len() < MAX_NESTED_MULTICOL_DEPTH
             {
                 return crate::layout::compute_multicol_layout(tree, node_id, inputs, block_ctx); // cov:ignore: exercised by ignored nested multicol WPT reftests
             }
@@ -676,7 +666,7 @@ impl Document {
             }
             // A paragraph measured as if empty is a block container with no
             // lines.
-            if tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty {
+            if formatting_context == FormattingContext::Inline && !empty {
                 return compute_ifc_root(tree, node_id, inputs, block_ctx);
             }
             if is_leaf {
@@ -698,8 +688,12 @@ impl Document {
                     }
                 })
             } else {
-                match display {
-                    Display::Block | Display::FlowRoot => {
+                match formatting_context {
+                    FormattingContext::Flex => flex_layout(tree, node_id, inputs),
+                    FormattingContext::Grid => grid_layout(tree, node_id, inputs),
+                    // A block container, including a paragraph or multicol
+                    // container measured as if empty or nested too deeply.
+                    _ => {
                         let vertical_cb =
                             vertical_oof::containing_block_inline_size(tree, idx, &inputs);
                         if let Some(inline_size) = vertical_cb {
@@ -714,9 +708,6 @@ impl Document {
                         }
                         output
                     }
-                    Display::Flex => flex_layout(tree, node_id, inputs),
-                    Display::Grid => grid_layout(tree, node_id, inputs),
-                    Display::None => unreachable!("Display::None handled above"),
                 }
             }
         };
@@ -1461,7 +1452,7 @@ fn fragmentation_context_for_ifc(
 fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     use raikiri_style::property::DisplayValue;
     let root_node = doc.nodes.get(root)?;
-    if root_node.style.display == Display::None {
+    if root_node.is_display_none() {
         return None;
     }
     // A text node outside every paragraph has no line, so no baseline.
@@ -1479,7 +1470,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     let mut stack = Vec::new();
     for &child in root_node.children.iter().rev() {
         if doc.nodes[child].is_in_document()
-            && doc.nodes[child].style.display != Display::None
+            && !doc.nodes[child].is_display_none()
             && doc.nodes[child].style.position != TaffyPosition::Absolute
         {
             stack.push((child, doc.nodes[child].unrounded_layout.location.y));
@@ -1503,7 +1494,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
         }
         for &child in node.children.iter().rev() {
             if doc.nodes[child].is_in_document()
-                && doc.nodes[child].style.display != Display::None
+                && !doc.nodes[child].is_display_none()
                 && doc.nodes[child].style.position != TaffyPosition::Absolute
             {
                 stack.push((
@@ -1840,7 +1831,7 @@ fn center_absolute_children_in_block_axis(
                 (style.margin.left, style.margin.right)
             };
             style.position == TaffyPosition::Absolute
-                && style.display != Display::None
+                && !tree.nodes[child].is_display_none()
                 && start.is_auto()
                 && end.is_auto()
         })

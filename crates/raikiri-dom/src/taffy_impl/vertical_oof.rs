@@ -29,7 +29,7 @@ pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
 
 fn is_absolute(tree: &Document, node: usize) -> bool {
     tree.nodes[node].style.position == TaffyPosition::Absolute
-        && tree.nodes[node].style.display != taffy::Display::None
+        && !tree.nodes[node].is_display_none()
 }
 
 /// The physical height of the padding box `node` would fill as a vertical
@@ -152,7 +152,7 @@ pub(super) fn place_static_block_start(tree: &mut Document, node: usize, border_
     let in_flow = |child: usize| {
         tree.nodes[child].kind() == raikiri_traits::NodeKind::Element
             && !is_absolute(tree, child)
-            && tree.nodes[child].style.display != taffy::Display::None
+            && !tree.nodes[child].is_display_none()
     };
     if !children.iter().any(|&child| is_absolute(tree, child))
         || children.iter().any(|&child| in_flow(child))

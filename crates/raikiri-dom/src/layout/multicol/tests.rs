@@ -1,4 +1,5 @@
 use super::*;
+use crate::node::FormattingContext;
 use taffy::Style;
 
 #[test]
@@ -142,11 +143,13 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
     let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     let float = doc.append_element(Some(hidden), "div", Style::default(), None::<&str>);
     doc.nodes[hidden].style.display = Display::None;
+    doc.nodes[hidden].formatting_context = FormattingContext::None;
     doc.nodes[float].style.float = taffy::Float::Left;
 
     assert!(!multicol_subtree_has_float(&doc, root));
 
     doc.nodes[hidden].style.display = Display::Block;
+    doc.nodes[hidden].formatting_context = FormattingContext::Block;
     assert!(multicol_subtree_has_float(&doc, root));
 }
 
