@@ -1795,12 +1795,24 @@ pub(crate) fn project_slices_with_control(
         pages_follow_x_axis(document, cascade).map_or(FlowAxis::Y, |right_to_left| FlowAxis::X {
             right_to_left,
             width: pages.first().map_or(0.0, |page| page.content_box.width),
+            page_width: 0.0,
         });
 
     // Each page's slice of the shared flow space: from its origin to the next
     // page's origin, or its content extent along the flow for the last page.
     for (page_slot, page) in pages.iter_mut().enumerate() {
-        page.flow_axis = flow_axis;
+        page.flow_axis = match flow_axis {
+            FlowAxis::X {
+                right_to_left,
+                width,
+                ..
+            } => FlowAxis::X {
+                right_to_left,
+                width,
+                page_width: page.content_box.width,
+            },
+            FlowAxis::Y => FlowAxis::Y,
+        };
         let page_start = page.content_origin_y;
         let extent = match flow_axis {
             FlowAxis::Y => page.content_box.height,
@@ -2505,8 +2517,9 @@ pub(crate) fn project_slices_with_control(
             let Some(page) = pages.get_mut(page_slot) else {
                 continue; // cov:ignore: placements are indexed from the same slices used to build pages.
             };
+            let page_axis = page.flow_axis;
             let to_page = |rect: (f32, f32, f32, f32)| {
-                let (x, y, width, height) = flow_axis.to_layout(rect);
+                let (x, y, width, height) = page_axis.to_layout(rect);
                 PageFragmentRect::new(x, y, width, height)
             };
             let rect = to_page((source.abs_x, y, source.width, fragment_height));

@@ -181,9 +181,11 @@ impl PageFragment {
 ///
 /// Layout space is physical. Along `Y`, the flow coordinate of a point is
 /// its y. Along `X`, the pages of a root whose blocks stack on vertical axes
-/// follow the root's block axis across a page area `width` wide: the flow
-/// coordinate of a point is its distance from the right edge of that area
-/// when the flow runs right to left, and its x otherwise.
+/// follow the root's block axis across the page area `width` wide that the
+/// root was laid out in: the flow coordinate of a point is its distance from
+/// the right edge of that area when the flow runs right to left, and its x
+/// otherwise. A page area `page_width` wide holds its slice of the flow
+/// against its own right edge in that case.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub(crate) enum FlowAxis {
     /// The flow runs down the page.
@@ -193,8 +195,10 @@ pub(crate) enum FlowAxis {
     X {
         /// The flow runs from right to left.
         right_to_left: bool,
-        /// Width of the page area the flow runs across.
+        /// Width of the page area the root was laid out in.
         width: f32,
+        /// Width of the area of the page holding the content.
+        page_width: f32,
     },
 }
 
@@ -208,23 +212,24 @@ impl FlowAxis {
             Self::X {
                 right_to_left: true,
                 width: area,
+                ..
             } => (y, area - x - width, height, width),
             Self::X { .. } => (y, x, height, width),
         }
     }
 
-    /// The layout-space rectangle of a flow-space one: the inverse of
-    /// [`Self::to_flow`]. Applied to a rectangle placed on a page, whose
-    /// flow coordinate is relative to the page's slice, it gives the
-    /// rectangle relative to the page's content box.
+    /// The rectangle relative to the page's content box of a rectangle
+    /// placed on the page in flow space, whose flow coordinate is relative to
+    /// the page's slice.
     pub(crate) fn to_layout(self, rect: (f32, f32, f32, f32)) -> (f32, f32, f32, f32) {
         let (x, y, width, height) = rect;
         match self {
             Self::Y => rect,
             Self::X {
                 right_to_left: true,
-                width: area,
-            } => (area - y - height, x, height, width),
+                page_width,
+                ..
+            } => (page_width - y - height, x, height, width),
             Self::X { .. } => (y, x, height, width),
         }
     }
@@ -277,8 +282,9 @@ impl FlowAxis {
             Self::Y => (0.0, -start),
             Self::X {
                 right_to_left: true,
-                ..
-            } => (start, 0.0),
+                width,
+                page_width,
+            } => (start + page_width - width, 0.0),
             Self::X { .. } => (-start, 0.0),
         }
     }

@@ -323,3 +323,49 @@ fn projection_places_blocks_of_a_vertical_lr_root_on_their_pages() {
         runs[0].origin
     );
 }
+
+#[test]
+fn projection_holds_the_slice_of_a_narrower_page_against_its_right_edge() {
+    let (mut doc, cascade, ids, pages) = paginate_with_cascade(
+        "writing-mode:vertical-rl",
+        "margin:0",
+        &[
+            ("div", "width:800px", ""),
+            (
+                "div",
+                "writing-mode:horizontal-tb;width:100px;height:600px",
+                "X",
+            ),
+        ],
+    );
+    let wide = page_box_800x600();
+    let mut narrow = wide;
+    narrow.width = 600.0;
+    let geometries: Vec<_> = [wide, narrow]
+        .into_iter()
+        .map(|page| {
+            (
+                page,
+                crate::layout::page_margins(&cascade, page),
+                crate::layout::page_content_insets(&cascade, page),
+            )
+        })
+        .collect();
+    doc.project_pages(&cascade, wide, &pages, &geometries)
+        .expect("projection");
+    let rect = doc
+        .page_fragments(pages[1].page_index)
+        .find(|fragment| fragment.node() == raikiri_traits::NodeId::new(ids[2] as u64))
+        .map(|fragment| {
+            let rect = fragment.rect();
+            (rect.x, rect.y, rect.width, rect.height)
+        });
+    assert_eq!(rect, Some((500.0, 0.0, 100.0, 600.0)));
+    let runs = doc.page_text_runs(&cascade, 1);
+    assert_eq!(runs.len(), 1);
+    assert!(
+        (500.0..600.0).contains(&runs[0].origin.0),
+        "{:?}",
+        runs[0].origin
+    );
+}
