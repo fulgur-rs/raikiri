@@ -5826,6 +5826,9 @@ fn paginate_flow(
         };
         materialize_y(document, node_id, effective_y);
         let forced_before = page_break_is_forced(document, node_id, computed.break_before);
+        // Set when a forced break starts this box's page, which makes the box
+        // the owner of the margins after the break.
+        let mut starts_after_forced_break = false;
         // A block box with no block size and no in-flow content lets its
         // block-start and block-end margins collapse through it.
         let margins_collapse_through = height <= 0.0
@@ -6306,6 +6309,7 @@ fn paginate_flow(
                 current_page = target_page;
                 if forced_transition {
                     forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    starts_after_forced_break = true;
                 }
                 if pending_break_applies {
                     pending_break_source = None;
@@ -6323,6 +6327,7 @@ fn paginate_flow(
                 // that page.
                 if forced_before {
                     forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    starts_after_forced_break = true;
                 }
                 // An unforced break that falls inside the collapsed margin
                 // between this box and its preceding sibling truncates that
@@ -6408,7 +6413,7 @@ fn paginate_flow(
         {
             // An empty box right after the forced-break box passes the
             // break on to the margin after it; any other box ends it.
-            if !forced_before {
+            if !starts_after_forced_break {
                 let follows_forced_box = forced_break_margin_box.is_some_and(|owner| {
                     previous_block_bottoms
                         .get(&parent_id)
