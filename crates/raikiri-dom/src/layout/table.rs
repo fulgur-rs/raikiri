@@ -51,6 +51,7 @@ use taffy::util::{MaybeResolve, ResolveOrZero};
 pub(crate) mod anonymous;
 mod cell_index;
 pub(crate) mod headers;
+pub(crate) mod row_moves;
 mod rowspan;
 use cell_index::CellIndex;
 

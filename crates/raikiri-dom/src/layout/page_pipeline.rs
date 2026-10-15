@@ -4383,33 +4383,11 @@ pub fn layout_pages_with_page_geometry_and_control(
         page_step,
         |id| root_flow_offset + current_abs_y(document, id),
     );
-    // A table row group with `break-inside: avoid` starts on the next page
-    // when it would cross the current one. Its first row carries the block
-    // end of the group's rows up to the first forced break between them (a
-    // forced break already splits the group), and, when it is the table's
-    // first row of a table without a caption, its offset below the table's
-    // top: the table's spacing and borders above it move with it.
-    let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
-    // A header group repeated on each page is placed by the repetition
-    // path; any other header group avoids breaks like a body group.
-    let avoiding_row_group = |group: usize| {
-        (matches!(
-            cascade.computed[group].display,
-            DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
-        ) || (cascade.computed[group].display == DisplayValue::TableHeaderGroup
-            && !table_headers.headers.contains_key(&group)))
-            && matches!(
-                cascade.computed[group].break_inside,
-                raikiri_style::property::BreakInside::Avoid
-                    | raikiri_style::property::BreakInside::AvoidPage
-            )
-    };
-    if candidates.iter().any(|candidate| {
-        candidate.is_table_row
-            && document
-                .parent_of(candidate.node_id)
-                .is_some_and(avoiding_row_group)
-    }) {
+    // The first row of a table without a caption above its grid carries its
+    // offset below the table's top: when the row starts the next page, the
+    // table's spacing and borders above it move with it.
+    let mut table_row_leads = HashMap::<usize, f32>::new();
+    if candidates.iter().any(|candidate| candidate.is_table_row) {
         let candidate_y: HashMap<usize, f32> = candidates
             .iter()
             .map(|candidate| (candidate.node_id, candidate.raw_y))
@@ -4439,6 +4417,51 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
             }
         }
+        for (table, (row, row_y)) in table_first_rows {
+            // A caption above the grid stays on the current page. Content
+            // outside the rows, wrapped in an anonymous row, may come before
+            // the first row.
+            if document.nodes[table].children.iter().any(|&child| {
+                cascade.computed[child].display == DisplayValue::TableCaption
+                    && cascade.computed[child].caption_side
+                        == raikiri_style::property::CaptionSideValue::Top
+                    || document.anonymous_table_cells(child).next().is_some()
+            }) || document.anonymous_table_cells(table).next().is_some()
+            {
+                continue;
+            }
+            let table_y = candidate_y
+                .get(&table)
+                .copied()
+                .unwrap_or_else(|| root_flow_offset + current_abs_y(document, table));
+            table_row_leads.insert(row, (row_y - table_y).max(0.0));
+        }
+    }
+    // A table row group with `break-inside: avoid` starts on the next page
+    // when it would cross the current one. Its first row carries the block
+    // end of the group's rows up to the first forced break between them (a
+    // forced break already splits the group).
+    let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
+    // A header group repeated on each page is placed by the repetition
+    // path; any other header group avoids breaks like a body group.
+    let avoiding_row_group = |group: usize| {
+        (matches!(
+            cascade.computed[group].display,
+            DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
+        ) || (cascade.computed[group].display == DisplayValue::TableHeaderGroup
+            && !table_headers.headers.contains_key(&group)))
+            && matches!(
+                cascade.computed[group].break_inside,
+                raikiri_style::property::BreakInside::Avoid
+                    | raikiri_style::property::BreakInside::AvoidPage
+            )
+    };
+    if candidates.iter().any(|candidate| {
+        candidate.is_table_row
+            && document
+                .parent_of(candidate.node_id)
+                .is_some_and(avoiding_row_group)
+    }) {
         let mut group_first_rows = HashMap::<usize, Option<usize>>::new();
         // The last row seen in each row group: rows of a nested table are
         // visited between two rows of the outer group.
@@ -4456,12 +4479,6 @@ pub fn layout_pages_with_page_geometry_and_control(
                                 cascade.computed[previous].break_after,
                             )
                         });
-            let table = table_of(row);
-            let first_in_table = table.is_some_and(|table| {
-                table_first_rows
-                    .get(&table)
-                    .is_some_and(|&(first, _)| first == row)
-            });
             let Some(group) = document
                 .parent_of(row)
                 .filter(|&group| avoiding_row_group(group))
@@ -4471,22 +4488,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             let entry = group_first_rows.entry(group);
             let first = match entry {
                 std::collections::hash_map::Entry::Vacant(slot) => {
-                    // A caption above the grid stays on the current page.
-                    let lead = table
-                        .filter(|&table| {
-                            first_in_table
-                                && !document.nodes[table].children.iter().any(|&child| {
-                                    cascade.computed[child].display == DisplayValue::TableCaption
-                                        && cascade.computed[child].caption_side
-                                            == raikiri_style::property::CaptionSideValue::Top
-                                })
-                        })
-                        .map(|table| {
-                            candidate_y.get(&table).copied().unwrap_or_else(|| {
-                                root_flow_offset + current_abs_y(document, table)
-                            })
-                        })
-                        .map_or(0.0, |table_y| (candidate.raw_y - table_y).max(0.0));
+                    let lead = table_row_leads.get(&row).copied().unwrap_or(0.0);
                     avoided_row_groups.insert(row, (candidate.raw_y + candidate.height, lead));
                     slot.insert(Some(row));
                     continue;
@@ -4587,6 +4589,9 @@ pub fn layout_pages_with_page_geometry_and_control(
     // paragraph, and its texts that start on a moved line, take each shift
     // once they are reached; its texts before that line stay where they are.
     let mut pending_line_splits: Vec<(usize, usize, f32)> = Vec::new();
+    // How far each table row moved to a later page; the table boxes around
+    // the moved rows follow them once every row is placed.
+    let mut moved_table_rows = HashMap::<usize, f32>::new();
     // A float moved to a later page carries its own content with it, but
     // the in-flow content after it in the source sits beside or above it,
     // so the shift ends where the float's subtree does. A later float may
@@ -5574,8 +5579,9 @@ pub fn layout_pages_with_page_geometry_and_control(
             .get(&node_id)
             .and_then(|header_id| table_headers.headers.get(header_id))
             .map_or(0.0, |header| header.height + header.gap);
+        let table_row_lead = table_row_leads.get(&node_id).copied().unwrap_or(0.0);
         let table_row_overflow = candidate.is_table_row
-            && height + repeated_header_height
+            && table_row_lead + height + repeated_header_height
                 <= page_step_at(current_page.saturating_add(1)) + 0.001
             && flow_y.is_finite()
             && flow_y >= page_origin(current_page)
@@ -5704,6 +5710,8 @@ pub fn layout_pages_with_page_geometry_and_control(
                         target_y + margin_top.max(0.0)
                     } else if row_group_overflow {
                         target_y + row_group.map_or(0.0, |(_, lead)| lead) + relative_offset
+                    } else if table_row_overflow {
+                        target_y + table_row_lead + relative_offset
                     } else {
                         // A relative offset moves with the box to the page
                         // it starts on.
@@ -5726,6 +5734,9 @@ pub fn layout_pages_with_page_geometry_and_control(
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
                     follow_moved_ifc_block(document, node_id, node_delta);
+                    if candidate.is_table_row && node_delta > 0.0 {
+                        *moved_table_rows.entry(node_id).or_default() += node_delta;
+                    }
                     // A nested avoiding block that moves to the next page
                     // lengthens the ancestors whose content box holds it, so
                     // their continuation (and any `overflow` clip) reaches the
@@ -6158,6 +6169,12 @@ pub fn layout_pages_with_page_geometry_and_control(
         }
     }
 
+    super::table::row_moves::follow_moved_rows(document, &moved_table_rows, |table| {
+        table_headers
+            .headers
+            .values()
+            .any(|header| header.table == table)
+    });
     super::table::headers::finish_boxes(document, &table_headers);
     table_headers.index();
     document.table_objects.headers = table_headers;
