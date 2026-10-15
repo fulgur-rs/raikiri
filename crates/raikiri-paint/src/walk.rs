@@ -2071,14 +2071,17 @@ pub(crate) fn paint_document_impl(
     let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
         // Pages that follow the x axis hold a band of the flow across the
         // whole page height: every box is on the page along y, and the
-        // caller clips the page to its band.
+        // caller clips the page to its band. Flowing right to left, the
+        // band starts at the page area's right edge, so on a page whose area
+        // is narrower or wider than the one layout used it moves with that
+        // edge.
         Some(right_to_left) => (
             -FLOW_EXTENT,
             FLOW_EXTENT,
             margins.left
                 + insets.left
                 + if right_to_left {
-                    content_origin_y
+                    content_origin_y + content_width - fixed_content_width
                 } else {
                     -content_origin_y
                 },
@@ -2094,8 +2097,16 @@ pub(crate) fn paint_document_impl(
     // Viewport-fixed boxes repeat at the same place on every page, so they
     // are placed against the page, not against the band of the flow that
     // the page offsets above carry.
-    let (fixed_flow_shift_x, fixed_origin_y) = if pages_follow_x_axis.is_some() {
-        (page_offset_x - (margins.left + insets.left), 0.0)
+    let (fixed_flow_shift_x, fixed_origin_y) = if let Some(right_to_left) = pages_follow_x_axis {
+        let edge_shift = if right_to_left {
+            content_width - fixed_content_width
+        } else {
+            0.0
+        };
+        (
+            page_offset_x - (margins.left + insets.left) - edge_shift,
+            0.0,
+        )
     } else {
         (0.0, content_origin_y)
     };

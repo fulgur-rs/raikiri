@@ -6144,3 +6144,51 @@ fn a_viewport_fixed_box_repeats_in_place_on_pages_along_the_x_axis() {
         );
     }
 }
+
+#[test]
+fn a_narrower_page_along_the_x_axis_holds_its_band_against_its_right_edge() {
+    let markup = "<!DOCTYPE html><html style='writing-mode:vertical-rl'><body style='margin:0;background:white'>\
+        <div style='width:100px'></div><div style='width:30px;background:green'></div></body></html>";
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    assert_eq!(pages.len(), 2);
+    // The second page is 60px wide; layout used the first page's 100px.
+    let mut narrow = page;
+    narrow.width = 60.0;
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        narrow,
+        pages[1].content_origin_y,
+        1,
+        2,
+        true,
+        None,
+        None,
+        100.0,
+    )
+    .unwrap();
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        60,
+        100,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 60 + x) * 4..][..4];
+    // The page's slice of the flow starts at its own right edge.
+    assert_eq!(pixel(45, 50), &[0, 128, 0, 255]);
+    assert_ne!(pixel(15, 50), &[0, 128, 0, 255]);
+}
