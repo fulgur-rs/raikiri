@@ -48,13 +48,19 @@ fn resolve_source(context: &mut Context, src: &str) -> JsResult<Option<String>> 
         .map(String::from))
 }
 
-/// Whether `index` sits inside some `<template>`'s contents, whose inert
-/// document never loads images.
-fn in_template_contents(document: &raikiri_dom::Document, index: usize) -> bool {
+/// The root of the tree `index` is in.
+fn tree_root(document: &raikiri_dom::Document, index: usize) -> usize {
     let mut root = index;
     while let Some(parent) = document.parent_of(root) {
         root = parent;
     }
+    root
+}
+
+/// Whether `index` sits inside some `<template>`'s contents, whose inert
+/// document never loads images.
+fn in_template_contents(document: &raikiri_dom::Document, index: usize) -> bool {
+    let root = tree_root(document, index);
     document
         .get_node(root)
         .is_some_and(|node| node.kind() == NodeKind::DocumentFragment)
@@ -74,7 +80,11 @@ fn in_template_contents(document: &raikiri_dom::Document, index: usize) -> bool 
 pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult<()> {
     let src = with_state(context, |s| {
         let document = s.host.document();
-        if in_template_contents(document, index) {
+        // A remembered image removed from template contents still belongs
+        // to their inert document until it is inserted into this one.
+        let adopted =
+            !s.inert_images.contains(&index) || tree_root(document, index) == document.root_index();
+        if !adopted || in_template_contents(document, index) {
             s.inert_images.insert(index);
             return None;
         }
@@ -160,14 +170,16 @@ pub(crate) fn update_images_below(context: &mut Context, root: usize) -> JsResul
 }
 
 /// After a tree mutation, start the request of each remembered inert image
-/// that is no longer in template contents.
+/// that is now in this document's tree. Merely removing one from template
+/// contents does not adopt it, so a detached one keeps waiting.
 pub(crate) fn wake_adopted_images(context: &mut Context) -> JsResult<()> {
     let adopted = with_state(context, |s| {
         let document = s.host.document();
+        let root = document.root_index();
         s.inert_images
             .iter()
             .copied()
-            .filter(|&index| !in_template_contents(document, index))
+            .filter(|&index| tree_root(document, index) == root)
             .collect::<Vec<_>>()
     })?;
     for index in adopted {

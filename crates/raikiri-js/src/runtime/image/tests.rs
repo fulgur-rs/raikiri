@@ -332,6 +332,13 @@ fn template_content_images_wait_until_moved_out() {
          img.src = 'ok.png'; img.complete && parsed.complete",
     );
     ok_after_tasks(&mut rt, "log.length === 0");
+    // Removing one from the contents leaves it in their inert document, even
+    // when its `src` changes again.
+    ok(
+        &mut rt,
+        "img.parentNode.removeChild(img); img.src = 'ok.png'; img.complete",
+    );
+    ok_after_tasks(&mut rt, "log.length === 0");
     // Moving them into the document starts the requests they were holding.
     ok(
         &mut rt,
