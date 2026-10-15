@@ -1774,6 +1774,11 @@ fn ifc_paint_extent(node: &raikiri_dom::Node, layout: &taffy::Layout) -> f32 {
         .max(layout.border.top + layout.padding.top + lines)
 }
 
+/// How far the band of a page that follows the x axis reaches along y, both
+/// ways: far enough to hold any box, and finite, so that page membership
+/// tests compare against it like a page edge.
+pub(crate) const FLOW_EXTENT: f32 = f32::MAX / 4.0;
+
 fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> bool {
     if !y.is_finite() || !height.is_finite() || !page_top.is_finite() || !page_bottom.is_finite() {
         return false;
@@ -2059,23 +2064,41 @@ pub(crate) fn paint_document_impl(
     } else {
         content_width
     };
-    let page_top = content_origin_y;
-    let page_bottom = content_origin_y + content_height;
     // The walker keeps source coordinates in the stack.  Only the paint sites
     // receive the page translation, which makes page membership testable even
-    // when an ancestor spans a page boundary.  The cascade retains the raw
-    // root writing-mode winner because vertical-rl currently normalizes to
-    // horizontal-tb for ordinary layout; in that page context the physical
-    // left page margin is on the opposite inline edge.
-    let root_vertical_rl = find_html(document)
-        .and_then(|html_id| cascade.authored_writing_modes.get(html_id))
-        .is_some_and(|mode| matches!(mode, Some(WritingMode::VerticalRl)));
-    let page_offset_x = if root_vertical_rl {
-        insets.left
-    } else {
-        margins.left + insets.left
+    // when an ancestor spans a page boundary.
+    let pages_follow_x_axis = raikiri_dom::pages_follow_x_axis(document, cascade);
+    let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
+        // Pages that follow the x axis hold a band of the flow across the
+        // whole page height: every box is on the page along y, and the
+        // caller clips the page to its band.
+        Some(right_to_left) => (
+            -FLOW_EXTENT,
+            FLOW_EXTENT,
+            margins.left
+                + insets.left
+                + if right_to_left {
+                    content_origin_y
+                } else {
+                    -content_origin_y
+                },
+            margins.top + insets.top,
+        ),
+        None => (
+            content_origin_y,
+            content_origin_y + content_height,
+            margins.left + insets.left,
+            margins.top + insets.top - content_origin_y,
+        ),
     };
-    let page_offset_y = margins.top + insets.top - content_origin_y;
+    // Viewport-fixed boxes repeat at the same place on every page, so they
+    // are placed against the page, not against the band of the flow that
+    // the page offsets above carry.
+    let (fixed_flow_shift_x, fixed_origin_y) = if pages_follow_x_axis.is_some() {
+        (page_offset_x - (margins.left + insets.left), 0.0)
+    } else {
+        (0.0, content_origin_y)
+    };
     // A body background is normally propagated to the canvas. When the body
     // has authored padding, its border box can still extend beyond the
     // synthetic canvas width used by this paint walk; paint that visible
@@ -2157,10 +2180,11 @@ pub(crate) fn paint_document_impl(
         || insets.top > 0.0
         || insets.bottom > 0.0
     {
+        let left = margins.left + insets.left;
         Some(Rect::new(
-            page_offset_x as f64,
+            left as f64,
             (margins.top + insets.top) as f64,
-            (page_box.width - margins.right - insets.right).max(page_offset_x) as f64,
+            (page_box.width - margins.right - insets.right).max(left) as f64,
             (margins.top + insets.top + content_height) as f64,
         ))
     } else {
@@ -2945,11 +2969,11 @@ pub(crate) fn paint_document_impl(
                         (abs_x, abs_y),
                         fixed_rtl,
                         page_box.width,
-                        content_origin_y,
+                        fixed_origin_y,
                         fixed_content_width,
                         content_height,
                     )
-                    .map(|(x, y)| (x - abs_x, y - abs_y))
+                    .map(|(x, y)| (x - abs_x - fixed_flow_shift_x, y - abs_y))
                     .unwrap_or((0.0, 0.0))
                 } else {
                     (0.0, 0.0)

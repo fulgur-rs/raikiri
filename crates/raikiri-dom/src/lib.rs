@@ -108,6 +108,8 @@ pub use layout::{
 };
 // cov:ignore: public re-exports have no runtime behavior to measure.
 #[doc(hidden)]
+pub use layout::pages_follow_x_axis;
+#[doc(hidden)]
 pub use layout::placed_without_relative_offset;
 pub use layout::{RootBox, root_box};
 #[doc(hidden)]

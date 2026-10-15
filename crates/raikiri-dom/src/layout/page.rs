@@ -1388,9 +1388,10 @@ pub(crate) fn is_static_position_absolute(
 }
 
 /// Whether pagination treats the box of `node_id` as monolithic: a replaced
-/// element, an atomic inline-level box or an orthogonal flow. Its content
-/// offers no class A break points, and its descendants' page names neither
-/// open pages nor propagate to the box.
+/// element, an atomic inline-level box or an orthogonal flow, and, while a
+/// vertical document is paginated on transposed axes, a box laid out on
+/// horizontal axes. Its content offers no class A break points, and its
+/// descendants' page names neither open pages nor propagate to the box.
 pub(crate) fn is_monolithic_for_pagination(
     document: &Document,
     cascade: &CascadeResult,
@@ -1412,6 +1413,9 @@ pub(crate) fn is_monolithic_for_pagination(
         || (!page_applies_to_box(document, cascade, node_id)
             && cascade.computed[node_id].display.is_atomic_inline_level())
         || establishes_orthogonal_flow(document, cascade, node_id)
+        || (document.pagination_on_transposed_axes
+            && node.kind() == NodeKind::Element
+            && !crate::layout::bridge::uses_vertical_axes(cascade, node_id))
 }
 
 /// Whether `node_id` establishes an orthogonal flow: its writing mode is

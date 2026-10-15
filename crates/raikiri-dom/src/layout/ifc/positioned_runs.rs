@@ -99,6 +99,17 @@ pub struct PositionedLine<'a> {
     pub content_images: Vec<PositionedContentImage>,
 }
 
+/// The physical offset of a move of `shift` along the block axis of
+/// `writing_mode`: down for horizontal lines, to the left for `vertical-rl`
+/// and `sideways-rl`, and to the right otherwise.
+pub(crate) fn block_shift(writing_mode: WritingMode, shift: f32) -> (f32, f32) {
+    match writing_mode {
+        WritingMode::HorizontalTb => (0.0, shift),
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => (-shift, 0.0),
+        _ => (shift, 0.0),
+    }
+}
+
 /// The lines of an ifc root, with what positions their glyphs.
 #[derive(Debug)]
 pub struct PositionedLines<'a> {
@@ -175,11 +186,14 @@ impl<'a> PositionedLines<'a> {
             }
             None => line_offsets.fill(Some((0.0, 0.0))),
         }
-        // Lines that pagination moved down with a block before them.
+        // Lines that pagination moved along the block axis with a block
+        // before them.
         let shifts = root_node.ifc_line_shifts();
-        for (offset, shift) in line_offsets.iter_mut().zip(&shifts) {
-            if let Some((_, dy)) = offset {
-                *dy += shift;
+        for (offset, &shift) in line_offsets.iter_mut().zip(&shifts) {
+            if let Some((dx, dy)) = offset {
+                let (x, y) = block_shift(writing_mode, shift);
+                *dx += x;
+                *dy += y;
             }
         }
         let size = root_node.ifc_size().unwrap_or((0.0, 0.0));
