@@ -219,10 +219,15 @@ pub(crate) fn hold_ifc_lines<'a>(
     let vertical = writing_mode != WritingMode::HorizontalTb;
     // Pages along x never cut a paragraph whose lines stack along y: each
     // of its lines goes with the paragraph's content box.
-    let paragraph_center_x = (!vertical)
+    let paragraph_center = (!vertical)
         .then(|| document.ifc_layout_node(root_id))
         .flatten()
-        .map(|node| base.x + node.unrounded_layout.content_box_width() / 2.0);
+        .map(|node| {
+            kurbo::Point::new(
+                f64::from(base.x + node.unrounded_layout.content_box_width() / 2.0),
+                f64::from(base.y + base.shift_y + node.unrounded_layout.content_box_height() / 2.0),
+            )
+        });
     let pieces = document
         .ifc_layout_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
@@ -300,7 +305,7 @@ pub(crate) fn hold_ifc_lines<'a>(
             && !line_on_flow_band(
                 &positioned_line,
                 position,
-                paragraph_center_x,
+                paragraph_center,
                 paint_transform,
                 band,
             )
@@ -676,28 +681,28 @@ pub(crate) fn draw_ifc_lines(
 
 /// Whether the page of `band` owns `line`, by the line's center, as layout
 /// assigns lines to the pages that follow the x axis. A line of a paragraph
-/// whose lines stack along y is centered at `paragraph_center_x` instead,
-/// the center of its paragraph's content box.
+/// whose lines stack along y goes with `paragraph_center` instead, the
+/// center of its paragraph's content box.
 fn line_on_flow_band(
     line: &raikiri_dom::PositionedLine<'_>,
     position: IfcPosition,
-    paragraph_center_x: Option<f32>,
+    paragraph_center: Option<kurbo::Point>,
     paint_transform: Affine,
     band: crate::walk::FlowBand,
 ) -> bool {
-    let rect = line.converter.rect(shodo::geometry::LogicalRect {
-        inline_start: 0.0,
-        block_start: line.line.block_offset(),
-        inline_size: line.line.inline_size(),
-        block_size: line.line.block_size(),
-    });
-    band.holds_line_center(
-        paint_transform,
+    let center = paragraph_center.unwrap_or_else(|| {
+        let rect = line.converter.rect(shodo::geometry::LogicalRect {
+            inline_start: 0.0,
+            block_start: line.line.block_offset(),
+            inline_size: line.line.inline_size(),
+            block_size: line.line.block_size(),
+        });
         kurbo::Point::new(
-            f64::from(paragraph_center_x.unwrap_or(position.x + rect.x + rect.width / 2.0)),
+            f64::from(position.x + rect.x + rect.width / 2.0),
             f64::from(position.y + position.shift_y + rect.y + rect.height / 2.0),
-        ),
-    )
+        )
+    });
+    band.holds_line_center(paint_transform, center)
 }
 
 fn physical_glyph_transform(

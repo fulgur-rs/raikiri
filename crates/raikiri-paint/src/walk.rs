@@ -1833,7 +1833,10 @@ impl FlowBand {
         if rect.width() <= 0.0 {
             return rect.x0 >= left && rect.x0 <= right;
         }
-        rect.x0 < right - FLOW_BAND_TOLERANCE && rect.x1 > left + FLOW_BAND_TOLERANCE
+        // The allowance absorbs rounding at the page area's edges, but never
+        // more than half a box, so a box narrower than it keeps its overlap.
+        let tolerance = FLOW_BAND_TOLERANCE.min(rect.width() / 2.0);
+        rect.x0 < right - tolerance && rect.x1 > left + tolerance
     }
 
     /// Whether the page owns a line whose center, painted under `transform`

@@ -6501,6 +6501,24 @@ fn a_page_along_the_x_axis_keeps_the_lines_of_a_sideways_paragraph_together() {
     assert_eq!(pixel(15, 5), &[0, 128, 0, 255]);
 }
 
+#[test]
+fn a_page_along_the_x_axis_keeps_the_lines_of_a_turned_sideways_paragraph_together() {
+    // Turned a quarter, the horizontal paragraph's lines fan out along x,
+    // but they all go with its center on the page area.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:30px;height:10px'></div>\
+         <div style='writing-mode:horizontal-tb;width:40px;height:60px;transform:rotate(90deg);\
+         font:10px/10px Ahem;color:green'>a<br>a<br>a<br>a<br>a<br>a</div>\
+         </body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(10, 15), &[0, 128, 0, 255]);
+}
+
 fn flow_band(right_to_left: bool, root_transform: Affine) -> super::FlowBand {
     super::FlowBand {
         left: 20.0,
@@ -6521,6 +6539,9 @@ fn flow_band_membership_handles_empty_and_unbounded_boxes() {
     assert!(!band.holds_box(Affine::IDENTITY, (f32::INFINITY, 0.0, 10.0, 10.0)));
     // A box that ends at the page area's edge belongs to the page beside it.
     assert!(!band.holds_box(Affine::IDENTITY, (-40.0, 0.0, 60.0, 10.0)));
+    // A box narrower than the rounding allowance keeps its overlap.
+    assert!(band.holds_box(Affine::IDENTITY, (20.0, 0.0, 0.005, 10.0)));
+    assert!(!band.holds_box(Affine::IDENTITY, (19.995, 0.0, 0.005, 10.0)));
 }
 
 #[test]
