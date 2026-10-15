@@ -1788,6 +1788,75 @@ fn box_intersects_page(y: f32, height: f32, page_top: f32, page_bottom: f32) -> 
     y < page_bottom && y + height > page_top
 }
 
+/// How far a box must reach into the page area of a page that follows the x
+/// axis to belong to it, so that a box ending at the page edge, up to
+/// rounding, stays on the page beside it.
+const FLOW_BAND_TOLERANCE: f64 = 0.01;
+
+/// How far toward its start a page's slice of the flow reaches to own a
+/// line, as layout assigns lines to pages.
+const LINE_OWNERSHIP_BIAS: f64 = 0.001;
+
+/// The page area of a page that follows the x axis, from `left` to `right`
+/// in page coordinates: the page holds the boxes that reach across it and
+/// the lines whose center lies in it.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FlowBand {
+    pub(crate) left: f32,
+    pub(crate) right: f32,
+    /// The flow, and so its pages, run from right to left.
+    pub(crate) right_to_left: bool,
+    /// The root element's transform, which maps the walker's coordinates to
+    /// page coordinates.
+    pub(crate) root_transform: Affine,
+}
+
+impl FlowBand {
+    /// Whether the rectangle at `x, y` of `width` and `height`, painted
+    /// under `transform` inside the root element, reaches across the band.
+    pub(crate) fn holds_box(
+        self,
+        transform: Affine,
+        (x, y, width, height): (f32, f32, f32, f32),
+    ) -> bool {
+        let rect = (self.root_transform * transform).transform_rect_bbox(Rect::new(
+            f64::from(x),
+            f64::from(y),
+            f64::from(x + width),
+            f64::from(y + height),
+        ));
+        let (left, right) = (f64::from(self.left), f64::from(self.right));
+        if !rect.x0.is_finite() || !rect.x1.is_finite() {
+            return false;
+        }
+        if rect.width() <= 0.0 {
+            return rect.x0 >= left && rect.x0 <= right;
+        }
+        // The allowance absorbs rounding at the page area's edges, but stays
+        // under half a box, so a box narrower than it keeps its overlap, even
+        // one centered on the edge between two pages.
+        let tolerance = FLOW_BAND_TOLERANCE.min(rect.width() / 4.0);
+        rect.x0 < right - tolerance && rect.x1 > left + tolerance
+    }
+
+    /// Whether the page owns a line whose center, painted under `transform`
+    /// inside the root element, lies at `center`: the page whose slice of
+    /// the flow holds the center, a center on the edge between two pages
+    /// going to the page whose slice starts there.
+    pub(crate) fn holds_line_center(self, transform: Affine, center: kurbo::Point) -> bool {
+        let x = (self.root_transform * transform * center).x;
+        let (left, right) = (f64::from(self.left), f64::from(self.right));
+        if !x.is_finite() {
+            return false;
+        }
+        if self.right_to_left {
+            x > left + LINE_OWNERSHIP_BIAS && x <= right + LINE_OWNERSHIP_BIAS
+        } else {
+            x >= left - LINE_OWNERSHIP_BIAS && x < right - LINE_OWNERSHIP_BIAS
+        }
+    }
+}
+
 /// Walk the Document arena iteratively in DFS order, starting from body.
 /// A fragment (without `<body>`) returns silently. `layout_single_page` should
 /// already have returned Err before painting; this is defensive.
@@ -2070,7 +2139,7 @@ pub(crate) fn paint_document_impl(
     let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
         // Pages that follow the x axis hold a band of the flow across the
         // whole page height: every box is on the page along y, and the
-        // caller clips the page to its band. Flowing right to left, the
+        // page area decides along x which boxes and lines the page holds. Flowing right to left, the
         // band starts at the page area's right edge, so on a page whose area
         // is narrower or wider than the one this document was laid out in it
         // moves with that edge.
@@ -2155,6 +2224,18 @@ pub(crate) fn paint_document_impl(
                 })
                 .fold(0.0_f32, f32::max);
             if content_end > 0.0 && content_bottom > 0.0 {
+                // On a page that follows the x axis the strip belongs to the
+                // page whose page area it lies across; keep it out of the
+                // margins beside that area. The clip is in page coordinates,
+                // so it undoes the root element's transform.
+                let band_clip = pages_follow_x_axis.map(|_| {
+                    let left = f64::from(margins.left + insets.left);
+                    let extent = f64::from(FLOW_EXTENT);
+                    Rect::new(left, -extent, left + f64::from(content_width), extent)
+                });
+                if let Some(clip) = &band_clip {
+                    scene.push_clip_layer(root_transform.inverse(), clip);
+                }
                 scene.fill(
                     Fill::NonZero,
                     Affine::IDENTITY,
@@ -2168,6 +2249,9 @@ pub(crate) fn paint_document_impl(
                             as f64,
                     ),
                 );
+                if band_clip.is_some() {
+                    scene.pop_layer();
+                }
             }
         }
     }
@@ -2197,6 +2281,18 @@ pub(crate) fn paint_document_impl(
     } else {
         None
     };
+    // A page that follows the x axis holds the boxes and lines that lie
+    // across its page area, as pages along y hold those across their page
+    // height; nothing else of the flow beside it is painted.
+    let flow_band = pages_follow_x_axis.map(|right_to_left| {
+        let left = margins.left + insets.left;
+        FlowBand {
+            left,
+            right: left + content_width,
+            right_to_left,
+            root_transform,
+        }
+    });
     let mut capture_scene = crate::capture::CaptureScene::new(scene);
     let mut transformed_scene = crate::transform::TransformScene {
         scene: &mut capture_scene,
@@ -2404,7 +2500,20 @@ pub(crate) fn paint_document_impl(
                     scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 let owner = document.ifc_source_owner(key);
+                let cell_on_band = inside_fixed
+                    || flow_band.is_none_or(|band| {
+                        band.holds_box(
+                            scene.transform,
+                            (
+                                x + page_offset_x + transform_x,
+                                y + page_offset_y + transform_y,
+                                layout.size.width,
+                                layout.size.height,
+                            ),
+                        )
+                    });
                 if cascade.computed[owner].visibility != Visibility::Hidden
+                    && cell_on_band
                     && let Some(border) = cell.collapsed_border()
                 {
                     paint_element_border(
@@ -2444,6 +2553,7 @@ pub(crate) fn paint_document_impl(
                     pixel_source,
                     warnings,
                     page_box,
+                    flow_band.filter(|_| !inside_fixed),
                     paint_transform,
                 );
                 if clip.is_some() {
@@ -2580,6 +2690,7 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
+                        flow_band.filter(|_| !inside_fixed),
                         paint_transform,
                     );
                     match lines {
@@ -2614,6 +2725,7 @@ pub(crate) fn paint_document_impl(
                         pixel_source,
                         warnings,
                         page_box,
+                        flow_band.filter(|_| !inside_fixed),
                         paint_transform,
                     );
                 }
@@ -3070,12 +3182,27 @@ pub(crate) fn paint_document_impl(
                         || ((fixed_in_viewport || named_page_matches(node_id))
                             && (fixed_in_viewport
                                 || inside_fixed
-                                || box_intersects_page(
+                                || (box_intersects_page(
                                     abs_y,
                                     layout.size.height,
                                     page_top,
                                     page_bottom,
-                                ))));
+                                ) && flow_band.is_none_or(|band| {
+                                    // A table paints its own box around its
+                                    // grid, without its captions.
+                                    let own_box = node.table_grid_box().map_or(
+                                        (paint_x, paint_y, layout.size.width, layout.size.height),
+                                        |grid| {
+                                            (
+                                                paint_x + grid.x,
+                                                paint_y + grid.y,
+                                                grid.width,
+                                                grid.height,
+                                            )
+                                        },
+                                    );
+                                    band.holds_box(scene.transform, own_box)
+                                })))));
                 // An absolutely positioned containing block can own a child
                 // fragment on a later page even when its first layout box ends
                 // before that page.  Preserve the parent's border/background
@@ -3123,7 +3250,10 @@ pub(crate) fn paint_document_impl(
                 // Where the box's border box starts on this page's coordinates
                 // before it is cut into a continuation fragment.
                 let mut unfragmented_top = paint_y;
+                // Continuations cut boxes along y; a page that follows the x
+                // axis holds only the boxes across its page area.
                 if !paints_on_page
+                    && flow_band.is_none()
                     && is_absolute_fragment_candidate
                     && let Some(descendant_end) = descendant_end_on_page
                 {
@@ -4291,6 +4421,7 @@ pub(crate) fn paint_document_impl(
                             pixel_source,
                             warnings,
                             page_box,
+                            flow_band.filter(|_| !inside_fixed),
                             paint_transform,
                         );
                     }

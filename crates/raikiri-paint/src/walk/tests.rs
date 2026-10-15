@@ -6158,3 +6158,283 @@ fn a_viewport_fixed_box_keeps_its_page_position_on_a_narrower_page_along_the_x_a
     // carried onto it.
     assert_eq!(pixel(5, 5), &[0, 128, 0, 255]);
 }
+
+/// Lay `markup` out with the Ahem font on `page` and paint page
+/// `page_index` into a buffer of that page's size.
+fn paint_ahem_page(markup: &str, page: PageBox, page_index: usize) -> Vec<u8> {
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    let dir = std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../raikiri-dom/tests/data/text-autospace"
+    ));
+    let collection = raikiri_dom::build_wpt_font_collection(dir).expect("the Ahem layer");
+    parsed
+        .dom
+        .set_font_collection_with_limits(collection, shodo::limits::Limits::default());
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let pages = raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin_and_page_context_named_with_fixed_page_width(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        page,
+        pages[page_index].content_origin_y,
+        page_index as u32,
+        pages.len() as u32,
+        true,
+        None,
+        None,
+        page.width,
+    )
+    .unwrap();
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+        page.width as u32,
+        page.height as u32,
+    )
+}
+
+fn square_page(size: f32) -> PageBox {
+    let mut page = PageBox::new();
+    page.width = size;
+    page.height = size;
+    page
+}
+
+#[test]
+fn a_page_along_the_x_axis_leaves_the_boxes_of_the_next_page_out_of_its_margin() {
+    // Each box fills one 60px page area; the next page's lies to the left,
+    // with its right border across the page's 20px left margin.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:60px;height:10px;background:green'></div>\
+         <div style='width:50px;height:10px;border-right:10px solid red'></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(50, 5), &[0, 128, 0, 255]);
+    assert_eq!(pixel(15, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_paints_the_ink_of_its_lines_past_its_page_area() {
+    // The page holds the line; relative positioning moves 5px of its glyph
+    // into the right margin, where the page still paints it.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='font:10px/10px Ahem;color:green'>\
+         <span style='position:relative;left:5px'>a</span></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(82, 5), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_paints_only_the_lines_it_holds() {
+    // Ten 10px lines of one paragraph run over two 60px page areas; the
+    // lines of the second page lie to the left of the first page's area.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='font:10px/10px Ahem;color:green;height:10px'>\
+         a a a a a a a a a a</div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(75, 5), &[0, 128, 0, 255]);
+    assert_eq!(pixel(25, 5), &[0, 128, 0, 255]);
+    assert_eq!(pixel(10, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_repeats_the_lines_of_fixed_boxes() {
+    // A fixed box repeats on every page, so its line paints on the second
+    // page too, even from the page's margin where no flow line belongs.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='position:fixed;top:0;left:-15px;font:10px/10px Ahem;color:green;width:10px;height:10px'>a</div>\
+         <div style='width:60px;height:10px'></div>\
+         <div style='width:60px;height:10px'></div></body></html>",
+        square_page(100.0),
+        1,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(10, 5), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_leaves_anonymous_cell_borders_beside_its_page_area_out() {
+    // A sideways table straddles the page's left margin. The anonymous
+    // cell around its text lies wholly in the margin, beside the page area,
+    // so the row's red border it carries stays off the page.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:40px;height:10px'></div>\
+         <div style='writing-mode:horizontal-tb;display:table;border-collapse:collapse;\
+         font:10px/10px Ahem;color:green'><div style='display:table-row;border:4px solid red'>a\
+         <div style='display:table-cell;width:20px;height:10px'></div></div></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(5, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_keeps_the_body_padding_strip_out_of_its_margins() {
+    // The body's red padding strip runs across the flow from its right
+    // padding edge; the page paints it across its page area only.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head>\
+         <body style='margin:0;padding-right:10px;background:red'>\
+         <div style='width:60px;height:10px'></div>\
+         <div style='width:60px;height:10px'></div></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(10, 5), &[255, 255, 255, 255]);
+    assert_eq!(pixel(90, 5), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_leaves_the_grid_of_a_table_beside_it_out_of_its_margin() {
+    // The table's caption reaches into the page area, but its grid, with
+    // the red border, lies wholly in the page's left margin.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:50px;height:10px'></div>\
+         <table style='border-collapse:collapse;border:4px solid red;font:10px/10px Ahem'>\
+         <caption style='width:10px;color:green'>a</caption>\
+         <tr><td style='width:12px;height:20px;padding:0'></td></tr></table></body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(22, 9), &[0, 128, 0, 255]);
+    assert_eq!(pixel(5, 1), &[255, 255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_keeps_the_lines_of_a_sideways_paragraph_together() {
+    // The horizontal paragraph is centered on the page area, so its short
+    // line goes with it into the page's left margin.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:30px;height:10px'></div>\
+         <div style='writing-mode:horizontal-tb;width:40px;font:10px/10px Ahem;color:green'>a</div>\
+         </body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(15, 5), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_keeps_the_lines_of_a_turned_sideways_paragraph_together() {
+    // Turned a quarter, the horizontal paragraph's lines fan out along x,
+    // but they all go with its center on the page area.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:30px;height:10px'></div>\
+         <div style='writing-mode:horizontal-tb;width:40px;height:60px;transform:rotate(90deg);\
+         font:10px/10px Ahem;color:green'>a<br>a<br>a<br>a<br>a<br>a</div>\
+         </body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(10, 15), &[0, 128, 0, 255]);
+}
+
+#[test]
+fn a_page_along_the_x_axis_leaves_absolute_boxes_beside_it_out_of_its_margin() {
+    // The bordered absolute box with an in-flow child lies wholly in the
+    // page's left margin, so no continuation of it paints there.
+    let rgba = paint_ahem_page(
+        "<!DOCTYPE html><html style='writing-mode:vertical-rl'><head><style>\
+         @page { margin: 0 20px }</style></head><body style='margin:0'>\
+         <div style='width:60px;height:10px'></div>\
+         <div style='position:absolute;left:-18px;top:0;width:10px;height:40px;\
+         border:3px solid red;background:red'><div style='width:10px;height:10px'></div></div>\
+         </body></html>",
+        square_page(100.0),
+        0,
+    );
+    let pixel = |x: usize, y: usize| &rgba[(y * 100 + x) * 4..][..4];
+    assert_eq!(pixel(3, 1), &[255, 255, 255, 255]);
+}
+
+fn flow_band(right_to_left: bool, root_transform: Affine) -> super::FlowBand {
+    super::FlowBand {
+        left: 20.0,
+        right: 80.0,
+        right_to_left,
+        root_transform,
+    }
+}
+
+#[test]
+fn flow_band_membership_handles_empty_and_unbounded_boxes() {
+    let band = flow_band(true, Affine::IDENTITY);
+    // An empty box belongs to the page whose page area holds it, edges
+    // included.
+    assert!(band.holds_box(Affine::IDENTITY, (20.0, 0.0, 0.0, 10.0)));
+    assert!(!band.holds_box(Affine::IDENTITY, (10.0, 0.0, 0.0, 10.0)));
+    // A box without finite edges belongs to no page.
+    assert!(!band.holds_box(Affine::IDENTITY, (f32::INFINITY, 0.0, 10.0, 10.0)));
+    // A box that ends at the page area's edge belongs to the page beside it.
+    assert!(!band.holds_box(Affine::IDENTITY, (-40.0, 0.0, 60.0, 10.0)));
+    // A box narrower than the rounding allowance keeps its overlap.
+    assert!(band.holds_box(Affine::IDENTITY, (20.0, 0.0, 0.005, 10.0)));
+    assert!(!band.holds_box(Affine::IDENTITY, (19.995, 0.0, 0.005, 10.0)));
+    // One centered on the edge between two pages stays on both.
+    assert!(band.holds_box(Affine::IDENTITY, (19.995, 0.0, 0.01, 10.0)));
+    assert!(band.holds_box(Affine::IDENTITY, (79.995, 0.0, 0.01, 10.0)));
+}
+
+#[test]
+fn flow_band_membership_applies_the_root_transform() {
+    // The root element's transform moves its boxes and lines onto the page.
+    let band = flow_band(true, Affine::translate((50.0, 0.0)));
+    assert!(band.holds_box(Affine::IDENTITY, (-20.0, 0.0, 10.0, 10.0)));
+    assert!(!band.holds_box(Affine::IDENTITY, (40.0, 0.0, 10.0, 10.0)));
+    assert!(band.holds_line_center(Affine::IDENTITY, kurbo::Point::new(-20.0, 5.0)));
+    assert!(!band.holds_line_center(Affine::IDENTITY, kurbo::Point::new(40.0, 5.0)));
+    assert!(!band.holds_line_center(Affine::IDENTITY, kurbo::Point::new(f64::NAN, 5.0)));
+}
+
+#[test]
+fn a_line_centered_on_a_page_boundary_belongs_to_the_page_starting_there() {
+    // Right to left, a page starts at its right edge and ends at its left
+    // edge, so it holds the line centered on its right edge only.
+    let rl = flow_band(true, Affine::IDENTITY);
+    assert!(rl.holds_line_center(Affine::IDENTITY, kurbo::Point::new(80.0, 5.0)));
+    assert!(!rl.holds_line_center(Affine::IDENTITY, kurbo::Point::new(20.0, 5.0)));
+    // Left to right, a page starts at its left edge.
+    let lr = flow_band(false, Affine::IDENTITY);
+    assert!(lr.holds_line_center(Affine::IDENTITY, kurbo::Point::new(20.0, 5.0)));
+    assert!(!lr.holds_line_center(Affine::IDENTITY, kurbo::Point::new(80.0, 5.0)));
+}

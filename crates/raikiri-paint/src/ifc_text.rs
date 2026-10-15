@@ -81,6 +81,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     warnings: &mut Vec<raikiri_traits::RenderWarning>,
     page_box: raikiri_traits::PageBox,
+    flow_band: Option<crate::walk::FlowBand>,
     paint_transform: Affine,
 ) {
     if let Some(lines) = hold_ifc_lines(
@@ -95,6 +96,7 @@ pub(crate) fn draw_ifc_lines_with_resources(
         pixel_source,
         warnings,
         page_box,
+        flow_band,
         paint_transform,
     ) {
         lines.finish(scene);
@@ -206,6 +208,7 @@ pub(crate) fn hold_ifc_lines<'a>(
     pixel_source: Option<&dyn raikiri_traits::ImagePixelSource>,
     warnings: &mut Vec<raikiri_traits::RenderWarning>,
     page_box: raikiri_traits::PageBox,
+    flow_band: Option<crate::walk::FlowBand>,
     paint_transform: Affine,
 ) -> Option<HeldLines<'a>> {
     let positioned = PositionedLines::new(document, cascade, root_id, fragmentainer)?;
@@ -214,6 +217,17 @@ pub(crate) fn hold_ifc_lines<'a>(
     let base = position;
     let size = positioned.size;
     let vertical = writing_mode != WritingMode::HorizontalTb;
+    // Pages along x never cut a paragraph whose lines stack along y: each
+    // of its lines goes with the paragraph's content box.
+    let paragraph_center = (!vertical)
+        .then(|| document.ifc_layout_node(root_id))
+        .flatten()
+        .map(|node| {
+            kurbo::Point::new(
+                f64::from(base.x + node.unrounded_layout.content_box_width() / 2.0),
+                f64::from(base.y + base.shift_y + node.unrounded_layout.content_box_height() / 2.0),
+            )
+        });
     let pieces = document
         .ifc_layout_node(root_id)
         .and_then(|node| node.ifc_inline_boxes())
@@ -287,6 +301,17 @@ pub(crate) fn hold_ifc_lines<'a>(
             y: base.y + column_y,
             shift_y: base.shift_y,
         };
+        if let Some(band) = flow_band
+            && !line_on_flow_band(
+                &positioned_line,
+                position,
+                paragraph_center,
+                paint_transform,
+                band,
+            )
+        {
+            continue;
+        }
         let transform = Affine::translate((
             f64::from(position.x),
             f64::from(position.y + position.shift_y),
@@ -649,8 +674,35 @@ pub(crate) fn draw_ifc_lines(
         None,
         &mut Vec::new(),
         raikiri_traits::PageBox::A4,
+        None,
         Affine::IDENTITY,
     );
+}
+
+/// Whether the page of `band` owns `line`, by the line's center, as layout
+/// assigns lines to the pages that follow the x axis. A line of a paragraph
+/// whose lines stack along y goes with `paragraph_center` instead, the
+/// center of its paragraph's content box.
+fn line_on_flow_band(
+    line: &raikiri_dom::PositionedLine<'_>,
+    position: IfcPosition,
+    paragraph_center: Option<kurbo::Point>,
+    paint_transform: Affine,
+    band: crate::walk::FlowBand,
+) -> bool {
+    let center = paragraph_center.unwrap_or_else(|| {
+        let rect = line.converter.rect(shodo::geometry::LogicalRect {
+            inline_start: 0.0,
+            block_start: line.line.block_offset(),
+            inline_size: line.line.inline_size(),
+            block_size: line.line.block_size(),
+        });
+        kurbo::Point::new(
+            f64::from(position.x + rect.x + rect.width / 2.0),
+            f64::from(position.y + position.shift_y + rect.y + rect.height / 2.0),
+        )
+    });
+    band.holds_line_center(paint_transform, center)
 }
 
 fn physical_glyph_transform(
