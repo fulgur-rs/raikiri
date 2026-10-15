@@ -1253,3 +1253,15 @@ fn a_preserved_line_break_inside_an_inline_wrapper_keeps_its_line() {
     // wrapper belongs to a paragraph and is not a line-less block wrapper.
     assert_eq!(text_origins(&document)[0], ("A".into(), (0.0, 36.0)));
 }
+
+#[test]
+fn collapsible_white_space_inside_an_inline_wrapper_keeps_the_forced_break() {
+    let document = lay_out(
+        "<div class=mc><div><span>\n<div style='break-after:column'>A</div>\n</span><span><div>B</div></span></div></div>",
+        ".mc{height:60px;column-fill:auto}",
+    );
+    assert_eq!(
+        text_origins(&document),
+        [("A".into(), (0.0, 16.0)), ("B".into(), (60.0, 16.0))]
+    );
+}
