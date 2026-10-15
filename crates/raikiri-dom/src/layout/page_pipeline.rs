@@ -6347,8 +6347,9 @@ fn paginate_flow(
                     // top leaves its collapsed margin after the break.
                     // A later, unforced page edge inside that margin still
                     // truncates it.
-                    let after_forced_break = forced_break_margin_box == Some(previous)
-                        && (previous_bottom - page_top).abs() <= 0.001;
+                    let after_forced_break = forced_break_margin_box.is_some_and(|owner| {
+                        forced_margin_reaches(document, cascade, owner, previous)
+                    }) && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
                         && effective_y > page_top + 0.001
                         && previous_bottom <= page_top + 0.001
@@ -6411,7 +6412,9 @@ fn paginate_flow(
                 let follows_forced_box = forced_break_margin_box.is_some_and(|owner| {
                     previous_block_bottoms
                         .get(&parent_id)
-                        .is_some_and(|&(previous, _)| previous == owner)
+                        .is_some_and(|&(previous, _)| {
+                            forced_margin_reaches(document, cascade, owner, previous)
+                        })
                 });
                 forced_break_margin_box = (follows_forced_box
                     && collapses_with_previous_block
@@ -6773,6 +6776,32 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
                 || has_in_flow_content(document, cascade, child)
         }
     })
+}
+
+/// Whether the margins of `owner`, an empty box after a forced break, reach
+/// the block-end margin of `previous`: `previous` is `owner` itself or an
+/// ancestor whose boxes down to `owner` are all empty, so that the margins
+/// collapse through each of them (CSS 2 §8.3.1).
+fn forced_margin_reaches(
+    document: &Document,
+    cascade: &CascadeResult,
+    owner: usize,
+    previous: usize,
+) -> bool {
+    let mut id = owner;
+    while id != previous {
+        match box_parent(document, cascade, id, BoxParentScope::Document) {
+            Some(parent)
+                if document.nodes[parent].unrounded_layout.size.height <= 0.0
+                    && margins_may_collapse_through(document, cascade, parent)
+                    && !has_in_flow_content(document, cascade, parent) =>
+            {
+                id = parent;
+            }
+            _ => return false,
+        }
+    }
+    true
 }
 
 /// Whether `id` is a block box (a list item included) that establishes no
