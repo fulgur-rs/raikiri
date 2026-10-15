@@ -6735,11 +6735,11 @@ pub fn layout_single_page_with_resolver_and_base_url(
 /// through it (CSS 2 §8.3.1). A line box counts, including one holding only
 /// generated content such as an inside marker or `::before`, and so does a
 /// block-level `::before` or `::after` box with padding, border or height.
-/// Out-of-flow children do not count, an inline child counts only through
-/// its line, and an empty block child whose own margins collapse through it
-/// does not count.
+/// Out-of-flow children do not count, text and inline children count only
+/// through their lines, and an empty block child whose own margins collapse
+/// through it does not count.
 fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let has_generated_content = document.ifc_layout_node(id).is_some_and(|node| {
+    let has_paragraph_content = document.ifc_layout_node(id).is_some_and(|node| {
         let width = node.unrounded_layout.size.width;
         node.ifc.as_ref().is_some_and(|ifc| {
             ifc.generated_blocks
@@ -6751,7 +6751,7 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
                     .is_some_and(|lines| !lines.lines.is_empty())
         })
     });
-    if has_generated_content {
+    if has_paragraph_content {
         return true;
     }
     let mut boxes = Vec::new();
@@ -6761,11 +6761,9 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
     boxes.into_iter().any(|child| {
         let node = &document.nodes[child];
         let display = cascade.computed[child].display;
-        if node.kind() == NodeKind::Text {
-            true
-        } else if display.is_inline_level() {
-            // An inline-level box is content only through the line it makes,
-            // which the line check above has already counted.
+        if node.kind() == NodeKind::Text || display.is_inline_level() {
+            // Text and inline-level boxes are content only through the lines
+            // they make, which the line check above has already counted.
             false
         } else {
             display != DisplayValue::Block
