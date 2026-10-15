@@ -38,11 +38,20 @@ pub(crate) struct IfcPosition {
 }
 
 /// One glyph run ready to draw, with its decoration context.
+/// The glyph `glyph` as the scene draws it.
+fn anyrender_glyph(glyph: &raikiri_dom::LineGlyph) -> AnyrenderGlyph {
+    AnyrenderGlyph {
+        id: glyph.id,
+        x: glyph.x,
+        y: glyph.y,
+    }
+}
+
 struct RunDraw<'a> {
     run: shodo::GlyphRunView<'a>,
     style: &'a raikiri_style::ComputedValues,
     color: peniko::Color,
-    glyphs: Vec<AnyrenderGlyph>,
+    glyphs: Vec<raikiri_dom::LineGlyph>,
     decorations: Vec<raikiri_dom::DecorationLine>,
     /// The relative offsets of the run's inline ancestors.
     offset: (f32, f32),
@@ -563,20 +572,12 @@ pub(crate) fn hold_ifc_lines<'a>(
         );
         let mut runs: Vec<RunDraw<'_>> = Vec::new();
         let converter = positioned_line.converter;
-        for (positioned_run, decorations) in
+        for (mut positioned_run, decorations) in
             positioned_line.runs.into_iter().zip(resolved_decorations)
         {
             let run = positioned_run.run;
             let cv = positioned_run.style;
-            let glyphs: Vec<AnyrenderGlyph> = positioned_run
-                .glyphs
-                .iter()
-                .map(|glyph| AnyrenderGlyph {
-                    id: glyph.id,
-                    x: glyph.x,
-                    y: glyph.y,
-                })
-                .collect();
+            let glyphs = std::mem::take(&mut positioned_run.glyphs);
             let offset = positioned_run.offset;
             let paint_box = paint_box(
                 document,
@@ -691,7 +692,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                     1.0,
                     run_transform,
                     glyph_transform,
-                    draw.glyphs.clone().into_iter(),
+                    draw.glyphs.iter().map(anyrender_glyph),
                 );
                 // Emphasis marks sit over or under their characters; vertical
                 // runs need rotated placement, which is not drawn yet.
@@ -1050,7 +1051,7 @@ fn draw_shadow(
         1.0,
         shadow_transform,
         run.glyph_transform,
-        run.draw.glyphs.clone().into_iter(),
+        run.draw.glyphs.iter().map(anyrender_glyph),
     );
     let (x, baseline) = run.emphasis_origin;
     crate::emphasis::draw_marks_in(

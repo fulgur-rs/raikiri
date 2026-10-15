@@ -22,6 +22,12 @@ pub struct LineGlyph {
     pub x: f32,
     /// Vertical position from the line's origin.
     pub y: f32,
+    /// Layout advance, including the cluster's assigned spacing.
+    pub advance: f32,
+    /// Byte offset at which the glyph's cluster starts, in the text of the
+    /// line that lays the run out: a ruby annotation's own line for an
+    /// annotation run.
+    pub cluster: u32,
 }
 
 /// A glyph run the painter draws, with its glyph positions.
@@ -440,7 +446,13 @@ impl<'a> PositionedLines<'a> {
                 .filter_map(|(glyph_index, glyph)| {
                     let (inline, block) = run.glyph_origin(glyph_index)?;
                     let (x, y) = converter.point(inline, block + line.block_offset());
-                    Some(LineGlyph { id: glyph.id, x, y })
+                    Some(LineGlyph {
+                        id: glyph.id,
+                        x,
+                        y,
+                        advance: glyph.advance,
+                        cluster: glyph.cluster,
+                    })
                 })
                 .collect();
             // A run without glyphs draws nothing.
@@ -524,7 +536,13 @@ impl<'a> PositionedLines<'a> {
                             let (inline, block) =
                                 placement.apply(inline, block + line.block_offset());
                             let (x, y) = converter.point(inline, block);
-                            Some(LineGlyph { id: glyph.id, x, y })
+                            Some(LineGlyph {
+                                id: glyph.id,
+                                x,
+                                y,
+                                advance: glyph.advance,
+                                cluster: glyph.cluster,
+                            })
                         })
                         .collect();
                     if glyphs.is_empty() {

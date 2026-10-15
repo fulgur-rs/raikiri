@@ -6,7 +6,7 @@
 //! mark over each shaping cluster that takes one, centered on the cluster in
 //! the inline direction, as Blink does.
 
-use anyrender::{Glyph as AnyrenderGlyph, PaintScene};
+use anyrender::PaintScene;
 use peniko::Color;
 use raikiri_dom::{Document, StandaloneAlign, StandaloneText};
 use raikiri_style::ComputedValues;
@@ -73,7 +73,7 @@ pub(crate) fn draw_marks(
     scene: &mut impl PaintScene,
     document: &Document,
     run: &shodo::GlyphRunView<'_>,
-    glyphs: &[AnyrenderGlyph],
+    glyphs: &[raikiri_dom::LineGlyph],
     (origin_x, baseline): (f32, f32),
     style: &ComputedValues,
     text_color: Color,
@@ -99,7 +99,7 @@ pub(crate) fn draw_marks_in(
     scene: &mut impl PaintScene,
     document: &Document,
     run: &shodo::GlyphRunView<'_>,
-    glyphs: &[AnyrenderGlyph],
+    glyphs: &[raikiri_dom::LineGlyph],
     (origin_x, baseline): (f32, f32),
     style: &ComputedValues,
     color: Color,
@@ -111,10 +111,6 @@ pub(crate) fn draw_marks_in(
     else {
         return; // cov:ignore: shaping one character fails only past the engine's limits.
     };
-    let advances: Vec<f32> = run.glyphs().map(|glyph| glyph.advance).collect();
-    // A glyph records the text offset of its character, which falls inside
-    // the text range of the cluster it belongs to.
-    let offsets: Vec<usize> = run.glyphs().map(|glyph| glyph.cluster as usize).collect();
     for cluster in run.clusters() {
         if cluster.flags.emphasis_excluded {
             continue;
@@ -124,12 +120,14 @@ pub(crate) fn draw_marks_in(
         let mut start = f32::INFINITY;
         let mut end = f32::NEG_INFINITY;
         let mut found = false;
-        for ((glyph, advance), offset) in glyphs.iter().zip(&advances).zip(&offsets) {
-            if !cluster.text_range.contains(offset) {
+        for glyph in glyphs {
+            // A glyph records the text offset of its character, which falls
+            // inside the text range of the cluster it belongs to.
+            if !cluster.text_range.contains(&(glyph.cluster as usize)) {
                 continue;
             }
             start = start.min(glyph.x);
-            end = end.max(glyph.x + advance);
+            end = end.max(glyph.x + glyph.advance);
             found = true;
         }
         if !found {

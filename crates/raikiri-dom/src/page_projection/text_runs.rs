@@ -4,7 +4,9 @@
 use super::records::{FlowAxis, PageFragment, ProjectedTextRoot};
 use crate::Document;
 use crate::generated_content::generated_origin;
-use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
+use crate::layout::{
+    LineGlyph, PositionedLine, PositionedLines, PositionedRun, line_center_on_page,
+};
 use crate::node::FormattingContext;
 use raikiri_style::property::{
     ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
@@ -1428,7 +1430,7 @@ fn glyph_run<'a>(
     let index = font.index;
     let (bytes, blob) = font.data.into_raw_parts();
     let text_range = run.text_range();
-    let shaped: Vec<shodo::Glyph> = run.glyphs().collect();
+    let glyphs = &positioned.glyphs;
     let (text, ranges) = if ellipsis {
         // The periods of a fallback ellipsis are split into one run per font.
         let runs = line
@@ -1438,9 +1440,9 @@ fn glyph_run<'a>(
                 matches!(fragment, shodo::Fragment::GlyphRun(other) if other.is_ellipsis())
             })
             .count();
-        ellipsis_text(shaped.len(), runs > 1)
+        ellipsis_text(glyphs.len(), runs > 1)
     } else {
-        let clusters: Vec<u32> = shaped.iter().map(|glyph| glyph.cluster).collect();
+        let clusters: Vec<u32> = glyphs.iter().map(|glyph| glyph.cluster).collect();
         // An annotation's text is in its own line.
         let text_line = positioned
             .annotation
@@ -1451,38 +1453,33 @@ fn glyph_run<'a>(
         )
     };
     let (dx, dy) = (x + positioned.offset.0, y + positioned.offset.1);
-    let mut placed: Vec<(f32, f32, &shodo::Glyph, Range<usize>)> = positioned
-        .glyphs
-        .iter()
-        .zip(&shaped)
-        .zip(ranges)
-        .map(|((glyph, shaped), range)| (dx + glyph.x, dy + glyph.y, shaped, range))
-        .collect();
     // Glyphs are stored in logical order; a right-to-left run is drawn from
     // its last logical glyph on the left.
-    if run.bidi_level() % 2 == 1 {
-        placed.reverse();
-    }
+    let rtl = run.bidi_level() % 2 == 1;
+    let first = if rtl { glyphs.last() } else { glyphs.first() }?;
     let baseline = positioned.annotation.map_or_else(
         || line.line.block_offset() + run.baseline(),
         |annotation| annotation.baseline,
     );
-    let origin = (placed.first()?.0, dy + baseline);
+    let origin = (dx + first.x, dy + baseline);
     let mut pen = origin.0;
-    let glyphs = placed
-        .into_iter()
-        .map(|(glyph_x, glyph_y, shaped, text_range)| {
-            let glyph = Glyph {
-                id: shaped.id,
-                advance: shaped.advance,
-                x_offset: glyph_x - pen,
-                y_offset: glyph_y - origin.1,
-                text_range,
-            };
-            pen += shaped.advance;
-            glyph
-        })
-        .collect();
+    let mut place = |(glyph, text_range): (&LineGlyph, Range<usize>)| {
+        let placed = Glyph {
+            id: glyph.id,
+            advance: glyph.advance,
+            x_offset: dx + glyph.x - pen,
+            y_offset: dy + glyph.y - origin.1,
+            text_range,
+        };
+        pen += glyph.advance;
+        placed
+    };
+    let logical = glyphs.iter().zip(ranges);
+    let glyphs = if rtl {
+        logical.rev().map(&mut place).collect()
+    } else {
+        logical.map(&mut place).collect()
+    };
     let metrics = run.metrics();
     Some(PositionedGlyphRun {
         line: line_id,
