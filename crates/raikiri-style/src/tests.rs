@@ -407,3 +407,34 @@ fn first_letter_legacy_and_modern_selectors_serialize_canonically() {
         assert_eq!(output, "div::first-letter");
     }
 }
+
+#[test]
+fn at_rule_preludes_follow_each_at_rule_grammar() {
+    use crate::is_valid_at_rule_prelude as valid;
+    assert!(valid("import", " url(a.css) screen", false));
+    assert!(!valid("import", " foo", false));
+    assert!(!valid("import", " 'a.css'", true));
+    assert!(valid("namespace", " svg url(x)", false));
+    assert!(!valid("namespace", " foo", false));
+    assert!(valid("layer", " a, b.c ", false));
+    assert!(valid("layer", "", true));
+    assert!(valid("layer", " a ", true));
+    assert!(!valid("layer", "", false));
+    assert!(!valid("layer", " a, b", true));
+    assert!(!valid("layer", " initial", false));
+    assert!(!valid("layer", " a.", false));
+    assert!(valid("media", " ,,, ", true));
+    assert!(!valid("media", " print", false));
+    assert!(valid("supports", " (foo)", true));
+    assert!(!valid("supports", " foo", true));
+    assert!(!valid("supports", "", true));
+    assert!(!valid("supports", " (a: url(b c))", true));
+    assert!(valid("page", " :first", true));
+    assert!(!valid("page", " a b", true));
+    assert!(valid("font-face", " ", true));
+    assert!(!valid("font-face", " garbage", true));
+    assert!(valid("counter-style", " x", true));
+    assert!(!valid("counter-style", " a b", true));
+    assert!(!valid("counter-style", "", true));
+    assert!(!valid("keyframes", " x", true));
+}

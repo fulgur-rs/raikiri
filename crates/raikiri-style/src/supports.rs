@@ -19,6 +19,21 @@ type SupportsCondition = Condition<bool>;
 // Bound all nested blocks before any grammar or value parser recurses.
 const MAX_SUPPORTS_NESTING_DEPTH: usize = crate::MAX_CSS_NESTING_DEPTH;
 
+/// Whether `source` is a feature query the grammar accepts, whatever it
+/// evaluates to.
+pub(crate) fn is_valid_supports_condition(source: &str, namespaces: &SupportsContext<'_>) -> bool {
+    let mut input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut input);
+    let start = parser.state();
+    if validate_component_values(&mut parser, 0).is_err() {
+        return false;
+    }
+    parser.reset(&start);
+    parser
+        .parse_entirely(|input| parse_supports_condition(input, namespaces))
+        .is_ok()
+}
+
 /// Evaluate a complete feature query; invalid syntax never matches.
 pub(crate) fn supports_condition(source: &str, namespaces: &SupportsContext<'_>) -> bool {
     let mut input = ParserInput::new(source);

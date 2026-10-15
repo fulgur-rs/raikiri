@@ -2366,3 +2366,271 @@ fn urls_read_back_as_quoted_strings_in_every_property() {
          s.getPropertyValue('--x') === 'url(c.png)'",
     );
 }
+
+#[test]
+fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = 'a { color: red; } b { color: blue; }'; \
+         document.head.appendChild(el); \
+         var sheet = el.sheet; var rules = sheet.cssRules; \
+         var a = rules[0]; var b = rules[1];",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule.length === 1 && sheet.deleteRule.length === 1",
+    );
+    ok(
+        &mut rt,
+        "sheet.insertRule('  i { color: green; }  ') === 0 && rules.length === 3 && \
+         rules[0].selectorText === 'i' && rules[1] === a && rules[2] === b",
+    );
+    ok(
+        &mut rt,
+        "sheet.insertRule('z { color: gray }', 3) === 3 && rules[3].selectorText === 'z' && \
+         el.textContent === 'i { color: green; }\\na { color: red; } b { color: blue; }\\nz { color: gray }'",
+    );
+    // Removing a rule detaches its object, which keeps the rule's text.
+    rt.evaluate("sheet.deleteRule(1);").unwrap();
+    ok(
+        &mut rt,
+        "rules.length === 3 && rules[1] === b && a.cssText === 'a { color: red; }' && \
+         a.style.color === 'red' && b.style.color === 'blue'",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { sheet.deleteRule(3); return false; } \
+         catch (e) { return e.name === 'IndexSizeError'; } })()",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { sheet.insertRule('q {}', 4); return false; } \
+         catch (e) { return e.name === 'IndexSizeError'; } })()",
+    );
+    for bad in [
+        "''",
+        "'a {} b {}'",
+        "'a {} b'",
+        "'a'",
+        "'[] {}'",
+        "'p:: {}'",
+        "'@charset \"UTF-8\";'",
+        "'@import {}'",
+        "'@namespace url(x) {}'",
+        "'@unknown {}'",
+        "'@media screen'",
+        "'@import foo'",
+        "'@import'",
+        "'@namespace foo'",
+        "'@page :foo {}'",
+        "'svg|rect {}'",
+        "'@layer initial'",
+        "'@layer'",
+        "'@layer a, b {}'",
+        "'@layer a.'",
+        "'@font-face garbage {}'",
+        "'@supports foo {}'",
+        "'@counter-style {}'",
+        "'@ {}'",
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ sheet.insertRule({bad}); return false; }} \
+                 catch (e) {{ return e.name === 'SyntaxError' && rules.length === 3; }} }})()"
+            ),
+        );
+    }
+}
+
+#[test]
+fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = '@import \"x.css\"'; \
+         document.head.appendChild(el); var sheet = el.sheet;",
+    )
+    .unwrap();
+    // The cut-off `@import` gets its `;`, and a cut-off inserted rule its `}`.
+    ok(
+        &mut rt,
+        "sheet.insertRule('p { color: red', 1) === 1 && sheet.cssRules.length === 2 && \
+         el.textContent === '@import \"x.css\";\\np { color: red}'",
+    );
+    ok(
+        &mut rt,
+        "sheet.insertRule('@import \"y.css\"', 1) === 1 && \
+         sheet.cssRules[1].cssText === '@import \"y.css\";' && sheet.cssRules[2].selectorText === 'p'",
+    );
+    for (rule, index) in [("'@import \"z.css\";'", 3), ("'q {}'", 0), ("'q {}'", 1)] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ sheet.insertRule({rule}, {index}); return false; }} \
+                 catch (e) {{ return e.name === 'HierarchyRequestError'; }} }})()"
+            ),
+        );
+    }
+    ok(
+        &mut rt,
+        "sheet.insertRule('q {}', 2) === 2 && sheet.cssRules.length === 4",
+    );
+    // `@namespace` rules sit between the imports and every other rule, and
+    // cannot be added once the sheet has other rules.
+    ok(
+        &mut rt,
+        "(function() { try { sheet.insertRule('@namespace url(x)', 2); return false; } \
+         catch (e) { return e.name === 'InvalidStateError'; } })()",
+    );
+    rt.evaluate(
+        "var ns = document.createElement('style'); \
+         ns.textContent = '@import \"a.css\"; @namespace svg url(y);'; \
+         document.head.appendChild(ns);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "ns.sheet.insertRule('@namespace url(x)', 1) === 1 && \
+         ns.sheet.insertRule('@namespace url(z)', 3) === 3 && ns.sheet.cssRules.length === 4",
+    );
+    for (rule, index) in [
+        ("'@namespace url(w)'", 0),
+        ("'p {}'", 3),
+        ("'@import \"b.css\"'", 2),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ ns.sheet.insertRule({rule}, {index}); return false; }} \
+                 catch (e) {{ return e.name === 'HierarchyRequestError'; }} }})()"
+            ),
+        );
+    }
+    ok(&mut rt, "ns.sheet.insertRule('p {}', 4) === 4");
+    // Strings, comments, and nested blocks left open at the end of the
+    // rule are closed too, so later rules stay separate.
+    rt.evaluate("el.textContent = '';").unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule(\"p { content: 'x\") === 0 && sheet.insertRule('q {}', 1) === 1 && \
+         sheet.cssRules.length === 2 && sheet.cssRules[1].selectorText === 'q' && \
+         sheet.insertRule('r { color: red /* note', 2) === 2 && \
+         sheet.insertRule('s { a: f(x', 3) === 3 && sheet.insertRule('t {}') === 0 && \
+         sheet.cssRules.length === 5 && sheet.cssRules[4].selectorText === 's'",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { sheet.insertRule('u {' + '('.repeat(300)); return false; } \
+         catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    // Appending after a block cut off by the end of the sheet closes it.
+    rt.evaluate("el.textContent = 'a { color: red';").unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule('b {}', 1) === 1 && el.textContent === 'a { color: red}\\nb {}'",
+    );
+    rt.evaluate("el.textContent = 'a { content: \"x';").unwrap();
+    ok(
+        &mut rt,
+        "sheet.insertRule('b {}', 1) === 1 && sheet.cssRules.length === 2 && \
+         sheet.cssRules[1].selectorText === 'b'",
+    );
+}
+
+#[test]
+fn style_sheet_layer_statements_and_namespace_removal_keep_rule_order() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = '@layer base; @import \"x.css\";'; \
+         document.head.appendChild(el); var sheet = el.sheet;",
+    )
+    .unwrap();
+    // A layer statement ranks with the imports it precedes, and a new one
+    // fits among the imports or after them, but not before a namespace.
+    ok(
+        &mut rt,
+        "sheet.insertRule('@import \"y.css\"', 1) === 1 && \
+         sheet.insertRule('@layer a', 0) === 0 && sheet.insertRule('@layer b', 4) === 4 && \
+         sheet.insertRule('@layer c { p {} }', 5) === 5 && \
+         sheet.insertRule('@media print { p {} }', 6) === 6 && sheet.cssRules.length === 7 && \
+         (function() { try { sheet.insertRule('@namespace url(x)', 0); return false; } \
+         catch (e) { return e.name === 'InvalidStateError'; } })()",
+    );
+    rt.evaluate(
+        "var ns = document.createElement('style'); \
+         ns.textContent = '@import \"a.css\"; @namespace svg url(y);'; \
+         document.head.appendChild(ns);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "(function() { try { ns.sheet.insertRule('@layer d', 1); return false; } \
+         catch (e) { return e.name === 'HierarchyRequestError'; } })() && \
+         ns.sheet.insertRule('@layer d', 2) === 2 && \
+         ns.sheet.insertRule('@layer e', 0) === 0 && ns.sheet.cssRules[1].cssText.startsWith('@import') && \
+         ns.sheet.deleteRule(0) === undefined",
+    );
+    // A namespace rule stays while the sheet has rules other than imports
+    // and namespaces, and goes once only those are left.
+    ok(
+        &mut rt,
+        "(function() { try { ns.sheet.deleteRule(1); return false; } \
+         catch (e) { return e.name === 'InvalidStateError' && ns.sheet.cssRules.length === 3; } })()",
+    );
+    // A selector's namespace prefix resolves against the sheet's
+    // `@namespace` rules.
+    ok(
+        &mut rt,
+        "ns.sheet.insertRule('svg|rect {}', 3) === 3 && ns.sheet.cssRules.length === 4 && \
+         (function() { try { ns.sheet.insertRule('math|mi {}', 4); return false; } \
+         catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    // A namespace rule after other rules declares nothing.
+    rt.evaluate(
+        "var late = document.createElement('style'); \
+         late.textContent = 'p {} @namespace math url(m);'; \
+         document.head.appendChild(late);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "(function() { try { late.sheet.insertRule('math|mi {}', 2); return false; } \
+         catch (e) { return e.name === 'SyntaxError'; } })()",
+    );
+    ok(
+        &mut rt,
+        "ns.sheet.deleteRule(3); ns.sheet.deleteRule(2); ns.sheet.deleteRule(1); \
+         ns.sheet.cssRules.length === 1",
+    );
+}
+
+#[test]
+fn style_sheet_delete_rule_detaches_page_rule_margin_objects() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = 'p {} @page { @top-left { content: \"a\" } }'; \
+         document.head.appendChild(el); var sheet = el.sheet; \
+         var page = sheet.cssRules[1]; var margin = page.cssRules[0];",
+    )
+    .unwrap();
+    rt.evaluate("sheet.deleteRule(0);").unwrap();
+    ok(
+        &mut rt,
+        "sheet.cssRules[0] === page && page.cssRules[0] === margin",
+    );
+    rt.evaluate("sheet.deleteRule(0);").unwrap();
+    ok(
+        &mut rt,
+        "sheet.cssRules.length === 0 && margin.name === 'top-left' && \
+         margin.style.content === '\"a\"' && el.textContent === ' '",
+    );
+}

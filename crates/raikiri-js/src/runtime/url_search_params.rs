@@ -55,12 +55,17 @@ fn url_search_params_constructor(
         Some(value) => value.to_string(context)?.to_std_string_escaped(),
         None => String::new(),
     };
-    let query = init.strip_prefix('?').unwrap_or(&init);
+    Ok(params_object(prototype, &init).into())
+}
+
+/// A `URLSearchParams` with `prototype`, initialized from the query string
+/// `init` (a leading `?` is skipped).
+pub(crate) fn params_object(prototype: JsObject, init: &str) -> JsObject {
+    let query = init.strip_prefix('?').unwrap_or(init);
     let entries = url::form_urlencoded::parse(query.as_bytes())
         .map(|(name, value)| (name.into_owned(), value.into_owned()))
         .collect();
-    let object = JsObject::from_proto_and_data(Some(prototype), UrlSearchParamsData { entries });
-    Ok(object.into())
+    JsObject::from_proto_and_data(Some(prototype), UrlSearchParamsData { entries })
 }
 
 fn url_search_params_has(
@@ -102,8 +107,31 @@ fn url_search_params_get_all(
     Ok(JsArray::from_iter(values, context).into())
 }
 
-pub(crate) fn install(context: &mut Context) -> JsResult<()> {
+/// `URLSearchParams.prototype.entries` and `@@iterator`: an iterator over
+/// `[name, value]` pairs, here an array iterator over a snapshot of them.
+fn url_search_params_entries(
+    this: &JsValue,
+    _: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let entries = params_entries(this)?;
+    let pairs: Vec<JsValue> = entries
+        .iter()
+        .map(|(name, value)| {
+            let pair = [
+                JsValue::from(JsString::from(name.as_str())),
+                JsValue::from(JsString::from(value.as_str())),
+            ];
+            JsArray::from_iter(pair, context).into()
+        })
+        .collect();
+    JsArray::from_iter(pairs, context).values(context)
+}
+
+/// Installs `URLSearchParams` and returns its prototype.
+pub(crate) fn install(context: &mut Context) -> JsResult<JsObject> {
     let has = function(context, "has", 1, url_search_params_has)?;
+    let entries = function(context, "entries", 0, url_search_params_entries)?;
     let get = function(context, "get", 1, url_search_params_get)?;
     let get_all = function(context, "getAll", 1, url_search_params_get_all)?;
     let mut builder = ConstructorBuilder::new(
@@ -115,6 +143,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     builder.property(js_string!("has"), has, operation);
     builder.property(js_string!("get"), get, operation);
     builder.property(js_string!("getAll"), get_all, operation);
+    builder.property(js_string!("entries"), entries.clone(), operation);
+    builder.property(boa_engine::JsSymbol::iterator(), entries, operation);
     let standard = builder.build();
     let prototype = standard.prototype();
     let constructor = standard.constructor();
@@ -124,5 +154,5 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         constructor,
         Attribute::WRITABLE | Attribute::CONFIGURABLE,
     )?;
-    Ok(())
+    Ok(prototype)
 }

@@ -461,3 +461,38 @@ fn document_element_scroll_setters_clamp_like_viewport() {
         .unwrap();
     ok(&mut rt, "document.documentElement.scrollTop === 0");
 }
+
+#[test]
+fn get_client_rects_lists_the_border_box_or_nothing() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.geometry.insert(body, StubHost::rect(20.4));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "var list = document.body.getClientRects(); \
+         Object.prototype.toString.call(list) === '[object DOMRectList]' && \
+         list.length === 1 && list[0] instanceof DOMRect && list[0].x === 1 && \
+         list[0].height === 20.4 && list.item(0).bottom === 22.4 && list.item(1) === null && \
+         list[1] === undefined && [...list].length === 1 && list[0] === list.item(0) && \
+         (list[0].x = 7, list[0].x === 7) && (list[0] = 1, list[0] instanceof DOMRect) && \
+         JSON.stringify(Object.keys(list)) === '[\"0\"]' && \
+         delete list[0] === false && list[0] instanceof DOMRect && \
+         Object.getOwnPropertyDescriptor(list, '0').configurable === true && \
+         Object.getOwnPropertyDescriptor(list, '0').writable === false && \
+         (function() { 'use strict'; try { delete list[0]; return false; } \
+         catch (e) { return e instanceof TypeError; } })()",
+    );
+    ok(
+        &mut rt,
+        "var none = document.documentElement.getClientRects(); \
+         none.length === 0 && none.item(0) === null && \
+         typeof DOMRectList === 'function' && document.body.getClientRects.length === 0",
+    );
+    ok(
+        &mut rt,
+        "(function() { try { DOMRectList.prototype.item.call({}, 0); return false; } \
+         catch (e) { return e instanceof TypeError; } })() && \
+         (function() { try { Object.getOwnPropertyDescriptor(DOMRectList.prototype, 'length').get.call({}); \
+         return false; } catch (e) { return e instanceof TypeError; } })()",
+    );
+}

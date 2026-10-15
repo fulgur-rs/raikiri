@@ -918,6 +918,8 @@ fn style_sheet_object(context: &mut Context, style_element: usize) -> JsResult<J
     define_getter(&object, "cssRules", style_sheet_rules, context)?;
     // `rules` is the legacy alias of `cssRules` (CSSOM §6.1.2.1).
     define_getter(&object, "rules", style_sheet_rules, context)?;
+    define_method(&object, "insertRule", 1, style_sheet_insert_rule, context)?;
+    define_method(&object, "deleteRule", 1, style_sheet_delete_rule, context)?;
     let to_string_tag = PropertyDescriptor::builder()
         .value(JsString::from("CSSStyleSheet"))
         .writable(false)
@@ -967,6 +969,360 @@ fn style_sheet_rules(this: &JsValue, _: &[JsValue], context: &mut Context) -> Js
         state.css_rule_lists.insert(style_element, list.clone())
     })?;
     Ok(list.into())
+}
+
+/// `CSSStyleSheet.insertRule(rule, index = 0)` (CSSOM §6.1.2, "insert a
+/// CSS rule"): the rule's text is spliced into the style element's text
+/// before the rule now at `index`, or after the last rule.
+fn style_sheet_insert_rule(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let style_element = style_sheet_node(this)?;
+    let rule = dom_string(args, 0, context)?;
+    let index = match args.get(1) {
+        Some(value) if !value.is_undefined() => value.to_u32(context)? as usize,
+        _ => 0,
+    };
+    // Converting the arguments can run script that rewrites the sheet, so
+    // the sheet is read only afterwards.
+    let sheet = SheetKey::Element(style_element);
+    let text = with_state(context, |state| {
+        sync_sheet(state, style_element);
+        sheet_text(state, sheet)
+    })?;
+    let rules = parse_css_rules(&text);
+    if index > rules.len() {
+        return Err(throw_dom_exception(
+            context,
+            "IndexSizeError",
+            "rule index is out of range",
+        ));
+    }
+    let Some(rule) = parse_single_rule(&rule, &namespace_header(&text, &rules)) else {
+        return Err(throw_dom_exception(
+            context,
+            "SyntaxError",
+            "the rule could not be parsed",
+        ));
+    };
+    if order_rank(&rule.prelude) == NAMESPACE_RANK
+        && rules
+            .iter()
+            .any(|rule| order_rank(&rule.prelude) > NAMESPACE_RANK)
+    {
+        return Err(throw_dom_exception(
+            context,
+            "InvalidStateError",
+            "@namespace rules cannot be added once the sheet has other rules",
+        ));
+    }
+    let ranks = sheet_ranks(&rules);
+    let fits = |rank: u8| {
+        ranks[..index].iter().all(|&before| before <= rank)
+            && ranks[index..].iter().all(|&after| after >= rank)
+    };
+    // A layer statement may sit before and among the `@import` rules, and
+    // before the `@namespace` rules but not between those and the imports
+    // (CSS Cascade 5 §6.4.3), or among the other rules.
+    let ordered = if is_layer_statement(&rule.prelude, rule.has_block) {
+        let after_import = rules[..index]
+            .iter()
+            .any(|rule| is_at_rule(&rule.prelude, "import"));
+        let leading = ranks[..index].iter().all(|&before| before == 0)
+            && !(after_import && ranks[index..].contains(&NAMESPACE_RANK));
+        leading || fits(OTHER_RANK)
+    } else {
+        fits(order_rank(&rule.prelude))
+    };
+    if !ordered {
+        return Err(throw_dom_exception(
+            context,
+            "HierarchyRequestError",
+            "@import and @namespace rules must precede all other rules",
+        ));
+    }
+    let mut updated = text.clone();
+    match rules.get(index) {
+        Some(next) => updated.insert_str(next.source.start, &format!("{}\n", rule.text)),
+        None => {
+            if let Some(last) = rules.last() {
+                // A last rule cut off by the end of the sheet is closed, so
+                // the new rule does not land inside it.
+                let source = &text[last.source.clone()];
+                if let Some(closed) = self_contained(source, last.body.is_some()) {
+                    updated.replace_range(last.source.clone(), &closed);
+                }
+            }
+            updated.push('\n');
+            updated.push_str(&rule.text);
+        }
+    }
+    write_sheet_text(context, sheet, updated)?;
+    with_state(context, |state| {
+        shift_sheet_rules(state, sheet, &text, |rule| {
+            Some(if rule >= index { rule + 1 } else { rule })
+        });
+    })?;
+    Ok(JsValue::from(index as u32))
+}
+
+/// `CSSStyleSheet.deleteRule(index)` (CSSOM §6.1.2, "remove a CSS rule").
+fn style_sheet_delete_rule(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let style_element = style_sheet_node(this)?;
+    let index = arg_unsigned_long(args, 0, context)?;
+    let sheet = SheetKey::Element(style_element);
+    let text = with_state(context, |state| {
+        sync_sheet(state, style_element);
+        sheet_text(state, sheet)
+    })?;
+    let rules = parse_css_rules(&text);
+    let Some(rule) = rules.get(index) else {
+        return Err(throw_dom_exception(
+            context,
+            "IndexSizeError",
+            "rule index is out of range",
+        ));
+    };
+    if order_rank(&rule.prelude) == NAMESPACE_RANK
+        && rules
+            .iter()
+            .any(|rule| order_rank(&rule.prelude) > NAMESPACE_RANK)
+    {
+        return Err(throw_dom_exception(
+            context,
+            "InvalidStateError",
+            "@namespace rules cannot be removed while the sheet has other rules",
+        ));
+    }
+    let range = rule.source.clone();
+    let mut updated = text.clone();
+    updated.replace_range(range, "");
+    write_sheet_text(context, sheet, updated)?;
+    with_state(context, |state| {
+        shift_sheet_rules(state, sheet, &text, |rule| match rule.cmp(&index) {
+            std::cmp::Ordering::Less => Some(rule),
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Greater => Some(rule - 1),
+        });
+    })?;
+    Ok(JsValue::undefined())
+}
+
+/// A rule given to `insertRule`, made ready to splice into a sheet.
+struct SingleRule {
+    prelude: String,
+    has_block: bool,
+    text: String,
+}
+
+/// CSS Syntax "parse a rule": `source` must hold exactly one rule,
+/// surrounded by nothing but whitespace and comments, that the cascade
+/// keeps. `namespaces` is the sheet's `@namespace` rules, so namespace
+/// prefixes in a selector resolve as they would in the sheet. A rule cut
+/// off by the end of `source` is closed, so it ends where it would in
+/// `source` once more text follows it.
+fn parse_single_rule(source: &str, namespaces: &str) -> Option<SingleRule> {
+    let trimmed = source.trim_matches(|c: char| c.is_ascii_whitespace());
+    let rules = parse_css_rules(trimmed);
+    let [rule] = rules.as_slice() else {
+        return None;
+    };
+    if !only_trivia(&trimmed[..rule.source.start]) || !only_trivia(&trimmed[rule.source.end..]) {
+        return None;
+    }
+    // An at-rule the cascade has no use for, or one with a block where it
+    // takes none (or none where it needs one), is a syntax error here.
+    let has_block = rule.body.is_some();
+    if rule.prelude.starts_with('@') && !is_supported_at_rule(&rule.prelude, has_block) {
+        return None;
+    }
+    let text = self_contained(&trimmed[rule.source.clone()], has_block)?;
+    // So is a rule the cascade drops, such as a style rule whose selector
+    // does not parse or an `@namespace` without its URL. The rules that
+    // must lead a sheet are checked on their own, the others after the
+    // sheet's namespaces.
+    let header =
+        if order_rank(&rule.prelude) < OTHER_RANK || is_layer_statement(&rule.prelude, has_block) {
+            ""
+        } else {
+            namespaces
+        };
+    if !cascade_keeps(header, &text) {
+        return None;
+    }
+    Some(SingleRule {
+        prelude: rule.prelude.clone(),
+        has_block,
+        text,
+    })
+}
+
+/// The `@namespace` rules that declare prefixes in a sheet whose text is
+/// `text`, closed so more text can follow them. Only those before the
+/// sheet's first rule other than `@import`, `@namespace`, or a layer
+/// statement count (CSS Namespaces §2).
+fn namespace_header(text: &str, rules: &[CssRuleInfo]) -> String {
+    rules
+        .iter()
+        .take_while(|rule| {
+            order_rank(&rule.prelude) < OTHER_RANK
+                || is_layer_statement(&rule.prelude, rule.body.is_some())
+        })
+        .filter(|rule| order_rank(&rule.prelude) == NAMESPACE_RANK)
+        .filter_map(|rule| self_contained(&text[rule.source.clone()], false))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Whether the cascade keeps `rule` when it follows `header`.
+fn cascade_keeps(header: &str, rule: &str) -> bool {
+    let kept = |source: &str| {
+        let mut tree = raikiri_style::RuleTree::empty();
+        tree.add_stylesheet(source, raikiri_style::Origin::Author);
+        tree.rules().len()
+    };
+    kept(&format!("{header}\n{rule}")) > kept(header)
+}
+
+/// Whether `text` is only whitespace and comments.
+fn only_trivia(text: &str) -> bool {
+    let mut input = ParserInput::new(text);
+    let mut parser = Parser::new(&mut input);
+    parser.is_exhausted()
+}
+
+/// `rule`, the source of one rule, made to end where it does even when
+/// more text follows it. A rule the end of its text cut off (inside a
+/// block, string, or comment, or an at-rule without its `;`) is serialized
+/// from its tokens with every construct EOF left open closed, as CSS
+/// Syntax closes them. `None` when blocks nest too deeply to serialize.
+fn self_contained(rule: &str, has_block: bool) -> Option<String> {
+    if parse_css_rules(&format!("{rule}\na{{}}")).len() == 2 {
+        return Some(rule.to_owned());
+    }
+    let mut input = ParserInput::new(rule);
+    let mut closed = String::new();
+    if !serialize_tokens(&mut Parser::new(&mut input), &mut closed, 0) {
+        return None;
+    }
+    if !has_block && !closed.ends_with(';') {
+        closed.push(';');
+    }
+    Some(closed)
+}
+
+/// Whether the at-keyword of `prelude` is `name` (ASCII case-insensitive).
+fn is_at_rule(prelude: &str, name: &str) -> bool {
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    matches!(parser.next(), Ok(Token::AtKeyword(keyword)) if keyword.eq_ignore_ascii_case(name))
+}
+
+/// Whether an at-rule with this prelude, given whether it has a block,
+/// follows the grammar of an at-rule the cascade gives meaning to.
+fn is_supported_at_rule(prelude: &str, has_block: bool) -> bool {
+    let mut input = ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    let Ok(Token::AtKeyword(name)) = parser.next().cloned() else {
+        // A qualified rule whose selector starts with a bare `@`.
+        return false;
+    };
+    let rest = &prelude[parser.position().byte_index()..];
+    raikiri_style::is_valid_at_rule_prelude(&name, rest, has_block)
+}
+
+/// Whether a rule is an `@layer` statement (an `@layer` without a block).
+fn is_layer_statement(prelude: &str, has_block: bool) -> bool {
+    !has_block && is_at_rule(prelude, "layer")
+}
+
+/// The rank of `@namespace` rules in [`order_rank`].
+const NAMESPACE_RANK: u8 = 1;
+
+/// The rank of every rule after the `@import` and `@namespace` rules.
+const OTHER_RANK: u8 = 2;
+
+/// The ranks of a sheet's `rules`: [`order_rank`], except that a layer
+/// statement among the leading `@import` rules ranks with them.
+fn sheet_ranks(rules: &[CssRuleInfo]) -> Vec<u8> {
+    let mut leading = true;
+    rules
+        .iter()
+        .map(|rule| {
+            if leading && is_layer_statement(&rule.prelude, rule.body.is_some()) {
+                return 0;
+            }
+            let rank = order_rank(&rule.prelude);
+            leading &= rank == 0;
+            rank
+        })
+        .collect()
+}
+
+/// Where a rule may sit in a sheet (CSSOM "insert a CSS rule" steps 6 and
+/// 7): `@import` rules first, then `@namespace` rules, then every other
+/// rule. A rule may only be inserted between rules of no higher and no
+/// lower rank. (`@charset` never appears: the top-level parser drops it,
+/// so `insertRule` rejects it as a syntax error.)
+fn order_rank(prelude: &str) -> u8 {
+    if is_at_rule(prelude, "import") {
+        0
+    } else if is_at_rule(prelude, "namespace") {
+        NAMESPACE_RANK
+    } else {
+        OTHER_RANK
+    }
+}
+
+/// Moves the rule objects of `sheet`, whose text was `old_text`, after a
+/// rule was inserted or removed: `shift` maps an old rule index to its new
+/// one, or to `None` for the removed rule. The objects of the removed rule
+/// are detached and keep that rule, in a text of its own.
+fn shift_sheet_rules(
+    state: &mut State,
+    sheet: SheetKey,
+    old_text: &str,
+    shift: impl Fn(usize) -> Option<usize>,
+) {
+    let rules: Vec<_> = state
+        .css_style_rules
+        .extract_if(|&(key, _), _| key == sheet)
+        .map(|((_, rule), object)| (rule, None, object))
+        .collect();
+    let margins: Vec<_> = state
+        .css_margin_rules
+        .extract_if(|&(key, ..), _| key == sheet)
+        .map(|((_, rule, margin), object)| (rule, Some(margin), object))
+        .collect();
+    let mut removed: Option<SheetKey> = None;
+    for (rule, margin, object) in rules.into_iter().chain(margins) {
+        let (key, index) = match shift(rule) {
+            Some(index) => (sheet, index),
+            None => {
+                let key = *removed.get_or_insert_with(|| {
+                    let text = parse_css_rules(old_text)
+                        .get(rule)
+                        .map_or("", |info| &old_text[info.source.clone()]);
+                    detached_rule_text(state, text.to_owned())
+                });
+                (key, 0)
+            }
+        };
+        if let Some(slot) = rule_object_slot(&object) {
+            slot.sheet.set(key);
+            slot.rule_index.set(index);
+        }
+        match margin {
+            Some(margin) => state.css_margin_rules.insert((key, index, margin), object),
+            None => state.css_style_rules.insert((key, index), object),
+        };
+    }
 }
 
 fn css_style_rule_object(

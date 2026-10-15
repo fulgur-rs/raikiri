@@ -19,6 +19,20 @@ pub(crate) struct LayerId {
 
 pub(crate) type LayerName = Vec<SmolStr>;
 
+/// Whether `prelude`, the text after an `@layer` keyword, is one the
+/// cascade parses: one or more layer names for a statement, at most one for
+/// a block (CSS Cascade 5 §6.4.2).
+pub(crate) fn is_valid_layer_prelude(prelude: &str, has_block: bool) -> bool {
+    let mut input = cssparser::ParserInput::new(prelude);
+    let mut parser = Parser::new(&mut input);
+    let mut budget = ParseBudget::new(&crate::ruletree::RuleTreeLimits::default(), 0);
+    match parser.parse_entirely(|input| parse_layer_names(input, &mut budget)) {
+        Ok(names) if has_block => names.len() <= 1,
+        Ok(names) => !names.is_empty(),
+        Err(_) => false,
+    }
+}
+
 /// Parse optional block names or a statement's comma-separated name list.
 ///
 /// Each segment of each name declares a layer, so each counts as a rule

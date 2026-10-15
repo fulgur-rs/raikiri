@@ -61,6 +61,7 @@ pub(crate) struct Protos {
     pub dom_token_list: JsObject,
     pub dom_rect_read_only: JsObject,
     pub dom_rect: JsObject,
+    pub dom_rect_list: JsObject,
     pub range: JsObject,
     pub tree_walker: JsObject,
     pub highlight: JsObject,
@@ -587,6 +588,28 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         0,
     );
     let dom_rect = dom_rect_result?;
+    let dom_rect_list_members = [&geometry::DOM_RECT_LIST_MEMBERS];
+    let dom_rect_list_result = interface(
+        context,
+        "DOMRectList",
+        None,
+        None,
+        &dom_rect_list_members,
+        illegal_constructor,
+        0,
+    );
+    let dom_rect_list = dom_rect_list_result?;
+    // An interface with an indexed getter and `length` is iterable (WebIDL
+    // §3.7.6).
+    let values = context.intrinsics().objects().array_prototype_values();
+    let iterator = PropertyDescriptor::builder()
+        .value(values)
+        .writable(true)
+        .enumerable(false)
+        .configurable(true);
+    dom_rect_list
+        .prototype
+        .define_property_or_throw(JsSymbol::iterator(), iterator, context)?;
     let range_members = [&selection::RANGE_MEMBERS];
     let range_result = interface(
         context,
@@ -656,7 +679,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     style::install_property_accessors(context, &css_style_declaration.prototype)?;
     indexed::install(context)?;
     super::event_loop::install(context)?;
-    super::url_search_params::install(context)?;
+    let params_prototype = super::url_search_params::install(context)?;
+    super::url::install(context, params_prototype)?;
     context.insert_data(Protos {
         event_target: event_target.prototype,
         node: node_i.prototype,
@@ -681,6 +705,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         dom_token_list: dom_token_list.prototype,
         dom_rect_read_only: dom_rect_read_only.prototype,
         dom_rect: dom_rect.prototype,
+        dom_rect_list: dom_rect_list.prototype,
         range: range.prototype,
         tree_walker: tree_walker.prototype,
         highlight: highlight.prototype,

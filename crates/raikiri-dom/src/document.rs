@@ -1321,7 +1321,31 @@ impl Document {
         local: impl Into<SmolStr>,
         value: impl Into<SmolStr>,
     ) -> Result<(), String> {
-        let local = local.into();
+        self.set_null_namespace_attribute(id, local.into(), value.into(), true)
+    }
+
+    /// Set one null-namespace attribute by its exact local name, as DOM
+    /// `setAttributeNS(null, ...)` does: unlike
+    /// [`Document::set_element_attribute`], an HTML element's name is not
+    /// ASCII-lowercased, so `RESULT` and `result` are distinct attributes.
+    ///
+    /// Panics (debug + release): `id` is not an Element.
+    pub fn set_element_attribute_exact(
+        &mut self,
+        id: usize,
+        local: impl Into<SmolStr>,
+        value: impl Into<SmolStr>,
+    ) -> Result<(), String> {
+        self.set_null_namespace_attribute(id, local.into(), value.into(), false)
+    }
+
+    fn set_null_namespace_attribute(
+        &mut self,
+        id: usize,
+        local: SmolStr,
+        value: SmolStr,
+        fold_html_case: bool,
+    ) -> Result<(), String> {
         if !is_valid_xml_name(local.as_str()) {
             return Err(format!("invalid attribute name: {local}"));
         }
@@ -1333,12 +1357,11 @@ impl Document {
             .namespace
             .as_deref()
             .is_none_or(|namespace| namespace == XHTML_NAMESPACE_URI);
-        let local: SmolStr = if html_element {
+        let local: SmolStr = if html_element && fold_html_case {
             local.to_ascii_lowercase().into()
         } else {
             local
         };
-        let value = value.into();
         if local.as_str() == "style" {
             // Keep the storage invariant even if a caller previously populated
             // the full-list setter with a style entry by mistake.
@@ -1396,6 +1419,35 @@ impl Document {
             self.invalidate_layout_cache();
         }
         Ok(())
+    }
+
+    /// Remove the attribute with namespace `namespace` (`None` for the null
+    /// namespace) and exactly the local name `local`, as DOM
+    /// `removeAttributeNS` does: no ASCII case folding on any element.
+    /// Returns the removed value. The inline `style` slot and canvas sizing
+    /// are left alone; callers route a lowercase null-namespace name through
+    /// [`Document::remove_element_attribute`] instead.
+    ///
+    /// Panics (debug + release): `id` is not an Element.
+    pub fn remove_element_attribute_ns(
+        &mut self,
+        id: usize,
+        namespace: Option<&str>,
+        local: &str,
+    ) -> Option<SmolStr> {
+        let element = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("remove_element_attribute_ns called on non-Element");
+        let position = element.attributes.iter().position(|attribute| {
+            attribute.namespace.as_deref() == namespace && attribute.local == local
+        })?;
+        self.page_projection.clear();
+        let element = self.nodes[id]
+            .data
+            .as_element_mut()
+            .expect("remove_element_attribute_ns called on non-Element");
+        Some(element.attributes.remove(position).value)
     }
 
     /// Remove one null-namespace attribute from an element and return its

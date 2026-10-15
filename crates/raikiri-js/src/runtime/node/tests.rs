@@ -493,3 +493,109 @@ fn mutations_set_dirty_and_reads_and_no_op_writes_do_not() {
         "reading innerHTML should not mark dirty"
     );
 }
+
+#[test]
+fn class_list_assignment_forwards_to_its_value() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("var b = document.body; var list = b.classList; b.classList = 'p  q';")
+        .unwrap();
+    ok(
+        &mut rt,
+        "b.classList === list && b.getAttribute('class') === 'p  q' && list.length === 2",
+    );
+    rt.evaluate("'use strict'; document.body.classList = undefined;")
+        .unwrap();
+    ok(
+        &mut rt,
+        "document.body.getAttribute('class') === 'undefined'",
+    );
+    // The assignment goes through an ordinary [[Set]] on the list.
+    ok(
+        &mut rt,
+        "var seen; Object.defineProperty(list, 'value', { set(v) { seen = v; }, configurable: true }); \
+         b.classList = 'r'; seen === 'r' && b.getAttribute('class') === 'undefined'",
+    );
+    ok(
+        &mut rt,
+        "Object.defineProperty(list, 'value', { set(v) { throw new RangeError('no'); } }); \
+         (function() { try { b.classList = 's'; return false; } \
+         catch (e) { return e instanceof RangeError; } })()",
+    );
+}
+
+#[test]
+fn set_attribute_ns_keeps_case_and_namespaces_apart() {
+    let (host, _, _, body) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    clear_dirty(&mut rt);
+    rt.evaluate(
+        "var b = document.body; b.setAttributeNS('', 'RESULT', 'upper'); \
+         b.setAttributeNS(null, 'result', 'lower'); \
+         b.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'zh'); \
+         b.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', 'en'); \
+         b.setAttributeNS(undefined, 'id', 'main');",
+    )
+    .unwrap();
+    assert!(is_dirty(&mut rt));
+    with_state(rt.context_mut(), |s| {
+        let doc = s.host.document();
+        let node = doc.get_node(body).unwrap();
+        assert_eq!(node.attribute("RESULT"), Some("upper"));
+        assert_eq!(node.attribute("result"), Some("lower"));
+        assert_eq!(
+            doc.element_attribute_ns(body, "http://www.w3.org/XML/1998/namespace", "lang"),
+            Some("en")
+        );
+    })
+    .unwrap();
+    ok(
+        &mut rt,
+        "b.getAttribute('result') === 'lower' && b.id === 'main' && \
+         document.getElementById('main') === b && b.setAttributeNS.length === 3",
+    );
+    clear_dirty(&mut rt);
+    rt.evaluate(
+        "b.removeAttributeNS('http://www.w3.org/XML/1998/namespace', 'lang'); \
+         b.removeAttributeNS('', 'RESULT'); b.removeAttributeNS(null, 'id');",
+    )
+    .unwrap();
+    assert!(is_dirty(&mut rt));
+    with_state(rt.context_mut(), |s| {
+        let doc = s.host.document();
+        let node = doc.get_node(body).unwrap();
+        assert_eq!(node.attribute("RESULT"), None);
+        assert_eq!(node.attribute("result"), Some("lower"));
+        assert_eq!(node.attribute("id"), None);
+        assert_eq!(
+            doc.element_attribute_ns(body, "http://www.w3.org/XML/1998/namespace", "lang"),
+            None
+        );
+    })
+    .unwrap();
+    clear_dirty(&mut rt);
+    rt.evaluate("b.removeAttributeNS('urn:none', 'missing');")
+        .unwrap();
+    assert!(!is_dirty(&mut rt), "removing nothing changes nothing");
+    ok(
+        &mut rt,
+        "b.removeAttributeNS.length === 2 && \
+         (b.setAttribute('undefined', 'u'), b.removeAttributeNS(), !b.hasAttribute('undefined'))",
+    );
+    for (call, error) in [
+        ("b.setAttributeNS(null, 'a:b', 'x')", "NamespaceError"),
+        (
+            "b.setAttributeNS('urn:x', 'xml:lang', 'x')",
+            "NamespaceError",
+        ),
+        ("b.setAttributeNS(null, '1a', 'x')", "InvalidCharacterError"),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ {call}; return false; }} \
+                 catch (e) {{ return e.name === '{error}'; }} }})()"
+            ),
+        );
+    }
+}

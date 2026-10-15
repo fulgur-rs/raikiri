@@ -58,3 +58,12 @@ fn at_rules_with_blocks_record_their_body() {
         " p { color: red } "
     );
 }
+
+#[test]
+fn top_level_charset_rules_are_dropped() {
+    let rules = parse_css_rules("@charset \"UTF-8\"; p {}");
+    assert_eq!(
+        rules.iter().map(|r| r.prelude.as_str()).collect::<Vec<_>>(),
+        ["p"]
+    );
+}
