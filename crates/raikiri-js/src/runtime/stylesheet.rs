@@ -1007,8 +1007,7 @@ fn style_sheet_insert_rule(
             "the rule could not be parsed",
         ));
     };
-    let rank = order_rank(&rule.prelude);
-    if rank == NAMESPACE_RANK
+    if order_rank(&rule.prelude) == NAMESPACE_RANK
         && rules
             .iter()
             .any(|rule| order_rank(&rule.prelude) > NAMESPACE_RANK)
@@ -1019,12 +1018,22 @@ fn style_sheet_insert_rule(
             "@namespace rules cannot be added once the sheet has other rules",
         ));
     }
-    let ordered = rules[..index]
-        .iter()
-        .all(|rule| order_rank(&rule.prelude) <= rank)
-        && rules[index..]
-            .iter()
-            .all(|rule| order_rank(&rule.prelude) >= rank);
+    let ranks = sheet_ranks(&rules);
+    let fits = |rank: u8| {
+        ranks[..index].iter().all(|&before| before <= rank)
+            && ranks[index..].iter().all(|&after| after >= rank)
+    };
+    // A layer statement may sit among the leading `@import` rules (CSS
+    // Cascade 5 §6.4.3), though not before a `@namespace` rule, which must
+    // precede every other at-rule (CSS Namespaces §2), or among the other
+    // rules.
+    let ordered = if is_layer_statement(&rule.prelude, rule.has_block) {
+        let leading = ranks[..index].iter().all(|&before| before == 0)
+            && !ranks[index..].contains(&NAMESPACE_RANK);
+        leading || fits(OTHER_RANK)
+    } else {
+        fits(order_rank(&rule.prelude))
+    };
     if !ordered {
         return Err(throw_dom_exception(
             context,
@@ -1070,16 +1079,26 @@ fn style_sheet_delete_rule(
         sync_sheet(state, style_element);
         sheet_text(state, sheet)
     })?;
-    let Some(range) = parse_css_rules(&text)
-        .get(index)
-        .map(|rule| rule.source.clone())
-    else {
+    let rules = parse_css_rules(&text);
+    let Some(rule) = rules.get(index) else {
         return Err(throw_dom_exception(
             context,
             "IndexSizeError",
             "rule index is out of range",
         ));
     };
+    if order_rank(&rule.prelude) == NAMESPACE_RANK
+        && rules
+            .iter()
+            .any(|rule| order_rank(&rule.prelude) > NAMESPACE_RANK)
+    {
+        return Err(throw_dom_exception(
+            context,
+            "InvalidStateError",
+            "@namespace rules cannot be removed while the sheet has other rules",
+        ));
+    }
+    let range = rule.source.clone();
     let mut updated = text.clone();
     updated.replace_range(range, "");
     write_sheet_text(context, sheet, updated)?;
@@ -1096,6 +1115,7 @@ fn style_sheet_delete_rule(
 /// A rule given to `insertRule`, made ready to splice into a sheet.
 struct SingleRule {
     prelude: String,
+    has_block: bool,
     text: String,
 }
 
@@ -1118,8 +1138,15 @@ fn parse_single_rule(source: &str) -> Option<SingleRule> {
     {
         return None;
     }
+    // Likewise an at-rule the cascade does not keep, or one with a block
+    // where it takes none (or none where it needs one).
+    let has_block = rule.body.is_some();
+    if rule.prelude.starts_with('@') && !is_supported_at_rule(&rule.prelude, has_block) {
+        return None;
+    }
     Some(SingleRule {
         prelude: rule.prelude.clone(),
+        has_block,
         text: self_contained(&trimmed[rule.source.clone()], rule.body.is_some())?,
     })
 }
@@ -1158,8 +1185,46 @@ fn is_at_rule(prelude: &str, name: &str) -> bool {
     matches!(parser.next(), Ok(Token::AtKeyword(keyword)) if keyword.eq_ignore_ascii_case(name))
 }
 
+/// Whether the cascade keeps an at-rule with this prelude, given whether
+/// it has a block.
+fn is_supported_at_rule(prelude: &str, has_block: bool) -> bool {
+    let named = |names: &[&str]| names.iter().any(|name| is_at_rule(prelude, name));
+    if named(&["import", "namespace"]) {
+        !has_block
+    } else if named(&["layer"]) {
+        true
+    } else {
+        has_block && named(&["media", "supports", "page", "font-face", "counter-style"])
+    }
+}
+
+/// Whether a rule is an `@layer` statement (an `@layer` without a block).
+fn is_layer_statement(prelude: &str, has_block: bool) -> bool {
+    !has_block && is_at_rule(prelude, "layer")
+}
+
 /// The rank of `@namespace` rules in [`order_rank`].
 const NAMESPACE_RANK: u8 = 1;
+
+/// The rank of every rule after the `@import` and `@namespace` rules.
+const OTHER_RANK: u8 = 2;
+
+/// The ranks of a sheet's `rules`: [`order_rank`], except that a layer
+/// statement among the leading `@import` rules ranks with them.
+fn sheet_ranks(rules: &[CssRuleInfo]) -> Vec<u8> {
+    let mut leading = true;
+    rules
+        .iter()
+        .map(|rule| {
+            if leading && is_layer_statement(&rule.prelude, rule.body.is_some()) {
+                return 0;
+            }
+            let rank = order_rank(&rule.prelude);
+            leading &= rank == 0;
+            rank
+        })
+        .collect()
+}
 
 /// Where a rule may sit in a sheet (CSSOM "insert a CSS rule" steps 6 and
 /// 7): `@import` rules first, then `@namespace` rules, then every other
@@ -1172,7 +1237,7 @@ fn order_rank(prelude: &str) -> u8 {
     } else if is_at_rule(prelude, "namespace") {
         NAMESPACE_RANK
     } else {
-        2
+        OTHER_RANK
     }
 }
 

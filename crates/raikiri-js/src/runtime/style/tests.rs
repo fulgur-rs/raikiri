@@ -2418,6 +2418,10 @@ fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
         "'[] {}'",
         "'p:: {}'",
         "'@charset \"UTF-8\";'",
+        "'@import {}'",
+        "'@namespace url(x) {}'",
+        "'@unknown {}'",
+        "'@media screen'",
     ] {
         ok(
             &mut rt,
@@ -2522,6 +2526,52 @@ fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
         &mut rt,
         "sheet.insertRule('b {}', 1) === 1 && sheet.cssRules.length === 2 && \
          sheet.cssRules[1].selectorText === 'b'",
+    );
+}
+
+#[test]
+fn style_sheet_layer_statements_and_namespace_removal_keep_rule_order() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate(
+        "var el = document.createElement('style'); \
+         el.textContent = '@layer base; @import \"x.css\";'; \
+         document.head.appendChild(el); var sheet = el.sheet;",
+    )
+    .unwrap();
+    // A layer statement ranks with the imports it precedes, and a new one
+    // fits among the imports or after them, but not before a namespace.
+    ok(
+        &mut rt,
+        "sheet.insertRule('@import \"y.css\"', 1) === 1 && \
+         sheet.insertRule('@layer a', 0) === 0 && sheet.insertRule('@layer b', 4) === 4 && \
+         sheet.insertRule('@layer c { p {} }', 5) === 5 && \
+         sheet.insertRule('@media print { p {} }', 6) === 6 && sheet.cssRules.length === 7 && \
+         (function() { try { sheet.insertRule('@namespace url(x)', 0); return false; } \
+         catch (e) { return e.name === 'InvalidStateError'; } })()",
+    );
+    rt.evaluate(
+        "var ns = document.createElement('style'); \
+         ns.textContent = '@import \"a.css\"; @namespace svg url(y);'; \
+         document.head.appendChild(ns);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "(function() { try { ns.sheet.insertRule('@layer d', 1); return false; } \
+         catch (e) { return e.name === 'HierarchyRequestError'; } })() && \
+         ns.sheet.insertRule('@layer d', 2) === 2",
+    );
+    // A namespace rule stays while the sheet has rules other than imports
+    // and namespaces, and goes once only those are left.
+    ok(
+        &mut rt,
+        "(function() { try { ns.sheet.deleteRule(1); return false; } \
+         catch (e) { return e.name === 'InvalidStateError' && ns.sheet.cssRules.length === 3; } })()",
+    );
+    ok(
+        &mut rt,
+        "ns.sheet.deleteRule(2); ns.sheet.deleteRule(1); ns.sheet.cssRules.length === 1",
     );
 }
 

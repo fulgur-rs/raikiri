@@ -128,7 +128,9 @@ struct DomRectListData {
 
 /// A new `DOMRectList` (Geometry Interfaces §3.1) over `rects`. The list
 /// never changes, so its indices are read-only own properties rather than
-/// a live indexed view.
+/// a live indexed view. They are also non-configurable: a legacy platform
+/// object refuses to delete or redefine a supported index (WebIDL §3.9.4,
+/// §3.9.5), which plain properties can only express this way.
 pub(crate) fn dom_rect_list(context: &mut Context, rects: Vec<DomRect>) -> JsResult<JsObject> {
     let rects: Vec<JsObject> = rects
         .into_iter()
@@ -146,7 +148,7 @@ pub(crate) fn dom_rect_list(context: &mut Context, rects: Vec<DomRect>) -> JsRes
             .value(rect)
             .writable(false)
             .enumerable(true)
-            .configurable(true);
+            .configurable(false);
         list.define_property_or_throw(index, descriptor, context)?;
     }
     Ok(list)
