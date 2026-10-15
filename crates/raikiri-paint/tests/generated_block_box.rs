@@ -28,6 +28,11 @@ impl ImagePixelSource for Red {
 /// Pixels of a 100×80 page holding `<div>A</div>` with the style sheet
 /// `css`, on 20px lines of 10px Ahem whose glyphs are transparent.
 fn paint(css: &str) -> Vec<u8> {
+    paint_with_root(css, None)
+}
+
+/// [`paint`], with the root element styled `root_css`.
+fn paint_with_root(css: &str, root_css: Option<&str>) -> Vec<u8> {
     let mut doc = Document::new();
     doc.set_font_collection(
         build_bundled_font_collection(
@@ -39,7 +44,7 @@ fn paint(css: &str) -> Vec<u8> {
         )
         .unwrap(),
     );
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let html = doc.append_element(Some(0), "html", Style::default(), root_css);
     let head = doc.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
     doc.append_text(
@@ -134,7 +139,7 @@ fn a_block_before_under_a_translucent_first_line_stays_below_the_text() {
 }
 
 #[test]
-fn a_transformed_block_before_with_an_image_turns_its_whole_box() {
+fn a_transformed_block_before_with_an_image_moves_its_whole_box() {
     let pixels = paint(
         "div::before { content: url(file:///red.png); display: block; background: blue; \
          transform: translateX(50px) }",
@@ -146,4 +151,25 @@ fn a_transformed_block_before_with_an_image_turns_its_whole_box() {
         "left of the moved box"
     );
     assert_eq!(pixel(&pixels, 80, 0)[2], 255, "the moved box");
+}
+
+#[test]
+fn a_block_before_without_width_paints_nothing() {
+    let pixels = paint(
+        "div::before { content: ''; display: block; width: 0; height: 10px; \
+         border-left: 0 solid; background: red }",
+    );
+    assert_eq!(pixel(&pixels, 0, 5), [255, 255, 255]);
+}
+
+#[test]
+fn a_page_along_x_paints_the_block_box_of_its_horizontal_paragraph() {
+    let pixels = paint_with_root(
+        "div { writing-mode: horizontal-tb; width: 60px } \
+         div::before { content: ''; display: block; height: 10px; background: red }",
+        Some("writing-mode: vertical-rl"),
+    );
+    // The paragraph sits at the right of the page, where a vertical flow
+    // starts.
+    assert_eq!(pixel(&pixels, 70, 5), [255, 0, 0]);
 }

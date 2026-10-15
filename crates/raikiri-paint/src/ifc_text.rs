@@ -270,12 +270,18 @@ pub(crate) fn hold_ifc_lines<'a>(
     // other lines (CSS Pseudo 4 §2.1.1), so the first line has groups of its
     // own.
     let first_line_opacity = raikiri_dom::paint_rules::first_line_opacity_layer(document, root_id);
+    // Pages along x hold a horizontal paragraph by its center, as they hold
+    // its lines.
+    let off_band = flow_band
+        .zip(paragraph_center)
+        .is_some_and(|(band, center)| !band.holds_line_center(paint_transform, center));
     // A block-level `::before` or `::after` paints its own box, cut along
     // the block axis where pagination cuts its lines. Its pieces on the
     // lines hold only its text.
     let blocks: Vec<_> = root_node
         .ifc_generated_block_pieces()
         .into_iter()
+        .filter(|_| !off_band)
         .map(|block| {
             (
                 raikiri_dom::InlineBoxPiece {
@@ -338,37 +344,11 @@ pub(crate) fn hold_ifc_lines<'a>(
         }
         let (dx, dy) = cumulative_offset(document, root_id, positioned.offsets, piece.node);
         let (x, y) = (base.x + dx, base.y + base.shift_y + dy);
-        if let Some(band) = flow_band {
-            let center = paragraph_center.unwrap_or_else(|| {
-                kurbo::Point::new(
-                    f64::from(x + outer.x + outer.width / 2.0),
-                    f64::from(y + outer.y + outer.height / 2.0),
-                )
-            });
-            if !band.holds_line_center(paint_transform, center) {
-                continue;
-            }
-        }
         let paint = match first_line.as_mut() {
             Some((first, _)) if on_first_line(piece) => first,
             _ => &mut rest,
         };
         let group = paint.piece_group(piece);
-        // A box whose content is one image turns about its whole box.
-        if let Some(turned) = raikiri_dom::paint_rules::pseudo_transform(cascade, piece.node) {
-            let whole = joined.outer;
-            paint.turn(
-                group,
-                piece,
-                crate::walk::element_transform(
-                    turned,
-                    x + whole.x,
-                    y + whole.y,
-                    whole.width,
-                    whole.height,
-                ),
-            );
-        }
         // The piece's edges are along the block axis: its progression runs
         // down the page.
         crate::walk::paint_inline_box(
