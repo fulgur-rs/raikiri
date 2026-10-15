@@ -1522,7 +1522,9 @@ pub(crate) fn propagate_float_bottoms_to_auto_height_ancestors(
             continue;
         }
         let mut child = idx;
-        while let Some(parent) = doc.parent_of(child) {
+        // A float in a paragraph sits in the paragraph root's coordinates and
+        // adds no height to the inline elements that hold it (CSS 2.1 §10.6.1).
+        while let Some(parent) = doc.layout_parent_of(child) {
             if matches!(
                 cascade.computed[parent].height,
                 ComputedLengthPercentageOrAuto::Auto
