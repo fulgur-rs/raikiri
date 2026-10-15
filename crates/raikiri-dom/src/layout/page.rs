@@ -615,8 +615,8 @@ pub fn page_margins_for_page(
 }
 
 /// Resolve the first page-context scan's child order from cascaded styles.
-/// This runs before the first Taffy layout, so it can use order-modified source
-/// order for flex items and grid items with auto row start/end and column
+/// This runs before the first Taffy layout, so it can use table section order,
+/// order-modified source order for flex items, and grid items with auto row start/end and column
 /// placement at auto or line 1, but not Taffy's resolved grid row details.
 fn initial_page_child_order(
     document: &Document,
@@ -628,6 +628,12 @@ fn initial_page_child_order(
     let is_flex = parent_style.display.is_flex_container();
     if is_flex {
         return flex_pagination_child_order(document, cascade, parent_id);
+    }
+    if matches!(
+        parent_style.display,
+        DisplayValue::Table | DisplayValue::InlineTable
+    ) {
+        return table_pagination_child_order(document, cascade, parent_id);
     }
     let is_auto_row_grid = parent_style.display.is_grid_container()
         && children
