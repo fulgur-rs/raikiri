@@ -6736,7 +6736,8 @@ pub fn layout_single_page_with_resolver_and_base_url(
 /// Whether `id` holds in-flow content that keeps its margins from collapsing
 /// through it (CSS 2 §8.3.1). A line box counts, including one holding only
 /// generated content such as an inside marker or `::before`, and so does a
-/// block-level `::before` or `::after` box with padding, border or height.
+/// block-level `::before` or `::after` box with padding, border or height,
+/// or one the paragraph placed as a box of its own, as with clearance.
 /// Out-of-flow children do not count, text and inline children count only
 /// through their lines, and an empty block child whose own margins collapse
 /// through it does not count.
@@ -6753,7 +6754,7 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
                 || ifc
                     .lines
                     .as_ref()
-                    .is_some_and(|lines| !lines.lines.is_empty())
+                    .is_some_and(|lines| !lines.lines.is_empty() || !lines.placed_blocks.is_empty())
         })
     });
     if has_paragraph_content {
