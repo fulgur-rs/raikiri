@@ -532,8 +532,17 @@ fn poll_async_job(job: NativeAsyncJob, context: &mut Context) -> JsResult<JsValu
 /// Queue `job` as a task due now, behind every task already due; it runs
 /// the next time the event loop drains.
 pub(crate) fn queue_native_task(context: &mut Context, job: NativeJob) -> JsResult<()> {
+    queue_native_task_after(context, 0.0, job)
+}
+
+/// Queue `job` as a task due `delay_ms` after the current virtual time.
+pub(crate) fn queue_native_task_after(
+    context: &mut Context,
+    delay_ms: f64,
+    job: NativeJob,
+) -> JsResult<()> {
     with_state(context, |state| {
-        state.event_loop.queue_task(0.0, Task::Native(job));
+        state.event_loop.queue_task(delay_ms, Task::Native(job));
     })
 }
 

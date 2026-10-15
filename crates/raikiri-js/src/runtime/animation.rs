@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
+use boa_engine::job::NativeJob;
 use boa_engine::object::JsObject;
+use boa_engine::object::builtins::JsPromise;
 use boa_engine::property::PropertyKey;
 use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace, js_string,
 };
 
+use super::event_loop;
 use super::interfaces::{Members, protos};
 use super::webidl::{this_element, with_state};
 
@@ -54,7 +57,12 @@ pub(crate) struct KeyframePair {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AnimationEffect {
     pub(crate) target: usize,
-    pub(crate) keyframes: KeyframePair,
+    /// The sampled keyframes, or `None` for keyframes outside the static
+    /// sampler: such an effect keeps its timing but never styles its target.
+    pub(crate) keyframes: Option<KeyframePair>,
+    /// Virtual time at which the effect was created and started playing.
+    pub(crate) start_time_ms: f64,
+    pub(crate) duration_ms: f64,
     pub(crate) current_time_ms: Option<f64>,
     pub(crate) paused: bool,
 }
@@ -64,6 +72,10 @@ pub(crate) struct AnimationEffect {
 pub(crate) struct AnimationData {
     #[unsafe_ignore_trace]
     id: usize,
+    /// The `ready` promise, created on first access.
+    ready: Option<JsObject>,
+    /// The `finished` promise, created on first access.
+    finished: Option<JsObject>,
 }
 
 impl KeyframePair {
@@ -184,22 +196,30 @@ fn is_css_number_syntax(value: &str) -> bool {
     index == bytes.len()
 }
 
+/// Parse keyframes into the one sampled property, or `None` when they fall
+/// outside the static sampler (null, a keyframe sequence, no property, an
+/// unsupported property, or several properties).
 fn parse_keyframes(
     value: &JsValue,
     context: &mut Context,
-) -> JsResult<(AnimationProperty, f64, f64)> {
+) -> JsResult<Option<(AnimationProperty, f64, f64)>> {
+    if value.is_null_or_undefined() {
+        return Ok(None);
+    }
     let object = value
         .as_object()
         .ok_or_else(|| type_error("animation keyframes must be an object"))?;
+    if object.is_array() {
+        return Ok(None);
+    }
     let keys = object.own_property_keys(context)?;
     let [PropertyKey::String(name)] = keys.as_slice() else {
-        return Err(type_error(
-            "exactly one supported animation property is required",
-        ));
+        return Ok(None);
     };
     let property_name = name.to_std_string_escaped();
-    let property = AnimationProperty::parse_cssom_name(&property_name)
-        .map_err(|_| type_error("unsupported animation property"))?;
+    let Ok(property) = AnimationProperty::parse_cssom_name(&property_name) else {
+        return Ok(None);
+    };
     let values = object.get(JsString::from(property_name), context)?;
     let values = values
         .as_object()
@@ -213,22 +233,50 @@ fn parse_keyframes(
     }
     let from = values.get(js_string!("0"), context)?;
     let to = values.get(js_string!("1"), context)?;
-    Ok((property, parse_pixel_value(&from)?, parse_pixel_value(&to)?))
+    Ok(Some((
+        property,
+        parse_pixel_value(&from)?,
+        parse_pixel_value(&to)?,
+    )))
 }
 
-fn parse_effect(args: &[JsValue], context: &mut Context) -> JsResult<KeyframePair> {
+/// The iteration duration from `options`: a number, or a dictionary whose
+/// `duration` member is a number or `"auto"`. Absent and `"auto"` mean zero
+/// for a keyframe effect.
+fn parse_duration(options: Option<&JsValue>, context: &mut Context) -> JsResult<f64> {
+    let duration = match options {
+        Some(value) if value.is_number() => value.clone(),
+        Some(value) if value.is_undefined() => JsValue::undefined(),
+        Some(value) => value
+            .as_object()
+            .ok_or_else(|| type_error("animation options must be a number or a dictionary"))?
+            .get(js_string!("duration"), context)?,
+        None => JsValue::undefined(),
+    };
+    if duration.is_undefined()
+        || duration
+            .as_string()
+            .is_some_and(|value| value.to_std_string_escaped() == "auto")
+    {
+        return Ok(0.0);
+    }
+    duration
+        .as_number()
+        .filter(|duration| duration.is_finite() && *duration >= 0.0)
+        .ok_or_else(|| type_error("animation duration must be a finite, non-negative number"))
+}
+
+fn parse_effect(args: &[JsValue], context: &mut Context) -> JsResult<(Option<KeyframePair>, f64)> {
     let keyframes = args
         .first()
         .ok_or_else(|| type_error("animation keyframes are required"))?;
-    let (property, from, to) = parse_keyframes(keyframes, context)?;
-    let duration = args
-        .get(1)
-        .filter(|value| value.is_number())
-        .and_then(JsValue::as_number)
-        .ok_or_else(|| type_error("animation duration must be a number"))?;
-    KeyframePair::new(property, from, to, duration).map_err(|_| {
-        type_error("animation values and duration must be finite, with non-negative duration")
-    })
+    let keyframes = parse_keyframes(keyframes, context)?;
+    let duration = parse_duration(args.get(1), context)?;
+    let keyframes = keyframes
+        .map(|(property, from, to)| KeyframePair::new(property, from, to, duration))
+        .transpose()
+        .map_err(|_| type_error("animation keyframe values must be finite"))?;
+    Ok((keyframes, duration))
 }
 
 fn animation_id(this: &JsValue) -> JsResult<usize> {
@@ -237,19 +285,24 @@ fn animation_id(this: &JsValue) -> JsResult<usize> {
         .ok_or_else(|| type_error("'this' is not an Animation"))
 }
 
-/// `Element.animate(keyframes, duration)` for the pinned CSS Text fixtures.
+/// `Element.animate(keyframes, options)`. Only one-property pixel keyframes
+/// are sampled, and only while paused; any other keyframes create an effect
+/// that keeps timing (`ready`, `finished`) but never styles its target.
 pub(crate) fn element_animate(
     this: &JsValue,
     args: &[JsValue],
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let target = this_element(this, context)?;
-    let keyframes = parse_effect(args, context)?;
+    let (keyframes, duration_ms) = parse_effect(args, context)?;
     let id = with_state(context, |state| {
         let id = state.animations.len();
+        let start_time_ms = state.event_loop.now;
         state.animations.push(AnimationEffect {
             target,
             keyframes,
+            start_time_ms,
+            duration_ms,
             current_time_ms: None,
             paused: false,
         });
@@ -257,23 +310,112 @@ pub(crate) fn element_animate(
     })?;
     refresh_animation_styles(context)?;
     let prototype = protos(context).animation.clone();
-    Ok(JsObject::from_proto_and_data(Some(prototype), AnimationData { id }).into())
+    let data = AnimationData {
+        id,
+        ready: None,
+        finished: None,
+    };
+    Ok(JsObject::from_proto_and_data(Some(prototype), data).into())
+}
+
+fn this_animation(this: &JsValue) -> JsResult<JsObject> {
+    this.as_object()
+        .filter(|object| object.is::<AnimationData>())
+        .ok_or_else(|| type_error("'this' is not an Animation"))
+}
+
+/// `Animation.ready`: play-pending ends at once, so the promise is already
+/// resolved with the animation.
+fn ready(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let animation = this_animation(this)?;
+    if let Some(ready) = animation_data(&animation).ready.clone() {
+        return Ok(ready.into());
+    }
+    let ready: JsObject = JsPromise::resolve(animation.clone(), context)?.into();
+    animation_data_mut(&animation).ready = Some(ready.clone());
+    Ok(ready.into())
+}
+
+/// `Animation.finished`: resolves with the animation once the virtual clock
+/// reaches the end of its active interval, unless it was paused by then.
+/// The finishing task is queued on first access so that long animations
+/// nobody waits on do not hold the event loop open.
+fn finished(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let animation = this_animation(this)?;
+    if let Some(finished) = animation_data(&animation).finished.clone() {
+        return Ok(finished.into());
+    }
+    let id = animation_data(&animation).id;
+    let (promise, resolvers) = JsPromise::new_pending(context);
+    let delay = with_state(context, |state| {
+        state.animations.get(id).map(|effect| {
+            (effect.start_time_ms + effect.duration_ms - state.event_loop.now).max(0.0)
+        })
+    })?
+    .ok_or_else(|| type_error("Animation is no longer available"))?;
+    let target = animation.clone();
+    let job = NativeJob::new(move |context| {
+        let running = with_state(context, |state| {
+            state
+                .animations
+                .get(id)
+                .is_some_and(|effect| !effect.paused)
+        })?;
+        if running {
+            resolvers
+                .resolve
+                .call(&JsValue::undefined(), &[target.into()], context)?;
+        }
+        Ok(JsValue::undefined())
+    });
+    event_loop::queue_native_task_after(context, delay, job)?;
+    let finished: JsObject = promise.into();
+    animation_data_mut(&animation).finished = Some(finished.clone());
+    Ok(finished.into())
+}
+
+fn animation_data(object: &JsObject) -> boa_engine::gc::GcRef<'_, AnimationData> {
+    object
+        .downcast_ref::<AnimationData>()
+        .expect("checked by this_animation")
+}
+
+fn animation_data_mut(object: &JsObject) -> boa_engine::gc::GcRefMut<'_, AnimationData> {
+    object
+        .downcast_mut::<AnimationData>()
+        .expect("checked by this_animation")
+}
+
+/// Run `update` on a sampled effect, refusing effects the static sampler
+/// cannot render so that pausing or seeking them fails loudly.
+fn update_sampled_effect(
+    id: usize,
+    context: &mut Context,
+    update: impl FnOnce(&mut AnimationEffect),
+) -> JsResult<()> {
+    let found = with_state(context, |state| {
+        let effect = state.animations.get_mut(id)?;
+        if effect.keyframes.is_none() {
+            return Some(false);
+        }
+        update(effect);
+        Some(true)
+    })?;
+    match found {
+        None => Err(type_error("Animation is no longer available")),
+        Some(false) => Err(type_error(
+            "only single-property pixel animations can be paused or seeked",
+        )),
+        Some(true) => refresh_animation_styles(context),
+    }
 }
 
 fn pause(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let id = animation_id(this)?;
-    let found = with_state(context, |state| {
-        let Some(effect) = state.animations.get_mut(id) else {
-            return false;
-        };
+    update_sampled_effect(id, context, |effect| {
         effect.paused = true;
         effect.current_time_ms.get_or_insert(0.0);
-        true
     })?;
-    if !found {
-        return Err(type_error("Animation is no longer available"));
-    }
-    refresh_animation_styles(context)?;
     Ok(JsValue::undefined())
 }
 
@@ -297,17 +439,9 @@ fn set_current_time(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
         .and_then(JsValue::as_number)
         .filter(|time| time.is_finite())
         .ok_or_else(|| type_error("currentTime must be a finite number"))?;
-    let found = with_state(context, |state| {
-        let Some(effect) = state.animations.get_mut(id) else {
-            return false;
-        };
+    update_sampled_effect(id, context, |effect| {
         effect.current_time_ms = Some(current_time);
-        true
     })?;
-    if !found {
-        return Err(type_error("Animation is no longer available"));
-    }
-    refresh_animation_styles(context)?;
     Ok(JsValue::undefined())
 }
 
@@ -323,17 +457,18 @@ fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
             if !effect.paused {
                 continue;
             }
-            let Some(current_time) = effect.current_time_ms else {
+            let (Some(keyframes), Some(current_time)) = (effect.keyframes, effect.current_time_ms)
+            else {
                 continue;
             };
-            let Some(value) = effect.keyframes.sample(current_time) else {
+            let Some(value) = keyframes.sample(current_time) else {
                 continue;
             };
             let declarations = declarations.entry(effect.target).or_default();
             if !declarations.is_empty() {
                 declarations.push(' ');
             }
-            declarations.push_str(effect.keyframes.property.css_name());
+            declarations.push_str(keyframes.property.css_name());
             declarations.push_str(": ");
             declarations.push_str(&value.to_string());
             declarations.push_str("px;");
@@ -350,7 +485,7 @@ fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
 }
 
 pub(crate) const ANIMATION_MEMBERS: Members = Members {
-    getters: &[],
+    getters: &[("ready", ready), ("finished", finished)],
     accessors: &[("currentTime", current_time, set_current_time)],
     methods: &[("pause", 0, pause)],
 };

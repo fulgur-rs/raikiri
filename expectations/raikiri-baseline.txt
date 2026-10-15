@@ -4641,3 +4641,8 @@ css/css-page/page-name-orthogonal-writing-002-print.html
 # --- percentage page margins in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once the page area that viewport units resolve against maps flow-relative @page margins and padding through the root's writing mode; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-box-008-print.html
+
+# --- color-mix() currentColor background repaint (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
+# Pass once Element.animate() exposes a finished promise for waitForCompositorReady() and the background re-resolves currentColor after a class change; KEEP in two audit-vacuous-passes runs.
+css/css-backgrounds/color-mix-currentcolor-background-repaint.html
+css/css-backgrounds/color-mix-currentcolor-background-repaint-parent.html

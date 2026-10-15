@@ -238,10 +238,14 @@ fn unsupported_animation_inputs_throw_type_error() {
             "const validAnimation = target.animate({ fontSize: ['0px', '40px'] }, 40);\
              validAnimation.pause();\
              [\
-               () => target.animate({ opacity: ['0px', '1px'] }, 40),\
                () => target.animate({ fontSize: ['0px'] }, 40),\
                () => target.animate({ fontSize: [0, '40px'] }, 40),\
-               () => target.animate({ fontSize: ['0px', '40px'] }, { duration: 40 }),\
+               () => target.animate({ fontSize: ['0px', '40px'] }, { duration: -1 }),\
+               () => target.animate({ fontSize: ['0px', '40px'] }, { duration: 'slow' }),\
+               () => target.animate({ fontSize: ['0px', '40px'] }, 'slow'),\
+               () => target.animate({ opacity: [0, 1] }, -1),\
+               () => target.animate(1, 40),\
+               () => target.animate(),\
                () => target.animate({ fontSize: ['0px', '40px'] }, -1),\
                () => target.animate({ fontSize: ['0px', '40px'] }, NaN),\
                () => target.animate({ fontSize: ['0px', '40px'] }, Infinity),\
@@ -250,8 +254,7 @@ fn unsupported_animation_inputs_throw_type_error() {
                () => target.animate({ fontSize: ['', '40px'] }, 40),\
                () => target.animate({ fontSize: ['0', '40px'] }, 40),\
                () => target.animate({ fontSize: ['0em', '40px'] }, 40),\
-               () => target.animate({}, 40),\
-               () => target.animate({ fontSize: ['0px', '40px'], wordSpacing: ['0px', '40px'] }, 40)\
+               () => target.animate({ fontSize: ['0px', '40px'] }, 40).pause.call({})\
              ].every(run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } })",
         )
         .expect("invalid animation inputs are caught as TypeErrors");
@@ -278,12 +281,17 @@ fn stale_animation_ids_are_rejected_by_controls() {
     let prototype = super::super::interfaces::protos(runtime.context_mut())
         .animation
         .clone();
-    let animation =
-        JsObject::from_proto_and_data(Some(prototype), AnimationData { id: usize::MAX });
+    let data = AnimationData {
+        id: usize::MAX,
+        ready: None,
+        finished: None,
+    };
+    let animation = JsObject::from_proto_and_data(Some(prototype), data);
     let animation: JsValue = animation.into();
 
     assert!(pause(&animation, &[], runtime.context_mut()).is_err());
     assert!(set_current_time(&animation, &[JsValue::from(1.0)], runtime.context_mut()).is_err());
+    assert!(finished(&animation, &[], runtime.context_mut()).is_err());
 }
 
 #[test]
@@ -292,8 +300,12 @@ fn paused_effect_without_a_current_time_has_no_sample() {
     with_state(runtime.context_mut(), |state| {
         state.animations.push(AnimationEffect {
             target,
-            keyframes: KeyframePair::new(AnimationProperty::FontSize, 0.0, 40.0, 40.0)
-                .expect("valid keyframes"),
+            keyframes: Some(
+                KeyframePair::new(AnimationProperty::FontSize, 0.0, 40.0, 40.0)
+                    .expect("valid keyframes"),
+            ),
+            start_time_ms: 0.0,
+            duration_ms: 40.0,
             current_time_ms: None,
             paused: true,
         });
@@ -317,5 +329,171 @@ fn finite_numeric_duration_accepts_the_javascript_double_range() {
         )
         .expect("finite numeric duration is accepted");
 
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn options_dictionary_sets_the_sampled_duration() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "const animation = target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 40 });\
+             animation.pause();\
+             animation.currentTime = 10",
+        )
+        .expect("a dictionary duration is accepted");
+    assert_eq!(
+        animation_style(&mut runtime, target).as_deref(),
+        Some("word-spacing: 10px;")
+    );
+}
+
+#[test]
+fn absent_and_auto_durations_are_zero() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "const animations = [\
+               target.animate({ wordSpacing: ['0px', '40px'] }),\
+               target.animate({ wordSpacing: ['0px', '40px'] }, undefined),\
+               target.animate({ wordSpacing: ['0px', '40px'] }, {}),\
+               target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 'auto' })\
+             ];\
+             for (const animation of animations) { animation.pause(); animation.currentTime = 0; }",
+        )
+        .expect("absent and auto durations are accepted");
+    assert_eq!(animation_style(&mut runtime, target), None);
+}
+
+#[test]
+fn keyframes_outside_the_sampler_keep_timing_but_never_style() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const animations = [\
+               target.animate({ opacity: [0, 1] }, { duration: 1 }),\
+               target.animate({}, 40),\
+               target.animate(null, 40),\
+               target.animate([{ opacity: 0 }, { opacity: 1 }], 40),\
+               target.animate({ fontSize: ['0px', '40px'], wordSpacing: ['0px', '40px'] }, 40)\
+             ];\
+             animations.every(animation => {\
+               const refused = run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } };\
+               return animation instanceof Animation\
+                 && animation.currentTime === null\
+                 && refused(() => animation.pause())\
+                 && refused(() => { animation.currentTime = 0; });\
+             })",
+        )
+        .expect("keyframes outside the sampler are accepted");
+    assert!(result.to_boolean(), "only sampling is refused");
+    assert_eq!(animation_style(&mut runtime, target), None);
+}
+
+#[test]
+fn ready_is_one_resolved_promise_for_the_animation() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ opacity: [0, 1] }, 40);\
+             globalThis.sameReady = animation.ready === animation.ready;\
+             animation.ready.then(value => { globalThis.readyValue = value; })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("sameReady && readyValue === animation")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn finished_resolves_at_the_end_of_the_active_interval() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ opacity: [0, 1] }, { duration: 40 });\
+             globalThis.sameFinished = animation.finished === animation.finished;\
+             animation.finished.then(value => {\
+               globalThis.finishedValue = value;\
+               globalThis.finishedAt = performance.now();\
+             })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("sameFinished && finishedValue === animation && finishedAt === 40")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn finished_counts_from_the_start_time_not_the_first_access() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ opacity: [0, 1] }, { duration: 40 });\
+             setTimeout(() => {\
+               animation.finished.then(() => { globalThis.finishedAt = performance.now(); });\
+             }, 10);\
+             setTimeout(() => {\
+               const late = target.animate({ opacity: [0, 1] }, 5);\
+               late.finished.then(() => { globalThis.lateAt = performance.now(); });\
+             }, 60)",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("finishedAt === 40 && lateAt === 65")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn paused_animation_never_finishes() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ wordSpacing: ['0px', '40px'] }, 40);\
+             animation.finished.then(() => { globalThis.finishedValue = true; });\
+             animation.pause()",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("typeof finishedValue === 'undefined'")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn promise_getters_reject_foreign_receivers() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const animation = target.animate({ opacity: [0, 1] }, 40);\
+             const proto = Object.getPrototypeOf(animation);\
+             ['ready', 'finished'].every(name => {\
+               const getter = Object.getOwnPropertyDescriptor(proto, name).get;\
+               try { getter.call({}); return false; } catch (error) { return error instanceof TypeError; }\
+             })",
+        )
+        .unwrap();
     assert!(result.to_boolean());
 }
