@@ -2037,3 +2037,100 @@ fn pipeline_clears_the_box_after_a_float_with_break_after() {
         .expect("the block is on the new page");
     assert_eq!(block.rect().width, 400.0);
 }
+
+#[test]
+fn pipeline_counts_the_padding_after_a_bodys_own_lines() {
+    // The 60px line and the 60px padding below it reach the second page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;line-height:60px;padding-bottom:60px}</style>x",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_counts_the_padding_after_a_nested_float_in_a_formatting_context_body() {
+    // The 80px float inside the first block ends below that block's 1px
+    // content and the 1px last block; the flow-root body encloses it, and
+    // its 40px padding reaches the second page.
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;display:flow-root;padding-bottom:40px}</style>\
+         <div><div style='float:left;width:10px;height:80px'></div><div style='height:1px'></div></div>\
+         <div style='height:1px'></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 2);
+}
+
+#[test]
+fn pipeline_leaves_out_floats_the_body_does_not_enclose() {
+    // A body that is no formatting context of its own lets the nested
+    // float overflow it, and a float inside an absolutely positioned box
+    // belongs to that box: either way the body ends 41px down the page.
+    for (body, wrapper) in [
+        ("", ""),
+        ("display:flow-root;", "position:absolute;width:20px"),
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;{body}padding-bottom:40px}}</style>\
+             <div style='{wrapper}'><div style='float:left;width:10px;height:80px'></div></div>\
+             <div style='height:1px'></div>"
+        ));
+        assert_eq!(run(&doc).slices.len(), 1, "{body} {wrapper}");
+    }
+}
+
+#[test]
+fn pipeline_leaves_a_relative_offset_out_of_a_nested_float_end() {
+    // The wrapper's 100px offset moves the 50px float without moving the
+    // flow: the body ends 110px down, with its padding, on the first page.
+    let doc = parse(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0;display:flow-root;padding-bottom:60px}</style>\
+         <div style='position:relative;top:100px'><div style='float:left;width:10px;height:50px'></div></div>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_treats_a_percentage_offset_against_an_auto_height_as_auto() {
+    // The section's height is auto, so `top: -100%` acts as `auto`: the
+    // float ends 160px down and the body, with its padding, at 190px.
+    let doc = parse(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0;display:flow-root;padding-bottom:30px}</style>\
+         <section><div style='height:150px'></div><div style='position:relative;top:-100%'>\
+         <div style='float:left;width:10px;height:10px'></div></div></section>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}
+
+#[test]
+fn pipeline_places_a_float_in_an_inline_in_its_paragraph() {
+    // Floats in a paragraph sit in the paragraph's coordinates, so the
+    // inlines that hold them add no offset: the float ends 130px down,
+    // and the body ends with its padding inside the page.
+    for paragraph in [
+        "a<br>b<span style='float:left;width:10px;height:80px'></span>",
+        "a<br>b<span><span style='float:left;width:10px;height:80px'></span></span>",
+        "a<br>b<span style='display:contents'><span style='float:left;width:10px;height:80px'></span></span>",
+        "<div style='line-height:50px'>a<br>b<span>c<span style='float:left;width:10px;height:80px'></span></span></div>",
+        "<div style='line-height:50px'>a<br>b<span style='display:contents'><span style='float:left;width:10px;height:80px'></span></span></div>",
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:300px 300px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:60px;line-height:50px}}</style>{paragraph}"
+        ));
+        assert_eq!(run(&doc).slices.len(), 1, "{paragraph}");
+    }
+}
+
+#[test]
+fn pipeline_leaves_footnotes_out_of_the_body_end() {
+    // A footnote moves to its page's footnote area, so it does not extend
+    // the body, whether or not a block of the body holds it.
+    for note in [
+        "<div style='float:footnote;height:30px'></div>",
+        "<div><div style='float:footnote;height:30px'></div></div>",
+    ] {
+        let doc = parse(&format!(
+            "<style>@page{{size:100px 100px;margin:0}} body{{margin:0;display:flow-root;padding-bottom:20px}}</style>{note}"
+        ));
+        assert_eq!(run(&doc).slices.len(), 1, "{note}");
+    }
+}

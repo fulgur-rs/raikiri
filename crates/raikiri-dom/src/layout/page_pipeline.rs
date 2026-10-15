@@ -433,18 +433,18 @@ fn body_border_box_end(
     let max_end = used(computed.max_height).map_or(f32::INFINITY, border_box_end);
     // Without block-end edges or a `min-height` an auto-height body ends
     // with its content, which the flow already paginated.
+    let edges_end = edges_bottom > 0.0 || min_height > 0.0;
     if body.is_ifc_root() {
         let lines_end = body
             .ifc
             .as_ref()
             .and_then(|root| root.lines.as_ref())
-            .filter(|_| whole_box)
+            .filter(|_| whole_box || edges_end)
             .map_or(f32::NEG_INFINITY, |lines| {
                 (top + edges_top + lines.shifted_height() + edges_bottom).min(max_end)
             });
         return min_end.max(generated_end).max(lines_end);
     }
-    let edges_end = edges_bottom > 0.0 || min_height > 0.0;
     if !edges_end && !whole_box {
         return min_end;
     }
@@ -452,35 +452,47 @@ fn body_border_box_end(
     // between them collapsed, so the content ends at the block-end margin
     // edge of the last one; block-end edges or a `min-height` keep that
     // margin, negative or not, inside the body. A body that establishes a
-    // formatting context of its own also encloses its floats.
+    // formatting context of its own also encloses its floats, including
+    // those inside its in-flow blocks that are not formatting contexts
+    // themselves.
     // The children of a `display: contents` element take part as the body's
     // own, and a relative offset moves a box without moving the flow.
-    let encloses_floats = computed.display == DisplayValue::FlowRoot;
-    let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
+    let encloses_floats = holds_floats(document, cascade, body_id);
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
     let mut last_flow_margin = 0.0;
-    // Popped in document order.
-    let mut children: Vec<(usize, f32)> = body
+    // Popped in document order, each with the flow offset of its parent's
+    // coordinates and whether it is nested in one of the body's blocks,
+    // where only floats count. Boxes inside an inline formatting context
+    // are placed in the coordinates of its root, so its inlines add no
+    // offset.
+    let mut children: Vec<(usize, f32, bool)> = body
         .children
         .iter()
         .rev()
-        .map(|&child| (child, 0.0))
+        .map(|&child| (child, 0.0, false))
         .collect();
-    while let Some((child, offset)) = children.pop() {
+    while let Some((child, offset, nested)) = children.pop() {
         let node = &document.nodes[child];
         let child_computed = &cascade.computed[child];
         if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
             continue;
         }
         let layout = &node.unrounded_layout;
+        let in_ifc = document
+            .parent_of(child)
+            .is_some_and(|parent| in_inline_context(document, cascade, parent));
         if child_computed.display == DisplayValue::Contents {
-            let offset = offset + layout.location.y;
+            let offset = if in_ifc {
+                offset
+            } else {
+                offset + layout.location.y
+            };
             children.extend(
                 node.children
                     .iter()
                     .rev()
-                    .map(|&grandchild| (grandchild, offset)),
+                    .map(|&grandchild| (grandchild, offset, nested)),
             );
             continue;
         }
@@ -492,26 +504,32 @@ fn body_border_box_end(
         }
         if super::page::is_floating_box_for_pagination(document, cascade, child) {
             // The painter adds a float's relative offset; its layout box is
-            // where the float sits in the flow.
+            // where the float sits in the flow. A footnote leaves the flow
+            // for its page's footnote area.
             let end = offset + layout.location.y + layout.size.height + layout.margin.bottom;
-            if encloses_floats && end.is_finite() {
+            let footnote = child_computed.float == FloatValue::Footnote;
+            if encloses_floats && !footnote && end.is_finite() {
                 content_end = content_end.max(end);
             }
             continue;
         }
-        // Layout resolves the insets of relative and sticky boxes alike,
-        // against the body's content box.
-        let relative_shift = if matches!(
-            child_computed.position,
-            PositionValue::Relative | PositionValue::Sticky
-        ) {
-            let inset = |value| used_computed_length_percentage_or_auto(value, body_content_height);
-            inset(child_computed.top)
-                .or_else(|| inset(child_computed.bottom).map(|bottom| -bottom))
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
+        let relative_shift = layout_relative_offset_y(document, cascade, body_id, child);
+        if encloses_floats && !holds_floats(document, cascade, child) {
+            let offset = if in_ifc {
+                offset
+            } else {
+                offset + layout.location.y - relative_shift
+            };
+            children.extend(
+                node.children
+                    .iter()
+                    .rev()
+                    .map(|&grandchild| (grandchild, offset, true)),
+            );
+        }
+        if nested {
+            continue;
+        }
         let end =
             offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
         if end.is_finite() {
@@ -523,7 +541,7 @@ fn body_border_box_end(
         // Without block-end edges the last child's block-end margin
         // collapses through the end of the body, unless the body is a
         // formatting context of its own.
-        let end = if edges_end || holds_floats(document, cascade, body_id) {
+        let end = if edges_end || encloses_floats {
             end
         } else {
             end - last_flow_margin
@@ -7357,6 +7375,18 @@ fn float_context_root(
         current = parent;
     }
     body_id
+}
+
+/// Whether `node_id` is the root of an inline formatting context or an
+/// inline inside one, whose boxes sit in the root's coordinates.
+fn in_inline_context(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    std::iter::successors(Some(node_id), |&id| document.parent_of(id))
+        .find(|&id| {
+            let display = cascade.computed[id].display;
+            document.nodes[id].is_ifc_root()
+                || !(display.is_inline_flow() || display == DisplayValue::Contents)
+        })
+        .is_some_and(|id| document.nodes[id].is_ifc_root())
 }
 
 /// Whether the box `node_id` establishes an independent block formatting
