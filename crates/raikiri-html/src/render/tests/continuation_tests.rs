@@ -686,3 +686,21 @@ fn a_cancellation_while_measuring_a_continuation_aborts_the_run() {
     assert!(matches!(result, Ok(PipelineRun::Aborted)));
     assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
 }
+
+#[test]
+fn a_named_page_after_an_empty_box_is_laid_out_at_its_own_width() {
+    // The empty box sits at the end of the first page's content. It does
+    // not open the next page, so the change to the named page breaks once,
+    // and the relayout reproduces that page start.
+    let out = run("<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div>first</div><div style='height:0'></div>\
+        <div style='page:wide'>second</div>");
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.slices[1].page_name.as_deref(), Some("wide"));
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(out.continuations[0].first_page, 1);
+    assert_eq!(page_lines(&out, 1), vec![vec!["second".to_owned()]]);
+}
