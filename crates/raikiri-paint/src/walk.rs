@@ -7024,12 +7024,22 @@ fn conic_to_peniko(
     // clamp the wrapped slice to the last stop and paint the starting
     // quadrant with the wrong color, so always repeat for the wrap.
     let extend = PenikoExtend::Repeat;
-    let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle)
-        .with_extend(extend)
-        .with_interpolation_cs(conic_interpolation_tag(conic.interpolation.color_space))
-        .with_hue_direction(conic_hue_direction(conic.interpolation.hue_method))
-        .with_stops(peniko_stops.as_slice());
-    Some(gradient)
+    let space = conic_interpolation_tag(conic.interpolation.color_space);
+    let direction = conic_hue_direction(conic.interpolation.hue_method);
+    let gradient = PenikoGradient::new_sweep(center, start_angle, end_angle).with_extend(extend);
+    // A renderer clips each stop to the sRGB gamut before interpolating, so
+    // a sweep with a stop outside it gets clipped sRGB stops sampled from
+    // the ramp in its own space instead.
+    if gradient::any_out_of_gamut(&peniko_stops) {
+        let stops = gradient::expand_stops(&peniko_stops, space, direction, false);
+        return Some(gradient.with_stops(stops.as_slice()));
+    }
+    Some(
+        gradient
+            .with_interpolation_cs(space)
+            .with_hue_direction(direction)
+            .with_stops(peniko_stops.as_slice()),
+    )
 }
 
 /// Paint one conic background over its painting area.

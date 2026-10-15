@@ -1389,3 +1389,32 @@ fn average_colors_follow_the_clipped_ramp() {
     );
     assert!(pixel(&rgba, 10, 5, 5)[0].abs_diff(191) <= 2);
 }
+
+#[test]
+fn out_of_gamut_conic_stops_clip_after_interpolation() {
+    // Red falls from 2 to 0 over the turn: still clipped at a quarter turn,
+    // half way down at three quarters.
+    let cv = computed_for("background-image: conic-gradient(in srgb, color(srgb 2 0 0), black)");
+    let Gradient::Conic(conic) = gradient_of(&cv) else {
+        panic!("expected a conic gradient");
+    };
+    let area = Rect::new(0.0, 0.0, 200.0, 200.0);
+    let mut scene = Scene::new();
+    paint_conic_gradient(
+        &mut scene,
+        &conic,
+        area,
+        area,
+        &cv.border_radius,
+        (0.0, 0.0, 0.0, 0.0),
+        (200.0, 200.0),
+        cv.color,
+    );
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        200,
+        200,
+    );
+    assert_eq!(pixel(&rgba, 200, 180, 100)[0], 255);
+    assert!(pixel(&rgba, 200, 20, 100)[0].abs_diff(128) <= 3);
+}

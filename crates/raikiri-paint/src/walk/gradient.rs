@@ -866,10 +866,14 @@ const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
 /// Stops a brush cannot take as they are: ones interpolated outside sRGB, or
 /// ones outside its gamut, which a renderer clips before interpolating.
 fn needs_expansion(stops: &[(f32, DynamicColor)], space: ColorSpaceTag) -> bool {
-    space != ColorSpaceTag::Srgb
-        || stops
-            .iter()
-            .any(|(_, color)| !in_gamut(color.to_alpha_color::<Srgb>()))
+    space != ColorSpaceTag::Srgb || any_out_of_gamut(stops)
+}
+
+/// Some stop lies outside the sRGB gamut.
+pub(super) fn any_out_of_gamut(stops: &[(f32, DynamicColor)]) -> bool {
+    stops
+        .iter()
+        .any(|(_, color)| !in_gamut(color.to_alpha_color::<Srgb>()))
 }
 
 /// Every sRGB channel lies in 0..=1.
@@ -892,7 +896,7 @@ fn clipped(color: AlphaColor<Srgb>) -> DynamicColor {
 /// draws the pad as a segment between two equal colors, which `longer hue`
 /// turns into a full hue turn. Expanding each segment here and pinning the
 /// first and last colors to 0 and 1 keeps the pads solid.
-fn expand_stops(
+pub(super) fn expand_stops(
     stops: &[(f32, DynamicColor)],
     space: ColorSpaceTag,
     direction: HueDirection,
