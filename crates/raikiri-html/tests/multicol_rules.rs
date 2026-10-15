@@ -301,3 +301,21 @@ fn a_nested_container_continued_in_the_next_outer_column_draws_rules_in_each_row
         [(34.0, 20.0, 2.0, 40.0), (124.0, 0.0, 2.0, 20.0)]
     );
 }
+
+#[test]
+fn column_properties_do_not_apply_to_flex_grid_or_table_boxes() {
+    for display in [
+        "flex",
+        "inline-flex",
+        "grid",
+        "inline-grid",
+        "table",
+        "inline-table",
+    ] {
+        let document = lay_out(
+            "<div class=mc><p>A</p><p>B</p><p>C</p><p>D</p></div>",
+            &format!(".mc{{display:{display};column-rule:4px solid red}}"),
+        );
+        assert!(rules(&document).is_empty(), "{display}");
+    }
+}

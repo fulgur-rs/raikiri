@@ -28,9 +28,9 @@ use std::collections::HashMap;
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
-    AbsoluteAxis, AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Display, Layout,
-    LayoutInput, LayoutOutput, LengthPercentage, Line, NodeId, Point, Position as TaffyPosition,
-    Rect, Size, SizingMode, Style, TraversePartialTree, compute_block_layout,
+    AbsoluteAxis, AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Layout, LayoutInput,
+    LayoutOutput, LengthPercentage, Line, NodeId, Point, Position as TaffyPosition, Rect, Size,
+    SizingMode, Style, TraversePartialTree, compute_block_layout,
 };
 
 use super::resolve_calc;
@@ -169,8 +169,7 @@ impl Document {
 /// on horizontal axes: a horizontal box, or a flex or grid container, whose
 /// algorithms place items on physical axes.
 fn flows_horizontally(tree: &Document, idx: usize) -> bool {
-    !is_vertical(tree, idx)
-        || matches!(tree.nodes[idx].style.display, Display::Flex | Display::Grid)
+    !is_vertical(tree, idx) || tree.nodes[idx].formatting_context.is_flex_or_grid()
 }
 
 /// `inputs` for the child `idx` of a vertical container, already on

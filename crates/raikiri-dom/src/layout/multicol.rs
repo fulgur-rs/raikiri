@@ -6,6 +6,7 @@ mod paragraph_group;
 pub(super) mod spanning;
 
 use super::*;
+use crate::node::FormattingContext;
 
 pub(super) use paged_spanning::{FragmentEdits, paginate_spanning_columns};
 
@@ -210,8 +211,8 @@ pub(crate) fn compute_multicol_layout(
                 item.align_self.or(container.align_items),
                 None | Some(taffy::AlignItems::STRETCH)
             );
-            match container.display {
-                Display::Flex => match container.flex_direction {
+            match tree.nodes[parent].formatting_context {
+                FormattingContext::Flex => match container.flex_direction {
                     taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse => {
                         FlowPlacement::Stretched(stretched)
                     }
@@ -221,7 +222,7 @@ pub(crate) fn compute_multicol_layout(
                         }
                     }
                 },
-                Display::Grid => FlowPlacement::Stretched(stretched),
+                FormattingContext::Grid => FlowPlacement::Stretched(stretched),
                 _ => FlowPlacement::Stretched(false),
             }
         });
@@ -1624,9 +1625,9 @@ fn record_nested_ifc_box_fragments(
                 }
                 for &ancestor in &path {
                     let layout = tree.nodes[ancestor].unrounded_layout;
-                    let is_flex_item = tree
-                        .parent_of(ancestor)
-                        .is_some_and(|parent| tree.nodes[parent].style.display == Display::Flex);
+                    let is_flex_item = tree.parent_of(ancestor).is_some_and(|parent| {
+                        tree.nodes[parent].formatting_context == FormattingContext::Flex
+                    });
                     let fragment_id =
                         if let Some(&fragment_id) = existing_fragments.get(&(ancestor, column)) {
                             let fragment = &mut tree.fragment_tree.fragments[fragment_id];
@@ -1808,7 +1809,7 @@ impl FlexFloatChain {
                 float,
             };
         }
-        let row_flex = node.style.display == Display::Flex
+        let row_flex = node.formatting_context == FormattingContext::Flex
             && matches!(
                 node.style.flex_direction,
                 taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse

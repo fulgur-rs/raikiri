@@ -171,7 +171,11 @@ pub(crate) fn apply_computed_to_style(
         // Carry multicol settings into the Taffy dispatch seam. Taffy has no
         // native multicol style fields, so the custom strategy reads this
         // side-channel while the ordinary Style remains Taffy-compatible.
-        doc.nodes[idx].multicol = multicol_style_from_computed(cv);
+        // CSS Multi-column Layout 1, 2: the column properties apply to block
+        // containers other than table wrapper boxes; a flex, grid or table
+        // box lays its content out by its own algorithm, in no columns.
+        doc.nodes[idx].multicol =
+            multicol_style_from_computed(cv).filter(|_| !lays_out_without_columns(cv.display));
         doc.nodes[idx].column_span_all =
             cv.column_span == raikiri_style::property::ColumnSpanValue::All;
         // Table engine inputs — no taffy::Style counterpart (taffy 0.12
@@ -564,6 +568,13 @@ fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
             Display::Block
         }
     };
+}
+
+/// Whether a box of `display` lays its content out by an algorithm of its
+/// own, to which the column properties do not apply.
+fn lays_out_without_columns(display: DisplayValue) -> bool {
+    display.is_flex_or_grid_container()
+        || matches!(display, DisplayValue::Table | DisplayValue::InlineTable)
 }
 
 /// [`ComputedValues::float`] / [`ComputedValues::clear`] → [`taffy::Style::float`] /

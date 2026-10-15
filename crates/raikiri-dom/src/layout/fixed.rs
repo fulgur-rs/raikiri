@@ -31,6 +31,7 @@
 //! the same way.
 
 use super::*;
+use crate::node::FormattingContext;
 use raikiri_style::property::WillChange;
 use taffy::util::{MaybeMath, MaybeResolve, ResolveOrZero};
 use taffy::{
@@ -51,12 +52,9 @@ pub fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues)
         && !node.is_inline_svg_root()
         && !ATOMIC_TAGS.contains(&tag)
         && !REPLACED_BOX_TAGS.contains(&tag)
-        && !document.taffy_parent_of(id).is_some_and(|parent| {
-            matches!(
-                document.nodes[parent].style.display,
-                Display::Flex | Display::Grid
-            )
-        })
+        && !document
+            .taffy_parent_of(id)
+            .is_some_and(|parent| document.nodes[parent].formatting_context.is_flex_or_grid())
 }
 
 /// Whether the element's `transform` applies to it: layout makes it the
@@ -816,7 +814,7 @@ fn static_position_alignment(
         width: if rtl { 1.0 } else { 0.0 },
         height: 0.0,
     };
-    if parent_style.display != Display::Flex {
+    if tree.nodes[parent].formatting_context != FormattingContext::Flex {
         // The alignment does not depend on the size, so neither does the
         // shift.
         return (block, Size::ZERO);

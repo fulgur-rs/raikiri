@@ -11,9 +11,9 @@
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
     AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
-    DetailedGridInfo, Display, ExpandedDimension, Layout, LayoutBlockContainer,
-    LayoutFlexboxContainer, LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree,
-    NodeId, Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
+    DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
+    LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
+    Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
     compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
     compute_leaf_layout,
 };
@@ -257,10 +257,7 @@ impl<'a> TaffyChildIter<'a> {
         let hidden = doc.size_contained_measure.last() == Some(&usize::from(parent));
         Self {
             doc,
-            flatten: matches!(
-                node.style.display,
-                Display::Flex | Display::Grid | Display::Block | Display::FlowRoot
-            ) && node.display != DisplayValue::Contents,
+            flatten: !node.is_display_none() && node.display != DisplayValue::Contents,
             stack: if hidden {
                 Vec::new()
             } else {
@@ -321,10 +318,7 @@ impl Document {
         }
         let container = &self.nodes[top];
         let lifted = top != parent
-            && matches!(
-                container.style.display,
-                Display::Flex | Display::Grid | Display::Block | Display::FlowRoot
-            )
+            && !container.is_display_none()
             && container.display != DisplayValue::Contents;
         Some(if lifted { top } else { parent })
     }
@@ -741,7 +735,7 @@ impl Document {
         // information records instead, because Taffy's grid baseline does
         // not measure an item's own first line.
         if inputs.run_mode == RunMode::PerformLayout
-            && self.nodes[usize::from(node_id)].style.display == Display::Flex
+            && self.nodes[usize::from(node_id)].formatting_context == FormattingContext::Flex
         {
             self.nodes[usize::from(node_id)].flex_first_baseline = output.baselines.first;
         }
@@ -1435,7 +1429,7 @@ fn fragmentation_context_for_ifc(
         if let Some(multicol) = node.multicol {
             return (has_row_flex && multicol.horizontal).then_some(context);
         }
-        has_row_flex |= node.style.display == Display::Flex
+        has_row_flex |= node.formatting_context == FormattingContext::Flex
             && matches!(
                 node.style.flex_direction,
                 taffy::FlexDirection::Row | taffy::FlexDirection::RowReverse

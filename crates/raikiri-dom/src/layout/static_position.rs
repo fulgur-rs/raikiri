@@ -3,6 +3,7 @@
 //! container.
 
 use crate::document::Document;
+use crate::node::FormattingContext;
 use raikiri_style::property::{Direction, DisplayValue, FloatValue, PositionValue, TextAlign};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto};
 
@@ -42,10 +43,7 @@ pub(super) fn realign_inline_level_abspos_static_positions(
         if parent_node.ifc.is_some()
             || parent_node.multicol.is_some()
             || crate::taffy_impl::used_writing_mode(document, parent_id).is_vertical()
-            || !matches!(
-                parent_node.style.display,
-                taffy::Display::Block | taffy::Display::FlowRoot
-            )
+            || parent_node.formatting_context != FormattingContext::Block
             || !matches!(
                 parent.display,
                 DisplayValue::Block

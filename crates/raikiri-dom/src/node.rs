@@ -392,6 +392,12 @@ impl FormattingContext {
             taffy::Display::Block | taffy::Display::FlowRoot => Self::Block,
         }
     }
+
+    /// Whether the box is a flex or grid container, whose items its own
+    /// algorithm places.
+    pub(crate) fn is_flex_or_grid(self) -> bool {
+        matches!(self, Self::Flex | Self::Grid)
+    }
 }
 
 /// Arena node implemented with a NodeData tagged union.
