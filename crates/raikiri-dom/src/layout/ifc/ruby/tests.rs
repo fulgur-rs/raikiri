@@ -629,6 +629,42 @@ fn runs(fixture: Fixture) -> Vec<(usize, bool, (f32, f32))> {
 }
 
 #[test]
+fn annotation_runs_keep_their_place_in_tree_order() {
+    let mut ids = (0, 0, 0);
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let base = rb(doc, container, "a");
+        let annotation = rt(doc, container, "x");
+        ids.0 = doc.nodes[base].children[0];
+        ids.1 = doc.nodes[annotation].children[0];
+        ids.2 = doc.append_text(root, "b");
+    });
+    let runs = runs(fixture);
+    let order: Vec<usize> = runs.iter().map(|run| run.0).collect();
+    assert_eq!(order, [ids.0, ids.1, ids.2], "{runs:?}");
+}
+
+#[test]
+fn word_break_opportunities_stay_in_the_base_text() {
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        let base = rb(doc, container, "aa");
+        element(doc, base, "wbr", "");
+        doc.append_text(base, "bb");
+        rt(doc, container, "x");
+    });
+    let (mut doc, cascade, root) = (fixture.doc, fixture.cascade, fixture.root);
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    let lines = doc.nodes[root].ifc_lines().expect("lines");
+    let text: String = lines[0]
+        .text()
+        .chars()
+        .filter(|ch| !matches!(*ch, '\u{2066}'..='\u{2069}'))
+        .collect();
+    assert!(text.contains("aa\u{200B}bb"), "{text:?}");
+}
+
+#[test]
 fn annotations_sit_over_their_bases() {
     let mut ids = (0, 0);
     let fixture = block_fixture("line-height:20px", |doc, root| {

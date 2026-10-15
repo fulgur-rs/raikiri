@@ -711,6 +711,16 @@ impl Content<'_, '_> {
             let inline = styled(self.doc, self.cascade, cv, id, self.fonts)?;
             self.record_element(id);
             builder.open_inline(NodeId(id as u64), &inline, edges);
+            // A `<wbr>` is a break opportunity, as in the paragraph outside
+            // the ruby.
+            if node.tag_name() == Some("wbr") {
+                builder.push_text(
+                    TextSource::Generated {
+                        node: NodeId(id as u64),
+                    },
+                    "\u{200B}",
+                );
+            }
             self.push_nodes(builder, &node.children, ends, letter)?;
             builder.close_inline();
         }

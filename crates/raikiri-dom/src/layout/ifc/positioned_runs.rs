@@ -324,6 +324,7 @@ impl<'a> PositionedLines<'a> {
             self.converter_size,
         );
         let mut runs = Vec::new();
+        let mut annotations = Vec::new();
         let mut markers = Vec::new();
         let mut content_images = Vec::new();
         let mut object_offsets = None;
@@ -375,13 +376,15 @@ impl<'a> PositionedLines<'a> {
                 continue;
             }
             if let Fragment::RubyAnnotation(annotation) = fragment {
+                let mut own = Vec::new();
                 self.annotation_runs(
                     annotation,
                     Placement::IDENTITY.annotation(annotation.transform(), line.block_offset()),
                     annotation.base_text_range().end,
                     &converter,
-                    &mut runs,
+                    &mut own,
                 );
+                annotations.push((annotation.base_text_range().end, own));
                 continue;
             }
             let Fragment::GlyphRun(run) = fragment else {
@@ -442,6 +445,16 @@ impl<'a> PositionedLines<'a> {
                     annotation: None,
                 });
             }
+        }
+        // shodo reports annotations after every other fragment of the line;
+        // each one paints after the text of its ruby segment, before the
+        // text that follows the segment.
+        for (end, own) in annotations {
+            let at = runs
+                .iter()
+                .position(|run| run.annotation.is_none() && run.run.text_range().start >= end)
+                .unwrap_or(runs.len());
+            runs.splice(at..at, own);
         }
         PositionedLine {
             index,
