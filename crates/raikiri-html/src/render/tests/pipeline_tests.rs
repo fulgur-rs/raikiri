@@ -2088,3 +2088,15 @@ fn pipeline_leaves_a_relative_offset_out_of_a_nested_float_end() {
     );
     assert_eq!(run(&doc).slices.len(), 1);
 }
+
+#[test]
+fn pipeline_treats_a_percentage_offset_against_an_auto_height_as_auto() {
+    // The section's height is auto, so `top: -100%` acts as `auto`: the
+    // float ends 160px down and the body, with its padding, at 190px.
+    let doc = parse(
+        "<style>@page{size:200px 200px;margin:0} body{margin:0;display:flow-root;padding-bottom:30px}</style>\
+         <section><div style='height:150px'></div><div style='position:relative;top:-100%'>\
+         <div style='float:left;width:10px;height:10px'></div></div></section>",
+    );
+    assert_eq!(run(&doc).slices.len(), 1);
+}

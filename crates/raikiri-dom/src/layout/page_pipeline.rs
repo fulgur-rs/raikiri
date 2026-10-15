@@ -458,20 +458,19 @@ fn body_border_box_end(
     // The children of a `display: contents` element take part as the body's
     // own, and a relative offset moves a box without moving the flow.
     let encloses_floats = holds_floats(document, cascade, body_id);
-    let body_content_height = (layout.size.height - edges_top - edges_bottom).max(0.0);
     let mut content_end = top + edges_top;
     let mut last_flow_end = None;
     let mut last_flow_margin = 0.0;
     // Popped in document order, each with the flow offset of its parent's
-    // coordinates, the height its insets resolve against, and whether it
-    // is nested in one of the body's blocks, where only floats count.
-    let mut children: Vec<(usize, f32, f32, bool)> = body
+    // coordinates and whether it is nested in one of the body's blocks,
+    // where only floats count.
+    let mut children: Vec<(usize, f32, bool)> = body
         .children
         .iter()
         .rev()
-        .map(|&child| (child, 0.0, body_content_height, false))
+        .map(|&child| (child, 0.0, false))
         .collect();
-    while let Some((child, offset, basis, nested)) = children.pop() {
+    while let Some((child, offset, nested)) = children.pop() {
         let node = &document.nodes[child];
         let child_computed = &cascade.computed[child];
         if !node.is_in_document() || node.is_display_none() || node.kind() != NodeKind::Element {
@@ -484,7 +483,7 @@ fn body_border_box_end(
                 node.children
                     .iter()
                     .rev()
-                    .map(|&grandchild| (grandchild, offset, basis, nested)),
+                    .map(|&grandchild| (grandchild, offset, nested)),
             );
             continue;
         }
@@ -503,32 +502,14 @@ fn body_border_box_end(
             }
             continue;
         }
-        // Layout resolves the insets of relative and sticky boxes alike,
-        // against the containing block's content box.
-        let relative_shift = if matches!(
-            child_computed.position,
-            PositionValue::Relative | PositionValue::Sticky
-        ) {
-            let inset = |value| used_computed_length_percentage_or_auto(value, basis);
-            inset(child_computed.top)
-                .or_else(|| inset(child_computed.bottom).map(|bottom| -bottom))
-                .unwrap_or(0.0)
-        } else {
-            0.0
-        };
+        let relative_shift = layout_relative_offset_y(document, cascade, body_id, child);
         if encloses_floats && !holds_floats(document, cascade, child) {
             let offset = offset + layout.location.y - relative_shift;
-            let basis = (layout.size.height
-                - layout.padding.top
-                - layout.padding.bottom
-                - layout.border.top
-                - layout.border.bottom)
-                .max(0.0);
             children.extend(
                 node.children
                     .iter()
                     .rev()
-                    .map(|&grandchild| (grandchild, offset, basis, true)),
+                    .map(|&grandchild| (grandchild, offset, true)),
             );
         }
         if nested {
