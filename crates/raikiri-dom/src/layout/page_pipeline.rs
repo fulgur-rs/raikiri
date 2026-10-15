@@ -410,11 +410,11 @@ fn body_border_box_end(
     // or after them takes room of its own: the paragraph then ends where
     // its content does. Like the body's in-flow children, that content
     // counts past the body's `height` and `max-height`: the body's overflow
-    // is visible.
+    // is visible. That overflow is not part of the whole box.
     let generated_end = body
         .ifc
         .as_ref()
-        .filter(|root| !root.generated_blocks.is_empty())
+        .filter(|root| !whole_box && !root.generated_blocks.is_empty())
         .and_then(|root| root.lines.as_ref())
         .map(|lines| top + edges_top + lines.shifted_height() + edges_bottom)
         .unwrap_or(f32::NEG_INFINITY);

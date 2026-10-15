@@ -467,3 +467,34 @@ fn a_body_with_only_a_side_border_ends_with_its_last_block() {
         ]
     );
 }
+
+#[test]
+fn generated_overflow_leaves_a_definite_body_height() {
+    // The `::after` overflows the 10px body onto the third page. The body
+    // keeps the box layout gave it, the page area and its border, and does
+    // not follow its overflow there.
+    let out = run(&format!(
+        "{}<style>body {{ height: 10px; border: 1px solid }} \
+         body::after {{ content: ''; display: block; height: 400px }}</style>",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    assert_eq!(
+        body_on_pages(&out),
+        vec![Some((20.0, 160.0)), Some((20.0, 2.0)), None]
+    );
+}
+
+#[test]
+fn generated_overflow_leaves_a_paragraph_body_at_its_max_height() {
+    // Text and a tall `::after` in the body's own paragraph overflow its
+    // 10px `max-height`.
+    let out = run(&format!(
+        "{}<style>body {{ max-height: 10px; border: 1px solid }} \
+         body::after {{ content: ''; display: block; height: 400px }}</style>text",
+        PAGES.replace("margin-left: 220px", "margin-top: 20px")
+    ));
+    let pages = body_on_pages(&out);
+    assert!(pages.len() > 1);
+    assert_eq!(pages[0], Some((20.0, 12.0)));
+    assert!(pages[1..].iter().all(Option::is_none), "{pages:?}");
+}
