@@ -990,3 +990,33 @@ fn a_content_image_of_extreme_ratio_falls_back_to_its_visible_area() {
         .expect("the image still exists");
     assert_eq!((image.width, image.height), (100, 1));
 }
+
+#[test]
+fn standalone_image_marker_sits_inside_or_before_the_padding_edge() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", taffy::Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", taffy::Style::default(), None::<&str>);
+    let inside = doc.append_element(
+        Some(body),
+        "li",
+        taffy::Style::default(),
+        Some("list-style-position:inside"),
+    );
+    let outside = doc.append_element(Some(body), "li", taffy::Style::default(), None::<&str>);
+    let cascade =
+        raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).expect("cascade");
+    let size = ImageRasterSize {
+        width: 8.0,
+        height: 6.0,
+    };
+    // An inside marker starts at the content edge; an outside one ends 4px
+    // before it.
+    assert_eq!(
+        doc.standalone_marker_image_rect(&cascade.computed[inside], (2.0, 3.0), 10.0, size),
+        raikiri_traits::PaintRect::new(12.0, 3.0, 8.0, 6.0)
+    );
+    assert_eq!(
+        doc.standalone_marker_image_rect(&cascade.computed[outside], (2.0, 3.0), 10.0, size),
+        raikiri_traits::PaintRect::new(0.0, 3.0, 8.0, 6.0)
+    );
+}

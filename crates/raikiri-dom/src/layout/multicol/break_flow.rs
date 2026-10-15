@@ -202,15 +202,13 @@ fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
             let child = &tree.nodes[child];
             !child.is_in_document()
                 || child.style.display == Display::None
-                || match &child.data {
-                    NodeData::Text(text) => text
-                        .text_content
-                        .chars()
-                        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')),
-                    NodeData::Element(_) => {
-                        !child.display.is_inline_level() && child.display != DisplayValue::Contents
-                    }
-                    _ => true,
+                || if child.kind() == NodeKind::Element {
+                    !child.display.is_inline_level() && child.display != DisplayValue::Contents
+                } else {
+                    child.text_content().is_none_or(|text| {
+                        text.chars()
+                            .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+                    })
                 }
         })
 }
