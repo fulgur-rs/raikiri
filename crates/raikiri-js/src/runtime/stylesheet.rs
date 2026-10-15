@@ -1112,6 +1112,11 @@ fn parse_single_rule(source: &str) -> Option<SingleRule> {
     if !only_trivia(&trimmed[..rule.source.start]) || !only_trivia(&trimmed[rule.source.end..]) {
         return None;
     }
+    // `@charset` is not a rule CSSOM can insert (CSS Syntax drops it as an
+    // unknown at-rule; it only selects the sheet's encoding).
+    if is_at_rule(&rule.prelude, "charset") {
+        return None;
+    }
     // A style rule whose selector does not parse is dropped by the
     // cascade, so it is a syntax error here.
     if !rule.prelude.starts_with('@') && raikiri_style::parse_selector_list(&rule.prelude).is_err()

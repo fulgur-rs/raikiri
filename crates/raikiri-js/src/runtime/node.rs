@@ -463,12 +463,10 @@ fn class_list(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<
 /// assigns the value to the token list's `value`, which rewrites the
 /// `class` attribute.
 fn set_class_list(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let list = class_list(this, &[], context)?;
+    let list = class_list(this, &[], context)?.to_object(context)?;
     let value = args.first().cloned().unwrap_or_default();
     // An ordinary [[Set]], so a script-defined `value` on the list is honored.
-    if let Some(list) = list.as_object() {
-        list.set(JsString::from("value"), value, true, context)?;
-    }
+    list.set(JsString::from("value"), value, true, context)?;
     Ok(JsValue::undefined())
 }
 
