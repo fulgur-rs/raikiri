@@ -19,6 +19,7 @@ fn rpc_flush_and_services() {
             HostOperation::Computed(_, _) => Ok(HostValue::Text(Some("red".into()))),
             HostOperation::Geometry(_) => Ok(HostValue::Geometry(None)),
             HostOperation::Rendered(node) => Ok(HostValue::Flag(node == 0)),
+            HostOperation::Visible(node) => Ok(HostValue::Flag(node == 1)),
             HostOperation::Fragment { .. } => {
                 Ok(HostValue::Document(Document::new().logical_snapshot()))
             }
@@ -32,6 +33,8 @@ fn rpc_flush_and_services() {
     assert!(host.box_geometry(0).unwrap().is_none());
     assert!(host.is_being_rendered(0).unwrap());
     assert!(!host.is_being_rendered(1).unwrap());
+    assert!(!host.is_visible(0).unwrap());
+    assert!(host.is_visible(1).unwrap());
     assert_eq!(host.parse_fragment("div", "", "x").unwrap().node_count(), 1);
     assert_eq!(host.document_url(), Some("file:///page".into()));
     // The downcast hooks recover the concrete host from its boxed form.
@@ -58,6 +61,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
                 HostOperation::Fetch(_) => HostValue::Unit,
                 HostOperation::LoadImage(_) => HostValue::Text(None),
                 HostOperation::Rendered(_) => HostValue::Unit,
+                HostOperation::Visible(_) => HostValue::Unit,
                 HostOperation::Fragment { .. } => HostValue::Unit,
             })
         }),
@@ -68,6 +72,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
     assert!(wrong_kind.fetch_script("x").is_err());
     assert!(wrong_kind.load_image("x").is_err());
     assert!(wrong_kind.is_being_rendered(0).is_err());
+    assert!(wrong_kind.is_visible(0).is_err());
     assert!(wrong_kind.parse_fragment("div", "", "x").is_err());
 
     let mut failing = RpcDocumentHost::new(

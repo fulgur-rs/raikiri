@@ -5,7 +5,7 @@
 //! the cascade reads it for `:focus`, `:focus-within` and `:focus-visible`.
 //! There is no user input here, so focus only ever moves by script.
 
-use boa_engine::{Context, JsResult, JsValue, js_string};
+use boa_engine::{Context, JsNativeError, JsResult, JsValue, js_string};
 use raikiri_dom::{Document, NodeKind};
 
 use super::dispatch::{dict_arg, fire_focus_event};
@@ -213,14 +213,10 @@ fn is_connected_and_not_inert(document: &Document, index: usize) -> bool {
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focusable-area>
 fn is_focusable(document: &Document, index: usize) -> bool {
     let html = html_tag(document, index).is_some();
-    if !html
-        && tag_in(document, index, SVG_NS).is_none()
-        && tag_in(document, index, MATHML_NS).is_none()
-    {
-        return false;
-    }
+    let foreign = tag_in(document, index, SVG_NS).or(tag_in(document, index, MATHML_NS));
     let attr = |name| document.element_attribute(index, name);
-    !is_actually_disabled(document, index)
+    (html || foreign.is_some())
+        && !is_actually_disabled(document, index)
         && is_connected_and_not_inert(document, index)
         && (attr("tabindex").and_then(integer_digits).is_some()
             || is_foreign_link(document, index)
@@ -438,6 +434,25 @@ fn focus_visible_option(args: &[JsValue], context: &mut Context) -> JsResult<Opt
     Ok((!visible.is_undefined()).then(|| visible.to_boolean()))
 }
 
+/// `this` as an HTML, SVG or MathML element, the interfaces that include
+/// the focus members. Any other element is a `TypeError`, per WebIDL's
+/// check that `this` implements the member's interface.
+fn this_focus_element(this: &JsValue, context: &mut Context) -> JsResult<usize> {
+    let index = this_element(this, context)?;
+    let supported = with_state(context, |s| {
+        matches!(
+            s.host.document().element_namespace_uri(index),
+            Some(HTML_NS | SVG_NS | MATHML_NS)
+        )
+    })?;
+    if !supported {
+        return Err(JsNativeError::typ()
+            .with_message("'this' is not an HTML, SVG or MathML element")
+            .into());
+    }
+    Ok(index)
+}
+
 /// `HTMLElement.focus(options)`: focus the element if it is a focusable
 /// area; otherwise do nothing. An explicit `focusVisible` decides whether
 /// the element indicates focus (`:focus-visible`); without one, script
@@ -445,7 +460,7 @@ fn focus_visible_option(args: &[JsValue], context: &mut Context) -> JsResult<Opt
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#dom-focus>
 fn focus(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
+    let index = this_focus_element(this, context)?;
     let visible = focus_visible_option(args, context)?;
     // Focusing the document element focuses the viewport instead.
     if with_state(context, |s| document_element(s.host.document()))? == Some(index) {
@@ -461,7 +476,7 @@ fn focus(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<Js
 
 /// `HTMLElement.blur()`: unfocus the element if it has focus.
 fn blur(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
+    let index = this_focus_element(this, context)?;
     if with_state(context, |s| s.host.document().focused_element())? == Some(index) {
         move_focus(context, None, None)?;
     }
@@ -471,7 +486,7 @@ fn blur(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
 /// `tabIndex`: the parsed `tabindex` attribute, else the element's
 /// default.
 fn tab_index(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
+    let index = this_focus_element(this, context)?;
     let value = with_state(context, |s| {
         let document = s.host.document();
         document
@@ -483,7 +498,7 @@ fn tab_index(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
 }
 
 fn set_tab_index(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
-    let index = this_element(this, context)?;
+    let index = this_focus_element(this, context)?;
     // WebIDL `long`.
     let value = args.first().cloned().unwrap_or_default().to_i32(context)?;
     write_attribute(context, index, "tabindex", &value.to_string())?;

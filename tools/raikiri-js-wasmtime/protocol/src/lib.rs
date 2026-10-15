@@ -61,6 +61,8 @@ pub enum HostOperation {
     LoadImage(String),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Rendered(usize),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    Visible(usize),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {

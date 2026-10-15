@@ -60,6 +60,13 @@ impl DocumentHost for RpcDocumentHost {
             _ => Err(HostError("rendered response kind".into())),
         }
     }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
+    fn is_visible(&mut self, node: usize) -> Result<bool, HostError> {
+        match self.call(HostOperation::Visible(node))? {
+            HostValue::Flag(v) => Ok(v),
+            _ => Err(HostError("visible response kind".into())),
+        }
+    }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         match self.call(HostOperation::Computed(node, property.into()))? {
             HostValue::Text(v) => Ok(v),

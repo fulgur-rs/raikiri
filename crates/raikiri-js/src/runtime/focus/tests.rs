@@ -131,8 +131,9 @@ fn only_connected_focusable_areas_take_focus() {
               document.body.appendChild(math);\
               var plain = document.body.appendChild(document.createElementNS(null, 'x'));\
               plain.setAttribute('tabindex', '0');\
-              HTMLElement.prototype.focus.call(plain);\
-              return document.activeElement !== plain\
+              var refused = false;\
+              try { HTMLElement.prototype.focus.call(plain); } catch (e) { refused = e instanceof TypeError; }\
+              return refused && document.activeElement !== plain\
                 && math instanceof MathMLElement && !takes(math)\
                 && (math.tabIndex = 0, takes(math))\
                 && svg('svg') instanceof SVGElement && !takes(svg('svg'))\
@@ -659,5 +660,21 @@ fn event_subclass_getters_check_the_interface_of_this() {
            && reads(FocusEvent.prototype, 'relatedTarget', focus) === null\
            && reads(CustomEvent.prototype, 'detail', new CustomEvent('x', {detail: 3})) === 3\
            && reads(ErrorEvent.prototype, 'lineno', new ErrorEvent('x', {lineno: 4})) === 4",
+    );
+}
+
+#[test]
+fn focus_members_reject_elements_outside_html_svg_and_mathml() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var plain = document.createElementNS(null, 'x'), proto = HTMLElement.prototype;\
+         var tab = Object.getOwnPropertyDescriptor(proto, 'tabIndex');\
+         function throws(f) { try { f(); return false; } catch (e) { return e instanceof TypeError; } }\
+         throws(function () { proto.focus.call(plain); })\
+           && throws(function () { proto.blur.call(plain); })\
+           && throws(function () { tab.get.call(plain); })\
+           && throws(function () { tab.set.call(plain, 1); })\
+           && !plain.hasAttribute('tabindex')",
     );
 }
