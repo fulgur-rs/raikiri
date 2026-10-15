@@ -3747,3 +3747,18 @@ fn white_space_between_flex_items_leaves_an_item_alone_on_its_line() {
     );
     assert_eq!(second_top, 60.0);
 }
+
+#[test]
+fn a_flex_item_beside_a_display_contents_child_keeps_its_natural_break() {
+    // The items a `display: contents` child lifts onto the lines are not
+    // measured, so the item is not known to be alone on its line.
+    let (fragments, _) =
+        flex_item_paragraph_after_a_spacer(true, "orphans:1;widows:2", "display:contents", "");
+    assert_eq!(
+        fragments,
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 3))),
+        ]
+    );
+}

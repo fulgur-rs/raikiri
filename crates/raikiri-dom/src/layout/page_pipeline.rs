@@ -6781,7 +6781,10 @@ fn flex_container_of_item_alone_on_its_line(
         .all(|&child| {
             let other = document.nodes[child].unrounded_layout;
             let other_width = other.size.width + other.margin.left + other.margin.right;
+            // A `display: contents` child lifts its children onto the lines
+            // in its place, so its own box says nothing about them.
             wraps
+                && cascade.computed[child].display != DisplayValue::Contents
                 && other_width > room + 0.001
                 && (other.location.y + other.size.height + other.margin.bottom <= top + 0.001
                     || other.location.y - other.margin.top >= bottom - 0.001)
