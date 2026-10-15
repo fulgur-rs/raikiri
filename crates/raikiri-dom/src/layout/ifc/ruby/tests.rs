@@ -1329,3 +1329,28 @@ fn annotation_runs_keep_their_reading_order() {
     assert_eq!(order, [ids.0, ids.1], "{runs:?}");
     assert!(runs[0].2.0 < runs[1].2.0, "{runs:?}");
 }
+
+#[test]
+fn white_space_in_collapsed_annotation_containers_collapses() {
+    let mut after = 0;
+    let fixture = block_fixture("line-height:20px", |doc, root| {
+        let container = ruby(doc, root);
+        rb(doc, container, "a");
+        rb(doc, container, "b");
+        let level = element(
+            doc,
+            container,
+            "rtc",
+            "display:ruby-text-container;visibility:collapse;font-size:50px;white-space:pre",
+        );
+        rt(doc, level, "x");
+        doc.append_text(level, " ");
+        rt(doc, level, "y");
+        after = doc.append_text(root, "z");
+    });
+    let runs = runs(fixture);
+    let z = runs.iter().find(|run| run.0 == after).expect("text").2;
+    // The collapsed level takes no room, its white space included: the
+    // text after the ruby follows its two bases on a line of its own height.
+    assert_eq!(z, (20.0, 13.0), "{runs:?}");
+}

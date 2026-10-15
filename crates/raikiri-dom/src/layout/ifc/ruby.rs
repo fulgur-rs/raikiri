@@ -943,14 +943,7 @@ impl Content<'_, '_> {
     /// or an empty box when only another level has white space there. An
     /// empty box takes the id of `text`, the segment's first text.
     fn space(&mut self, part: &Part, text: usize) -> Result<(NodeId, RubyContent), IfcError> {
-        // The white space is a sibling of the part: its style comes from
-        // their parent, not from the part.
-        let owner = part
-            .tail
-            .first()
-            .or(part.element.as_ref())
-            .and_then(|&id| self.doc.parent_of(id))
-            .unwrap_or(part.style_owner);
+        let owner = self.space_owner(part);
         let node = part.tail.first().copied().unwrap_or(text);
         let paragraph = self.paragraph(owner)?;
         let mut builder = ParagraphBuilder::new(&paragraph, self.limits);
@@ -965,6 +958,17 @@ impl Content<'_, '_> {
             );
         }
         Ok((NodeId(node as u64), RubyContent::from_builder(builder)))
+    }
+
+    /// The element whose style the white space after `part` takes. The white
+    /// space is a sibling of the part: its style comes from their parent,
+    /// not from the part.
+    fn space_owner(&self, part: &Part) -> usize {
+        part.tail
+            .first()
+            .or(part.element.as_ref())
+            .and_then(|&id| self.doc.parent_of(id))
+            .unwrap_or(part.style_owner)
     }
 
     fn level(
@@ -999,11 +1003,12 @@ impl Content<'_, '_> {
             });
             if index + 1 < level.annotations.len() && spaces.contains(&index) {
                 let (node, content) = self.space(part, text)?;
+                let owner = self.space_owner(part);
                 annotations.push(shodo::RubyAnnotation {
                     node,
                     content,
                     span: shodo::RubySpan::Auto,
-                    visibility: shodo::RubyVisibility::Visible,
+                    visibility: visibility(self.cascade.computed[owner].visibility),
                 });
             }
         }
