@@ -1418,3 +1418,16 @@ fn out_of_gamut_conic_stops_clip_after_interpolation() {
     assert_eq!(pixel(&rgba, 200, 180, 100)[0], 255);
     assert!(pixel(&rgba, 200, 20, 100)[0].abs_diff(128) <= 3);
 }
+
+#[test]
+fn far_out_of_gamut_stops_find_where_they_enter_the_gamut() {
+    // Red falls from 1000 to 0 and only drops below 1 in the last
+    // thousandth, so nearly the whole line stays fully red.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, color(srgb 1000 0 0), black)",
+        400,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 400, 300, 0)[0], 255);
+    assert_eq!(pixel(&rgba, 400, 395, 0)[0], 255);
+}

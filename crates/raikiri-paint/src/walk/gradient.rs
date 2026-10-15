@@ -860,8 +860,16 @@ const COINCIDENT_STEP: f32 = 1e-5;
 const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 
 /// Exact samples between two approximated stops when either lies outside
-/// the sRGB gamut.
+/// the sRGB gamut, before each substep is refined further.
 const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
+
+/// Most halvings of one substep while its drawn colors stray from the
+/// clipped ramp.
+const MAX_CLIP_REFINEMENT: u32 = 12;
+
+/// Largest premultiplied channel error, about half an 8-bit level, that a
+/// drawn substep may have against the clipped ramp at its middle.
+const CLIP_TOLERANCE: f32 = 0.5 / 255.0;
 
 /// Stops a brush cannot take as they are: ones interpolated outside sRGB, or
 /// ones outside its gamut, which a renderer clips before interpolating.
@@ -884,9 +892,49 @@ fn in_gamut(color: AlphaColor<Srgb>) -> bool {
 }
 
 /// The color clipped to the sRGB gamut, as it is drawn.
+fn clamp_srgb(color: AlphaColor<Srgb>) -> AlphaColor<Srgb> {
+    AlphaColor::<Srgb>::new(color.components.map(|channel| channel.clamp(0.0, 1.0)))
+}
+
+/// The color clipped to the sRGB gamut, as a brush stop.
 fn clipped(color: AlphaColor<Srgb>) -> DynamicColor {
-    let [r, g, b, a] = color.components.map(|channel| channel.clamp(0.0, 1.0));
-    DynamicColor::from_alpha_color(AlphaColor::<Srgb>::new([r, g, b, a]))
+    DynamicColor::from_alpha_color(clamp_srgb(color))
+}
+
+/// Push clipped samples strictly between `start` and `end` until a renderer
+/// interpolating linearly between neighbors stays within
+/// [`CLIP_TOLERANCE`] of the clipped ramp at each middle. A channel far
+/// outside the gamut crosses into it within a sliver of the step, which
+/// fixed substeps cannot find.
+fn refine_clipped(
+    sample: &impl Fn(f32) -> AlphaColor<Srgb>,
+    start: (f32, AlphaColor<Srgb>),
+    end: (f32, AlphaColor<Srgb>),
+    depth: u32,
+    out: &mut Vec<(f32, AlphaColor<Srgb>)>,
+) {
+    if depth == 0 {
+        return;
+    }
+    let t = (start.0 + end.0) / 2.0;
+    let middle = sample(t);
+    let premultiplied = |color: AlphaColor<Srgb>| {
+        let [r, g, b, a] = color.components;
+        [r * a, g * a, b * a, a]
+    };
+    let (from, to, at) = (
+        premultiplied(start.1),
+        premultiplied(end.1),
+        premultiplied(middle),
+    );
+    if (0..4)
+        .all(|channel| ((from[channel] + to[channel]) / 2.0 - at[channel]).abs() <= CLIP_TOLERANCE)
+    {
+        return;
+    }
+    refine_clipped(sample, start, (t, middle), depth - 1, out);
+    out.push((t, middle));
+    refine_clipped(sample, (t, middle), end, depth - 1, out);
 }
 
 /// Approximate interpolation in `space` with dense sRGB stops.
@@ -927,11 +975,28 @@ pub(super) fn expand_stops(
             if let Some((previous_t, previous_color)) = previous
                 && (!in_gamut(previous_color) || !in_gamut(color))
             {
-                for step in 1..OUT_OF_GAMUT_SUBSTEPS {
-                    let t =
-                        previous_t + (t - previous_t) * step as f32 / OUT_OF_GAMUT_SUBSTEPS as f32;
-                    let sample = exact.eval(t).to_alpha_color::<Srgb>();
-                    expanded.push((from_offset + span * t, clipped(sample)));
+                let sample = |t: f32| clamp_srgb(exact.eval(t).to_alpha_color::<Srgb>());
+                let mut samples = Vec::new();
+                let mut start = (previous_t, clamp_srgb(previous_color));
+                for step in 1..=OUT_OF_GAMUT_SUBSTEPS {
+                    let end = if step == OUT_OF_GAMUT_SUBSTEPS {
+                        (t, clamp_srgb(color))
+                    } else {
+                        let t = previous_t
+                            + (t - previous_t) * step as f32 / OUT_OF_GAMUT_SUBSTEPS as f32;
+                        (t, sample(t))
+                    };
+                    refine_clipped(&sample, start, end, MAX_CLIP_REFINEMENT, &mut samples);
+                    if step < OUT_OF_GAMUT_SUBSTEPS {
+                        samples.push(end);
+                    }
+                    start = end;
+                }
+                for (t, color) in samples {
+                    expanded.push((
+                        from_offset + span * t,
+                        DynamicColor::from_alpha_color(color),
+                    ));
                 }
             }
             if t < 1.0 {
