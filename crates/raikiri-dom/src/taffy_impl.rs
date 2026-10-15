@@ -552,10 +552,11 @@ impl Document {
                 // A table box laid out as an ifc root is an anonymous cell's
                 // content inside the table wrapper, whose auto width shrinks to
                 // fit as well (CSS 2.1 17.5.2.2).
-                let ifc_table = matches!(
-                    tree.nodes[idx].display,
-                    DisplayValue::Table | DisplayValue::InlineTable
-                ) && formatting_context == FormattingContext::Inline;
+                let ifc_table = formatting_context == FormattingContext::Inline
+                    && matches!(
+                        tree.nodes[idx].display,
+                        DisplayValue::Table | DisplayValue::InlineTable
+                    );
                 let inline_shrink_wrap = ifc_table
                     || (tree.nodes[idx].display.is_atomic_inline_level()
                         && tree.nodes[idx].display != DisplayValue::InlineTable);
