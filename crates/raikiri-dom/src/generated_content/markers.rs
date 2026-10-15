@@ -219,17 +219,16 @@ fn marker_content_text<T: AsRef<str>>(
                 separator,
                 style,
             } if name.as_str() == "list-item" => {
-                let joined = format_counters_component(
-                    counters,
-                    name.as_str(),
-                    separator.as_str(),
-                    style,
-                    registry,
-                );
-                if joined.is_empty() {
+                if counters.values_for(name.as_str()).is_empty() {
                     text.push_str(&format_counter(ordinal as i32, style, registry));
                 } else {
-                    text.push_str(&joined);
+                    text.push_str(&format_counters_component(
+                        counters,
+                        name.as_str(),
+                        separator.as_str(),
+                        style,
+                        registry,
+                    ));
                 }
             }
             ContentComponent::Counters {
