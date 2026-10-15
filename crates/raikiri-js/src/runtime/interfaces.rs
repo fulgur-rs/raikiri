@@ -419,12 +419,13 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
     let svg_element_members = [&super::focus::HTML_ELEMENT_FOCUS_MEMBERS];
     let svg_element = derived(context, "SVGElement", &element, &svg_element_members)?;
     // SVG 2 `SVGStyleElement` also includes `LinkStyle`.
-    let svg_style_element = derived(
+    let svg_style_result = derived(
         context,
         "SVGStyleElement",
         &svg_element,
         &style_element_members,
-    )?;
+    );
+    let svg_style_element = svg_style_result?;
     let canvas_2d_members = [&canvas::CANVAS_RENDERING_CONTEXT_2D_MEMBERS];
     let canvas_2d_result = interface(
         context,
