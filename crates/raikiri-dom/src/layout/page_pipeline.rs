@@ -1540,6 +1540,16 @@ fn paragraph_line_bounds(
     )
 }
 
+/// Moves line `line` of the paragraph `root` and every line after it down by
+/// `shift`, and grows the root's box to hold them.
+fn shift_ifc_lines_from(document: &mut Document, root: usize, line: usize, shift: f32) {
+    let node = document.table_layout_node_mut(root);
+    if let Some(lines) = node.ifc.as_mut().and_then(|ifc| ifc.lines.as_mut()) {
+        lines.shifts.push(line, shift);
+        node.unrounded_layout.size.height += shift;
+    }
+}
+
 /// Block edges of a text node's lines after the paragraph's column ranges
 /// have moved them from their unfragmented shaping offsets.
 #[cfg(test)]
@@ -4555,6 +4565,11 @@ pub fn layout_pages_with_page_geometry_and_control(
     // When a forced-break box underflows into the preceding page, descendants
     // follow the box while later siblings still begin after the break boundary.
     let mut pending_underflow: Option<(usize, f32)> = None;
+    // A paragraph whose later lines were moved to the next page to keep
+    // enough widows there: `(root, first moved line, shift)`. The flow after
+    // the paragraph, and its texts that start on a moved line, take the shift
+    // once they are reached; its texts before that line stay where they are.
+    let mut pending_line_split: Option<(usize, usize, f32)> = None;
     // A float moved to a later page carries its own content with it, but
     // the in-flow content after it in the source sits beside or above it,
     // so the shift ends where the float's subtree does. A later float may
@@ -4722,6 +4737,19 @@ pub fn layout_pages_with_page_geometry_and_control(
             first
         };
         let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
+        if let Some((root, first_moved, shift)) = pending_line_split
+            && (!is_descendant_or_self(document, node_id, root)
+                || candidate
+                    .ifc_root
+                    .is_some_and(|(text_root, _)| text_root == root)
+                    && text_lines
+                        .get(node_id)
+                        .and_then(|owned| owned.lines.first())
+                        .is_some_and(|line| line.line >= first_moved))
+        {
+            flow_shift += shift;
+            pending_line_split = None;
+        }
         if let Some((ancestor_id, correction)) = pending_underflow
             && !is_descendant_or_self(document, node_id, ancestor_id)
         {
@@ -4921,7 +4949,7 @@ pub fn layout_pages_with_page_geometry_and_control(
             // break-after; descendants must wait until their containing box
             // has finished.
             let raw_y = candidate.raw_y;
-            let height = candidate.height;
+            let mut height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
             let mut effective_y = if uses_positioned_coordinates {
                 if let Some((root, _)) = candidate.ifc_root {
@@ -5049,11 +5077,27 @@ pub fn layout_pages_with_page_geometry_and_control(
                 }
             }
             // `orphans` and `widows` constrain breaks between line boxes, not
-            // breaks between block-level children.  A fitting block is moved
-            // as a unit when its natural split would violate either
-            // constraint.  Oversized blocks stay on the existing whole-box
-            // path; their line-level fragment map is a separate concern.
-            if let Some((block_id, nested)) = line_block_parent
+            // breaks between block-level children.  When the paragraph has
+            // lines enough for both, a break that leaves too few widows moves
+            // up between earlier lines; otherwise a fitting block is moved as
+            // a unit when its natural split would violate either constraint.
+            // Oversized blocks that cannot break earlier keep their natural
+            // break.
+            // A paragraph that is a flex item alone on its line cannot move
+            // as a unit, but its later lines can move down inside it.
+            let flex_line_paragraph = paragraph_root
+                .filter(|_| {
+                    line_block_parent.is_none()
+                        && !uses_positioned_coordinates
+                        && !candidate.is_float_descendant
+                        && !candidate.is_out_of_flow_descendant
+                })
+                .and_then(|root| {
+                    flex_container_of_item_alone_on_its_line(document, cascade, root, body_id)
+                        .map(|container| (root, container))
+                });
+            if let Some((block_id, nested)) =
+                line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
                 && checked_orphans_widows.insert(block_id)
                 && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
             {
@@ -5077,7 +5121,70 @@ pub fn layout_pages_with_page_geometry_and_control(
                 let violates_line_constraints = needs_break
                     && (lines_before_break < orphans
                         || total_lines.saturating_sub(lines_before_break) < widows);
-                if starts_on_page && fits_on_page && violates_line_constraints {
+                // Only the widows are short, and the paragraph has lines
+                // enough for both constraints: the break moves up between
+                // earlier lines (CSS Fragmentation 3 §3.3), so the last
+                // `widows` lines start the next page and the lines before
+                // them stay.
+                let earlier_break = (starts_on_page
+                    && violates_line_constraints
+                    && lines_before_break >= orphans
+                    && orphans + widows <= total_lines
+                    && paragraph_root == Some(block_id))
+                .then(|| total_lines - widows)
+                .filter(|&line| {
+                    // Widows that cannot fit on the next page would not be
+                    // kept together there either; the natural break stays.
+                    let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
+                    // A box with a definite height keeps it; its lines
+                    // cannot grow it.
+                    pending_line_split.is_none()
+                        && height_follows_content(document, block_id)
+                        && moved_height <= page_step_at(current_page.saturating_add(1)) + 0.001
+                        && document
+                            .ifc_layout_node(block_id)
+                            .and_then(|node| node.ifc.as_ref())
+                            .is_some_and(|ifc| {
+                                ifc.boxes.is_empty() && ifc.multicol_fragments.is_none()
+                            })
+                        && line > 0
+                })
+                .map(|line| {
+                    let target_y = page_origin(current_page.saturating_add(1));
+                    (line, target_y - (effective_y + line_metrics[line].0))
+                })
+                .filter(|(_, shift)| shift.is_finite() && *shift > 0.0);
+                if let Some((line, shift)) = earlier_break {
+                    check_candidate_page!('candidate_loop, current_page.saturating_add(1));
+                    shift_ifc_lines_from(document, block_id, line, shift);
+                    if let Some((item, container)) = flex_line_paragraph {
+                        shift_later_flex_lines(document, cascade, container, item, shift);
+                    }
+                    if nested {
+                        grow_ancestors_for_shift(
+                            document,
+                            cascade,
+                            block_id,
+                            shift,
+                            body_id,
+                            &mut pending_bounded_shifts,
+                            &mut pending_context_growth,
+                            page_before_candidate,
+                        );
+                    }
+                    if text_lines
+                        .get(node_id)
+                        .and_then(|owned| owned.lines.last())
+                        .is_some_and(|last| last.line >= line)
+                    {
+                        height += shift;
+                    }
+                    pending_line_split = Some((block_id, line, shift));
+                } else if line_block_parent.is_some()
+                    && starts_on_page
+                    && fits_on_page
+                    && violates_line_constraints
+                {
                     let block_raw_y =
                         root_flow_offset + current_abs_y(document, block_id) - flow_shift;
                     // The block already sits `flow_shift` below its raw
@@ -6554,9 +6661,20 @@ fn is_block_flow_paragraph(
     // A box whose height does not follow its lines fragments at the break
     // itself, as the same box does as a flex or grid item, rather than moving
     // as a unit with its lines.
-    if !height_follows_content(document, block) {
-        return false;
-    }
+    height_follows_content(document, block)
+        && placed_in_block_flow(document, cascade, block, body_id)
+}
+
+/// Whether every box from `block` up to the body stacks its children in
+/// block order and grows with its content, and none is floated or
+/// absolutely positioned, so a box growing below `block` pushes the boxes
+/// after it down.
+fn placed_in_block_flow(
+    document: &Document,
+    cascade: &CascadeResult,
+    block: usize,
+    body_id: usize,
+) -> bool {
     let mut child = block;
     loop {
         let placed_apart = is_floating_box_for_pagination(document, cascade, child)
@@ -6578,6 +6696,122 @@ fn is_block_flow_paragraph(
             }
             _ => return false,
         }
+    }
+}
+
+/// The row flex container of `item` when `item` is a flex item alone on
+/// its line and the container is itself placed in plain block flow (see
+/// [`placed_in_block_flow`]): lines moved down inside the item grow it and
+/// its flex line without moving another item beside it, and the lines after
+/// it follow.
+fn flex_container_of_item_alone_on_its_line(
+    document: &Document,
+    cascade: &CascadeResult,
+    item: usize,
+    body_id: usize,
+) -> Option<usize> {
+    if !height_follows_content(document, item)
+        || matches!(
+            cascade.computed[item].position,
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+    {
+        return None;
+    }
+    let container = document.layout_parent_of(item).filter(|&container| {
+        let computed = &cascade.computed[container];
+        computed.display == DisplayValue::Flex
+            && matches!(
+                computed.flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            )
+            && height_follows_content(document, container)
+            && placed_in_block_flow(document, cascade, container, body_id)
+    })?;
+    // An item that takes the whole main size leaves no room for another on
+    // its line; vertical separation alone can come from cross-axis margins
+    // or alignment of items that do share it.
+    let layout = document.nodes[item].unrounded_layout;
+    let outer_width = layout.size.width + layout.margin.left + layout.margin.right;
+    let line = document.nodes[container].unrounded_layout;
+    let line_width = line.size.width
+        - line.padding.left
+        - line.padding.right
+        - line.border.left
+        - line.border.right;
+    if outer_width < line_width - 0.001 {
+        return None;
+    }
+    // A single-line container puts every item on the item's line. In a
+    // multi-line one, another item joins the line when its outer main size
+    // fits in what the item leaves, which a zero or negative outer size
+    // (negative margins) does.
+    let wraps = cascade.computed[container].flex_wrap != FlexWrapValue::NoWrap;
+    let room = line_width - outer_width;
+    let top = layout.location.y - layout.margin.top;
+    let bottom = layout.location.y + layout.size.height + layout.margin.bottom;
+    document.nodes[container]
+        .children
+        .iter()
+        .filter(|&&child| {
+            // Collapsed white space between items, `display: none` and
+            // absolutely positioned children are on no flex line.
+            child != item
+                && match &document.nodes[child].data {
+                    crate::node::NodeData::Text(text) => !text.text_content.trim().is_empty(),
+                    _ => {
+                        let computed = &cascade.computed[child];
+                        computed.display != DisplayValue::None
+                            && !matches!(
+                                computed.position,
+                                PositionValue::Absolute | PositionValue::Fixed
+                            )
+                    }
+                }
+        })
+        .all(|&child| {
+            let other = document.nodes[child].unrounded_layout;
+            let other_width = other.size.width + other.margin.left + other.margin.right;
+            // A `display: contents` child lifts its children onto the lines
+            // in its place, so its own box says nothing about them.
+            wraps
+                && cascade.computed[child].display != DisplayValue::Contents
+                && other_width > room + 0.001
+                && (other.location.y + other.size.height + other.margin.bottom <= top + 0.001
+                    || other.location.y - other.margin.top >= bottom - 0.001)
+        })
+        .then_some(container)
+}
+
+/// Moves the flex lines of `container` below `item`, a flex item alone on
+/// its line that grew by `shift` at its block-end edge, down by `shift`: in
+/// a row flex container they follow the line that grew.
+fn shift_later_flex_lines(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    container: usize,
+    item: usize,
+    shift: f32,
+) {
+    let layout = document.nodes[item].unrounded_layout;
+    // The item has already grown, so its old bottom is `shift` higher.
+    let old_bottom = layout.location.y + layout.size.height - shift;
+    let later: Vec<usize> = document.nodes[container]
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| {
+            // Absolutely positioned children are not on a flex line.
+            child != item
+                && !matches!(
+                    cascade.computed[child].position,
+                    PositionValue::Absolute | PositionValue::Fixed
+                )
+                && document.nodes[child].unrounded_layout.location.y >= old_bottom - 0.001
+        })
+        .collect();
+    for child in later {
+        document.nodes[child].unrounded_layout.location.y += shift;
     }
 }
 
