@@ -1112,11 +1112,6 @@ fn parse_single_rule(source: &str) -> Option<SingleRule> {
     if !only_trivia(&trimmed[..rule.source.start]) || !only_trivia(&trimmed[rule.source.end..]) {
         return None;
     }
-    // `@charset` is not a rule CSSOM can insert (CSS Syntax drops it as an
-    // unknown at-rule; it only selects the sheet's encoding).
-    if is_at_rule(&rule.prelude, "charset") {
-        return None;
-    }
     // A style rule whose selector does not parse is dropped by the
     // cascade, so it is a syntax error here.
     if !rule.prelude.starts_with('@') && raikiri_style::parse_selector_list(&rule.prelude).is_err()
@@ -1167,11 +1162,12 @@ fn is_at_rule(prelude: &str, name: &str) -> bool {
 const NAMESPACE_RANK: u8 = 1;
 
 /// Where a rule may sit in a sheet (CSSOM "insert a CSS rule" steps 6 and
-/// 7, after CSS Syntax's rule ordering): `@charset` and `@import` rules
-/// first, then `@namespace` rules, then every other rule. A rule may only
-/// be inserted between rules of no higher and no lower rank.
+/// 7): `@import` rules first, then `@namespace` rules, then every other
+/// rule. A rule may only be inserted between rules of no higher and no
+/// lower rank. (`@charset` never appears: the top-level parser drops it,
+/// so `insertRule` rejects it as a syntax error.)
 fn order_rank(prelude: &str) -> u8 {
-    if is_at_rule(prelude, "import") || is_at_rule(prelude, "charset") {
+    if is_at_rule(prelude, "import") {
         0
     } else if is_at_rule(prelude, "namespace") {
         NAMESPACE_RANK
