@@ -262,7 +262,7 @@ fn projection_splits_a_vertical_paragraph_by_its_lines() {
                 .collect()
         })
         .collect();
-    assert_eq!(line_ranges, [vec![0..80], vec![80..100]]);
+    assert_eq!(line_ranges, [0..80, 80..100].map(|range| vec![range]));
 }
 
 #[test]
