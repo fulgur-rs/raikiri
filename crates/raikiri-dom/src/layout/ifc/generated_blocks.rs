@@ -8,7 +8,7 @@
 //! padding, border and margin at the end token. The lines between the tokens
 //! are the box's lines, set in by its inline-side edges.
 
-use raikiri_style::property::{BoxSizing, ClearValue, Sides};
+use raikiri_style::property::{BoxSizing, ClearValue, Contain, DisplayValue, OverflowValue, Sides};
 use raikiri_style::{
     ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ComputedValues,
 };
@@ -46,6 +46,9 @@ pub(crate) struct GeneratedBlock {
     max_height: ComputedLengthPercentageOrAuto,
     border_box: bool,
     clear: taffy::Clear,
+    /// Whether the box establishes an independent formatting context, which
+    /// keeps margins from collapsing through it.
+    formatting_root: bool,
 }
 
 impl GeneratedBlock {
@@ -78,6 +81,7 @@ impl GeneratedBlock {
                 ClearValue::Both => taffy::Clear::Both,
                 _ => taffy::Clear::None,
             },
+            formatting_root: establishes_formatting_context(cv),
         }
     }
 
@@ -128,12 +132,13 @@ impl GeneratedBlock {
     }
 
     /// Whether the box keeps margins from collapsing through it even with no
-    /// content (CSS 2.1 8.3.1): it has block-axis padding or border, or a
-    /// used height above zero. `basis` is the containing block width.
+    /// content (CSS 2.1 8.3.1): it establishes an independent formatting
+    /// context, has block-axis padding or border, or has a used height above
+    /// zero. `basis` is the containing block width.
     pub(crate) fn separates_margins(&self, basis: f32) -> bool {
         let edges = self.edges(basis);
         let block_edges = edges.top + edges.bottom;
-        block_edges > 0.0 || self.used_height(0.0, block_edges, None) > 0.0
+        self.formatting_root || block_edges > 0.0 || self.used_height(0.0, block_edges, None) > 0.0
     }
 
     /// The physical left and right insets of the box's lines from the
@@ -454,6 +459,18 @@ pub(crate) fn close(block: &GeneratedBlock, open: OpenBlock, flow: Flow<'_, '_>)
     }
     *flow.y = top + height + edges.bottom;
     *flow.pending = CollapsibleMarginSet::from_margin(margins.bottom);
+}
+
+/// Whether a block-level box styled by `cv` establishes an independent
+/// formatting context: any display other than a plain block or list item, a
+/// scroll container, or layout or paint containment.
+fn establishes_formatting_context(cv: &ComputedValues) -> bool {
+    let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
+    !matches!(cv.display, DisplayValue::Block | DisplayValue::ListItem)
+        || !visible(cv.overflow.x)
+        || !visible(cv.overflow.y)
+        || cv.contain.contains(Contain::LAYOUT)
+        || cv.contain.contains(Contain::PAINT)
 }
 
 #[cfg(test)]
