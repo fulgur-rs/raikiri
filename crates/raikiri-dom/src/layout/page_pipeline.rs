@@ -6343,6 +6343,7 @@ fn paginate_flow(
                     // An empty box that a forced break placed at the page
                     // top leaves its collapsed margin after the break.
                     let after_forced_break = previous_bottom >= page_top - 0.001
+                        && document.nodes[previous].unrounded_layout.size.height <= 0.001
                         && forced_page_top.is_some_and(|top| (top - page_top).abs() <= 0.001);
                     if natural_page > 0
                         && effective_y > page_top + 0.001
