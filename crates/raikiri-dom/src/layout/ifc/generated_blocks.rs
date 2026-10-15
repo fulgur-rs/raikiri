@@ -273,7 +273,14 @@ impl PlacedBlock {
         let bottom = self.border_box.y + self.border_box.height;
         let mut cuts = Vec::new();
         let mut start = (self.border_box.y, shift_of(anchor), anchor);
-        for (index, line) in lines.iter().enumerate().take(end_line).skip(anchor + 1) {
+        // Lines that overflow below the box cut nothing of it.
+        for (index, line) in lines
+            .iter()
+            .enumerate()
+            .take(end_line)
+            .skip(anchor + 1)
+            .take_while(|(_, line)| line.block_offset() < bottom)
+        {
             let shift = shift_of(index);
             if shift != start.1 {
                 cuts.push((start, line.block_offset()));

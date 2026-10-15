@@ -427,3 +427,22 @@ fn the_top_of_a_block_box_moves_with_its_first_line() {
     assert_eq!((piece.line, piece.shift), (1, 9.0));
     assert!(piece.has_block_start_edge && piece.has_block_end_edge);
 }
+
+#[test]
+fn a_line_overflowing_below_the_box_does_not_cut_it() {
+    let (lines, blocks) = placed(
+        "div::before { content: 'B B'; display: block; width: 10px; height: 5px }",
+        TEN_PX,
+        "A",
+    );
+    let block = blocks[0];
+    assert_eq!(block.border_box.height, 5.0);
+    // The box's second line overflows below its 5px border box, so moving
+    // it leaves the box whole.
+    let pieces = block.pieces(&lines, |index| if index >= 1 { 7.0 } else { 0.0 });
+    let [piece] = pieces[..] else {
+        panic!("one piece: {pieces:?}")
+    };
+    assert_eq!((piece.border_box.y, piece.border_box.height), (0.0, 5.0));
+    assert!(piece.has_block_start_edge && piece.has_block_end_edge);
+}
