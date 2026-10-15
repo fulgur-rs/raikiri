@@ -349,6 +349,35 @@ fn template_content_images_wait_until_moved_out() {
 }
 
 #[test]
+fn moving_an_image_into_template_contents_cancels_its_request() {
+    let (mut host, body) = host();
+    let document = &mut host.document;
+    let template = document.create_detached_element("template").unwrap();
+    document.append_child(body, template).unwrap();
+    let contents = document.allocate_template_fragment_root(template);
+    let inner = document.create_detached_element("div").unwrap();
+    document.append_child(contents, inner).unwrap();
+    document.mark_in_document_flags();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let object = wrap(rt.context_mut(), inner).unwrap();
+    rt.context_mut()
+        .register_global_property(js_string!("inner"), object, Attribute::all())
+        .unwrap();
+    let report = rt.run_document();
+    assert!(report.aborted.is_none(), "{report:?}");
+    ok(
+        &mut rt,
+        "var log = []; var img = document.createElement('img');\
+         img.onload = img.onerror = function (e) { log.push(e.type); };\
+         img.src = 'ok.png'; inner.appendChild(img); img.complete",
+    );
+    ok_after_tasks(&mut rt, "log.length === 0");
+    // It is remembered like any other image in template contents.
+    ok(&mut rt, "document.body.appendChild(img); !img.complete");
+    ok_after_tasks(&mut rt, "log.join() === 'load'");
+}
+
+#[test]
 fn an_empty_source_is_complete_while_its_error_is_queued() {
     let mut rt = rt();
     ok(

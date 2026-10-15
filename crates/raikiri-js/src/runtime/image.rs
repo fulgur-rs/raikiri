@@ -80,7 +80,7 @@ fn in_template_contents(document: &raikiri_dom::Document, index: usize) -> bool 
 /// removed, or for an `<img>` the parser created. Starts a new request,
 /// which makes any earlier pending one stale; with no `src` there is no
 /// request and nothing fires. An image in template contents is only
-/// remembered: [`wake_adopted_images`] starts its request once it is moved
+/// remembered: [`settle_moved_images`] starts its request once it is moved
 /// out (HTML runs these steps again when an `<img>` is adopted).
 pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult<()> {
     let src = with_state(context, |s| {
@@ -174,12 +174,24 @@ pub(crate) fn update_images_below(context: &mut Context, root: usize) -> JsResul
     Ok(())
 }
 
-/// After a tree mutation, start the request of each remembered inert image
-/// that is now in this document's tree. Merely removing one from template
-/// contents does not adopt it, so a detached one keeps waiting.
-pub(crate) fn wake_adopted_images(context: &mut Context) -> JsResult<()> {
+/// After a tree mutation, cancel the pending request of each image that was
+/// moved into template contents (adopting it into their inert document),
+/// remembering it instead, then start the request of each remembered inert
+/// image that is now in this document's tree. Merely removing one from
+/// template contents does not adopt it, so a detached one keeps waiting.
+pub(crate) fn settle_moved_images(context: &mut Context) -> JsResult<()> {
     let adopted = with_state(context, |s| {
         let document = s.host.document();
+        let moved_in = s
+            .image_requests
+            .keys()
+            .copied()
+            .filter(|&index| in_template_contents(document, index))
+            .collect::<Vec<_>>();
+        for index in moved_in {
+            s.image_requests.remove(&index);
+            s.inert_images.insert(index);
+        }
         let root = document.root_index();
         s.inert_images
             .iter()
