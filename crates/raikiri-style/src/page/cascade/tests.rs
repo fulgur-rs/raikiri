@@ -7810,3 +7810,78 @@ fn margin_box_inherits_the_page_computed_direction_under_upright_text() {
             .any(|declaration| declaration.value == PropertyValue::MarginRight(px_margin(1.0)))
     );
 }
+
+#[test]
+fn cascade_page_border_image_computes_its_longhands() {
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { border-image: url(frame.png) 30 / 2em 10% 3 auto / 1em 2 round }",
+        &root,
+    );
+    let image = result.border_image().expect("a border image");
+    assert_eq!(image.source, BackgroundImage::Url("frame.png".into()));
+    assert_eq!(
+        image.width.top,
+        BorderImageWidthSide::LengthPercentage(crate::resolve::ComputedLengthPercentageOrCalc::Px(
+            32.0
+        ))
+    );
+    assert_eq!(
+        image.width.right,
+        BorderImageWidthSide::LengthPercentage(
+            crate::resolve::ComputedLengthPercentageOrCalc::Percent(10.0)
+        )
+    );
+    assert_eq!(image.width.bottom, BorderImageWidthSide::Number(3.0));
+    assert_eq!(image.width.left, BorderImageWidthSide::Auto);
+    assert_eq!(image.outset.top, BorderImageOutsetSide::Length(16.0));
+    assert_eq!(image.outset.right, BorderImageOutsetSide::Number(2.0));
+    let expected = page(
+        "@page { border-image-slice: 30; border-image-repeat: round }",
+        &root,
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderImageSlice),
+        expected.declarations().get(&PropertyKey::BorderImageSlice)
+    );
+    assert_eq!(
+        result.declarations().get(&PropertyKey::BorderImageRepeat),
+        expected.declarations().get(&PropertyKey::BorderImageRepeat)
+    );
+}
+
+#[test]
+fn cascade_page_without_a_border_image_source_has_no_border_image() {
+    let root = ComputedValues::initial();
+    assert!(
+        page("@page { margin: 1px }", &root)
+            .border_image()
+            .is_none()
+    );
+    assert!(
+        page("@page { border-image: none 2 }", &root)
+            .border_image()
+            .is_none()
+    );
+}
+
+#[test]
+fn page_image_visitor_reaches_the_border_image() {
+    let root = ComputedValues::initial();
+    let mut result = page(
+        "@page { background-image: url(a.png); border-image-source: url(b.png) }",
+        &root,
+    );
+    let mut seen = Vec::new();
+    result.for_each_background_image_mut(|image| {
+        if let BackgroundImage::Url(url) = image {
+            seen.push(url.to_string());
+            *url = format!("https://base.test/{url}").into();
+        }
+    });
+    assert_eq!(seen, ["a.png", "b.png"]);
+    assert_eq!(
+        result.border_image().map(|image| image.source),
+        Some(BackgroundImage::Url("https://base.test/b.png".into()))
+    );
+}

@@ -1510,3 +1510,66 @@ fn large_out_of_gamut_stops_stay_clipped_until_they_enter_the_gamut() {
     );
     assert_eq!(pixel(&rgba, 400, 398, 0)[0], 255);
 }
+
+/// Paint the `@page` border of a 100px square page into pixels.
+fn raster_page_border(page_css: &str) -> Vec<u8> {
+    let (_, cascade) = canvas_fixture(Some(page_css), None);
+    let mut page_box = PageBox::A4;
+    page_box.width = 100.0;
+    page_box.height = 100.0;
+    let mut scene = Scene::new();
+    let mut warnings = Vec::new();
+    paint_page_border(
+        &ImageBrushCache::default(),
+        &mut scene,
+        &cascade,
+        page_box,
+        None,
+        &mut warnings,
+    );
+    anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        100,
+        100,
+    )
+}
+
+#[test]
+fn page_border_image_replaces_the_page_border() {
+    let rgba = raster_page_border(
+        "@page { size: 100px; margin: 10px; border: 10px solid blue; \
+         border-image: linear-gradient(red, red) 1 }",
+    );
+    // The border box spans 10..90; its border band is 10px wide.
+    assert_eq!(pixel(&rgba, 100, 15, 50), RED);
+    assert_eq!(pixel(&rgba, 100, 50, 85), RED);
+    // The image's middle part is not drawn without `fill`.
+    assert_eq!(pixel(&rgba, 100, 50, 50)[3], 0);
+}
+
+#[test]
+fn page_border_image_takes_its_width_and_outset() {
+    let rgba = raster_page_border(
+        "@page { size: 100px; margin: 20px; border: 10px solid blue; \
+         border-image: linear-gradient(red, red) 1 / 5px / 4px stretch }",
+    );
+    // The image area is the border box (20..80) grown by the 4px outset, and
+    // its edges are 5px wide: 16..21 on the left.
+    assert_eq!(pixel(&rgba, 100, 18, 50), RED);
+    assert_eq!(pixel(&rgba, 100, 14, 50)[3], 0);
+    assert_eq!(pixel(&rgba, 100, 23, 50)[3], 0);
+}
+
+#[test]
+fn page_border_without_a_drawable_image_keeps_its_style() {
+    // A URL image with no pixel source cannot be drawn.
+    let rgba = raster_page_border(
+        "@page { size: 100px; margin: 10px; border: 10px solid blue; \
+         border-image: url('https://images.test/border.png') 1 }",
+    );
+    assert_eq!(pixel(&rgba, 100, 15, 50), BLUE);
+    let none = raster_page_border(
+        "@page { size: 100px; margin: 10px; border: 10px solid blue; border-image: none }",
+    );
+    assert_eq!(pixel(&none, 100, 15, 50), BLUE);
+}

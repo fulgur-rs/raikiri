@@ -428,7 +428,14 @@ fn paint_single_page_with_origin_and_page_context_impl(
         pixel_source,
         &mut warnings,
     );
-    walk::paint_page_border(scene, cascade, page_box);
+    walk::paint_page_border(
+        &image_cache,
+        scene,
+        cascade,
+        page_box,
+        pixel_source,
+        &mut warnings,
+    );
     walk::paint_page_outline(scene, cascade, page_box);
     walk::paint_root_element_border(
         &image_cache,
@@ -618,7 +625,14 @@ pub fn paint_single_page_with_images_and_warnings(
         Some(pixel_source),
         &mut warnings,
     );
-    walk::paint_page_border(scene, cascade, page_box);
+    walk::paint_page_border(
+        &image_cache,
+        scene,
+        cascade,
+        page_box,
+        Some(pixel_source),
+        &mut warnings,
+    );
     walk::paint_page_outline(scene, cascade, page_box);
     walk::paint_root_element_border(
         &image_cache,
