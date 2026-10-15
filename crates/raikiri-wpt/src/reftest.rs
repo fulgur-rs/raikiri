@@ -1994,12 +1994,9 @@ fn authored_document_page_viewport(
     );
     query.is_right = !query.is_left;
     query.page_name = name.map(Into::into);
-    let page = raikiri_style::cascade_page_with_media_context(
-        &tree,
-        &query,
-        raikiri_style::PageInheritance::LegacyInitialValues,
-        &context,
-    );
+    // The page context inherits the root's writing mode, which maps its
+    // flow-relative margins and padding onto the page sides.
+    let page = elements.cascade_page_from_root(&tree, &query, &context);
     // Preserve the legacy nominal unit basis only when the hinted descriptor
     // can actually contribute in this environment. An inactive imported page
     // rule must not change ordinary declaration lengths.
