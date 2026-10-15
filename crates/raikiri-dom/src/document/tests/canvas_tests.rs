@@ -492,7 +492,10 @@ fn canvas_composite_rect_blends_each_sampled_pixel() {
     let bitmap = doc.canvas_bitmap(canvas).unwrap();
     assert_eq!(&bitmap.rgba[..8], &[1, 2, 3, 255, 0, 0, 255, 255]);
     // A translucent source over a translucent backdrop.
-    assert_eq!(source_over([0, 0, 0, 128], [255, 255, 255, 128]), [85, 85, 85, 192]);
+    assert_eq!(
+        source_over([0, 0, 0, 128], [255, 255, 255, 128]),
+        [85, 85, 85, 192]
+    );
     let body = doc.root_index();
     assert!(!doc.canvas_composite_rect(body, 0, 0, 1, 1, |_, _| None));
 }
