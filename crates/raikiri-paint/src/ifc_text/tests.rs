@@ -2251,7 +2251,7 @@ fn the_dom_and_the_paint_crate_agree_on_the_relative_offset() {
         let cv = &cascade.computed[root];
         assert_eq!(
             raikiri_dom::relative_offset(cv),
-            Some(raikiri_dom::used_relative_offset(&doc, cv, root)),
+            Some(raikiri_dom::used_relative_offset(&doc, &cascade, cv, root)),
             "{css}"
         );
     }

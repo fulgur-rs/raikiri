@@ -12,10 +12,10 @@ use super::css_component_values_are_bounded;
 
 /// Serializes `raw_value` for the `<position>`-valued properties
 /// (`background-position`, `object-position`) and for `background-image`,
-/// whose radial gradients' `at <position>` is canonicalized and whose
-/// `url()`s serialize as `url("...")` (CSSOM "serialize a URL"). Returns `None` for other
-/// properties or for text this canonicalizer does not recognize, in which
-/// case callers keep the source text.
+/// whose radial gradients' `at <position>` is canonicalized. Returns `None`
+/// for other properties or for text this canonicalizer does not recognize,
+/// in which case callers keep the source text. `url()`s are left to
+/// [`serialize_urls`](super::serialize_urls).
 pub fn serialize_position_value(name: &str, raw_value: &str) -> Option<String> {
     if !css_component_values_are_bounded(raw_value) {
         return None;
@@ -62,7 +62,7 @@ fn is_substitution_function(name: &str) -> bool {
 
 /// Whether `block` uses a substitution function at any nesting depth, as
 /// in `calc(var(--y))`. Consumes the rest of `block`.
-fn contains_substitution(block: &mut Parser<'_, '_>) -> bool {
+pub(super) fn contains_substitution(block: &mut Parser<'_, '_>) -> bool {
     let mut found = false;
     while let Ok(token) = block.next() {
         let nested = match token {
@@ -214,8 +214,7 @@ fn group_components(values: Vec<(Option<String>, &str)>) -> Option<Vec<Component
 }
 
 /// `source` with the `at <position>` of each top-level radial gradient
-/// canonicalized and each top-level `url()` written as a quoted string, or
-/// `None` when nothing changed.
+/// canonicalized, or `None` when nothing changed.
 fn canonical_image_list(source: &str) -> Option<String> {
     // A value with a substitution function keeps the text it was written
     // with.
@@ -225,60 +224,25 @@ fn canonical_image_list(source: &str) -> Option<String> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);
     let mut replacements = Vec::new();
-    loop {
-        parser.skip_whitespace();
-        let start = parser.position().byte_index();
-        let Ok(token) = parser.next() else { break };
-        if let Token::UnquotedUrl(url) = token {
-            let canonical = serialized_url(url);
-            replacements.push((start..parser.position().byte_index(), canonical));
-            continue;
-        }
+    while let Ok(token) = parser.next() {
         let is_radial = matches!(
             token,
             Token::Function(name)
                 if name.eq_ignore_ascii_case("radial-gradient")
                     || name.eq_ignore_ascii_case("repeating-radial-gradient")
         );
-        let is_url = matches!(token, Token::Function(name) if name.eq_ignore_ascii_case("url"));
         if !matches!(token, Token::Function(_)) {
             continue;
         }
-        let quoted = parser.parse_nested_block(|block| {
+        let _ = parser.parse_nested_block(|block| {
             if is_radial && let Some(found) = gradient_position(source, block) {
                 replacements.push(found);
             }
-            let quoted = match block.next() {
-                Ok(Token::QuotedString(url)) if is_url => Some(url.as_ref().to_owned()),
-                _ => None,
-            };
-            let only_token = block.is_exhausted();
             while block.next().is_ok() {}
-            Ok::<_, cssparser::ParseError<'_, ()>>(quoted.filter(|_| only_token))
+            Ok::<_, cssparser::ParseError<'_, ()>>(())
         });
-        if let Ok(Some(url)) = quoted {
-            let end = parser.position().byte_index();
-            replacements.push((start..end, serialized_url(&url)));
-        }
     }
-    let mut out = String::with_capacity(source.len());
-    let mut copied = 0;
-    let mut changed = false;
-    for (range, canonical) in replacements {
-        changed |= source[range.clone()] != canonical;
-        out.push_str(&source[copied..range.start]);
-        out.push_str(&canonical);
-        copied = range.end;
-    }
-    out.push_str(&source[copied..]);
-    changed.then(|| out.trim().to_owned())
-}
-
-/// `url` as CSSOM serializes a URL.
-fn serialized_url(url: &str) -> String {
-    let mut out = String::new();
-    super::serialize_content::push_url(&mut out, url);
-    out
+    super::serialize_url::apply_replacements(source, replacements)
 }
 
 /// The source range of the position after `at` in a radial gradient's

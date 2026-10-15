@@ -389,14 +389,7 @@ fn push_generated(
     let has_images = pieces
         .iter()
         .any(|piece| matches!(piece, GeneratedPiece::Image(_)));
-    let atomic = pseudo != PseudoElem::Marker
-        && matches!(
-            cv.display,
-            DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        );
+    let atomic = pseudo != PseudoElem::Marker && cv.display.is_atomic_inline_level();
     if text.is_empty() && !has_images {
         if atomic {
             first_letter.stop();
@@ -420,15 +413,7 @@ fn push_generated(
         );
     }
     let inline_level = pseudo == PseudoElem::Marker
-        || cv.display.is_inline_flow()
-        || matches!(
-            cv.display,
-            DisplayValue::Contents
-                | DisplayValue::InlineBlock
-                | DisplayValue::InlineFlex
-                | DisplayValue::InlineGrid
-                | DisplayValue::InlineTable
-        );
+        || (cv.display.is_inline_level() || matches!(cv.display, DisplayValue::Contents));
     // Atomic text is outside this IFC; a block after-pseudo starts a later line.
     if atomic || (!inline_level && pseudo == PseudoElem::After) {
         first_letter.stop();
@@ -540,13 +525,7 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
         return Some(IfcBoxKind::Float);
     }
     // An inline-level table is an atomic inline too (CSS 2.1 17.4).
-    let inline_block = matches!(
-        cv.display,
-        DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    );
+    let inline_block = cv.display.is_atomic_inline_level();
     let tag = node.tag_name().unwrap_or("");
     let replaced = cv.display.is_inline_flow()
         && (ATOMIC_TAGS.contains(&tag) || REPLACED_BOX_TAGS.contains(&tag));
@@ -560,22 +539,22 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     // paragraph would be wrapped in an anonymous table (CSS 2.1 17.2.1),
     // which raikiri does not create; it is laid out as a block between the
     // lines, as taffy's block algorithm lays a block child out.
-    if matches!(
-        cv.display,
-        DisplayValue::Block
-            | DisplayValue::FlowRoot
-            | DisplayValue::Flex
-            | DisplayValue::Grid
-            | DisplayValue::ListItem
-            | DisplayValue::Table
-            | DisplayValue::TableRowGroup
-            | DisplayValue::TableHeaderGroup
-            | DisplayValue::TableFooterGroup
-            | DisplayValue::TableRow
-            | DisplayValue::TableCell
-            | DisplayValue::TableCaption
-            | DisplayValue::BlockRuby
-    ) {
+    if cv.display.is_block_flex_or_grid_container()
+        || matches!(
+            cv.display,
+            DisplayValue::Block
+                | DisplayValue::FlowRoot
+                | DisplayValue::ListItem
+                | DisplayValue::Table
+                | DisplayValue::TableRowGroup
+                | DisplayValue::TableHeaderGroup
+                | DisplayValue::TableFooterGroup
+                | DisplayValue::TableRow
+                | DisplayValue::TableCell
+                | DisplayValue::TableCaption
+                | DisplayValue::BlockRuby
+        )
+    {
         return Some(IfcBoxKind::Block);
     }
     None

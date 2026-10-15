@@ -120,9 +120,16 @@ The expected-failure rule is applied after execution:
 | Actual result | Reported result |
 | --- | --- |
 | Pixel mismatch or failed assertion | `XFAIL` |
+| Pass only without local resources | `XFAIL` |
 | Pass | `XPASS` |
 | Render, resource, or harness error | `ERROR` |
 | Skip | `SKIP` |
+
+A reftest whose page matches its reference only when images, support
+stylesheets, and web fonts are left out reports `PASS` with the note "passes
+only without local resources". The pass baseline accepts such a pass, but an
+expected-failure row records the failure with the resources loaded, so the
+row reports `XFAIL` until the test matches with them.
 
 `XFAIL` is visible as a failure and never counts as `PASS`. `XPASS` means the
 record is stale: remove it and promote the id to the pass baseline when the

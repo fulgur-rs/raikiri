@@ -1586,6 +1586,46 @@ fn grid_template_columns_minmax() {
 }
 
 #[test]
+fn grid_template_columns_keeps_mixed_calc_breadths() {
+    let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
+        super::box_model_tests::parse_grammar(
+            "calc(50% - 1em) minmax(calc(10% + 2px), 1fr) minmax(0, calc(20% + 1em))",
+            "grid-template-columns",
+        )
+    else {
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        panic!("expected a track list");
+    };
+    assert!(matches!(
+        list.components[0],
+        GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Calc(_)))
+    ));
+    assert!(matches!(
+        list.components[1],
+        GridTrackListComponent::Size(GridTrackSize::MinMax(
+            GridInflexibleBreadth::Calc(_),
+            GridTrackBreadth::Flex(_)
+        ))
+    ));
+    assert!(matches!(
+        list.components[2],
+        GridTrackListComponent::Size(GridTrackSize::MinMax(
+            GridInflexibleBreadth::Length(_),
+            GridTrackBreadth::Calc(_)
+        ))
+    ));
+    // A mixed calc is a `<fixed-breadth>`, so it may repeat with auto-fill.
+    assert!(
+        super::box_model_tests::parse_grammar(
+            "repeat(auto-fill, calc(10% + 1em) minmax(calc(10% + 1em), 1fr))",
+            "grid-template-columns"
+        )
+        .is_some()
+    );
+}
+
+#[test]
 fn grid_template_columns_minmax_rejects_flex_in_min_position() {
     // `<inflexible-breadth>` (minmax's first argument) excludes `<flex>`
     // — CSS Grid Layout Module Level 1 §7.2.1.

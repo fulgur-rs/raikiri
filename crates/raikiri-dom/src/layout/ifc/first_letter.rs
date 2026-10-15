@@ -565,13 +565,12 @@ pub(crate) fn typographic_origins(
         let transparent =
             cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
         if !transparent
-            && (!(cv.display.is_inline_flow()
+            && (!(cv.display.is_inline_flow_box()
                 || matches!(
                     cv.display,
                     DisplayValue::Block
                         | DisplayValue::FlowRoot
                         | DisplayValue::ListItem
-                        | DisplayValue::InlineBlock
                         | DisplayValue::TableCell
                         | DisplayValue::TableCaption
                         | DisplayValue::Contents

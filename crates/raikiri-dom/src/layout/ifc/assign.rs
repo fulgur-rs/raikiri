@@ -9,6 +9,7 @@ use super::projection::{
 use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
 use super::style;
 use crate::Document;
+use crate::layout::{BoxParentScope, box_parent};
 use crate::node::NodeFlags;
 use raikiri_style::property::{
     ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse, WritingMode,
@@ -56,15 +57,8 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         {
             true
         }
-        DisplayValue::Inline => box_parent(doc, cascade, idx).is_some_and(|parent| {
-            matches!(
-                cascade.computed[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        }),
+        DisplayValue::Inline => box_parent(doc, cascade, idx, BoxParentScope::LayoutRoot)
+            .is_some_and(|parent| cascade.computed[parent].display.is_flex_or_grid_container()),
         _ => true,
     }
 }
@@ -89,20 +83,6 @@ fn is_above_the_layout_root(doc: &Document, idx: usize) -> bool {
             }
             false
         })
-}
-
-/// The nearest element ancestor of `idx` that generates a box: elements with
-/// `display: contents` are skipped, their children take part in their
-/// parent's layout (CSS Display 3, 2.5). `None` past the root element.
-fn box_parent(doc: &Document, cascade: &CascadeResult, idx: usize) -> Option<usize> {
-    let mut parent = doc.parent_of(idx)?;
-    while doc.nodes[parent].kind() == NodeKind::Element
-        && cascade.computed[parent].display == DisplayValue::Contents
-        && !is_layout_root(doc, parent)
-    {
-        parent = doc.parent_of(parent)?;
-    }
-    (doc.nodes[parent].kind() == NodeKind::Element).then_some(parent)
 }
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
@@ -131,14 +111,20 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
         return false;
     }
     match cascade.computed[idx].display {
-        display if display.is_ruby() => true,
-        DisplayValue::Block
-        | DisplayValue::FlowRoot
-        | DisplayValue::InlineBlock
-        | DisplayValue::ListItem
-        | DisplayValue::Inline
-        | DisplayValue::TableCell
-        | DisplayValue::TableCaption => true,
+        display
+            if display.is_inline_flow_box()
+                || matches!(
+                    display,
+                    DisplayValue::Block
+                        | DisplayValue::FlowRoot
+                        | DisplayValue::ListItem
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                        | DisplayValue::BlockRuby
+                ) =>
+        {
+            true
+        }
         // A row or row group outside any table is laid out as a block (no
         // anonymous table wraps it, see the taffy bridge), so it lays its own
         // inline content out. Inside a table that content belongs to
@@ -712,20 +698,15 @@ fn is_anonymous_item_text(doc: &Document, cascade: &CascadeResult, text: usize) 
     if node.kind() != NodeKind::Text || !node.is_in_document() {
         return false;
     }
-    let Some(parent) = box_parent(doc, cascade, text) else {
+    let Some(parent) = box_parent(doc, cascade, text, BoxParentScope::LayoutRoot) else {
         return false;
     };
-    matches!(
-        cascade.computed[parent].display,
-        DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-    ) && node.text_content().is_some_and(|text| {
-        !text
-            .chars()
-            .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
-    })
+    cascade.computed[parent].display.is_flex_or_grid_container()
+        && node.text_content().is_some_and(|text| {
+            !text
+                .chars()
+                .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}'))
+        })
 }
 
 /// The text nodes that are anonymous flex or grid items and can be laid out

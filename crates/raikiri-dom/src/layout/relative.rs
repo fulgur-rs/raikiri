@@ -5,12 +5,12 @@ use super::ifc::projection::REPLACED_BOX_TAGS;
 use super::ifc::style::inset_precedence;
 use super::multicol::spanning::is_spanner;
 use super::page::used_computed_length_percentage_or_auto;
-use super::page_pipeline::box_parent;
+use super::{BoxParentScope, box_parent};
 use crate::document::Document;
 use crate::fragment::FragmentationContext;
 use crate::node::Node;
-use raikiri_style::property::{DisplayValue, PositionValue, WritingMode};
-use raikiri_style::{ComputedLengthPercentageOrAuto, ComputedValues};
+use raikiri_style::property::{DisplayValue, FloatValue, PositionValue, WritingMode};
+use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::NodeKind;
 
 /// The used horizontal and vertical insets of `node_id`, whatever its
@@ -28,11 +28,12 @@ use raikiri_traits::NodeKind;
 /// one, or one its flex, grid or absolute positioning fixed.
 pub(crate) fn used_relative_insets(
     document: &Document,
+    cascade: &CascadeResult,
     cv: &ComputedValues,
     node_id: usize,
     precedence: Precedence,
 ) -> (Option<f32>, Option<f32>) {
-    let block = containing_block(document, node_id);
+    let block = containing_block(document, cascade, node_id);
     let is_body = || super::ifc::assign::is_layout_root(document, node_id);
     // An anonymous cell takes its direction and writing mode from its row,
     // and the initial containing block of the body from the root element
@@ -75,7 +76,7 @@ pub(crate) fn used_relative_insets(
         }
         let block = document.ifc_layout_node(block?.key)?;
         Some(if is_spanner(document, node_id) {
-            content_width(block)
+            block.unrounded_layout.content_box_width()
         } else {
             column_content_width(block)
         })
@@ -106,6 +107,33 @@ pub(crate) fn used_relative_insets(
     }
 }
 
+/// Whether layout places `node_id` without its relative offset, which the
+/// painter applies instead: the body (`body`), a float outside a flex or
+/// grid container, and a table caption, cell, row or row group. Inline-level
+/// boxes are placed on their lines with the offset.
+pub fn placed_without_relative_offset(
+    document: &Document,
+    cascade: &CascadeResult,
+    body: Option<usize>,
+    node_id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
+        && document
+            .layout_parent_of(node_id)
+            .is_none_or(|parent| !cascade.computed[parent].display.is_flex_or_grid_container());
+    let table_part = matches!(
+        cv.display,
+        DisplayValue::TableCaption
+            | DisplayValue::TableCell
+            | DisplayValue::TableRow
+            | DisplayValue::TableRowGroup
+            | DisplayValue::TableHeaderGroup
+            | DisplayValue::TableFooterGroup
+    );
+    (body == Some(node_id) || float || table_part) && !cv.display.is_inline_level()
+}
+
 /// Which of two opposing insets wins.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Precedence {
@@ -131,14 +159,20 @@ struct ContainingBlock {
 /// groups and columns are skipped, so a table cell has its table (CSS
 /// Tables 3 §3.5). A box that table fixup wrapped in an anonymous cell (CSS
 /// Tables 3 §3.9) has that cell instead.
-fn containing_block(document: &Document, node_id: usize) -> Option<ContainingBlock> {
+fn containing_block(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> Option<ContainingBlock> {
     let mut child = node_id;
     loop {
-        let block = box_parent(document, child)?;
+        let block = box_parent(document, cascade, child, BoxParentScope::Document)?;
         if let Some(key) = document.anonymous_cell_of(child) {
             return Some(ContainingBlock { key, source: block });
         }
-        if !is_non_atomic_inline(document, block) && !is_table_part(document, block) {
+        if !is_non_atomic_inline(document, cascade, block)
+            && !is_table_part(document, cascade, block)
+        {
             return Some(ContainingBlock {
                 key: block,
                 source: block,
@@ -150,54 +184,48 @@ fn containing_block(document: &Document, node_id: usize) -> Option<ContainingBlo
 
 /// Whether `node_id` is a table row, row group, column or column group,
 /// which lay out inside the table's grid.
-fn is_table_part(document: &Document, node_id: usize) -> bool {
-    matches!(
-        document.nodes[node_id].display,
-        DisplayValue::TableRowGroup
-            | DisplayValue::TableHeaderGroup
-            | DisplayValue::TableFooterGroup
-            | DisplayValue::TableRow
-            | DisplayValue::TableColumnGroup
-            | DisplayValue::TableColumn
-    )
+fn is_table_part(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    document.nodes[node_id].kind() == NodeKind::Element
+        && cascade.computed.get(node_id).is_some_and(|cv| {
+            matches!(
+                cv.display,
+                DisplayValue::TableRowGroup
+                    | DisplayValue::TableHeaderGroup
+                    | DisplayValue::TableFooterGroup
+                    | DisplayValue::TableRow
+                    | DisplayValue::TableColumnGroup
+                    | DisplayValue::TableColumn
+            )
+        })
 }
 
 /// Whether `node_id` lays out as a non-atomic inline box. The cascade keeps
 /// `inline` on elements that layout blockifies (absolutely positioned boxes,
 /// CSS 2.1 §9.7, and flex and grid items, CSS Display 3 §2.7) and on
 /// replaced elements, which are atomic inlines.
-fn is_non_atomic_inline(document: &Document, node_id: usize) -> bool {
+fn is_non_atomic_inline(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
-    node.display.is_inline_flow()
+    node.kind() == NodeKind::Element
+        && cascade
+            .computed
+            .get(node_id)
+            .is_some_and(|cv| cv.display.is_inline_flow())
         && node.style.position != taffy::Position::Absolute
         && !node
             .tag_name()
             .is_some_and(|tag| REPLACED_BOX_TAGS.contains(&tag))
-        && !box_parent(document, node_id).is_some_and(|parent| {
-            matches!(
-                document.nodes[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
+        && !box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent| {
+            cascade
+                .computed
+                .get(parent)
+                .is_some_and(|cv| cv.display.is_flex_or_grid_container())
         })
-}
-
-/// The content-box width of `block`.
-fn content_width(block: &Node) -> f32 {
-    let layout = &block.unrounded_layout;
-    layout.size.width
-        - layout.padding.left
-        - layout.padding.right
-        - layout.border.left
-        - layout.border.right
 }
 
 /// The content-box width of `block`, or of one of its columns when it is a
 /// multi-column container.
 fn column_content_width(block: &Node) -> f32 {
-    let width = content_width(block);
+    let width = block.unrounded_layout.content_box_width();
     block
         .multicol
         .and_then(|style| FragmentationContext::resolve(width, None, style))
@@ -207,15 +235,18 @@ fn column_content_width(block: &Node) -> f32 {
 /// The offset by which a `position: relative` box at `node_id` moves from
 /// its layout location, as the painter applies it to boxes that layout
 /// places without it; `(0, 0)` for any other `position`.
+/// The supplied `cascade` determines ancestor boxes; `cv` remains the
+/// caller-selected style of the box being offset.
 pub fn used_relative_offset(
     document: &Document,
+    cascade: &CascadeResult,
     cv: &ComputedValues,
     node_id: usize,
 ) -> (f32, f32) {
     if cv.position != PositionValue::Relative {
         return (0.0, 0.0);
     }
-    let (dx, dy) = used_relative_insets(document, cv, node_id, Precedence::WritingMode);
+    let (dx, dy) = used_relative_insets(document, cascade, cv, node_id, Precedence::WritingMode);
     (dx.unwrap_or(0.0), dy.unwrap_or(0.0))
 }
 

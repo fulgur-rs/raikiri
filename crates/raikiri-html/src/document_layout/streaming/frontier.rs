@@ -286,15 +286,11 @@ fn depth(document: &Document, id: usize) -> usize {
 /// depends on children that come later.
 fn needs_all_children(values: &ComputedValues) -> bool {
     has_intrinsic_width(values)
-        || matches!(
-            values.display,
-            DisplayValue::Table
-                | DisplayValue::InlineTable
-                | DisplayValue::Flex
-                | DisplayValue::InlineFlex
-                | DisplayValue::Grid
-                | DisplayValue::InlineGrid
-        )
+        || (values.display.is_flex_or_grid_container()
+            || matches!(
+                values.display,
+                DisplayValue::Table | DisplayValue::InlineTable
+            ))
         || matches!(values.column_count, ColumnCountValue::Count(_))
         || matches!(values.column_width, ComputedColumnWidth::Px(_))
         || values.break_inside != BreakInside::Auto
@@ -348,10 +344,6 @@ fn has_auto_direction(document: &Document, id: usize) -> bool {
     }
 }
 
-fn is_inline_level(values: &ComputedValues) -> bool {
-    values.display.is_inline_level()
-}
-
 /// Whether `id` can belong to the inline formatting context of its parent:
 /// text, inline-level boxes, floats and absolutely positioned boxes (which
 /// are blockified but still sit in the surrounding inline content), and
@@ -363,7 +355,7 @@ fn joins_inline_run(document: &Document, cascade: &CascadeResult, id: usize) -> 
     match node.kind() {
         NodeKind::Text => true,
         NodeKind::Element => computed(cascade, id).is_none_or(|values| {
-            is_inline_level(values)
+            values.display.is_inline_level()
                 || values.float != FloatValue::None
                 || matches!(
                     values.position,

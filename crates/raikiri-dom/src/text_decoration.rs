@@ -100,13 +100,7 @@ pub struct DecorationSpec {
 fn is_decoration_propagation_boundary(cv: &ComputedValues) -> bool {
     let out_of_flow = matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
         || !matches!(cv.float, FloatValue::None);
-    let atomic_inline = matches!(
-        cv.display,
-        DisplayValue::InlineBlock
-            | DisplayValue::InlineFlex
-            | DisplayValue::InlineGrid
-            | DisplayValue::InlineTable
-    );
+    let atomic_inline = cv.display.is_atomic_inline_level();
     out_of_flow || atomic_inline
 }
 

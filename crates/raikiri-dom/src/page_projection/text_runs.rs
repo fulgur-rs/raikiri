@@ -6,7 +6,7 @@ use crate::Document;
 use crate::generated_content::generated_origin;
 use crate::layout::{PositionedLine, PositionedLines, PositionedRun, line_center_on_page};
 use raikiri_style::property::{
-    ColumnCountValue, CssColor, Direction, DisplayValue, FloatValue, PositionValue, TextShadowColor,
+    ColumnCountValue, CssColor, Direction, PositionValue, TextShadowColor,
 };
 use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem};
@@ -556,23 +556,28 @@ impl RunContext {
     }
 }
 
-/// Whether `cv`'s box sits on an inline formatting context line, where its
-/// relative offset is already part of its layout location.
-fn inline_level(cv: &ComputedValues) -> bool {
-    cv.display.is_inline_level()
-}
-
 /// The block offset that layout applies to a box in normal flow for its
 /// `position: relative` or `position: sticky` insets, which layout treats
 /// alike, resolved against the containing block as layout resolves them.
-fn layout_relative_offset_y(document: &Document, cv: &ComputedValues, id: usize) -> f32 {
+fn layout_relative_offset_y(
+    document: &Document,
+    cascade: &CascadeResult,
+    cv: &ComputedValues,
+    id: usize,
+) -> f32 {
     if !matches!(cv.position, PositionValue::Relative | PositionValue::Sticky) {
         return 0.0;
     }
     // Layout takes `top` over `-bottom` in every writing mode.
-    crate::layout::used_relative_insets(document, cv, id, crate::layout::Precedence::LeftTop)
-        .1
-        .unwrap_or(0.0)
+    crate::layout::used_relative_insets(
+        document,
+        cascade,
+        cv,
+        id,
+        crate::layout::Precedence::LeftTop,
+    )
+    .1
+    .unwrap_or(0.0)
 }
 
 /// How the built-in painter moves one element and its subtree from their
@@ -607,36 +612,20 @@ pub(super) fn box_paint_shift(
     // flex and grid, and of boxes on lines. The body, floats and table parts
     // and column fragments are placed without it, and the painter adds it, as
     // it adds the block offset that manual column placement leaves out.
-    let float = matches!(cv.float, FloatValue::Left | FloatValue::Right)
-        && document.layout_parent_of(id).is_none_or(|parent| {
-            !matches!(
-                cascade.computed[parent].display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-            )
-        });
-    let painted_inset = Some(id) == body
-        || float
-        || fragmented
-        || matches!(
-            cv.display,
-            DisplayValue::TableCaption
-                | DisplayValue::TableCell
-                | DisplayValue::TableRow
-                | DisplayValue::TableRowGroup
-                | DisplayValue::TableHeaderGroup
-                | DisplayValue::TableFooterGroup
-        );
-    let (mut dx, mut dy) = if painted_inset && !inline_level(cv) {
-        crate::layout::used_relative_offset(document, cv, id)
+    let painted_inset =
+        crate::layout::placed_without_relative_offset(document, cascade, body, id, cv)
+            || (fragmented && !cv.display.is_inline_level());
+    let (mut dx, mut dy) = if painted_inset {
+        crate::layout::used_relative_offset(document, cascade, cv, id)
     } else if node.needs_relative_block_paint_offset() {
-        (0.0, crate::layout::used_relative_offset(document, cv, id).1)
+        (
+            0.0,
+            crate::layout::used_relative_offset(document, cascade, cv, id).1,
+        )
     } else {
         (0.0, 0.0)
     };
-    if !transformable(document, id, cv) || cv.transform.is_empty() {
+    if !crate::layout::is_transformable(document, id, cv) || cv.transform.is_empty() {
         return Ok(BoxShift {
             offset: (dx, dy),
             general: false,
@@ -675,21 +664,6 @@ pub(super) fn box_paint_shift(
     })
 }
 
-/// Whether the element's `transform` applies to it.
-pub(super) fn transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    // spec: https://www.w3.org/TR/css-transforms-1/#terminology
-    // Non-replaced inline and table-column boxes are not transformable.
-    // An inline box blockified by layout (an out-of-flow box, a flex or
-    // grid item) is transformable whatever its computed display.
-    if document.get_node(id).is_none() {
-        return false; // cov:ignore: ancestors of a laid-out paragraph are arena nodes
-    }
-    !matches!(
-        cv.display,
-        DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && !crate::layout::generates_inline_box(document, id, cv)
-}
-
 /// How many columns a multicol container lays its content out in; 1 for
 /// any other box.
 fn used_columns(document: &Document, id: usize) -> usize {
@@ -699,12 +673,7 @@ fn used_columns(document: &Document, id: usize) -> usize {
     let Some(style) = node.multicol else {
         return 1;
     };
-    let layout = node.unrounded_layout;
-    let content_width = layout.size.width
-        - layout.border.left
-        - layout.border.right
-        - layout.padding.left
-        - layout.padding.right;
+    let content_width = node.unrounded_layout.content_box_width();
     crate::fragment::FragmentationContext::resolve(content_width, None, style)
         .map_or(1, |context| context.column_count)
 }
@@ -831,7 +800,7 @@ pub(super) fn paint_shift(
             // ancestor neither moves the fixed box in layout, which places it
             // against the page area, nor in the painter, which places it from
             // its insets.
-            if (transformable(document, id, cv) && !cv.transform.is_empty())
+            if (crate::layout::is_transformable(document, id, cv) && !cv.transform.is_empty())
                 || !cv.filter.is_empty()
             {
                 return Err(TextRunOmission::FixedPlacement);
@@ -1206,7 +1175,7 @@ fn layout_applied_relative_offset_y(
     if document.nodes[id].needs_relative_block_paint_offset() {
         0.0
     } else {
-        layout_relative_offset_y(document, &cascade.computed[id], id)
+        layout_relative_offset_y(document, cascade, &cascade.computed[id], id)
     }
 }
 
@@ -1227,11 +1196,7 @@ fn first_block_child(
             raikiri_style::property::DisplayValue::Contents => {
                 first_block_child(document, child, in_flow)
             }
-            display if display.is_inline_flow() => None,
-            raikiri_style::property::DisplayValue::InlineBlock
-            | raikiri_style::property::DisplayValue::InlineFlex
-            | raikiri_style::property::DisplayValue::InlineGrid
-            | raikiri_style::property::DisplayValue::InlineTable => None,
+            display if display.is_inline_level() => None,
             _ => Some(child),
         }
     })

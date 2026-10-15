@@ -1054,3 +1054,69 @@ fn floated_ruby_decorations_skip_its_annotations() {
     assert!(!base.decorations.is_empty());
     assert!(annotation.decorations.is_empty());
 }
+
+/// The painter moves an element by its `transform` exactly when layout
+/// treats it as transformable (CSS Transforms 1 §1): a non-replaced inline
+/// box is not, but a form control, a MathML root and an inline that layout
+/// blockifies are.
+#[test]
+fn box_paint_shift_translates_the_boxes_layout_finds_transformable() {
+    let mut document = Document::new();
+    let body = document.append_element(
+        Some(0),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let paragraph = document.append_element(
+        Some(body),
+        "p",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let translated = "display:inline;transform:translateX(10px)";
+    let span = document.append_element(
+        Some(paragraph),
+        "span",
+        taffy::Style::default(),
+        Some(translated),
+    );
+    document.append_text(span, "X".to_string());
+    let button = document.append_element(
+        Some(paragraph),
+        "button",
+        taffy::Style::default(),
+        Some(translated),
+    );
+    let math = document.append_element(
+        Some(paragraph),
+        "math",
+        taffy::Style::default(),
+        Some(translated),
+    );
+    let floated = document.append_element(
+        Some(paragraph),
+        "span",
+        taffy::Style::default(),
+        Some(&format!("{translated};float:left")),
+    );
+    document.mark_in_document_flags();
+    let fonts = crate::build_wpt_font_collection(std::path::Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/data/text-autospace"
+    )))
+    .unwrap();
+    document.set_font_collection(fonts);
+    let cascade =
+        raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+    crate::layout_single_page(&mut document, &cascade, raikiri_traits::PageBox::A4).unwrap();
+    let offset = |id: usize| {
+        box_paint_shift(&document, &cascade, None, id, &cascade.computed[id], false)
+            .unwrap()
+            .offset
+    };
+    assert_eq!(offset(span), (0.0, 0.0));
+    assert_eq!(offset(button), (10.0, 0.0));
+    assert_eq!(offset(math), (10.0, 0.0));
+    assert_eq!(offset(floated), (10.0, 0.0));
+}

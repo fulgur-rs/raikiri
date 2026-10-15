@@ -6,7 +6,7 @@
 //! events, and the text runs carry the same transforms, composed.
 
 use super::records::PageFragment;
-use super::text_runs::{RunContext, box_paint_shift, column_clip_owner, transformable};
+use super::text_runs::{RunContext, box_paint_shift, column_clip_owner};
 use crate::Document;
 use crate::image_geometry::position_offset;
 use raikiri_style::resolve::ComputedTransformFunction;
@@ -325,7 +325,7 @@ impl MotionCache {
         }
         for &node in path.iter().rev() {
             contains |= cascade.computed.get(node).is_some_and(|cv| {
-                (transformable(document, node, cv) && !cv.transform.is_empty())
+                (crate::layout::is_transformable(document, node, cv) && !cv.transform.is_empty())
                     || !cv.filter.is_empty()
             });
             self.fixed_container.insert(node, contains);

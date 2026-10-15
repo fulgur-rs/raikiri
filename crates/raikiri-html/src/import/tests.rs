@@ -1,7 +1,8 @@
 use super::*;
 use bytes::Bytes;
 use raikiri_traits::{
-    FetchOutcome, FetchedResource, NetworkError, PolicyViolation, ResourceKind, ViolationType,
+    FetchOutcome, FetchedResource, NetworkError, PolicyViolation, Request, ResourceKind,
+    ViolationType,
 };
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -1151,4 +1152,126 @@ fn deeply_nested_import_media_is_rejected_without_recursing_through_it() {
     assert_eq!(scan_leading_imports(&shallow).len(), 1);
     let deep = format!("@import \"a.css\" {}x;", "(".repeat(100_000));
     assert!(scan_leading_imports(&deep).is_empty());
+}
+
+#[test]
+fn import_byte_limit_violations_are_reported_as_resource_limits() {
+    struct TooLargeProvider;
+
+    impl NetworkProvider for TooLargeProvider {
+        fn fetch_one_hop(&self, request: Request) -> Result<FetchOutcome, NetworkError> {
+            Err(NetworkError::PolicyViolation(Box::new(PolicyViolation {
+                kind: ResourceKind::StylesheetImport,
+                url: request.url,
+                violation_type: ViolationType::FetchTooLarge {
+                    limit: 4,
+                    actual: 8,
+                },
+                details: "too large".to_owned(),
+            })))
+        }
+    }
+
+    let source = r#"@import "a.css?token=secret";"#;
+    let mut warnings = Vec::new();
+    let expanded = expand_stylesheet_imports(
+        source,
+        Some(&Url::parse("https://example.test/main.css").unwrap()),
+        None,
+        Some(&TooLargeProvider),
+        &mut warnings,
+    );
+    assert_eq!(expanded, source);
+    assert!(matches!(
+        warnings[0].kind,
+        WarningKind::ResourceLimitExceeded {
+            kind: ResourceKind::StylesheetImport,
+            limit: 4,
+            actual: 8,
+        }
+    ));
+    assert_eq!(
+        warnings[0].details,
+        "stylesheet @import resource response exceeded a byte limit for https://example.test/a.css"
+    );
+}
+
+#[test]
+fn overlong_import_urls_are_not_fetched() {
+    let provider = MapProvider::new(&[]);
+    let source = format!(r#"@import "{}.css";"#, "a".repeat(MAX_IMPORT_URL_LENGTH));
+    let mut warnings = Vec::new();
+    let expanded = expand_stylesheet_imports(
+        &source,
+        Some(&Url::parse("https://example.test/main.css").unwrap()),
+        None,
+        Some(&provider),
+        &mut warnings,
+    );
+    assert_eq!(expanded, source);
+    assert!(provider.requests.lock().unwrap().is_empty());
+    assert!(warnings.is_empty());
+}
+
+#[test]
+fn imports_redirected_to_credential_bearing_urls_are_not_applied() {
+    struct CredentialRedirectProvider;
+
+    impl NetworkProvider for CredentialRedirectProvider {
+        fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
+            Ok(FetchOutcome::Body(FetchedResource {
+                bytes: Bytes::from_static(b"p { color: red }"),
+                content_type: Some("text/css".to_owned()),
+                final_url: Url::parse("https://user:secret@cdn.test/a.css").unwrap(),
+                encoding: None,
+            }))
+        }
+    }
+
+    let source = r#"@import "a.css";"#;
+    let mut warnings = Vec::new();
+    let expanded = expand_stylesheet_imports(
+        source,
+        Some(&Url::parse("https://example.test/main.css").unwrap()),
+        None,
+        Some(&CredentialRedirectProvider),
+        &mut warnings,
+    );
+    assert_eq!(expanded, source);
+    assert!(matches!(
+        &warnings[0].kind,
+        WarningKind::NetworkFallback { url } if url.as_str() == "https://cdn.test/a.css"
+    ));
+}
+
+#[test]
+fn imports_redirected_to_overlong_urls_are_not_applied() {
+    struct LongRedirectProvider;
+
+    impl NetworkProvider for LongRedirectProvider {
+        fn fetch_one_hop(&self, _request: Request) -> Result<FetchOutcome, NetworkError> {
+            let long = format!("https://cdn.test/{}.css", "a".repeat(MAX_IMPORT_URL_LENGTH));
+            Ok(FetchOutcome::Body(FetchedResource {
+                bytes: Bytes::from_static(b"p { color: red }"),
+                content_type: Some("text/css".to_owned()),
+                final_url: Url::parse(&long).unwrap(),
+                encoding: None,
+            }))
+        }
+    }
+
+    let source = r#"@import "a.css";"#;
+    let mut warnings = Vec::new();
+    let expanded = expand_stylesheet_imports(
+        source,
+        Some(&Url::parse("https://example.test/main.css").unwrap()),
+        None,
+        Some(&LongRedirectProvider),
+        &mut warnings,
+    );
+    assert_eq!(expanded, source);
+    assert!(matches!(
+        &warnings[0].kind,
+        WarningKind::NetworkFallback { url } if url.as_str() == "https://example.test/a.css"
+    ));
 }

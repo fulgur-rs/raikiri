@@ -5100,7 +5100,7 @@ fn text_shadow_key_maps_to_text_shadow_property_key() {
 
 fn expect_font(value: Option<PropertyValue>) -> FontShorthand {
     match value {
-        Some(PropertyValue::Font(shorthand)) => shorthand,
+        Some(PropertyValue::Font(shorthand)) => *shorthand,
         // cov:ignore: this branch only executes when a caller's
         // `parse(..., "font")` unexpectedly fails to parse or parses to
         // the wrong variant; every call site in this test module passes
@@ -5314,14 +5314,14 @@ fn font_shorthand_rejects_unknown_keyword() {
 
 #[test]
 fn font_shorthand_key_maps_to_font_property_key() {
-    let v = PropertyValue::Font(FontShorthand {
+    let v = PropertyValue::Font(Box::new(FontShorthand {
         style: FontStyle::Normal,
         variant: FontVariantCaps::Normal,
         weight: FontWeightValue::Absolute(400.0),
         size: FontShorthandSize::Absolute(Length::Px(16.0)),
         line_height: LineHeight::Normal,
         family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-    });
+    }));
     assert_eq!(v.key(), PropertyKey::Font);
 }
 
@@ -5757,4 +5757,32 @@ fn hanging_punctuation_declarations_reject_invalid_important_suffixes() {
             "{css}"
         );
     }
+}
+
+#[test]
+fn font_size_scale_takes_only_percent_and_true_em_terms() {
+    use crate::property::RelativeCalcLengthPercentage as Calc;
+    let term = |value, unit| Calc::from_unit(value, unit).unwrap();
+    let sum = |a: Calc, b: Calc| a.add_scaled(b, 1.0).unwrap();
+    assert_eq!(
+        sum(term(50.0, "%"), term(1.0, "em")).font_size_scale(),
+        Some(1.5)
+    );
+    // An `ex` or `ic` folded into the `em` term keeps it from scaling, also
+    // after a true `em` is added to it.
+    assert_eq!(
+        sum(term(1.0, "ex"), term(1.0, "em")).font_size_scale(),
+        None
+    );
+    assert_eq!(
+        sum(term(1.0, "em"), term(1.0, "ic")).font_size_scale(),
+        None
+    );
+    // Other bases, absolute lengths and negative sums do not scale.
+    assert_eq!(term(1.0, "rem").font_size_scale(), None);
+    assert_eq!(
+        sum(term(1.0, "em"), term(1.0, "px")).font_size_scale(),
+        None
+    );
+    assert_eq!(term(-1.0, "em").font_size_scale(), None);
 }

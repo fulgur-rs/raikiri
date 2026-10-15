@@ -1,6 +1,9 @@
 use crate::{Document, DomMutationError};
 use raikiri_style::{StyleDom, StyleElement, StyleNode, StyleNodeId};
 
+const SVG_NS: &str = "http://www.w3.org/2000/svg";
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+
 fn doc_with_html_body() -> (Document, usize, usize, usize) {
     let mut d = Document::new();
     let root = d.root_index();
@@ -387,4 +390,79 @@ fn element_attribute_names_is_empty_for_non_elements_and_missing_ids() {
     let t = d.create_detached_text("hi");
     assert_eq!(d.element_attribute_names(t), Vec::<String>::new());
     assert_eq!(d.element_attribute_names(usize::MAX), Vec::<String>::new());
+}
+
+#[test]
+fn clone_node_copies_the_element_and_its_subtree_only_when_deep() {
+    let (mut d, _, _, body) = doc_with_html_body();
+    let svg = d.create_detached_element("svg").unwrap();
+    d.set_element_namespace_info(svg, Some(SVG_NS.into()), Some("s".into()));
+    d.set_element_namespaced_attribute(svg, XLINK_NS, Some("xlink".into()), "href", "#a")
+        .unwrap();
+    d.set_element_attribute(svg, "style", "fill: red").unwrap();
+    d.pre_insert(body, svg, None).unwrap();
+    let text = d.append_text(svg, "t");
+    let comment = d.create_detached_comment("c");
+    d.pre_insert(svg, comment, None).unwrap();
+    let pi = d.append_processing_instruction(Some(svg), "target", "data");
+
+    assert_eq!(d.clone_node_count(svg, false), 1);
+    let shallow = d.clone_node(svg, false).unwrap();
+    let node = d.get_node(shallow).unwrap();
+    assert_eq!(node.tag_name(), Some("svg"));
+    assert_eq!(node.namespace_uri(), Some(SVG_NS));
+    assert_eq!(node.attribute_ns(XLINK_NS, "href"), Some("#a"));
+    assert_eq!(node.attribute("style"), Some("fill: red"));
+    assert!(node.children.is_empty());
+    assert_eq!(d.parent_of(shallow), None);
+
+    assert_eq!(d.clone_node_count(svg, true), 4);
+    let before = d.node_count();
+    let deep = d.clone_node(svg, true).unwrap();
+    assert_eq!(d.node_count(), before + 4);
+    let children = d.get_node(deep).unwrap().children.clone();
+    assert_eq!(children.len(), 3);
+    assert!(!children.contains(&text) && !children.contains(&comment) && !children.contains(&pi));
+    assert_eq!(d.character_data(children[0]), Some("t"));
+    assert_eq!(d.character_data(children[1]), Some("c"));
+    assert_eq!(d.processing_instruction_target(children[2]), Some("target"));
+    assert_eq!(d.character_data(children[2]), Some("data"));
+    assert_eq!(d.parent_of(children[0]), Some(deep));
+}
+
+#[test]
+fn clone_node_gives_a_template_copy_its_own_contents() {
+    let (mut d, root, _, body) = doc_with_html_body();
+    let template = d.create_detached_element("template").unwrap();
+    d.pre_insert(body, template, None).unwrap();
+    let contents = d.allocate_template_fragment_root(template);
+    let inner = d.create_detached_element("template").unwrap();
+    d.pre_insert(contents, inner, None).unwrap();
+    let inner_contents = d.allocate_template_fragment_root(inner);
+    d.append_text(inner_contents, "x");
+
+    // A shallow copy still gets an (empty) contents fragment.
+    assert_eq!(d.clone_node_count(template, false), 2);
+    let shallow = d.clone_node(template, false).unwrap();
+    let shallow_contents = d.get_node(shallow).unwrap().template_contents().unwrap();
+    assert_ne!(shallow_contents, contents);
+    assert!(d.get_node(shallow_contents).unwrap().children.is_empty());
+
+    // template, contents, inner template, its contents, and the text.
+    assert_eq!(d.clone_node_count(template, true), 5);
+    let deep = d.clone_node(template, true).unwrap();
+    let deep_contents = d.get_node(deep).unwrap().template_contents().unwrap();
+    let [inner_copy] = d.get_node(deep_contents).unwrap().children[..] else {
+        panic!("expected one child in the copied contents");
+    };
+    assert_ne!(inner_copy, inner);
+    let inner_copy_contents = d.get_node(inner_copy).unwrap().template_contents().unwrap();
+    let [text_copy] = d.get_node(inner_copy_contents).unwrap().children[..] else {
+        panic!("expected one child in the copied inner contents");
+    };
+    assert_eq!(d.character_data(text_copy), Some("x"));
+
+    assert_eq!(d.clone_node_count(root, true), 0);
+    assert_eq!(d.clone_node(root, true), None);
+    assert_eq!(d.clone_node(usize::MAX, false), None);
 }

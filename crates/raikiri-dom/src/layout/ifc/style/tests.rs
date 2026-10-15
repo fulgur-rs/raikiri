@@ -254,6 +254,43 @@ fn inline_edges_in_ch_are_measured() {
 }
 
 #[test]
+fn inline_edges_in_calc_ch_add_the_rest_of_the_sum() {
+    let fixture = block_fixture(
+        "padding-left:calc(2ch + 3px);margin-right:calc(1ch + 10%)",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let edges = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    assert_eq!(edges.padding.inline_start, 23.0);
+    // A percentage needs the containing block, as for other calc() edges.
+    assert_eq!(edges.margin.inline_end, 0.0);
+}
+
+#[test]
+fn inline_edges_in_calc_ch_clamp_negative_padding_but_not_margin() {
+    let fixture = block_fixture(
+        "padding-left:calc(1ch - 100px);margin-left:calc(1ch - 100px)",
+        |doc, root| {
+            doc.append_text(root, "x");
+        },
+    );
+    let edges = inline_edges(
+        &fixture.cascade.computed[fixture.root],
+        fixture.root,
+        &fonts(),
+    )
+    .expect("edges");
+    assert_eq!(edges.padding.inline_start, 0.0);
+    assert_eq!(edges.margin.inline_start, -90.0);
+}
+
+#[test]
 fn inline_edges_in_ch_use_the_declaring_element_font() {
     let fixture = block_fixture("", |doc, root| {
         let inner = span(
@@ -967,4 +1004,13 @@ fn inline_relative_insets_prefer_the_start_side_of_a_vertical_containing_block()
         insets.offset_in(200.0, None, WritingMode::SidewaysLr, false),
         (5.0, -4.0)
     );
+}
+
+#[test]
+fn own_ch_font_carries_the_elements_optical_sizing() {
+    let mut cv = ComputedValues::initial();
+    cv.font_optical_sizing = raikiri_style::property::FontOpticalSizing::None;
+    let key = own_ch_font(&cv);
+    assert_eq!(key.optical_sizing, cv.font_optical_sizing);
+    assert_eq!(key.size, cv.font_size);
 }

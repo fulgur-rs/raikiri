@@ -2,6 +2,7 @@
 //! the page paint-order event generator.
 
 use crate::Document;
+use crate::layout::{BoxParentScope, box_parent};
 use raikiri_style::property::{
     BorderCollapseValue, ColumnCountValue, ContentComponent, DisplayValue, EmptyCellsValue,
     FloatValue, OverflowValue, OverflowXY, PositionValue, Visibility, WhiteSpaceCollapse,
@@ -371,7 +372,7 @@ fn defers_unless_clipped(document: &Document, cascade: &CascadeResult, node_id: 
     let Some(cv) = cascade.computed.get(node_id) else {
         return false;
     };
-    let parent_display = box_parent(document, cascade, node_id)
+    let parent_display = box_parent(document, cascade, node_id, BoxParentScope::Document)
         .and_then(|parent| cascade.computed.get(parent))
         .map(|parent| parent.display);
     let fits_parent = match cv.display {
@@ -449,30 +450,29 @@ pub fn defers_to_positioned_layer(
             && generates_box(cv)
             && (positioned || establishes_stacking_context(cv))
             && !negative
-            && box_parent(document, cascade, node_id).is_some_and(|parent| {
-                document
-                    .get_node(parent)
-                    .is_some_and(|node| !node.is_ifc_root())
-                    && cascade.computed.get(parent).is_some_and(|parent| {
-                        // A child of a table part sits in an anonymous cell;
-                        // the children of flex and grid containers join the
-                        // layer the same way.
-                        is_block_container(parent.display)
-                            || matches!(
-                                parent.display,
-                                DisplayValue::Flex
-                                    | DisplayValue::InlineFlex
-                                    | DisplayValue::Grid
-                                    | DisplayValue::InlineGrid
-                                    | DisplayValue::Table
-                                    | DisplayValue::InlineTable
-                                    | DisplayValue::TableRowGroup
-                                    | DisplayValue::TableHeaderGroup
-                                    | DisplayValue::TableFooterGroup
-                                    | DisplayValue::TableRow
-                            )
-                    })
-            })
+            && box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
+                |parent| {
+                    document
+                        .get_node(parent)
+                        .is_some_and(|node| !node.is_ifc_root())
+                        && cascade.computed.get(parent).is_some_and(|parent| {
+                            // A child of a table part sits in an anonymous cell;
+                            // the children of flex and grid containers join the
+                            // layer the same way.
+                            is_block_container(parent.display)
+                                || (parent.display.is_flex_or_grid_container()
+                                    || matches!(
+                                        parent.display,
+                                        DisplayValue::Table
+                                            | DisplayValue::InlineTable
+                                            | DisplayValue::TableRowGroup
+                                            | DisplayValue::TableHeaderGroup
+                                            | DisplayValue::TableFooterGroup
+                                            | DisplayValue::TableRow
+                                    ))
+                        })
+                },
+            )
     })
 }
 
@@ -495,11 +495,13 @@ pub fn hoists_positioned_content(
             && !is_z_indexed_item(document, cascade, node_id, cv)
             && !clips_overflow(cv)
             && (!matches!(cv.float, FloatValue::None)
-                || box_parent(document, cascade, node_id).is_some_and(|parent| {
-                    document
-                        .get_node(parent)
-                        .is_some_and(|node| !node.is_ifc_root())
-                }))
+                || box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
+                    |parent| {
+                        document
+                            .get_node(parent)
+                            .is_some_and(|node| !node.is_ifc_root())
+                    },
+                ))
     })
 }
 
@@ -513,17 +515,9 @@ fn is_z_indexed_item(
     cv: &ComputedValues,
 ) -> bool {
     matches!(cv.z_index, ZIndexValue::Integer(_))
-        && box_parent(document, cascade, node_id)
+        && box_parent(document, cascade, node_id, BoxParentScope::Document)
             .and_then(|parent| cascade.computed.get(parent))
-            .is_some_and(|parent| {
-                matches!(
-                    parent.display,
-                    DisplayValue::Flex
-                        | DisplayValue::InlineFlex
-                        | DisplayValue::Grid
-                        | DisplayValue::InlineGrid
-                )
-            })
+            .is_some_and(|parent| parent.display.is_flex_or_grid_container())
 }
 
 /// Whether box `id`, laid out in paragraph `root`, is an in-flow block
@@ -556,7 +550,7 @@ pub fn paints_before_paragraph_lines(
     }) && document
         .get_node(id)
         .is_some_and(|node| node.kind() == NodeKind::Element)
-        && box_parent(document, cascade, id) == Some(root)
+        && box_parent(document, cascade, id, BoxParentScope::Document) == Some(root)
         && !atomic_on_first_line(document, root, id)
 }
 
@@ -621,20 +615,6 @@ pub fn holds_negative_stack_level(
         }
     }
     false
-}
-
-/// The nearest ancestor that generates a box, skipping `display: contents`
-/// elements, whose children take their place (CSS Display 3 §2.5).
-fn box_parent(document: &Document, cascade: &CascadeResult, node_id: usize) -> Option<usize> {
-    let mut parent = document.parent_of(node_id)?;
-    while cascade
-        .computed
-        .get(parent)
-        .is_some_and(|cv| cv.display == DisplayValue::Contents)
-    {
-        parent = document.parent_of(parent)?;
-    }
-    Some(parent)
 }
 
 /// Whether the inline content deferred in front of an element paints
@@ -727,13 +707,7 @@ pub(crate) fn paint_child_key(
     parent_display: DisplayValue,
     cascade: &CascadeResult,
 ) -> PaintChildKey {
-    let order_sensitive_container = matches!(
-        parent_display,
-        DisplayValue::Flex
-            | DisplayValue::InlineFlex
-            | DisplayValue::Grid
-            | DisplayValue::InlineGrid
-    );
+    let order_sensitive_container = parent_display.is_flex_or_grid_container();
     // Direct abspos/fixed children are not flex/grid items: paint them as if
     // their order were zero, while in-flow (including relative) items use the
     // computed `order` value. Stacking buckets stay primary.
@@ -806,14 +780,7 @@ fn computed_paint_order_key(computed: &ComputedValues) -> (u8, i32) {
         // z-index. Keep ordinary static boxes in the normal bucket, but
         // place flex containers with positioned descendants alongside
         // auto-z siblings so their later absolute child paints in tree order.
-        (PositionValue::Static, _)
-            if matches!(
-                computed.display,
-                DisplayValue::Flex | DisplayValue::InlineFlex
-            ) =>
-        {
-            (2, 0)
-        }
+        (PositionValue::Static, _) if computed.display.is_flex_container() => (2, 0),
         (PositionValue::Static, _) => (1, 0),
         (_, ZIndexValue::Auto) => (2, 0),
         (_, ZIndexValue::Integer(value)) if value < 0 => (0, value),
@@ -824,30 +791,12 @@ fn computed_paint_order_key(computed: &ComputedValues) -> (u8, i32) {
     }
 }
 
-/// Walk the Document arena in DFS order; return the first `<body>` element index.
-///
-/// Use an iterative `Vec` stack (as in cascade §deep_nesting) to avoid
-/// stack overflow on deep DOMs. Return `None` for fragments (no `<body>`).
-///
-/// Skip subtrees with `!is_in_document()` (such as `<template>` descendants)
-/// so a hypothetical `<body>` in an inert subtree is not selected. The
-/// paint-side and layout-side body lookups are separate to avoid crossing
-/// module boundaries, but share the same contract.
+/// The body element paint starts at: the same element layout starts at
+/// (see [`crate::layout::find_body`]), so a `<body>` inside an inert subtree
+/// such as `<template>` contents is never selected. Return `None` for
+/// fragments (no `<body>`).
 pub fn find_paint_root(doc: &Document) -> Option<usize> {
-    let mut stack: Vec<usize> = vec![doc.root_index()];
-    while let Some(id) = stack.pop() {
-        let node = doc.get_node(id)?;
-        if !node.is_in_document() {
-            continue;
-        }
-        if node.kind() == NodeKind::Element && crate::layout::is_body_element(doc, id) {
-            return Some(id);
-        }
-        for &c in node.children.iter().rev() {
-            stack.push(c);
-        }
-    }
-    None
+    crate::layout::find_body(doc)
 }
 
 /// Whether separate-border `empty-cells: hide` suppresses this cell's box ink.

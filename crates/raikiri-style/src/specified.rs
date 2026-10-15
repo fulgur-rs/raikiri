@@ -68,11 +68,11 @@ use crate::resolve::{
     NormalLineHeight, ResolveContext, calc_ch_factor, calc_ch_offset,
     empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
     lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
-    lift_word_spacing, resolve_background_image, resolve_background_size, resolve_border,
-    resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item, resolve_column_width,
-    resolve_css_position, resolve_flex_basis, resolve_font_size, resolve_font_size_calc,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
-    resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
+    lift_word_spacing, relative_calc_ch_parts, resolve_background_image, resolve_background_size,
+    resolve_border, resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item,
+    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
+    resolve_font_size_calc, resolve_grid_auto_track_list, resolve_grid_template_tracks,
+    resolve_length, resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
     resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
     resolve_line_height, resolve_margin_length_or_auto,
     resolve_non_negative_length_percentage_or_calc, resolve_outline,
@@ -1575,6 +1575,7 @@ impl SpecifiedValues {
                 && parent.font_size == font_size
                 && parent.font_weight == self.font_weight
                 && parent.font_style == self.font_style
+                && parent.font_optical_sizing == self.font_optical_sizing
                 && (Arc::ptr_eq(&parent.font_family, &self.font_family)
                     || parent.font_family == self.font_family)
         }) {
@@ -1585,6 +1586,7 @@ impl SpecifiedValues {
             size: font_size,
             weight: self.font_weight,
             style: self.font_style,
+            optical_sizing: self.font_optical_sizing,
         })
     }
 
@@ -1768,6 +1770,7 @@ impl SpecifiedValues {
                     size: initial_font_size,
                     weight: 400.0,
                     style: FontStyle::Normal,
+                    optical_sizing: FontOpticalSizing::Auto,
                 })
             });
         let initial = ResolveContext {
@@ -1971,6 +1974,7 @@ impl SpecifiedValues {
             size: font_size,
             weight: self.font_weight,
             style: self.font_style,
+            optical_sizing: self.font_optical_sizing,
         };
         // A `ch` value declared on this node measures with its own font; one
         // inherited from an ancestor keeps measuring with the ancestor's font.
@@ -2019,11 +2023,26 @@ impl SpecifiedValues {
             Length::Ch(factor) if factor.is_finite() => Some(ChLengthProvenance {
                 factor,
                 font: own_ch_font(),
+                offset: 0.0,
+                percent: 0.0,
             }),
             _ => None,
         };
+        // A `calc()` with a `ch` term keeps the rest of its sum so layout can
+        // add it to the measured `ch` part.
+        let calc_ch_provenance = |calc| {
+            relative_calc_ch_parts(calc, font_size, own_line_height, ctx).map(|(factor, rest)| {
+                ChLengthProvenance {
+                    factor,
+                    font: own_ch_font(),
+                    offset: rest.px,
+                    percent: rest.percent,
+                }
+            })
+        };
         let size_ch = |size: LengthOrAuto| match size {
             LengthOrAuto::Length(length) => ch_provenance(length),
+            LengthOrAuto::RelativeCalc(calc) => calc_ch_provenance(calc),
             _ => None,
         };
         let vertical_logical_size =
@@ -2043,22 +2062,14 @@ impl SpecifiedValues {
                 ),
                 height_ch: size_ch(height),
             });
-        let width_ch = match self.width {
-            LengthOrAuto::Length(length) => ch_provenance(length),
-            _ => None,
-        };
-        let height_ch = match self.height {
-            LengthOrAuto::Length(length) => ch_provenance(length),
-            _ => None,
-        };
+        let width_ch = size_ch(self.width);
+        let height_ch = size_ch(self.height);
         let padding_ch = self.padding.map(|value| match value {
             LengthPercentageOrCalc::Length(length) => ch_provenance(length),
+            LengthPercentageOrCalc::RelativeCalc(calc) => calc_ch_provenance(calc),
             _ => None,
         });
-        let margin_ch = self.margin.map(|value| match value {
-            LengthOrAuto::Length(length) => ch_provenance(length),
-            _ => None,
-        });
+        let margin_ch = self.margin.map(size_ch);
         let (text_decoration_inset_start_ch, text_decoration_inset_end_ch) =
             match self.text_decoration_inset {
                 TextDecorationInset::Auto => (None, None),

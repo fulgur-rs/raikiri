@@ -187,6 +187,13 @@ fn transformed_boxes_match_paint() {
         "<div class=\"b\" style=\"float: left; position: relative; left: 5px; top: 4px; width: 40px; \
          height: 20px\"></div>",
         "<table><tr><td class=\"b\" style=\"position: relative; left: 6px; top: 2px\">cell</td></tr></table>",
+        // Inline elements that layout blockifies, and form controls, are
+        // transformable.
+        "<span class=\"b\" style=\"float: left; width: 30px; height: 20px; transform: rotate(20deg)\"></span>",
+        "<span class=\"b\" style=\"position: absolute; width: 30px; height: 20px; \
+         transform: translate(5px, 3px)\"></span>",
+        "<button class=\"b\" style=\"display: inline; width: 30px; height: 20px; border: 0; padding: 0; \
+         transform: rotate(15deg)\"></button>",
         // A box broken across pages turns about its box on each page.
         "<div class=\"b\" style=\"height: 300px; transform: rotate(2deg)\"></div>",
         // Percentages resolve against the box, in any function of the list.

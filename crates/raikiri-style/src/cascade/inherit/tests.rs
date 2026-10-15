@@ -959,6 +959,19 @@ fn normal_line_height_is_measured_only_where_the_font_changes() {
 }
 
 #[test]
+fn normal_line_height_is_measured_again_for_another_optical_sizing() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", None);
+    let body = doc.push_element(html, "body", None);
+    let p = doc.push_element(body, "p", Some("font-optical-sizing: none"));
+    doc.push_element(p, "span", None);
+    let (_, measurer) = cascade_measuring_normal(&doc);
+    // The document node, the root element and the paragraph, whose `opsz`
+    // instance can differ; the span shares the paragraph's font.
+    assert_eq!(measurer.0.load(std::sync::atomic::Ordering::Relaxed), 3);
+}
+
+#[test]
 fn normal_line_height_stays_unmeasured_for_other_line_heights() {
     let mut doc = TestDoc::new();
     let html = doc.push_element(0, "html", Some("line-height: 1.5"));
@@ -1405,6 +1418,59 @@ fn monospace_root_element_uses_13px_medium() {
     assert_eq!(cv.font_size, ComputedLength(13.0));
     let cv = cascade_doc("", "html", Some("font-family: monospace; font-size: 150%"));
     assert_eq!(cv.font_size, ComputedLength(19.5));
+}
+
+#[test]
+fn monospace_keyword_scaling_survives_a_percent_and_em_calc() {
+    let size = |declarations: &str| {
+        cascade_doc(
+            "",
+            "html",
+            Some(&format!(
+                "font-family: monospace; font-size: {declarations}"
+            )),
+        )
+        .font_size
+    };
+    // `%` and `em` both scale the parent's size, like `150%`.
+    assert_eq!(size("calc(50% + 1em)"), ComputedLength(19.5));
+    assert_eq!(size("calc(2em - 50%)"), ComputedLength(19.5));
+    // `ex`, `ic` and absolute lengths do not scale the keyword size, so the
+    // calc resolves against the plain 16px parent size.
+    assert_eq!(size("calc(50% + 1ex)"), ComputedLength(16.0));
+    assert_eq!(size("calc(50% + 1ic - 1em + 1em)"), ComputedLength(24.0));
+    assert_eq!(size("calc(100% + 2px)"), ComputedLength(18.0));
+    // The same holds after substitution.
+    assert_eq!(size("calc(50% + var(--x)); --x: 1em"), ComputedLength(19.5));
+    assert_eq!(size("calc(50% + var(--x)); --x: 1ex"), ComputedLength(16.0));
+    // An `ex` that cancels out, or is multiplied by zero, takes no part.
+    assert_eq!(size("calc(50% + 1em + 1ex - 1ex)"), ComputedLength(19.5));
+    assert_eq!(size("calc(50% + 1em + 0 * 1ex)"), ComputedLength(19.5));
+    // A negative sum clamps to zero.
+    assert_eq!(size("calc(50% - 1em)"), ComputedLength(0.0));
+    // A sum that overflows the parent's size falls back to the initial size.
+    assert_eq!(size("calc(1e38em + 1%)"), ComputedLength(16.0));
+    // An `ex` that folds into an `em` term which then cancels still keeps
+    // the calc on the plain parent size.
+    assert_eq!(size("calc(50% + 1ex - .5em)"), ComputedLength(8.0));
+
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: calc(100% + 1em)",
+        "font-family: serif",
+    ]);
+    assert_eq!(c[1].font_size, ComputedLength(26.0));
+    // The keyword information follows the family change.
+    assert_eq!(c[2].font_size, ComputedLength(32.0));
+
+    // A multiple that fits the 13px monospace size but would overflow the
+    // 16px `medium` after a family change stays on the calc path.
+    let c = cascade_chain(&[
+        "font-family: monospace",
+        "font-size: calc(2.5e37em + 1%)",
+        "font-family: serif",
+    ]);
+    assert!(c[2].font_size.0.is_finite(), "{:?}", c[2].font_size);
 }
 
 #[test]
@@ -5205,7 +5271,7 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
     }
     assert_eq!(
         resolve_against_inherited(PropertyValue::MarginInherit, &root, &ctx).into_property_value(),
-        PropertyValue::Margin(root.margin.map(|value| match value {
+        PropertyValue::Margin(Box::new(root.margin.map(|value| match value {
             ComputedLengthPercentageOrAuto::Px(px) => LengthOrAuto::Length(Length::Px(px)),
             ComputedLengthPercentageOrAuto::Percent(percent) => {
                 LengthOrAuto::Length(Length::Percent(percent))
@@ -5213,7 +5279,7 @@ fn page_margin_inherit_preserves_computed_margin_value_shapes() {
             ComputedLengthPercentageOrAuto::Calc(calc) => LengthOrAuto::Calc(calc),
             ComputedLengthPercentageOrAuto::Auto => LengthOrAuto::Auto,
             ComputedLengthPercentageOrAuto::MinContent => LengthOrAuto::Length(Length::Px(0.0)),
-        }))
+        })))
     );
 }
 
@@ -7348,7 +7414,7 @@ fn apply_value_direct_padding_shorthand_direct_assign() {
         bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
         left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
     };
-    apply_value(PropertyValue::Padding(sides), &mut cv);
+    apply_value(PropertyValue::Padding(Box::new(sides)), &mut cv);
     assert_eq!(cv.padding, sides);
 }
 
@@ -7741,7 +7807,7 @@ fn apply_value_direct_margin_shorthand_fall_through() {
         bottom: LengthOrAuto::Length(Length::Px(3.0)),
         left: LengthOrAuto::Length(Length::Px(4.0)),
     };
-    apply_value(PropertyValue::Margin(sides), &mut cv);
+    apply_value(PropertyValue::Margin(Box::new(sides)), &mut cv);
     assert_eq!(cv.margin, sides);
 }
 
@@ -8458,14 +8524,14 @@ fn apply_value_direct_font_shorthand_fall_through() {
     use std::sync::Arc;
     let mut cv = SpecifiedValues::initial();
     apply_value(
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             style: FontStyle::Italic,
             variant: FontVariantCaps::SmallCaps,
             weight: FontWeightValue::Bolder,
             size: FontShorthandSize::Relative(RelativeFontSize::Larger),
             line_height: LineHeight::Number(1.5),
             family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-        }),
+        })),
         &mut cv,
     );
     assert_eq!(cv.font_style, FontStyle::Italic);
@@ -8478,14 +8544,14 @@ fn apply_value_direct_font_shorthand_fall_through() {
     // delegation shape as the `Relative` case above).
     let mut cv = SpecifiedValues::initial();
     apply_value(
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             style: FontStyle::Normal,
             variant: FontVariantCaps::Normal,
             weight: FontWeightValue::Absolute(400.0),
             size: FontShorthandSize::Absolute(Length::Px(12.0)),
             line_height: LineHeight::Normal,
             family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-        }),
+        })),
         &mut cv,
     );
     assert_eq!(cv.font_size, Length::Px(12.0));
@@ -10738,4 +10804,31 @@ fn root_self_referential_lh_uses_the_initial_fonts_normal_line() {
         r.computed[html].line_height,
         ComputedLineHeight::Length(ComputedLength(40.0))
     );
+}
+
+#[test]
+fn svg_font_size_calc_of_percent_and_em_exports_its_em_multiple() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(
+        style,
+        "#a { font-size: calc(50% + 1em) } #b { font-size: calc(50% + 2px) }",
+    );
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let a =
+        doc.push_element_with_namespace(svg, "text", "http://www.w3.org/2000/svg", &[("id", "a")]);
+    let b =
+        doc.push_element_with_namespace(svg, "text", "http://www.w3.org/2000/svg", &[("id", "b")]);
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).unwrap();
+    let font_size = |node| {
+        result
+            .svg_style_properties(StyleNodeId(node as u64))
+            .iter()
+            .find(|value| value.property == PropertyKey::FontSize)
+            .map(|value| value.expression.clone())
+    };
+    assert_eq!(font_size(a), Some(Some("1.5em".to_owned())));
+    // A calc with an absolute length keeps its computed px size.
+    assert_eq!(font_size(b), Some(None));
 }

@@ -1651,8 +1651,13 @@ fn cascade_page_lh_scales_the_roots_measured_normal_line_height() {
 #[test]
 fn cascade_page_lh_leaves_normal_unmeasured_for_another_font() {
     let root = root_with_measured_normal();
-    let result = page("@page { font-family: monospace; padding: 1lh }", &root);
-    assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)));
+    for css in [
+        "@page { font-family: monospace; padding: 1lh }",
+        "@page { font-optical-sizing: none; padding: 1lh }",
+    ] {
+        let result = page(css, &root);
+        assert_eq!(padding_top_of(&result), Some(Length::Px(0.0)), "{css}");
+    }
 }
 
 /// A page font declared with the root's resolved values is the root's font,
@@ -2232,6 +2237,47 @@ fn cascade_page_all_box_properties_are_absolutized() {
 /// (`cascade.rs`) only exercises a bare `<length>` track, which leaves
 /// every other shape in this round trip unreached.
 #[test]
+fn cascade_page_grid_template_columns_keeps_mixed_calc_tracks() {
+    // `1em` is the initial font size. A calc with no percentage left is
+    // clamped to the `[0,∞]` range at computed-value time, and one with no
+    // length left becomes a plain percentage.
+    let root = ComputedValues::initial();
+    let result = page(
+        "@page { grid-template-columns: calc(50% - 1em) \
+             minmax(calc(10% + 1em), 1fr) calc(1em - 100px) calc(20% + 1em - 1em); }",
+        &root,
+    );
+    let declarations = result.declarations();
+    let Some(PropertyValue::GridTemplateColumns(GridTemplateTracks::List(list))) =
+        declarations.get(&PropertyKey::GridTemplateColumns)
+    else {
+        // cov:ignore: panic-message literal only executed on assertion
+        // failure, which doesn't happen while this test passes.
+        panic!("expected a track list");
+    };
+    let calc = |percent, px| LengthPercentageOrCalc::Calc(CalcLengthPercentage { percent, px });
+    assert_eq!(
+        list.components,
+        vec![
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Calc(calc(
+                50.0,
+                -INITIAL_FONT_SIZE_PX
+            )))),
+            GridTrackListComponent::Size(GridTrackSize::MinMax(
+                GridInflexibleBreadth::Calc(calc(10.0, INITIAL_FONT_SIZE_PX)),
+                GridTrackBreadth::Flex(1.0),
+            )),
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
+                Length::Px(0.0)
+            ))),
+            GridTrackListComponent::Size(GridTrackSize::Breadth(GridTrackBreadth::Length(
+                Length::Percent(20.0)
+            ))),
+        ]
+    );
+}
+
+#[test]
 fn cascade_page_grid_template_columns_round_trips_every_track_shape_through_phase_3() {
     let root = ComputedValues::initial();
     let result = page(
@@ -2460,9 +2506,9 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
 
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Padding(Sides::all(
+            ResolvedAgainstInherited::for_test(PropertyValue::Padding(Box::new(Sides::all(
                 LengthPercentageOrCalc::Length(Length::Em(2.0))
-            ))),
+            )))),
             fs,
             None,
             &ctx,
@@ -2470,13 +2516,15 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Px(40.0)))),
+        PropertyValue::Padding(Box::new(Sides::all(LengthPercentageOrCalc::Length(
+            Length::Px(40.0)
+        )))),
     );
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Margin(Sides::all(
+            ResolvedAgainstInherited::for_test(PropertyValue::Margin(Box::new(Sides::all(
                 LengthOrAuto::Length(Length::Rem(2.0))
-            ))),
+            )))),
             fs,
             None,
             &ctx,
@@ -2484,7 +2532,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Px(32.0)))),
+        PropertyValue::Margin(Box::new(Sides::all(LengthOrAuto::Length(Length::Px(32.0))))),
     );
     // Each side of the `border` shorthand gates on the style it carries
     // itself, not on `border_styles` (which describes the longhands).
@@ -2613,7 +2661,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Font(font.clone())),
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(Box::new(font.clone()))),
             fs,
             None,
             &ctx,
@@ -2621,11 +2669,11 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             size: FontShorthandSize::Absolute(Length::Px(30.0)),
             line_height: LineHeight::Length(Length::Px(32.0)),
             ..font.clone()
-        }),
+        })),
     );
     // `<absolute-size>` keywords, as shorthand size and as longhand, converge
     // to px with the default 16px `medium` (`small` is 8/9 of it), whatever
@@ -2636,7 +2684,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Font(keyword_font)),
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(Box::new(keyword_font))),
             fs,
             None,
             &ctx,
@@ -2644,13 +2692,13 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             size: FontShorthandSize::Absolute(Length::Px(
                 crate::property::AbsoluteFontSize::Small.px_for_medium(16.0),
             )),
             line_height: LineHeight::Length(Length::Px(32.0)),
             ..font.clone()
-        }),
+        })),
     );
     assert_eq!(
         absolutize_in_page_context(
@@ -2682,7 +2730,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Font(calc_font)),
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(Box::new(calc_font))),
             fs,
             None,
             &ctx,
@@ -2690,11 +2738,11 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             size: FontShorthandSize::Absolute(Length::Px(12.0)),
             line_height: LineHeight::Length(Length::Px(32.0)),
             ..font.clone()
-        }),
+        })),
     );
     assert_eq!(
         absolutize_in_page_context(
@@ -2716,7 +2764,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
     };
     assert_eq!(
         absolutize_in_page_context(
-            ResolvedAgainstInherited::for_test(PropertyValue::Font(relative_font)),
+            ResolvedAgainstInherited::for_test(PropertyValue::Font(Box::new(relative_font))),
             fs,
             None,
             &ctx,
@@ -2724,11 +2772,11 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             OutlineStyle::None,
             OverflowXY::both(OverflowValue::Visible),
         ),
-        PropertyValue::Font(FontShorthand {
+        PropertyValue::Font(Box::new(FontShorthand {
             size: FontShorthandSize::Absolute(Length::Px(24.0)),
             line_height: LineHeight::Length(Length::Px(32.0)),
             ..font
-        }),
+        })),
     );
     // `text-decoration` shorthand fall-through — only `thickness` is
     // absolutized (same basis as the `TextDecorationThickness` longhand
@@ -3659,7 +3707,7 @@ property_key_samples! {
     PaddingRight => PropertyValue::PaddingRight(LengthPercentageOrCalc::Length(Length::Em(2.0))),
     PaddingBottom => PropertyValue::PaddingBottom(LengthPercentageOrCalc::Length(Length::Em(2.0))),
     PaddingLeft => PropertyValue::PaddingLeft(LengthPercentageOrCalc::Length(Length::Em(2.0))),
-    Padding => PropertyValue::Padding(Sides::all(LengthPercentageOrCalc::Length(Length::Em(2.0)))),
+    Padding => PropertyValue::Padding(Box::new(Sides::all(LengthPercentageOrCalc::Length(Length::Em(2.0))))),
     // `PaddingInline`/`PaddingBlock` — same worst-case unit (`Em`) as
     // `Padding` above, placed right after it to match `PropertyKey`'s
     // own declaration order (`property.rs`'s "shorthand key comes after
@@ -3671,7 +3719,7 @@ property_key_samples! {
     MarginRight => PropertyValue::MarginRight(LengthOrAuto::Length(Length::Rem(2.0))),
     MarginBottom => PropertyValue::MarginBottom(LengthOrAuto::Length(Length::Rem(2.0))),
     MarginLeft => PropertyValue::MarginLeft(LengthOrAuto::Length(Length::Rem(2.0))),
-    Margin => PropertyValue::Margin(Sides::all(LengthOrAuto::Length(Length::Rem(2.0)))),
+    Margin => PropertyValue::Margin(Box::new(Sides::all(LengthOrAuto::Length(Length::Rem(2.0))))),
     // `MarginInline`/`MarginBlock` — same placement rationale as
     // `PaddingInline`/`PaddingBlock` above.
     MarginInline =>
@@ -4242,14 +4290,14 @@ property_key_samples! {
     // other 4 components reuse non-initial payloads distinct from
     // their standalone longhand samples above, to catch a field-swap
     // regression in the shorthand's own fall-through arms.
-    Font => PropertyValue::Font(FontShorthand {
+    Font => PropertyValue::Font(Box::new(FontShorthand {
         style: FontStyle::Italic,
         variant: FontVariantCaps::SmallCaps,
         weight: FontWeightValue::Absolute(700.0),
         size: FontShorthandSize::Absolute(Length::Em(1.5)),
         line_height: LineHeight::Number(1.5),
         family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
-    }),
+    })),
     // CSS Paged Media 3 §8.1 — keyword-only, carries no length.
     // `Named` is the non-initial worst case (`Auto` is the spec
     // initial, same reasoning as `BackgroundAttachment`'s `Fixed`
@@ -4270,9 +4318,9 @@ property_key_samples! {
     ColumnSpan => PropertyValue::ColumnSpan(crate::property::ColumnSpanValue::All),
     BorderImageSource => PropertyValue::BorderImageSource(BackgroundImage::Url("frame.png".into())),
     BorderImageSlice => PropertyValue::BorderImageSlice(crate::property::BorderImageSlice::INITIAL),
-    BorderImageWidth => PropertyValue::BorderImageWidth(Sides::all(
+    BorderImageWidth => PropertyValue::BorderImageWidth(Box::new(Sides::all(
         crate::property::BorderImageWidthSide::LengthPercentage(LengthPercentageOrCalc::Length(Length::Em(2.0))),
-    )),
+    ))),
     BorderImageOutset => PropertyValue::BorderImageOutset(Sides::all(
         crate::property::BorderImageOutsetSide::Length(Length::Em(2.0)),
     )),
@@ -5012,6 +5060,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     fn grid_track_breadth(b: &GridTrackBreadth) -> Option<&'static str> {
         match b {
             GridTrackBreadth::Length(l) => length(*l),
+            GridTrackBreadth::Calc(c) => length_percentage_or_calc(*c),
             GridTrackBreadth::Flex(_)
             | GridTrackBreadth::MinContent
             | GridTrackBreadth::MaxContent
@@ -5023,6 +5072,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
     fn grid_inflexible_breadth(b: &GridInflexibleBreadth) -> Option<&'static str> {
         match b {
             GridInflexibleBreadth::Length(l) => length(*l),
+            GridInflexibleBreadth::Calc(c) => length_percentage_or_calc(*c),
             GridInflexibleBreadth::MinContent
             | GridInflexibleBreadth::MaxContent
             | GridInflexibleBreadth::Auto => None,
@@ -5199,8 +5249,8 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::InlineSize(l)
             | PropertyValue::BlockSize(l) => length_or_auto(*l),
             PropertyValue::TextUnderlineOffset(value) => text_underline_offset(*value),
-            PropertyValue::Padding(s) => sides(*s, length_percentage_or_calc),
-            PropertyValue::Margin(s) => sides(*s, length_or_auto),
+            PropertyValue::Padding(s) => sides(**s, length_percentage_or_calc),
+            PropertyValue::Margin(s) => sides(**s, length_or_auto),
             PropertyValue::PaddingInline(p) | PropertyValue::PaddingBlock(p) => {
                 start_end(*p, length_percentage_or_calc)
             }
@@ -5998,7 +6048,7 @@ fn font_shorthand_relative_size_is_specified_layer_residue() {
         family: Arc::new(vec![crate::property::FontFamilyName::generic("serif")]),
     };
     assert_eq!(
-        specified_layer_residue(&PropertyValue::Font(shorthand)),
+        specified_layer_residue(&PropertyValue::Font(Box::new(shorthand))),
         Some("font-size: larger/smaller"),
     );
 }
@@ -6717,7 +6767,7 @@ fn post_parse_page_margin_shorthand_before_longhand_lets_longhand_win() {
     let result = page_with_post_parse_injection(
         "@page { margin-left: 99px; margin-top: 10px }",
         0,
-        PropertyValue::Margin(distinct_page_margin_sides()),
+        PropertyValue::Margin(Box::new(distinct_page_margin_sides())),
     );
     assert_eq!(
         margin_px(&result, PropertyKey::MarginTop),
@@ -6738,7 +6788,7 @@ fn post_parse_page_margin_shorthand_after_longhand_lets_shorthand_win() {
     let result = page_with_post_parse_injection(
         "@page { margin-top: 10px; margin-left: 99px }",
         1,
-        PropertyValue::Margin(distinct_page_margin_sides()),
+        PropertyValue::Margin(Box::new(distinct_page_margin_sides())),
     );
     assert_eq!(margin_px(&result, PropertyKey::MarginTop), Some(1.0));
     assert_eq!(margin_px(&result, PropertyKey::MarginRight), Some(2.0));
@@ -6752,12 +6802,12 @@ fn post_parse_page_padding_shorthand_before_longhand_lets_longhand_win() {
     let result = page_with_post_parse_injection(
         "@page { padding-left: 99px; padding-top: 10px }",
         0,
-        PropertyValue::Padding(Sides {
+        PropertyValue::Padding(Box::new(Sides {
             top: LengthPercentageOrCalc::Length(Length::Px(1.0)),
             right: LengthPercentageOrCalc::Length(Length::Px(2.0)),
             bottom: LengthPercentageOrCalc::Length(Length::Px(3.0)),
             left: LengthPercentageOrCalc::Length(Length::Px(4.0)),
-        }),
+        })),
     );
     assert_eq!(padding_px(&result, PropertyKey::PaddingTop), Some(10.0));
     assert_eq!(padding_px(&result, PropertyKey::PaddingRight), Some(2.0));
@@ -6854,7 +6904,7 @@ fn post_parse_page_shorthand_injection_propagates_important() {
     let result = page_with_post_parse_injection(
         "@page { margin-left: 99px !important; margin-top: 10px }",
         0,
-        PropertyValue::Margin(distinct_page_margin_sides()),
+        PropertyValue::Margin(Box::new(distinct_page_margin_sides())),
     );
     assert_eq!(
         margin_px(&result, PropertyKey::MarginTop),
@@ -6872,7 +6922,7 @@ fn post_parse_page_important_longhand_survives_later_normal_shorthand() {
     let result = page_with_post_parse_injection(
         "@page { margin-top: 10px !important; margin-left: 99px }",
         1,
-        PropertyValue::Margin(distinct_page_margin_sides()),
+        PropertyValue::Margin(Box::new(distinct_page_margin_sides())),
     );
     assert_eq!(
         margin_px(&result, PropertyKey::MarginTop),

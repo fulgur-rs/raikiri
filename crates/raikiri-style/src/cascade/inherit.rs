@@ -1497,6 +1497,12 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         PropertyValue::FontSize(Length::Ic(value)) => {
             crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(*value)))
         }
+        // A calc that only scales the parent's size stays relative as its
+        // `em` multiple; any other calc keeps its computed px size (SVG 1.1
+        // lengths have no `calc()`).
+        PropertyValue::FontSizeCalc(calc) => calc.font_size_scale().and_then(|scale| {
+            crate::property::serialize_value(&PropertyValue::FontSize(Length::Em(scale)))
+        }),
         PropertyValue::FontSizeRelative(RelativeFontSize::Larger) => Some("larger".into()),
         PropertyValue::FontSizeRelative(RelativeFontSize::Smaller) => Some("smaller".into()),
         PropertyValue::FontWeight(FontWeightValue::Bolder) => Some("bolder".into()),
@@ -1507,9 +1513,8 @@ fn svg_property_expression(value: &PropertyValue) -> Option<String> {
         // exporting the keyword would follow the instance's size instead.
         // usvg has no font-family dependent `medium` either, so a definition
         // reused under a different generic family keeps the size of the
-        // family where it is defined. SVG 1.1 lengths have no `calc()`, so a
-        // mixed calc keeps its computed px size as well.
-        PropertyValue::FontSizeKeyword(_) | PropertyValue::FontSizeCalc(_) => None,
+        // family where it is defined.
+        PropertyValue::FontSizeKeyword(_) => None,
         _ => None,
     }
 }
@@ -2091,7 +2096,7 @@ fn border_image_defaulting_value(
         PropertyKey::BorderImageSource => PropertyValue::BorderImageSource(image.source.clone()),
         PropertyKey::BorderImageSlice => PropertyValue::BorderImageSlice(image.slice),
         PropertyKey::BorderImageWidth => {
-            PropertyValue::BorderImageWidth(image.width.map(|side| match side {
+            PropertyValue::BorderImageWidth(Box::new(image.width.map(|side| match side {
                 BorderImageWidthSide::LengthPercentage(length) => {
                     BorderImageWidthSide::LengthPercentage(
                         crate::resolve::lift_length_percentage_or_calc(length),
@@ -2099,7 +2104,7 @@ fn border_image_defaulting_value(
                 }
                 BorderImageWidthSide::Number(number) => BorderImageWidthSide::Number(number),
                 _ => BorderImageWidthSide::Auto,
-            }))
+            })))
         }
         PropertyKey::BorderImageOutset => {
             PropertyValue::BorderImageOutset(image.outset.map(|side| match side {
@@ -2366,12 +2371,12 @@ pub(crate) fn resolve_against_inherited(
         PropertyValue::MarginLeftInherit => {
             PropertyValue::MarginLeft(inherited_margin_length(inherited.margin.left))
         }
-        PropertyValue::MarginInherit => PropertyValue::Margin(Sides {
+        PropertyValue::MarginInherit => PropertyValue::Margin(Box::new(Sides {
             top: inherited_margin_length(inherited.margin.top),
             right: inherited_margin_length(inherited.margin.right),
             bottom: inherited_margin_length(inherited.margin.bottom),
             left: inherited_margin_length(inherited.margin.left),
-        }),
+        })),
         PropertyValue::TextDecorationThicknessInherit => {
             PropertyValue::TextDecorationThickness(inherited_text_decoration_thickness(inherited))
         }
@@ -3076,14 +3081,29 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.font_size_calc = None;
             target.font_size_keyword_declared = false;
         }
-        // Phase 2 resolves the calc once the root font size and the parent's
-        // line height are known; the parent's keyword information does not
-        // carry over to a size that mixes in other terms.
-        PropertyValue::FontSizeCalc(calc) => {
-            target.font_size_calc = Some(calc);
-            target.font_size_keyword = None;
-            target.font_size_keyword_declared = false;
-        }
+        // A sum of `%` and true `em` terms only scales the parent's size, so
+        // it is applied as the equivalent `em` multiple and keeps a
+        // keyword-derived parent size keyword-derived. Otherwise phase 2
+        // resolves the calc once the root font size and the parent's line
+        // height are known; the parent's keyword information does not carry
+        // over to a size that mixes in other terms. A multiple that would
+        // overflow the parent's size, or the keyword size it carries under
+        // the larger 16px `medium` of a later family change, also stays a
+        // calc, whose resolution falls back to the initial size.
+        PropertyValue::FontSizeCalc(calc) => match calc.font_size_scale().filter(|&scale| {
+            // Still the `Length::Px` parent seed, as for `FontSizeRelative`.
+            (target.font_size.payload() * scale).is_finite()
+                && target
+                    .font_size_keyword
+                    .is_none_or(|info| info.scaled(scale).resolve(&[]).0.is_finite())
+        }) {
+            Some(scale) => apply_value(PropertyValue::FontSize(Length::Em(scale)), target),
+            None => {
+                target.font_size_calc = Some(calc);
+                target.font_size_keyword = None;
+                target.font_size_keyword_declared = false;
+            }
+        },
         PropertyValue::FontSizeRelative(rel) => {
             // Always the `Length::Px` parent seed: `FontSize` shares this
             // key's single winner slot, so it has not overwritten the seed.
@@ -3176,7 +3196,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::PaddingRight(v) => target.padding.right = v,
         PropertyValue::PaddingBottom(v) => target.padding.bottom = v,
         PropertyValue::PaddingLeft(v) => target.padding.left = v,
-        PropertyValue::Padding(sides) => expand_padding(sides, |v| apply_value(v, target)),
+        PropertyValue::Padding(sides) => expand_padding(*sides, |v| apply_value(v, target)),
         PropertyValue::PaddingInline(pair) => {
             expand_padding_inline(pair, |v| apply_value(v, target))
         }
@@ -3192,7 +3212,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::MarginRight(v) => target.margin.right = v,
         PropertyValue::MarginBottom(v) => target.margin.bottom = v,
         PropertyValue::MarginLeft(v) => target.margin.left = v,
-        PropertyValue::Margin(sides) => expand_margin(sides, |v| apply_value(v, target)),
+        PropertyValue::Margin(sides) => expand_margin(*sides, |v| apply_value(v, target)),
         PropertyValue::MarginInline(pair) => expand_margin_inline(pair, |v| apply_value(v, target)),
         PropertyValue::MarginBlock(pair) => expand_margin_block(pair, |v| apply_value(v, target)),
         PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
@@ -3438,7 +3458,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         PropertyValue::BorderImageSource(v) => target.border_image_source = v,
         PropertyValue::BorderImageSlice(v) => target.border_image_slice = v,
-        PropertyValue::BorderImageWidth(v) => target.border_image_width = v,
+        PropertyValue::BorderImageWidth(v) => target.border_image_width = *v,
         PropertyValue::BorderImageOutset(v) => target.border_image_outset = v,
         PropertyValue::BorderImageRepeat(v) => target.border_image_repeat = v,
         PropertyValue::BorderStyle(sides) => expand_border_style(sides, |v| apply_value(v, target)),

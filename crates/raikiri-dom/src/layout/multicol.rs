@@ -2330,112 +2330,21 @@ pub(crate) struct MulticolMetrics {
 }
 
 /// Visit every node of the arena once, each parent before its children.
-fn visit_top_down(parent_of: &[Option<usize>], mut visit: impl FnMut(Option<usize>, usize)) {
-    let mut resolved = vec![false; parent_of.len()];
+fn visit_top_down(doc: &Document, mut visit: impl FnMut(Option<usize>, usize)) {
+    let mut resolved = vec![false; doc.nodes.len()];
     let mut chain = Vec::new();
-    for start in 0..parent_of.len() {
+    for start in 0..doc.nodes.len() {
         // Collect the unresolved part of this node's chain, then resolve it
         // from the top down.
         let mut current = Some(start);
         while let Some(id) = current.filter(|&id| !resolved[id]) {
             resolved[id] = true;
             chain.push(id);
-            current = parent_of[id];
+            current = doc.parent_of(id);
         }
         while let Some(id) = chain.pop() {
-            visit(parent_of[id], id);
+            visit(doc.parent_of(id), id);
         }
-    }
-}
-
-/// The widths text is broken at when lines are broken again for a page,
-/// derived once for every node of the arena with each parent resolved before
-/// its children. Searching the ancestors of every paragraph instead would
-/// cost the paragraph count times the tree depth.
-pub(crate) struct ResolvedChWidths {
-    /// The content width with a resolved `ch` width: the measured length a
-    /// `ch` width resolved to, a definite `px` or percentage width resolved
-    /// against the parent's, else the parent's own.
-    content_width: Vec<f32>,
-    /// The nearest strict ancestor whose authored width is neither `auto`
-    /// nor `min-content`.
-    authored_ancestor: Vec<Option<usize>>,
-    /// The node or an ancestor has a `min-content` width.
-    min_content: Vec<bool>,
-}
-
-impl ResolvedChWidths {
-    // Text shaping must use the same measured `ch` width that Taffy will use.
-    // The cascade retains a style-layer fallback, while pre-Taffy preparation
-    // has already written the measured value to the node style. This avoids
-    // shaping text against a narrower fallback than its containing block.
-    // cov:ignore: exercised by resource-enabled CSS Text WPT runs.
-    pub(crate) fn new(
-        doc: &Document,
-        cascade: &CascadeResult,
-        parent_of: &[Option<usize>],
-        fallback: f32,
-    ) -> Self {
-        let count = parent_of.len();
-        let mut widths = Self {
-            content_width: vec![0.0; count],
-            authored_ancestor: vec![None; count],
-            min_content: vec![false; count],
-        };
-        visit_top_down(parent_of, |parent, id| {
-            let parent_width = parent.map_or(fallback, |parent| widths.content_width[parent]);
-            let cv = &cascade.computed[id];
-            let resolved_ch = cv
-                .width_ch
-                .as_ref()
-                .and_then(|_| style_dimension_length(doc.nodes[id].style.size.width));
-            widths.content_width[id] = match (resolved_ch, cv.width) {
-                (Some(width), _) => width.max(0.0),
-                (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
-                    value.max(0.0)
-                }
-                (None, ComputedLengthPercentageOrAuto::Percent(value)) if value.is_finite() => {
-                    (parent_width * value / 100.0).max(0.0)
-                }
-                _ => parent_width.max(0.0),
-            };
-            let self_min_content = cv.width == ComputedLengthPercentageOrAuto::MinContent;
-            let Some(parent) = parent else {
-                widths.min_content[id] = self_min_content;
-                return;
-            };
-            widths.min_content[id] = self_min_content || widths.min_content[parent];
-            // A `min-content` width is intrinsic, not an authored containing
-            // width; keep searching like `auto`.
-            let values = &cascade.computed[parent];
-            widths.authored_ancestor[id] = if values.display == DisplayValue::Contents
-                || matches!(
-                    values.width,
-                    ComputedLengthPercentageOrAuto::Auto
-                        | ComputedLengthPercentageOrAuto::MinContent
-                ) {
-                widths.authored_ancestor[parent]
-            } else {
-                Some(parent)
-            };
-        });
-        widths
-    }
-
-    /// The content width of the nearest strict ancestor of `id` with an
-    /// authored width.
-    // cov:ignore: exercised by the resource-enabled line-break:anywhere WPT run.
-    pub(crate) fn authored_containing_width(&self, id: usize) -> Option<f32> {
-        self.authored_ancestor
-            .get(id)
-            .copied()
-            .flatten()
-            .map(|ancestor| self.content_width[ancestor])
-    }
-
-    /// `id` or one of its ancestors has a `min-content` width.
-    pub(crate) fn in_min_content(&self, id: usize) -> bool {
-        self.min_content[id]
     }
 }
 
@@ -2453,8 +2362,9 @@ fn has_nonzero_horizontal_margin(cv: &ComputedValues) -> bool {
 /// Ancestor-chain facts for every node of the arena, derived once with each
 /// parent resolved before its children. The multicol preparation pass asks
 /// these questions of every element; walking to the root for each one would
-/// cost the node count times the tree depth.
-struct AncestorFacts {
+/// cost the node count times the tree depth. Rebreaking uses the same table
+/// with fresh page-width and measured-font inputs.
+pub(crate) struct AncestorFacts {
     /// A strict ancestor is a multicol container.
     multicol_ancestor: Vec<bool>,
     /// The node or an ancestor has a vertical or sideways writing mode.
@@ -2463,23 +2373,20 @@ struct AncestorFacts {
     out_of_flow_ancestor: Vec<bool>,
     /// A strict ancestor establishes a flex, grid, or table formatting context.
     non_block_flow_ancestor: Vec<bool>,
-    /// The cascade-derived content width: a definite `px` or percentage
-    /// width resolved against the parent's, else the parent's own.
+    /// A definite width resolved against the parent, else the parent width;
+    /// measured `ch` widths include their calc percentage and `contents` inherits.
     content_width: Vec<f32>,
     /// The nearest strict ancestor whose authored width is neither `auto`
     /// nor `min-content`; a `min-content` width is intrinsic, not an
     /// authored containing width.
     authored_ancestor: Vec<Option<usize>>,
+    /// The node or an ancestor has a `min-content` width.
+    min_content: Vec<bool>,
 }
 
 impl AncestorFacts {
-    fn new(
-        doc: &Document,
-        cascade: &CascadeResult,
-        parent_of: &[Option<usize>],
-        fallback_width: f32,
-    ) -> Self {
-        let count = parent_of.len();
+    pub(crate) fn new(doc: &Document, cascade: &CascadeResult, fallback_width: f32) -> Self {
+        let count = doc.nodes.len();
         let mut facts = Self {
             multicol_ancestor: vec![false; count],
             vertical: vec![false; count],
@@ -2487,8 +2394,9 @@ impl AncestorFacts {
             non_block_flow_ancestor: vec![false; count],
             content_width: vec![0.0; count],
             authored_ancestor: vec![None; count],
+            min_content: vec![false; count],
         };
-        visit_top_down(parent_of, |parent, id| {
+        visit_top_down(doc, |parent, id| {
             facts.resolve(doc, cascade, parent, id, fallback_width);
         });
         facts
@@ -2515,15 +2423,22 @@ impl AncestorFacts {
             )
         );
         let parent_width = parent.map_or(fallback_width, |parent| self.content_width[parent]);
-        self.content_width[id] = match cascade.computed[id].width {
-            // A `display: contents` element has no box, so no width of its own.
-            _ if cascade.computed[id].display == DisplayValue::Contents => parent_width.max(0.0),
-            ComputedLengthPercentageOrAuto::Px(value) if value.is_finite() => value.max(0.0),
-            ComputedLengthPercentageOrAuto::Percent(value) if value.is_finite() => {
+        let cv = &cascade.computed[id];
+        let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);
+        self.content_width[id] = match (resolved_ch, cv.width) {
+            // Contents has no box; both preparation and rebreaking inherit its parent width.
+            _ if cv.display == DisplayValue::Contents => parent_width.max(0.0),
+            (Some(width), _) => width.max(0.0),
+            (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
+                value.max(0.0)
+            }
+            (None, ComputedLengthPercentageOrAuto::Percent(value)) if value.is_finite() => {
                 (parent_width * value / 100.0).max(0.0)
             }
             _ => parent_width.max(0.0),
         };
+        self.min_content[id] = cv.width == ComputedLengthPercentageOrAuto::MinContent
+            || parent.is_some_and(|parent| self.min_content[parent]);
         let Some(parent) = parent else {
             self.vertical[id] = vertical_self;
             return;
@@ -2538,23 +2453,20 @@ impl AncestorFacts {
                 PositionValue::Absolute | PositionValue::Fixed
             );
         self.non_block_flow_ancestor[id] = self.non_block_flow_ancestor[parent]
-            || matches!(
-                values.display,
-                DisplayValue::Flex
-                    | DisplayValue::InlineFlex
-                    | DisplayValue::Grid
-                    | DisplayValue::InlineGrid
-                    | DisplayValue::Table
-                    | DisplayValue::InlineTable
-                    | DisplayValue::TableRowGroup
-                    | DisplayValue::TableHeaderGroup
-                    | DisplayValue::TableFooterGroup
-                    | DisplayValue::TableRow
-                    | DisplayValue::TableColumnGroup
-                    | DisplayValue::TableColumn
-                    | DisplayValue::TableCell
-                    | DisplayValue::TableCaption
-            );
+            || (values.display.is_flex_or_grid_container()
+                || matches!(
+                    values.display,
+                    DisplayValue::Table
+                        | DisplayValue::InlineTable
+                        | DisplayValue::TableRowGroup
+                        | DisplayValue::TableHeaderGroup
+                        | DisplayValue::TableFooterGroup
+                        | DisplayValue::TableRow
+                        | DisplayValue::TableColumnGroup
+                        | DisplayValue::TableColumn
+                        | DisplayValue::TableCell
+                        | DisplayValue::TableCaption
+                ));
         self.authored_ancestor[id] = if values.display == DisplayValue::Contents
             || matches!(
                 values.width,
@@ -2567,8 +2479,17 @@ impl AncestorFacts {
     }
 
     /// The content width of the nearest authored-width ancestor.
-    fn authored_containing_width(&self, id: usize) -> Option<f32> {
-        self.authored_ancestor[id].map(|ancestor| self.content_width[ancestor])
+    pub(crate) fn authored_containing_width(&self, id: usize) -> Option<f32> {
+        self.authored_ancestor
+            .get(id)
+            .copied()
+            .flatten()
+            .map(|ancestor| self.content_width[ancestor])
+    }
+
+    /// `id` or one of its ancestors has a `min-content` width.
+    pub(crate) fn in_min_content(&self, id: usize) -> bool {
+        self.min_content[id]
     }
 }
 
@@ -2711,15 +2632,7 @@ pub(crate) fn prepare_multicol_layout(
     cascade: &CascadeResult,
     fallback_width: f32,
 ) {
-    let mut parent_of = vec![None; doc.nodes.len()];
-    for parent in 0..doc.nodes.len() {
-        for &child in &doc.nodes[parent].children {
-            if child < parent_of.len() {
-                parent_of[child] = Some(parent);
-            }
-        }
-    }
-    let ancestors = AncestorFacts::new(doc, cascade, &parent_of, fallback_width);
+    let ancestors = AncestorFacts::new(doc, cascade, fallback_width);
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
             continue;
@@ -2741,7 +2654,7 @@ pub(crate) fn prepare_multicol_layout(
             || cv.overflow.y != OverflowValue::Visible;
         let engine_box = engine_sized
             && !doc.nodes[idx].in_ifc_subtree()
-            && parent_of.get(idx).copied().flatten().is_some_and(|parent| {
+            && doc.parent_of(idx).is_some_and(|parent| {
                 doc.nodes[parent].is_ifc_root() || doc.nodes[parent].in_ifc_subtree()
             });
         if engine_box {
@@ -2820,8 +2733,7 @@ pub(crate) fn prepare_multicol_layout(
             element_children.iter().any(|&child| {
                 let mut pending = vec![child];
                 while let Some(descendant) = pending.pop() {
-                    let display = cascade.computed[descendant].display;
-                    if (display.is_inline_flow() || display == DisplayValue::InlineBlock)
+                    if cascade.computed[descendant].display.is_inline_flow_box()
                         && style_dimension_length(doc.nodes[descendant].style.size.height)
                             .is_some_and(|descendant_height| descendant_height > height + 0.001)
                     {
@@ -2913,7 +2825,7 @@ pub(crate) fn prepare_multicol_layout(
         let has_inline_flow_children = doc.nodes[idx].children.iter().any(|&child| {
             doc.nodes[child].is_in_document()
                 && doc.nodes[child].kind() == NodeKind::Element
-                && is_inline_element_box(cascade, child)
+                && supports_foundational_inline_projection(cascade, child)
         });
         let has_ruby_child = doc.nodes[idx].children.iter().any(|&child| {
             doc.nodes[child].is_in_document()
@@ -2976,15 +2888,14 @@ pub(crate) fn prepare_multicol_layout(
     }
 }
 
-/// Whether `idx`, an element, generates an inline-level box (or none of its
-/// own, for `display: contents`).
-fn is_inline_element_box(cascade: &CascadeResult, idx: usize) -> bool {
+/// Whether this child's display can enable the foundational column
+/// projection. Flex/grid containers do not enable that specialized path,
+/// which rewrites child widths and flex bases. Contents can enable it
+/// without generating a box of its own.
+fn supports_foundational_inline_projection(cascade: &CascadeResult, idx: usize) -> bool {
     let display = cascade.computed[idx].display;
-    display.is_inline_flow()
-        || matches!(
-            display,
-            DisplayValue::InlineBlock | DisplayValue::InlineTable | DisplayValue::Contents
-        )
+    (display.is_inline_level() && !display.is_flex_or_grid_container())
+        || display == DisplayValue::Contents
 }
 
 #[cfg(test)]

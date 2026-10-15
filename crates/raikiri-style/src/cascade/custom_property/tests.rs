@@ -2606,14 +2606,27 @@ fn negative_mixed_calc_clamps_sizes_but_not_insets() {
 }
 
 #[test]
-fn mixed_calc_beyond_one_relative_basis_or_on_vertical_align_stays_invalid() {
+fn mixed_calc_beyond_two_relative_bases_or_on_vertical_align_stays_invalid() {
     let cv = cascade_doc(
         "",
         "div",
-        Some("width: 7px; width: calc(100vh - 2em); vertical-align: calc(1em + 2px)"),
+        Some("width: 7px; width: calc(100vh - 2em + 1rem); vertical-align: calc(1em + 2px)"),
     );
     assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Auto);
     assert_eq!(cv.vertical_align, VerticalAlign::Baseline);
+}
+
+#[test]
+fn mixed_calc_with_two_relative_bases_resolves() {
+    let cv = cascade_doc(
+        "",
+        "div",
+        Some("font-size: 10px; width: calc(100vh - 2em); height: calc(1em + 1rem)"),
+    );
+    // The div is the root element, so `rem` is its own 10px font size, and
+    // `100vh` is the default 288px viewport height.
+    assert_eq!(cv.width, ComputedLengthPercentageOrAuto::Px(268.0));
+    assert_eq!(cv.height, ComputedLengthPercentageOrAuto::Px(20.0));
 }
 
 #[test]
@@ -2664,8 +2677,7 @@ fn relative_calc_parser_accepts_linear_sums_only() {
         "calc(1em+2px)",
         "calc(1deg + 1em)",
         "calc(1svx + 1px)",
-        "calc(1em + 1vw)",
-        "calc(1ch + 1px)",
+        "calc(1em + 1vw + 1rem)",
         "calc(1em) 2px",
         "calc(min(1em, 2px) + 1px)",
     ] {
