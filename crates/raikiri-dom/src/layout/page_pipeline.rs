@@ -6774,14 +6774,16 @@ fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) 
     })
 }
 
-/// Whether `id` is a block box that establishes no independent formatting
-/// context, the only kind whose margins can collapse through it when it is
+/// Whether `id` is a block box (a list item included) that establishes no
+/// independent formatting context, the only kind whose margins can collapse through it when it is
 /// empty (CSS 2 §8.3.1).
 fn margins_may_collapse_through(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let computed = &cascade.computed[id];
     let visible = |overflow| matches!(overflow, OverflowValue::Visible | OverflowValue::Clip);
-    computed.display == DisplayValue::Block
-        && visible(computed.overflow.x)
+    matches!(
+        computed.display,
+        DisplayValue::Block | DisplayValue::ListItem
+    ) && visible(computed.overflow.x)
         && visible(computed.overflow.y)
         && document.nodes[id].multicol.is_none()
         && !establishes_containment_context(computed)
