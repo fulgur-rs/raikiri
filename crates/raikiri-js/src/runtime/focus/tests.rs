@@ -117,6 +117,14 @@ fn only_connected_focusable_areas_take_focus() {
          && !takes(make('span', {contenteditable: 'false'}))\
          && !takes(make('span', {contenteditable: 'inherit'}))\
          && !takes(make('span', {contenteditable: ' true'}))\
+         && (function () {\
+              var host = make('div', {contenteditable: ''});\
+              var off = make('div', {contenteditable: 'false'}, host);\
+              var inherited = make('div', {contenteditable: 'inherit'}, host);\
+              return !takes(make('span', {contenteditable: ''}, host))\
+                && takes(make('span', {contenteditable: ''}, off))\
+                && !takes(make('span', {contenteditable: ''}, inherited));\
+            })()\
          && takes(make('video', {controls: ''})) && !takes(make('video'))\
          && takes(first) && !takes(second) && !takes(make('summary'))\
          && !takes(make('button', {}, inert))\

@@ -94,6 +94,25 @@ fn is_editing_host_value(value: &str) -> bool {
         || value.eq_ignore_ascii_case("plaintext-only")
 }
 
+/// Whether the element `index` is editable: its nearest HTML ancestor or
+/// self with a `contenteditable` in the true, plaintext-only or false
+/// state decides, and invalid values inherit.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#editing-host>
+fn is_editable(document: &Document, index: usize) -> bool {
+    let mut current = Some(index);
+    while let Some(element) = current {
+        let value =
+            html_tag(document, element).and(document.element_attribute(element, "contenteditable"));
+        match value {
+            Some(value) if is_editing_host_value(value) => return true,
+            Some(value) if value.eq_ignore_ascii_case("false") => return false,
+            _ => current = document.parent_of(element),
+        }
+    }
+    false
+}
+
 /// Whether `index` is a `<summary>` that is the first `<summary>` child of
 /// a `<details>` (HTML "summary for its parent details").
 fn is_details_summary(document: &Document, index: usize) -> bool {
@@ -229,6 +248,9 @@ fn is_focusable(document: &Document, index: usize) -> bool {
         || focusable_by_default(document, index)
         || html_tag(document, index).is_some()
             && attr("contenteditable").is_some_and(is_editing_host_value)
+            && !document
+                .parent_of(index)
+                .is_some_and(|parent| is_editable(document, parent))
 }
 
 /// The element children of `index`, then their descendants, in tree
