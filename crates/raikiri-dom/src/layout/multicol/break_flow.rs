@@ -197,6 +197,7 @@ fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
     node.display == DisplayValue::Inline
         && node.style.display == Display::Block
         && node.ifc.is_none()
+        && !in_paragraph_with_lines(tree, id)
         && has_rendered_element_child(tree, id)
         && node.children.iter().all(|&child| {
             let child = &tree.nodes[child];
@@ -211,6 +212,20 @@ fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
                     })
                 }
         })
+}
+
+/// Whether the inline box belongs to a paragraph that lays out lines, such as
+/// one holding preserved white space next to the blocks. The block-in-inline
+/// split then leaves those lines around the blocks, and they are painted by
+/// that paragraph rather than by a line-less wrapper.
+fn in_paragraph_with_lines(tree: &Document, id: usize) -> bool {
+    std::iter::successors(tree.nodes[id].parent, |&ancestor| {
+        tree.nodes[ancestor].parent
+    })
+    .find(|&ancestor| tree.nodes[ancestor].display != DisplayValue::Inline)
+    .and_then(|ancestor| tree.nodes[ancestor].ifc.as_ref())
+    .and_then(|root| root.lines.as_ref())
+    .is_some_and(|lines| !lines.lines.is_empty())
 }
 
 fn has_rendered_element_child(tree: &Document, id: usize) -> bool {

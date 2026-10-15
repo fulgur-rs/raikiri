@@ -1242,3 +1242,14 @@ fn a_forced_break_inside_an_inline_wrapper_moves_the_next_block_to_the_next_colu
         [("A".into(), (0.0, 16.0)), ("B".into(), (60.0, 16.0))]
     );
 }
+
+#[test]
+fn a_preserved_line_break_inside_an_inline_wrapper_keeps_its_line() {
+    let document = lay_out(
+        "<div class=mc><div><span class=w>\n<div style='break-after:column'>A</div></span><span><div>B</div></span></div></div>",
+        ".mc{height:60px;column-fill:auto} .w{white-space:pre}",
+    );
+    // The preserved newline makes an empty line ahead of the block, so the
+    // wrapper belongs to a paragraph and is not a line-less block wrapper.
+    assert_eq!(text_origins(&document)[0], ("A".into(), (0.0, 36.0)));
+}
