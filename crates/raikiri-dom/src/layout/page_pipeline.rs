@@ -3067,11 +3067,16 @@ fn clear_floats_at_forced_breaks(document: &mut Document, cascade: &CascadeResul
                 // flow, as pagination does, while its own `page` value and
                 // its unnamed content take no part. Its content is in a
                 // formatting context of its own, so only the boxes after it
-                // start below the earlier floats.
-                let last = child_boxes(document, child, false)
-                    .into_iter()
-                    .rev()
-                    .find(|item| item.is_none_or(|item| !is_float(document, item)))
+                // start below the earlier floats. A monolithic box passes no
+                // page name on.
+                let last = (!is_monolithic_for_pagination(document, cascade, child))
+                    .then(|| {
+                        child_boxes(document, child, false)
+                            .into_iter()
+                            .rev()
+                            .find(|item| item.is_none_or(|item| !is_float(document, item)))
+                    })
+                    .flatten()
                     .flatten();
                 if let Some(last) = last {
                     let name = end_page_name(document, &mut trailing, last, inherited.clone());

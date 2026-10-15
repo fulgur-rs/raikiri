@@ -2199,6 +2199,8 @@ fn pipeline_clears_floats_after_a_named_page_inside_a_static_absolute_box() {
     assert_eq!(tops_by_id(&run(&doc), &["after"]), [300.0]);
     // An absolutely positioned box whose content is unnamed passes no page
     // name on, so the two `y` boxes around it share their page.
+    // Nor does a monolithic one, here an orthogonal flow, whatever its
+    // content's page names.
     for content in ["", "t", "<div>t</div>"] {
         let doc = parse(&format!(
             "<style>@page{{size:200px 100px;margin:0}} body{{margin:0;line-height:10px}}</style>\
@@ -2210,4 +2212,11 @@ fn pipeline_clears_floats_after_a_named_page_inside_a_static_absolute_box() {
         let tops = tops_by_id(&run(&doc), &["first", "second"]);
         assert_eq!(tops[1] - tops[0], 10.0, "{content:?}");
     }
+    let doc = parse(
+        "<style>@page{size:200px 100px;margin:0} body{margin:0;line-height:10px}</style>\
+         <div style='float:left;width:50px;height:250px'></div><div style='height:20px'>a</div>\
+         <div style='position:absolute;writing-mode:vertical-rl;height:20px'><div style='page:x;width:10px'>x</div></div>\
+         <div id=after style='height:10px'>after</div>",
+    );
+    assert_eq!(tops_by_id(&run(&doc), &["after"]), [20.0]);
 }
