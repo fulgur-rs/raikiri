@@ -1,15 +1,19 @@
 use super::*;
 
 #[test]
-fn sideways_ifc_fallback_uses_horizontal_percentage_edge_basis() {
-    for mode in [
-        raikiri_style::property::WritingMode::SidewaysRl,
-        raikiri_style::property::WritingMode::SidewaysLr,
+fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
+    use raikiri_style::property::WritingMode;
+    for (mode, expected) in [
+        (WritingMode::HorizontalTb, 60.0),
+        (WritingMode::VerticalRl, 30.0),
+        (WritingMode::VerticalLr, 30.0),
+        (WritingMode::SidewaysRl, 30.0),
+        (WritingMode::SidewaysLr, 30.0),
     ] {
         let mut tree = Document::new();
         let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
         let node = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
-        tree.nodes[parent].authored_writing_mode = Some(mode);
+        tree.nodes[parent].used_writing_mode = mode;
 
         assert_eq!(
             ifc_parent_inline_size(
@@ -17,11 +21,11 @@ fn sideways_ifc_fallback_uses_horizontal_percentage_edge_basis() {
                 node,
                 Size {
                     width: Some(60.0),
-                    height: None,
+                    height: Some(30.0),
                 },
             ),
-            Some(60.0),
-            "{mode:?} uses the horizontal IFC fallback basis"
+            Some(expected),
+            "{mode:?} uses its containing block inline basis"
         );
     }
 }

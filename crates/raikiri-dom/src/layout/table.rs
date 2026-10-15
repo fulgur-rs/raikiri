@@ -132,24 +132,7 @@ struct RowPassLayout {
 // ---------------------------------------------------------------------------
 
 fn table_writing_mode(doc: &Document, table_idx: usize) -> WritingMode {
-    let mut current = Some(doc.ifc_source_owner(table_idx));
-    while let Some(id) = current {
-        if let Some(mode) = doc.nodes[id].authored_writing_mode {
-            return mode;
-        }
-        current = doc.parent_of(id);
-    }
-    WritingMode::HorizontalTb
-}
-
-fn is_vertical_writing_mode(mode: WritingMode) -> bool {
-    matches!(
-        mode,
-        WritingMode::VerticalRl
-            | WritingMode::VerticalLr
-            | WritingMode::SidewaysRl
-            | WritingMode::SidewaysLr
-    )
+    doc.nodes[doc.ifc_source_owner(table_idx)].used_writing_mode
 }
 
 fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool) -> f32 {
@@ -217,7 +200,7 @@ fn layout_table_caption(
         .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption)?;
     let style = doc.nodes[caption_id].style.clone();
     // Let block layout apply authored sizes in their box-sizing domain.
-    let vertical = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    let vertical = table_writing_mode(doc, table_idx).is_vertical();
     let inline_basis = if vertical {
         parent_height.unwrap_or(0.0)
     } else {
@@ -357,7 +340,7 @@ fn position_table_caption(
         Size::ZERO
     };
     let mode = table_writing_mode(doc, table_idx);
-    let vertical = is_vertical_writing_mode(mode);
+    let vertical = mode.is_vertical();
     let before =
         caption_id.is_some_and(|id| doc.nodes[id].caption_side != CaptionSideValue::Bottom);
     let right_to_left = matches!(mode, WritingMode::VerticalRl | WritingMode::SidewaysRl);
@@ -479,7 +462,7 @@ fn compute_table_layout_checked(
         resolve_collapsed_cell_borders(doc, &grid, index);
         resolve_collapsed_table_edges(doc, &grid, table_idx);
     }
-    let vertical_writing = is_vertical_writing_mode(table_writing_mode(doc, table_idx));
+    let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
     // CAPMIN constrains the grid's inline axis before its tracks are assigned;
     // growing only the wrapper would leave the cells and grid paint too small.
     let caption_inline_minimum = caption_minimum_inline_size(doc, table_idx, vertical_writing);
@@ -2360,8 +2343,7 @@ fn place_cells(
                     .resolve_or_zero(Some(cell_width), crate::taffy_impl::resolve_calc),
             )
         };
-        let vertical_cell =
-            vertical_writing && is_vertical_writing_mode(table_writing_mode(doc, cell.node_id));
+        let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
         let collapsed_empty = cell_height == 0.0
             && doc
                 .ifc_layout_node(cell.node_id)
@@ -2479,7 +2461,7 @@ fn reposition_cells_for_vertical_writing(
         layout.size.width = cell_width;
         layout.size.height = height;
         let cell_writing_mode = table_writing_mode(doc, cell.node_id);
-        if !is_vertical_writing_mode(cell_writing_mode) {
+        if !cell_writing_mode.is_vertical() {
             // A horizontal cell in a vertical table still aligns content on
             // its own block axis. Preserve the normal pass's vertical shift.
             doc.table_layout_node_mut(cell.node_id).unrounded_layout =

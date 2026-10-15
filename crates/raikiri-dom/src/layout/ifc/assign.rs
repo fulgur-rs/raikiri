@@ -11,9 +11,7 @@ use super::style;
 use crate::Document;
 use crate::layout::{BoxParentScope, box_parent};
 use crate::node::NodeFlags;
-use raikiri_style::property::{
-    ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse, WritingMode,
-};
+use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedColumnWidth};
 use raikiri_traits::{LayoutError, NodeKind};
 use rayon::prelude::*;
@@ -150,10 +148,8 @@ fn needs_ifc_layout(
         return Ok(true);
     }
     let cv = &cascade.computed[idx];
-    let vertical_block_children = matches!(
-        cv.cssom_writing_mode,
-        WritingMode::VerticalRl | WritingMode::VerticalLr
-    ) && !is_layout_root(doc, idx)
+    let vertical_block_children = cv.cssom_writing_mode.is_vertical()
+        && !is_layout_root(doc, idx)
         && matches!(cv.column_count, ColumnCountValue::Auto)
         && matches!(cv.column_width, ComputedColumnWidth::Auto);
     let mut stack = doc.nodes[idx].children.clone();

@@ -151,10 +151,7 @@ struct Area {
 
 /// Whether the writing mode `id` lays its lines out in is vertical.
 fn is_vertical(document: &Document, id: usize) -> bool {
-    !matches!(
-        crate::taffy_impl::used_writing_mode(document, id),
-        WritingMode::HorizontalTb
-    )
+    crate::taffy_impl::used_writing_mode(document, id).is_vertical()
 }
 
 /// Lay out the fixed boxes below the taffy root `root`, and the nested
