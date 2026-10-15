@@ -439,8 +439,9 @@ impl DocumentHost for WptDocumentHost {
     }
 
     /// Being rendered here means no inclusive ancestor computes to
-    /// `display: none` or is an HTML element layout never renders, such as
-    /// `script`, whatever its computed display. A box placed off every page still counts, which the
+    /// `display: none`, is an HTML element layout never renders, such as
+    /// `script`, whatever its computed display, or is an SVG never-rendered
+    /// element such as `defs`. A box placed off every page still counts, which the
     /// page-scene geometry behind [`Self::box_geometry`] cannot tell apart.
     fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
         let Some(styles) = self.computed_styles.as_ref() else {
@@ -457,6 +458,7 @@ impl DocumentHost for WptDocumentHost {
                 || document
                     .get_node(index)
                     .is_some_and(|node| node.is_non_rendered_html_element())
+                || is_never_rendered_svg_element(document, index)
             {
                 return Ok(false);
             }
@@ -612,6 +614,35 @@ fn compute_scroll_content_extents(
 /// (`position: running(...)`, taken out of the flow into a page margin box),
 /// and any value this crate does not know yet (the enum is
 /// `#[non_exhaustive]`) all read as `static`.
+/// Whether `index` is one of SVG's never-rendered elements, which with
+/// their descendants are not rendered even when no style hides them.
+///
+/// Spec: <https://svgwg.org/svg2-draft/render.html#TermNeverRenderedElement>
+fn is_never_rendered_svg_element(document: &raikiri_dom::Document, index: usize) -> bool {
+    document.element_namespace_uri(index) == Some("http://www.w3.org/2000/svg")
+        && document
+            .get_node(index)
+            .and_then(|node| node.tag_name())
+            .is_some_and(|tag| {
+                matches!(
+                    tag,
+                    "clipPath"
+                        | "defs"
+                        | "desc"
+                        | "linearGradient"
+                        | "marker"
+                        | "mask"
+                        | "metadata"
+                        | "pattern"
+                        | "radialGradient"
+                        | "script"
+                        | "style"
+                        | "symbol"
+                        | "title"
+                )
+            })
+}
+
 fn position_kind(value: &raikiri_style::property::PositionValue) -> PositionKind {
     use raikiri_style::property::PositionValue as P;
     match value {

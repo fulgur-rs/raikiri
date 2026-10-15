@@ -624,3 +624,16 @@ fn listeners_that_keep_focus_invalid_cannot_stop_the_page_settling() {
         "document.activeElement === document.body && blurs === 16 && !b.matches(':focus')",
     );
 }
+
+#[test]
+fn an_out_of_range_tabindex_still_makes_an_element_focusable() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var span = document.body.appendChild(document.createElement('span'));\
+         span.setAttribute('tabindex', '99999999999999999999999'); span.focus();\
+         var huge = document.activeElement === span && span.tabIndex === -1;\
+         span.blur(); span.setAttribute('tabindex', ' -2147483649x'); span.focus();\
+         huge && document.activeElement === span && span.tabIndex === -1",
+    );
+}

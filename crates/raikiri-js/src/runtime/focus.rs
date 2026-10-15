@@ -22,6 +22,15 @@ const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-integers>
 fn parse_integer(value: &str) -> Option<i32> {
+    let (negative, digits) = integer_digits(value)?;
+    let magnitude: i64 = digits.parse().ok()?;
+    i32::try_from(if negative { -magnitude } else { magnitude }).ok()
+}
+
+/// The sign and leading digit run of `value` under HTML's rules for
+/// parsing integers, or `None` when it has no digits. A value with digits
+/// is a valid integer however large it is.
+fn integer_digits(value: &str) -> Option<(bool, &str)> {
     let rest = value.trim_start_matches(['\t', '\n', '\x0C', '\r', ' ']);
     let (negative, rest) = match rest.as_bytes().first() {
         Some(b'-') => (true, &rest[1..]),
@@ -29,11 +38,7 @@ fn parse_integer(value: &str) -> Option<i32> {
         _ => (false, rest),
     };
     let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    if digits == 0 {
-        return None;
-    }
-    let magnitude: i64 = rest[..digits].parse().ok()?;
-    i32::try_from(if negative { -magnitude } else { magnitude }).ok()
+    (digits > 0).then(|| (negative, &rest[..digits]))
 }
 
 fn tag_in<'a>(document: &'a Document, index: usize, namespace: &str) -> Option<&'a str> {
@@ -217,7 +222,7 @@ fn is_focusable(document: &Document, index: usize) -> bool {
     let attr = |name| document.element_attribute(index, name);
     !is_actually_disabled(document, index)
         && is_connected_and_not_inert(document, index)
-        && (attr("tabindex").and_then(parse_integer).is_some()
+        && (attr("tabindex").and_then(integer_digits).is_some()
             || is_foreign_link(document, index)
             || focusable_by_default(document, index)
             || html && attr("contenteditable").is_some_and(is_editing_host_value))
