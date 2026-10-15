@@ -6304,7 +6304,7 @@ fn paginate_flow(
                 // A box with no block size at a page's end still fits on
                 // that page, so it does not open the next one: a forced
                 // break after it would otherwise leave it alone on a page.
-                let mut natural_page = if height <= 0.001 {
+                let mut natural_page = if height <= 0.0 {
                     page_index_for_end(effective_y)
                 } else {
                     page_index_for_y(effective_y)
