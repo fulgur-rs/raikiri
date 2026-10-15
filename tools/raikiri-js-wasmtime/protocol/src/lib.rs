@@ -56,6 +56,7 @@ pub enum HostOperation {
         markup: String,
     },
     Fetch(String),
+    LoadImage(String),
 }
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Response {

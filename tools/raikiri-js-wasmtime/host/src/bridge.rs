@@ -81,6 +81,11 @@ impl Bridge {
                 .fetch_script(&url)
                 .map(|s| HostValue::Text(Some(s)))
                 .map_err(|e| e.to_string()),
+            HostOperation::LoadImage(url) => self
+                .host
+                .load_image(&url)
+                .map(|()| HostValue::Unit)
+                .map_err(|e| e.to_string()),
         }
     }
     pub fn take_response(&mut self, capacity: usize) -> Result<Vec<u8>, String> {

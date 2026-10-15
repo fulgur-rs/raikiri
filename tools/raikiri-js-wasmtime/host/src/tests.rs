@@ -368,6 +368,7 @@ fn hostile_flush_rejects_invalid_snapshot() {
         nodes: Vec::new(),
         quirks: 0,
         stylesheets: Vec::new(),
+        base_url: None,
     };
     assert!(roundtrip_response(&mut b, HostOperation::Flush(empty)).is_err());
 }
@@ -388,6 +389,8 @@ fn hostile_fragment_and_fetch_propagate_host_errors() {
     // Default test host fails fetches (unsupported) but succeeds fragments.
     let mut b = bridge();
     assert!(roundtrip_response(&mut b, HostOperation::Fetch("http://x/".into())).is_err());
+    // Likewise the default image loader fails every request.
+    assert!(roundtrip_response(&mut b, HostOperation::LoadImage("http://x/".into())).is_err());
     assert!(
         roundtrip_response(
             &mut b,
