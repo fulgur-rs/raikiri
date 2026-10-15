@@ -68,13 +68,17 @@ fn in_template_contents(document: &raikiri_dom::Document, index: usize) -> bool 
 /// HTML "update the image data" for `index`, after its `src` was set or
 /// removed, or for an `<img>` the parser created. Starts a new request,
 /// which makes any earlier pending one stale; with no `src` there is no
-/// request and nothing fires.
+/// request and nothing fires. An image in template contents is only
+/// remembered: [`wake_adopted_images`] starts its request once it is moved
+/// out (HTML runs these steps again when an `<img>` is adopted).
 pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult<()> {
     let src = with_state(context, |s| {
         let document = s.host.document();
         if in_template_contents(document, index) {
+            s.inert_images.insert(index);
             return None;
         }
+        s.inert_images.remove(&index);
         document.element_attribute(index, "src").map(str::to_owned)
     })?;
     let request = with_state(context, |s| {
@@ -131,8 +135,8 @@ pub(crate) fn update_parsed_images(context: &mut Context) -> JsResult<()> {
 }
 
 /// Start a request for every `<img>` below `root` (not `root` itself), in
-/// tree order: the elements a fragment parse just created there. Template
-/// contents are not children, so their inert images never load.
+/// tree order: the elements a fragment parse just created there. Images in
+/// template contents are only remembered, as [`update_image_data`] says.
 pub(crate) fn update_images_below(context: &mut Context, root: usize) -> JsResult<()> {
     let images = with_state(context, |s| {
         let document = s.host.document();
@@ -144,11 +148,29 @@ pub(crate) fn update_images_below(context: &mut Context, root: usize) -> JsResul
             }
             if let Some(node) = document.get_node(index) {
                 stack.extend(node.children.iter().rev());
+                stack.extend(node.template_contents());
             }
         }
         images
     })?;
     for index in images {
+        update_image_data(context, index)?;
+    }
+    Ok(())
+}
+
+/// After a tree mutation, start the request of each remembered inert image
+/// that is no longer in template contents.
+pub(crate) fn wake_adopted_images(context: &mut Context) -> JsResult<()> {
+    let adopted = with_state(context, |s| {
+        let document = s.host.document();
+        s.inert_images
+            .iter()
+            .copied()
+            .filter(|&index| !in_template_contents(document, index))
+            .collect::<Vec<_>>()
+    })?;
+    for index in adopted {
         update_image_data(context, index)?;
     }
     Ok(())

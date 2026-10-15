@@ -3,7 +3,7 @@
 
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use boa_engine::object::FunctionObjectBuilder;
@@ -102,6 +102,9 @@ pub(crate) struct State {
     pub image_requests: HashMap<usize, u64>,
     /// The number given to the last image request.
     pub next_image_request: u64,
+    /// `<img>` elements in template contents whose request waits until they
+    /// are moved out.
+    pub inert_images: HashSet<usize>,
     /// The Window's live Selection object, created on first access.
     pub selection_object: Option<JsObject>,
     /// Ranges currently held by the singleton Selection object.
@@ -358,6 +361,7 @@ impl DomRuntime {
             children_collections: HashMap::new(),
             image_requests: HashMap::new(),
             next_image_request: 0,
+            inert_images: HashSet::new(),
             selection_object: None,
             selection_ranges: Vec::new(),
             custom_highlights: HashMap::new(),

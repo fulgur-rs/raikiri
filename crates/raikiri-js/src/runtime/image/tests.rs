@@ -285,7 +285,23 @@ fn cloned_images_start_their_own_requests() {
 }
 
 #[test]
-fn template_content_images_never_load() {
+fn cloned_images_compile_their_handler_attributes_first() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var log = []; var img = document.createElement('img');\
+         img.setAttribute('onload', 'log.push(this === copy ? \"root\" : \"inner\")');\
+         img.src = 'missing.png';\
+         var div = document.createElement('div'); div.appendChild(img);\
+         var copy = img.cloneNode(); var deep = div.cloneNode(true);\
+         img.removeAttribute('src');\
+         copy.src = 'ok.png'; deep.firstChild.src = 'ok.png'; true",
+    );
+    ok_after_tasks(&mut rt, "log.sort().join() === 'inner,root'");
+}
+
+#[test]
+fn template_content_images_wait_until_moved_out() {
     let (mut host, body) = host();
     let document = &mut host.document;
     let template = document.create_detached_element("template").unwrap();
@@ -293,19 +309,36 @@ fn template_content_images_never_load() {
     let contents = document.allocate_template_fragment_root(template);
     let img = document.create_detached_element("img").unwrap();
     document.append_child(contents, img).unwrap();
+    let parsed = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(parsed, "src", "ok.png")
+        .unwrap();
+    document.append_child(contents, parsed).unwrap();
     document.mark_in_document_flags();
     let mut rt = DomRuntime::new(host).unwrap();
-    let object = wrap(rt.context_mut(), img).unwrap();
-    rt.context_mut()
-        .register_global_property(js_string!("img"), object, Attribute::all())
-        .unwrap();
+    for (name, index) in [("img", img), ("parsed", parsed)] {
+        let object = wrap(rt.context_mut(), index).unwrap();
+        rt.context_mut()
+            .register_global_property(js_string!(name), object, Attribute::all())
+            .unwrap();
+    }
+    let report = rt.run_document();
+    assert!(report.aborted.is_none(), "{report:?}");
     ok(
         &mut rt,
         "var log = [];\
-         img.onload = img.onerror = function (e) { log.push(e.type); };\
-         img.src = 'ok.png'; img.complete",
+         img.onload = img.onerror = function (e) { log.push('img:' + e.type); };\
+         parsed.onload = parsed.onerror = function (e) { log.push('parsed:' + e.type); };\
+         img.src = 'ok.png'; img.complete && parsed.complete",
     );
     ok_after_tasks(&mut rt, "log.length === 0");
+    // Moving them into the document starts the requests they were holding.
+    ok(
+        &mut rt,
+        "document.body.appendChild(img); document.body.appendChild(parsed);\
+         !img.complete && !parsed.complete",
+    );
+    ok_after_tasks(&mut rt, "log.join() === 'img:load,parsed:load'");
 }
 
 #[test]

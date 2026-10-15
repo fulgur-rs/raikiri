@@ -1207,9 +1207,26 @@ pub(crate) fn sync_all_event_handler_content_attributes(context: &mut Context) -
 /// Runs after that setter replaces a subtree, so only newly inserted nodes
 /// recompile and IDL-set slots elsewhere are untouched.
 pub(crate) fn sync_event_handlers_in_subtree(context: &mut Context, root: usize) -> JsResult<()> {
+    sync_event_handlers_below(context, root, false)
+}
+
+/// [`sync_event_handlers_in_subtree`] plus `root`'s own handler attributes:
+/// for a node that was just created with its attributes, such as a clone.
+pub(crate) fn sync_event_handlers_in_tree(context: &mut Context, root: usize) -> JsResult<()> {
+    sync_event_handlers_below(context, root, true)
+}
+
+fn sync_event_handlers_below(
+    context: &mut Context,
+    root: usize,
+    include_root: bool,
+) -> JsResult<()> {
     let indices = with_state(context, |s| {
         let doc = s.host.document();
         let mut out = Vec::new();
+        if include_root {
+            out.push(root);
+        }
         let Some(root_node) = doc.get_node(root) else {
             return Vec::new();
         };

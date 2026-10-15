@@ -15,10 +15,17 @@ use super::webidl::{
 /// `dirty` alone cannot serve live collections: a successful flush clears it
 /// while the DOM stays changed.
 pub(crate) fn mark_dirty(context: &mut Context) -> JsResult<()> {
-    with_state(context, |s| {
+    let inert_images = with_state(context, |s| {
         s.dirty = true;
         s.generation = s.generation.wrapping_add(1);
-    })
+        !s.inert_images.is_empty()
+    })?;
+    // Every tree mutation marks the document dirty, so this is where an
+    // image moved out of template contents starts loading.
+    if inert_images {
+        super::image::wake_adopted_images(context)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn js_str(s: &str) -> JsValue {
