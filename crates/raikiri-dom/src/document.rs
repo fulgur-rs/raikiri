@@ -311,6 +311,9 @@ pub struct Document {
     pub(crate) page_projection: crate::page_projection::PageProjection,
     pub(crate) nodes: Vec<Node>,
     pub(crate) resolved_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
+    /// URLs a script host selected for `<img>` elements, with the `src`
+    /// each was selected for; see [`Document::select_image_url`].
+    pub(crate) selected_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, PreparedImage>,
@@ -643,6 +646,7 @@ impl Document {
             page_projection: crate::page_projection::PageProjection::default(),
             nodes,
             resolved_image_urls: Default::default(),
+            selected_image_urls: Default::default(),
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
@@ -1957,6 +1961,7 @@ impl Document {
             page_projection: _,
             nodes: arena,
             resolved_image_urls,
+            selected_image_urls,
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
@@ -2029,6 +2034,7 @@ impl Document {
         document.nodes = copied;
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
+        document.selected_image_urls = remap_keys(selected_image_urls, nodes);
         document.list_marker_images = remap_keys(list_marker_images, nodes);
         document.content_images = content_images
             .iter()
@@ -3511,6 +3517,27 @@ fn marker_image_size(
 }
 
 impl Document {
+    /// Record `url` as the image `element` selected for its `src` value
+    /// `src`. HTML resolves an `<img>` source once, when its request starts,
+    /// so a later `<base href>` change does not move it to another resource;
+    /// layout uses this URL for as long as `src` keeps that value.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/urls-and-fetching.html#document-base-urls>
+    pub fn select_image_url(&mut self, element: usize, src: &str, url: url::Url) {
+        self.selected_image_urls
+            .insert(element, (src.to_owned(), url));
+    }
+
+    /// The URL [`Document::select_image_url`] recorded for `element`, while
+    /// its `src` still has the value it was selected for.
+    pub fn selected_image_url(&self, element: usize) -> Option<&url::Url> {
+        let src = self.get_node(element)?.attribute("src")?;
+        self.selected_image_urls
+            .get(&element)
+            .filter(|(selected_for, _)| selected_for == src)
+            .map(|(_, url)| url)
+    }
+
     /// Absolute image URL resolved during the current layout pass.
     ///
     /// Source attributes remain unchanged. Absolute source URLs also work for

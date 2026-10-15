@@ -112,6 +112,15 @@ pub(crate) fn update_image_data(context: &mut Context, index: usize) -> JsResult
     } else {
         resolve_source(context, &src)?
     };
+    // Layout renders the resource selected here, even if `<base href>`
+    // changes before it runs.
+    if let Some(selected) = url.as_deref().and_then(|url| url::Url::parse(url).ok()) {
+        with_state(context, |s| {
+            s.host
+                .document_mut()
+                .select_image_url(index, &src, selected);
+        })?;
+    }
     let job = NativeJob::new(move |context| {
         finish_request(context, index, request, url.as_deref())?;
         Ok(JsValue::undefined())
@@ -172,6 +181,33 @@ pub(crate) fn update_images_below(context: &mut Context, root: usize) -> JsResul
         update_image_data(context, index)?;
     }
     Ok(())
+}
+
+/// Whether `index` belongs to an inert template document: it sits in
+/// template contents, or is a remembered image not yet adopted out of them.
+pub(crate) fn is_inert(context: &mut Context, index: usize) -> JsResult<bool> {
+    with_state(context, |s| {
+        s.inert_images.contains(&index) || in_template_contents(s.host.document(), index)
+    })
+}
+
+/// Remember every `<img>` at or below `root` as inert, without a request:
+/// the images of a detached copy that still belongs to an inert template
+/// document. [`settle_moved_images`] starts them once they are inserted.
+pub(crate) fn remember_inert_images(context: &mut Context, root: usize) -> JsResult<()> {
+    with_state(context, |s| {
+        let mut stack = vec![root];
+        while let Some(index) = stack.pop() {
+            let document = s.host.document();
+            if is_html_image(document, index) {
+                s.inert_images.insert(index);
+            }
+            if let Some(node) = s.host.document().get_node(index) {
+                stack.extend(node.children.iter().copied());
+                stack.extend(node.template_contents());
+            }
+        }
+    })
 }
 
 /// After a tree mutation, cancel the pending request of each image that was

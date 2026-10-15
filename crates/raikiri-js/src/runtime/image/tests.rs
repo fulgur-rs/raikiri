@@ -378,6 +378,46 @@ fn moving_an_image_into_template_contents_cancels_its_request() {
 }
 
 #[test]
+fn clones_of_template_contents_stay_inert_until_inserted() {
+    let (mut host, body) = host();
+    let document = &mut host.document;
+    let template = document.create_detached_element("template").unwrap();
+    document.append_child(body, template).unwrap();
+    let contents = document.allocate_template_fragment_root(template);
+    let img = document.create_detached_element("img").unwrap();
+    document
+        .set_element_attribute(img, "src", "ok.png")
+        .unwrap();
+    document.append_child(contents, img).unwrap();
+    document.mark_in_document_flags();
+    let mut rt = DomRuntime::new(host).unwrap();
+    let object = wrap(rt.context_mut(), img).unwrap();
+    rt.context_mut()
+        .register_global_property(js_string!("img"), object, Attribute::all())
+        .unwrap();
+    let report = rt.run_document();
+    assert!(report.aborted.is_none(), "{report:?}");
+    ok(
+        &mut rt,
+        "var log = []; function watch(name, image) {\
+           image.onload = image.onerror = function (e) { log.push(name + ':' + e.type); };\
+         }\
+         var copy = img.cloneNode(); watch('copy', copy);\
+         var deep = img.parentNode.cloneNode(true); watch('deep', deep.firstChild);\
+         var imported = document.importNode(img); watch('imported', imported);\
+         copy.complete && deep.firstChild.complete && !imported.complete",
+    );
+    // `importNode` adopts its copy, which loads; the `cloneNode` copies wait.
+    ok_after_tasks(&mut rt, "log.join() === 'imported:load'");
+    ok(
+        &mut rt,
+        "log = []; document.body.appendChild(copy); document.body.appendChild(deep);\
+         !copy.complete",
+    );
+    ok_after_tasks(&mut rt, "log.join() === 'copy:load,deep:load'");
+}
+
+#[test]
 fn an_empty_source_is_complete_while_its_error_is_queued() {
     let mut rt = rt();
     ok(
@@ -410,6 +450,42 @@ fn a_base_element_sets_the_url_images_resolve_against() {
          && img.src === 'https://example.test/dir/ok.png'",
     );
     ok_after_tasks(&mut rt, "log.join() === 'load'");
+}
+
+#[test]
+fn layout_keeps_the_url_an_image_selected_before_a_base_change() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var img = document.createElement('img'); img.id = 'picked';\
+         document.body.appendChild(img); img.src = 'ok.png';\
+         var base = document.createElement('base');\
+         base.setAttribute('href', '/elsewhere/');\
+         document.head.appendChild(base); true",
+    );
+    let selected = with_state(rt.context_mut(), |s| {
+        let document = s.host.document();
+        let img = (0..document.node_count())
+            .find(|&index| document.element_attribute(index, "id") == Some("picked"))
+            .unwrap();
+        document.selected_image_url(img).map(ToString::to_string)
+    })
+    .unwrap();
+    assert_eq!(selected.as_deref(), Some(LOADS));
+    // A new `src` value is selected afresh, against the current base.
+    ok(&mut rt, "img.src = 'other.png'; true");
+    let selected = with_state(rt.context_mut(), |s| {
+        let document = s.host.document();
+        let img = (0..document.node_count())
+            .find(|&index| document.element_attribute(index, "id") == Some("picked"))
+            .unwrap();
+        document.selected_image_url(img).map(ToString::to_string)
+    })
+    .unwrap();
+    assert_eq!(
+        selected.as_deref(),
+        Some("https://example.test/elsewhere/other.png")
+    );
 }
 
 #[test]
