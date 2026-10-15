@@ -4628,3 +4628,7 @@ css/css-pseudo/first-letter-punctuation-dynamic.html
 css/css-pseudo/marker-content-022.html
 css/css-tables/border-collapse-dynamic-col-001.html
 css/cssom/stylesheet-replacedata-dynamic.html
+
+# --- text overflowing into the right page padding (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
+# Pass once flowed text on pages that follow the y axis is clipped at the page border box's right edge; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-box-009-print.html

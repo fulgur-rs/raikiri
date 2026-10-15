@@ -1448,6 +1448,57 @@ fn transformed_text_and_image_fallback_keep_page_content_clips_untransformed() {
 }
 
 #[test]
+fn flowed_text_page_clip_includes_page_padding() {
+    let scene = transform_markup_scene(
+        "<style>@page { margin:10px 200px; padding:20px 30px }</style><body style='margin:0'>TEXT</body>",
+    );
+    let page_width = PageBox::A4.width as f64;
+    let page_height = PageBox::A4.height as f64;
+    let glyph_index = scene
+        .commands
+        .iter()
+        .position(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        .expect("the text paints");
+    let clip = scene.commands[..glyph_index]
+        .iter()
+        .rev()
+        .find_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(kurbo::Shape::bounding_box(&clip.clip)),
+            _ => None,
+        })
+        .expect("flowed text is clipped to the page");
+    // The clip ends at the page border box's right edge, past the 30px
+    // right page padding, so ink overflowing into that padding shows.
+    // Along y, the paging axis, it keeps to the page content box.
+    assert!((clip.x1 - (page_width - 200.0)).abs() < 0.01, "{clip:?}");
+    assert!((clip.y0 - 30.0).abs() < 0.01, "{clip:?}");
+    assert!((clip.y1 - (page_height - 30.0)).abs() < 0.01, "{clip:?}");
+}
+
+#[test]
+fn vertical_root_text_page_clip_keeps_right_page_padding_clipped() {
+    let scene = transform_markup_scene(
+        "<style>@page { margin:10px 200px; padding:20px 30px }</style><html style='writing-mode:vertical-lr'><body style='margin:0'>TEXT</body></html>",
+    );
+    let page_width = PageBox::A4.width as f64;
+    let glyph_index = scene
+        .commands
+        .iter()
+        .position(|command| matches!(command, RenderCommand::GlyphRun(_)))
+        .expect("the text paints");
+    let clip = scene.commands[..glyph_index]
+        .iter()
+        .rev()
+        .find_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(kurbo::Shape::bounding_box(&clip.clip)),
+            _ => None,
+        })
+        .expect("flowed text is clipped to the page");
+    // x is the paging axis here, so the right page padding stays clipped.
+    assert!((clip.x1 - (page_width - 230.0)).abs() < 0.01, "{clip:?}");
+}
+
+#[test]
 fn replaced_inline_image_composes_own_and_ancestor_transform() {
     struct Pixels;
     impl ImagePixelSource for Pixels {

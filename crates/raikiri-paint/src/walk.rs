@@ -2378,7 +2378,9 @@ pub(crate) fn paint_document_impl(
     ];
     // Flowed text is clipped to the page content box when the page is at
     // least twice as wide as its content; fixed boxes repeat on every page
-    // and are not clipped.
+    // and are not clipped. When pages follow the y axis, the right edge is
+    // the page border box instead: x is not the paging axis there, so ink
+    // that overflows into the right page padding stays visible.
     let text_page_clip = |inside_fixed: bool| -> Option<Rect> {
         (!inside_fixed
             && content_width.is_finite()
@@ -2389,7 +2391,13 @@ pub(crate) fn paint_document_impl(
             Rect::new(
                 page_offset_x as f64,
                 (margins.top + insets.top) as f64,
-                (page_box.width - margins.right - insets.right) as f64,
+                (page_box.width
+                    - margins.right
+                    - if pages_follow_x_axis.is_some() {
+                        insets.right
+                    } else {
+                        0.0
+                    }) as f64,
                 (margins.top + insets.top + content_height) as f64,
             )
         })
