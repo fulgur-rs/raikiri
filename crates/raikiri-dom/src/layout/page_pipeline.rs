@@ -6731,14 +6731,20 @@ pub fn layout_single_page_with_resolver_and_base_url(
     layout_single_page(document, cascade, page_box)
 }
 
-/// Whether `id` generates an in-flow box or line inside it. Out-of-flow
-/// children do not stop a box's margins from collapsing through it
-/// (CSS 2 §8.3.1).
+/// Whether `id` holds in-flow content that keeps its margins from collapsing
+/// through it (CSS 2 §8.3.1). Out-of-flow children do not count, and neither
+/// does an empty block child whose own margins collapse through it.
 fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let mut boxes = Vec::new();
-    document.nodes[id].children.iter().any(|&child| {
+    for &child in &document.nodes[id].children {
         push_in_flow_boxes_rev(document, cascade, child, &mut boxes);
-        !boxes.is_empty()
+    }
+    boxes.into_iter().any(|child| {
+        let node = &document.nodes[child];
+        node.kind() == NodeKind::Text
+            || cascade.computed[child].display != DisplayValue::Block
+            || node.unrounded_layout.size.height > 0.0
+            || has_in_flow_content(document, cascade, child)
     })
 }
 
