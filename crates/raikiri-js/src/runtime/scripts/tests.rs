@@ -165,6 +165,7 @@ impl DocumentHost for ScriptFragmentHost {
                     quirks: 0,
                     base_url: None,
                     selected_image_urls: Vec::new(),
+                    focused: None,
                     stylesheets: vec![],
                 },
                 3,

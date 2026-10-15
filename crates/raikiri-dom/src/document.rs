@@ -314,6 +314,8 @@ pub struct Document {
     /// URLs a script host selected for `<img>` elements, with the `src`
     /// each was selected for; see [`Document::select_image_url`].
     pub(crate) selected_image_urls: std::collections::HashMap<usize, (String, url::Url)>,
+    /// The element a script focused; see [`Document::focused_element`].
+    pub(crate) focused: Option<usize>,
     canvas_bitmap_bytes: CanvasBitmapByteCount,
     /// Decoded marker images retained for both sizing and painting.
     list_marker_images: std::collections::HashMap<usize, PreparedImage>,
@@ -655,6 +657,7 @@ impl Document {
             nodes: nodes.into(),
             resolved_image_urls: Default::default(),
             selected_image_urls: Default::default(),
+            focused: None,
             canvas_bitmap_bytes: CanvasBitmapByteCount(Some(0)),
             list_marker_images: Default::default(),
             content_images: Default::default(),
@@ -1972,6 +1975,7 @@ impl Document {
             nodes: arena,
             resolved_image_urls,
             selected_image_urls,
+            focused,
             canvas_bitmap_bytes: _,
             list_marker_images,
             content_images,
@@ -2048,6 +2052,7 @@ impl Document {
         document.root = 0;
         document.resolved_image_urls = remap_keys(resolved_image_urls, nodes);
         document.selected_image_urls = remap_keys(selected_image_urls, nodes);
+        document.focused = focused.and_then(|old| new_of_old.get(&old).copied());
         document.list_marker_images = remap_keys(list_marker_images, nodes);
         document.content_images = content_images
             .iter()
@@ -3530,6 +3535,29 @@ fn marker_image_size(
 }
 
 impl Document {
+    /// Make `element` the focused element, or clear focus with `None`. The
+    /// caller decides whether the element is focusable.
+    pub fn set_focused_element(&mut self, element: Option<usize>) {
+        self.focused = element;
+    }
+
+    /// The focused element while it is an element in this document's tree.
+    /// One removed from the tree no longer has focus (HTML "focus fixup"),
+    /// so `:focus` stops matching it.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focus-fixup-rule>
+    pub fn focused_element(&self) -> Option<usize> {
+        let focused = self.focused?;
+        if self.get_node(focused)?.kind() != crate::NodeKind::Element {
+            return None;
+        }
+        let mut root = focused;
+        while let Some(parent) = self.parent_of(root) {
+            root = parent;
+        }
+        (root == self.root).then_some(focused)
+    }
+
     /// Record `url` as the image `element` selected for its `src` value
     /// `src`. HTML resolves an `<img>` source once, when its request starts,
     /// so a later `<base href>` change does not move it to another resource;

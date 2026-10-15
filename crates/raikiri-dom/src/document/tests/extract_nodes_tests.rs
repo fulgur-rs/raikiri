@@ -79,3 +79,27 @@ fn a_node_listed_without_its_parent_is_detached() {
     assert!(copy.get_node(0).expect("root").children.is_empty());
     assert!(!copy.get_node(1).expect("node").is_in_document());
 }
+
+#[test]
+fn focus_follows_the_element_while_it_is_in_the_tree() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let button = doc.append_element(Some(html), "button", Style::default(), None::<&str>);
+    let text = doc.append_text(html, "x");
+    let detached = doc.append_element(None, "button", Style::default(), None::<&str>);
+    assert_eq!(doc.focused_element(), None);
+    doc.set_focused_element(Some(button));
+    assert_eq!(doc.focused_element(), Some(button));
+    // An extracted copy keeps focus on the copied element.
+    assert_eq!(
+        doc.extract_nodes(&[0, html, button]).focused_element(),
+        Some(2)
+    );
+    assert_eq!(doc.extract_nodes(&[0, html]).focused_element(), None);
+    for unfocusable in [detached, text, usize::MAX] {
+        doc.set_focused_element(Some(unfocusable));
+        assert_eq!(doc.focused_element(), None);
+    }
+    doc.set_focused_element(None);
+    assert_eq!(doc.focused_element(), None);
+}

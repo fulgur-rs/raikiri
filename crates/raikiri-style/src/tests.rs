@@ -5,6 +5,9 @@ fn common_report_pseudo_selectors_parse_without_forgiving_invalid_lists() {
     for source in [
         "a:link",
         "area:any-link",
+        "a:focus",
+        "div:focus-within",
+        "button:focus-visible",
         "::backdrop",
         "input::file-selector-button",
         "*, ::after, ::before, ::backdrop, ::file-selector-button",

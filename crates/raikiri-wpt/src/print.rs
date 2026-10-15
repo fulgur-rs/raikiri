@@ -73,6 +73,7 @@ pub fn render_print_url(
             canvas_bitmaps: None,
             animation_styles: None,
             custom_highlight_ranges: None,
+            focused_path: None,
             require_inline_fonts: false,
             print_page_margin: true,
         },

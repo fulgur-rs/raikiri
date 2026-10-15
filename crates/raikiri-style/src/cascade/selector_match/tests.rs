@@ -115,6 +115,53 @@ fn hyperlink_states_share_namespace_aware_cascade_and_query_matching() {
 }
 
 #[test]
+fn focus_states_match_the_focused_element_and_its_ancestors() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(
+        style,
+        ":focus { color:red } :focus-within { font-weight:bold } \
+         :focus-visible { font-style:italic }",
+    );
+    let outer = doc.push_element(0, "div", None);
+    let inner = doc.push_element(outer, "div", None);
+    let sibling = doc.push_element(0, "div", None);
+    let unfocused = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    assert!(
+        [outer, inner, sibling]
+            .iter()
+            .all(|&id| unfocused.computed[id].color != RED)
+    );
+    doc.focused = Some(inner);
+    let result = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let bold = |id: usize| result.computed[id].font_weight >= 700.0;
+    assert_eq!(result.computed[inner].color, RED);
+    assert_ne!(result.computed[outer].color, RED);
+    assert!(bold(inner) && bold(outer) && !bold(sibling));
+    assert!(matches!(
+        result.computed[inner].font_style,
+        crate::property::FontStyle::Italic
+    ));
+    for (selector, id, expected) in [
+        (":focus", inner, true),
+        (":focus", outer, false),
+        (":focus-within", outer, true),
+        (":focus-within", sibling, false),
+        (":focus-visible", inner, true),
+    ] {
+        assert_eq!(
+            crate::SelectorQuery::parse(selector).unwrap().matches(
+                &doc,
+                StyleNodeId::new(id as u64),
+                &[]
+            ),
+            expected,
+            "{selector} {id}"
+        );
+    }
+}
+
+#[test]
 fn type_selector_applies_color() {
     let cv = cascade_doc("p { color: red }", "p", None);
     assert_eq!(cv.color, RED);

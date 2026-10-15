@@ -28,6 +28,7 @@ fn rich_document() -> Document {
         "a.png",
         url::Url::parse("https://example.test/a.png").unwrap(),
     );
+    doc.set_focused_element(Some(img));
     doc
 }
 
@@ -44,6 +45,9 @@ fn roundtrip_all_logical_kinds() {
 
 #[test]
 fn reject_a_selected_image_url_that_does_not_parse_or_names_no_node() {
+    let mut bad = rich_document().logical_snapshot();
+    bad.focused = Some(usize::MAX);
+    assert!(Document::from_logical_snapshot(bad, 100).is_err());
     for selected in [
         (1, "a.png".to_owned(), "not a url".to_owned()),
         (
@@ -202,6 +206,7 @@ fn reject_empty_arena_and_root_out_of_bounds() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     assert!(empty.validate(100).is_err());
@@ -238,6 +243,7 @@ fn reject_non_document_root_kind() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     // Root points at Text, so validation must fail even though node 0 is a Document.
@@ -305,6 +311,7 @@ fn reject_leaf_children() {
             quirks: 0,
             base_url: None,
             selected_image_urls: Vec::new(),
+            focused: None,
             stylesheets: Vec::new(),
         };
         assert!(bad.validate(100).is_err());
@@ -341,6 +348,7 @@ fn reject_template_link_variants() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     assert!(bad_tag.validate(100).is_err());
@@ -386,6 +394,7 @@ fn reject_template_link_variants() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     assert!(bad_target.validate(100).is_err());
@@ -412,6 +421,7 @@ fn reject_edge_to_root_and_self_loop() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     assert!(back_to_root.validate(100).is_err());
@@ -432,6 +442,7 @@ fn reject_edge_to_root_and_self_loop() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     assert!(self_loop.validate(100).is_err());
@@ -460,6 +471,7 @@ fn reject_detached_cycle_without_repeated_parent() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     assert!(cycle.validate(100).is_err());
@@ -497,6 +509,7 @@ fn snapshot_error_displays_its_reason() {
         quirks: 0,
         base_url: None,
         selected_image_urls: Vec::new(),
+        focused: None,
         stylesheets: Vec::new(),
     };
     let err = bad.validate(100).unwrap_err();

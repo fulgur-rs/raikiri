@@ -381,6 +381,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &query::NON_ELEMENT_PARENT_NODE_MEMBERS,
         &query::PARENT_NODE_QUERY_MEMBERS,
         &query::DOCUMENT_QUERY_MEMBERS,
+        &super::focus::DOCUMENT_FOCUS_MEMBERS,
     ];
     let document = derived(context, "Document", &node_i, &document_members)?;
     let fragment_members = [
@@ -394,6 +395,7 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         &query::HTML_ELEMENT_QUERY_MEMBERS,
         &geometry::HTML_ELEMENT_OFFSET_MEMBERS,
         &dispatch::HTML_ELEMENT_HANDLER_MEMBERS,
+        &super::focus::HTML_ELEMENT_FOCUS_MEMBERS,
     ];
     let html_element = derived(context, "HTMLElement", &element, &html_element_members)?;
     let canvas_members = [&canvas::HTML_CANVAS_ELEMENT_MEMBERS];

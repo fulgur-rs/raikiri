@@ -20,6 +20,8 @@ pub(super) struct PreparedDynamic {
     pub animation_styles: Vec<AnimationStyleSidecar>,
     /// Script-created highlight ranges expressed against the serialized tree.
     pub custom_highlight_ranges: Vec<CustomHighlightPathRange>,
+    /// Child-index path of the element script left focused.
+    pub focused_path: Option<Vec<usize>>,
 }
 
 fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationStyleSidecar> {
@@ -52,6 +54,10 @@ fn animation_style_sidecars(document: &raikiri_dom::Document) -> Vec<AnimationSt
         }
     }
     styles
+}
+
+fn focused_path(document: &raikiri_dom::Document) -> Option<Vec<usize>> {
+    node_path(document, document.focused_element()?)
 }
 
 fn node_path(document: &raikiri_dom::Document, node: usize) -> Option<Vec<usize>> {
@@ -211,6 +217,7 @@ pub(super) fn prepare(
             canvases: Vec::new(),
             animation_styles: Vec::new(),
             custom_highlight_ranges: Vec::new(),
+            focused_path: None,
         });
     }
     let parent = path
@@ -250,6 +257,7 @@ pub(super) fn prepare(
         let mut host = runtime.into_host();
         let custom_highlight_ranges = custom_highlight_paths(host.document(), &highlights);
         let animation_styles = animation_style_sidecars(host.document());
+        let focused_path = focused_path(host.document());
         let html = serialize(host.document(), &report)?;
         let canvases = host.document_mut().take_canvases_in_tree_order();
         Ok(PreparedDynamic {
@@ -257,6 +265,7 @@ pub(super) fn prepare(
             canvases,
             animation_styles,
             custom_highlight_ranges,
+            focused_path,
         })
     }
     #[cfg(feature = "js-wasmtime")]
@@ -278,6 +287,7 @@ pub(super) fn prepare(
             .synchronize_final_document()
             .map_err(|e| ReftestError::RaikiriRender(e.to_string()))?;
         let animation_styles = animation_style_sidecars(runtime.document());
+        let focused_path = focused_path(runtime.document());
         let html = serialize(runtime.document(), &report)?;
         let canvases = runtime.take_canvases_in_tree_order();
         return Ok(PreparedDynamic {
@@ -285,6 +295,7 @@ pub(super) fn prepare(
             canvases,
             animation_styles,
             custom_highlight_ranges: Vec::new(),
+            focused_path,
         });
     }
     #[cfg(not(any(feature = "js-native", feature = "js-wasmtime")))]

@@ -25,6 +25,9 @@ pub struct LogicalSnapshot {
     /// selected; see [`Document::select_image_url`].
     #[cfg_attr(feature = "snapshot-serde", serde(default))]
     pub selected_image_urls: Vec<(usize, String, String)>,
+    /// The element a script focused; see [`Document::focused_element`].
+    #[cfg_attr(feature = "snapshot-serde", serde(default))]
+    pub focused: Option<usize>,
 }
 /// Node contents and ordered children without derived state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -124,6 +127,7 @@ impl LogicalSnapshot {
                 .selected_image_urls
                 .iter()
                 .any(|(element, _, url)| *element >= n || url::Url::parse(url).is_err())
+            || self.focused.is_some_and(|focused| focused >= n)
         {
             return fail("document metadata");
         }
@@ -208,6 +212,7 @@ impl Document {
                 selected.sort_unstable();
                 selected
             },
+            focused: self.focused,
             quirks: match self.quirks_mode() {
                 QuirksMode::NoQuirks => 0,
                 QuirksMode::LimitedQuirks => 1,
@@ -282,6 +287,7 @@ impl Document {
                 .as_deref()
                 .and_then(|url| url::Url::parse(url).ok()),
         );
+        doc.set_focused_element(snapshot.focused);
         // `validate` rejected a selected URL that does not parse.
         for (element, src, url) in snapshot.selected_image_urls {
             if let Ok(url) = url::Url::parse(&url) {
