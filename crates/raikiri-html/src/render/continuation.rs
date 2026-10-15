@@ -281,6 +281,10 @@ fn relayout_from(
         .with_abort_check(inputs.abort_check);
     let mut token_y = None;
     for _ in 0..MAX_MEASURE_PASSES {
+        let mut measure_box = geometry.page_box;
+        measure_box.height = measure_height + geometry.page_box.height;
+        // Only a cancellation landing in this pass fails it; the first
+        // layout and projection already met the same work limits.
         let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
             &mut document,
             &cascade,
@@ -290,20 +294,22 @@ fn relayout_from(
             inputs.resolver,
             inputs.base_url,
             &measure_control,
-        )?; // cov:ignore: only a cancellation landing in this pass fails it; the first layout already met the same work limits
-        let mut measure_box = geometry.page_box;
-        measure_box.height = measure_height + geometry.page_box.height;
-        let measure_geometries: Vec<_> = measured
-            .iter()
-            .map(|_| (measure_box, geometry.margins, geometry.content_insets))
-            .collect();
-        document.project_pages_with_control(
-            &cascade,
-            measure_box,
-            &measured,
-            &measure_geometries,
-            &measure_control,
-        )?; // cov:ignore: only a cancellation landing in this pass fails it; the first projection already met the same work limits
+        )
+        .and_then(|measured| {
+            let measure_geometries: Vec<_> = measured
+                .iter()
+                .map(|_| (measure_box, geometry.margins, geometry.content_insets))
+                .collect();
+            document
+                .project_pages_with_control(
+                    &cascade,
+                    measure_box,
+                    &measured,
+                    &measure_geometries,
+                    &measure_control,
+                )
+                .map(|()| measured)
+        })?;
         // Content taller than one measuring page runs onto the next, so the
         // token's offset counts from the first measuring page.
         let first_origin = measured.first().map_or(0.0, |slice| slice.content_origin_y);
@@ -312,13 +318,13 @@ fn relayout_from(
                 .page_token_offset(slice.page_index, start.token)
                 .map(|offset| slice.content_origin_y - first_origin + offset)
         });
-        let Some(last) = measured.last() else {
-            break; // cov:ignore: defensive; a measurement lays out at least one page
-        };
         if token_y.is_some() || !measure_control.page_limit_reached() {
             break;
         }
-        measure_height = 2.0 * (last.content_origin_y - first_origin + measure_height);
+        let last_origin = measured
+            .last()
+            .map_or(first_origin, |slice| slice.content_origin_y);
+        measure_height = 2.0 * (last_origin - first_origin + measure_height);
     }
     document.set_clearance_page_values(None);
     cascade.page_values = page_values;

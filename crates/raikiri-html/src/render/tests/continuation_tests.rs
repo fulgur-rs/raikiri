@@ -624,3 +624,65 @@ fn generated_overflow_leaves_a_paragraph_body_at_its_max_height() {
     assert_eq!(pages[0], Some((20.0, 12.0)));
     assert!(pages[1..].iter().all(Option::is_none), "{pages:?}");
 }
+
+#[test]
+fn a_cancellation_while_measuring_a_continuation_aborts_the_run() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Cancels the run on its third image, which the continuation's
+    /// measurement resolves after the probe and the first layout.
+    struct AbortOnThirdResolve {
+        controller: raikiri_traits::AbortController,
+        calls: AtomicUsize,
+    }
+
+    impl raikiri_traits::ReplacedResolver for AbortOnThirdResolve {
+        fn resolve(
+            &self,
+            _request: raikiri_traits::ResolverRequest<'_>,
+        ) -> Result<raikiri_traits::ResolvedIntrinsic, raikiri_traits::ResolverError> {
+            if self.calls.fetch_add(1, Ordering::SeqCst) + 1 == 3 {
+                self.controller.abort();
+            }
+            Ok(raikiri_traits::ResolvedIntrinsic {
+                intrinsic: raikiri_traits::IntrinsicBox::new(1.0, 1.0),
+                disposition: raikiri_traits::ResolveDisposition::Ok,
+            })
+        }
+    }
+
+    let controller = raikiri_traits::AbortController::new();
+    let resolver = AbortOnThirdResolve {
+        controller: raikiri_traits::AbortController {
+            signal: controller.signal.clone(),
+        },
+        calls: AtomicUsize::new(0),
+    };
+    let resources = RenderResources::new()
+        .fonts(super::ahem_fonts())
+        .replaced_resolver(&resolver);
+    let html = "<style>\
+        @page { size: 200px 200px; margin: 0 }\
+        @page wide { size: 400px 200px }\
+        body { margin: 0 } div { font: 10px/10px Ahem }\
+        </style><div>first</div><div style='page:wide'>\
+        <img src='https://example.invalid/image.png' style='display:block;height:30px'>\
+        second</div>";
+    let config = LayoutConfig::builder()
+        .signal(Some(controller.signal.clone()))
+        .build();
+    let result = run_pipeline(
+        &parse(html),
+        PageDefaults::default(),
+        &config,
+        PipelineInputs {
+            resources: Some(&resources),
+            consumer_properties: &[],
+            property_observer: None,
+            preload_background_images: true,
+            resume: None,
+        },
+    );
+    assert!(matches!(result, Ok(PipelineRun::Aborted)));
+    assert_eq!(resolver.calls.load(Ordering::SeqCst), 3);
+}
