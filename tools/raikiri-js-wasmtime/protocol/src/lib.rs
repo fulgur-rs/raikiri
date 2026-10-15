@@ -56,6 +56,7 @@ pub enum HostOperation {
         markup: String,
     },
     Fetch(String),
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol users; tools/ is outside the workspace llvm-cov run.
     LoadImage(String),
 }
 #[derive(Debug, Serialize, Deserialize)]
