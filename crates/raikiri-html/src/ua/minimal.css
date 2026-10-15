@@ -447,6 +447,7 @@ pre, code, kbd, samp, tt, listing, xmp, plaintext { text-autospace: no-autospace
  * not rendered (see `Node::is_non_rendered_html_element`). */
 ruby { display: ruby; }
 rb { display: ruby-base; }
+rbc { display: ruby-base-container; }
 rt { display: ruby-text; }
 rtc { display: ruby-text-container; }
 rtc, rt {

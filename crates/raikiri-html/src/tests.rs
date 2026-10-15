@@ -4045,3 +4045,24 @@ fn heading_ua_rules_set_weight_size_and_block_margins_per_level() {
         "the size still comes from the UA rule"
     );
 }
+
+#[test]
+fn ruby_elements_take_their_ua_display_types() {
+    use raikiri_style::{DisplayValue, Origin};
+
+    let html = b"<html><body><ruby><rbc><rb>a</rb></rbc><rtc><rt>x</rt></rtc></ruby></body></html>";
+    let opts = empty_options();
+    let uncascaded = parse(&html[..], &opts).expect("parse ok");
+    let mut tree = raikiri_style::build_rule_tree(&uncascaded.dom);
+    tree.add_stylesheet(MINIMAL_UA_CSS, Origin::UserAgent);
+    let cascade = raikiri_style::cascade(&uncascaded.dom, &tree).expect("cascade ok");
+    let display = |tag: &str| {
+        let id = find_first_by_tag(&uncascaded.dom, tag).unwrap();
+        cascade.computed[id.0 as usize].display
+    };
+    assert_eq!(display("ruby"), DisplayValue::Ruby);
+    assert_eq!(display("rbc"), DisplayValue::RubyBaseContainer);
+    assert_eq!(display("rb"), DisplayValue::RubyBase);
+    assert_eq!(display("rtc"), DisplayValue::RubyTextContainer);
+    assert_eq!(display("rt"), DisplayValue::RubyText);
+}

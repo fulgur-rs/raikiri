@@ -4499,7 +4499,6 @@ css/css-ruby/ruby-dynamic-removal-003.html
 css/css-ruby/ruby-float-handling-001.html
 css/css-ruby/ruby-intra-level-whitespace-001.html
 css/css-ruby/ruby-intra-level-whitespace-002.html
-css/css-ruby/ruby-intra-level-whitespace-003.html
 css/css-ruby/ruby-intrinsic-isize-001.html
 css/css-ruby/ruby-intrinsic-isize-002.html
 css/css-ruby/ruby-intrinsic-isize-003.html
