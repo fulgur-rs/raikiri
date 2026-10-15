@@ -337,10 +337,11 @@ fn linear_fill(
     let start = center - direction * (length / 2.0);
     let line = direction * length;
     let stops = resolved_stops(&linear.stops, length, length, current_color);
-    let (first, last, stops) = match normalize_stops(stops, linear.repeating, length)? {
-        Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
-        Normalized::Stops { first, last, stops } => (first, last, stops),
-    };
+    let (first, last, stops) =
+        match normalize_stops(stops, linear.repeating, length, &linear.interpolation)? {
+            Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
+            Normalized::Stops { first, last, stops } => (first, last, stops),
+        };
     let brush = PenikoGradient::new_linear(start + line * first, start + line * last);
     Some(GradientFill::Brush(
         Box::new(finish_brush(
@@ -459,7 +460,7 @@ fn radial_fill(
         // only its last color, or the average of a repeating one, shows.
         let stops = resolved_stops(&radial.stops, rx, rx, current_color);
         let color = if radial.repeating {
-            average_color(&stops)
+            ramp_average_color(&stops, &radial.interpolation)
         } else {
             let (_, last) = *stops.last()?;
             solid_color(last)
@@ -483,10 +484,11 @@ fn radial_fill(
     }
     // An ellipse stretches the period along its longer radius, where it is
     // most visible.
-    let (first, last, stops) = match normalize_stops(stops, radial.repeating, rx.max(ry))? {
-        Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
-        Normalized::Stops { first, last, stops } => (first, last, stops),
-    };
+    let (first, last, stops) =
+        match normalize_stops(stops, radial.repeating, rx.max(ry), &radial.interpolation)? {
+            Normalized::Solid(color) => return Some(GradientFill::Solid(color)),
+            Normalized::Stops { first, last, stops } => (first, last, stops),
+        };
     let brush = PenikoGradient::new_two_point_radial(
         center,
         (rx * first) as f32,
@@ -680,6 +682,47 @@ pub(super) fn average_color(stops: &[(f64, DynamicColor)]) -> Color {
     Color::from_rgba8(r, g, b, a)
 }
 
+/// The average color of one period of stops, as [`average_color`] takes it.
+/// Clipping does not commute with interpolation, so when a stop lies outside
+/// the sRGB gamut the ramp is interpolated in its own space and clipped
+/// before it is averaged, not the other way round. Stops that share one
+/// position are spread evenly, as [`average_color`] weighs them.
+fn ramp_average_color(
+    stops: &[(f64, DynamicColor)],
+    interpolation: &GradientColorInterpolation,
+) -> Color {
+    let in_gamut_stops = stops
+        .iter()
+        .all(|(_, color)| in_gamut(color.to_alpha_color::<Srgb>()));
+    let ([first, .., last], false) = (stops, in_gamut_stops) else {
+        return average_color(stops);
+    };
+    let period = last.0 - first.0;
+    let last_index = (stops.len() - 1) as f64;
+    let spread: Vec<(f32, DynamicColor)> = stops
+        .iter()
+        .enumerate()
+        .map(|(index, &(offset, color))| {
+            let offset = if period > 1e-6 {
+                (offset - first.0) / period
+            } else {
+                index as f64 / last_index
+            };
+            (offset as f32, color)
+        })
+        .collect();
+    let ramp: Vec<(f64, DynamicColor)> = expand_stops(
+        &spread,
+        conic_interpolation_tag(interpolation.color_space),
+        conic_hue_direction(interpolation.hue_method),
+        true,
+    )
+    .into_iter()
+    .map(|(offset, color)| (f64::from(offset), color))
+    .collect();
+    average_color(&ramp)
+}
+
 /// Color channels from 0 to 1, multiplied by alpha.
 fn premultiply(color: CssColor) -> [f64; 4] {
     let alpha = f64::from(color.a) / 255.0;
@@ -728,6 +771,7 @@ fn normalize_stops(
     stops: Vec<(f64, DynamicColor)>,
     repeating: bool,
     length: f64,
+    interpolation: &GradientColorInterpolation,
 ) -> Option<Normalized> {
     let (first, last) = (stops.first()?.0, stops.last()?.0);
     let period = if length > 0.0 {
@@ -736,7 +780,7 @@ fn normalize_stops(
         last - first
     };
     if repeating && period <= MIN_REPEATING_PERIOD {
-        return Some(Normalized::Solid(average_color(&stops)));
+        return Some(Normalized::Solid(ramp_average_color(&stops, interpolation)));
     }
     let (start, end) = if repeating {
         (first, last)
@@ -800,7 +844,7 @@ fn finish_brush(
     } else {
         PenikoExtend::Pad
     });
-    if space == ColorSpaceTag::Srgb {
+    if !needs_expansion(stops, space) {
         return brush.with_stops(stops);
     }
     let stops = expand_stops(stops, space, conic_hue_direction(hue_method), repeating);
@@ -818,6 +862,15 @@ const MIN_EXPANDED_SEGMENT: f32 = 2.0 * COINCIDENT_STEP;
 /// Exact samples between two approximated stops when either lies outside
 /// the sRGB gamut.
 const OUT_OF_GAMUT_SUBSTEPS: usize = 16;
+
+/// Stops a brush cannot take as they are: ones interpolated outside sRGB, or
+/// ones outside its gamut, which a renderer clips before interpolating.
+fn needs_expansion(stops: &[(f32, DynamicColor)], space: ColorSpaceTag) -> bool {
+    space != ColorSpaceTag::Srgb
+        || stops
+            .iter()
+            .any(|(_, color)| !in_gamut(color.to_alpha_color::<Srgb>()))
+}
 
 /// Every sRGB channel lies in 0..=1.
 fn in_gamut(color: AlphaColor<Srgb>) -> bool {

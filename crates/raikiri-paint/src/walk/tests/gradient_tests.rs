@@ -1332,3 +1332,52 @@ fn unbounded_stop_colors_keep_their_space() {
         );
     }
 }
+
+#[test]
+fn out_of_gamut_srgb_stops_clip_after_interpolation() {
+    // Red falls from 2 to 0, so it stays clipped at 1 for the first half.
+    let rgba = raster_layer(
+        "background-image: linear-gradient(to right in srgb, color(srgb 2 0 0), black)",
+        200,
+        1,
+    );
+    assert_eq!(pixel(&rgba, 200, 50, 0)[0], 255);
+    assert!(pixel(&rgba, 200, 150, 0)[0].abs_diff(128) <= 2);
+}
+
+#[test]
+fn average_colors_follow_the_clipped_ramp() {
+    // The clipped ramp averages to three quarters red; averaging the
+    // clipped stops would give half.
+    let short_period = raster_layer(
+        "background-image: repeating-linear-gradient(to right in srgb, \
+         color(srgb 2 0 0) 0, black 0.001px)",
+        10,
+        1,
+    );
+    assert!(pixel(&short_period, 10, 5, 0)[0].abs_diff(191) <= 2);
+
+    let cv = computed_for(
+        "background-image: linear-gradient(to right in srgb, color(srgb 2 0 0), black); \
+         background-size: 1px 1px",
+    );
+    let area = Rect::new(0.0, 0.0, 1000.0, 1000.0);
+    let mut scene = Scene::new();
+    assert!(gradient::paint_gradient_layer(
+        &mut scene,
+        &gradient_of(&cv),
+        area,
+        area,
+        None,
+        &cv.background_layers()[0].size,
+        &cv.background_layers()[0].position,
+        &cv.background_layers()[0].repeat,
+        cv.color,
+    ));
+    let rgba = anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+        |out| out.append_scene(scene, Affine::IDENTITY),
+        10,
+        10,
+    );
+    assert!(pixel(&rgba, 10, 5, 5)[0].abs_diff(191) <= 2);
+}
