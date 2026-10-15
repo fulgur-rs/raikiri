@@ -2065,30 +2065,38 @@ pub(crate) fn paint_document_impl(
     // The walker keeps source coordinates in the stack.  Only the paint sites
     // receive the page translation, which makes page membership testable even
     // when an ancestor spans a page boundary.
-    let (page_top, page_bottom, page_offset_x, page_offset_y) =
-        match raikiri_dom::pages_follow_x_axis(document, cascade) {
-            // Pages that follow the x axis hold a band of the flow across the
-            // whole page height: every box is on the page along y, and the
-            // caller clips the page to its band.
-            Some(right_to_left) => (
-                -FLOW_EXTENT,
-                FLOW_EXTENT,
-                margins.left
-                    + insets.left
-                    + if right_to_left {
-                        content_origin_y
-                    } else {
-                        -content_origin_y
-                    },
-                margins.top + insets.top,
-            ),
-            None => (
-                content_origin_y,
-                content_origin_y + content_height,
-                margins.left + insets.left,
-                margins.top + insets.top - content_origin_y,
-            ),
-        };
+    let pages_follow_x_axis = raikiri_dom::pages_follow_x_axis(document, cascade);
+    let (page_top, page_bottom, page_offset_x, page_offset_y) = match pages_follow_x_axis {
+        // Pages that follow the x axis hold a band of the flow across the
+        // whole page height: every box is on the page along y, and the
+        // caller clips the page to its band.
+        Some(right_to_left) => (
+            -FLOW_EXTENT,
+            FLOW_EXTENT,
+            margins.left
+                + insets.left
+                + if right_to_left {
+                    content_origin_y
+                } else {
+                    -content_origin_y
+                },
+            margins.top + insets.top,
+        ),
+        None => (
+            content_origin_y,
+            content_origin_y + content_height,
+            margins.left + insets.left,
+            margins.top + insets.top - content_origin_y,
+        ),
+    };
+    // Viewport-fixed boxes repeat at the same place on every page, so they
+    // are placed against the page, not against the band of the flow that
+    // the page offsets above carry.
+    let (fixed_flow_shift_x, fixed_origin_y) = if pages_follow_x_axis.is_some() {
+        (page_offset_x - (margins.left + insets.left), 0.0)
+    } else {
+        (0.0, content_origin_y)
+    };
     // A body background is normally propagated to the canvas. When the body
     // has authored padding, its border box can still extend beyond the
     // synthetic canvas width used by this paint walk; paint that visible
@@ -2959,11 +2967,11 @@ pub(crate) fn paint_document_impl(
                         (abs_x, abs_y),
                         fixed_rtl,
                         page_box.width,
-                        content_origin_y,
+                        fixed_origin_y,
                         fixed_content_width,
                         content_height,
                     )
-                    .map(|(x, y)| (x - abs_x, y - abs_y))
+                    .map(|(x, y)| (x - abs_x - fixed_flow_shift_x, y - abs_y))
                     .unwrap_or((0.0, 0.0))
                 } else {
                     (0.0, 0.0)
