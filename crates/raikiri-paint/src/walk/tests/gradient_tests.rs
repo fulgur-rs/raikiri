@@ -1303,6 +1303,14 @@ fn out_of_gamut_stops_interpolate_before_clipping() {
     assert_eq!(pixel(&two, 200, 100, 2)[0], 0);
 }
 
+/// The number of channel values that differ between two rasters, and the
+/// largest difference.
+fn raster_difference(a: &[u8], b: &[u8]) -> (usize, u8) {
+    let differing = a.iter().zip(b).filter(|(a, b)| a != b).count();
+    let largest = a.iter().zip(b).map(|(a, b)| a.abs_diff(*b)).max();
+    (differing, largest.unwrap_or(0))
+}
+
 #[test]
 fn a_stop_on_the_ramp_leaves_the_drawn_colors_alone() {
     // The middle stop lies on the ramp between red and blue, outside the
@@ -1318,8 +1326,29 @@ fn a_stop_on_the_ramp_leaves_the_drawn_colors_alone() {
         100,
         4,
     );
-    let differing = whole.iter().zip(&split).filter(|(a, b)| a != b).count();
-    assert_eq!(differing, 0);
+    assert_eq!(raster_difference(&whole, &split), (0, 0));
+}
+
+#[test]
+fn a_stop_on_the_ramp_off_the_sampling_grid_changes_one_cell_at_most() {
+    // A split at 3% falls inside a cell of the sampling grid. Only that cell
+    // may be sampled differently, by less than a level, so the rest of the
+    // ramp draws the same colors.
+    let whole = raster_layer(
+        "background-image: linear-gradient(to right in lch increasing hue, red, blue)",
+        1000,
+        1,
+    );
+    let split = raster_layer(
+        "background-image: linear-gradient(to right in lch increasing hue, red, \
+         color-mix(in lch increasing hue, red 97%, blue 3%) 3%, blue)",
+        1000,
+        1,
+    );
+    let (differing, largest) = raster_difference(&whole, &split);
+    assert!(largest <= 1, "largest channel difference {largest}");
+    // One cell of the 64-step grid spans about 16 of the 1000 pixels.
+    assert!(differing <= 16 * 3, "{differing} differing channel values");
 }
 
 #[test]
