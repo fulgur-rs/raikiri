@@ -146,3 +146,29 @@ fn sideways_absolute_text_uses_the_vertical_block_start_edge() {
         assert_eq!(absolute_rect(&doc, child), (expected_x, 0.0, 15.0, 20.0));
     }
 }
+
+#[test]
+fn only_an_absolute_child_of_the_vertical_containing_block_gets_its_inline_size() {
+    let mut doc = Document::new();
+    let container = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let absolute = doc.append_element(
+        Some(container),
+        "div",
+        Style {
+            position: taffy::Position::Absolute,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let in_flow = doc.append_element(Some(container), "div", Style::default(), None::<&str>);
+    doc.vertical_oof_containing_blocks.push((container, 120.0));
+    let inputs = taffy::LayoutInput::HIDDEN;
+    let resolved = super::absolute_child_inputs(&doc, absolute, inputs);
+    assert_eq!(resolved.parent_size.height, Some(120.0));
+    assert_eq!(
+        resolved.available_space.height,
+        taffy::AvailableSpace::Definite(120.0)
+    );
+    let unchanged = super::absolute_child_inputs(&doc, in_flow, inputs);
+    assert_eq!(unchanged.parent_size.height, inputs.parent_size.height);
+}
