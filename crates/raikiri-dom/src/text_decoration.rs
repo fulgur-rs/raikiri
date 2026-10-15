@@ -628,12 +628,12 @@ pub fn positioned_line_decorations(
         .runs
         .iter()
         .map(|placed| {
-            placed.glyphs.iter().zip(placed.run.glyphs()).fold(
+            placed.glyphs.iter().fold(
                 (f64::INFINITY, f64::NEG_INFINITY),
-                |(left, right), (glyph, shaped)| {
+                |(left, right), glyph| {
                     (
                         left.min(f64::from(origin.0 + glyph.x)),
-                        right.max(f64::from(origin.0 + glyph.x) + f64::from(shaped.advance)),
+                        right.max(f64::from(origin.0 + glyph.x) + f64::from(glyph.advance)),
                     )
                 },
             )
