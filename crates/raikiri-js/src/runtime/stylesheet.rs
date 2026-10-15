@@ -1007,11 +1007,29 @@ fn style_sheet_insert_rule(
             "the rule could not be parsed",
         ));
     };
-    if !import_order_allows(&rules, index, &rule.prelude) {
+    let rank = order_rank(&rule.prelude);
+    if rank == NAMESPACE_RANK
+        && rules
+            .iter()
+            .any(|rule| order_rank(&rule.prelude) > NAMESPACE_RANK)
+    {
+        return Err(throw_dom_exception(
+            context,
+            "InvalidStateError",
+            "@namespace rules cannot be added once the sheet has other rules",
+        ));
+    }
+    let ordered = rules[..index]
+        .iter()
+        .all(|rule| order_rank(&rule.prelude) <= rank)
+        && rules[index..]
+            .iter()
+            .all(|rule| order_rank(&rule.prelude) >= rank);
+    if !ordered {
         return Err(throw_dom_exception(
             context,
             "HierarchyRequestError",
-            "@import rules must precede all other rules",
+            "@import and @namespace rules must precede all other rules",
         ));
     }
     let mut updated = text.clone();
@@ -1091,6 +1109,12 @@ fn parse_single_rule(source: &str) -> Option<SingleRule> {
     if !only_trivia(&trimmed[..rule.source.start]) || !only_trivia(&trimmed[rule.source.end..]) {
         return None;
     }
+    // A style rule whose selector does not parse is dropped by the
+    // cascade, so it is a syntax error here.
+    if !rule.prelude.starts_with('@') && raikiri_style::parse_selector_list(&rule.prelude).is_err()
+    {
+        return None;
+    }
     let text = &trimmed[rule.source.clone()];
     Some(SingleRule {
         prelude: rule.prelude.clone(),
@@ -1123,18 +1147,20 @@ fn is_at_rule(prelude: &str, name: &str) -> bool {
     matches!(parser.next(), Ok(Token::AtKeyword(keyword)) if keyword.eq_ignore_ascii_case(name))
 }
 
-/// CSSOM "insert a CSS rule" step 6: an `@import` rule may only follow
-/// `@charset` and `@import` rules, and no other rule may precede one.
-fn import_order_allows(rules: &[CssRuleInfo], index: usize, prelude: &str) -> bool {
-    let leading = |rule: &CssRuleInfo| {
-        is_at_rule(&rule.prelude, "import") || is_at_rule(&rule.prelude, "charset")
-    };
-    if is_at_rule(prelude, "import") {
-        rules[..index].iter().all(leading)
+/// The rank of `@namespace` rules in [`order_rank`].
+const NAMESPACE_RANK: u8 = 1;
+
+/// Where a rule may sit in a sheet (CSSOM "insert a CSS rule" steps 6 and
+/// 7, after CSS Syntax's rule ordering): `@charset` and `@import` rules
+/// first, then `@namespace` rules, then every other rule. A rule may only
+/// be inserted between rules of no higher and no lower rank.
+fn order_rank(prelude: &str) -> u8 {
+    if is_at_rule(prelude, "import") || is_at_rule(prelude, "charset") {
+        0
+    } else if is_at_rule(prelude, "namespace") {
+        NAMESPACE_RANK
     } else {
-        !rules[index..]
-            .iter()
-            .any(|rule| is_at_rule(&rule.prelude, "import"))
+        2
     }
 }
 

@@ -10,6 +10,7 @@ use boa_engine::{
 use url::Url;
 
 use super::interfaces::{function, set_to_string_tag};
+use super::webidl::usv_string;
 
 #[derive(Debug, Trace, Finalize, JsData)]
 struct UrlData {
@@ -45,19 +46,21 @@ fn parse(input: &str, base: Option<&str>) -> Option<Url> {
 
 /// The URL and optional base of a constructor or `canParse` call.
 fn parse_args(args: &[JsValue], context: &mut Context) -> JsResult<Option<Url>> {
-    let input = args
-        .first()
-        .ok_or_else(|| JsNativeError::typ().with_message("url is required"))?
-        .to_string(context)?
-        .to_std_string_escaped();
+    if args.is_empty() {
+        return Err(JsNativeError::typ().with_message("url is required").into());
+    }
+    let input = usv_string(args, 0, context)?;
     let base = match args.get(1) {
-        Some(value) if !value.is_undefined() => {
-            Some(value.to_string(context)?.to_std_string_escaped())
-        }
+        Some(value) if !value.is_undefined() => Some(usv_string(args, 1, context)?),
         _ => None,
     };
     Ok(parse(&input, base.as_deref()))
 }
+
+/// `URL.prototype`, kept for constructor calls whose `new.target` has no
+/// object `prototype` (ECMAScript GetPrototypeFromConstructor).
+#[derive(Trace, Finalize, JsData)]
+struct UrlPrototype(JsObject);
 
 /// The `URL` constructor; `params_prototype` is `URLSearchParams.prototype`,
 /// so a script that replaces the global still gets real search params.
@@ -70,12 +73,17 @@ fn url_constructor(
     let new_target = new_target
         .as_object()
         .ok_or_else(|| JsNativeError::typ().with_message("URL constructor requires 'new'"))?;
-    let prototype = new_target
+    let prototype = match new_target
         .get(js_string!("prototype"), context)?
         .as_object()
-        .ok_or_else(|| {
-            JsNativeError::typ().with_message("constructor prototype is not an object")
-        })?;
+    {
+        Some(prototype) => prototype,
+        None => context
+            .get_data::<UrlPrototype>()
+            .expect("URL is installed")
+            .0
+            .clone(),
+    };
     let url = parse_args(args, context)?
         .ok_or_else(|| JsNativeError::typ().with_message("Invalid URL"))?;
     let search_params = super::url_search_params::params_object(
@@ -212,6 +220,7 @@ pub(crate) fn install(context: &mut Context, params_prototype: JsObject) -> JsRe
     let prototype = standard.prototype();
     let constructor = standard.constructor();
     set_to_string_tag(&prototype, "URL", context)?;
+    context.insert_data(UrlPrototype(prototype.clone()));
     context.register_global_property(
         js_string!("URL"),
         constructor,

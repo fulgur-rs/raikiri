@@ -2410,7 +2410,14 @@ fn style_sheet_insert_and_delete_rule_edit_the_style_element() {
         "(function() { try { sheet.insertRule('q {}', 4); return false; } \
          catch (e) { return e.name === 'IndexSizeError'; } })()",
     );
-    for bad in ["''", "'a {} b {}'", "'a {} b'", "'a'"] {
+    for bad in [
+        "''",
+        "'a {} b {}'",
+        "'a {} b'",
+        "'a'",
+        "'[] {}'",
+        "'p:: {}'",
+    ] {
         ok(
             &mut rt,
             &format!(
@@ -2455,6 +2462,38 @@ fn style_sheet_insert_rule_closes_cut_off_rules_and_orders_imports() {
         &mut rt,
         "sheet.insertRule('q {}', 2) === 2 && sheet.cssRules.length === 4",
     );
+    // `@namespace` rules sit between the imports and every other rule, and
+    // cannot be added once the sheet has other rules.
+    ok(
+        &mut rt,
+        "(function() { try { sheet.insertRule('@namespace url(x)', 2); return false; } \
+         catch (e) { return e.name === 'InvalidStateError'; } })()",
+    );
+    rt.evaluate(
+        "var ns = document.createElement('style'); \
+         ns.textContent = '@import \"a.css\"; @namespace svg url(y);'; \
+         document.head.appendChild(ns);",
+    )
+    .unwrap();
+    ok(
+        &mut rt,
+        "ns.sheet.insertRule('@namespace url(x)', 1) === 1 && \
+         ns.sheet.insertRule('@namespace url(z)', 3) === 3 && ns.sheet.cssRules.length === 4",
+    );
+    for (rule, index) in [
+        ("'@namespace url(w)'", 0),
+        ("'p {}'", 3),
+        ("'@import \"b.css\"'", 2),
+    ] {
+        ok(
+            &mut rt,
+            &format!(
+                "(function() {{ try {{ ns.sheet.insertRule({rule}, {index}); return false; }} \
+                 catch (e) {{ return e.name === 'HierarchyRequestError'; }} }})()"
+            ),
+        );
+    }
+    ok(&mut rt, "ns.sheet.insertRule('p {}', 4) === 4");
     // Appending after a block cut off by the end of the sheet closes it.
     rt.evaluate("el.textContent = 'a { color: red';").unwrap();
     ok(

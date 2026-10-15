@@ -703,6 +703,14 @@ fn url_parses_against_a_base_and_exposes_its_components() {
     );
     ok(
         &mut rt,
+        "function F() {} F.prototype = 1; \
+         var made = Reflect.construct(URL, ['https://a.test/'], F); \
+         Object.getPrototypeOf(made) === URL.prototype && made.host === 'a.test' && \
+         new URL('https://a.test/\\uD800', 'https://b.test/\\uDC00').pathname === '/%EF%BF%BD' && \
+         URL.canParse('https://a.test/\\uD800')",
+    );
+    ok(
+        &mut rt,
         "URL.canParse('https://a.test/') && !URL.canParse('nope') && URL.canParse('x', 'https://a.test/') && \
          !URL.canParse('x', 'nope') && URL.canParse('x', undefined) === false",
     );
@@ -712,7 +720,6 @@ fn url_parses_against_a_base_and_exposes_its_components() {
         "new URL()",
         "URL('https://a.test/')",
         "Object.getOwnPropertyDescriptor(URL.prototype, 'href').get.call({})",
-        "function F() {} F.prototype = 1; Reflect.construct(URL, ['https://a.test/'], F)",
     ] {
         ok(
             &mut rt,

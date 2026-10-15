@@ -119,10 +119,10 @@ pub(crate) fn new_dom_rect(context: &mut Context, r: DomRect) -> JsResult<JsObje
     Ok(JsObject::from_proto_and_data(Some(proto), data))
 }
 
-/// The rects of a `DOMRectList`. Each item read creates its `DOMRect`, so
-/// the rects need not be kept alive by the list.
+/// The `DOMRect` objects of a `DOMRectList`, created with the list so
+/// each index returns the same object.
 struct DomRectListSource {
-    rects: Vec<DomRect>,
+    rects: Vec<JsObject>,
 }
 
 impl IndexedSource for DomRectListSource {
@@ -130,16 +130,17 @@ impl IndexedSource for DomRectListSource {
         Ok(self.rects.len())
     }
 
-    fn item(&self, index: usize, context: &mut Context) -> JsResult<Option<JsValue>> {
-        self.rects
-            .get(index)
-            .map(|&rect| Ok(new_dom_rect(context, rect)?.into()))
-            .transpose()
+    fn item(&self, index: usize, _: &mut Context) -> JsResult<Option<JsValue>> {
+        Ok(self.rects.get(index).cloned().map(JsValue::from))
     }
 }
 
 /// A new `DOMRectList` (Geometry Interfaces §3.1) over `rects`.
 pub(crate) fn dom_rect_list(context: &mut Context, rects: Vec<DomRect>) -> JsResult<JsObject> {
+    let rects = rects
+        .into_iter()
+        .map(|rect| new_dom_rect(context, rect))
+        .collect::<JsResult<_>>()?;
     let prototype = protos(context).dom_rect_list.clone();
     indexed_object(context, prototype, DomRectListSource { rects })
 }
