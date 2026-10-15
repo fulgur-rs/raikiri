@@ -442,8 +442,9 @@ impl DocumentHost for WptDocumentHost {
     /// `display: none`, is an HTML element layout never renders, such as
     /// `script`, whatever its computed display, is hidden by HTML's
     /// rendering rules for `hidden` (which the bundled UA stylesheet does
-    /// not carry), or is an SVG never-rendered element such as `defs`. A box placed off every page still counts, which the
-    /// page-scene geometry behind [`Self::box_geometry`] cannot tell apart.
+    /// not carry), or is an SVG never-rendered element such as `defs`. A
+    /// box placed off every page still counts, which the page-scene
+    /// geometry behind [`Self::box_geometry`] cannot tell apart.
     fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
         let Some(styles) = self.computed_styles.as_ref() else {
             // cov:ignore: the runtime flushes before asking.
@@ -467,6 +468,16 @@ impl DocumentHost for WptDocumentHost {
             current = document.parent_of(index);
         }
         Ok(true)
+    }
+
+    fn is_visible(&mut self, node: usize) -> Result<bool, HostError> {
+        let Some(styles) = self.computed_styles.as_ref() else {
+            // cov:ignore: the runtime flushes before asking.
+            return Err(HostError("rendering read before flush".into()));
+        };
+        Ok(styles
+            .get(node)
+            .is_none_or(|style| style.visibility == raikiri_style::property::Visibility::Visible))
     }
 
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {

@@ -299,6 +299,31 @@ fn non_rendered_html_elements_are_not_being_rendered() {
     assert!(host.is_being_rendered(plugin).unwrap());
 }
 
+/// Visibility is the element's own computed value, so a visible descendant
+/// of a hidden element is visible again.
+#[test]
+fn visibility_reads_the_computed_value() {
+    let dir = tempfile::tempdir().unwrap();
+    let setup = prepare_wpt_live_document(
+        "<div id=shown>x</div><div id=veiled style='visibility:hidden'>\
+         <span id=restored style='visibility:visible'>y</span></div>\
+         <div id=folded style='visibility:collapse'></div>",
+        DEFAULT_REFTTEST_WIDTH,
+        DEFAULT_REFTTEST_HEIGHT,
+        dir.path(),
+        dir.path(),
+    )
+    .unwrap();
+    let mut host = WptDocumentHost::new(setup, dir.path());
+    let [shown, veiled, restored, folded] =
+        ["shown", "veiled", "restored", "folded"].map(|id| find_by_id(host.document(), id));
+    host.flush().unwrap();
+    assert!(host.is_visible(shown).unwrap());
+    assert!(!host.is_visible(veiled).unwrap());
+    assert!(host.is_visible(restored).unwrap());
+    assert!(!host.is_visible(folded).unwrap());
+}
+
 /// CSSOM View metrics over a real layout, checked against CSS 2.1 box-model
 /// arithmetic:
 ///

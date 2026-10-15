@@ -109,6 +109,14 @@ pub trait DocumentHost: 'static {
     fn is_being_rendered(&mut self, node: usize) -> Result<bool, HostError> {
         Ok(self.box_geometry(node)?.is_some())
     }
+    /// Whether the element `node` computes `visibility: visible`. CSS takes
+    /// hidden and collapsed boxes out of interaction, so they cannot take
+    /// focus. Called after [`Self::flush`]. The default reports visible.
+    ///
+    /// Spec: <https://drafts.csswg.org/css-display-4/#visibility>
+    fn is_visible(&mut self, _node: usize) -> Result<bool, HostError> {
+        Ok(true)
+    }
     /// Serialized computed value of `property` on `node`, or `None` when the
     /// property is not supported. Called after [`Self::flush`].
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError>;

@@ -363,6 +363,14 @@ fn is_being_rendered(context: &mut Context, index: usize) -> JsResult<bool> {
     rendered.map_err(|error| host_failure(context, error))
 }
 
+/// Whether the element `index` computes `visibility: visible`, after
+/// bringing style up to date. An invisible box cannot take focus.
+fn is_visible(context: &mut Context, index: usize) -> JsResult<bool> {
+    ensure_flushed(context)?;
+    let visible = with_state(context, |s| s.host.is_visible(index))?;
+    visible.map_err(|error| host_failure(context, error))
+}
+
 /// Whether `index` is a focusable area that is being rendered. An
 /// `<area>` is focusable through its shape in an image map, so it needs an
 /// associated `<img>` that is being rendered and is not inert.
@@ -378,7 +386,7 @@ fn can_take_focus(context: &mut Context, index: usize) -> JsResult<bool> {
         });
         (is_focusable(document, index), images)
     })?;
-    if !focusable {
+    if !focusable || !is_visible(context, index)? {
         return Ok(false);
     }
     let Some(images) = images else {
