@@ -6734,20 +6734,22 @@ pub fn layout_single_page_with_resolver_and_base_url(
 /// Whether `id` holds in-flow content that keeps its margins from collapsing
 /// through it (CSS 2 §8.3.1). A line box counts, including one holding only
 /// generated content such as an inside marker or `::before`, and so does a
-/// block-level `::before` or `::after` box. Out-of-flow children do not
-/// count, and neither does an empty block child whose own margins collapse
-/// through it.
+/// block-level `::before` or `::after` box with padding, border or height.
+/// Out-of-flow children do not count, and neither does an empty block child
+/// whose own margins collapse through it.
 fn has_in_flow_content(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let has_generated_content = document
-        .ifc_layout_node(id)
-        .and_then(|node| node.ifc.as_ref())
-        .is_some_and(|ifc| {
-            !ifc.generated_blocks.is_empty()
+    let has_generated_content = document.ifc_layout_node(id).is_some_and(|node| {
+        let width = node.unrounded_layout.size.width;
+        node.ifc.as_ref().is_some_and(|ifc| {
+            ifc.generated_blocks
+                .iter()
+                .any(|block| block.separates_margins(width))
                 || ifc
                     .lines
                     .as_ref()
                     .is_some_and(|lines| !lines.lines.is_empty())
-        });
+        })
+    });
     if has_generated_content {
         return true;
     }

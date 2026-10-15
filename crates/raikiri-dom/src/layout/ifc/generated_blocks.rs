@@ -127,6 +127,15 @@ impl GeneratedBlock {
         height.max(0.0)
     }
 
+    /// Whether the box keeps margins from collapsing through it even with no
+    /// content (CSS 2.1 8.3.1): it has block-axis padding or border, or a
+    /// used height above zero. `basis` is the containing block width.
+    pub(crate) fn separates_margins(&self, basis: f32) -> bool {
+        let edges = self.edges(basis);
+        let block_edges = edges.top + edges.bottom;
+        block_edges > 0.0 || self.used_height(0.0, block_edges, None) > 0.0
+    }
+
     /// The physical left and right insets of the box's lines from the
     /// paragraph's content box `width` wide: margin, border and padding.
     /// With a definite width, the margins take the room the box leaves
