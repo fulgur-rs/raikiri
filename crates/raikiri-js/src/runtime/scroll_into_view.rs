@@ -13,6 +13,7 @@ use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, js_string}
 
 use super::geometry::box_geometry;
 use super::host::PositionKind;
+use super::interfaces::HTML_NS;
 use super::node::first_element_child;
 use super::style::read_computed;
 use super::webidl::{this_element, with_state};
@@ -158,10 +159,14 @@ fn is_scroll_container(context: &mut Context, index: usize) -> JsResult<bool> {
 fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) -> JsResult<bool> {
     let (body, mut current) = with_state(context, |s| {
         let document = s.host.document();
-        // Only an HTML `body` under `html` hands its overflow to the
-        // viewport.
-        let html = document.get_node(root).and_then(|n| n.tag_name()) == Some("html");
-        let body = first_element_child(document, root, Some("body")).filter(|_| html);
+        // Only an HTML `body` under an HTML `html` hands its overflow to
+        // the viewport.
+        let is_html = |id: usize, name: &str| {
+            document.get_node(id).and_then(|n| n.tag_name()) == Some(name)
+                && document.element_namespace_uri(id) == Some(HTML_NS)
+        };
+        let body = first_element_child(document, root, Some("body"))
+            .filter(|&body| is_html(root, "html") && is_html(body, "body"));
         (body, document.parent_of(index))
     })?;
     let mut root_visible = true;
@@ -174,13 +179,16 @@ fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) 
         box_geometry(context, index)?.is_some_and(|g| g.position == PositionKind::Absolute);
     while let Some(ancestor) = current.filter(|&ancestor| ancestor != root) {
         // An ancestor without a box (`display: contents`, say) has no
-        // scrolling box whatever its `overflow`, and contains nothing.
+        // scrolling box whatever its `overflow`, and contains nothing. Nor
+        // does a non-atomic inline box, which `overflow` does not apply to
+        // (CSS Overflow 3 §3.1).
         let geometry = box_geometry(context, ancestor)?;
         let ancestor_position = geometry
             .as_ref()
             .map_or(PositionKind::Static, |g| g.position);
         if geometry.is_some() && !(absolute && ancestor_position == PositionKind::Static) {
-            if Some(ancestor) != body && is_scroll_container(context, ancestor)? {
+            let scrolls = geometry.as_ref().is_some_and(|g| !g.is_inline);
+            if scrolls && Some(ancestor) != body && is_scroll_container(context, ancestor)? {
                 return Ok(true);
             }
             absolute = ancestor_position == PositionKind::Absolute;

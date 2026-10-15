@@ -264,6 +264,52 @@ fn only_an_html_root_hands_the_body_overflow_to_the_viewport() {
 }
 
 #[test]
+fn foreign_html_and_body_and_inline_boxes_are_not_special() {
+    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    // A foreign-namespace `body` under `html` keeps its own scroller.
+    let (mut host, html, _, _) = StubHost::page();
+    let body = host.document.create_detached_element("body").unwrap();
+    host.document
+        .set_element_namespace(body, Some("http://www.w3.org/2000/svg".into()));
+    host.document.append_child(html, body).unwrap();
+    let target = host.document.create_detached_element("div").unwrap();
+    host.document.append_child(body, target).unwrap();
+    host.geometry
+        .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.geometry
+        .insert(body, StubHost::boxed(rect, rect, PositionKind::Static));
+    host.computed
+        .insert((body, "overflow-y".to_owned()), "auto".to_owned());
+    host.viewport = Ok(Some((100.0, 100.0)));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.documentElement.lastChild.firstChild.scrollIntoView({container: 'nearest'});\
+         scrollY === 0",
+    );
+    // An inline box with `overflow: auto` does not scroll.
+    let (mut host, _, _, body) = StubHost::page();
+    let span = host.document.create_detached_element("span").unwrap();
+    host.document.append_child(body, span).unwrap();
+    let target = host.document.create_detached_element("b").unwrap();
+    host.document.append_child(span, target).unwrap();
+    host.geometry
+        .insert(target, StubHost::boxed(rect, rect, PositionKind::Static));
+    let mut inline = StubHost::boxed(rect, rect, PositionKind::Static);
+    inline.is_inline = true;
+    host.geometry.insert(span, inline);
+    host.computed
+        .insert((span, "overflow-y".to_owned()), "auto".to_owned());
+    host.viewport = Ok(Some((100.0, 100.0)));
+    let mut rt = DomRuntime::new(host).unwrap();
+    ok(
+        &mut rt,
+        "document.body.firstChild.firstChild.scrollIntoView({container: 'nearest'});\
+         scrollY === 300",
+    );
+}
+
+#[test]
 fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
     let (mut host, html, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
