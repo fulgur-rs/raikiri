@@ -5163,11 +5163,11 @@ pub fn layout_pages_with_page_geometry_and_control(
                     })
                     .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0);
                 // A paragraph that runs over more pages keeps `widows` lines
-                // on its last page too. The pages between are full, so only
-                // the break before the last page can leave too few; it moves
-                // up the same way while the page before keeps `orphans`.
-                let final_break = (splittable
-                    && (earlier_break.is_some() || !violates_line_constraints))
+                // on its last page too, whether or not its first break could
+                // be repaired. The pages between are full, so only the break
+                // before the last page can leave too few; it moves up the
+                // same way while the page before keeps `orphans`.
+                let final_break = splittable
                     .then(|| {
                         let moved = |line: usize| {
                             earlier_break

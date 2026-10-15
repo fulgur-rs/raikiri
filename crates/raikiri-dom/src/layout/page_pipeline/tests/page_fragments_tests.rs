@@ -3865,3 +3865,29 @@ fn the_last_break_stays_when_the_page_before_would_keep_too_few_orphans() {
         ]
     );
 }
+
+#[test]
+fn the_last_break_keeps_its_widows_when_the_first_break_leaves_too_few_orphans() {
+    use crate::layout::test_support::{ahem_paragraph, ifc_ahem_fonts};
+    // Seven 10px lines from 15px down 40px pages break 2/4/1. The two lines
+    // on page 0 are fewer than `orphans: 3`, which no break can mend there,
+    // but the last break still moves up so page 2 keeps two lines.
+    let (mut doc, cascade, root) = ahem_paragraph(
+        "a b c d e f g",
+        "width:10px;margin-top:15px;orphans:3;widows:2",
+    );
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 40.0;
+    let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+    let text = doc.nodes[root].children[0];
+    assert_eq!(
+        text_fragments(&doc, &cascade, page, &slices, text),
+        [
+            (0, Some(PageFragmentLineRange::new(0, 2))),
+            (1, Some(PageFragmentLineRange::new(2, 5))),
+            (2, Some(PageFragmentLineRange::new(5, 7))),
+        ]
+    );
+}
