@@ -1304,6 +1304,25 @@ fn out_of_gamut_stops_interpolate_before_clipping() {
 }
 
 #[test]
+fn a_stop_on_the_ramp_leaves_the_drawn_colors_alone() {
+    // The middle stop lies on the ramp between red and blue, outside the
+    // sRGB gamut, so splitting the segment there changes nothing drawn.
+    let whole = raster_layer(
+        "background-image: linear-gradient(to right in lch longer hue, red, blue)",
+        100,
+        4,
+    );
+    let split = raster_layer(
+        "background-image: linear-gradient(to right in lch, red, \
+         color-mix(in lch longer hue, red, blue), blue)",
+        100,
+        4,
+    );
+    let differing = whole.iter().zip(&split).filter(|(a, b)| a != b).count();
+    assert_eq!(differing, 0);
+}
+
+#[test]
 fn unbounded_stop_colors_keep_their_space() {
     for (css, expected) in [
         // Hand-checked against the CSS Color 4 conversions; 100% lch
