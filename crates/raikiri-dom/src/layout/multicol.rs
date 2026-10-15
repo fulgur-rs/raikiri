@@ -753,8 +753,9 @@ fn layout_column_group(
                 },
                 vertical_margins_are_collapsible: TaffyLine::FALSE,
             };
+            // A direct text child is measured again against the column
+            // width instead of reusing a size cached for another width.
             if matches!(tree.nodes[child].data, NodeData::Text(_)) {
-                tree.nodes[child].style.size.height = Dimension::auto();
                 tree.nodes[child].cache.clear();
             }
             let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
@@ -840,9 +841,8 @@ fn layout_column_group(
                 };
 
                 // A direct text child is measured again against the column
-                // width instead of reusing a height cached for another width.
+                // width instead of reusing a size cached for another width.
                 if matches!(tree.nodes[child].data, NodeData::Text(_)) {
-                    tree.nodes[child].style.size.height = Dimension::auto();
                     tree.nodes[child].cache.clear();
                 }
                 let output = tree.compute_child_layout(TaffyNodeId::from(child), child_inputs);
@@ -1430,10 +1430,9 @@ fn record_nested_ifc_box_fragments(
             if !tree.nodes[source.node_id].style.float.is_floated() {
                 continue;
             }
-            let logical_top = source.fragmentainer.saturating_sub(context.column_index) as f32
-                * height
-                + source.rect.y;
-            let last_column = context.column_index.saturating_add(
+            let logical_top =
+                source.fragmentainer.saturating_sub(root_column) as f32 * height + source.rect.y;
+            let last_column = root_column.saturating_add(
                 (((logical_top + source.rect.height).max(0.0) / height).ceil() as usize)
                     .saturating_sub(1),
             );
@@ -1528,34 +1527,38 @@ fn record_nested_ifc_box_fragments(
                             .map(|line| line.block_offset() + line.block_size())
                     })
                     .unwrap_or(0.0);
-                let tail_line_bottom = lines
-                    .as_ref()
-                    .filter(|lines| lines.unfragmented_tail_column == Some(column))
-                    .map(|_| node_offset_y + line_bottom)
-                    .unwrap_or(0.0);
-                let overflow_float_bottom = overflow_clip_heights
-                    .get(&column)
-                    .map(|bottom| node_offset_y + bottom)
-                    .unwrap_or(0.0);
-                let column_clip_height = height.max(tail_line_bottom).max(overflow_float_bottom);
                 // A slice of this paragraph in a later column than the
                 // subtree root starts at the top of that column: move the
                 // path up by the block offset of its first line below the
                 // root's column-top position. Earlier content can leave the
                 // previous column short of its end (widows and orphans), so
                 // whole column heights would drift.
+                let line_shift = line_range
+                    .filter(|_| !nested_row_flex_scope && column != root_column)
+                    .map(|range| {
+                        tree.nodes[subtree_root].unrounded_layout.location.y - context.origin_y
+                            + node_offset_y
+                            + range.y
+                    });
                 let column_delta = match line_range {
-                    Some(range) if !nested_row_flex_scope => {
-                        if column == root_column {
-                            0.0
-                        } else {
-                            tree.nodes[subtree_root].unrounded_layout.location.y - context.origin_y
-                                + node_offset_y
-                                + range.y
-                        }
-                    }
-                    _ => column.saturating_sub(context.column_index) as f32 * height,
+                    Some(_) if !nested_row_flex_scope => line_shift.unwrap_or(0.0),
+                    _ => column.saturating_sub(root_column) as f32 * height,
                 };
+                // The bottom of the last line, measured from the column top
+                // where this slice is painted.
+                let tail_line_bottom = lines
+                    .as_ref()
+                    .filter(|lines| lines.unfragmented_tail_column == Some(column))
+                    .map(|_| match (line_shift, line_range) {
+                        (Some(_), Some(range)) => line_bottom - range.y,
+                        _ => node_offset_y + line_bottom,
+                    })
+                    .unwrap_or(0.0);
+                let overflow_float_bottom = overflow_clip_heights
+                    .get(&column)
+                    .map(|bottom| node_offset_y + bottom)
+                    .unwrap_or(0.0);
+                let column_clip_height = height.max(tail_line_bottom).max(overflow_float_bottom);
                 let mut parent = parent_fragment;
                 let mut parent_offset = Point::ZERO;
                 if node_id == subtree_root
@@ -2398,8 +2401,7 @@ pub(crate) fn root_column_fragments(
 /// container are left to the multicol dispatch in `compute_multicol_layout`,
 /// which supplies their used widths, so they are not guessed from a page
 /// fallback.
-// cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-pub(crate) fn prepare_multicol_layout(
+pub(crate) fn prepare_authored_block_widths(
     doc: &mut Document,
     cascade: &CascadeResult,
     fallback_width: f32,

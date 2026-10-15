@@ -203,7 +203,10 @@ fn block_in_inline_wrapper(tree: &Document, id: usize) -> bool {
             !child.is_in_document()
                 || child.style.display == Display::None
                 || match &child.data {
-                    NodeData::Text(text) => text.text_content.trim().is_empty(),
+                    NodeData::Text(text) => text
+                        .text_content
+                        .chars()
+                        .all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')),
                     NodeData::Element(_) => {
                         !child.display.is_inline_level() && child.display != DisplayValue::Contents
                     }

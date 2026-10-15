@@ -205,10 +205,14 @@ fn place_within(
         }
         let mut pieces = Vec::new();
         let mut gap = pending_margin.max(item.margin_top);
-        // A box that must stay whole but fits in a whole column moves to the
-        // next column like a box that avoids breaks, rather than being cut.
+        // A box that must stay whole moves to the next column like a box
+        // that avoids breaks, rather than being cut, when it fits there: in
+        // the rest of this column, or in a whole new one if content precedes
+        // it here.
         let splittable = item.splittable
-            && !(keep_whole && item.whole && item.height <= column_height + EPSILON);
+            && !(item.whole
+                && (cursor + gap + item.height <= column_height + EPSILON
+                    || cursor > 0.0 && item.height <= column_height + EPSILON));
         let fits_after_gap = if splittable {
             cursor + gap < column_height - EPSILON
         } else {

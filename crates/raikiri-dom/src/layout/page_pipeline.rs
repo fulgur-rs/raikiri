@@ -869,8 +869,7 @@ fn layout_single_page_with_table_projection(
 
     // Boxes with an `auto` width chain up to the body take the body's content
     // width, which its horizontal margins, padding and borders narrow.
-    // cov:ignore: exercised by the ignored foundation WPT run; default coverage skips ignored reftests.
-    prepare_multicol_layout(document, cascade, body_insets.content_width(content_width));
+    prepare_authored_block_widths(document, cascade, body_insets.content_width(content_width));
 
     // The body is the taffy root, which ignores its margins. Its block-start
     // margin is resolved here and placed after layout (or carried as top
