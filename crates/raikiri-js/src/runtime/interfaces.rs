@@ -13,7 +13,7 @@ use raikiri_dom::NodeKind;
 use super::webidl::{dom_string, with_state};
 
 pub(crate) const HTML_NS: &str = "http://www.w3.org/1999/xhtml";
-const SVG_NS: &str = "http://www.w3.org/2000/svg";
+pub(crate) const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// Native data of every node wrapper. The index is never exposed to scripts.
 #[derive(Debug, Trace, Finalize, JsData)]
@@ -67,6 +67,8 @@ pub(crate) struct Protos {
     pub event: JsObject,
     pub custom_event: JsObject,
     pub error_event: JsObject,
+    pub ui_event: JsObject,
+    pub focus_event: JsObject,
 }
 
 /// The prototypes registered by [`install`].
@@ -475,6 +477,26 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         1,
     );
     let error_event = error_event_result?;
+    let ui_event_result = interface(
+        context,
+        "UIEvent",
+        Some(&event.prototype),
+        Some(&event.constructor),
+        &[&dispatch::UI_EVENT_MEMBERS],
+        dispatch::ui_event_constructor,
+        1,
+    );
+    let ui_event = ui_event_result?;
+    let focus_event_result = interface(
+        context,
+        "FocusEvent",
+        Some(&ui_event.prototype),
+        Some(&ui_event.constructor),
+        &[&dispatch::FOCUS_EVENT_MEMBERS],
+        dispatch::focus_event_constructor,
+        1,
+    );
+    let focus_event = focus_event_result?;
     // DOMException.prototype inherits Error.prototype (WebIDL §3.14.1), but
     // the interface object itself is an ordinary function with a real
     // constructor operation.
@@ -648,6 +670,8 @@ pub(crate) fn install(context: &mut Context) -> JsResult<()> {
         event: event.prototype,
         custom_event: custom_event.prototype,
         error_event: error_event.prototype,
+        ui_event: ui_event.prototype,
+        focus_event: focus_event.prototype,
     });
 
     let global = context.global_object();

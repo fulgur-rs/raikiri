@@ -93,6 +93,12 @@ pub(crate) struct EventData {
     colno: u32,
     /// `ErrorEvent.error`.
     error: JsValue,
+    /// `UIEvent.view`: whether it is the window rather than null.
+    #[unsafe_ignore_trace]
+    view_is_window: bool,
+    /// `FocusEvent.relatedTarget`, in the `target` key convention.
+    #[unsafe_ignore_trace]
+    related_target: Option<Option<usize>>,
 }
 
 fn new_event_data(
@@ -125,6 +131,8 @@ fn new_event_data(
         lineno: 0,
         colno: 0,
         error: JsValue::undefined(),
+        view_is_window: false,
+        related_target: None,
     }
 }
 
@@ -293,6 +301,77 @@ pub(crate) fn error_event_constructor(
     Ok(JsObject::from_proto_and_data(Some(proto), data).into())
 }
 
+/// The `view` member of a `UIEventInit` dictionary: null or the window.
+fn dict_view(context: &mut Context, dict: &JsObject) -> JsResult<bool> {
+    let view = dict_any(context, dict, "view")?;
+    if view.is_null_or_undefined() {
+        return Ok(false);
+    }
+    if view.as_object().as_ref() == Some(&context.global_object()) {
+        return Ok(true);
+    }
+    Err(type_error("UIEventInit.view is not a Window"))
+}
+
+/// `new UIEvent(type, eventInitDict = {})` (UI Events §3.1).
+pub(crate) fn ui_event_constructor(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let data = ui_event_data(this, args, context)?;
+    let proto = protos(context).ui_event.clone();
+    Ok(JsObject::from_proto_and_data(Some(proto), data).into())
+}
+
+fn ui_event_data(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<EventData> {
+    require_new(this)?;
+    let kind = required_dom_string(args, 0, context)?;
+    let dict = dict_arg(args, 1)?;
+    let (bubbles, cancelable, composed) = event_init(context, dict.as_ref())?;
+    let (view_is_window, detail) = match &dict {
+        Some(d) => {
+            let view = dict_view(context, d)?;
+            let detail = dict_any(context, d, "detail")?;
+            let detail = if detail.is_undefined() {
+                0
+            } else {
+                detail.to_i32(context)?
+            };
+            (view, detail)
+        }
+        None => (false, 0),
+    };
+    let time_stamp = now(context)?;
+    let mut data = new_event_data(kind, bubbles, cancelable, composed, false, time_stamp);
+    data.view_is_window = view_is_window;
+    data.detail = JsValue::from(detail);
+    Ok(data)
+}
+
+/// `new FocusEvent(type, eventInitDict = {})` (UI Events §3.3).
+pub(crate) fn focus_event_constructor(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    let mut data = ui_event_data(this, args, context)?;
+    if let Some(dict) = dict_arg(args, 1)? {
+        let related = dict_any(context, &dict, "relatedTarget")?;
+        data.related_target = if related.is_null_or_undefined() {
+            None
+        } else if related.as_object().as_ref() == Some(&context.global_object()) {
+            Some(None)
+        } else {
+            Some(Some(super::webidl::node_index(&related).ok_or_else(
+                || type_error("FocusEventInit.relatedTarget is not an EventTarget"),
+            )?))
+        };
+    }
+    let proto = protos(context).focus_event.clone();
+    Ok(JsObject::from_proto_and_data(Some(proto), data).into())
+}
+
 // ---- Event / CustomEvent / ErrorEvent members ---------------------------
 
 fn event_type(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
@@ -339,6 +418,20 @@ fn get_time_stamp(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<Js
 
 fn get_detail(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
     with_event(this, |d| d.detail.clone())
+}
+
+fn get_view(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let is_window = with_event(this, |d| d.view_is_window)?;
+    Ok(if is_window {
+        context.global_object().into()
+    } else {
+        JsValue::null()
+    })
+}
+
+fn get_related_target(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let key = with_event(this, |d| d.related_target)?;
+    target_key_to_js(context, key)
 }
 
 fn get_message(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
@@ -424,6 +517,18 @@ pub(crate) const EVENT_MEMBERS: Members = Members {
 
 pub(crate) const CUSTOM_EVENT_MEMBERS: Members = Members {
     getters: &[("detail", get_detail)],
+    accessors: &[],
+    methods: &[],
+};
+
+pub(crate) const UI_EVENT_MEMBERS: Members = Members {
+    getters: &[("view", get_view), ("detail", get_detail)],
+    accessors: &[],
+    methods: &[],
+};
+
+pub(crate) const FOCUS_EVENT_MEMBERS: Members = Members {
+    getters: &[("relatedTarget", get_related_target)],
     accessors: &[],
     methods: &[],
 };
@@ -905,6 +1010,27 @@ pub(crate) fn fire_event(
     let proto = protos(context).event.clone();
     let event = JsObject::from_proto_and_data(Some(proto), data);
     dispatch(context, &event, target)
+}
+
+/// Fire a trusted, composed, non-cancelable `FocusEvent` named `kind` at
+/// the element `target`, with the window as its `view` and `related` as
+/// its `relatedTarget`.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#fire-a-focus-event>
+pub(crate) fn fire_focus_event(
+    context: &mut Context,
+    target: usize,
+    kind: &str,
+    bubbles: bool,
+    related: Option<usize>,
+) -> JsResult<bool> {
+    let time_stamp = now(context)?;
+    let mut data = new_event_data(kind.to_owned(), bubbles, false, true, true, time_stamp);
+    data.view_is_window = true;
+    data.related_target = related.map(Some);
+    let proto = protos(context).focus_event.clone();
+    let event = JsObject::from_proto_and_data(Some(proto), data);
+    dispatch(context, &event, Some(target))
 }
 
 /// HTML "report an exception": dispatch a trusted, cancelable `ErrorEvent`

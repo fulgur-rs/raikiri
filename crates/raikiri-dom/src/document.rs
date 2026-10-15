@@ -3558,6 +3558,17 @@ impl Document {
         (root == self.root).then_some(focused)
     }
 
+    /// Forget a stored focused element that has left the document, so
+    /// inserting it again does not bring focus back without a `focus()`
+    /// call (HTML removing steps). Call after every tree mutation.
+    ///
+    /// Spec: <https://html.spec.whatwg.org/multipage/infrastructure.html#dom-trees:focus-fixup-rule>
+    pub fn fix_up_focus(&mut self) {
+        if self.focused.is_some() && self.focused_element().is_none() {
+            self.focused = None;
+        }
+    }
+
     /// Record `url` as the image `element` selected for its `src` value
     /// `src`. HTML resolves an `<img>` source once, when its request starts,
     /// so a later `<base href>` change does not move it to another resource;

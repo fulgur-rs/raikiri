@@ -8,7 +8,8 @@
 use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::{Document, NodeKind};
 
-use super::interfaces::{HTML_NS, Members, wrap_optional};
+use super::dispatch::fire_focus_event;
+use super::interfaces::{HTML_NS, Members, SVG_NS, wrap_optional};
 use super::node::{mark_dirty, write_attribute};
 use super::webidl::{this_document, this_element, with_state};
 
@@ -69,6 +70,63 @@ fn focusable_by_default(document: &Document, index: usize) -> bool {
     }
 }
 
+/// The `tabIndex` default of an element without a valid `tabindex`: 0 for
+/// a fixed list of elements, -1 for the rest. The list is historical and
+/// differs from which elements are focusable by default.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#dom-tabindex>
+fn default_tab_index(document: &Document, index: usize) -> i32 {
+    let zero = match html_tag(document, index) {
+        Some(
+            "a" | "area" | "button" | "frame" | "iframe" | "input" | "object" | "select"
+            | "textarea",
+        ) => true,
+        Some("summary") => is_details_summary(document, index),
+        Some(_) => false,
+        None => {
+            document.element_namespace_uri(index) == Some(SVG_NS)
+                && document.get_node(index).and_then(|node| node.tag_name()) == Some("a")
+        }
+    };
+    if zero { 0 } else { -1 }
+}
+
+/// Whether the form control `index` is disabled: by its own `disabled`
+/// attribute, or by a `<fieldset disabled>` ancestor unless it is inside
+/// that fieldset's first `<legend>` child.
+///
+/// Spec: <https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#concept-fe-disabled>
+fn is_disabled_control(document: &Document, index: usize) -> bool {
+    if !matches!(
+        html_tag(document, index),
+        Some("button" | "input" | "select" | "textarea")
+    ) {
+        return false;
+    }
+    if document.element_attribute(index, "disabled").is_some() {
+        return true;
+    }
+    let mut child = index;
+    while let Some(parent) = document.parent_of(child) {
+        if html_tag(document, parent) == Some("fieldset")
+            && document.element_attribute(parent, "disabled").is_some()
+        {
+            let first_legend = document.get_node(parent).and_then(|fieldset| {
+                fieldset
+                    .children
+                    .iter()
+                    .copied()
+                    .find(|&c| html_tag(document, c) == Some("legend"))
+            });
+            if first_legend != Some(child) {
+                return true;
+            }
+        }
+        child = parent;
+    }
+    false
+}
+
 /// Whether the HTML element `index` is a focusable area: connected, not
 /// inert, not a disabled form control, and focusable by default, through a
 /// valid `tabindex`, or as an editing host. Whether it is being rendered is
@@ -80,11 +138,7 @@ fn is_focusable(document: &Document, index: usize) -> bool {
         return false;
     }
     let attr = |name| document.element_attribute(index, name);
-    let disabled = matches!(
-        html_tag(document, index),
-        Some("button" | "input" | "select" | "textarea")
-    ) && attr("disabled").is_some();
-    if disabled {
+    if is_disabled_control(document, index) {
         return false;
     }
     let mut ancestor = Some(index);
@@ -105,7 +159,8 @@ fn is_focusable(document: &Document, index: usize) -> bool {
 
 /// HTML "focus update steps" for a move from the current focus to `next`
 /// (`None` to clear it): `blur` then `focusout` at the old element, then
-/// `focus` then `focusin` at the new one.
+/// `focus` then `focusin` at the new one, each a `FocusEvent` whose
+/// `relatedTarget` is the other element.
 ///
 /// Spec: <https://html.spec.whatwg.org/multipage/interaction.html#focus-update-steps>
 fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
@@ -117,12 +172,12 @@ fn move_focus(context: &mut Context, next: Option<usize>) -> JsResult<()> {
     // `:focus` and `:focus-within` change with it.
     mark_dirty(context)?;
     if let Some(previous) = previous {
-        super::dispatch::fire_event(context, Some(previous), "blur", false, false)?;
-        super::dispatch::fire_event(context, Some(previous), "focusout", true, false)?;
+        fire_focus_event(context, previous, "blur", false, next)?;
+        fire_focus_event(context, previous, "focusout", true, next)?;
     }
     if let Some(next) = next {
-        super::dispatch::fire_event(context, Some(next), "focus", false, false)?;
-        super::dispatch::fire_event(context, Some(next), "focusin", true, false)?;
+        fire_focus_event(context, next, "focus", false, previous)?;
+        fire_focus_event(context, next, "focusin", true, previous)?;
     }
     Ok(())
 }
@@ -146,8 +201,8 @@ fn blur(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValu
     Ok(JsValue::undefined())
 }
 
-/// `tabIndex`: the parsed `tabindex` attribute, else 0 for elements that
-/// are focusable by default and -1 for the rest.
+/// `tabIndex`: the parsed `tabindex` attribute, else the element's
+/// default.
 fn tab_index(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let index = this_element(this, context)?;
     let value = with_state(context, |s| {
@@ -155,11 +210,7 @@ fn tab_index(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
         document
             .element_attribute(index, "tabindex")
             .and_then(parse_integer)
-            .unwrap_or(if focusable_by_default(document, index) {
-                0
-            } else {
-                -1
-            })
+            .unwrap_or_else(|| default_tab_index(document, index))
     })?;
     Ok(JsValue::from(value))
 }
