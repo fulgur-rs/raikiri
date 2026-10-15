@@ -277,11 +277,12 @@ impl ParagraphProjection {
         // pieces on the lines only hold its text.
         let blocks = node.ifc_generated_block_pieces();
         let block_nodes: HashSet<usize> = blocks.iter().map(|block| block.node).collect();
-        for block in blocks {
+        // Only `::before` and `::after` are laid out as blocks.
+        let kinds = blocks
+            .into_iter()
+            .filter_map(|block| generated_kind(block.node).map(|kind| (block, kind)));
+        for (block, (owner, kind)) in kinds {
             work.check()?;
-            let Some((owner, kind)) = generated_kind(block.node) else {
-                continue; // cov:ignore: only `::before` and `::after` are laid out as blocks
-            };
             let visible = block.border_box.width > 0.0
                 && block.border_box.height > 0.0
                 && crate::generated_content::computed_for_id(cascade, block.node).is_some_and(
