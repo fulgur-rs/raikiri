@@ -2581,3 +2581,16 @@ fn malformed_inline_background_images_report_a_fallback() {
         "inline CSS background image data URL was malformed"
     );
 }
+
+#[test]
+fn background_raster_decodes_a_png_whose_chunk_crc_is_wrong() {
+    let mut corrupt = png_bytes(3, 2);
+    let idat = corrupt
+        .windows(4)
+        .position(|window| window == b"IDAT")
+        .expect("PNG has an IDAT chunk");
+    let length = u32::from_be_bytes(corrupt[idat - 4..idat].try_into().unwrap()) as usize;
+    corrupt[idat + 4 + length] ^= 0xFF;
+    let decoded = decode_background_raster(&corrupt, 1024).expect("decodes like a browser");
+    assert_eq!((decoded.width, decoded.height), (3, 2));
+}
