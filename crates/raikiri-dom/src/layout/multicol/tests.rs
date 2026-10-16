@@ -3073,16 +3073,49 @@ fn absolute_boxes_the_columns_cannot_hold_keep_the_other_strategies() {
         block,
         "position:absolute;top:-10px;width:10px;height:20px"
     ));
-    // A cut containing block cannot hold a box in a column after its own.
-    assert!(unbroken(
-        "display:block;position:relative;height:150px",
-        "position:absolute;top:0;width:10px;height:250px",
-    ));
     // Pieces that would not fit in the fragment budget.
     assert!(unbroken(
         block,
         "position:absolute;top:0;width:10px;height:10000000px",
     ));
+}
+
+#[test]
+fn a_cut_containing_block_holds_absolute_pieces_in_the_columns_after_its_own() {
+    // The 150px block ends 50px down the second column; the 250px box
+    // continues in an overflow column.
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:150px",
+            &["position:absolute;top:0;width:10px;height:250px"],
+        )],
+    );
+    let (block, absolute) = (ids[0].0, ids[0].1[0]);
+    let fragments = |node: usize| {
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .enumerate()
+            .filter(move |(_, fragment)| fragment.node_id == node)
+    };
+    let pieces: Vec<_> = fragments(absolute)
+        .map(|(_, fragment)| (fragment.fragmentainer, fragment.parent))
+        .collect();
+    let block_pieces: Vec<_> = fragments(block).map(|(id, _)| Some(id)).collect();
+    assert_eq!(
+        pieces,
+        vec![
+            (0, block_pieces[0]),
+            (1, block_pieces[1]),
+            (2, block_pieces[1])
+        ]
+    );
+    // The block's last piece shows the box in the column after it.
+    let clip = doc.fragment_tree.fragments[block_pieces[1].unwrap()]
+        .fragmentainer_clip
+        .unwrap();
+    assert_eq!((clip.x, clip.width), (100.0, 200.0));
 }
 
 #[test]

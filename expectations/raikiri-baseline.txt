@@ -1979,6 +1979,8 @@ css/css-break/out-of-flow-in-multicolumn-004.html
 css/css-break/out-of-flow-in-multicolumn-005.html
 css/css-break/out-of-flow-in-multicolumn-007.html
 css/css-break/out-of-flow-in-multicolumn-014.html
+css/css-break/out-of-flow-in-multicolumn-019.html
+css/css-break/out-of-flow-in-multicolumn-033.html
 css/css-break/out-of-flow-in-multicolumn-084.html
 css/css-break/out-of-flow-in-multicolumn-097.html
 css/css-break/out-of-flow-in-multicolumn-100.html

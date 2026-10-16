@@ -227,9 +227,10 @@ struct AbsolutePiece {
 /// the flow its containing block is part of (CSS Position 3, 3.3.4), and a
 /// box that reaches past the last column continues in overflow columns,
 /// unless `last_column` names a last column with no block-end limit, which
-/// holds the rest of the box. `None` when a box starts above the columns, or continues in a column that
-/// a cut containing block cannot hold it in, or when its pieces would not
-/// fit in `budget` fragments.
+/// holds the rest of the box. The last piece of the containing block holds
+/// the box's pieces in the columns after it. `None` when a box starts above
+/// the columns or its containing block, or when its pieces would not fit in
+/// `budget` fragments.
 fn absolute_pieces(
     tree: &Document,
     children: &[usize],
@@ -280,9 +281,9 @@ fn absolute_pieces(
             for column in first_column..=end_column {
                 let parent_piece = match pieces.iter().position(|piece| piece.column == column) {
                     Some(index) => index,
-                    // An uncut containing block holds the box's pieces in
-                    // the columns after its own.
-                    None if column > last.column && pieces.len() == 1 => 0,
+                    // The last piece of the containing block holds the
+                    // box's pieces in the columns after its own.
+                    None if column > last.column => pieces.len() - 1,
                     None => return None,
                 };
                 let parent = &pieces[parent_piece];
@@ -340,7 +341,7 @@ struct Item {
     whole: bool,
 }
 
-const EPSILON: f32 = 0.001;
+pub(super) const EPSILON: f32 = 0.001;
 
 /// Why a placement stopped before the end of the stream.
 #[derive(Debug, PartialEq)]
@@ -1274,12 +1275,28 @@ pub(super) fn layout(
                     width: size.width,
                     height: piece.height,
                 },
-                // A box that stays in one column is not cut.
-                fragmentainer_clip: (pieces.len() > 1).then_some(FragmentRect {
-                    x,
-                    y: origin.y,
-                    width: size.width.max(context.column_width),
-                    height: column_height,
+                // A box that stays in one column is not cut. A cut one
+                // still shows its absolutely positioned boxes, which have
+                // clips of their own, where they reach past it inline.
+                fragmentainer_clip: (pieces.len() > 1).then(|| {
+                    let (left, right) = absolute
+                        .iter()
+                        .filter(|absolute| absolute.parent_piece == index)
+                        .fold(
+                            (0.0f32, size.width.max(context.column_width)),
+                            |(left, right), absolute| {
+                                (
+                                    left.min(absolute.clip.x),
+                                    right.max(absolute.clip.x + absolute.clip.width),
+                                )
+                            },
+                        );
+                    FragmentRect {
+                        x: x + left,
+                        y: origin.y,
+                        width: right - left,
+                        height: column_height,
+                    }
                 }),
                 fragment_index: index,
                 fragment_count: pieces.len(),
