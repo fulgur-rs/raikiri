@@ -1452,12 +1452,12 @@ fn inverse_undoes_an_affine_transform_and_refuses_a_singular_one() {
 fn the_root_transform_moves_the_scrolling_area_and_a_singular_one_empties_it() {
     let (_dir, mut rt) = runtime(
         "<style>html{transform:translateY(2000px)}body{margin:0}</style>\
-         <div style='height:10px'></div>",
+         <div style='height:3000px'></div>",
     );
-    // The body box fills the page here, so the moved canvas ends a whole
-    // viewport below the translation.
+    // The content is taller than the page, so the moved canvas ends at the
+    // translation plus the content height whatever the root boxes measure.
     let offset = text(&mut rt, "scrollTo(0, 99999); String(scrollY)");
-    assert_eq!(offset, "2000");
+    assert_eq!(offset, "4400");
     let (_dir, mut rt) = runtime(
         "<style>html{transform:scale(0)}body{margin:0}</style>\
          <div style='height:3000px'></div>",
