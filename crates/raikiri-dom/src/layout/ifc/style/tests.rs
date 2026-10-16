@@ -401,15 +401,30 @@ fn supported_vertical_writing_modes_reach_the_paragraph() {
 }
 
 #[test]
-fn sideways_writing_modes_keep_cssom_values_with_horizontal_layout_fallback() {
+fn sideways_writing_modes_lay_lines_out_vertically() {
     use raikiri_style::property as p;
 
-    for (mode, computed) in [
-        ("sideways-rl", p::WritingMode::SidewaysRl),
-        ("sideways-lr", p::WritingMode::SidewaysLr),
+    // `sideways-rl` runs its lines from top to bottom and `sideways-lr` from
+    // bottom to top.
+    for (mode, computed, shodo_mode, inline_edges_px) in [
+        (
+            "sideways-rl",
+            p::WritingMode::SidewaysRl,
+            WritingMode::SidewaysRl,
+            (2.0, 3.0),
+        ),
+        (
+            "sideways-lr",
+            p::WritingMode::SidewaysLr,
+            WritingMode::SidewaysLr,
+            (3.0, 2.0),
+        ),
     ] {
         let fixture = block_fixture(
-            &format!("writing-mode:{mode};padding-left:2px;padding-right:3px"),
+            &format!(
+                "writing-mode:{mode};padding-top:2px;padding-bottom:3px;\
+                 padding-left:4px;padding-right:5px"
+            ),
             |doc, root| {
                 doc.append_text(root, "x");
             },
@@ -417,12 +432,13 @@ fn sideways_writing_modes_keep_cssom_values_with_horizontal_layout_fallback() {
         let cv = &fixture.cascade.computed[fixture.root];
         assert_eq!(cv.cssom_writing_mode, computed, "{mode}");
         let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
-        let paragraph = paragraph_style(cv, fixture.root, root).expect("layout fallback");
-        assert_eq!(paragraph.writing_mode, WritingMode::HorizontalTb, "{mode}");
-        let (edges, _) = inline_edges(cv, fixture.root, &fonts()).expect("edge fallback");
+        let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph style");
+        assert_eq!(paragraph.writing_mode, shodo_mode, "{mode}");
+        let (edges, _) = inline_edges(cv, fixture.root, &fonts()).expect("edges");
         assert_eq!(
             (edges.padding.inline_start, edges.padding.inline_end),
-            (2.0, 3.0)
+            inline_edges_px,
+            "{mode}"
         );
     }
 }

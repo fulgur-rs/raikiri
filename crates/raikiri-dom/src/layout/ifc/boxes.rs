@@ -2221,7 +2221,10 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
             root.writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr
         )
     });
     let boxes = tree.nodes[idx]

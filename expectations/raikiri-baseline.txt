@@ -4645,3 +4645,10 @@ css/css-page/page-box-008-print.html
 # --- later pages of another inline size in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once later pages of a vertical-rl root whose page area height differs are laid out again at that height; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-size-012-print.html
+
+# --- body background across pages in vertical and sideways writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-16) ---
+# Pass once sideways roots paginate along x, the body's block-end margin is truncated at the end of the flow, and a right-to-left root box is stitched from its left end; KEEP in two audit-vacuous-passes runs.
+css/css-page/body-background-slr-print.html
+css/css-page/body-background-srl-print.html
+css/css-page/body-background-vlr-print.html
+css/css-page/body-background-vrl-print.html

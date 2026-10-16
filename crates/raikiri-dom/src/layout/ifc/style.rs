@@ -710,7 +710,10 @@ pub(crate) fn resolve_auto_emphasis_position(cv: &ComputedValues, inline: &mut s
     if !matches!(cv.text_emphasis_position, p::TextEmphasisPosition::Auto)
         || matches!(
             cv.cssom_writing_mode,
-            p::WritingMode::VerticalRl | p::WritingMode::VerticalLr
+            p::WritingMode::VerticalRl
+                | p::WritingMode::VerticalLr
+                | p::WritingMode::SidewaysRl
+                | p::WritingMode::SidewaysLr
         )
     {
         return;
@@ -784,9 +787,8 @@ pub(crate) fn shodo_writing_mode(
         p::WritingMode::HorizontalTb => Ok(WritingMode::HorizontalTb),
         p::WritingMode::VerticalRl => Ok(WritingMode::VerticalRl),
         p::WritingMode::VerticalLr => Ok(WritingMode::VerticalLr),
-        // Preserve the previous horizontal layout fallback for CSSOM values
-        // whose shaping modes are outside the IFC path's supported set.
-        p::WritingMode::SidewaysRl | p::WritingMode::SidewaysLr => Ok(WritingMode::HorizontalTb),
+        p::WritingMode::SidewaysRl => Ok(WritingMode::SidewaysRl),
+        p::WritingMode::SidewaysLr => Ok(WritingMode::SidewaysLr),
         _ => Err(IfcError::Unsupported {
             node,
             reason: "writing-mode is not represented by the inline path",
@@ -916,11 +918,10 @@ pub(crate) fn inline_edges(
         (None, LengthOrAuto::Auto | LengthOrAuto::MinContent) => (0.0, 0.0),
     };
     let writing_mode = match cv.cssom_writing_mode {
-        p::WritingMode::HorizontalTb | p::WritingMode::SidewaysRl | p::WritingMode::SidewaysLr => {
-            WritingMode::HorizontalTb
-        }
-        p::WritingMode::VerticalRl => WritingMode::VerticalRl,
+        p::WritingMode::HorizontalTb => WritingMode::HorizontalTb,
+        p::WritingMode::VerticalRl | p::WritingMode::SidewaysRl => WritingMode::VerticalRl,
         p::WritingMode::VerticalLr => WritingMode::VerticalLr,
+        p::WritingMode::SidewaysLr => WritingMode::SidewaysLr,
         _ => return Err(unsupported("edge writing mode is not represented by shodo")),
     };
     let logical = |top, right, bottom, left| match (writing_mode, cv.direction) {
@@ -957,6 +958,19 @@ pub(crate) fn inline_edges(
         (WritingMode::VerticalLr, p::Direction::Rtl) => Ok(Sides {
             inline_start: bottom,
             inline_end: top,
+            block_start: left,
+            block_end: right,
+        }),
+        // Sideways-lr runs its lines from bottom to top.
+        (WritingMode::SidewaysLr, p::Direction::Ltr) => Ok(Sides {
+            inline_start: bottom,
+            inline_end: top,
+            block_start: left,
+            block_end: right,
+        }),
+        (WritingMode::SidewaysLr, p::Direction::Rtl) => Ok(Sides {
+            inline_start: top,
+            inline_end: bottom,
             block_start: left,
             block_end: right,
         }),

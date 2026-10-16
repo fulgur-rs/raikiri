@@ -241,7 +241,7 @@ fn an_over_constrained_rtl_root_keeps_its_right_margin() {
 }
 
 #[test]
-fn a_vertical_rl_root_runs_across_the_pages_from_the_right() {
+fn a_vertical_rl_root_is_stitched_across_the_pages_from_its_left_end() {
     let (document, cascade) = laid_out(
         "@page { size: 200px 100px; margin: 0 }",
         "display: block; writing-mode: vertical-rl; margin: 10px 20px 30px 40px; padding: 10%",
@@ -252,16 +252,17 @@ fn a_vertical_rl_root_runs_across_the_pages_from_the_right() {
     assert_eq!(root.padding, PaintInsets::new(10.0, 10.0, 10.0, 10.0));
     let rect = root.border_box;
     // Down the page it fills the area between its margins; across it, the
-    // flow of all three pages from the right margin.
+    // flow of all three pages between its margins.
     assert_eq!((rect.y, rect.height), (10.0, 60.0));
     assert_eq!(rect.width, 3.0 * 200.0 - 20.0 - 40.0);
-    assert_eq!(rect.x + rect.width, 200.0 - 20.0);
-
-    // The second page holds the flow 200px further left, so the box moves
-    // right by that much.
+    // The first page shows the left end of the box, inside its left margin,
+    // and each later page the part to the right of the one before.
+    assert_eq!(rect.x, 40.0);
     let later = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 3).expect("root box");
-    assert_eq!(later.border_box.x, rect.x + 200.0);
+    assert_eq!(later.border_box.x, rect.x - 200.0);
     assert_eq!(later.border_box.y, rect.y);
+    let last = root_box(&document, &cascade, page(200.0, 100.0), 400.0, 3).expect("root box");
+    assert_eq!(last.border_box.x + last.border_box.width, 200.0 - 20.0);
 }
 
 #[test]
@@ -290,5 +291,7 @@ fn a_vertical_root_maps_its_logical_sizes_onto_physical_axes() {
     let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 2).expect("root box");
     let rect = root.border_box;
     assert_eq!((rect.width, rect.height), (300.0, 50.0));
-    assert_eq!(rect.x + rect.width, 200.0);
+    // The box ends at the right edge of the last page's area.
+    let last = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 2).expect("root box");
+    assert_eq!(last.border_box.x + last.border_box.width, 200.0);
 }

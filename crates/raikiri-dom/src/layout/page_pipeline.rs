@@ -1000,7 +1000,10 @@ fn layout_single_page_with_table_projection(
     let body_percent_basis = if document.nodes[body_id].parent.is_some_and(|root| {
         matches!(
             cascade.computed[root].cssom_writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr
         )
     }) {
         content_height

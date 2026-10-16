@@ -143,9 +143,15 @@ pub fn root_box(
             let (margin_start, width) =
                 horizontal.along_pages(computed, right_to_left, content_origin_y, page_count);
             // A later page sees the box moved by the flow before it, away
-            // from the side the pages continue to.
+            // from the side the pages continue to. Browsers stitch the
+            // fragments of a right-to-left root box in page order from its
+            // left end, as though the pages continued to the right: the
+            // first page shows the part the last page would hold in flow
+            // order, and so on.
             let x = if right_to_left {
-                area_x + area_width - margin_start - width + content_origin_y
+                let last_origin = area_width * page_count.saturating_sub(1) as f32;
+                let mirrored_origin = (last_origin - content_origin_y).max(0.0);
+                area_x + area_width - margin_start - width + mirrored_origin
             } else {
                 area_x + margin_start - content_origin_y
             };
