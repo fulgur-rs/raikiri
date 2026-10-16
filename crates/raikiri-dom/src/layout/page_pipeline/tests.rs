@@ -15859,3 +15859,43 @@ fn a_last_child_margin_inside_a_fixed_height_box_does_not_join_the_gap() {
         (100.0, 2)
     );
 }
+
+#[test]
+fn float_shift_stays_pending_inside_the_moved_float() {
+    let mut doc = Document::new();
+    let float = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
+    let inner = doc.append_element(Some(float), "p", Style::default(), None::<&str>);
+    let after = doc.append_element(Some(0), "p", Style::default(), None::<&str>);
+    let mut shifts = FloatShifts {
+        pending: Some((float, 12.0, 3)),
+        ..FloatShifts::default()
+    };
+    assert_eq!(shifts.end_pending_outside(&doc, inner), None);
+    assert_eq!(shifts.pending, Some((float, 12.0, 3)));
+    assert_eq!(shifts.end_pending_outside(&doc, after), Some((12.0, 3)));
+    assert_eq!(shifts.pending, None);
+    assert_eq!(shifts.later, 12.0);
+}
+
+#[test]
+fn dropping_the_last_float_edges_resets_the_later_shift() {
+    let edge = |node, bottom| FloatEdge {
+        node,
+        side: 0,
+        top: 0.0,
+        bottom,
+        width: 10.0,
+    };
+    let mut shifts = FloatShifts::default();
+    shifts.extend_later(8.0);
+    shifts.record_edge(1, edge(10, 50.0));
+    shifts.record_edge(2, edge(20, 80.0));
+    shifts.drop_edges_above(1, 60.0);
+    assert!(!shifts.edges.contains_key(&1));
+    assert_eq!(shifts.later, 8.0);
+    shifts.drop_edges_above(2, 60.0);
+    assert_eq!(shifts.edges[&2].len(), 1);
+    shifts.drop_edges_above(2, 80.0);
+    assert!(shifts.edges.is_empty());
+    assert_eq!(shifts.later, 0.0);
+}
