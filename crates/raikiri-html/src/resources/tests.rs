@@ -819,6 +819,31 @@ fn render_resources_default_matches_new() {
     assert_eq!(debug_new, debug_default);
 }
 
+#[test]
+fn render_resources_border_width_device_scale_reaches_the_parse_cascade() {
+    let html = "<div id=bordered style='border-top-width:49.75px;border-top-style:solid'></div>";
+    let find_border = |document: &crate::HtmlDocument| {
+        let dom = document.dom();
+        let element = (0..dom.node_count())
+            .find(|&index| {
+                dom.get_node(index).and_then(|node| node.attribute("id")) == Some("bordered")
+            })
+            .expect("bordered element");
+        document.cascade().computed[element].border.top.width()
+    };
+
+    let fractional = crate::parse_html_with_resources(html.as_bytes(), &RenderResources::new())
+        .expect("parse without output scale");
+    assert_eq!(find_border(&fractional).0, 49.75);
+
+    let snapped = crate::parse_html_with_resources(
+        html.as_bytes(),
+        &RenderResources::new().border_width_device_scale(Some(1.5)),
+    )
+    .expect("parse with 1.5x output scale");
+    assert_eq!(find_border(&snapped).0, 74.0 / 1.5);
+}
+
 struct StubImageProvider;
 
 impl raikiri_traits::ReplacedResolver for StubImageProvider {

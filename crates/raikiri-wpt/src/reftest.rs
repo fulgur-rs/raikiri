@@ -1984,8 +1984,16 @@ fn authored_document_page_viewport(
         height as u32,
     );
     let tree = viewport_rule_tree(document, 480.0, 288.0, &context);
-    let elements = raikiri_style::cascade_with_media_context(&document.dom, &tree, &context)
-        .expect("page-basis element cascade");
+    let mut cascade_options = raikiri_style::CascadeOptions::default();
+    cascade_options.border_width_device_scale = Some(1.0);
+    let elements = raikiri_style::cascade_with_options(
+        &document.dom,
+        &tree,
+        &context,
+        &raikiri_style::PageContextQuery::default(),
+        &cascade_options,
+    )
+    .expect("page-basis element cascade");
     let mut query = raikiri_style::PageContextQuery::default();
     query.is_first = true;
     query.is_left = matches!(
@@ -3106,8 +3114,8 @@ pub(crate) fn render_raikiri_pages_with_resources(
     use anyrender_vello_cpu::VelloCpuImageRenderer;
     use raikiri::ParseOptions;
     use raikiri::{
-        Atom, MediaContext, PageBox, PageContextQuery, RasterBufferBudget,
-        build_cascaded_with_media_context_for_page,
+        Atom, CascadeOptions, MediaContext, PageBox, PageContextQuery, RasterBufferBudget,
+        build_cascaded_with_options,
     };
     use raikiri_dom::{
         layout_pages, layout_pages_with_page_geometry,
@@ -3178,8 +3186,15 @@ pub(crate) fn render_raikiri_pages_with_resources(
     first_query.is_first = true;
     first_query.is_right = true;
     first_query.is_left = false;
-    let mut default_cascade =
-        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &first_query)?;
+    let mut cascade_options = CascadeOptions::default();
+    cascade_options.border_width_device_scale = Some(1.0);
+    let mut default_cascade = build_cascaded_with_options(
+        &uncascaded,
+        &media_context,
+        &first_query,
+        &[],
+        &cascade_options,
+    )?;
     if let Some(prepare) = prepare_cascade_images {
         prepare.prepare_cascade(&uncascaded.dom, &mut default_cascade);
     }
@@ -3344,11 +3359,14 @@ pub(crate) fn render_raikiri_pages_with_resources(
         // The reparsed document is a different arena, so it gets its own
         // rule tree and full cascade.
         let fresh_tree = raikiri::build_rule_tree(&fresh);
-        let mut fresh_cascade = raikiri_style::cascade_with_media_context_for_page(
+        let mut fresh_cascade_options = raikiri_style::CascadeOptions::default();
+        fresh_cascade_options.border_width_device_scale = Some(1.0);
+        let mut fresh_cascade = raikiri_style::cascade_with_options(
             &fresh.dom,
             &fresh_tree,
             &media_context,
             &first_query,
+            &fresh_cascade_options,
         )?; // cov:ignore: the first cascade of the same document, above, already returns a limit error
         if let Some(prepare) = prepare_cascade_images {
             prepare.prepare_cascade(&fresh.dom, &mut fresh_cascade);
@@ -3615,11 +3633,14 @@ fn continue_at_page_widths(
     // The element cascade of this document already succeeded on the same
     // input, and its limits count only that input.
     let cascade_for_page = |slice: &raikiri_dom::PageSlice| {
-        let mut cascade = raikiri_style::cascade_with_media_context_for_page(
+        let mut cascade_options = raikiri_style::CascadeOptions::default();
+        cascade_options.border_width_device_scale = Some(1.0);
+        let mut cascade = raikiri_style::cascade_with_options(
             pristine,
             context.tree,
             context.media_context,
             &page_query_for_slice(slice, context.first_page_is_left),
+            &cascade_options,
         )
         .expect("the element cascade of this document already succeeded");
         if let Some(prepare) = context.prepare_cascade_images {

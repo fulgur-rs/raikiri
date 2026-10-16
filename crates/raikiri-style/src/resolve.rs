@@ -1574,6 +1574,13 @@ pub struct ResolveContext {
     /// inline axis, the basis of `vi`, is the viewport's height and its
     /// block axis, the basis of `vb`, is the viewport's width.
     pub vertical_root: bool,
+    /// Device pixels per CSS pixel for computed `border-*-width` snapping.
+    ///
+    /// `None` preserves fractional CSS-pixel widths for output-neutral and
+    /// vector consumers. A finite positive scale applies CSS Values 4's
+    /// “snap a length as a border width” algorithm. Invalid scales are
+    /// ignored by [`Self::with_border_width_device_scale`].
+    pub border_width_device_scale: Option<f32>,
 }
 
 /// The viewport size [`ResolveContext`]'s constructors start from: the
@@ -1600,6 +1607,21 @@ impl ResolveContext {
     pub fn with_viewport(mut self, width: f32, height: f32) -> Self {
         self.viewport_width = width;
         self.viewport_height = height;
+        self
+    }
+
+    /// Configure device-pixel snapping for computed border widths.
+    ///
+    /// `device_pixels_per_css_pixel` is the raster output scale. At 1x, one
+    /// CSS pixel maps to one device pixel; at 2x, two device pixels map to one
+    /// CSS pixel. `None`, zero, negative, NaN, and infinite scales preserve
+    /// fractional CSS-pixel widths.
+    pub fn with_border_width_device_scale(
+        mut self,
+        device_pixels_per_css_pixel: Option<f32>,
+    ) -> Self {
+        self.border_width_device_scale =
+            device_pixels_per_css_pixel.filter(|scale| scale.is_finite() && *scale > 0.0);
         self
     }
 
@@ -1645,6 +1667,7 @@ impl ResolveContext {
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
+            border_width_device_scale: None,
         }
     }
 
@@ -1664,6 +1687,7 @@ impl ResolveContext {
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
+            border_width_device_scale: None,
         }
     }
 
@@ -1708,6 +1732,7 @@ impl ResolveContext {
             viewport_width: DEFAULT_VIEWPORT.0,
             viewport_height: DEFAULT_VIEWPORT.1,
             vertical_root: false,
+            border_width_device_scale: None,
         }
     }
 }
@@ -3779,6 +3804,21 @@ pub fn resolve_border(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorder {
+    resolve_border_with_width_provenance(specified, font_size, own_line_height, false, ctx)
+}
+
+/// Resolve a border while retaining a width that is already a computed value.
+///
+/// Explicit CSS-wide inheritance lifts the parent's computed width back into
+/// `Length::Px` for staging. That width must not be snapped a second time, but
+/// the current border's `none` / `hidden` style still gates it to zero.
+pub(crate) fn resolve_border_with_width_provenance(
+    specified: Border,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    width_is_computed: bool,
+    ctx: &ResolveContext,
+) -> ComputedBorder {
     // `matches!` + else: pass the specified width through for any unknown
     // future `BorderStyle` variant, treating it as visible. This fail-safe
     // prevents a newly added visible style from silently getting zero width.
@@ -3786,13 +3826,58 @@ pub fn resolve_border(
     let width = if matches!(specified.style, BorderStyle::None | BorderStyle::Hidden) {
         ComputedLength::ZERO
     } else {
-        resolve_length(specified.width, font_size, own_line_height, ctx)
+        resolve_border_width_with_provenance(
+            specified.width,
+            font_size,
+            own_line_height,
+            width_is_computed,
+            ctx,
+        )
     };
     ComputedBorder {
         width,
         style: specified.style,
         color: specified.color,
     }
+}
+
+/// Resolve a border width and snap authored values to the device-pixel grid.
+///
+/// `width_is_computed` preserves inherited widths that were staged back into
+/// [`Length::Px`], avoiding a second snap during page or element finalization.
+pub(crate) fn resolve_border_width_with_provenance(
+    specified: Length,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    width_is_computed: bool,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    let width = resolve_length(specified, font_size, own_line_height, ctx);
+    match (width_is_computed, ctx.border_width_device_scale) {
+        (true, _) => width,
+        (false, Some(scale)) => snap_border_width_to_device_pixels(width, scale),
+        (false, None) => width,
+    }
+}
+
+/// Snap an absolute border width to the device-pixel grid, returning CSS px.
+///
+/// CSS Values 4 §6 (“Snap a length as a border width”) keeps zero at zero,
+/// rounds positive widths below one device pixel up to one device pixel, and
+/// floors larger widths to an integer number of device pixels.
+fn snap_border_width_to_device_pixels(width: ComputedLength, scale: f32) -> ComputedLength {
+    let css_px = width.px();
+    let scale = f64::from(scale);
+    let device_px = f64::from(css_px) * scale;
+    if css_px <= 0.0 || !device_px.is_finite() || device_px <= 0.0 {
+        return width;
+    }
+    let snapped_device_px = if device_px < 1.0 {
+        1.0
+    } else {
+        device_px.floor()
+    };
+    ComputedLength((snapped_device_px / scale) as f32)
 }
 
 // ---------------------------------------------------------------------------

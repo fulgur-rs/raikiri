@@ -14,6 +14,7 @@ const CTX: ResolveContext = ResolveContext {
     viewport_width: 480.0,
     viewport_height: 288.0,
     vertical_root: false,
+    border_width_device_scale: None,
 };
 
 #[test]
@@ -1162,6 +1163,78 @@ fn border_pc_width_is_absolutized_and_still_gated_by_style() {
         resolve_border(specified, ComputedLength(20.0), None, &CTX).width,
         ComputedLength::ZERO,
     );
+}
+
+#[test]
+fn border_width_snaps_only_when_a_valid_device_scale_is_configured() {
+    let mut border = SpecifiedValues::initial().border.top;
+    border.style = BorderStyle::Solid;
+    border.width = Length::Px(49.75);
+
+    let preserve = resolve_border(
+        border,
+        ComputedLength(16.0),
+        None,
+        &ResolveContext::initial(),
+    );
+    assert_eq!(preserve.width, ComputedLength(49.75));
+
+    let snap = |width, scale| {
+        let mut test_border = border;
+        test_border.width = Length::Px(width);
+        resolve_border(
+            test_border,
+            ComputedLength(16.0),
+            None,
+            &ResolveContext::initial().with_border_width_device_scale(Some(scale)),
+        )
+        .width
+        .px()
+    };
+    assert_eq!(snap(49.75, 1.0), 49.0);
+    assert!((snap(49.75, 1.5) - 74.0 / 1.5).abs() < 1e-5);
+    assert_eq!(snap(0.2, 1.0), 1.0);
+    assert!((snap(0.8, 1.5) - 1.0 / 1.5).abs() < 1e-5);
+    assert_eq!(snap(0.75, 2.0), 0.5);
+    assert_eq!(snap(1.2, 2.0), 1.0);
+    assert_eq!(snap(0.0, 2.0), 0.0);
+
+    for invalid_scale in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        border.width = Length::Px(49.75);
+        let ctx = ResolveContext::initial().with_border_width_device_scale(Some(invalid_scale));
+        assert_eq!(
+            resolve_border(border, ComputedLength(16.0), None, &ctx).width,
+            ComputedLength(49.75),
+        );
+    }
+}
+
+#[test]
+fn border_width_snap_floors_authored_width_matching_a_grid_float() {
+    let mut border = SpecifiedValues::initial().border.top;
+    border.style = BorderStyle::Solid;
+    border.width = Length::Px(49.333332);
+    let ctx = ResolveContext::initial().with_border_width_device_scale(Some(1.5));
+
+    assert_eq!(
+        resolve_border(border, ComputedLength(16.0), None, &ctx).width,
+        ComputedLength(48.666668),
+    );
+}
+
+#[test]
+fn border_width_snap_keeps_none_and_hidden_styles_zero() {
+    let mut border = SpecifiedValues::initial().border.top;
+    border.width = Length::Px(49.75);
+    let ctx = ResolveContext::initial().with_border_width_device_scale(Some(1.5));
+
+    for style in [BorderStyle::None, BorderStyle::Hidden] {
+        border.style = style;
+        assert_eq!(
+            resolve_border(border, ComputedLength(16.0), None, &ctx).width,
+            ComputedLength::ZERO,
+        );
+    }
 }
 
 #[test]

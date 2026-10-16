@@ -25,8 +25,8 @@ fn frontier_of(prefix: &str) -> String {
     };
     let uncascaded = finish_document(sink.snapshot(), &options).expect("finish");
     let forward = build_rule_tree(&uncascaded).has_forward_dependent_selectors();
-    let document =
-        assemble_document(uncascaded, &options, &RenderLimits::default(), None).expect("cascade");
+    let document = assemble_document(uncascaded, &options, &RenderLimits::default(), None, None)
+        .expect("cascade");
     match stable_frontier(&document.uncascaded.dom, &document.cascade, &open, forward) {
         Frontier::End => "end".to_owned(),
         Frontier::At(id) => describe(&document.uncascaded.dom, id),

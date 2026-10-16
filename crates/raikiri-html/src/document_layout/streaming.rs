@@ -498,6 +498,7 @@ impl Settings<'_, '_> {
             build_rule_tree_with_limits(&document.uncascaded, &[], &limits.rule_tree_limits())?;
         let mut options = raikiri_style::CascadeOptions::default();
         options.limits = limits.cascade_limits();
+        options.border_width_device_scale = self.resources.configured_border_width_device_scale();
         document.cascade = raikiri_style::cascade_with_options(
             &document.uncascaded.dom,
             &rule_tree,
@@ -543,7 +544,13 @@ impl Settings<'_, '_> {
         let forward_dependent =
             forward_dependent && build_rule_tree(&uncascaded).has_forward_dependent_selectors();
         let fonts = self.resources.configured_fonts();
-        let mut document = assemble_document(uncascaded, &options, &limits, fonts)?;
+        let mut document = assemble_document(
+            uncascaded,
+            &options,
+            &limits,
+            fonts,
+            self.resources.configured_border_width_device_scale(),
+        )?;
         self.recascade_for_layout(&mut document, &limits)?;
 
         let late =
@@ -581,7 +588,13 @@ impl Settings<'_, '_> {
             hide_element(&mut uncascaded.dom, id);
         }
         let fonts = self.resources.configured_fonts();
-        let mut document = assemble_document(uncascaded, &options, &limits, fonts)?;
+        let mut document = assemble_document(
+            uncascaded,
+            &options,
+            &limits,
+            fonts,
+            self.resources.configured_border_width_device_scale(),
+        )?;
         self.recascade_for_layout(&mut document, &limits)?;
         Ok(document)
     }

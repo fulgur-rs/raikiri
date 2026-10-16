@@ -5,8 +5,8 @@ use std::fmt;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri::{
-    Body, MediaContext, Method, NetworkProvider, PageBox, PageContextQuery, ParseOptions,
-    RasterBufferBudget, Request, ResourceKind, Url, build_cascaded_with_media_context_for_page,
+    Body, CascadeOptions, MediaContext, Method, NetworkProvider, PageBox, PageContextQuery,
+    ParseOptions, RasterBufferBudget, Request, ResourceKind, Url, build_cascaded_with_options,
 };
 use raikiri_html::effective_document_base_url;
 use raikiri_net::{ImageResolver, SystemHttpProvider};
@@ -72,9 +72,16 @@ pub fn render_screen_url(
     )
     .map_err(ScreenRenderError::new)?;
     uncascaded.dom.set_font_collection(fonts);
-    let mut cascade =
-        build_cascaded_with_media_context_for_page(&uncascaded, &media_context, &page_query)
-            .map_err(|error| ScreenRenderError::new(error.to_string()))?;
+    let mut cascade_options = CascadeOptions::default();
+    cascade_options.border_width_device_scale = Some(1.0);
+    let mut cascade = build_cascaded_with_options(
+        &uncascaded,
+        &media_context,
+        &page_query,
+        &[],
+        &cascade_options,
+    )
+    .map_err(|error| ScreenRenderError::new(error.to_string()))?;
     let mut page_box = PageBox::new();
     page_box.width = size.width() as f32;
     page_box.height = size.height() as f32;

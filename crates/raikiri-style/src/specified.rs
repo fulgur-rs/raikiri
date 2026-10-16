@@ -69,12 +69,12 @@ use crate::resolve::{
     empty_computed_box_shadow_list, empty_computed_text_shadow_list, lift_border_spacing,
     lift_font_size, lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent,
     lift_word_spacing, relative_calc_ch_parts, resolve_background_image, resolve_background_size,
-    resolve_border, resolve_border_radius, resolve_border_spacing, resolve_box_shadow_item,
-    resolve_column_width, resolve_css_position, resolve_flex_basis, resolve_font_size,
-    resolve_font_size_calc, resolve_grid_auto_track_list, resolve_grid_template_tracks,
-    resolve_length, resolve_length_percentage_or_auto, resolve_length_percentage_or_normal,
-    resolve_length_percentage_with_ch, resolve_letter_spacing, resolve_letter_spacing_with_ch,
-    resolve_line_height, resolve_margin_length_or_auto,
+    resolve_border_radius, resolve_border_spacing, resolve_border_with_width_provenance,
+    resolve_box_shadow_item, resolve_column_width, resolve_css_position, resolve_flex_basis,
+    resolve_font_size, resolve_font_size_calc, resolve_grid_auto_track_list,
+    resolve_grid_template_tracks, resolve_length, resolve_length_percentage_or_auto,
+    resolve_length_percentage_or_normal, resolve_length_percentage_with_ch, resolve_letter_spacing,
+    resolve_letter_spacing_with_ch, resolve_line_height, resolve_margin_length_or_auto,
     resolve_non_negative_length_percentage_or_calc, resolve_outline,
     resolve_size_length_percentage_or_auto, resolve_tab_size, resolve_text_decoration_inset,
     resolve_text_decoration_thickness, resolve_text_indent_calc, resolve_text_shadow_item,
@@ -303,9 +303,12 @@ pub struct SpecifiedValues {
     pub padding: Sides<LengthPercentageOrCalc>,
     /// **Specified** `margin`; phase 3 ([`resolve_margin_length_or_auto`]) absolutizes its lengths.
     pub margin: Sides<LengthOrAuto>,
-    /// **Specified** `border`; phase 3 ([`resolve_border`]) absolutizes its width and applies
+    /// **Specified** `border`; phase 3 ([`crate::resolve::resolve_border`]) absolutizes its width and applies
     /// style gating for `none` and `hidden`.
     pub border: Sides<Border>,
+    /// Whether each border and column-rule width was lifted from a computed value.
+    /// Such widths must keep their exact value through phase 3 instead of being snapped again.
+    pub(crate) border_width_is_computed: [bool; 5],
     /// **Specified** `border-radius`; phase 3 absolutizes all corner lengths against this node's
     /// font size and line height.
     pub border_radius: BorderRadius,
@@ -868,6 +871,7 @@ impl SpecifiedValues {
             // actual `data-level` values. Keep 3.x throughout the crate: §5.x of Backgrounds 3
             // covers border-image, so do not restore 5.x here merely for "consistency".
             border: Sides::all(INITIAL_BORDER),
+            border_width_is_computed: [false; 5],
             border_radius: BorderRadius {
                 top_left: Length::Px(0.0).into(),
                 top_right: Length::Px(0.0).into(),
@@ -1351,6 +1355,7 @@ impl SpecifiedValues {
             padding: Sides::all(LengthPercentageOrCalc::Length(Length::Px(0.0))),
             margin: Sides::all(LengthOrAuto::Length(Length::Px(0.0))),
             border: Sides::all(INITIAL_BORDER),
+            border_width_is_computed: [false; 5],
             border_radius: BorderRadius {
                 top_left: Length::Px(0.0).into(),
                 top_right: Length::Px(0.0).into(),
@@ -1748,6 +1753,21 @@ impl SpecifiedValues {
         height: f32,
         normal_line_height: Option<&dyn NormalLineHeight>,
     ) -> ComputedValues {
+        self.finalize_as_root_in_viewport_with_border_width_device_scale(
+            width,
+            height,
+            normal_line_height,
+            None,
+        )
+    }
+
+    pub(crate) fn finalize_as_root_in_viewport_with_border_width_device_scale(
+        self,
+        width: f32,
+        height: f32,
+        normal_line_height: Option<&dyn NormalLineHeight>,
+        border_width_device_scale: Option<f32>,
+    ) -> ComputedValues {
         // Phase 2: with no parent, use the initial values. The `em` / `rem` reference follows the
         // parent-metrics clause of CSS Values 4 §6.1.1 quoted above. **That clause does not cover
         // `<percentage>`**: its subject is "the font-relative lengths", not percentages. The 24px
@@ -1795,7 +1815,8 @@ impl SpecifiedValues {
             ..ResolveContext::initial()
         }
         .with_viewport(width, height)
-        .with_vertical_root(self.writing_mode.is_vertical());
+        .with_vertical_root(self.writing_mode.is_vertical())
+        .with_border_width_device_scale(border_width_device_scale);
         // The root's parent is the initial style, whose `font-family` is
         // `initial_font_family()`.
         let font_size = match self.keyword_font_size(&initial_font_family()) {
@@ -1839,7 +1860,8 @@ impl SpecifiedValues {
         let own_line_height = used_line_height_length_or(line_height, font_size, normal);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
             .with_viewport(width, height)
-            .with_vertical_root(self.writing_mode.is_vertical());
+            .with_vertical_root(self.writing_mode.is_vertical())
+            .with_border_width_device_scale(border_width_device_scale);
         self.absolutize_with(font_size, line_height, normal, text_align, &ctx)
     }
 
@@ -2268,9 +2290,36 @@ impl SpecifiedValues {
                 .margin
                 .map(|l| resolve_margin_length_or_auto(l, font_size, own_line_height, ctx)),
             margin_ch,
-            border: self
-                .border
-                .map(|b| resolve_border(b, font_size, own_line_height, ctx)),
+            border: Sides {
+                top: resolve_border_with_width_provenance(
+                    self.border.top,
+                    font_size,
+                    own_line_height,
+                    self.border_width_is_computed[0],
+                    ctx,
+                ),
+                right: resolve_border_with_width_provenance(
+                    self.border.right,
+                    font_size,
+                    own_line_height,
+                    self.border_width_is_computed[1],
+                    ctx,
+                ),
+                bottom: resolve_border_with_width_provenance(
+                    self.border.bottom,
+                    font_size,
+                    own_line_height,
+                    self.border_width_is_computed[2],
+                    ctx,
+                ),
+                left: resolve_border_with_width_provenance(
+                    self.border.left,
+                    font_size,
+                    own_line_height,
+                    self.border_width_is_computed[3],
+                    ctx,
+                ),
+            },
             border_radius: resolve_border_radius(
                 self.border_radius,
                 font_size,
@@ -2763,15 +2812,24 @@ impl SpecifiedValues {
             column_fill: self.column_fill,
             column_span: self.column_span,
             column_rule: {
-                let mut rule = resolve_border(self.column_rule, font_size, own_line_height, ctx);
-                // CSS Values 4: snap positive subpixel widths up and larger
-                // widths down before centering the producer's rule rectangle.
-                let width = rule.width.px();
-                rule.width = ComputedLength(if width > 0.0 {
-                    width.floor().max(1.0)
-                } else {
-                    0.0
-                });
+                let mut rule = resolve_border_with_width_provenance(
+                    self.column_rule,
+                    font_size,
+                    own_line_height,
+                    self.border_width_is_computed[4],
+                    ctx,
+                );
+                if ctx.border_width_device_scale.is_none() {
+                    // Preserve the output-neutral column-rule snap. Raster
+                    // contexts were already snapped to their device scale
+                    // by `resolve_border`.
+                    let width = rule.width.px();
+                    rule.width = ComputedLength(if width > 0.0 {
+                        width.floor().max(1.0)
+                    } else {
+                        0.0
+                    });
+                }
                 rule
             },
             column_width,
@@ -2795,7 +2853,7 @@ impl SpecifiedValues {
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-color>).
 ///
 /// **The computed initial value differs**: with style `none`, gating in
-/// [`resolve_border`] reduces the width to 0px (see
+/// [`crate::resolve::resolve_border`] reduces the width to 0px (see
 /// [`ComputedValues::initial`]).
 ///
 /// This is `pub(crate)` because phase 3 of the page path

@@ -25,7 +25,7 @@ use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 
-use super::absolutize::absolutize_in_page_context;
+use super::absolutize::{PageStyleGates, absolutize_in_page_context};
 use super::types::*;
 
 // ---------------------------------------------------------------------------
@@ -526,6 +526,7 @@ impl PageCascadeResult {
     /// `font-size` (`absolutize_in_page_context`):
     ///
     /// - `padding` / `margin` / `width` / `height` / `border-*-width` /
+    ///   `column-rule-width` /
     ///   `line-height` — [`Length::Em`] / `Rem` /
     ///   `Pt` become [`Length::Px`]. `em` is
     ///   relative to "the font associated with their context" (§6 above), which
@@ -549,6 +550,13 @@ impl PageCascadeResult {
     ///   property does not apply to the page or page-margin box." So
     ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
     ///   the element path.
+    /// - `column-rule-width` is **gated to `0px` when the page context's
+    ///   computed `column-rule-style` is `none` or `hidden`** — CSS Multi-column
+    ///   1 §4.4 <https://www.w3.org/TR/css-multicol-1/#propdef-column-rule-width>
+    ///   gives this as part of the computed value. An **undeclared** style is
+    ///   its initial value `none` (§4.3, `Initial: none`), because the property
+    ///   is not inherited. The page context still has this computed value even
+    ///   though column rules do not apply to the page box.
     /// - `overflow-x` / `overflow-y` apply the CSS
     ///   Overflow 3 §3.1 cross-axis coupling
     ///   ([`crate::property::resolve_overflow`]) the same way the element
@@ -866,7 +874,7 @@ impl PageCascadeResult {
             &page.computed,
             rule.declarations
                 .iter()
-                .map(|declaration| declaration.value.clone()),
+                .map(|declaration| ComputedOverValue::Specified(declaration.value.clone())),
             &page.context,
             normal_line_height,
         )
@@ -1191,7 +1199,29 @@ pub fn cascade_page_with_media_context(
     inheritance: PageInheritance<'_>,
     media_context: &MediaContext,
 ) -> PageCascadeResult {
-    cascade_page_with_normal_line_height(rule_tree, query, inheritance, media_context, None)
+    cascade_page_with_normal_line_height(rule_tree, query, inheritance, media_context, None, None)
+}
+
+/// [`cascade_page_with_media_context`] with output-scale-aware border widths.
+///
+/// Raster consumers that resolve the page area before the element cascade
+/// should pass the scale of that output so page borders and the resulting
+/// viewport use the same geometry. `None` preserves fractional widths.
+pub fn cascade_page_with_media_context_and_border_width_device_scale(
+    rule_tree: &RuleTree,
+    query: &PageContextQuery,
+    inheritance: PageInheritance<'_>,
+    media_context: &MediaContext,
+    border_width_device_scale: Option<f32>,
+) -> PageCascadeResult {
+    cascade_page_with_normal_line_height(
+        rule_tree,
+        query,
+        inheritance,
+        media_context,
+        None,
+        border_width_device_scale,
+    )
 }
 
 /// [`cascade_page_with_media_context`], measuring `line-height: normal` with
@@ -1203,6 +1233,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
     inheritance: PageInheritance<'_>,
     media_context: &MediaContext,
     normal_line_height: Option<&dyn NormalLineHeight>,
+    border_width_device_scale: Option<f32>,
 ) -> PageCascadeResult {
     let layers = rule_tree.layer_order(media_context);
     // Candidate: (value, important, origin, specificity, source_order).
@@ -1588,7 +1619,8 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // relies on the same fact for `font-size: 1lh`'s self-reference basis —
     // for the page context specifically, "parent" and "root" coincide (both
     // are `inherited`), so the one `ctx.root_line_height` serves both.
-    let ctx = ResolveContext::with_root_line_height(inherited.font_size, inherited.lh_basis());
+    let ctx = ResolveContext::with_root_line_height(inherited.font_size, inherited.lh_basis())
+        .with_border_width_device_scale(border_width_device_scale);
     let radius_keys = [
         PropertyKey::BorderRadiusTopLeft,
         PropertyKey::BorderRadiusTopRight,
@@ -1730,7 +1762,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
     }
 
     // Step 4 (phase 3): absolutize the remaining lengths against the page
-    // context's own font-size and apply the `border-*-width` style gate.
+    // context's own font-size and apply the border and column-rule width gates.
     // Splitting this out of step 3 is forced by the same constraint the element
     // path has: `padding: 2em` needs the page
     // context's font-size, which step 3 only finalises once *all* winners have
@@ -1743,6 +1775,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`. `ctx`
     // (built above, before step 3) already carries this basis.
     let border_styles = page_context_border_styles(&resolved);
+    let column_rule_style = page_context_column_rule_style(&resolved);
     let outline_style = page_context_outline_style(&resolved);
     // The page context's raw `overflow-x`/`overflow-y` winners
     // — mirrors `border_styles` above: the CSS Overflow
@@ -1784,6 +1817,21 @@ pub(crate) fn cascade_page_with_normal_line_height(
         line_height: own_line_height,
         custom_properties,
     };
+    // Only margin boxes inherit from the page context's computed values.
+    let page_style = (!margin_boxes.is_empty()).then(|| {
+        Arc::new(PageStyle {
+            computed: computed_over(
+                inherited,
+                cascade_order
+                    .iter()
+                    .filter_map(|(_, key)| resolved.get(key).cloned())
+                    .map(ComputedOverValue::Resolved),
+                &ctx,
+                normal_line_height,
+            ),
+            context: ctx,
+        })
+    });
     let declarations: HashMap<PropertyKey, PropertyValue> = resolved
         .into_iter()
         .map(|(k, v)| {
@@ -1794,27 +1842,12 @@ pub(crate) fn cascade_page_with_normal_line_height(
                     font_size,
                     own_line_height,
                     &ctx,
-                    border_styles,
-                    outline_style,
+                    PageStyleGates::new(border_styles, column_rule_style, outline_style),
                     overflow_pair,
                 ),
             )
         })
         .collect();
-    // Only margin boxes inherit from the page context's computed values.
-    let page_style = (!margin_boxes.is_empty()).then(|| {
-        Arc::new(PageStyle {
-            computed: computed_over(
-                inherited,
-                cascade_order
-                    .iter()
-                    .filter_map(|(_, key)| declarations.get(key).cloned()),
-                &ctx,
-                normal_line_height,
-            ),
-            context: ctx,
-        })
-    });
     PageCascadeResult {
         declarations,
         size: size_best
@@ -1832,25 +1865,53 @@ pub(crate) fn cascade_page_with_normal_line_height(
 /// The computed values of a box whose winning declarations are `values`,
 /// over the parent style `parent`. CSS-wide keywords default against
 /// `parent`; every other value computes as for an element.
+enum ComputedOverValue {
+    Resolved(ResolvedAgainstInherited),
+    Specified(PropertyValue),
+}
+
 fn computed_over(
     parent: &ComputedValues,
-    values: impl Iterator<Item = PropertyValue>,
+    values: impl Iterator<Item = ComputedOverValue>,
     ctx: &ResolveContext,
     normal_line_height: Option<&dyn NormalLineHeight>,
 ) -> ComputedValues {
     let mut specified = SpecifiedValues::inherit_from(parent);
     for value in values {
-        let value = match value {
-            // `resolve_against_inherited` takes the root's line height as
-            // the `lh` basis of `font-size`, which holds for the page
-            // context only. Finalizing resolves it against `parent`.
-            value @ (PropertyValue::FontSize(_)
-            | PropertyValue::FontSizeCalc(_)
-            | PropertyValue::FontSizeRelative(_)
-            | PropertyValue::FontSizeKeyword(_)) => value,
-            value => resolve_against_inherited(value, parent, ctx).into_property_value(),
+        let (value, border_width_is_computed) = match value {
+            ComputedOverValue::Resolved(resolved) => {
+                let border_width_is_computed =
+                    std::array::from_fn(|index| resolved.border_width_is_computed(index));
+                (resolved.into_property_value(), border_width_is_computed)
+            }
+            ComputedOverValue::Specified(value) => {
+                // These forms need the box's finalization path: phase-2
+                // `resolve_against_inherited` uses the root line height for
+                // `lh`, while margin-box font-size resolves against its page
+                // parent. Keyword sizing also needs the parent's font family.
+                let keep_for_finalization = matches!(
+                    &value,
+                    PropertyValue::FontSize(_)
+                        | PropertyValue::FontSizeCalc(_)
+                        | PropertyValue::FontSizeRelative(_)
+                        | PropertyValue::FontSizeKeyword(_)
+                );
+                if keep_for_finalization {
+                    (value, [false; 5])
+                } else {
+                    let resolved = resolve_against_inherited(value, parent, ctx);
+                    let border_width_is_computed =
+                        std::array::from_fn(|index| resolved.border_width_is_computed(index));
+                    (resolved.into_property_value(), border_width_is_computed)
+                }
+            }
         };
         apply_value(value, &mut specified);
+        for (index, is_computed) in border_width_is_computed.into_iter().enumerate() {
+            if is_computed {
+                specified.border_width_is_computed[index] = true;
+            }
+        }
     }
     specified.finalize_with(parent, ctx, normal_line_height)
 }
@@ -2074,6 +2135,21 @@ fn page_context_border_styles(
         }
     }
     sides
+}
+
+/// The page context's computed `column-rule-style`, used to gate the
+/// `column-rule-width` longhand in phase 3. An absent declaration means the
+/// initial `none` (CSS Multi-column 1 §4.3); the property is not inherited.
+fn page_context_column_rule_style(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+) -> BorderStyle {
+    declarations
+        .values()
+        .find_map(|value| match value.as_property_value() {
+            PropertyValue::ColumnRuleStyle(style) => Some(*style),
+            _ => None,
+        })
+        .unwrap_or(INITIAL_BORDER.style)
 }
 
 /// The page context's computed `outline-style`, used to gate the

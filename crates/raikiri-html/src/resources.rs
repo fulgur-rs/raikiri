@@ -140,6 +140,7 @@ pub struct RenderResources<'a> {
     image_pixel_source: Option<&'a (dyn ImagePixelSource + Send + Sync)>,
     render_limits: RenderLimits,
     resource_limits: ResourceLimits,
+    border_width_device_scale: Option<f32>,
     budget: Arc<Mutex<u64>>,
     image_cache: Arc<Mutex<DecodedImageCache>>,
     background_inflight: Arc<Mutex<HashMap<Url, Arc<BackgroundInflight>>>>,
@@ -158,6 +159,7 @@ impl fmt::Debug for RenderResources<'_> {
             .field("has_image_pixel_source", &self.image_pixel_source.is_some())
             .field("render_limits", &self.render_limits)
             .field("resource_limits", &self.resource_limits)
+            .field("border_width_device_scale", &self.border_width_device_scale)
             .finish()
     }
 }
@@ -183,6 +185,7 @@ impl<'a> RenderResources<'a> {
             image_pixel_source: None,
             render_limits: RenderLimits::default(),
             resource_limits: ResourceLimits::default(),
+            border_width_device_scale: None,
             budget: Arc::new(Mutex::new(0)),
             image_cache: Arc::new(Mutex::new(DecodedImageCache::new(Arc::clone(
                 &process_budget,
@@ -279,6 +282,16 @@ impl<'a> RenderResources<'a> {
         self
     }
 
+    /// Set the raster output scale used when computing border widths.
+    ///
+    /// For example, `1.0` means one device pixel per CSS pixel and `2.0`
+    /// means two device pixels per CSS pixel. `None` preserves fractional
+    /// widths for output-neutral and vector consumers.
+    pub fn border_width_device_scale(mut self, scale: Option<f32>) -> Self {
+        self.border_width_device_scale = scale;
+        self
+    }
+
     /// Use one cache/provider object for replaced-element sizing and paint pixels.
     ///
     /// The same object is retained as both the layout resolver and the
@@ -351,6 +364,10 @@ impl<'a> RenderResources<'a> {
 
     pub(crate) fn parse_limits(&self) -> RenderLimits {
         self.render_limits.clone()
+    }
+
+    pub(crate) fn configured_border_width_device_scale(&self) -> Option<f32> {
+        self.border_width_device_scale
     }
 
     pub(crate) fn fallback_base_url(&self) -> Option<&Url> {
@@ -1287,6 +1304,7 @@ pub fn parse_html_with_resources<R: Read>(
         &options,
         resources.parse_limits(),
         resources.configured_fonts(),
+        resources.configured_border_width_device_scale(),
     )
 }
 

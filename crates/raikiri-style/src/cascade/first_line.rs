@@ -183,6 +183,7 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
             retain_subtree: Some(root),
             limits,
             viewport: options.viewport,
+            border_width_device_scale: options.border_width_device_scale,
             normal_line_height: measurer,
             ..WalkOptions::default()
         },
@@ -195,7 +196,15 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
     let mut output = Counter::new(limits.max_output_bytes, CascadeLimitKind::OutputBytes);
     output.add(outputs.counts.output_bytes)?;
     let query = PageContextQuery::default();
-    let mut normal = finish(dom, rule_tree, &query, media, outputs, measurer);
+    let mut normal = finish(
+        dom,
+        rule_tree,
+        &query,
+        media,
+        outputs,
+        measurer,
+        options.border_width_device_scale,
+    );
     normal.normal_line_height = normal_line_height.clone();
     let error = |id: StyleNodeId| CascadeError::Internal {
         message: format!(
@@ -231,7 +240,8 @@ pub fn cascade_with_first_line_options<D: StyleDom>(
                     // The walk above resolves viewport-percentage lengths against
                     // the same viewport.
                     .with_viewport(viewport.0, viewport.1)
-                    .with_vertical_root(cv.cssom_writing_mode.is_vertical()),
+                    .with_vertical_root(cv.cssom_writing_mode.is_vertical())
+                    .with_border_width_device_scale(options.border_width_device_scale),
             )
         } else {
             ctx

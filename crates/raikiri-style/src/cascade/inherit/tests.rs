@@ -781,6 +781,144 @@ fn em_font_size_compounds_across_cascade_levels() {
 }
 
 #[test]
+fn border_width_device_scale_reaches_elements_pseudos_page_and_margin_boxes() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(
+        0,
+        "html",
+        Some("border-top-width:49.75px;border-top-style:solid"),
+    );
+    let style = doc.push_element(html, "style", None);
+    doc.push_text(
+        style,
+        "#child::before{content:'x';border-top-width:49.75px;border-top-style:solid} \
+         @page{border-top-width:49.75px;border-top-style:solid; \
+           @top-center{content:'x';border-top-width:49.75px;border-top-style:solid}}",
+    );
+    let child = doc.push_element_with_attrs(
+        html,
+        "div",
+        Some("border-top-width:49.75px;border-top-style:solid"),
+        &[("id", "child")],
+    );
+    let tree = build_rule_tree(&doc);
+    let options = crate::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..crate::CascadeOptions::default()
+    };
+    let result = crate::cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+    let snapped = ComputedLength(74.0 / 1.5);
+    assert_eq!(result.computed[html].border.top.width, snapped);
+    assert_eq!(result.computed[child].border.top.width, snapped);
+    assert_eq!(
+        result.pseudo[&(crate::StyleNodeId(child as u64), crate::PseudoElem::Before)]
+            .border
+            .top
+            .width,
+        snapped,
+    );
+
+    let page = result.cascade_page_from_root(
+        &tree,
+        &crate::PageContextQuery::default(),
+        &MediaContext::default(),
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(74.0 / 1.5))),
+    );
+    let margin_rule = page
+        .cascade_margin_box(crate::PageMarginBoxSlot::TopCenter)
+        .expect("top-center margin box");
+    assert_eq!(
+        page.margin_box_style(&margin_rule, None).border.top.width,
+        snapped,
+    );
+}
+
+#[test]
+fn inherited_border_width_remains_snapped_at_fractional_device_scale() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("border-top:49.75px solid"));
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some("border-top-width:inherit;border-top-style:solid"),
+    );
+    let grandchild = doc.push_element(
+        child,
+        "div",
+        Some("border-top-width:inherit;border-top-style:solid"),
+    );
+    let grid_collision_authored = doc.push_element(0, "div", Some("border-top:49.333332px solid"));
+    let tree = build_rule_tree(&doc);
+    let options = crate::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..crate::CascadeOptions::default()
+    };
+    let result = crate::cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+    let snapped = ComputedLength(74.0 / 1.5);
+    for node in [parent, child, grandchild] {
+        assert_eq!(result.computed[node].border.top.width, snapped);
+    }
+    assert_eq!(
+        result.computed[grid_collision_authored].border.top.width,
+        ComputedLength(73.0 / 1.5),
+    );
+}
+
+#[test]
+fn border_revert_to_var_inherit_keeps_the_computed_device_pixel_value() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width:49.75px;border-right-style:solid"),
+    );
+    let child = doc.push_element(parent, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div div { --u: inherit; border-right-width: var(--u); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    let options = crate::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..crate::CascadeOptions::default()
+    };
+
+    let result = crate::cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+
+    let snapped = ComputedLength(74.0 / 1.5);
+    assert_eq!(result.computed[parent].border.right.width, snapped);
+    assert_eq!(result.computed[child].border.right.width, snapped);
+}
+
+#[test]
 fn box_property_em_resolves_against_own_computed_font_size() {
     let cv = cascade_doc(
         "",

@@ -149,6 +149,39 @@ fn resolver_backed_png_render_prepares_inside_marker_images() {
     }
 }
 
+#[test]
+fn html_to_png_with_resolver_uses_raster_border_width_snapping() {
+    use raikiri_traits::{
+        DecodedImage, ImagePixelSource, ReplacedResolver, ResolvedIntrinsic, ResolverError,
+        ResolverRequest,
+    };
+    use std::sync::Arc;
+
+    struct NoopResolver;
+    impl ReplacedResolver for NoopResolver {
+        fn resolve(
+            &self,
+            _request: ResolverRequest<'_>,
+        ) -> Result<ResolvedIntrinsic, ResolverError> {
+            Ok(ResolvedIntrinsic {
+                intrinsic: raikiri_traits::IntrinsicBox::new(0.0, 0.0),
+                disposition: raikiri_traits::ResolveDisposition::Ok,
+            })
+        }
+    }
+    impl ImagePixelSource for NoopResolver {
+        fn get_decoded(&self, _url: &url::Url) -> Option<Arc<DecodedImage>> {
+            None
+        }
+    }
+
+    let html = br#"<div style="width:20px;height:20px;border:1.4px solid black"></div>"#;
+    let resolver = NoopResolver;
+    let with_resolver = html_to_png_with_resolver(html.as_slice(), &resolver, &resolver).unwrap();
+    let regular = html_to_png(html.as_slice()).unwrap();
+    assert_eq!(with_resolver, regular);
+}
+
 /// Exercise intrinsic sizing, decoding and painting through the resolver API.
 #[test]
 fn html_to_png_with_resolver_paints_an_img_element() {

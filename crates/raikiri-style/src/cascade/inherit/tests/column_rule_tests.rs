@@ -13,6 +13,57 @@ fn column_rule_widths_use_border_pixel_snapping() {
 }
 
 #[test]
+fn raster_column_rule_widths_snap_once_at_the_device_scale() {
+    for (specified, expected) in [(0.75, 0.5), (1.9, 1.5)] {
+        let mut doc = TestDoc::new();
+        let element = doc.push_element(
+            0,
+            "div",
+            Some(&format!("column-rule:{specified}px solid red")),
+        );
+        let tree = build_rule_tree(&doc);
+        let options = crate::cascade::CascadeOptions {
+            border_width_device_scale: Some(2.0),
+            ..Default::default()
+        };
+        let result = crate::cascade::cascade_with_options(
+            &doc,
+            &tree,
+            &crate::media::MediaContext::default(),
+            &crate::page::PageContextQuery::default(),
+            &options,
+        )
+        .expect("cascade succeeds");
+
+        assert_eq!(result.computed[element].column_rule.width().px(), expected);
+    }
+}
+
+#[test]
+fn inherited_column_rule_width_keeps_its_computed_device_pixel_value() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("column-rule:49.75px solid red"));
+    let child = doc.push_element(parent, "div", Some("column-rule:inherit"));
+    let tree = build_rule_tree(&doc);
+    let options = crate::cascade::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..Default::default()
+    };
+    let result = crate::cascade::cascade_with_options(
+        &doc,
+        &tree,
+        &crate::media::MediaContext::default(),
+        &crate::page::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade succeeds");
+
+    let inherited = result.computed[parent].column_rule.width();
+    assert_eq!(inherited.px(), 74.0 / 1.5);
+    assert_eq!(result.computed[child].column_rule.width(), inherited);
+}
+
+#[test]
 fn column_rule_shorthand_and_longhands_keep_independent_winners() {
     for source in [
         "column-rule:2px solid red;column-rule-color:blue",
