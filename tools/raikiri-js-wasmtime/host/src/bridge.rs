@@ -88,6 +88,8 @@ impl Bridge {
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::Viewport => self.viewport_size(),
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+            HostOperation::FixedToViewport(n) => self.is_fixed_to_viewport(n),
+            // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::Rendered(n) => self.is_being_rendered(n),
             // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
             HostOperation::ImagePixels(url, default_size) => Ok(HostValue::Image(
@@ -121,6 +123,16 @@ impl Bridge {
         }
         self.host
             .is_visible(node)
+            .map(HostValue::Flag)
+            .map_err(|e| e.to_string())
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-host tests; tools/ is outside the workspace llvm-cov run.
+    fn is_fixed_to_viewport(&mut self, node: usize) -> Result<HostValue, String> {
+        if node >= self.host.document().node_count() {
+            return Err("fixed-to-viewport node bounds".into());
+        }
+        self.host
+            .is_fixed_to_viewport(node)
             .map(HostValue::Flag)
             .map_err(|e| e.to_string())
     }

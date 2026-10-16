@@ -1304,3 +1304,37 @@ fn a_fixed_box_inside_a_transformed_ancestor_counts_toward_the_scrolling_area() 
     let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
     assert_eq!(offset, format!("{}", 3010.0 - height));
 }
+
+#[test]
+fn scroll_into_view_moves_the_viewport_for_a_fixed_box_inside_a_transform() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div style='transform:translateX(0)'>\
+         <div id='contained' style='position:fixed;top:2000px;height:10px'></div></div>\
+         <div id='pinned' style='position:fixed;top:1500px;height:10px'></div>\
+         <div style='height:3000px'></div>",
+    );
+    let offsets = text(
+        &mut rt,
+        "document.getElementById('pinned').scrollIntoView(); var pinned = scrollY;\
+         document.getElementById('contained').scrollIntoView();\
+         pinned + ' ' + scrollY",
+    );
+    assert_eq!(offsets, "0 2000");
+}
+
+#[test]
+fn a_containing_block_above_a_fixed_box_does_not_release_a_fixed_ancestor() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div style='position:fixed;top:0;height:10px'>\
+         <div style='transform:translateX(0)'>\
+         <div id='target' style='position:fixed;top:2000px;height:10px'></div></div></div>\
+         <div style='height:3000px'></div>",
+    );
+    let offset = text(
+        &mut rt,
+        "document.getElementById('target').scrollIntoView(); String(scrollY)",
+    );
+    assert_eq!(offset, "0");
+}

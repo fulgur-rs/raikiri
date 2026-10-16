@@ -21,6 +21,7 @@ fn rpc_flush_and_services() {
             HostOperation::Rendered(node) => Ok(HostValue::Flag(node == 0)),
             HostOperation::Visible(node) => Ok(HostValue::Flag(node == 1)),
             HostOperation::Viewport => Ok(HostValue::Size(Some((800.0, 600.0)))),
+            HostOperation::FixedToViewport(node) => Ok(HostValue::Flag(node == 1)),
             HostOperation::ImagePixels(url, size) => Ok(HostValue::Image(match url.as_str() {
                 "ok.png" if size == (4.0, 2.0) => Some(ImageDto {
                     size: (4.0, 2.0),
@@ -52,6 +53,8 @@ fn rpc_flush_and_services() {
     assert!(!host.is_visible(0).unwrap());
     assert!(host.is_visible(1).unwrap());
     assert_eq!(host.viewport_size().unwrap(), Some((800.0, 600.0)));
+    assert!(!host.is_fixed_to_viewport(0).unwrap());
+    assert!(host.is_fixed_to_viewport(1).unwrap());
     let pixels = host.image_pixels("ok.png", (4.0, 2.0)).unwrap();
     assert_eq!(pixels.size, (4.0, 2.0));
     assert_eq!(pixels.image.rgba, [1, 2, 3, 4]);
@@ -85,6 +88,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
                 HostOperation::Rendered(_) => HostValue::Unit,
                 HostOperation::Visible(_) => HostValue::Unit,
                 HostOperation::Viewport => HostValue::Unit,
+                HostOperation::FixedToViewport(_) => HostValue::Unit,
                 HostOperation::ImagePixels(..) => HostValue::Unit,
                 HostOperation::Fragment { .. } => HostValue::Unit,
             })
@@ -98,6 +102,7 @@ fn hostile_wrong_response_kinds_are_rejected() {
     assert!(wrong_kind.is_being_rendered(0).is_err());
     assert!(wrong_kind.is_visible(0).is_err());
     assert!(wrong_kind.viewport_size().is_err());
+    assert!(wrong_kind.is_fixed_to_viewport(0).is_err());
     assert!(wrong_kind.image_pixels("x", (1.0, 1.0)).is_none());
     assert!(wrong_kind.parse_fragment("div", "", "x").is_err());
 
