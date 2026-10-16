@@ -4144,8 +4144,7 @@ fn paginate_flow(
     );
     let mut column_contexts = ColumnContexts::new(document.nodes.len());
     let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
-
-    let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
+    let mut trailing_flex_children = TrailingFlexChildren::default();
     let mut entered_paragraphs = EnteredParagraphs::default();
     macro_rules! check_candidate_page {
         ($label:lifetime, $page_index:expr) => {
@@ -4990,16 +4989,7 @@ fn paginate_flow(
         // they would cross a fragmentainer, preserving the existing column
         // flex pagination behavior.
         let flex_item_is_last = candidate.is_flex_item
-            && box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
-                |parent_id| {
-                    let trailing_child = trailing_flex_child_by_parent
-                        .entry(parent_id)
-                        .or_insert_with(|| {
-                            trailing_flex_child_for_pagination(document, cascade, parent_id)
-                        });
-                    *trailing_child == Some(node_id)
-                },
-            );
+            && trailing_flex_children.is_trailing(document, cascade, node_id);
         // An item already at the top of its page, or one taller than the
         // next page, would cross a page edge wherever it went: pushing it
         // only leaves a blank page behind (CSS Fragmentation 3 §4.4 lets
@@ -6593,6 +6583,30 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// The trailing flex item of each flex container, found once per container.
+#[derive(Default)]
+struct TrailingFlexChildren {
+    by_parent: HashMap<usize, Option<usize>>,
+}
+
+impl TrailingFlexChildren {
+    /// Whether `node_id` is the trailing item of its flex container, which may
+    /// extend into the container's continuation at the page edge.
+    fn is_trailing(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+    ) -> bool {
+        box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent_id| {
+            let trailing_child = self.by_parent.entry(parent_id).or_insert_with(|| {
+                trailing_flex_child_for_pagination(document, cascade, parent_id)
+            });
+            *trailing_child == Some(node_id)
+        })
+    }
 }
 
 /// Flow shifts that apply only once pagination has left a subtree or reached
