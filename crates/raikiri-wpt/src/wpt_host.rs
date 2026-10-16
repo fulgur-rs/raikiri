@@ -777,7 +777,9 @@ fn compute_scroll_content_extents(
             if expanded {
                 // A node a singular transform hides draws its descendants
                 // nowhere; measuring them unmoved keeps its own metrics.
-                let to_local = paint_transform_of(transforms, index)
+                let own_transform = paint_transform_of(transforms, index);
+                let hidden = own_transform.is_none();
+                let to_local = own_transform
                     .and_then(inverse)
                     .unwrap_or(raikiri_traits::PaintTransform::IDENTITY);
                 // The node's own generated boxes are drawn with it.
@@ -791,8 +793,13 @@ fn compute_scroll_content_extents(
                     .get_node(index)
                     .map_or(&[][..], |n| &n.children[..])
                 {
-                    let Some(drawn) = paint_transform_of(transforms, child) else {
-                        continue;
+                    // A child hidden only by its own singular transform adds
+                    // nothing; inside a hidden subtree every child is hidden
+                    // too, so it is measured unmoved relative to its parent.
+                    let drawn = match paint_transform_of(transforms, child) {
+                        Some(drawn) => drawn,
+                        None if hidden => raikiri_traits::PaintTransform::IDENTITY,
+                        None => continue,
                     };
                     let own = border_box_of(scene, child);
                     let below = extents.get(child).copied().flatten();

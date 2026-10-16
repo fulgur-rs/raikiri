@@ -1425,6 +1425,21 @@ fn boxes_a_singular_transform_hides_add_nothing() {
 }
 
 #[test]
+fn a_hidden_scroll_container_keeps_its_own_scroll_height() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div style='transform:scale(0)'>\
+         <div id='box' style='height:100px;overflow:hidden'>\
+         <div style='height:500px'></div></div></div>",
+    );
+    let height = text(
+        &mut rt,
+        "String(document.getElementById('box').scrollHeight)",
+    );
+    assert_eq!(height, "500");
+}
+
+#[test]
 fn inverse_undoes_an_affine_transform_and_refuses_a_singular_one() {
     use raikiri_traits::PaintTransform;
     let transform = PaintTransform::new(2.0, 0.0, 1.0, 4.0, 10.0, -6.0);
