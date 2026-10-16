@@ -517,7 +517,7 @@ pub fn defers_to_positioned_layer(
 /// pass them on too (Appendix E, the step for inline-block and inline-table
 /// elements, and CSS Flexbox 1 §4.3). A box that clips or forms a stacking
 /// context of its own keeps them, as does a box inside an inline element
-/// that forms one, such as an inline with an opacity below one.
+/// with an opacity below one, whose group the painters paint as a whole.
 pub fn hoists_positioned_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -528,13 +528,15 @@ pub fn hoists_positioned_content(
             && !establishes_stacking_context(document, node_id, cv)
             && !is_z_indexed_item(document, cascade, node_id, cv)
             && !clips_overflow(cv)
-            && !inside_inline_stacking_context(document, cascade, node_id)
+            && !inside_inline_opacity_group(document, cascade, node_id)
     })
 }
 
 /// Whether element `node_id` sits inside an inline element of its paragraph
-/// that forms a stacking context, whose group paints everything inside it.
-fn inside_inline_stacking_context(
+/// with an opacity below one. The painters paint such an inline's content as
+/// one group; other inline stacking contexts form no group yet, so the
+/// positioned boxes inside them still join the enclosing layer.
+fn inside_inline_opacity_group(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
@@ -554,10 +556,7 @@ fn inside_inline_stacking_context(
     while let Some((parent, cv)) = box_parent(document, cascade, current, BoxParentScope::Document)
         .and_then(|parent| inline_box(parent).map(|cv| (parent, cv)))
     {
-        if establishes_stacking_context(document, parent, cv)
-            || (!matches!(cv.position, PositionValue::Static)
-                && matches!(cv.z_index, ZIndexValue::Integer(_)))
-        {
+        if opacity_layer(cv).is_some() {
             return true;
         }
         current = parent;

@@ -506,7 +506,7 @@ fn generated_boxes_below_a_paragraph_hold_a_negative_stack_level() {
 }
 
 #[test]
-fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_a_stacking_context() {
+fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_group() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
@@ -524,8 +524,20 @@ fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_a_stacking_con
         Style::default(),
         Some("display:inline;position:relative;z-index:1"),
     );
-    let kept = doc.append_element(
+    let passed = doc.append_element(
         Some(leveled),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    let faded = doc.append_element(
+        Some(plain),
+        "span",
+        Style::default(),
+        Some("display:inline;opacity:0.5"),
+    );
+    let kept = doc.append_element(
+        Some(faded),
         "span",
         Style::default(),
         Some("display:inline-block"),
@@ -533,5 +545,8 @@ fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_a_stacking_con
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     assert!(hoists_positioned_content(&doc, &cascade, open));
+    // A positioned inline with a z-index forms no group in the painters, so
+    // the boxes inside it still join the enclosing layer.
+    assert!(hoists_positioned_content(&doc, &cascade, passed));
     assert!(!hoists_positioned_content(&doc, &cascade, kept));
 }
