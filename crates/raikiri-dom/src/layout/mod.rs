@@ -72,13 +72,14 @@ fn measured_ch_width(
     }
 }
 
-mod body_block_margins;
+mod body_overflow;
 mod box_tree;
 mod bridge;
 mod compact_length;
 mod depth;
 mod fixed;
 pub(crate) mod ifc;
+mod initial_containing_block;
 pub(crate) mod multicol;
 mod page;
 mod page_pipeline;
@@ -89,7 +90,7 @@ mod static_position;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use body_block_margins::*;
+use body_overflow::*;
 pub(crate) use box_tree::{BoxParentScope, box_parent};
 pub(crate) use compact_length::{
     resolve_dimension, resolve_length_percentage, resolve_length_percentage_auto,
@@ -106,9 +107,9 @@ pub use depth::{MAX_LAYOUT_DEPTH, validate_layout_depth};
 pub(crate) use multicol::{
     compute_multicol_layout, multicol_definite_dimension, root_column_fragments,
 };
-pub(crate) use page::is_floating_box_for_pagination;
 #[doc(hidden)]
-pub(crate) use page::{find_body, is_body_element};
+pub(crate) use page::find_body;
+pub(crate) use page::is_floating_box_for_pagination;
 pub(crate) use sanitize::LayoutWarn;
 // only reached via an intra-doc link from outside layout/, not real code
 pub use ifc::ch::{measure_ch_advance, measure_normal_line_height};

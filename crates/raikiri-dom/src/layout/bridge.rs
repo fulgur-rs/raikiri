@@ -155,6 +155,7 @@ pub(crate) fn apply_computed_to_style(
     doc: &mut Document,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    super::initial_containing_block::prepare_root_element(doc);
     bridge_writing_modes(doc, cascade);
     // Styles retain raw pointers to these payloads for Taffy's calc callback;
     // rebuild the arena for every cascade/layout pass.
@@ -760,23 +761,8 @@ fn bridge_inset(
 ///
 /// See [`computed_length_percentage_or_auto_to_taffy_dimension`] for length policy.
 ///
-/// # PageBox compromise
-///
-/// After this bridge, [`apply_page_content_box_to_body`] overwrites the `<body>`
-/// element's `style.size` with the page content-box dimensions
-/// (`layout_single_page` Step 1 → Step 4): the PageBox width/height minus the
-/// used page margins (and the top/bottom page content insets), not the full
-/// paper size. Thus the author values in `<body style="width: 100px; height: 200px">`
-/// are written to taffy by this helper, but content-box values overwrite them
-/// in Step 4. This is intentional for now (pending an @page cascade and
-/// per-page PageBox refactor). The width author→content-box overwrite path is
-/// checked by `apply_page_content_box_clobbers_body_width_from_bridge`. For height,
-/// [`apply_page_content_box_to_body`] assigns both fields without branching through
-/// the struct literal `style.size = Size { width, height }`; height thus uses
-/// the same overwrite path as width (both fields are written in one statement).
-/// `apply_page_content_box_sets_body_style_size_to_content_dimensions` checks that
-/// helper's content-box output. The width test sufficiently checks the full
-/// bridge→overwrite path; height relies on the structural guarantee to avoid duplication.
+/// Page dimensions belong to a separate initial-containing-block box. The
+/// element's preferred width and height remain the authored sizing inputs.
 fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
     // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(

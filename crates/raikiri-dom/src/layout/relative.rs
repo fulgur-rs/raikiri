@@ -281,6 +281,7 @@ fn is_table_part(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> boo
 fn is_non_atomic_inline(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
     node.kind() == NodeKind::Element
+        && !super::ifc::assign::is_layout_root(document, node_id)
         && boxes.properties(node_id).is_some_and(|properties| {
             properties.display().is_inline_flow()
                 && !matches!(

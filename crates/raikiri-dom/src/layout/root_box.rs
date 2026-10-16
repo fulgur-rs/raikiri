@@ -1,11 +1,8 @@
 //! The root element's box, which places the canvas background.
 //!
-//! Layout starts at the body, so the root element gets no box of its own
-//! there. Painting still needs one: the images of the canvas background are
-//! sized and positioned against the root element's box (CSS Backgrounds 3
-//! §2.11.2), and a transform on the root moves the whole canvas (CSS
-//! Transforms 1 §6). This module rebuilds that box from the root's computed
-//! style and the page area.
+//! After layout, canvas backgrounds and root transforms use the root's actual
+//! border box. An explicit cascade query before layout resolves a provisional
+//! box from the computed style and page area.
 
 use super::page::{page_content_insets, page_margins, used_computed_length_percentage_or_auto};
 use crate::Document;
@@ -43,17 +40,13 @@ pub struct RootBox {
 /// at `content_origin_y`, in a document of `page_count` pages, or `None`
 /// when there is no root element or it generates no box.
 ///
-/// The box is placed in the page area, inside the page margins, border and
-/// padding, moved in by the root's margins. A root with a definite `width`
-/// or `height` takes that size. Otherwise, across the pages it fills the
-/// page area between its margins, and along them it fills the flow of all
-/// `page_count` pages, each as long as this page's area, between its
-/// margins. Layout does not size the root by its content, so an auto size
-/// along the pages is the extent of the pages the flow runs through; pages
-/// of different sizes and a root margin cut at a page break are not
-/// followed. `auto` margins share what the root's used size leaves of the
-/// page area across the pages. A root with `display: none` generates no
-/// box.
+/// With a current completed layout, the border box, border and padding come
+/// from the laid-out root element. The box is translated into this page's
+/// coordinates, preserving its actual authored or content-derived size.
+/// Before layout, or for a different caller-selected cascade, a provisional
+/// box is resolved from the computed style and page area: its auto block
+/// size spans the requested number of pages. A root with `display: none`
+/// generates no box.
 ///
 /// The pages run down the flow, or across it along x for a root whose
 /// blocks stack on vertical axes; there, `content_origin_y` is the distance
@@ -81,6 +74,42 @@ pub fn root_box(
     // axis: the root's block axis runs across them, and its inline axis
     // down each page.
     let pages_along_x = super::pages_follow_x_axis(document, cascade);
+    if document.layout_cascade_generation == Some(cascade.generation())
+        && !document.layout_dirty
+        && document.nodes.initial_containing_block_key().is_some()
+    {
+        let layout = document.nodes[root].unrounded_layout;
+        let (x, y) = match pages_along_x {
+            None => (
+                area_x + layout.location.x,
+                area_y + layout.location.y - content_origin_y,
+            ),
+            Some(false) => (
+                area_x + layout.location.x - content_origin_y,
+                area_y + layout.location.y,
+            ),
+            Some(true) => {
+                let last_origin = area_width * page_count.saturating_sub(1) as f32;
+                (
+                    area_x + layout.location.x + (last_origin - content_origin_y).max(0.0),
+                    area_y + layout.location.y,
+                )
+            }
+        };
+        let border_box = PaintRect::new(x, y, layout.size.width, layout.size.height);
+        let insets = |edges: taffy::Rect<f32>| {
+            PaintInsets::new(edges.top, edges.right, edges.bottom, edges.left)
+        };
+        return Some(RootBox {
+            node: NodeId(root as u64),
+            border_box,
+            border: insets(layout.border),
+            padding: insets(layout.padding),
+            transform: (!computed.transform.is_empty())
+                .then(|| root_transform(computed, border_box)),
+        });
+    }
+
     let inline_size = if pages_along_x.is_some() {
         area_height
     } else {
@@ -88,8 +117,8 @@ pub fn root_box(
     };
 
     // Margins and padding resolve against the inline size of the root's
-    // containing block, the page area (CSS Writing Modes 4 §7.2). Layout
-    // clamps the root's block-start margin to zero; the box follows it.
+    // containing block, the page area (CSS Writing Modes 4 §7.2). The
+    // provisional fallback keeps its historical non-negative block margin.
     let margin = |value| used_computed_length_percentage_or_auto(value, inline_size);
     let border = PaintInsets::new(
         computed.border.top.width().px(),

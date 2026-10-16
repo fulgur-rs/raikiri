@@ -57,6 +57,7 @@ fn generates_inline_box_with_properties(
     let node = &document.nodes[id];
     let tag = node.tag_name().unwrap_or("");
     properties.display().is_inline_flow()
+        && !super::ifc::assign::is_layout_root(document, id)
         && !matches!(
             properties.position(),
             PositionValue::Absolute | PositionValue::Fixed
@@ -236,20 +237,13 @@ pub(crate) fn place_fixed_boxes_in_page_area(
 ) {
     // The page area takes the direction of the root element (CSS Writing
     // Modes 4 §8), not an override on the body.
-    let direction = match document
-        .parent_of(root)
-        .and_then(|html| cascade.computed.get(html))
-    {
-        Some(cv) if cv.direction == Direction::Rtl => TaffyDirection::Rtl,
-        Some(_) => TaffyDirection::Ltr,
-        None => document.nodes[root].style.direction,
-    };
+    let direction = document.nodes[root].style.direction;
     // So does its writing mode.
     let page = Area {
         origin: Point::ZERO,
         size: area_size,
         direction,
-        vertical: is_vertical(document, document.parent_of(root).unwrap_or(root)),
+        vertical: is_vertical(document, root),
     };
     visit_out_of_flow_boxes(
         document,
@@ -351,12 +345,21 @@ fn visit_out_of_flow_boxes(
     root: usize,
     mut visit: impl FnMut(&mut Document, usize, Point<f32>, ContainingBlock),
 ) {
+    let root_origin = document
+        .inclusive_ancestors(root)
+        .fold(Point::ZERO, |origin, id| {
+            let location = document.nodes[id].unrounded_layout.location;
+            Point {
+                x: origin.x + location.x,
+                y: origin.y + location.y,
+            }
+        });
     let root_cv = cascade.computed.get(root);
     // A body that is a containing block for fixed boxes contains its fixed
     // descendants.
     let fixed_cb = match root_cv {
         Some(cv) if establishes_fixed_containing_block_for_layout(document, root, cv) => {
-            containing_block_of(document, root, cv, Point::ZERO)
+            containing_block_of(document, root, cv, root_origin)
         }
         _ => ContainingBlock::Page,
     };
@@ -365,7 +368,7 @@ fn visit_out_of_flow_boxes(
     // containing block, which the page area stands in for.
     let abs_cb = match root_cv {
         Some(cv) if establishes_absolute_containing_block(document, root, cv) => {
-            containing_block_of(document, root, cv, Point::ZERO)
+            containing_block_of(document, root, cv, root_origin)
         }
         _ if document.ancestors(root).any(|id| {
             cascade
@@ -387,7 +390,7 @@ fn visit_out_of_flow_boxes(
         .children
         .iter()
         .rev()
-        .map(|&child| (child, Point::ZERO, in_paragraph, abs_cb, fixed_cb))
+        .map(|&child| (child, root_origin, in_paragraph, abs_cb, fixed_cb))
         .collect();
     while let Some((id, parent_origin, in_paragraph, abs_cb, fixed_cb)) = stack.pop() {
         let node = &document.nodes[id];

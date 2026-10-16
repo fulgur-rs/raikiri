@@ -297,41 +297,25 @@ fn find_body_returns_first_body_in_document_order() {
 }
 
 #[test]
-fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
-    // The production Step 4 helper writes the page content box, not the full
-    // paper size: horizontal margins plus left/right content insets narrow
-    // the width, and vertical margins plus top/bottom content insets narrow
-    // the height.
-    use raikiri_traits::PageBox;
-    use taffy::{Dimension, Size};
-
+fn the_icb_uses_the_page_area_inside_page_margins_and_insets() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-
-    let margins = PageMargins {
-        top: 20.0,
-        right: 10.0,
-        bottom: 20.0,
-        left: 10.0,
-    };
-    let insets = PageContentInsets {
-        top: 1.0,
-        right: 2.0,
-        bottom: 3.0,
-        left: 4.0,
-    };
-    apply_page_content_box_to_body(&mut doc, body, PageBox::A4, margins, insets);
-
-    let size: Size<Dimension> = doc.nodes[body].style.size;
-    assert_eq!(
-        size.width,
-        Dimension::length(PageBox::A4.width - 10.0 - 10.0 - 4.0 - 2.0)
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let mut rules = build_rule_tree(&doc);
+    rules.add_stylesheet(
+        "@page { margin:20px 10px; padding:1px 2px 3px 4px }",
+        Origin::Author,
     );
-    assert_eq!(
-        size.height,
-        Dimension::length(PageBox::A4.height - 20.0 - 20.0 - 1.0 - 3.0)
-    );
+    let cr = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
+    let icb = doc
+        .nodes
+        .initial_containing_block_key()
+        .expect("page-area ICB");
+    let size = doc.nodes[icb].unrounded_layout.size;
+    assert_eq!(size.width, PageBox::A4.width - 26.0);
+    assert_eq!(size.height, PageBox::A4.height - 44.0);
 }
 
 #[test]

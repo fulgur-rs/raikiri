@@ -51,7 +51,12 @@ impl BoxProperties {
     }
 
     /// Lower CSS display to the box types supported by Taffy.
-    pub(crate) fn taffy_display(&self, multicol: bool, kind: NodeKind) -> taffy::Display {
+    pub(crate) fn taffy_display(
+        &self,
+        multicol: bool,
+        kind: NodeKind,
+        root: bool,
+    ) -> taffy::Display {
         // Non-elements have no CSS display property. Preserve the native
         // default used by programmatic document layout instead of lowering
         // their inline text identity as an element's block box.
@@ -65,7 +70,7 @@ impl BoxProperties {
             display if display.is_grid_container() => taffy::Display::Grid,
             _ => taffy::Display::Block,
         };
-        if multicol && display == taffy::Display::Block {
+        if (multicol || root) && display == taffy::Display::Block {
             taffy::Display::FlowRoot
         } else {
             display
@@ -85,8 +90,14 @@ impl BoxProperties {
     }
 
     /// Refresh the derived identity exported to Taffy and the public style API.
-    pub(crate) fn apply_to_style(&self, style: &mut taffy::Style, multicol: bool, kind: NodeKind) {
-        style.display = self.taffy_display(multicol, kind);
+    pub(crate) fn apply_to_style(
+        &self,
+        style: &mut taffy::Style,
+        multicol: bool,
+        kind: NodeKind,
+        root: bool,
+    ) {
+        style.display = self.taffy_display(multicol, kind, root);
         style.position = self.taffy_position();
     }
 }

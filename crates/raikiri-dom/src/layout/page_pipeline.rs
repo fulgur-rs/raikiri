@@ -1016,132 +1016,18 @@ fn layout_single_page_with_table_projection(
     let body_id = find_body(document).ok_or_else(|| LayoutError::Internal {
         message: "no <body> element found (fragment parse not supported yet)".to_string(),
     })?;
-    // Percentages of the body's margins and padding resolve against the
-    // inline size of its containing block, the root element's content box
-    // (CSS Writing Modes 4 §7.1): the page area height when the root is in a
-    // vertical writing mode.
-    let body_percent_basis = if document.nodes[body_id].parent.is_some_and(|root| {
-        matches!(
-            cascade.computed[root].cssom_writing_mode,
-            WritingMode::VerticalRl
-                | WritingMode::VerticalLr
-                | WritingMode::SidewaysRl
-                | WritingMode::SidewaysLr
-        )
-    }) {
-        content_height
-    } else {
-        content_width
-    };
-    let body_insets = BodyInlineInsets::resolve(document, cascade, body_id, body_percent_basis);
-
-    // Boxes with an `auto` width chain up to the body take the body's content
-    // width, which its horizontal margins, padding and borders narrow.
-    prepare_authored_block_widths(document, cascade, body_insets.content_width(content_width));
-
-    // The body is the taffy root, which ignores its margins. Its block-start
-    // margin is resolved here and placed after layout (or carried as top
-    // padding, see below), where it can collapse with its first child's;
-    // the bottom margin has no effect on a root sized to the page content
-    // box. The horizontal margins, UA or authored, become inline padding of
-    // the root after Step 4 (`move_body_inline_margins_into_padding`).
-    // A body laid out on vertical axes, whether it stacks blocks or lines,
-    // advances along the physical x axis: its top and bottom margins are
-    // inline margins, which become padding after Step 4 instead, and its
-    // block-start margin cannot collapse with a child's (see
-    // `taffy_impl::vertical_block`). A vertical flex or grid body still
-    // lays out on horizontal axes and keeps the horizontal path.
-    let vertical_body = crate::layout::bridge::lays_out_vertically(cascade, body_id)
-        && crate::taffy_impl::block_right_to_left(document, body_id).is_some();
-    let body_margin_top = if vertical_body {
-        0.0
-    } else {
-        body_margin_top(document, cascade, body_id, body_percent_basis)
-    };
-    let body_vertical_margins = vertical_body
-        .then(|| body_vertical_margins(document, cascade, body_id, body_percent_basis));
-    {
-        let style_margin = &mut document.nodes[body_id].style.margin;
-        style_margin.top = LengthPercentageAuto::length(0.0);
-        style_margin.bottom = LengthPercentageAuto::length(0.0);
-    }
     propagate_body_overflow_to_viewport(document, cascade, body_id);
-    let body_top_may_collapse =
-        body_top_margin_may_collapse(document, cascade, body_id, body_percent_basis);
-
-    // Step 4: force body.style.size to the page content box, not the full paper size.
-    // Page margins are painted/represented outside this taffy root.
-    apply_page_content_box_to_body(document, body_id, page_box, margins, insets);
-    move_body_inline_margins_into_padding(document, body_id, body_insets, content_width);
-    if let Some(margins) = body_vertical_margins {
-        move_body_vertical_margins_into_padding(document, body_id, margins, body_percent_basis);
-    }
-    // A body whose content is one inline-engine paragraph has line boxes that
-    // keep its top margin from collapsing; carry it as top padding so the
-    // lines and the boxes among them start below it.
-    let body_is_paragraph = document.nodes[body_id].is_ifc_root();
-    let body_top_padding = BodyTopPadding::capture(document, body_id, body_percent_basis);
-    let mut body_padded_top = if body_is_paragraph {
-        body_top_padding.apply(document, body_id, body_margin_top)
-    } else {
-        0.0
-    };
-    // CSS 2.1 §10.3.7 absolute width:auto shrink-to-fit needs no pre-pass:
-    // taffy already shrink-wraps direct-body and nested absolute boxes alike.
-    // See the §10.3.7 note on the layout helpers for the removed fill override.
-
-    // Fixed boxes laid out by the inline engine shrink against the page area.
+    prepare_authored_block_widths(document, cascade, content_width);
     if let Some(state) = document.ifc.as_mut() {
         state.page_width = Some(content_width);
     }
-    // Orthogonal flows size against the page area when their containing
-    // block leaves the space indefinite.
     document.fixed_page_area = Some((content_width, content_height));
-    // Step 5: taffy compute
+    let icb = super::initial_containing_block::prepare(document, content_width, content_height);
     let available_space = taffy::Size {
         width: AvailableSpace::Definite(content_width),
         height: AvailableSpace::Definite(content_height),
     };
-    let escaped_top_margin = compute_body_root_layout(
-        document,
-        TaffyNodeId::from(body_id),
-        available_space,
-        body_top_may_collapse,
-    );
-    // A block box that starts the body's paragraph was placed by its own
-    // top margins inside the paragraph; those collapse with the body's. Lay
-    // the body out again with only the part of the collapsed margin that
-    // they leave over as top padding. Only the body's own box changes, so
-    // the boxes inside keep their cached layouts.
-    let mut paragraph_collapsed_top = None;
-    if body_is_paragraph
-        && body_top_may_collapse
-        && let Some(leading) = body_paragraph_leading_margin(document, body_id)
-    {
-        let collapsed = leading.collapse_with_margin(body_margin_top).resolve();
-        let padding = collapsed - leading.resolve();
-        if (padding.max(0.0) - body_padded_top).abs() > 1e-4 {
-            body_padded_top = body_top_padding.apply(document, body_id, padding);
-            document.nodes[body_id].cache.clear();
-            compute_body_root_layout(document, TaffyNodeId::from(body_id), available_space, false);
-        }
-        // A negative remainder is clamped, as padding cannot be negative.
-        paragraph_collapsed_top = Some(body_padded_top + leading.resolve());
-    }
-    // CSS 2.1 §8.3.1: the body's top margin and the top margins that escaped
-    // its first in-flow children collapse into one, the largest positive
-    // margin plus the most negative one. When nothing escaped (top padding
-    // or border, a new formatting context, no in-flow child) this is the
-    // body's own margin. Move the content below it.
-    document.body_block_start_margin = if body_is_paragraph {
-        paragraph_collapsed_top.unwrap_or(body_padded_top)
-    } else {
-        let collapsed = escaped_top_margin
-            .collapse_with_margin(body_margin_top)
-            .resolve();
-        shift_body_content(document, body_id, collapsed);
-        collapsed
-    };
+    taffy::compute_root_layout(document, TaffyNodeId::from(icb), available_space);
     take_layout_failure(document)?;
     // Step 5a: post-layout corrections taffy does not make: the static
     // position of auto-placed grid abspos items, the containing block of
@@ -1156,7 +1042,8 @@ fn layout_single_page_with_table_projection(
     };
     document.fixed_page_area = Some((content_width, content_height));
     super::static_position::realign_inline_level_abspos_static_positions(document, cascade);
-    place_fixed_boxes_in_page_area(document, cascade, body_id, page_area);
+    let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
+    place_fixed_boxes_in_page_area(document, cascade, root, page_area);
     // Laying those boxes out again can fail a table or exhaust the
     // fragment budget like the root layout above.
     take_layout_failure(document)?;
@@ -2199,7 +2086,7 @@ pub(crate) fn project_slices_with_control(
         paragraph_column: Option<(usize, usize)>,
     }
     let mut stack = vec![ProjectionVisit {
-        node: body_id,
+        node: super::initial_containing_block::root_element(document).unwrap_or(body_id),
         parent_origin: (0.0, 0.0),
         repeat: false,
         fragment: None,
@@ -5463,7 +5350,8 @@ fn paginate_flow(
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
     if sibling_margins.moved_boxes {
-        super::fixed::restore_fixed_box_block_positions(document, cascade, body_id, content_height);
+        let root = super::initial_containing_block::root_element(document).unwrap_or(body_id);
+        super::fixed::restore_fixed_box_block_positions(document, cascade, root, content_height);
     }
 
     if !page_widths.is_empty() {

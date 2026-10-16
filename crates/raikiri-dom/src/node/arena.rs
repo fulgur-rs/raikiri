@@ -1,4 +1,4 @@
-//! The node arena: source DOM nodes followed by layout-only boxes.
+//! Source DOM nodes and separately stored layout-only boxes.
 
 use super::Node;
 use std::ops::{Deref, DerefMut, Index, IndexMut};
@@ -14,15 +14,18 @@ pub(crate) enum BoxKey {
     Source(usize),
     /// A layout-only anonymous table cell, by its index among those cells.
     AnonymousCell(usize),
+    /// The page-area initial containing block, outside the source DOM.
+    InitialContainingBlock,
 }
 
-/// Source DOM nodes, followed by the anonymous table cells that table fixup
-/// generated for the current layout pass.
+// A reserved layout key stays valid when source nodes or anonymous cells grow.
+const INITIAL_CONTAINING_BLOCK_KEY: usize = usize::MAX;
+
+/// Source DOM nodes, anonymous table cells, and the page-area ICB.
 ///
 /// The arena dereferences to the source nodes only, so length, iteration and
 /// mutation of the DOM never see a layout-only box. Indexing with a layout
-/// key resolves either kind, which lets layout code address an anonymous cell
-/// by its own key, like any other box.
+/// key resolves any box kind without exposing generated boxes as DOM nodes.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeArena {
     source: Vec<Node>,
@@ -31,11 +34,18 @@ pub(crate) struct NodeArena {
     /// the cells were set. Table fixup sets the cells again on every layout
     /// pass, after any change to the DOM.
     anonymous_base: usize,
+    initial_containing_block: Option<Box<Node>>,
 }
 
 impl NodeArena {
     /// What `key` names, or `None` when it names nothing in this arena.
     pub(crate) fn box_key(&self, key: usize) -> Option<BoxKey> {
+        if key == INITIAL_CONTAINING_BLOCK_KEY {
+            return self
+                .initial_containing_block
+                .as_ref()
+                .map(|_| BoxKey::InitialContainingBlock);
+        }
         if key < self.source.len() {
             return Some(BoxKey::Source(key));
         }
@@ -53,12 +63,26 @@ impl NodeArena {
         self.anonymous_base + index
     }
 
-    /// The node `key` names, a source node or an anonymous cell.
+    /// The node or generated box that `key` names.
     pub(crate) fn layout_node(&self, key: usize) -> Option<&Node> {
         match self.box_key(key)? {
             BoxKey::Source(id) => Some(&self.source[id]),
             BoxKey::AnonymousCell(index) => Some(&self.anonymous_cells[index]),
+            BoxKey::InitialContainingBlock => self.initial_containing_block.as_deref(),
         }
+    }
+
+    /// Replace the page-area root without adding a source DOM node.
+    pub(crate) fn set_initial_containing_block(&mut self, node: Node) -> usize {
+        self.initial_containing_block = Some(Box::new(node));
+        INITIAL_CONTAINING_BLOCK_KEY
+    }
+
+    /// The page-area root, when a page layout has prepared one.
+    pub(crate) fn initial_containing_block_key(&self) -> Option<usize> {
+        self.initial_containing_block
+            .as_ref()
+            .map(|_| INITIAL_CONTAINING_BLOCK_KEY)
     }
 
     /// Replace the anonymous cells of the previous pass. Their keys follow
@@ -68,10 +92,12 @@ impl NodeArena {
         self.anonymous_base = self.source.len();
     }
 
-    /// Every node a layout pass may lay out: the source nodes, then the
-    /// anonymous cells.
+    /// Every source node and generated box a layout pass may lay out.
     pub(crate) fn layout_nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
-        self.source.iter_mut().chain(&mut self.anonymous_cells)
+        self.source
+            .iter_mut()
+            .chain(&mut self.anonymous_cells)
+            .chain(self.initial_containing_block.as_deref_mut())
     }
 
     /// The anonymous cells of the current pass, in key order.
@@ -87,6 +113,7 @@ impl From<Vec<Node>> for NodeArena {
             anonymous_base: source.len(),
             source,
             anonymous_cells: Vec::new(),
+            initial_containing_block: None,
         }
     }
 }
@@ -117,6 +144,9 @@ impl Index<usize> for NodeArena {
     fn index(&self, key: usize) -> &Node {
         match self.box_key(key) {
             Some(BoxKey::AnonymousCell(index)) => &self.anonymous_cells[index],
+            Some(BoxKey::InitialContainingBlock) => {
+                self.initial_containing_block.as_deref().unwrap()
+            }
             // An out-of-range key panics on the source nodes, as a slice would.
             Some(BoxKey::Source(_)) | None => &self.source[key],
         }
@@ -127,6 +157,9 @@ impl IndexMut<usize> for NodeArena {
     fn index_mut(&mut self, key: usize) -> &mut Node {
         match self.box_key(key) {
             Some(BoxKey::AnonymousCell(index)) => &mut self.anonymous_cells[index],
+            Some(BoxKey::InitialContainingBlock) => {
+                self.initial_containing_block.as_deref_mut().unwrap()
+            }
             Some(BoxKey::Source(_)) | None => &mut self.source[key],
         }
     }

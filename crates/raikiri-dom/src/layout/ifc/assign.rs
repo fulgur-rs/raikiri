@@ -23,8 +23,8 @@ use std::collections::HashSet;
 /// `contents` and `none`, an absolutely positioned or fixed inline element
 /// (blockified, CSS 2.1 9.7), a replaced element or form control (an
 /// atomic inline), and an inline element that a flex or grid
-/// container blockifies as its item (CSS Display 3, 2.7), and the body layout
-/// starts at, whatever its display. The cascade leaves such elements
+/// container blockifies as its item (CSS Display 3, 2.7), and the document
+/// element, whose principal box is blockified. The cascade leaves such elements
 /// `inline`; only the taffy bridge maps them to blocks.
 pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
     generates_own_box_in(doc, BoxTree::for_cascade(doc, cascade), idx)
@@ -39,10 +39,8 @@ fn generates_own_box_in(doc: &Document, boxes: BoxTree<'_>, idx: usize) -> bool 
         properties.display()
     };
     match display {
-        // Layout starts at the body, which always generates a block box: CSS
-        // Display 3, 2.7 blockifies the root element (`inline` and
-        // `contents` alike), and the body is the root of what raikiri lays
-        // out.
+        // CSS Display 3, 2.7 blockifies the document element, including
+        // an inline or contents root, without blockifying the body.
         DisplayValue::Inline | DisplayValue::Contents if is_layout_root(doc, idx) => true,
         DisplayValue::Contents | DisplayValue::None => false,
         DisplayValue::Inline
@@ -70,17 +68,10 @@ fn generates_own_box_in(doc: &Document, boxes: BoxTree<'_>, idx: usize) -> bool 
     }
 }
 
-/// Whether `idx` is the body layout starts at.
+/// Whether `idx` is the document element, blockified independently of its children.
 pub(crate) fn is_layout_root(doc: &Document, idx: usize) -> bool {
-    // The tag check spares the document walk for every other element.
-    crate::layout::is_body_element(doc, idx) && crate::layout::find_body(doc) == Some(idx)
-}
-
-/// Whether `idx` is an ancestor of the body layout starts at: it is not laid
-/// out, so it is never a paragraph (the body is the root of its own content).
-fn is_above_the_layout_root(doc: &Document, idx: usize) -> bool {
-    doc.nodes[idx].tag_name() == Some("html")
-        && crate::layout::find_body(doc).is_some_and(|body| doc.is_ancestor_or_self(idx, body))
+    doc.parent_of(idx) == Some(doc.root)
+        && super::super::initial_containing_block::root_element(doc) == Some(idx)
 }
 
 /// Whether `idx` is a box that lays its own inline content out in lines: a
@@ -105,7 +96,6 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
     if node.is_inline_svg_content()
         || node.is_inline_svg_root()
         || super::projection::ATOMIC_TAGS.contains(&tag)
-        || is_above_the_layout_root(doc, idx)
     {
         return false;
     }
@@ -135,7 +125,7 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
         | DisplayValue::TableRowGroup
         | DisplayValue::TableHeaderGroup
         | DisplayValue::TableFooterGroup => !doc.table_objects.lays_out_children(idx),
-        // The body is a block whatever its display (see `generates_own_box`).
+        // A contents document element still generates its principal box.
         DisplayValue::Contents => is_layout_root(doc, idx),
         _ => false,
     }
