@@ -308,6 +308,7 @@ fn paused_effect_without_a_current_time_has_no_sample() {
             duration_ms: 40.0,
             current_time_ms: None,
             paused: true,
+            finish_task: None,
         });
     })
     .unwrap();
@@ -526,6 +527,71 @@ fn primitive_options_convert_to_a_number_but_durations_do_not() {
     assert!(
         runtime
             .evaluate("autoAt === 0 && refusedDurations")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn pausing_cancels_a_long_finishing_task() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ wordSpacing: ['0px', '40px'] }, 100000);\
+             animation.finished.then(() => { globalThis.finishedValue = true; });\
+             animation.pause()",
+        )
+        .unwrap();
+    runtime
+        .run_until_idle()
+        .expect("a cancelled finishing task does not hit the virtual-time limit");
+    assert!(
+        runtime
+            .evaluate("typeof finishedValue === 'undefined' && performance.now() === 0")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn reading_finished_after_the_end_resolves_at_once() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.order = [];\
+             const animation = target.animate({ opacity: [0, 1] }, 10);\
+             setTimeout(() => {\
+               animation.finished.then(() => order.push('finished'));\
+               queueMicrotask(() => order.push('later'));\
+             }, 20)",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("order.join() === 'finished,later'")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn reading_finished_while_paused_queues_nothing() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ wordSpacing: ['0px', '40px'] }, 100000);\
+             animation.pause();\
+             animation.finished.then(() => { globalThis.finishedValue = true; })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("typeof finishedValue === 'undefined'")
             .unwrap()
             .to_boolean()
     );

@@ -168,6 +168,9 @@ enum Task {
     AnimationFrame,
     /// A native job, such as a Boa timeout job.
     Native(NativeJob),
+    /// A native job kept in [`EventLoop::cancellable`]; one cancelled
+    /// before it runs has no entry there and is skipped without counting.
+    Cancellable(u64),
 }
 
 struct Queued {
@@ -224,6 +227,9 @@ pub(crate) struct EventLoop {
     frame_callbacks: BTreeMap<u32, JsObject>,
     next_frame_handle: u32,
     frame_scheduled: bool,
+    /// Native jobs that may be cancelled before they run, by token.
+    cancellable: HashMap<u64, NativeJob>,
+    next_cancellable: u64,
     /// The timer nesting level of the timer task currently running.
     current_nesting: Option<u32>,
     /// Tasks and microtasks run so far.
@@ -260,6 +266,8 @@ impl EventLoop {
             frame_callbacks: BTreeMap::new(),
             next_frame_handle: 1,
             frame_scheduled: false,
+            cancellable: HashMap::new(),
+            next_cancellable: 0,
             current_nesting: None,
             jobs_run: 0,
             aborted: None,
@@ -299,9 +307,12 @@ impl EventLoop {
             let Some(queued) = self.tasks.peek() else {
                 return Next::Idle;
             };
-            if let Task::Timer { id, .. } = queued.task
-                && !self.timers.contains_key(&id)
-            {
+            let cancelled = match queued.task {
+                Task::Timer { id, .. } => !self.timers.contains_key(&id),
+                Task::Cancellable(token) => !self.cancellable.contains_key(&token),
+                Task::AnimationFrame | Task::Native(_) => false,
+            };
+            if cancelled {
                 self.tasks.pop();
                 continue;
             }
@@ -532,18 +543,28 @@ fn poll_async_job(job: NativeAsyncJob, context: &mut Context) -> JsResult<JsValu
 /// Queue `job` as a task due now, behind every task already due; it runs
 /// the next time the event loop drains.
 pub(crate) fn queue_native_task(context: &mut Context, job: NativeJob) -> JsResult<()> {
-    queue_native_task_after(context, 0.0, job)
+    with_state(context, |state| {
+        state.event_loop.queue_task(0.0, Task::Native(job));
+    })
 }
 
-/// Queue `job` as a task due `delay_ms` after the current virtual time.
-pub(crate) fn queue_native_task_after(
-    context: &mut Context,
-    delay_ms: f64,
-    job: NativeJob,
-) -> JsResult<()> {
-    with_state(context, |state| {
-        state.event_loop.queue_task(delay_ms, Task::Native(job));
-    })
+impl EventLoop {
+    /// Queue `job` as a task due `delay_ms` after the current virtual time,
+    /// returning a token that [`Self::cancel_native_task`] accepts.
+    pub(crate) fn queue_cancellable_native_task(&mut self, delay_ms: f64, job: NativeJob) -> u64 {
+        let token = self.next_cancellable;
+        self.next_cancellable += 1;
+        self.cancellable.insert(token, job);
+        self.queue_task(delay_ms, Task::Cancellable(token));
+        token
+    }
+
+    /// Drop a job queued by [`Self::queue_cancellable_native_task`] that
+    /// has not run yet; its task is then skipped, so a late due time no
+    /// longer counts against the virtual-time limit.
+    pub(crate) fn cancel_native_task(&mut self, token: u64) {
+        self.cancellable.remove(&token);
+    }
 }
 
 /// Run tasks and microtasks until both queues are empty or a limit is hit.
@@ -582,6 +603,15 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
             Task::Native(job) => {
                 let result = job.call(context);
                 settle(context, result)?;
+            }
+            Task::Cancellable(token) => {
+                let job = with_state(context, |state| state.event_loop.cancellable.remove(&token))
+                    .ok()
+                    .flatten();
+                if let Some(job) = job {
+                    let result = job.call(context);
+                    settle(context, result)?;
+                }
             }
         }
         microtask_checkpoint(context)?;

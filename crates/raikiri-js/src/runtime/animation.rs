@@ -8,7 +8,6 @@ use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace, js_string,
 };
 
-use super::event_loop;
 use super::interfaces::{Members, protos};
 use super::webidl::{this_element, with_state};
 
@@ -65,6 +64,8 @@ pub(crate) struct AnimationEffect {
     pub(crate) duration_ms: f64,
     pub(crate) current_time_ms: Option<f64>,
     pub(crate) paused: bool,
+    /// The queued task that resolves `finished`, cancelled on pause.
+    pub(crate) finish_task: Option<u64>,
 }
 
 /// Native data behind an `Animation` instance.
@@ -316,6 +317,7 @@ pub(crate) fn element_animate(
             duration_ms,
             current_time_ms: None,
             paused: false,
+            finish_task: None,
         });
         id
     })?;
@@ -348,9 +350,10 @@ fn ready(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
 }
 
 /// `Animation.finished`: resolves with the animation once the virtual clock
-/// reaches the end of its active interval, unless it was paused by then.
-/// The finishing task is queued on first access so that long animations
-/// nobody waits on do not hold the event loop open.
+/// reaches the end of its active interval; a paused animation never
+/// finishes. The finishing task is queued on first access so that long
+/// animations nobody waits on do not hold the event loop open, and pausing
+/// cancels it.
 fn finished(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let animation = this_animation(this)?;
     if let Some(finished) = animation_data(&animation).finished.clone() {
@@ -358,30 +361,38 @@ fn finished(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
     }
     let id = animation_data(&animation).id;
     let (promise, resolvers) = JsPromise::new_pending(context);
-    let delay = with_state(context, |state| {
+    let finished: JsObject = promise.into();
+    animation_data_mut(&animation).finished = Some(finished.clone());
+    let remaining = with_state(context, |state| {
         state.animations.get(id).map(|effect| {
-            (effect.start_time_ms + effect.duration_ms - state.event_loop.now).max(0.0)
+            (!effect.paused)
+                .then_some(effect.start_time_ms + effect.duration_ms - state.event_loop.now)
         })
     })?
     .ok_or_else(|| type_error("Animation is no longer available"))?;
-    let target = animation.clone();
-    let job = NativeJob::new(move |context| {
-        let running = with_state(context, |state| {
-            state
-                .animations
-                .get(id)
-                .is_some_and(|effect| !effect.paused)
-        })?;
-        if running {
+    match remaining {
+        None => {}
+        Some(remaining) if remaining <= 0.0 => {
             resolvers
                 .resolve
-                .call(&JsValue::undefined(), &[target.into()], context)?;
+                .call(&JsValue::undefined(), &[animation.into()], context)?;
         }
-        Ok(JsValue::undefined())
-    });
-    event_loop::queue_native_task_after(context, delay, job)?;
-    let finished: JsObject = promise.into();
-    animation_data_mut(&animation).finished = Some(finished.clone());
+        Some(remaining) => {
+            let job = NativeJob::new(move |context| {
+                resolvers
+                    .resolve
+                    .call(&JsValue::undefined(), &[animation.into()], context)
+            });
+            with_state(context, |state| {
+                let token = state
+                    .event_loop
+                    .queue_cancellable_native_task(remaining, job);
+                if let Some(effect) = state.animations.get_mut(id) {
+                    effect.finish_task = Some(token);
+                }
+            })?;
+        }
+    }
     Ok(finished.into())
 }
 
@@ -426,6 +437,11 @@ fn pause(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
     update_sampled_effect(id, context, |effect| {
         effect.paused = true;
         effect.current_time_ms.get_or_insert(0.0);
+    })?;
+    with_state(context, |state| {
+        let token = state.animations.get_mut(id)?.finish_task.take()?;
+        state.event_loop.cancel_native_task(token);
+        Some(())
     })?;
     Ok(JsValue::undefined())
 }
