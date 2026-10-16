@@ -1957,6 +1957,36 @@ fn a_nested_multicol_slices_a_block_without_lines_into_its_columns() {
 }
 
 #[test]
+fn a_nested_multicol_taller_than_the_outer_column_is_not_sliced_alone() {
+    // Slicing a nested container's own columns does not cut them again at
+    // the end of the outer column, so a container taller than that column
+    // keeps the strategies that place it in the outer context.
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;height:200px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let child = doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some("display:block;height:400px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert!(fragment_rects(&doc, child).len() <= 1);
+}
+
+#[test]
 fn the_trailing_margin_of_blocks_without_lines_stays_in_the_container() {
     let (doc, parent, _) = lineless_fixture(
         "display:block;width:100px;columns:1",
