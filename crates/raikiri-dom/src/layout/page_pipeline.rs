@@ -1381,6 +1381,12 @@ impl PageOrigins {
         self.correct_page_index_for_y(self.page_index_after_prefix(extra), y)
     }
 
+    /// The page that a flow position `y` falls on, or `None` when `y` is not
+    /// a usable flow position (not finite, or above the first page).
+    fn page_index_in_flow(&self, y: f32) -> Option<u32> {
+        (y.is_finite() && y >= 0.0).then(|| self.page_index_for_y(y))
+    }
+
     fn page_index_for_end(&self, end: f32) -> u32 {
         if !end.is_finite() || end <= 0.0 {
             return 0;
@@ -3970,6 +3976,7 @@ fn paginate_flow(
     let page_step_at = |page_index: u32| page_origins.step_at(page_index);
     let page_origin = |page_index: u32| page_origins.origin(page_index);
     let page_index_for_y = |y: f32| page_origins.page_index_for_y(y);
+    let page_index_in_flow = |y: f32| page_origins.page_index_in_flow(y);
     let page_index_for_end = |end: f32| page_origins.page_index_for_end(end);
     // The document element has its own used margin, outside its BFC.
     // Truncate the part adjoining an unforced break without changing any
@@ -4551,11 +4558,7 @@ fn paginate_flow(
             let consumes_pending_break = pending_break_applies && name_participates_in_flow;
             if saw_child {
                 if consumes_pending_break || named_page_change {
-                    let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                        page_index_for_y(effective_y)
-                    } else {
-                        current_page
-                    };
+                    let natural_page = page_index_in_flow(effective_y).unwrap_or(current_page);
                     let target_page = current_page.saturating_add(1).max(natural_page);
                     check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
@@ -4578,8 +4581,7 @@ fn paginate_flow(
                     }
                     current_page = target_page;
                     page_names.current = candidate_page_name.clone();
-                } else if effective_y.is_finite() && effective_y >= 0.0 {
-                    let natural_page = page_index_for_y(effective_y);
+                } else if let Some(natural_page) = page_index_in_flow(effective_y) {
                     check_candidate_page!('candidate_loop, natural_page);
                     current_page = current_page.max(natural_page);
                 }
@@ -4633,11 +4635,7 @@ fn paginate_flow(
             let raw_y = candidate.raw_y;
             let height = candidate.height;
             let effective_y = raw_y + flow_shift;
-            let anchor_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                page_index_for_y(effective_y)
-            } else {
-                current_page
-            };
+            let anchor_page = page_index_in_flow(effective_y).unwrap_or(current_page);
             let note_page = current_page.max(anchor_page);
             check_candidate_page!('candidate_loop, note_page);
             let target_y = footnote_areas.stack(
@@ -4749,11 +4747,7 @@ fn paginate_flow(
         // and the margin after the forced break is kept.
         let forced_break_at_page_start = forced_before && {
             let margin_box_y = effective_y - margin_top.max(0.0);
-            let margin_box_page = if margin_box_y.is_finite() && margin_box_y >= 0.0 {
-                page_index_for_y(margin_box_y)
-            } else {
-                current_page
-            };
+            let margin_box_page = page_index_in_flow(margin_box_y).unwrap_or(current_page);
             margin_box_page > current_page
                 || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
         };
@@ -4840,8 +4834,7 @@ fn paginate_flow(
                 let forced_transition = pending_break_applies
                     || (forced_before && !forced_break_at_page_start)
                     || named_page_change;
-                let natural_page = if effective_y.is_finite() && effective_y >= 0.0 {
-                    let page = page_index_for_y(effective_y);
+                let natural_page = if let Some(page) = page_index_in_flow(effective_y) {
                     // Preceding content that overflowed past the current
                     // page (a tall box, or floats it contains) has put this
                     // box partway down a later page. A page-type change sits
