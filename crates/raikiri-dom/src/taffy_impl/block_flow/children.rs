@@ -5,10 +5,9 @@ use super::{Metrics, child_inputs, child_style, commit, shares_context};
 use crate::Document;
 use crate::taffy_impl::resolve_calc;
 use taffy::{
-    AlignContentKeyword, AlignmentSafety, AvailableSpace, Baselines, BlockItemStyle,
-    BoxGenerationMode, Clear, CollapsibleMarginSet, CoreStyle, Float, FloatDirection, LayoutInput,
-    LayoutOutput, Line, MaybeResolve, NodeId, Point, Position, Rect, RunMode, Size, Style,
-    TraversePartialTree,
+    AvailableSpace, Baselines, BlockItemStyle, BoxGenerationMode, Clear, CollapsibleMarginSet,
+    CoreStyle, Float, FloatDirection, LayoutInput, LayoutOutput, Line, MaybeResolve, NodeId, Point,
+    Position, Rect, RunMode, Size, Style, TraversePartialTree,
 };
 
 pub(super) struct Flow {
@@ -17,6 +16,7 @@ pub(super) struct Flow {
     pub trailing: CollapsibleMarginSet,
     pub through: bool,
     pub overflow: Rect<f32>,
+    pub float_overflow: Rect<f32>,
     pub baselines: Baselines,
     pub placed: Vec<NodeId>,
     pub positioned: Vec<super::positioned::Candidate>,
@@ -28,7 +28,7 @@ fn margins(style: &Style, basis: f32) -> Rect<f32> {
         .map(|edge| edge.resolve_to_option(basis, resolve_calc).unwrap_or(0.0))
 }
 
-fn relative(style: &Style, parent: Size<Option<f32>>) -> Point<f32> {
+fn relative(style: &Style, parent: Size<Option<f32>>, direction: taffy::Direction) -> Point<f32> {
     if !matches!(style.position, Position::Relative | Position::Sticky) {
         return Point::ZERO;
     }
@@ -42,10 +42,12 @@ fn relative(style: &Style, parent: Size<Option<f32>>) -> Point<f32> {
             .maybe_resolve(parent.height, resolve_calc),
     };
     Point {
-        x: inset
-            .left
-            .or(inset.right.map(|right| -right))
-            .unwrap_or(0.0),
+        x: if direction == taffy::Direction::Rtl {
+            inset.right.map(|right| -right).or(inset.left)
+        } else {
+            inset.left.or(inset.right.map(|right| -right))
+        }
+        .unwrap_or(0.0),
         y: inset
             .top
             .or(inset.bottom.map(|bottom| -bottom))
@@ -54,12 +56,11 @@ fn relative(style: &Style, parent: Size<Option<f32>>) -> Point<f32> {
 }
 
 fn overflow(
-    flow: &mut Flow,
     style: &Style,
     metrics: Metrics,
     output: &LayoutOutput,
     location: Point<f32>,
-) {
+) -> Rect<f32> {
     let mut rect = Rect {
         left: location.x,
         right: location.x + output.size.width,
@@ -67,7 +68,10 @@ fn overflow(
         bottom: location.y + output.size.height,
     };
     let child = output.scrollable_overflow_rect;
-    if !style.overflow.x.is_scroll_container() && style.overflow.x != taffy::Overflow::Clip {
+    let contains_overflow = style.contain.contains_scrollable_overflow()
+        || style.overflow.x.is_scroll_container()
+        || style.overflow.y.is_scroll_container();
+    if !contains_overflow && style.overflow.x == taffy::Overflow::Visible {
         let (left, right) = if style.direction == taffy::Direction::Rtl {
             let origin = location.x + output.size.width - metrics.border.right;
             (origin - child.right, origin - child.left)
@@ -80,16 +84,13 @@ fn overflow(
         rect.left = rect.left.min(left);
         rect.right = rect.right.max(right);
     }
-    if !style.overflow.y.is_scroll_container() && style.overflow.y != taffy::Overflow::Clip {
+    if !contains_overflow && style.overflow.y == taffy::Overflow::Visible {
         rect.top = rect.top.min(location.y + metrics.border.top + child.top);
         rect.bottom = rect
             .bottom
             .max(location.y + metrics.border.top + child.bottom);
     }
-    flow.overflow.left = flow.overflow.left.min(rect.left);
-    flow.overflow.right = flow.overflow.right.max(rect.right);
-    flow.overflow.top = flow.overflow.top.min(rect.top);
-    flow.overflow.bottom = flow.overflow.bottom.max(rect.bottom);
+    rect
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -115,6 +116,7 @@ pub(super) fn layout(
         trailing: CollapsibleMarginSet::ZERO,
         through: true,
         overflow: Rect::ZERO,
+        float_overflow: Rect::ZERO,
         baselines: Baselines::NONE,
         placed: Vec::new(),
         positioned: Vec::new(),
@@ -172,26 +174,42 @@ pub(super) fn layout(
                 x: position.x + margin.left,
                 y: position.y + margin.top,
             };
-            overflow(&mut flow, &style, child_metrics, &output, location);
+            flow.float_overflow =
+                flow.float_overflow
+                    .union(overflow(&style, child_metrics, &output, location));
             if inputs.run_mode == RunMode::PerformLayout {
                 commit(tree, child, order, child_metrics, &output, location, margin);
             }
             continue;
         }
         let same = shares_context(&style);
-        let mut child_width = child_metrics.preferred.width;
+        let stretches = matches!(
+            style.size.width.expand(),
+            taffy::ExpandedDimension::Auto | taffy::ExpandedDimension::Stretch
+        ) && !style.is_table()
+            && !style.is_compressible_replaced();
         let natural_stretch = content_width - margin.horizontal_axis_sum();
-        if child_width.is_none()
-            && matches!(
-                style.size.width.expand(),
-                taffy::ExpandedDimension::Auto | taffy::ExpandedDimension::Stretch
-            )
-            && !style.is_table()
-            && !style.is_compressible_replaced()
-        {
-            child_width = Some(child_metrics.clamp_width(natural_stretch.max(0.0)));
-        }
-        let mut left = metrics.inset.left + margin.left;
+        let mut measure_width = |limit: f32| {
+            if let Some(preferred) = child_metrics.preferred.width {
+                return preferred;
+            }
+            if stretches {
+                return child_metrics.clamp_width(limit.max(0.0));
+            }
+            let mut measure = child_input;
+            measure.run_mode = RunMode::ComputeSize;
+            measure.available_space.width = match style.size.width.expand() {
+                taffy::ExpandedDimension::MinContent => AvailableSpace::MinContent,
+                taffy::ExpandedDimension::MaxContent => AvailableSpace::MaxContent,
+                _ => AvailableSpace::Definite(limit.max(0.0)),
+            };
+            tree.compute_child_layout_with_block_ctx(child, measure, None)
+                .size
+                .width
+        };
+        let mut child_width = measure_width(natural_stretch);
+        let mut area_start = metrics.inset.left + margin.left;
+        let mut area_width = natural_stretch;
         let mut slot_y = None;
         if !same && ctx.has_active_floats(flow.end + pending.resolve()) {
             let mut after = None;
@@ -203,37 +221,42 @@ pub(super) fn layout(
                     style.clear,
                     after,
                 );
-                let proposed = child_metrics
-                    .preferred
-                    .width
-                    .unwrap_or_else(|| child_metrics.clamp_width(slot.stretch_width.max(0.0)));
+                let proposed = measure_width(slot.stretch_width);
                 if proposed <= slot.border_width + 0.001 || slot.segment_id.is_none() {
-                    child_width = Some(proposed);
-                    left = slot.x;
+                    child_width = proposed;
+                    area_start = slot.x;
+                    area_width = slot.stretch_width;
                     slot_y = Some(slot.y);
                     break;
                 }
                 after = slot.segment_id;
             }
-        } else if let Some(child_width) = child_width {
-            let free = (content_width - margin.horizontal_axis_sum() - child_width).max(0.0);
-            match (style.margin.left.is_auto(), style.margin.right.is_auto()) {
-                (true, true) => {
-                    margin.left = free / 2.0;
-                    margin.right = free / 2.0;
-                }
-                (true, false) => margin.left = free,
-                (false, true) => margin.right = free,
-                (false, false) if container.direction == taffy::Direction::Rtl => {
-                    margin.left = content_width - margin.right - child_width
-                }
-                _ => {}
-            }
-            left = metrics.inset.left + margin.left;
         }
-        child_input.known_dimensions.width = child_width;
-        child_input.available_space.width =
-            child_width.map_or(AvailableSpace::MaxContent, AvailableSpace::Definite);
+        let free = area_width - child_width;
+        let (left_auto, right_auto) = (style.margin.left.is_auto(), style.margin.right.is_auto());
+        let (auto_left, auto_right) = match (left_auto, right_auto) {
+            (true, true) => (free.max(0.0) / 2.0, free.max(0.0) / 2.0),
+            (true, false) => (free.max(0.0), 0.0),
+            (false, true) => (0.0, free.max(0.0)),
+            _ => (0.0, 0.0),
+        };
+        let offset = if container.direction == taffy::Direction::Rtl
+            && (free < 0.0 || !left_auto && !right_auto)
+        {
+            free
+        } else {
+            auto_left
+        };
+        let left = area_start + offset;
+        if left_auto {
+            margin.left = auto_left + (area_start - metrics.inset.left).max(0.0);
+        }
+        if right_auto {
+            margin.right =
+                auto_right + (width - metrics.inset.right - area_start - area_width).max(0.0);
+        }
+        child_input.known_dimensions.width = Some(child_width);
+        child_input.available_space.width = AvailableSpace::Definite(child_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
         let resolved = ctx.origin_resolved();
         // Clearance refers to preceding floats. Descendant floats created
@@ -254,7 +277,7 @@ pub(super) fn layout(
             .max(clear_y);
         let (output, top, top_set, bottom_set, clearance, floated_end, adjoining) = loop {
             let (output, floated_end, adjoining) = if same {
-                let right_inset = width - left - child_width.unwrap_or(0.0);
+                let right_inset = width - left - child_width;
                 let mut sub = ctx.sub_context_for_collapsing_child(
                     guess,
                     [left, right_inset],
@@ -321,12 +344,14 @@ pub(super) fn layout(
                 .collapse_with_set(pending)
                 .collapse_with_set(top_set);
         }
-        let offset = relative(&style, parent);
+        let offset = relative(&style, parent, container.direction);
         let location = Point {
             x: left + offset.x,
             y: top + offset.y,
         };
-        overflow(&mut flow, &style, child_metrics, &output, location);
+        flow.overflow = flow
+            .overflow
+            .union(overflow(&style, child_metrics, &output, location));
         if let Some(baseline) = output.baselines.first {
             flow.baselines.first.get_or_insert(top + baseline);
         }
@@ -362,22 +387,24 @@ pub(super) fn layout(
     flow
 }
 
-pub(super) fn align(tree: &mut Document, style: &Style, placed: &[NodeId], free: f32) {
-    let align = style.align_content;
-    let free = if align.safety == AlignmentSafety::Safe {
-        free.max(0.0)
-    } else {
-        free
-    };
-    let offset = match align.keyword {
-        AlignContentKeyword::End | AlignContentKeyword::FlexEnd => free,
-        AlignContentKeyword::Center => free / 2.0,
-        _ => 0.0,
-    };
+pub(super) fn align(tree: &mut Document, style: &Style, flow: &mut Flow, free: f32) {
+    if style.align_content.keyword == taffy::AlignContentKeyword::Normal {
+        return;
+    }
+    let offset = taffy::compute_block_align_content_offset(style.align_content, free);
     if offset == 0.0 {
         return;
     }
-    for &node in placed {
+    flow.baselines.first = flow.baselines.first.map(|baseline| baseline + offset);
+    flow.baselines.last = flow.baselines.last.map(|baseline| baseline + offset);
+    if flow.overflow != Rect::ZERO {
+        flow.overflow.top += offset;
+        flow.overflow.bottom += offset;
+    }
+    for candidate in &mut flow.positioned {
+        candidate.static_position.y += offset;
+    }
+    for &node in &flow.placed {
         let mut layout = tree.nodes[usize::from(node)].unrounded_layout;
         layout.location.y += offset;
         taffy::LayoutPartialTree::set_unrounded_layout(tree, node, &layout);

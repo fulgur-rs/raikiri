@@ -55,7 +55,9 @@ impl Metrics {
                 Size::NONE
             })
             .maybe_clamp(min, max)
-            .maybe_max(padding_border.sum_axes());
+            .maybe_max(padding_border.sum_axes())
+            .maybe_apply_aspect_ratio(style.aspect_ratio())
+            .maybe_clamp(min, max);
         let gutter = |overflow| {
             if overflow == Overflow::Scroll {
                 style.scrollbar_width()

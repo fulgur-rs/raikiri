@@ -561,11 +561,11 @@ pub struct Document {
     /// innermost last; taffy sees no children under them; see
     /// [`mod@crate::taffy_impl`]'s `size_contained_inputs`.
     pub(crate) size_contained_measure: Vec<usize>,
-    /// The tracks of the grid container taffy laid out last, kept from
+    /// Per-container tracks kept from
     /// [`taffy::LayoutGridContainer::set_detailed_grid_info`] until
-    /// [`mod@crate::taffy_impl`]'s `grid_layout` resolves the grid areas of its
-    /// absolutely positioned children from them.
-    pub(crate) last_grid_info: Option<(usize, taffy::DetailedLayoutInfo<String>)>,
+    /// [`mod@crate::taffy_impl`]'s `grid_layout` finishes positioning that
+    /// container's children. Nested grids retain their ancestors' entries.
+    pub(crate) grid_layout_info: HashMap<usize, taffy::DetailedLayoutInfo<String>>,
     /// Out-of-flow boxes recorded by the public Taffy containing-block interface.
     pub(crate) taffy_hoisted_children: HashMap<usize, Vec<taffy::NodeId>>,
     /// HTML5 quirks mode for this whole document. Default
@@ -774,7 +774,7 @@ impl Document {
             block_item_percent_bases: Vec::new(),
             flex_item_percent_bases: Vec::new(),
             size_contained_measure: Vec::new(),
-            last_grid_info: None,
+            grid_layout_info: HashMap::new(),
             taffy_hoisted_children: HashMap::new(),
             quirks_mode: QuirksMode::default(),
             base_url: None,
@@ -2173,7 +2173,7 @@ impl Document {
             block_item_percent_bases: _,
             flex_item_percent_bases: _,
             size_contained_measure: _,
-            last_grid_info: _,
+            grid_layout_info: _,
             taffy_hoisted_children: _,
             quirks_mode,
             base_url,

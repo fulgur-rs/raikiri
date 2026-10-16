@@ -36,10 +36,9 @@ impl LayoutContainingBlock for Document {
     }
 
     fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<String> {
-        self.last_grid_info
-            .as_ref()
-            .filter(|(index, _)| *index == usize::from(node))
-            .map_or(&DetailedLayoutInfo::None, |(_, info)| info)
+        self.grid_layout_info
+            .get(&usize::from(node))
+            .unwrap_or(&DetailedLayoutInfo::None)
     }
 }
 

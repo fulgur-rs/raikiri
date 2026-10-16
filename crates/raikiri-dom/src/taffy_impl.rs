@@ -491,6 +491,8 @@ impl Document {
             for node in self.nodes.layout_nodes_mut() {
                 node.cache.clear();
             }
+            self.grid_layout_info.clear();
+            self.taffy_hoisted_children.clear();
             self.layout_dirty = false;
         }
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
@@ -1971,8 +1973,8 @@ fn grid_layout(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> Lay
     let mut output = compute_grid_layout(tree, node_id, inputs);
     oof::layout_local_oof(tree, node_id, &mut output);
     // Taffy reports the tracks only from a layout it performs.
-    let grid = tree.last_grid_info.take().filter(|&(grid, _)| grid == idx);
-    if let Some((_, taffy::DetailedLayoutInfo::Grid(grid))) = grid {
+    let grid = tree.grid_layout_info.remove(&idx);
+    if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
     }
     output
@@ -2365,10 +2367,10 @@ impl LayoutGridContainer for Document {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.nodes[parent].grid_column_count = grid_column_count;
-        self.last_grid_info = Some((
+        self.grid_layout_info.insert(
             parent,
             taffy::DetailedLayoutInfo::Grid(Box::new(detailed_grid_info)),
-        ));
+        );
     }
 }
 

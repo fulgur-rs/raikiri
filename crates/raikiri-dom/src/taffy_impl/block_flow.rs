@@ -163,7 +163,7 @@ fn layout_context(
         ctx.set_origin_resolved(!collapse_start);
     }
     ctx.apply_content_box_inset([metrics.inset.left, metrics.inset.right]);
-    let flow = children::layout(
+    let mut flow = children::layout(
         tree,
         node,
         inputs,
@@ -191,17 +191,18 @@ fn layout_context(
         height = metrics.clamp_height(natural_end + flow.trailing.resolve() + metrics.inset.bottom);
     }
     let size = Size { width, height };
-    let mut positioned_overflow = Rect::ZERO;
-    if inputs.run_mode == RunMode::PerformLayout {
-        children::align(
-            tree,
-            style,
-            &flow.placed,
-            height - metrics.inset.bottom - flow.end,
-        );
-        positioned_overflow = positioned::layout(tree, node, &flow.positioned, metrics, size);
-    }
-    let mut overflow = flow.overflow;
+    children::align(
+        tree,
+        style,
+        &mut flow,
+        height - metrics.inset.bottom - natural_end,
+    );
+    let positioned_overflow = if inputs.run_mode == RunMode::PerformLayout {
+        positioned::layout(tree, node, &flow.positioned, metrics, size)
+    } else {
+        Rect::ZERO
+    };
+    let mut overflow = flow.overflow.union(flow.float_overflow);
     if style.direction == taffy::Direction::Rtl {
         let origin = width - metrics.border.right;
         overflow = Rect {
@@ -221,6 +222,17 @@ fn layout_context(
     overflow.right = overflow.right.max(0.0);
     overflow.bottom = overflow.bottom.max(0.0);
     overflow = overflow.union(positioned_overflow);
+    if style.overflow.x.is_scroll_container() || style.overflow.y.is_scroll_container() {
+        let end_padding = if style.direction == taffy::Direction::Rtl {
+            metrics.padding.left
+        } else {
+            metrics.padding.right
+        };
+        overflow.right = (overflow.right + end_padding)
+            .max(width - metrics.border.horizontal_axis_sum() - metrics.scrollbar.width);
+        overflow.bottom = (overflow.bottom + metrics.padding.bottom)
+            .max(height - metrics.border.vertical_axis_sum() - metrics.scrollbar.height);
+    }
     LayoutOutput {
         oof_candidates: taffy::OofCandidates::NONE,
         oof_positioning_area: None,
