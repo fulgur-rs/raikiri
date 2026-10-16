@@ -31,12 +31,14 @@ use raikiri_traits::{QuirksMode, StylesheetKind};
 
 use crate::fragment::{FragmentTree, FragmentationContext};
 use crate::layout::LayoutWarn;
-use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, Node, NodeData};
+use crate::node::{Attr, CanvasBitmap, CanvasBitmapError, ElementData, Node, NodeData};
 
 mod mutation;
 pub use mutation::DomMutationError;
 
 const XHTML_NAMESPACE_URI: &str = "http://www.w3.org/1999/xhtml";
+const MATHML_NAMESPACE_URI: &str = "http://www.w3.org/1998/Math/MathML";
+const SVG_NAMESPACE_URI: &str = "http://www.w3.org/2000/svg";
 // A WPT pair can hold one sidecar beside the other document and its paint blob.
 // Capping each side at 32 MiB keeps these three canvas buffers at 96 MiB total.
 const MAX_DOCUMENT_CANVAS_BITMAP_BYTES: usize = 32 * 1024 * 1024;
@@ -116,6 +118,24 @@ pub fn is_valid_element_local_name(name: &str) -> bool {
         }),
         _ => false,
     }
+}
+
+/// The prefix HTML fragment serialization writes before an element's local
+/// name. HTML "serializing HTML fragments" uses the local name for HTML,
+/// MathML and SVG elements and the qualified name for any other namespace.
+fn serialized_element_prefix(element: &ElementData) -> Option<&str> {
+    match element.namespace.as_deref() {
+        None | Some(XHTML_NAMESPACE_URI | MATHML_NAMESPACE_URI | SVG_NAMESPACE_URI) => None,
+        Some(_) => element.prefix.as_deref(),
+    }
+}
+
+fn push_html_element_name(output: &mut String, prefix: Option<&str>, local: &str) {
+    if let Some(prefix) = prefix {
+        output.push_str(prefix);
+        output.push(':');
+    }
+    output.push_str(local);
 }
 
 fn qualified_name(prefix: Option<&str>, local: &str) -> String {
@@ -1239,6 +1259,14 @@ impl Document {
         self.set_element_namespace_info(id, ns, None);
     }
 
+    /// The namespace prefix an element was created with, if any.
+    pub fn element_prefix(&self, id: usize) -> Option<&str> {
+        let NodeData::Element(element) = &self.nodes.get(id)?.data else {
+            return None;
+        };
+        element.prefix.as_deref()
+    }
+
     /// Set an element namespace URI and its source prefix.
     pub fn set_element_namespace_info(
         &mut self,
@@ -1796,7 +1824,7 @@ impl Document {
 
         enum Task<'a> {
             Node(usize, bool),
-            EndTag(&'a str),
+            EndTag(Option<&'a str>, &'a str),
         }
 
         let parent_node = self
@@ -1844,9 +1872,9 @@ impl Document {
 
         while let Some(task) = pending.pop() {
             match task {
-                Task::EndTag(tag) => {
+                Task::EndTag(prefix, tag) => {
                     output.push_str("</");
-                    output.push_str(tag);
+                    push_html_element_name(&mut output, prefix, tag);
                     output.push('>');
                 }
                 Task::Node(id, raw_text_parent) => {
@@ -1857,8 +1885,9 @@ impl Document {
                     match &node.data {
                         NodeData::Element(element) => {
                             let tag = element.tag_name.as_str();
+                            let prefix = serialized_element_prefix(element);
                             output.push('<');
-                            output.push_str(tag);
+                            push_html_element_name(&mut output, prefix, tag);
                             for attr in &element.attributes {
                                 // `style` is represented by inline_style and
                                 // must have only one serialized source.
@@ -1906,7 +1935,7 @@ impl Document {
                             } else {
                                 &node.children
                             };
-                            pending.push(Task::EndTag(tag));
+                            pending.push(Task::EndTag(prefix, tag));
                             let raw_text = is_html_raw_text_element(
                                 element.namespace.as_deref(),
                                 element.tag_name.as_str(),

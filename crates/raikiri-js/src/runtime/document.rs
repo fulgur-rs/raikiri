@@ -29,9 +29,9 @@ pub(crate) enum NameContext {
 /// into an optional prefix and a local name, returned with the namespace.
 /// The prefix must be a valid namespace prefix and the local name a valid
 /// element or attribute local name for `name_context`; then the
-/// namespace/prefix combinations the spec restricts are checked. `namespace` is normalized from an empty string to
-/// `None` first (the algorithm's own first step); both inputs are already
-/// `DOMString`-converted.
+/// namespace/prefix combinations the spec restricts are checked.
+/// `namespace` is normalized from an empty string to `None` first (the
+/// algorithm's own first step); both inputs are already `DOMString`-converted.
 pub(crate) fn validate_and_extract(
     context: &mut Context,
     namespace: Option<String>,
@@ -82,12 +82,9 @@ pub(crate) fn validate_and_extract(
 
 /// `Document.createElementNS` (DOM §4.5): unlike `createElement`, this never
 /// lowercases the given name (case matters for a foreign-namespace element,
-/// e.g. SVG's `linearGradient`). `raikiri_dom`'s `ElementData` has no
-/// separate prefix slot, so a prefixed qualified name's `tagName`/
-/// `localName` both fall back to just its local-name half; nothing in this
-/// runtime's own tests or WPT content passes a prefixed qualified name, so
-/// this only under-reports `tagName` for one (e.g. `xlink:href`), never
-/// over-reports it.
+/// e.g. SVG's `linearGradient`). The prefix half of a prefixed qualified
+/// name is stored alongside the namespace, so `tagName`/`nodeName` report
+/// the full qualified name while `localName` reports only the local half.
 pub(crate) fn create_element_ns(
     this: &JsValue,
     args: &[JsValue],
@@ -99,7 +96,7 @@ pub(crate) fn create_element_ns(
         _ => Some(dom_string(args, 0, context)?),
     };
     let qualified_name = dom_string(args, 1, context)?;
-    let (namespace, _, local_name) =
+    let (namespace, prefix, local_name) =
         validate_and_extract(context, namespace, &qualified_name, NameContext::Element)?;
     guard_node_budget(context)?;
     let result = with_state(context, |s| {
@@ -128,9 +125,11 @@ pub(crate) fn create_element_ns(
             Some(other) => Some(other.into()),
             None => Some("".into()),
         };
-        s.host
-            .document_mut()
-            .set_element_namespace(index, dom_namespace);
+        s.host.document_mut().set_element_namespace_info(
+            index,
+            dom_namespace,
+            prefix.map(Into::into),
+        );
     })?;
     if is_html && local_name == "template" {
         with_state(context, |s| {

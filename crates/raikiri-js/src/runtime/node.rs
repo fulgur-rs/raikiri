@@ -79,10 +79,14 @@ fn node_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
 
 /// DOM §4.9 "HTML-uppercased qualified name" for HTML-namespace elements.
 fn html_uppercased_name(doc: &raikiri_dom::Document, index: usize, tag: &str) -> String {
+    let qualified = match doc.element_prefix(index) {
+        Some(prefix) => format!("{prefix}:{tag}"),
+        None => tag.to_owned(),
+    };
     if doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS) {
-        tag.to_ascii_uppercase()
+        qualified.to_ascii_uppercase()
     } else {
-        tag.to_owned()
+        qualified
     }
 }
 

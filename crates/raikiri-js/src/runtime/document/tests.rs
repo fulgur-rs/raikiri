@@ -349,3 +349,28 @@ fn qualified_names_follow_the_dom_element_and_attribute_name_rules() {
         );
     }
 }
+
+/// A prefixed qualified name keeps its prefix: `tagName`/`nodeName` report
+/// the qualified name, `localName` only the local half, and serialization of
+/// a foreign-namespace element writes the prefixed name on both tags.
+#[test]
+fn create_element_ns_preserves_the_prefix() {
+    let mut rt = rt();
+    ok(
+        &mut rt,
+        "var e = document.createElementNS('urn:x', '@:x'); \
+         e.tagName === '@:x' && e.nodeName === '@:x' && e.localName === 'x'",
+    );
+    ok(
+        &mut rt,
+        "var d = document.createElement('div'); \
+         d.appendChild(document.createElementNS('urn:x', 'p:x')); \
+         d.innerHTML === '<p:x></p:x>'",
+    );
+    ok(
+        &mut rt,
+        "var h = document.createElementNS('http://www.w3.org/1999/xhtml', 'p:div'); \
+         var d = document.createElement('div'); d.appendChild(h); \
+         h.tagName === 'P:DIV' && d.innerHTML === '<div></div>'",
+    );
+}
