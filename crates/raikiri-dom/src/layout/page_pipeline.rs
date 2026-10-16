@@ -4153,10 +4153,7 @@ fn paginate_flow(
     let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
-    // Paragraphs laid out by the inline engine that already had a candidate
-    // inside them. Only the first candidate of a paragraph may move its root:
-    // a later one would move again what the earlier ones placed.
-    let mut entered_ifc_roots = HashSet::new();
+    let mut entered_paragraphs = EnteredParagraphs::default();
     macro_rules! check_candidate_page {
         ($label:lifetime, $page_index:expr) => {
             match control.check_page_index($page_index) {
@@ -4232,22 +4229,7 @@ fn paginate_flow(
         let keep_local_page_type =
             candidate.named_flex_context.is_none() && page_names.current != comparison_page_name;
         let page_before_candidate = current_page;
-        let moves_ifc_root = {
-            let mut first = candidate
-                .ifc_root
-                .filter(|&(root, _)| document.is_anonymous_cell(root))
-                .is_none_or(|(root, _)| entered_ifc_roots.insert(root));
-            let mut current = document.parent_of(node_id);
-            while let Some(id) = current {
-                if document.nodes[id].is_ifc_root() && !entered_ifc_roots.insert(id) {
-                    first = false;
-                    // Higher IFC roots were registered when this root was first entered.
-                    break;
-                }
-                current = document.parent_of(id);
-            }
-            first
-        };
+        let moves_ifc_root = entered_paragraphs.enter(document, candidate.ifc_root, node_id);
         let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
         pending_line_splits.retain(|&(root, first_moved, shift)| {
             let reached = !is_descendant_or_self(document, node_id, root)
@@ -6631,6 +6613,43 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// Paragraphs laid out by the inline engine that already had a candidate
+/// inside them. Only the first candidate of a paragraph may move its root: a
+/// later one would move again what the earlier ones placed.
+#[derive(Default)]
+struct EnteredParagraphs {
+    roots: HashSet<usize>,
+}
+
+impl EnteredParagraphs {
+    /// Registers every paragraph root around `node_id` and returns whether
+    /// this is the first candidate inside all of them.
+    ///
+    /// `ifc_root`, the candidate's own paragraph root, is registered directly
+    /// only when it is an anonymous cell; the other roots are the inline
+    /// formatting context roots among the ancestors of `node_id`.
+    fn enter(
+        &mut self,
+        document: &Document,
+        ifc_root: Option<(usize, f32)>,
+        node_id: usize,
+    ) -> bool {
+        let mut first = ifc_root
+            .filter(|&(root, _)| document.is_anonymous_cell(root))
+            .is_none_or(|(root, _)| self.roots.insert(root));
+        let mut current = document.parent_of(node_id);
+        while let Some(id) = current {
+            if document.nodes[id].is_ifc_root() && !self.roots.insert(id) {
+                first = false;
+                // Higher IFC roots were registered when this root was first entered.
+                break;
+            }
+            current = document.parent_of(id);
+        }
+        first
+    }
 }
 
 /// Paragraph blocks whose leading line or whose orphans and widows move them
