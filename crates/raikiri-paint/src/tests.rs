@@ -2672,6 +2672,19 @@ fn atomic_inline_on_the_first_line_paints_in_its_group() {
     );
 }
 
+/// The positioned boxes inside an atomic inline on a translucent first line
+/// paint in the `::first-line` group with it.
+#[test]
+fn positioned_box_in_an_atomic_inline_on_the_first_line_paints_in_its_group() {
+    let scene = painted_html(
+        br#"<html><head><style>p::first-line{opacity:.5}</style></head><body><p>A<i style="display:inline-block;width:5px;height:5px"><b style="display:block;position:relative;z-index:1;width:5px;height:5px;background:red"></b></i></p></body></html>"#,
+    );
+    assert_eq!(
+        command_kinds(&scene),
+        ["fill", "push 0.5", "glyphs 1", "fill", "pop"]
+    );
+}
+
 /// A box beside the lines with a negative stack level paints below the
 /// paragraph's text.
 #[test]

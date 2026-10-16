@@ -512,10 +512,12 @@ pub fn defers_to_positioned_layer(
 ///
 /// Positioned descendants belong to the nearest stacking context, where they
 /// paint after its inline content (CSS 2.1 Appendix E step 8), whatever box
-/// between holds them. A float or a flex or grid item paints as if it formed
-/// a stacking context, but passes them on too. A box that clips or forms a
-/// stacking context of its own keeps them, as does a box laid out beside the
-/// lines of a paragraph, which paints among the paragraph's content.
+/// between holds them. A float, a flex or grid item, and an atomic inline
+/// such as an inline-block paint as if they formed a stacking context, but
+/// pass them on too (Appendix E, the step for inline-block and inline-table
+/// elements, and CSS Flexbox 1 §4.3). A box that clips or forms a stacking
+/// context of its own keeps them, as does a box inside an inline opacity
+/// group, which the painters paint as a whole.
 pub fn hoists_positioned_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -526,15 +528,41 @@ pub fn hoists_positioned_content(
             && !establishes_stacking_context(document, node_id, cv)
             && !is_z_indexed_item(document, cascade, node_id, cv)
             && !clips_overflow(cv)
-            && (!matches!(cv.float, FloatValue::None)
-                || box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
-                    |parent| {
-                        document
-                            .get_node(parent)
-                            .is_some_and(|node| !node.is_ifc_root())
-                    },
-                ))
+            && !inside_inline_opacity_group(document, cascade, node_id)
     })
+}
+
+/// Whether element `node_id` sits inside an opacity group of its paragraph:
+/// an inline element with an opacity below one, or a translucent
+/// `::first-line` when the box is an atomic inline on the first line (see
+/// [`first_line_opacity_layer`]). The painters paint such a group's content
+/// as a whole; other inline stacking contexts form no group yet, so the
+/// positioned boxes inside them still join the enclosing layer.
+fn inside_inline_opacity_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let mut current = node_id;
+    while let Some(parent) = box_parent(document, cascade, current, BoxParentScope::Document) {
+        if document
+            .get_node(parent)
+            .is_some_and(|node| node.is_ifc_root())
+        {
+            return first_line_opacity_layer(document, parent).is_some()
+                && atomic_on_first_line(document, parent, node_id);
+        }
+        match cascade.computed.get(parent) {
+            Some(cv) if cv.display.is_inline_flow() => {
+                if opacity_layer(cv).is_some() {
+                    return true;
+                }
+                current = parent;
+            }
+            _ => break,
+        }
+    }
+    false
 }
 
 /// One frame of the list a layer keeps of the boxes that wait for its end

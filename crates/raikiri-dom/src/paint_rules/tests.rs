@@ -504,3 +504,63 @@ fn generated_boxes_below_a_paragraph_hold_a_negative_stack_level() {
     assert!(holds_negative_stack_level(&doc, &cascade, low));
     assert!(!holds_negative_stack_level(&doc, &cascade, high));
 }
+
+#[test]
+fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_group() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let div = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let plain = doc.append_element(Some(div), "span", Style::default(), Some("display:inline"));
+    let open = doc.append_element(
+        Some(plain),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    let leveled = doc.append_element(
+        Some(plain),
+        "span",
+        Style::default(),
+        Some("display:inline;position:relative;z-index:1"),
+    );
+    let passed = doc.append_element(
+        Some(leveled),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    let faded = doc.append_element(
+        Some(plain),
+        "span",
+        Style::default(),
+        Some("display:inline;opacity:0.5"),
+    );
+    let kept = doc.append_element(
+        Some(faded),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    let ruby = doc.append_element(
+        Some(plain),
+        "ruby",
+        Style::default(),
+        Some("display:ruby;opacity:0.5"),
+    );
+    let in_ruby = doc.append_element(
+        Some(ruby),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+    assert!(hoists_positioned_content(&doc, &cascade, open));
+    // Ruby boxes are inline boxes too and form the same groups.
+    assert!(!hoists_positioned_content(&doc, &cascade, in_ruby));
+    // A positioned inline with a z-index forms no group in the painters, so
+    // the boxes inside it still join the enclosing layer.
+    assert!(hoists_positioned_content(&doc, &cascade, passed));
+    assert!(!hoists_positioned_content(&doc, &cascade, kept));
+}
