@@ -96,6 +96,7 @@ pub(crate) fn compute_multicol_layout(
         && style.horizontal
         && available_height.is_some_and(|height| height > 0.0)
         && multicol_has_direct_block_child(tree, index)
+        && tree.nodes[index].style.direction == TaffyDirection::Ltr
         && multicol_has_only_paragraph_children(tree, index)
         && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
@@ -2114,19 +2115,27 @@ fn line_ranges_in_columns(
     if line_count == 0 {
         return Vec::new();
     }
-    // A box pushed past the last column of a definite-height container sits
-    // in an overflow column, which holds all of its lines.
-    if context.column_index >= context.column_count && !preserve_block_offsets {
-        return if context.available_height.is_some_and(|height| height > 0.0) {
-            vec![(0, line_count, context.column_index)]
-        } else {
-            Vec::new()
-        };
-    }
     let available_columns = context.column_count.saturating_sub(context.column_index);
     let mut ranges = Vec::with_capacity(available_columns.max(1).min(line_count));
     let mut start = 0usize;
-    if preserve_block_offsets
+    if available_columns == 0 && !preserve_block_offsets {
+        // A box pushed past the last column of a definite-height container
+        // continues through as many overflow columns as its lines need.
+        let Some(height) = context.available_height.filter(|height| *height > 0.0) else {
+            return Vec::new();
+        };
+        let mut column = context.column_index;
+        while start < line_count {
+            let origin = extents[start].0;
+            let mut end = start + 1;
+            while end < line_count && extents[end].1 - origin <= height + f32::EPSILON {
+                end += 1;
+            }
+            ranges.push((start, end, column));
+            column += 1;
+            start = end;
+        }
+    } else if preserve_block_offsets
         && let Some(height) = context.available_height.filter(|height| *height > 0.0)
     {
         while start < line_count {

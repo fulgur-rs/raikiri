@@ -134,15 +134,15 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
     assert!(line_ranges_in_columns(&[], context, false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), true).is_empty());
-    // Past the last column of a definite-height container, an overflow
-    // column holds every line.
+    // Past the last column of a definite-height container, the lines continue
+    // through as many overflow columns as they need.
     let definite = FragmentationContext {
         available_height: Some(30.0),
         ..context
     };
     assert_eq!(
         line_ranges_in_columns(&extents, definite.in_column(3, 300.0, 0.0), false),
-        vec![(0, 5, 3)],
+        vec![(0, 2, 3), (2, 4, 4), (4, 5, 5)],
     );
 }
 

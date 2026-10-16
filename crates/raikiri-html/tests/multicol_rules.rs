@@ -361,7 +361,10 @@ fn paragraphs_past_the_last_column_sit_in_overflow_columns() {
     // columns of a definite-height container continues in columns after
     // them, outside the container.
     for css in [".mc{height:30px}", ".mc{max-height:30px}"] {
-        let document = lay_out("<div class=mc><p>A</p><p>B</p><p>C</p></div>", css);
+        let document = lay_out(
+            "<div class=mc><p>A</p><p>B</p><p>C<br>D<br>E</p></div>",
+            css,
+        );
         let runs: Vec<_> = document
             .page(0)
             .unwrap()
@@ -374,10 +377,35 @@ fn paragraphs_past_the_last_column_sit_in_overflow_columns() {
             [
                 ("A", (0.0, 16.0)),
                 ("B", (60.0, 16.0)),
-                ("C", (120.0, 16.0))
+                ("C", (120.0, 16.0)),
+                ("D", (180.0, 16.0)),
+                ("E", (240.0, 16.0))
             ]
             .map(|(text, origin)| (text.to_owned(), origin)),
             "{css}"
         );
     }
+}
+
+#[test]
+fn right_to_left_paragraphs_keep_their_column_progression() {
+    let runs = |body: &str| {
+        let document = lay_out(
+            &format!("<div class=mc>{body}</div>"),
+            ".mc{height:40px;direction:rtl}",
+        );
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect::<Vec<_>>()
+    };
+    let paragraphs = runs("<p>A</p><p>B</p><p>C</p><p>D</p>");
+    let first = paragraphs.iter().find(|(text, _)| text == "A").unwrap().1;
+    let last = paragraphs.iter().find(|(text, _)| text == "D").unwrap().1;
+    // Columns progress from right to left, so later paragraphs never sit
+    // right of earlier ones.
+    assert!(last.0 <= first.0, "{paragraphs:?}");
 }
