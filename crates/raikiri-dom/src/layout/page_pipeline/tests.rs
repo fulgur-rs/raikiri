@@ -10,6 +10,47 @@ mod paged_spanning_tests;
 mod table_follow_tests;
 
 #[test]
+fn first_line_overflows_needs_a_block_that_starts_on_the_page_and_fits_it() {
+    // A 30px text at y=80 on a page from 0 to 100 straddles its end.
+    assert!(first_line_overflows(80.0, 30.0, 60.0, 50.0, 0.0, 100.0));
+    // Text that ends at the page end does not.
+    assert!(!first_line_overflows(70.0, 30.0, 60.0, 50.0, 0.0, 100.0));
+    // A block taller than the page keeps its natural break.
+    assert!(!first_line_overflows(80.0, 30.0, 60.0, 120.0, 0.0, 100.0));
+    // A block that starts on a later page is not this page's to push.
+    assert!(!first_line_overflows(80.0, 30.0, 100.0, 50.0, 0.0, 100.0));
+    // A block that continues from an earlier page is not pushed either.
+    assert!(!first_line_overflows(80.0, 30.0, -10.0, 50.0, 0.0, 100.0));
+    // Text above the page start belongs to an earlier page.
+    assert!(!first_line_overflows(-10.0, 120.0, 0.0, 50.0, 0.0, 100.0));
+    // Unresolved positions or sizes never move the block.
+    assert!(!first_line_overflows(
+        f32::NAN,
+        30.0,
+        60.0,
+        50.0,
+        0.0,
+        100.0
+    ));
+    assert!(!first_line_overflows(
+        80.0,
+        f32::INFINITY,
+        60.0,
+        50.0,
+        0.0,
+        100.0
+    ));
+    assert!(!first_line_overflows(
+        80.0,
+        30.0,
+        60.0,
+        f32::NAN,
+        0.0,
+        100.0
+    ));
+}
+
+#[test]
 fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
     // Four 10px lines from y=70 on a page that ends at 100: three fit.
     let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
