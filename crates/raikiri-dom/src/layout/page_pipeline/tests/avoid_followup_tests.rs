@@ -567,3 +567,19 @@ fn boxes_after_an_underflowing_forced_break_follow_the_break() {
     let ys: Vec<f32> = ids.iter().map(|&id| page_flow_y(&doc, id)).collect();
     assert_eq!(ys, vec![90.0, 120.0, 130.0]);
 }
+
+#[test]
+fn an_auto_block_end_margin_does_not_push_an_avoiding_float_off_its_page() {
+    let mut ids = Vec::new();
+    let (doc, _) = paged_body(|doc, body| {
+        block(doc, body, "display:block;height:60px");
+        let root = block(doc, body, "display:block;overflow:hidden");
+        ids.push(block(
+            doc,
+            root,
+            "float:left;width:40px;height:40px;margin-bottom:auto;break-inside:avoid",
+        ));
+    });
+    // The float ends exactly at the page edge; its auto margin adds nothing.
+    assert_eq!(page_flow_y(&doc, ids[0]), 60.0);
+}
