@@ -578,7 +578,6 @@ impl DocumentHost for WptDocumentHost {
     /// filter, containment or matching `will-change`).
     fn is_fixed_to_viewport(&mut self, node: usize) -> Result<bool, HostError> {
         let Some(styles) = self.computed_styles.as_ref() else {
-            // cov:ignore: the runtime flushes before asking.
             return Err(HostError("fixed position read before flush".into()));
         };
         let document = &self.setup.uncascaded.dom;

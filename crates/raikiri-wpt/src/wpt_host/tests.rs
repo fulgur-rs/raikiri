@@ -201,6 +201,7 @@ fn box_geometry_before_any_flush_is_a_host_error() {
     .unwrap();
     let mut host = WptDocumentHost::new(setup, dir.path());
     assert!(host.box_geometry(0).is_err());
+    assert!(host.is_fixed_to_viewport(0).is_err());
 }
 
 /// `getComputedStyle` on the runtime pre-checks the property name itself and
