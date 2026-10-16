@@ -30,8 +30,9 @@
 //! places such a box against its parent too, so it is laid out again here
 //! the same way.
 
+use super::box_tree::BoxTree;
 use super::*;
-use crate::node::FormattingContext;
+use crate::node::{BoxPropertiesRef, FormattingContext};
 use raikiri_style::property::WillChange;
 use taffy::util::{MaybeMath, MaybeResolve, ResolveOrZero};
 use taffy::{
@@ -41,40 +42,77 @@ use taffy::{
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
 pub fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    generates_inline_box_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
+}
+
+fn generates_inline_box_with_properties(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
+) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     // spec: https://www.w3.org/TR/css-display-3/#transformations
     // Out-of-flow boxes and flex and grid items are blockified.
     let node = &document.nodes[id];
     let tag = node.tag_name().unwrap_or("");
-    cv.display.is_inline_flow()
-        && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+    properties.display().is_inline_flow()
+        && !matches!(
+            properties.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
         && cv.float == FloatValue::None
         && !node.is_inline_svg_root()
         && !ATOMIC_TAGS.contains(&tag)
         && !REPLACED_BOX_TAGS.contains(&tag)
-        && !document
-            .taffy_parent_of(id)
-            .is_some_and(|parent| document.nodes[parent].formatting_context.is_flex_or_grid())
+        // The bridge asks before rebuilding anonymous cells. Inspect the
+        // current source ancestry rather than the preceding pass's wrappers.
+        && !BoxTree::for_layout(document)
+            .parent(id, BoxParentScope::LayoutRoot)
+            .is_some_and(|parent| document.nodes[parent].display().is_flex_or_grid_container())
 }
 
 /// Whether the element's `transform` applies to it: layout makes it the
 /// containing block of its fixed descendants, and the painter moves it.
 pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    is_transformable_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
+}
+
+/// Whether the captured box accepts transforms; shared with page projection.
+pub(crate) fn is_transformable_for_layout(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    is_transformable_with_properties(document, id, cv, document.nodes[id].box_properties())
+}
+
+fn is_transformable_with_properties(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
+) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
     !matches!(
-        cv.display,
+        properties.display(),
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && !generates_inline_box(document, id, cv)
+    ) && !generates_inline_box_with_properties(document, id, cv, properties)
 }
 
 /// Whether layout and paint containment apply to the element.
-fn containable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+fn containable(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
+) -> bool {
     // spec: https://www.w3.org/TR/css-contain-2/#containment-layout
     // They have no effect on internal table boxes other than cells, and on
     // non-atomic inline boxes.
     !matches!(
-        cv.display,
+        properties.display(),
         DisplayValue::Contents
             | DisplayValue::TableRow
             | DisplayValue::TableRowGroup
@@ -82,7 +120,7 @@ fn containable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
             | DisplayValue::TableFooterGroup
             | DisplayValue::TableColumn
             | DisplayValue::TableColumnGroup
-    ) && !generates_inline_box(document, id, cv)
+    ) && !generates_inline_box_with_properties(document, id, cv, properties)
 }
 
 /// Whether `id` is the containing block of its fixed-position descendants.
@@ -90,6 +128,24 @@ pub fn establishes_fixed_containing_block(
     document: &Document,
     id: usize,
     cv: &ComputedValues,
+) -> bool {
+    fixed_containing_block_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
+}
+
+/// Whether the captured layout box contains its fixed-position descendants.
+pub(crate) fn establishes_fixed_containing_block_for_layout(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    fixed_containing_block_with_properties(document, id, cv, document.nodes[id].box_properties())
+}
+
+fn fixed_containing_block_with_properties(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
 ) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#containing-block-for-all-descendants
     // spec: https://drafts.fxtf.org/filter-effects-1/#FilterProperty
@@ -101,7 +157,7 @@ pub fn establishes_fixed_containing_block(
     let filter = !cv.filter.is_empty() || cv.will_change.contains(WillChange::FILTER);
     let contain = cv.contain.contains_positioned_descendants()
         || cv.will_change.contains(WillChange::CONTAIN);
-    if cv.display == DisplayValue::Contents || !(transform || filter || contain) {
+    if properties.display() == DisplayValue::Contents || !(transform || filter || contain) {
         return false;
     }
     // A filter on the document root does not make it a containing block.
@@ -110,9 +166,9 @@ pub fn establishes_fixed_containing_block(
             .parent_of(id)
             .is_some_and(|parent| document.parent_of(parent).is_none())
     };
-    (transform && is_transformable(document, id, cv))
+    (transform && is_transformable_with_properties(document, id, cv, properties))
         || (filter && !root())
-        || (contain && containable(document, id, cv))
+        || (contain && containable(document, id, cv, properties))
 }
 
 /// Whether `id` is the containing block of its absolutely positioned
@@ -124,9 +180,11 @@ pub(super) fn establishes_absolute_containing_block(
 ) -> bool {
     // spec: https://www.w3.org/TR/CSS21/visudet.html#containing-block-details
     // spec: https://www.w3.org/TR/css-display-3/#box-generation
-    (cv.display != DisplayValue::Contents
-        && (cv.position != PositionValue::Static || cv.will_change.contains(WillChange::POSITION)))
-        || establishes_fixed_containing_block(document, id, cv)
+    let properties = document.nodes[id].box_properties();
+    (properties.display() != DisplayValue::Contents
+        && (*properties.position() != PositionValue::Static
+            || cv.will_change.contains(WillChange::POSITION)))
+        || fixed_containing_block_with_properties(document, id, cv, properties)
 }
 
 /// The containing block an out-of-flow box is laid out against.
@@ -258,7 +316,7 @@ fn containing_block_of(
     cv: &ComputedValues,
     origin: Point<f32>,
 ) -> ContainingBlock {
-    if generates_inline_box(document, id, cv) {
+    if generates_inline_box_with_properties(document, id, cv, document.nodes[id].box_properties()) {
         return ContainingBlock::Kept;
     }
     let layout = document.nodes[id].unrounded_layout;
@@ -297,7 +355,7 @@ fn visit_out_of_flow_boxes(
     // A body that is a containing block for fixed boxes contains its fixed
     // descendants.
     let fixed_cb = match root_cv {
-        Some(cv) if establishes_fixed_containing_block(document, root, cv) => {
+        Some(cv) if establishes_fixed_containing_block_for_layout(document, root, cv) => {
             containing_block_of(document, root, cv, Point::ZERO)
         }
         _ => ContainingBlock::Page,
@@ -339,8 +397,8 @@ fn visit_out_of_flow_boxes(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
-        let out_of_flow = node.style.position == TaffyPosition::Absolute;
-        let cb = match cv.position {
+        let out_of_flow = node.taffy_position() == TaffyPosition::Absolute;
+        let cb = match node.position() {
             PositionValue::Fixed => fixed_cb,
             PositionValue::Absolute => abs_cb,
             _ => ContainingBlock::Kept,
@@ -359,8 +417,11 @@ fn visit_out_of_flow_boxes(
         // paragraph, not to the inline elements between them.
         let inline = in_paragraph
             && !node.is_ifc_root()
-            && cv.display.is_inline_flow()
-            && !matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed);
+            && node.display().is_inline_flow()
+            && !matches!(
+                node.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            );
         let (origin, in_paragraph) = if inline {
             (parent_origin, true)
         } else {
@@ -373,7 +434,7 @@ fn visit_out_of_flow_boxes(
         };
         // The box's own transform or filter contains its descendants, not
         // the box itself.
-        let contains_fixed = establishes_fixed_containing_block(document, id, cv);
+        let contains_fixed = establishes_fixed_containing_block_for_layout(document, id, cv);
         let abs_cb = if contains_fixed || establishes_absolute_containing_block(document, id, cv) {
             containing_block_of(document, id, cv, origin)
         } else {

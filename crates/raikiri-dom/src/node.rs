@@ -5,14 +5,18 @@
 //! external consumers access them through the `raikiri_traits::Dom / Node / Element`
 //! traits.
 
+mod box_properties;
+
+use box_properties::BoxProperties;
+pub(crate) use box_properties::BoxPropertiesRef;
 use smol_str::SmolStr;
 use taffy::{Cache, Layout, Style};
 
 use crate::fragment::{MulticolGroup, MulticolStyle};
 
 use raikiri_style::property::{
-    BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, Sides,
-    TableLayoutValue, VerticalAlign, WritingMode,
+    BorderCollapseValue, BreakBetween, BreakInside, CaptionSideValue, DisplayValue, PositionValue,
+    Sides, TableLayoutValue, VerticalAlign, WritingMode,
 };
 use raikiri_style::{ComputedBorder, ComputedBorderSpacing};
 use raikiri_traits::{IntrinsicBox, NodeKind, PaintRect};
@@ -411,10 +415,8 @@ impl FormattingContext {
 pub struct Node {
     /// Taffy layout style.
     pub(crate) style: Style,
-    /// Computed `display` for table dispatch. Bridged to `style.display` for Block/Flex/Grid/None
-    /// but retains the full `DisplayValue` (including `Table` family) so table engine routing
-    /// does not need post-bridge `style.display` which collapses table variants to `Block`.
-    pub(crate) display: DisplayValue,
+    /// CSS display and position captured for this layout pass.
+    box_properties: BoxProperties,
     /// How this box lays out its contents. Layout dispatch and the other
     /// consumers read this classification instead of re-deriving it from
     /// [`Self::display`], [`Self::style`] and the paragraph root flag.
@@ -591,17 +593,68 @@ pub struct Node {
 }
 
 impl Node {
+    /// The CSS display retained before lowering the box for Taffy.
+    pub(crate) fn display(&self) -> DisplayValue {
+        self.box_properties.display()
+    }
+
+    /// Borrow the identity captured for this layout pass.
+    pub(crate) fn box_properties(&self) -> BoxPropertiesRef<'_> {
+        self.box_properties.borrowed()
+    }
+
+    /// The computed CSS position, including distinctions Taffy does not retain.
+    pub(crate) fn position(&self) -> &PositionValue {
+        self.box_properties.position()
+    }
+
+    /// The backend display derived from this box's CSS identity.
+    pub(crate) fn taffy_display(&self) -> taffy::Display {
+        self.box_properties
+            .taffy_display(self.multicol.is_some(), self.kind())
+    }
+
+    /// The backend position derived from this box's CSS identity.
+    pub(crate) fn taffy_position(&self) -> taffy::Position {
+        self.box_properties.taffy_position()
+    }
+
+    /// Capture CSS box identity and keep the public backend-style export current.
+    pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
+        self.box_properties = BoxProperties::new(display, position);
+        self.refresh_box_style();
+    }
+
+    /// Refresh the backend projection after rebuilding other style fields.
+    pub(crate) fn refresh_box_style(&mut self) {
+        let kind = self.kind();
+        self.box_properties
+            .apply_to_style(&mut self.style, self.multicol.is_some(), kind);
+    }
+
+    /// Change the display of an engine-created box while retaining its position.
+    pub(crate) fn set_display(&mut self, display: DisplayValue) {
+        self.set_box_properties(display, self.position().clone());
+    }
+
     /// Construct a node carrying `data` and `style`, with every other field at
     /// its pre-cascade, pre-layout default. Each `new_*` constructor delegates
     /// here so the defaults live in one place.
     fn with_data(data: NodeData, style: Style) -> Self {
-        Self {
+        let box_properties = if matches!(data, NodeData::Element(_)) {
+            BoxProperties::from_taffy_style(&style)
+        } else {
+            BoxProperties::new(DisplayValue::Inline, PositionValue::Static)
+        };
+        let mut node = Self {
             formatting_context: match data {
-                NodeData::Element(_) => FormattingContext::from_taffy_display(style.display),
+                NodeData::Element(_) => FormattingContext::from_taffy_display(
+                    box_properties.taffy_display(false, NodeKind::Element),
+                ),
                 _ => FormattingContext::Text,
             },
             style,
-            display: DisplayValue::Inline,
+            box_properties,
             table_layout: TableLayoutValue::Auto,
             table_vertical_align: VerticalAlign::Baseline,
             hides_empty_table_cell: false,
@@ -652,7 +705,9 @@ impl Node {
             percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
-        }
+        };
+        node.refresh_box_style();
+        node
     }
 
     /// Construct the Document root node for arena index 0.

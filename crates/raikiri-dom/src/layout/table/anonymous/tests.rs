@@ -169,7 +169,7 @@ fn source_owner_enumeration_is_linear_across_many_anonymous_rows() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     for (node, cv) in doc.nodes.iter_mut().zip(&computed.computed) {
-        node.display = cv.display;
+        node.set_display(cv.display);
     }
     prepare(&mut doc, &computed).unwrap();
     OWNER_CELL_VISITS.with(|visits| visits.set(0));
@@ -262,7 +262,7 @@ fn deep_generated_contents_stream_is_bounded_and_keeps_real_children() {
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     for (node, cv) in doc.nodes.iter_mut().zip(&computed.computed) {
-        node.display = cv.display;
+        node.set_display(cv.display);
     }
     std::thread::Builder::new()
         .stack_size(128 * 1024)

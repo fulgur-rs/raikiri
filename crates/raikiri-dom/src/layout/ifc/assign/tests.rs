@@ -399,7 +399,7 @@ fn reassignment_clears_stale_marks() {
     fixture.doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&fixture.doc);
     fixture.cascade = raikiri_style::cascade(&fixture.doc, &rules).expect("cascade");
-    assign(&mut fixture);
+    crate::layout::apply_computed_to_style(&mut fixture.doc, &fixture.cascade).expect("bridge");
     assert!(!is_root(&fixture, fixture.root));
     let text = fixture.doc.nodes[fixture.root].children[0];
     assert!(

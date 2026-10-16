@@ -562,25 +562,17 @@ impl RunContext {
 /// The block offset that layout applies to a box in normal flow for its
 /// `position: relative` or `position: sticky` insets, which layout treats
 /// alike, resolved against the containing block as layout resolves them.
-fn layout_relative_offset_y(
-    document: &Document,
-    cascade: &CascadeResult,
-    cv: &ComputedValues,
-    id: usize,
-) -> f32 {
-    if !matches!(cv.position, PositionValue::Relative | PositionValue::Sticky) {
+fn layout_relative_offset_y(document: &Document, cascade: &CascadeResult, id: usize) -> f32 {
+    if !matches!(
+        document.nodes[id].position(),
+        PositionValue::Relative | PositionValue::Sticky
+    ) {
         return 0.0;
     }
     // Layout takes `top` over `-bottom` in every writing mode.
-    crate::layout::used_relative_insets(
-        document,
-        cascade,
-        cv,
-        id,
-        crate::layout::Precedence::LeftTop,
-    )
-    .1
-    .unwrap_or(0.0)
+    crate::layout::layout_relative_insets(document, cascade, id, crate::layout::Precedence::LeftTop)
+        .1
+        .unwrap_or(0.0)
 }
 
 /// How the built-in painter moves one element and its subtree from their
@@ -616,19 +608,19 @@ pub(super) fn box_paint_shift(
     // and column fragments are placed without it, and the painter adds it, as
     // it adds the block offset that manual column placement leaves out.
     let painted_inset =
-        crate::layout::placed_without_relative_offset(document, cascade, body, id, cv)
-            || (fragmented && !cv.display.is_inline_level());
+        crate::layout::placed_without_relative_offset_for_layout(document, cascade, body, id)
+            || (fragmented && !node.display().is_inline_level());
     let (mut dx, mut dy) = if painted_inset {
-        crate::layout::used_relative_offset(document, cascade, cv, id)
+        crate::layout::used_relative_offset_for_layout(document, cascade, id)
     } else if node.needs_relative_block_paint_offset() {
         (
             0.0,
-            crate::layout::used_relative_offset(document, cascade, cv, id).1,
+            crate::layout::used_relative_offset_for_layout(document, cascade, id).1,
         )
     } else {
         (0.0, 0.0)
     };
-    if !crate::layout::is_transformable(document, id, cv) || cv.transform.is_empty() {
+    if !crate::layout::is_transformable_for_layout(document, id, cv) || cv.transform.is_empty() {
         return Ok(BoxShift {
             offset: (dx, dy),
             general: false,
@@ -698,6 +690,7 @@ fn page_areas_vary(document: &Document, pages: &[PageFragment]) -> bool {
 /// layout does.
 fn fixed_omission(
     cv: &ComputedValues,
+    position: &PositionValue,
     page_areas_vary: bool,
     rtl: bool,
 ) -> Option<TextRunOmission> {
@@ -716,7 +709,7 @@ fn fixed_omission(
                 && length(end))
     };
     let horizontal_from_end = rtl && length(cv.left) && length(cv.right);
-    (cv.position == PositionValue::Fixed
+    (position == &PositionValue::Fixed
         && !(placed(cv.left, cv.right, horizontal_from_end) && placed(cv.top, cv.bottom, false)))
     .then_some(TextRunOmission::FixedPlacement)
 }
@@ -801,12 +794,17 @@ pub(super) fn paint_shift(
             // every page. Any other ancestor neither moves the fixed box in
             // layout, which places it against the page area, nor in the
             // painter, which places it from its insets.
-            if crate::layout::establishes_fixed_containing_block(document, id, cv) {
+            if crate::layout::establishes_fixed_containing_block_for_layout(document, id, cv) {
                 return Err(TextRunOmission::FixedPlacement);
             }
             continue;
         }
-        if let Some(reason) = fixed_omission(cv, context.page_areas_vary, rtl) {
+        if let Some(reason) = fixed_omission(
+            cv,
+            document.nodes[id].position(),
+            context.page_areas_vary,
+            rtl,
+        ) {
             return Err(reason);
         }
         let fragmented = context.fragmented.contains(&id);
@@ -826,7 +824,7 @@ pub(super) fn paint_shift(
             dx += shift.offset.0;
             dy += shift.offset.1;
         }
-        fixed = cv.position == PositionValue::Fixed;
+        fixed = document.nodes[id].position() == &PositionValue::Fixed;
     }
     Ok((dx, dy))
 }
@@ -852,7 +850,7 @@ pub(super) fn run_translation_y(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
-        if cv.position == PositionValue::Fixed {
+        if document.nodes[id].position() == &PositionValue::Fixed {
             dy = 0.0;
         }
         let fragmented = context.fragmented.contains(&id);
@@ -887,7 +885,7 @@ pub(super) fn run_transform(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
-        if cv.position == PositionValue::Fixed {
+        if document.nodes[id].position() == &PositionValue::Fixed {
             // The painter places a fixed box from its insets, whatever moves
             // its ancestors; one that an ancestor contains is omitted
             // first.
@@ -975,7 +973,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
             node.is_in_document()
                 && node.kind() != NodeKind::Text
                 && !node.is_display_none()
-                && node.style.position != taffy::Position::Absolute
+                && node.taffy_position() != taffy::Position::Absolute
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
     };
@@ -990,7 +988,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
     loop {
         let node = document.nodes.get(id)?;
         if matches!(
-            node.display,
+            node.display(),
             raikiri_style::property::DisplayValue::Table
                 | raikiri_style::property::DisplayValue::InlineTable
         ) && !node.is_ifc_root()
@@ -1079,7 +1077,7 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
         document.nodes.get(id).is_some_and(|item| {
             item.is_in_document()
                 && !item.is_display_none()
-                && item.style.position != taffy::Position::Absolute
+                && item.taffy_position() != taffy::Position::Absolute
                 && !generated_origin(id).is_some_and(|(_, pseudo)| pseudo == PseudoElem::Marker)
         })
     };
@@ -1171,7 +1169,7 @@ fn layout_applied_relative_offset_y(
     if document.nodes[id].needs_relative_block_paint_offset() {
         0.0
     } else {
-        layout_relative_offset_y(document, cascade, &cascade.computed[id], id)
+        layout_relative_offset_y(document, cascade, id)
     }
 }
 
@@ -1188,7 +1186,7 @@ fn first_block_child(
         if !in_flow(child) {
             return None;
         }
-        match document.nodes[child].display {
+        match document.nodes[child].display() {
             raikiri_style::property::DisplayValue::Contents => {
                 first_block_child(document, child, in_flow)
             }

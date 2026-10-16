@@ -81,11 +81,11 @@ pub(crate) fn body_top_margin_may_collapse(
     let computed = &cascade.computed[body_id];
     let style = &doc.nodes[body_id].style;
     matches!(
-        computed.display,
+        doc.nodes[body_id].display(),
         DisplayValue::Block | DisplayValue::ListItem
-    ) && style.display == Display::Block
+    ) && doc.nodes[body_id].taffy_display() == Display::Block
         && style.float == TaffyFloat::None
-        && style.position != TaffyPosition::Absolute
+        && doc.nodes[body_id].taffy_position() != TaffyPosition::Absolute
         && !style.overflow.x.is_scroll_container()
         && !style.overflow.y.is_scroll_container()
         && style.align_content.is_none()
@@ -176,7 +176,7 @@ pub(crate) fn compute_body_root_layout(
     let mut known_dimensions = Size::NONE;
     {
         let style = tree.get_core_container_style(root);
-        if style.is_block() {
+        if tree.nodes[usize::from(root)].taffy_display() == Display::Block {
             let aspect_ratio = style.aspect_ratio();
             let margin = style.margin().resolve_or_zero(parent_size.width, calc);
             let padding = style.padding().resolve_or_zero(parent_size.width, calc);
@@ -305,7 +305,7 @@ pub(crate) fn shift_body_content(doc: &mut Document, body_id: usize, offset: f32
         .collect();
     for child in children {
         let style = &doc.nodes[child].style;
-        if style.position == TaffyPosition::Absolute
+        if doc.nodes[child].taffy_position() == TaffyPosition::Absolute
             && !(style.inset.top.is_auto() && style.inset.bottom.is_auto())
         {
             continue;

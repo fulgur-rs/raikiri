@@ -15,7 +15,7 @@ fn row_group(doc: &Document, table: usize, marker: usize) -> usize {
         .take_while(|&source| source != table)
         .find(|&source| {
             matches!(
-                doc.nodes[source].display,
+                doc.nodes[source].display(),
                 DisplayValue::TableRowGroup
                     | DisplayValue::TableHeaderGroup
                     | DisplayValue::TableFooterGroup

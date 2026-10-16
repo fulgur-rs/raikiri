@@ -1,5 +1,4 @@
 use super::*;
-use crate::node::FormattingContext;
 use taffy::Style;
 
 // ── layout_single_page driver (Task 7) ──────────────────────
@@ -78,15 +77,11 @@ fn propagated_start_page_name_handles_dom_edge_cases() {
     let detached = doc.append_element(None, "div", Style::default(), None::<&str>);
 
     doc.mark_in_document_flags();
-    // Pagination reads the bridged classification rather than the cascade
-    // result, so classify these unbridged boxes as the bridge would.
-    for id in [html, body, named, inline, absolute, normal, empty, detached] {
-        doc.nodes[id].formatting_context = FormattingContext::Block;
-    }
-    doc.nodes[hidden].formatting_context = FormattingContext::None;
+    crate::layout::test_support::with_ahem(&mut doc);
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cr).expect("bridge");
     assert_eq!(
         propagated_start_page_name(&doc, &cr, usize::MAX, None),
         (false, None)
@@ -1354,32 +1349,18 @@ fn grid_pagination_item_filter_matches_in_flow_boxes_and_text() {
     let text = doc.append_text(body, "content");
     let whitespace = doc.append_text(body, "   ");
     let comment = doc.append_comment(Some(body), "not a grid item");
+    crate::layout::test_support::with_ahem(&mut doc);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
 
-    assert!(is_in_flow_grid_item_for_pagination(
-        &doc, &cascade, static_box
-    ));
-    assert!(is_in_flow_grid_item_for_pagination(
-        &doc,
-        &cascade,
-        relative_box
-    ));
-    assert!(!is_in_flow_grid_item_for_pagination(
-        &doc, &cascade, hidden_box
-    ));
-    assert!(!is_in_flow_grid_item_for_pagination(
-        &doc,
-        &cascade,
-        absolute_box
-    ));
-    assert!(is_in_flow_grid_item_for_pagination(&doc, &cascade, text));
-    assert!(!is_in_flow_grid_item_for_pagination(
-        &doc, &cascade, whitespace
-    ));
-    assert!(!is_in_flow_grid_item_for_pagination(
-        &doc, &cascade, comment
-    ));
+    assert!(is_in_flow_grid_item_for_pagination(&doc, static_box));
+    assert!(is_in_flow_grid_item_for_pagination(&doc, relative_box));
+    assert!(!is_in_flow_grid_item_for_pagination(&doc, hidden_box));
+    assert!(!is_in_flow_grid_item_for_pagination(&doc, absolute_box));
+    assert!(is_in_flow_grid_item_for_pagination(&doc, text));
+    assert!(!is_in_flow_grid_item_for_pagination(&doc, whitespace));
+    assert!(!is_in_flow_grid_item_for_pagination(&doc, comment));
 }
 
 #[test]

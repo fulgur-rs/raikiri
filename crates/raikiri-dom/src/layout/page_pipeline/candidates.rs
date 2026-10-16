@@ -1,14 +1,14 @@
 //! Collection of the page candidates of a laid-out flow: the boxes and
 //! texts pagination may move to a later page, in source order.
 
+use super::super::box_tree::BoxTree;
 use super::{
     BoxParentScope, CascadeResult, DisplayValue, Document, FlexDirectionValue, FloatValue,
     FormattingContext, LayoutError, NodeFlags, NodeKind, PageLayoutControl, PositionValue,
-    TextLineIndex, box_parent, clears_float_side, has_bounded_clipping_ancestor,
-    has_side_by_side_ancestor, is_block_level_flow_box, is_floating_box_for_pagination,
-    is_monolithic_for_pagination, page_applies_to_box, page_break_is_forced,
-    pagination_child_order, pagination_child_parent_y, positioned_owned_text_line_bounds,
-    propagated_start_page_name, selected_page_name,
+    TextLineIndex, clears_float_side, has_bounded_clipping_ancestor, has_side_by_side_ancestor,
+    is_block_level_flow_box, is_floating_box_for_pagination, is_monolithic_for_pagination,
+    page_applies_to_box, page_break_is_forced, pagination_child_order, pagination_child_parent_y,
+    positioned_owned_text_line_bounds, propagated_start_page_name, selected_page_name,
 };
 
 #[derive(Clone)]
@@ -47,15 +47,11 @@ pub(super) struct PageCandidate {
 /// positioned box with a non-auto block-start or block-end inset, which
 /// moves it away from its static position in the page flow. A fixed box
 /// repeats on every page, so it never joins the page flow.
-fn in_inset_out_of_flow_subtree(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-) -> bool {
+fn in_inset_out_of_flow_subtree(document: &Document, node_id: usize) -> bool {
     let mut current = Some(node_id);
     while let Some(id) = current {
         if document.nodes[id].kind() == NodeKind::Element {
-            match cascade.computed[id].position {
+            match document.nodes[id].position() {
                 PositionValue::Fixed => return true,
                 PositionValue::Absolute => {
                     let inset = &document.nodes[id].style.inset;
@@ -85,12 +81,11 @@ fn has_nested_named_page_descendant(
         .collect();
     while let Some((current_id, current_depth)) = pending.pop() {
         let node = &document.nodes[current_id];
-        let computed = &cascade.computed[current_id];
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
-            || computed.display == DisplayValue::None
+            || document.nodes[current_id].display() == DisplayValue::None
             || matches!(
-                computed.position,
+                document.nodes[current_id].position(),
                 PositionValue::Absolute | PositionValue::Fixed
             )
             || is_floating_box_for_pagination(document, cascade, current_id)
@@ -98,7 +93,7 @@ fn has_nested_named_page_descendant(
             continue;
         }
         if current_depth >= 2
-            && page_applies_to_box(document, cascade, current_id)
+            && page_applies_to_box(document, current_id)
             && selected_page_name(cascade, current_id).is_some()
         {
             return true;
@@ -361,25 +356,26 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 let float_subtree = inside_float || is_float;
                 let out_of_flow_subtree = inside_out_of_flow
                     || matches!(
-                        computed.position,
+                        document.nodes[node_id].position(),
                         PositionValue::Absolute | PositionValue::Fixed
                     );
                 // An absolutely positioned box left at its static position
                 // still lays its in-flow descendants out where the page flow
                 // puts them, so their page names take part in pagination.
                 let inset_out_of_flow_subtree =
-                    out_of_flow_subtree && in_inset_out_of_flow_subtree(document, cascade, node_id);
+                    out_of_flow_subtree && in_inset_out_of_flow_subtree(document, node_id);
                 let explicit_page_name = selected_page_name(cascade, node_id);
                 // CSS Page 3 §4.1: `page` applies to boxes that create class A
                 // break points, which are block-level. An inline-level box,
                 // such as a replaced element in a line or an inline-block,
                 // takes the page type of its containing block; it is a
                 // candidate carrying that inherited name instead.
-                let inline_level = !page_applies_to_box(document, cascade, node_id);
+                let inline_level = !page_applies_to_box(document, node_id);
                 // The `page` property on an out-of-flow box does not open a
                 // normal-flow page boundary. Keep its inherited page context,
                 // but do not use its explicit name to split pagination.
-                let parent_box = box_parent(document, cascade, node_id, BoxParentScope::Document);
+                let parent_box =
+                    BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document);
                 let is_direct_flex_item = parent_box.is_some_and(|parent| {
                     document.nodes[parent].formatting_context == FormattingContext::Flex
                 });
@@ -389,7 +385,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                     && !is_direct_flex_item
                     && !inset_out_of_flow_subtree
                     && !matches!(
-                        computed.position,
+                        document.nodes[node_id].position(),
                         PositionValue::Absolute | PositionValue::Fixed
                     ) {
                     explicit_page_name.clone()
@@ -408,9 +404,10 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         computed.flex_direction,
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
-                let deferred_named_break_after = matches!(computed.display, DisplayValue::Flex)
-                    && !column_flex
-                    && has_nested_named_page_descendant(document, cascade, node_id, 0);
+                let deferred_named_break_after =
+                    matches!(document.nodes[node_id].display(), DisplayValue::Flex)
+                        && !column_flex
+                        && has_nested_named_page_descendant(document, cascade, node_id, 0);
                 // The items of a row flex container sit side by side rather
                 // than as class A siblings, so their names do not become the
                 // container's start page value.
@@ -426,14 +423,14 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 let child_page_name = own_page_name.clone().or(frame.inherited_page_name);
                 let is_body = node_id == body_id;
                 let participates_in_flow = matches!(
-                    computed.position,
+                    document.nodes[node_id].position(),
                     PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
                 );
                 let is_tall_direct_absolute = direct_body_child
-                    && matches!(computed.position, PositionValue::Absolute)
+                    && matches!(document.nodes[node_id].position(), PositionValue::Absolute)
                     && node.unrounded_layout.size.height > page_step;
                 let table_row_candidate = inside_table
-                    && matches!(computed.display, DisplayValue::TableRow)
+                    && matches!(document.nodes[node_id].display(), DisplayValue::TableRow)
                     && !inside_float
                     && !inside_flex;
                 let flex_item_candidate =
@@ -467,7 +464,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 // a later named descendant, even within the first flex item.
                 // Container geometry alone does not establish that context.
                 let is_rendered_leaf = named_flex_context.is_some()
-                    && computed.display != DisplayValue::Contents
+                    && document.nodes[node_id].display() != DisplayValue::Contents
                     && !float_subtree
                     && !out_of_flow_subtree
                     && candidate_height > 0.0
@@ -476,7 +473,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         if child_node.is_display_none()
                             || child_node.is_non_rendered_html_element()
                             || matches!(
-                                cascade.computed[child].position,
+                                document.nodes[child].position(),
                                 PositionValue::Absolute | PositionValue::Fixed
                             )
                             || is_floating_box_for_pagination(document, cascade, child)
@@ -505,7 +502,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree
-                    && is_block_level_flow_box(computed.display)
+                    && is_block_level_flow_box(document.nodes[node_id].display())
                     && matches!(
                         computed.break_inside,
                         raikiri_style::property::BreakInside::Avoid
@@ -513,7 +510,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                     )
                     // Grid items in other tracks do not follow a moved item
                     // in block flow, so grid content keeps its own handling.
-                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id)
+                    && !has_side_by_side_ancestor(document, node_id, body_id)
                     // A clipping ancestor of bounded height keeps its clip
                     // where it is, so moving the box would only hide it.
                     && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
@@ -523,7 +520,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                 // candidates like the body's children.
                 let nested_float_candidate = (is_float
                     || (!inline_level
-                        && is_block_level_flow_box(computed.display)
+                        && is_block_level_flow_box(document.nodes[node_id].display())
                         && [FloatValue::Left, FloatValue::Right]
                             .into_iter()
                             .any(|side| clears_float_side(computed.clear, side))))
@@ -532,12 +529,12 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                     && !inside_table
                     && !inside_flex
                     && !out_of_flow_subtree
-                    && !has_side_by_side_ancestor(document, cascade, node_id, body_id)
+                    && !has_side_by_side_ancestor(document, node_id, body_id)
                     // A clipping ancestor of bounded height keeps its clip
                     // where it is, so moving the box would only hide it.
                     && !has_bounded_clipping_ancestor(document, cascade, node_id, body_id);
                 let is_break_candidate = !is_body
-                    && computed.display != DisplayValue::Contents
+                    && document.nodes[node_id].display() != DisplayValue::Contents
                     && !inside_float
                     && ((participates_in_flow
                         && direct_body_child
@@ -589,17 +586,14 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         child_id,
                         CandidateFrame {
                             parent_abs_y: child_parent_y,
-                            direct_body_child: box_parent(
-                                document,
-                                cascade,
-                                child_id,
-                                BoxParentScope::Document,
-                            ) == Some(body_id),
+                            direct_body_child: BoxTree::for_layout(document)
+                                .parent(child_id, BoxParentScope::Document)
+                                == Some(body_id),
                             parent_height: node.unrounded_layout.size.height.max(0.0),
                             inherited_page_name: child_page_name.clone(),
                             inside_table: inside_table
                                 || matches!(
-                                    computed.display,
+                                    document.nodes[node_id].display(),
                                     DisplayValue::Table
                                         | DisplayValue::InlineTable
                                         | DisplayValue::TableRowGroup
@@ -608,13 +602,13 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                                         | DisplayValue::TableRow
                                 ),
                             flex_column_parent: column_flex
-                                || (computed.display == DisplayValue::Contents
+                                || (document.nodes[node_id].display() == DisplayValue::Contents
                                     && flex_column_parent),
                             grid_single_column_parent: document.nodes[node_id].formatting_context
                                 == FormattingContext::Grid
                                 && document.nodes[node_id].grid_column_count == 1,
                             inside_flex: inside_flex
-                                || matches!(computed.display, DisplayValue::Flex),
+                                || matches!(document.nodes[node_id].display(), DisplayValue::Flex),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {

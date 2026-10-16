@@ -100,7 +100,7 @@ fn a_display_contents_ancestor_is_skipped() {
         (10.0, 20.0)
     );
     // A stale layout mirror must not override the supplied cascade's box tree.
-    document.nodes[contents].display = DisplayValue::Block;
+    document.nodes[contents].set_display(DisplayValue::Block);
     assert_eq!(
         used_relative_offset(&document, &cascade, &cascade.computed[child], child),
         (10.0, 20.0)

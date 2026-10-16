@@ -323,10 +323,9 @@ impl MotionCache {
         cascade: &CascadeResult,
         id: usize,
     ) -> bool {
-        cascade
-            .computed
-            .get(id)
-            .is_some_and(|cv| cv.position == raikiri_style::property::PositionValue::Fixed)
+        document
+            .get_node(id)
+            .is_some_and(|node| node.position() == &raikiri_style::property::PositionValue::Fixed)
             && !document
                 .parent_of(id)
                 .is_some_and(|parent| self.fixed_container(document, cascade, parent))
@@ -352,7 +351,7 @@ impl MotionCache {
         }
         for &node in path.iter().rev() {
             contains |= cascade.computed.get(node).is_some_and(|cv| {
-                crate::layout::establishes_fixed_containing_block(document, node, cv)
+                crate::layout::establishes_fixed_containing_block_for_layout(document, node, cv)
             });
             self.fixed_container.insert(node, contains);
         }
@@ -453,7 +452,11 @@ pub(super) fn element_motion(
     id: usize,
     cv: &ComputedValues,
 ) -> Motion {
-    if cv.transform.is_empty() && cv.position != raikiri_style::property::PositionValue::Relative {
+    if cv.transform.is_empty()
+        && document
+            .get_node(id)
+            .is_none_or(|node| node.position() != &raikiri_style::property::PositionValue::Relative)
+    {
         return Motion::Still;
     }
     let fragmented = context.fragmented.contains(&id);

@@ -36,6 +36,7 @@ pub(crate) fn block_fixture(
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge fixture");
     Fixture { doc, cascade, root }
 }
 
@@ -58,6 +59,7 @@ pub(crate) fn sheet_fixture(
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge fixture");
     Fixture { doc, cascade, root }
 }
 

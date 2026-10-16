@@ -1,5 +1,4 @@
 use super::*;
-use taffy::Display;
 
 #[test]
 fn all_vertical_modes_use_the_containing_block_inline_percentage_basis() {
@@ -38,7 +37,7 @@ fn whitespace_only_text_is_not_a_child_of_a_block_container() {
     // cannot separate the margins of its siblings.
     let mut tree = Document::new();
     let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.nodes[parent].style.display = Display::Block;
+    tree.nodes[parent].set_display(raikiri_style::property::DisplayValue::Block);
     tree.append_text(parent, "\n  ");
     let first = tree.append_element(Some(parent), "div", Style::default(), None::<&str>);
     tree.append_text(parent, "\t\r\u{000c} ");
@@ -60,14 +59,14 @@ fn children_walked_by_index_match_the_child_iterator() {
     // with one child.
     let mut tree = Document::new();
     let parent = tree.append_element(Some(0), "div", Style::default(), None::<&str>);
-    tree.nodes[parent].style.display = Display::Block;
+    tree.nodes[parent].set_display(raikiri_style::property::DisplayValue::Block);
     let mut expected = Vec::new();
     for _ in 0..37 {
         expected.push(tree.append_element(Some(parent), "div", Style::default(), None::<&str>));
     }
     tree.append_text(parent, " ");
     let contents = tree.append_element(Some(parent), "span", Style::default(), None::<&str>);
-    tree.nodes[contents].display = DisplayValue::Contents;
+    tree.nodes[contents].set_display(DisplayValue::Contents);
     for _ in 0..3 {
         expected.push(tree.append_element(Some(contents), "div", Style::default(), None::<&str>));
     }
@@ -90,10 +89,10 @@ fn children_walked_by_index_match_the_child_iterator() {
     // The list goes when the walk ends, so a later change of the children
     // is seen without counting them again.
     assert!(tree.taffy_child_walks.borrow().is_empty());
-    tree.nodes[expected[0]].display = DisplayValue::Contents;
+    tree.nodes[expected[0]].set_display(DisplayValue::Contents);
     assert_eq!(usize::from(tree.get_child_id(parent, 0)), expected[1]);
     // Indices out of order read the same children.
-    tree.nodes[expected[0]].display = DisplayValue::Block;
+    tree.nodes[expected[0]].set_display(DisplayValue::Block);
     tree.child_count(parent);
     for index in [39, 2, 0, 38, 1] {
         assert_eq!(

@@ -19,6 +19,7 @@ use crate::generated_content::{
     GeneratedPiece, generated_image_node_id, generated_node_id, generated_pieces, generated_text,
     is_in_flow_generated_text,
 };
+use crate::node::BoxPropertiesRef;
 use crate::target::{CounterSnapshot, CounterSnapshotLimitExceeded};
 use raikiri_style::property::{
     ClearValue, Direction, DisplayValue, FloatValue, PositionValue, TextWrapMode,
@@ -169,7 +170,7 @@ fn break_strut_style(
                 || cascade
                     .computed
                     .get(id)
-                    .is_some_and(|cv| cv.display != DisplayValue::Contents)
+                    .is_some_and(|_| doc.nodes[id].display() != DisplayValue::Contents)
         })
         .unwrap_or(br);
     let owner_cv = cascade
@@ -251,9 +252,10 @@ pub(super) fn push_relative_offset(
     percent_insets: &mut Vec<(usize, style::InlineRelativeInsets)>,
     id: usize,
     cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
     rtl: bool,
 ) {
-    let Some(insets) = style::InlineRelativeInsets::of(cv) else {
+    let Some(insets) = style::InlineRelativeInsets::of_box(cv, properties) else {
         return;
     };
     if insets.depends_on_containing_block() {
@@ -373,7 +375,7 @@ fn push_generated(
     // A writing mode other than its box parent's makes the box an orthogonal
     // flow (CSS Writing Modes 4 §7.3). A `display: contents` element has no
     // box, so the box parent is its own.
-    let box_owner = if cascade.computed[element].display == DisplayValue::Contents {
+    let box_owner = if doc.nodes[element].display() == DisplayValue::Contents {
         crate::layout::box_parent(
             doc,
             cascade,
@@ -424,6 +426,7 @@ fn push_generated(
             &mut images.percent_insets,
             id.0 as usize,
             cv,
+            BoxPropertiesRef::from_computed(cv),
             images.rtl,
         );
     }
@@ -534,16 +537,37 @@ fn push_generated(
 /// The box kind of a child of an ifc root, from its computed style; `None` for
 /// content that belongs to the paragraph.
 pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Option<IfcBoxKind> {
+    box_kind_in(
+        cascade,
+        doc,
+        crate::layout::box_tree::BoxTree::for_layout(doc),
+        id,
+    )
+}
+
+pub(crate) fn box_kind_in(
+    cascade: &CascadeResult,
+    doc: &Document,
+    boxes: crate::layout::box_tree::BoxTree<'_>,
+    id: usize,
+) -> Option<IfcBoxKind> {
     let cv = cascade.computed.get(id)?;
+    let properties = boxes.properties(id)?;
     let node = doc.get_node(id)?;
     if node.kind() != NodeKind::Element
-        || matches!(cv.display, DisplayValue::None | DisplayValue::Contents)
+        || matches!(
+            properties.display(),
+            DisplayValue::None | DisplayValue::Contents
+        )
     {
         return None;
     }
     // An absolutely positioned or fixed box is out of flow whatever its
     // display and float (CSS 2.1 9.7: its float computes to none).
-    if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) {
+    if matches!(
+        properties.position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    ) {
         return Some(IfcBoxKind::OutOfFlow);
     }
     // Logical float sides are not mapped to physical ones: the box is laid
@@ -552,9 +576,9 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
         return Some(IfcBoxKind::Float);
     }
     // An inline-level table is an atomic inline too (CSS 2.1 17.4).
-    let inline_block = cv.display.is_atomic_inline_level();
+    let inline_block = properties.display().is_atomic_inline_level();
     let tag = node.tag_name().unwrap_or("");
-    let replaced = cv.display.is_inline_flow()
+    let replaced = properties.display().is_inline_flow()
         && (ATOMIC_TAGS.contains(&tag) || REPLACED_BOX_TAGS.contains(&tag));
     if inline_block || replaced {
         return Some(IfcBoxKind::Atomic);
@@ -566,9 +590,9 @@ pub(crate) fn box_kind(cascade: &CascadeResult, doc: &Document, id: usize) -> Op
     // paragraph would be wrapped in an anonymous table (CSS 2.1 17.2.1),
     // which raikiri does not create; it is laid out as a block between the
     // lines, as taffy's block algorithm lays a block child out.
-    if cv.display.is_block_flex_or_grid_container()
+    if properties.display().is_block_flex_or_grid_container()
         || matches!(
-            cv.display,
+            properties.display(),
             DisplayValue::Block
                 | DisplayValue::FlowRoot
                 | DisplayValue::ListItem
@@ -807,7 +831,7 @@ fn project_children_builder(
         .ok_or(IfcError::InvalidNode(root))?;
     if !root_node.is_in_document()
         || root_node.kind() != NodeKind::Element
-        || (anonymous_children.is_none() && !super::assign::can_be_ifc_root(doc, cascade, root))
+        || (anonymous_children.is_none() && !super::assign::can_be_ifc_root(doc, root))
     {
         return Err(IfcError::Unsupported {
             node: root,
@@ -918,7 +942,7 @@ fn project_children_builder(
     // A ruby container that lays out its own content (a flex item, an
     // absolutely positioned ruby, or a floated `block ruby`) keeps its ruby
     // layout.
-    let root_plan = if anonymous_children.is_none() && root_cv.display.is_ruby_container() {
+    let root_plan = if anonymous_children.is_none() && root_node.display().is_ruby_container() {
         super::ruby::plan(doc, cascade, root)
     } else {
         None
@@ -1073,7 +1097,7 @@ fn project_children_builder(
                 // Columns and column groups render nothing of their own
                 // outside a table either.
                 if matches!(
-                    cv.display,
+                    node.display(),
                     DisplayValue::None | DisplayValue::TableColumn | DisplayValue::TableColumnGroup
                 ) || node.is_non_rendered_html_element()
                 {
@@ -1081,7 +1105,7 @@ fn project_children_builder(
                 }
                 let unsupported = |reason: &'static str| IfcError::Unsupported { node: id, reason };
                 let tag = node.tag_name().unwrap_or_default();
-                if cv.display == DisplayValue::Contents {
+                if node.display() == DisplayValue::Contents {
                     // A `display: contents` element generates no box: its
                     // children take part in the paragraph as if they were the
                     // element's siblings. `float` and `position` apply to a
@@ -1164,10 +1188,10 @@ fn project_children_builder(
                     }
                     continue;
                 }
-                if !cv.display.is_inline_flow() {
+                if !node.display().is_inline_flow() {
                     return Err(unsupported("only inline-level boxes are projected"));
                 }
-                if cv.display == DisplayValue::Ruby
+                if node.display() == DisplayValue::Ruby
                     && let Some(plan) = super::ruby::plan(doc, cascade, id)
                 {
                     super::ruby::push(
@@ -1198,6 +1222,7 @@ fn project_children_builder(
                     &mut percent_insets,
                     id,
                     cv,
+                    node.box_properties(),
                     root_cv.direction == Direction::Rtl,
                 );
                 // `clear` on a line break moves the next line below the
@@ -1309,7 +1334,7 @@ fn project_children_builder(
                 offsets
             },
             cleared_breaks,
-            fixed: anonymous_children.is_none() && root_cv.position == PositionValue::Fixed,
+            fixed: anonymous_children.is_none() && root_node.position() == &PositionValue::Fixed,
             ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
             nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
             text_nowrap: Arc::new(text_nowrap),

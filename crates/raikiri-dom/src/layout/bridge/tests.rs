@@ -2351,3 +2351,80 @@ fn bridged_writing_modes_follow_live_parents_and_refresh_before_consumers() {
         }
     }
 }
+
+#[test]
+fn changing_a_block_parent_to_flex_refreshes_inline_size_containment_before_classification() {
+    use crate::layout::test_support::{page_box_800x600, with_ahem};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("margin:0;font:20px/1 Ahem"),
+    );
+    let parent = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let child = doc.append_element(Some(parent), "span", Style::default(), Some("contain:size"));
+    doc.append_text(child, "XX");
+
+    let first = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout_single_page(&mut doc, &first, page_box_800x600()).unwrap();
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 20.0);
+
+    doc.set_element_inline_style(parent, Some("display:flex;align-items:start".into()));
+    let second = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout_single_page(&mut doc, &second, page_box_800x600()).unwrap();
+    assert_eq!(doc.nodes[child].unrounded_layout.size, taffy::Size::ZERO);
+}
+
+#[test]
+fn changing_a_table_parent_to_flex_or_grid_matches_fresh_size_containment() {
+    use crate::layout::test_support::{page_box_800x600, with_ahem};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    fn fixture(parent_css: &str) -> (Document, usize, usize) {
+        let mut doc = Document::new();
+        with_ahem(&mut doc);
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("margin:0;font:20px/1 Ahem"),
+        );
+        let parent = doc.append_element(Some(body), "div", Style::default(), Some(parent_css));
+        let child =
+            doc.append_element(Some(parent), "span", Style::default(), Some("contain:size"));
+        doc.append_text(child, "XX");
+        (doc, parent, child)
+    }
+
+    for final_css in [
+        "display:flex;align-items:start",
+        "display:grid;align-items:start;justify-items:start",
+    ] {
+        let (mut fresh, _, fresh_child) = fixture(final_css);
+        let fresh_style = cascade(&fresh, &build_rule_tree(&fresh)).unwrap();
+        crate::layout_single_page(&mut fresh, &fresh_style, page_box_800x600()).unwrap();
+        let expected = fresh.nodes[fresh_child].unrounded_layout.size;
+        assert_eq!(expected, taffy::Size::ZERO);
+
+        let (mut changed, parent, child) = fixture("display:table");
+        let first = cascade(&changed, &build_rule_tree(&changed)).unwrap();
+        crate::layout_single_page(&mut changed, &first, page_box_800x600()).unwrap();
+        assert_eq!(
+            changed.nodes[child].unrounded_layout.size,
+            taffy::Size {
+                width: 40.0,
+                height: 20.0
+            }
+        );
+        changed.set_element_inline_style(parent, Some(final_css.into()));
+        let second = cascade(&changed, &build_rule_tree(&changed)).unwrap();
+        crate::layout_single_page(&mut changed, &second, page_box_800x600()).unwrap();
+        assert_eq!(changed.nodes[child].unrounded_layout.size, expected);
+    }
+}

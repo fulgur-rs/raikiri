@@ -88,7 +88,7 @@ fn collect(
             && node.style.overflow.y == taffy::Overflow::Visible;
         if !can_balance_paragraph_box(tree, parent, child)
             || (!empty && !can_balance_single_paragraph(tree, parent, child))
-            || node.display != DisplayValue::Block
+            || node.display() != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
             || node.break_before != BreakBetween::Auto
             || node.break_after != BreakBetween::Auto

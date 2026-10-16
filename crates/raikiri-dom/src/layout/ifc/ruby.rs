@@ -115,7 +115,7 @@ fn is_white_space_text(doc: &Document, id: usize) -> bool {
 
 /// Whether `id` takes no part in layout: a node outside the document, a
 /// comment, or an element that renders nothing.
-fn is_skipped(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
+fn is_skipped(doc: &Document, id: usize) -> bool {
     let node = &doc.nodes[id];
     !node.is_in_document()
         || matches!(
@@ -123,7 +123,7 @@ fn is_skipped(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
             NodeKind::Comment | NodeKind::ProcessingInstruction
         )
         || (node.kind() == NodeKind::Element
-            && (cascade.computed[id].display == DisplayValue::None
+            && (doc.nodes[id].display() == DisplayValue::None
                 || node.is_non_rendered_html_element()))
 }
 
@@ -191,7 +191,7 @@ impl Planner<'_> {
         if nesting > MAX_DEPTH {
             return false;
         }
-        if is_skipped(doc, cascade, id) || doc.nodes[id].kind() == NodeKind::Text {
+        if is_skipped(doc, id) || doc.nodes[id].kind() == NodeKind::Text {
             return true;
         }
         if is_out_of_flow(doc, cascade, id) {
@@ -204,7 +204,7 @@ impl Planner<'_> {
         {
             return false;
         }
-        match cascade.computed[id].display {
+        match doc.nodes[id].display() {
             // An element with `display: contents` generates no box: its
             // children take its place (CSS Display 3 §2.5).
             DisplayValue::Inline | DisplayValue::Contents => doc.nodes[id]
@@ -336,7 +336,7 @@ impl Planner<'_> {
             }
         };
         for child in flattened_children(doc, self.cascade, container) {
-            if is_skipped(doc, self.cascade, child) {
+            if is_skipped(doc, child) {
                 continue;
             }
             if is_out_of_flow(doc, self.cascade, child) {
@@ -344,7 +344,7 @@ impl Planner<'_> {
                 continue;
             }
             if doc.nodes[child].kind() == NodeKind::Element
-                && self.cascade.computed[child].display == DisplayValue::RubyText
+                && self.doc.nodes[child].display() == DisplayValue::RubyText
             {
                 if !self.is_plain_part(child) {
                     return None;
@@ -382,7 +382,7 @@ impl Planner<'_> {
         self.start_base();
         self.pending_owner = container;
         for base in flattened_children(self.doc, self.cascade, container) {
-            if is_skipped(self.doc, self.cascade, base) {
+            if is_skipped(self.doc, base) {
                 continue;
             }
             if is_out_of_flow(self.doc, self.cascade, base) {
@@ -390,7 +390,7 @@ impl Planner<'_> {
                 continue;
             }
             if self.doc.nodes[base].kind() == NodeKind::Element
-                && self.cascade.computed[base].display == DisplayValue::RubyBase
+                && self.doc.nodes[base].display() == DisplayValue::RubyBase
             {
                 if !self.is_plain_part(base) {
                     return None;
@@ -420,7 +420,7 @@ impl Planner<'_> {
 
     fn push_child_content(&mut self, ruby: usize, child: usize) -> Option<()> {
         let (doc, cascade) = (self.doc, self.cascade);
-        if is_skipped(doc, cascade, child) {
+        if is_skipped(doc, child) {
             return Some(());
         }
         if doc.nodes[child].kind() == NodeKind::Text {
@@ -464,7 +464,7 @@ impl Planner<'_> {
             self.wrappers -= 1;
             return Some(());
         }
-        match cascade.computed[child].display {
+        match doc.nodes[child].display() {
             DisplayValue::RubyBase if self.is_plain_part(child) => self.push_base(child),
             DisplayValue::RubyText if self.is_plain_part(child) => self.push_annotation(child),
             DisplayValue::RubyTextContainer if internal => {
@@ -519,7 +519,7 @@ fn flattened_children(doc: &Document, cascade: &CascadeResult, container: usize)
 /// replace in a ruby container (CSS Display 3 §2.5), whatever they are.
 fn is_contents_wrapper(doc: &Document, cascade: &CascadeResult, id: usize) -> bool {
     doc.nodes[id].kind() == NodeKind::Element
-        && cascade.computed[id].display == DisplayValue::Contents
+        && doc.nodes[id].display() == DisplayValue::Contents
         && box_kind(cascade, doc, id).is_none()
         && !has_generated_content(cascade, id)
 }
@@ -571,7 +571,7 @@ fn texts(doc: &Document, cascade: &CascadeResult, nodes: &[usize]) -> Vec<usize>
     let mut texts = Vec::new();
     let mut stack: Vec<usize> = nodes.iter().rev().copied().collect();
     while let Some(id) = stack.pop() {
-        if is_skipped(doc, cascade, id) || is_out_of_flow(doc, cascade, id) {
+        if is_skipped(doc, id) || is_out_of_flow(doc, cascade, id) {
             continue;
         }
         if doc.nodes[id].kind() == NodeKind::Text {
@@ -613,6 +613,7 @@ impl Content<'_, '_> {
             self.sink.percent_insets,
             id,
             cv,
+            self.doc.nodes[id].box_properties(),
             self.sink.rtl,
         );
         self.sink.text_nowrap.insert(
@@ -684,8 +685,7 @@ impl Content<'_, '_> {
         letter: Letter,
     ) -> Result<(), IfcError> {
         for &id in nodes {
-            if is_skipped(self.doc, self.cascade, id) || is_out_of_flow(self.doc, self.cascade, id)
-            {
+            if is_skipped(self.doc, id) || is_out_of_flow(self.doc, self.cascade, id) {
                 continue;
             }
             let node = &self.doc.nodes[id];
@@ -703,14 +703,14 @@ impl Content<'_, '_> {
                 builder.push_forced_break(NodeId(id as u64));
                 continue;
             }
-            if cv.display == DisplayValue::Ruby
+            if node.display() == DisplayValue::Ruby
                 && let Some(plan) = plan(self.doc, self.cascade, id)
             {
                 // The outer ruby container anchors what this one sets aside.
                 self.ruby(builder, id, &plan, false, false, letter)?;
                 continue;
             }
-            if cv.display == DisplayValue::Contents {
+            if node.display() == DisplayValue::Contents {
                 self.push_nodes(builder, &node.children, ends, letter)?;
                 continue;
             }
@@ -879,7 +879,7 @@ impl Content<'_, '_> {
                             part.children
                                 .iter()
                                 .copied()
-                                .find(|&id| !is_skipped(self.doc, self.cascade, id))
+                                .find(|&id| !is_skipped(self.doc, id))
                         })
                     })
                 })

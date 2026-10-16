@@ -18,7 +18,7 @@ fn append_grid_part(
     css: &str,
 ) -> usize {
     let id = doc.append_element(Some(parent), tag, Style::default(), Some(css));
-    doc.nodes[id].display = display;
+    doc.nodes[id].set_display(display);
     id
 }
 
@@ -201,7 +201,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
             },
             Some("display:table;width:40px;border-spacing:0"),
         );
-        doc.nodes[table].display = DisplayValue::Table;
+        doc.nodes[table].set_display(DisplayValue::Table);
         let row = doc.append_element(
             Some(table),
             "tr",
@@ -211,7 +211,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
             },
             Some("display:table-row"),
         );
-        doc.nodes[row].display = DisplayValue::TableRow;
+        doc.nodes[row].set_display(DisplayValue::TableRow);
         let mut children = Vec::new();
         for _ in 0..2 {
             let cell = doc.append_element(
@@ -227,7 +227,7 @@ fn native_callback_keeps_proper_cell_geometry_without_prepared_objects() {
                 },
                 Some("display:table-cell;width:20px;height:10px"),
             );
-            doc.nodes[cell].display = DisplayValue::TableCell;
+            doc.nodes[cell].set_display(DisplayValue::TableCell);
             children.push(cell);
         }
         doc.mark_in_document_flags();
@@ -359,7 +359,7 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
         .expect("block wrapped in a cell");
     let view_children = doc.nodes[key].children.clone();
     let row_children = doc.nodes[row].children.clone();
-    let row_display = doc.nodes[row].display;
+    let row_display = doc.nodes[row].display();
     let row_layout = doc.nodes[row].unrounded_layout;
     let mut inputs = column_probe_input();
     inputs.known_dimensions.width = Some(100.0);
@@ -376,7 +376,7 @@ fn laying_out_an_anonymous_cell_leaves_its_source_owner_alone() {
     // The cell is laid out under its own key: the source row keeps its
     // node and its layout, and the cell's view keeps its children.
     assert_eq!(doc.nodes[row].children, row_children);
-    assert_eq!(doc.nodes[row].display, row_display);
+    assert_eq!(doc.nodes[row].display(), row_display);
     assert_eq!(doc.nodes[row].unrounded_layout, row_layout);
     assert_eq!(doc.nodes[key].children, view_children);
     assert_eq!(doc.nodes[block].unrounded_layout.size.width, 20.0);
@@ -935,7 +935,7 @@ fn a_row_border_reaches_the_cells_on_it_and_the_row_paints_nothing() {
                 &mut doc,
                 collapsed_candidate(BorderStyle::Solid, 5.0, color),
             );
-            doc.nodes[row].display = DisplayValue::TableRow;
+            doc.nodes[row].set_display(DisplayValue::TableRow);
             row
         })
         .collect();
@@ -1064,7 +1064,7 @@ fn an_anonymous_row_does_not_turn_its_first_cell_into_a_row() {
         &mut doc,
         collapsed_candidate(BorderStyle::Solid, 1.0, CssColor::BLACK),
     );
-    doc.nodes[first].display = DisplayValue::TableCell;
+    doc.nodes[first].set_display(DisplayValue::TableCell);
     let grid = super::TableGrid {
         n_cols: 2,
         // An anonymous row is recorded by its first cell.
@@ -1093,7 +1093,7 @@ fn collapsed_resolution_skips_boxes_without_computed_borders() {
     // A hand-built box that never went through the style bridge has no
     // computed borders, so it takes part in no conflict.
     let bare_row = bordered_cell(&mut doc, 2.0);
-    doc.nodes[bare_row].display = DisplayValue::TableRow;
+    doc.nodes[bare_row].set_display(DisplayValue::TableRow);
     let bare_table = bordered_cell(&mut doc, 2.0);
     let bare_cell = bordered_cell(&mut doc, 2.0);
     let cell = collapsed_cell(
@@ -2690,7 +2690,7 @@ fn table_shell() -> (Document, usize) {
 fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
     let (mut doc, table) = table_shell();
     let colgroup = doc.append_element(Some(table), "colgroup", Style::default(), None::<&str>);
-    doc.nodes[colgroup].display = DisplayValue::TableColumnGroup;
+    doc.nodes[colgroup].set_display(DisplayValue::TableColumnGroup);
 
     let col_a = doc.append_element(
         Some(colgroup),
@@ -2704,7 +2704,7 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
         },
         None::<&str>,
     );
-    doc.nodes[col_a].display = DisplayValue::TableColumn;
+    doc.nodes[col_a].set_display(DisplayValue::TableColumn);
 
     let col_b = doc.append_element(
         Some(colgroup),
@@ -2718,13 +2718,13 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
         },
         None::<&str>,
     );
-    doc.nodes[col_b].display = DisplayValue::TableColumn;
+    doc.nodes[col_b].set_display(DisplayValue::TableColumn);
     doc.set_element_attributes(col_b, vec![("span".into(), "2".into())]);
 
     // A `<tr>` sibling of the colgroup must be skipped, not treated
     // as a column.
     let tr = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr].display = DisplayValue::TableRow;
+    doc.nodes[tr].set_display(DisplayValue::TableRow);
 
     // A bare `<col>` directly under the table (anonymous colgroup).
     let col_c = doc.append_element(
@@ -2739,7 +2739,7 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
         },
         None::<&str>,
     );
-    doc.nodes[col_c].display = DisplayValue::TableColumn;
+    doc.nodes[col_c].set_display(DisplayValue::TableColumn);
 
     doc.mark_in_document_flags();
     let sizing = super::collect_col_widths(&doc, table).unwrap();
@@ -2759,9 +2759,9 @@ fn collect_col_widths_expands_span_and_reads_colgroup_and_bare_col() {
 fn collect_rows_wraps_bare_cells_in_anonymous_row() {
     let (mut doc, table) = table_shell();
     let td1 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
-    doc.nodes[td1].display = DisplayValue::TableCell;
+    doc.nodes[td1].set_display(DisplayValue::TableCell);
     let td2 = doc.append_element(Some(table), "td", Style::default(), None::<&str>);
-    doc.nodes[td2].display = DisplayValue::TableCell;
+    doc.nodes[td2].set_display(DisplayValue::TableCell);
     doc.mark_in_document_flags();
 
     let mut rows = Vec::new();
@@ -2781,18 +2781,18 @@ fn head_body_fixture() -> (Document, usize, usize, usize) {
     // DOM order: tbody first, thead second — reorder must float the
     // header group up regardless.
     let tbody = doc.append_element(Some(table), "tbody", Style::default(), None::<&str>);
-    doc.nodes[tbody].display = DisplayValue::TableRowGroup;
+    doc.nodes[tbody].set_display(DisplayValue::TableRowGroup);
     let tr_body = doc.append_element(Some(tbody), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr_body].display = DisplayValue::TableRow;
+    doc.nodes[tr_body].set_display(DisplayValue::TableRow);
     let body_cell = doc.append_element(Some(tr_body), "td", Style::default(), None::<&str>);
-    doc.nodes[body_cell].display = DisplayValue::TableCell;
+    doc.nodes[body_cell].set_display(DisplayValue::TableCell);
 
     let thead = doc.append_element(Some(table), "thead", Style::default(), None::<&str>);
-    doc.nodes[thead].display = DisplayValue::TableHeaderGroup;
+    doc.nodes[thead].set_display(DisplayValue::TableHeaderGroup);
     let tr_head = doc.append_element(Some(thead), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr_head].display = DisplayValue::TableRow;
+    doc.nodes[tr_head].set_display(DisplayValue::TableRow);
     let head_cell = doc.append_element(Some(tr_head), "td", Style::default(), None::<&str>);
-    doc.nodes[head_cell].display = DisplayValue::TableCell;
+    doc.nodes[head_cell].set_display(DisplayValue::TableCell);
 
     doc.mark_in_document_flags();
     (doc, table, head_cell, body_cell)
@@ -2834,16 +2834,16 @@ fn collect_rows_inner_no_reorder_keeps_dom_order_for_nested_call() {
 fn collect_rows_inner_skips_character_data_between_rows() {
     let (mut doc, table) = table_shell();
     let tr1 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr1].display = DisplayValue::TableRow;
+    doc.nodes[tr1].set_display(DisplayValue::TableRow);
     let td1 = doc.append_element(Some(tr1), "td", Style::default(), None::<&str>);
-    doc.nodes[td1].display = DisplayValue::TableCell;
+    doc.nodes[td1].set_display(DisplayValue::TableCell);
 
     doc.append_text(table, "   ");
 
     let tr2 = doc.append_element(Some(table), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr2].display = DisplayValue::TableRow;
+    doc.nodes[tr2].set_display(DisplayValue::TableRow);
     let td2 = doc.append_element(Some(tr2), "td", Style::default(), None::<&str>);
-    doc.nodes[td2].display = DisplayValue::TableCell;
+    doc.nodes[td2].set_display(DisplayValue::TableCell);
 
     doc.mark_in_document_flags();
     let mut rows = Vec::new();
@@ -2867,9 +2867,9 @@ fn collect_rows_inner_recurses_into_non_row_group_wrapper() {
     // catch-all branch still recurses into it looking for rows.
     let wrapper = doc.append_element(Some(table), "div", Style::default(), None::<&str>);
     let tr = doc.append_element(Some(wrapper), "tr", Style::default(), None::<&str>);
-    doc.nodes[tr].display = DisplayValue::TableRow;
+    doc.nodes[tr].set_display(DisplayValue::TableRow);
     let td = doc.append_element(Some(tr), "td", Style::default(), None::<&str>);
-    doc.nodes[td].display = DisplayValue::TableCell;
+    doc.nodes[td].set_display(DisplayValue::TableCell);
 
     doc.mark_in_document_flags();
     let mut rows = Vec::new();

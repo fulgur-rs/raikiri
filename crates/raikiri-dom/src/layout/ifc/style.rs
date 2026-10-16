@@ -7,6 +7,7 @@
 
 use super::ch::ch_advance;
 use super::error::IfcError;
+use crate::node::BoxPropertiesRef;
 use raikiri_style::property::{self as p, FontFamilyKind, FontFamilyName};
 use raikiri_style::{ChFontKey, ChLengthProvenance};
 use raikiri_style::{
@@ -126,8 +127,13 @@ impl InsetTerms {
 impl InlineRelativeInsets {
     /// The insets of `cv`, or `None` when the box is not relatively
     /// positioned.
+    #[cfg(test)]
     pub(crate) fn of(cv: &ComputedValues) -> Option<Self> {
-        if cv.position != p::PositionValue::Relative {
+        Self::of_box(cv, BoxPropertiesRef::from_computed(cv))
+    }
+
+    pub(crate) fn of_box(cv: &ComputedValues, properties: BoxPropertiesRef<'_>) -> Option<Self> {
+        if properties.position() != &p::PositionValue::Relative {
             return None;
         }
         let terms = |value: LengthOrAuto| match value {

@@ -80,10 +80,10 @@ fn tree_positions(document: &Document) -> Vec<u32> {
 fn outside_normal_flow(document: &Document, cascade: &CascadeResult, node: usize) -> bool {
     document.inclusive_ancestors(node).any(|id| {
         document.nodes[id].kind() == NodeKind::Element
-            && cascade.computed.get(id).is_some_and(|computed| {
+            && cascade.computed.get(id).is_some_and(|_| {
                 is_floating_box_for_pagination(document, cascade, id)
                     || matches!(
-                        computed.position,
+                        document.nodes[id].position(),
                         PositionValue::Absolute | PositionValue::Fixed | PositionValue::Running(_)
                     )
             })

@@ -142,13 +142,13 @@ fn multicol_subtree_has_float_skips_hidden_descendants() {
     let root = doc.append_element(Some(0), "div", Style::default(), None::<&str>);
     let hidden = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     let float = doc.append_element(Some(hidden), "div", Style::default(), None::<&str>);
-    doc.nodes[hidden].style.display = Display::None;
+    doc.nodes[hidden].set_display(raikiri_style::property::DisplayValue::None);
     doc.nodes[hidden].formatting_context = FormattingContext::None;
     doc.nodes[float].style.float = taffy::Float::Left;
 
     assert!(!multicol_subtree_has_float(&doc, root));
 
-    doc.nodes[hidden].style.display = Display::Block;
+    doc.nodes[hidden].set_display(raikiri_style::property::DisplayValue::Block);
     doc.nodes[hidden].formatting_context = FormattingContext::Block;
     assert!(multicol_subtree_has_float(&doc, root));
 }
@@ -203,9 +203,9 @@ fn flex_float_chain_matches_an_ancestor_walk() {
             let node = doc.append_element(Some(parent), "div", Style::default(), None::<&str>);
             match arrangement % KINDS {
                 0 => {}
-                1 => doc.nodes[node].style.display = Display::Flex,
+                1 => doc.nodes[node].set_display(raikiri_style::property::DisplayValue::Flex),
                 2 => {
-                    doc.nodes[node].style.display = Display::Flex;
+                    doc.nodes[node].set_display(raikiri_style::property::DisplayValue::Flex);
                     doc.nodes[node].style.flex_direction = taffy::FlexDirection::Column;
                 }
                 3 => doc.nodes[node].style.float = taffy::Float::Left,
@@ -237,6 +237,7 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
     let sized = doc.append_element(Some(body), "div", Style::default(), Some("width:400px"));
@@ -267,6 +268,7 @@ fn ancestor_facts_resolve_each_chain_once_from_the_top() {
     doc.attach_child(late_parent, half);
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let facts = AncestorFacts::new(&doc, &cascade, 800.0);
 
     assert_eq!(facts.content_width[sized], 400.0);
@@ -2623,6 +2625,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
     use raikiri_style::{build_rule_tree, cascade};
 
     let mut doc = Document::new();
+    crate::layout::test_support::with_ahem(&mut doc);
     let body = doc.append_element(Some(0), "body", Style::default(), Some("width:400px"));
     let contents = doc.append_element(
         Some(body),
@@ -2639,6 +2642,7 @@ fn ancestor_width_table_preserves_contents_percentage_and_min_content() {
     );
     let text = doc.append_text(intrinsic, "test");
     let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::bridge::apply_computed_to_style(&mut doc, &cascade).expect("bridge");
     let widths = AncestorFacts::new(&doc, &cascade, 800.0);
     assert_eq!(widths.authored_containing_width(half), Some(400.0));
     assert_eq!(widths.authored_containing_width(text), Some(200.0));

@@ -435,12 +435,12 @@ impl Document {
                 return None;
             }
             let cv = cascade.computed.get(id)?;
-            if is_inline_opacity_group(cv) {
+            if is_inline_opacity_group(node, cv) {
                 return Some(id);
             }
             // Anything but an inline element or a `display: contents` one is
             // a block boundary: the walk has left the paragraph.
-            if !(cv.display.is_inline_flow() || cv.display == DisplayValue::Contents) {
+            if !(node.display().is_inline_flow() || node.display() == DisplayValue::Contents) {
                 return None;
             }
         }
@@ -975,7 +975,7 @@ impl Document {
                         } else {
                             node.children.clone()
                         };
-                    paint_rules::sort_paint_children(&mut children, cv.display, cascade);
+                    paint_rules::sort_paint_children(&mut children, node.display(), cascade);
                     stack.extend(children.into_iter().rev().map(
                         |key| match self.child_frame(key) {
                             Frame::Paragraph(key) if defers => Frame::DeferredParagraph(key),
@@ -1199,10 +1199,10 @@ impl Document {
         part: LinePart,
         first_line: bool,
     ) -> ParagraphFrames {
-        let display = cascade
-            .computed
-            .get(root)
-            .map_or(DisplayValue::Block, |cv| cv.display);
+        let display = self
+            .nodes
+            .layout_node(root)
+            .map_or(DisplayValue::Block, |node| node.display());
         let mut entries: Vec<(paint_rules::PaintChildKey, Frame)> = boxes
             .into_iter()
             .map(|key| {
@@ -1262,7 +1262,7 @@ impl Document {
                         .map_or(paint_rules::STACKING_CONTEXT_PAINT_KEY, |cv| {
                             paint_rules::stacking_context_key(cv)
                         }),
-                    None => match cascade.computed.get(group).map(|cv| &cv.position) {
+                    None => match self.get_node(group).map(|node| node.position()) {
                         Some(PositionValue::Static) | None => {
                             paint_rules::STACKING_CONTEXT_PAINT_KEY
                         }
@@ -1742,7 +1742,7 @@ fn push_paragraph<'a>(
                     .cascade
                     .computed
                     .get(node_id)
-                    .is_some_and(is_inline_opacity_group)
+                    .is_some_and(|cv| is_inline_opacity_group(node, cv))
                 {
                     nested.push(node_id);
                     continue;
@@ -2292,10 +2292,9 @@ fn own_box_events(group: usize, content: &[PaintEvent<'_>]) -> usize {
         .count()
 }
 
-/// Whether an element inside a paragraph composites its fragments on the
-/// paragraph's lines as one opacity group.
-fn is_inline_opacity_group(cv: &raikiri_style::ComputedValues) -> bool {
-    cv.display.is_inline_flow() && paint_rules::opacity_layer(cv).is_some()
+/// Whether a captured inline box composites its fragments as one opacity group.
+fn is_inline_opacity_group(node: &crate::Node, cv: &raikiri_style::ComputedValues) -> bool {
+    node.display().is_inline_flow() && cv.opacity < 1.0
 }
 
 #[cfg(test)]

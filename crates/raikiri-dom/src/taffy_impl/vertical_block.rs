@@ -63,7 +63,7 @@ pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
         WritingMode::VerticalLr | WritingMode::SidewaysLr => false,
         _ => return None,
     };
-    if is_table_box(tree.nodes[idx].display) {
+    if is_table_box(tree.nodes[idx].display()) {
         return None;
     }
     if tree
@@ -187,7 +187,7 @@ fn orthogonal_child_inputs(
     let style = &tree.nodes[idx].style;
     if !flows_horizontally(tree, idx)
         || inputs.sizing_mode != SizingMode::InherentSize
-        || style.position == TaffyPosition::Absolute
+        || tree.nodes[idx].taffy_position() == TaffyPosition::Absolute
     {
         return inputs;
     }
@@ -203,7 +203,7 @@ fn orthogonal_child_inputs(
         if inputs.known_dimensions.width.is_none()
             && style.size.width.is_auto()
             && style.float == taffy::Float::None
-            && !is_table_box(tree.nodes[idx].display)
+            && !is_table_box(tree.nodes[idx].display())
         {
             inputs.known_dimensions.width = Some(stretched_width(style, space, inputs));
         }
@@ -290,7 +290,7 @@ pub(super) fn compute_vertical_block(
     // of a vertical parent, the physical width of a horizontal one.
     let parent = tree
         .ancestors(idx)
-        .find(|&id| tree.nodes[id].display != DisplayValue::Contents);
+        .find(|&id| tree.nodes[id].display() != DisplayValue::Contents);
     // A flex item is measured without a main-axis parent size; the flex
     // container's definite size is recorded for its percentage edges.
     let flex_basis = super::flex_item_percent_basis(tree, idx).unwrap_or(Size::NONE);

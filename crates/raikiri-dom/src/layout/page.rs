@@ -1,3 +1,4 @@
+use super::box_tree::BoxTree;
 use super::*;
 use crate::node::FormattingContext;
 
@@ -624,27 +625,27 @@ fn initial_page_child_order(
     cascade: &CascadeResult,
     parent_id: usize,
 ) -> Vec<usize> {
+    let boxes = BoxTree::for_cascade(document, cascade);
     let children = document.nodes[parent_id].children.clone();
-    let parent_style = &cascade.computed[parent_id];
-    let is_flex = parent_style.display.is_flex_container();
+    let is_flex = boxes.identity(parent_id).display().is_flex_container();
     if is_flex {
-        return flex_pagination_child_order(document, cascade, parent_id);
+        return flex_pagination_child_order(document, cascade, parent_id, boxes);
     }
     if matches!(
-        parent_style.display,
+        boxes.identity(parent_id).display(),
         DisplayValue::Table | DisplayValue::InlineTable
     ) {
-        return table_pagination_child_order(document, cascade, parent_id);
+        return table_pagination_child_order(document, cascade, parent_id, boxes);
     }
-    let is_auto_row_grid = parent_style.display.is_grid_container()
+    let is_auto_row_grid = boxes.identity(parent_id).display().is_grid_container()
         && children
             .iter()
             .copied()
             .filter(|&child_id| {
                 !matches!(
-                    cascade.computed[child_id].position,
+                    boxes.identity(child_id).position(),
                     PositionValue::Absolute | PositionValue::Fixed
-                ) && cascade.computed[child_id].display != DisplayValue::None
+                ) && boxes.identity(child_id).display() != DisplayValue::None
             })
             .all(|child_id| {
                 matches!(
@@ -663,9 +664,9 @@ fn initial_page_child_order(
     }
 
     let is_in_flow = |child_id: usize| {
-        cascade.computed[child_id].display != DisplayValue::None
+        boxes.identity(child_id).display() != DisplayValue::None
             && !matches!(
-                cascade.computed[child_id].position,
+                boxes.identity(child_id).position(),
                 PositionValue::Absolute | PositionValue::Fixed
             )
     };
@@ -720,6 +721,11 @@ fn document_has_resolved_pagination_order(document: &Document, cascade: &Cascade
 pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<String> {
     let body_id = find_body(document)?;
     let resolved_layout = document_has_resolved_pagination_order(document, cascade);
+    let boxes = if resolved_layout {
+        BoxTree::for_layout(document)
+    } else {
+        BoxTree::for_cascade(document, cascade)
+    };
     if let Some(raikiri_style::property::PageValue::Named(name)) = cascade.page_values.get(body_id)
     {
         return Some(name.to_string());
@@ -734,7 +740,7 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
             || (node.kind() == NodeKind::Element
-                && cascade.computed[child_id].display == DisplayValue::None)
+                && boxes.identity(child_id).display() == DisplayValue::None)
         {
             continue;
         }
@@ -747,12 +753,11 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                 }
             }
             NodeKind::Element => {
-                let computed = &cascade.computed[child_id];
                 // An absolutely positioned box left at its static position
                 // keeps the page names of its in-flow descendants, so a named
                 // first descendant selects the initial page as it does in the
                 // page pipeline. Its own `page` value is ignored.
-                if is_static_position_absolute(document, cascade, child_id) {
+                if static_absolute_with_boxes(document, child_id, boxes) {
                     let child_order = if resolved_layout {
                         pagination_child_order(document, cascade, child_id)
                     } else {
@@ -760,9 +765,9 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     };
                     let first_child = child_order.into_iter().find(|&grandchild| {
                         !matches!(
-                            cascade.computed[grandchild].position,
+                            boxes.identity(grandchild).position(),
                             PositionValue::Absolute | PositionValue::Fixed
-                        ) && !is_floating_box_for_pagination(document, cascade, grandchild)
+                        ) && !floating_box_with_boxes(cascade, grandchild, boxes)
                     });
                     if let Some(first_child) = first_child
                         && let (_, Some(name)) = propagated_start_page_name_with_order(
@@ -778,15 +783,15 @@ pub fn first_page_name(document: &Document, cascade: &CascadeResult) -> Option<S
                     continue;
                 }
                 if !matches!(
-                    computed.position,
+                    boxes.identity(child_id).position(),
                     raikiri_style::property::PositionValue::Static
                         | raikiri_style::property::PositionValue::Relative
                         | raikiri_style::property::PositionValue::Sticky
-                ) || is_floating_box_for_pagination(document, cascade, child_id)
+                ) || floating_box_with_boxes(cascade, child_id, boxes)
                 {
                     continue;
                 }
-                if page_applies_to_box(document, cascade, child_id)
+                if page_applies_with_boxes(boxes, child_id)
                     && let Some(raikiri_style::property::PageValue::Named(name)) =
                         cascade.page_values.get(child_id)
                 {
@@ -995,7 +1000,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
             while let Some(child) = pending.pop() {
                 let node = &doc.nodes[child];
                 if node.kind() == NodeKind::Element
-                    && node.display == DisplayValue::Contents
+                    && node.display() == DisplayValue::Contents
                     && !node.is_ifc_root()
                 {
                     pending.extend(node.children.iter().rev().copied());
@@ -1005,21 +1010,21 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
             }
         }
         let should_sort = children.iter().any(|&child| {
-            doc.nodes[child].style.position != TaffyPosition::Absolute
+            doc.nodes[child].taffy_position() != TaffyPosition::Absolute
                 && doc.nodes[child].order != 0
         });
         let new_projection = if should_sort {
             let mut ordered_items: Vec<usize> = children
                 .iter()
                 .copied()
-                .filter(|&child| doc.nodes[child].style.position != TaffyPosition::Absolute)
+                .filter(|&child| doc.nodes[child].taffy_position() != TaffyPosition::Absolute)
                 .collect();
             // `sort_by_key` is stable, so equal `order` values retain DOM order.
             ordered_items.sort_by_key(|&child| doc.nodes[child].order);
             let mut ordered_items = ordered_items.into_iter();
             let mut ordered_children = children;
             for child in &mut ordered_children {
-                if doc.nodes[*child].style.position != TaffyPosition::Absolute {
+                if doc.nodes[*child].taffy_position() != TaffyPosition::Absolute {
                     *child = ordered_items
                         .next()
                         .expect("every in-flow child has one ordered entry");
@@ -1066,7 +1071,7 @@ pub(crate) fn is_in_flow_flex_child_for_pagination(
     let child = &document.nodes[child_id];
     child.is_in_document()
         && !child.is_display_none()
-        && child.style.position != TaffyPosition::Absolute
+        && child.taffy_position() != TaffyPosition::Absolute
         && !matches!(
             &child.data,
             NodeData::Text(text)
@@ -1081,6 +1086,7 @@ fn flex_pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
     parent_id: usize,
+    boxes: BoxTree<'_>,
 ) -> Vec<usize> {
     // Contents wrappers do not delimit order-modified flex item sequences.
     // Flatten the complete effective sequence before stable sorting so items
@@ -1093,7 +1099,7 @@ fn flex_pagination_child_order(
         .collect();
     let mut children = Vec::new();
     while let Some(child) = pending.pop() {
-        if cascade.computed[child].display == DisplayValue::Contents {
+        if boxes.identity(child).display() == DisplayValue::Contents {
             pending.extend(document.nodes[child].children.iter().rev().copied());
         } else {
             children.push(child);
@@ -1102,9 +1108,9 @@ fn flex_pagination_child_order(
     let is_in_flow = |child_id: usize| {
         let child = &document.nodes[child_id];
         child.is_in_document()
-            && cascade.computed[child_id].display != DisplayValue::None
+            && boxes.identity(child_id).display() != DisplayValue::None
             && !matches!(
-                cascade.computed[child_id].position,
+                boxes.identity(child_id).position(),
                 PositionValue::Absolute | PositionValue::Fixed
             )
             && !matches!(&child.data, NodeData::Text(text) if text.text_content.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{000c}')))
@@ -1141,6 +1147,10 @@ pub(crate) fn is_floating_box_for_pagination(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
+    floating_box_with_boxes(cascade, node_id, BoxTree::for_layout(document))
+}
+
+fn floating_box_with_boxes(cascade: &CascadeResult, node_id: usize, boxes: BoxTree<'_>) -> bool {
     let computed = &cascade.computed[node_id];
     // Layout floats only the physical sides; a logical `inline-start` or
     // `inline-end` box stays in normal flow there.
@@ -1148,16 +1158,16 @@ pub(crate) fn is_floating_box_for_pagination(
         computed.float,
         FloatValue::Left | FloatValue::Right | FloatValue::Footnote
     ) && !matches!(
-        computed.display,
+        boxes.identity(node_id).display(),
         DisplayValue::None | DisplayValue::Contents
     ) && (matches!(computed.float, FloatValue::Footnote)
-        || !box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
-            |parent| {
+        || !boxes
+            .parent(node_id, BoxParentScope::Document)
+            .is_some_and(|parent| {
                 // Flex and grid items are not floated (CSS Flexbox 1 §3, CSS
                 // Grid 1 §6.1).
-                cascade.computed[parent].display.is_flex_or_grid_container()
-            },
-        ))
+                boxes.identity(parent).display().is_flex_or_grid_container()
+            }))
 }
 
 /// Last in-flow effective item in the flex container's visual page order.
@@ -1173,16 +1183,12 @@ pub(crate) fn trailing_flex_child_for_pagination(
         .find(|&child| is_in_flow_flex_child_for_pagination(document, parent_id, child))
 }
 
-fn is_in_flow_grid_item_for_pagination(
-    document: &Document,
-    cascade: &CascadeResult,
-    child_id: usize,
-) -> bool {
+fn is_in_flow_grid_item_for_pagination(document: &Document, child_id: usize) -> bool {
     match document.nodes[child_id].kind() {
         NodeKind::Element => {
-            cascade.computed[child_id].display != DisplayValue::None
+            document.nodes[child_id].display() != DisplayValue::None
                 && matches!(
-                    cascade.computed[child_id].position,
+                    document.nodes[child_id].position(),
                     PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
                 )
         }
@@ -1210,7 +1216,7 @@ fn grid_pagination_children(document: &Document, parent_id: usize) -> Vec<usize>
     while let Some(child) = pending.pop() {
         let node = &document.nodes[child];
         if node.kind() == NodeKind::Element
-            && node.display == DisplayValue::Contents
+            && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
         {
             pending.extend(node.layout_children().iter().rev().copied());
@@ -1231,10 +1237,20 @@ pub(crate) fn pagination_child_order(
 ) -> Vec<usize> {
     match document.nodes[parent_id].formatting_context {
         FormattingContext::Flex => {
-            return flex_pagination_child_order(document, cascade, parent_id);
+            return flex_pagination_child_order(
+                document,
+                cascade,
+                parent_id,
+                BoxTree::for_layout(document),
+            );
         }
         FormattingContext::Table => {
-            return table_pagination_child_order(document, cascade, parent_id);
+            return table_pagination_child_order(
+                document,
+                cascade,
+                parent_id,
+                BoxTree::for_layout(document),
+            );
         }
         // Multi-column pagination is not implemented, but named-page
         // propagation and candidate traversal must retain Grid's
@@ -1251,18 +1267,18 @@ pub(crate) fn pagination_child_order(
         .grid_item_row_starts
         .iter()
         .copied()
-        .filter(|(child_id, _)| is_in_flow_grid_item_for_pagination(document, cascade, *child_id))
+        .filter(|(child_id, _)| is_in_flow_grid_item_for_pagination(document, *child_id))
         .collect();
     let pageable_count = children
         .iter()
-        .filter(|&&child_id| is_in_flow_grid_item_for_pagination(document, cascade, child_id))
+        .filter(|&&child_id| is_in_flow_grid_item_for_pagination(document, child_id))
         .count();
     if in_flow_items.len() == pageable_count {
         // Stable sorting keeps order-modified order within a resolved row.
         in_flow_items.sort_by_key(|&(_, row_start)| row_start);
         let mut ordered_items = in_flow_items.into_iter().map(|(child_id, _)| child_id);
         for child_id in &mut children {
-            if is_in_flow_grid_item_for_pagination(document, cascade, *child_id) {
+            if is_in_flow_grid_item_for_pagination(document, *child_id) {
                 *child_id = ordered_items
                     .next()
                     .expect("Taffy row details cover each in-flow grid item");
@@ -1280,6 +1296,7 @@ fn table_pagination_child_order(
     document: &Document,
     cascade: &CascadeResult,
     table: usize,
+    boxes: BoxTree<'_>,
 ) -> Vec<usize> {
     // Table layout lays out the children of `display: contents` wrappers as
     // the table's own children before it picks the header and footer.
@@ -1296,12 +1313,12 @@ fn table_pagination_child_order(
         // non-rendered element whatever its `display`.
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
-            || node.display == DisplayValue::None
+            || boxes.identity(child).display() == DisplayValue::None
             || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         {
             continue;
         }
-        if cascade.computed[child].display == DisplayValue::Contents {
+        if boxes.identity(child).display() == DisplayValue::Contents {
             pending.extend(node.children.iter().rev().copied());
         } else {
             children.push(child);
@@ -1311,7 +1328,7 @@ fn table_pagination_child_order(
         children
             .iter()
             .copied()
-            .find(|&id| cascade.computed[id].display == display)
+            .find(|&id| boxes.identity(id).display() == display)
     };
     let header = first(DisplayValue::TableHeaderGroup);
     let footer = first(DisplayValue::TableFooterGroup);
@@ -1322,16 +1339,16 @@ fn table_pagination_child_order(
         .children
         .iter()
         .copied()
-        .find(|&id| cascade.computed[id].display == DisplayValue::TableCaption);
+        .find(|&id| boxes.identity(id).display() == DisplayValue::TableCaption);
     // Columns and column groups only size the grid and generate no box.
-    children.retain(|&id| match cascade.computed[id].display {
+    children.retain(|&id| match boxes.identity(id).display() {
         DisplayValue::TableCaption => Some(id) == caption,
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup => false,
         _ => true,
     });
     children.sort_by_key(|&id| {
         let computed = &cascade.computed[id];
-        if computed.display == DisplayValue::TableCaption {
+        if boxes.identity(id).display() == DisplayValue::TableCaption {
             if computed.caption_side == raikiri_style::property::CaptionSideValue::Top {
                 0u8
             } else {
@@ -1354,36 +1371,36 @@ fn table_pagination_child_order(
 /// which are block-level. An inline-level box takes the page type of its
 /// containing block instead. A flex or grid item and an absolutely
 /// positioned box are blockified whatever their computed `display`.
-pub(crate) fn page_applies_to_box(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-) -> bool {
-    let blockified =
-        box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(|parent| {
-            cascade
-                .computed
-                .get(parent)
-                .is_some_and(|parent| parent.display.is_flex_or_grid_container())
+pub(crate) fn page_applies_to_box(document: &Document, node_id: usize) -> bool {
+    page_applies_with_boxes(BoxTree::for_layout(document), node_id)
+}
+
+fn page_applies_with_boxes(boxes: BoxTree<'_>, node_id: usize) -> bool {
+    let blockified = boxes
+        .parent(node_id, BoxParentScope::Document)
+        .is_some_and(|parent| {
+            boxes
+                .display(parent)
+                .is_some_and(DisplayValue::is_flex_or_grid_container)
         });
     blockified
         || matches!(
-            cascade.computed[node_id].position,
+            boxes.identity(node_id).position(),
             PositionValue::Absolute | PositionValue::Fixed
         )
-        || !cascade.computed[node_id].display.is_inline_level()
+        || !boxes.identity(node_id).display().is_inline_level()
 }
 
 /// Whether `node_id` is an absolutely positioned box whose block-start and
 /// block-end insets are both `auto`, which leaves it at its static position
 /// in the page flow.
-pub(crate) fn is_static_position_absolute(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-) -> bool {
+pub(crate) fn is_static_position_absolute(document: &Document, node_id: usize) -> bool {
+    static_absolute_with_boxes(document, node_id, BoxTree::for_layout(document))
+}
+
+fn static_absolute_with_boxes(document: &Document, node_id: usize, boxes: BoxTree<'_>) -> bool {
     let inset = &document.nodes[node_id].style.inset;
-    cascade.computed[node_id].position == PositionValue::Absolute
+    matches!(boxes.identity(node_id).position(), PositionValue::Absolute)
         && inset.top.is_auto()
         && inset.bottom.is_auto()
 }
@@ -1398,6 +1415,15 @@ pub(crate) fn is_monolithic_for_pagination(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
+    monolithic_with_boxes(document, cascade, node_id, BoxTree::for_layout(document))
+}
+
+fn monolithic_with_boxes(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    boxes: BoxTree<'_>,
+) -> bool {
     use crate::layout::ifc::projection::{ATOMIC_TAGS, REPLACED_BOX_TAGS};
     let node = &document.nodes[node_id];
     let replaced = node
@@ -1411,9 +1437,9 @@ pub(crate) fn is_monolithic_for_pagination(
                 .any(|replaced_tag| tag.eq_ignore_ascii_case(replaced_tag))
         });
     replaced
-        || (!page_applies_to_box(document, cascade, node_id)
-            && cascade.computed[node_id].display.is_atomic_inline_level())
-        || establishes_orthogonal_flow(document, cascade, node_id)
+        || (!page_applies_with_boxes(boxes, node_id)
+            && boxes.identity(node_id).display().is_atomic_inline_level())
+        || orthogonal_flow_with_boxes(document, cascade, node_id, boxes)
         || (document.pagination_on_transposed_axes
             && node.kind() == NodeKind::Element
             && !crate::layout::bridge::uses_vertical_axes(cascade, node_id))
@@ -1430,20 +1456,29 @@ pub(crate) fn establishes_orthogonal_flow(
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
+    orthogonal_flow_with_boxes(document, cascade, node_id, BoxTree::for_layout(document))
+}
+
+fn orthogonal_flow_with_boxes(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    boxes: BoxTree<'_>,
+) -> bool {
     let vertical = |id: usize| {
         cascade
             .computed
             .get(id)
             .is_some_and(|computed| computed.cssom_writing_mode.is_vertical())
     };
-    if cascade
-        .computed
-        .get(node_id)
-        .is_none_or(|computed| computed.display == DisplayValue::Contents)
+    if boxes
+        .display(node_id)
+        .is_none_or(|display| display == DisplayValue::Contents)
     {
         return false;
     }
-    box_parent(document, cascade, node_id, BoxParentScope::Document)
+    boxes
+        .parent(node_id, BoxParentScope::Document)
         .filter(|&parent| document.nodes[parent].kind() == NodeKind::Element)
         .is_some_and(|parent| vertical(parent) != vertical(node_id))
 }
@@ -1470,6 +1505,11 @@ fn propagated_start_page_name_with_order(
     inherited_page_name: Option<&str>,
     resolved_layout: bool,
 ) -> (bool, Option<String>) {
+    let boxes = if resolved_layout {
+        BoxTree::for_layout(document)
+    } else {
+        BoxTree::for_cascade(document, cascade)
+    };
     enum Task {
         Visit(usize, Option<String>),
         ContinueChildren {
@@ -1490,15 +1530,12 @@ fn propagated_start_page_name_with_order(
                 page_name,
             } => {
                 let next = children.find(|&child_id| {
-                    cascade
-                        .computed
-                        .get(child_id)
-                        .is_some_and(|child_computed| {
-                            !matches!(
-                                child_computed.position,
-                                PositionValue::Absolute | PositionValue::Fixed
-                            ) && !is_floating_box_for_pagination(document, cascade, child_id)
-                        })
+                    cascade.computed.get(child_id).is_some_and(|_| {
+                        !matches!(
+                            boxes.identity(child_id).position(),
+                            PositionValue::Absolute | PositionValue::Fixed
+                        ) && !floating_box_with_boxes(cascade, child_id, boxes)
+                    })
                 });
                 if let Some(child_id) = next {
                     pending.push(Task::ContinueChildren {
@@ -1514,7 +1551,7 @@ fn propagated_start_page_name_with_order(
         let Some(node) = document.get_node(node_id) else {
             continue;
         };
-        if !node.is_in_document() || node.is_display_none() {
+        if !node.is_in_document() || boxes.identity(node_id).display() == DisplayValue::None {
             continue;
         }
         if matches!(node.kind(), NodeKind::Text) {
@@ -1528,7 +1565,7 @@ fn propagated_start_page_name_with_order(
             continue;
         }
 
-        let page_applies = page_applies_to_box(document, cascade, node_id);
+        let page_applies = page_applies_with_boxes(boxes, node_id);
         let explicit_page_name = if page_applies {
             selected_page_name(cascade, node_id)
         } else {
@@ -1536,7 +1573,7 @@ fn propagated_start_page_name_with_order(
         };
         let used_page_name = explicit_page_name.or_else(|| inherited_page_name.clone());
         // A monolithic box does not pass a descendant's page value up.
-        if is_monolithic_for_pagination(document, cascade, node_id) {
+        if monolithic_with_boxes(document, cascade, node_id, boxes) {
             return (true, used_page_name);
         }
         let child_order = if resolved_layout {
@@ -1546,15 +1583,12 @@ fn propagated_start_page_name_with_order(
         };
         let mut children = child_order.into_iter();
         let next = children.find(|&child_id| {
-            cascade
-                .computed
-                .get(child_id)
-                .is_some_and(|child_computed| {
-                    !matches!(
-                        child_computed.position,
-                        PositionValue::Absolute | PositionValue::Fixed
-                    ) && !is_floating_box_for_pagination(document, cascade, child_id)
-                })
+            cascade.computed.get(child_id).is_some_and(|_| {
+                !matches!(
+                    boxes.identity(child_id).position(),
+                    PositionValue::Absolute | PositionValue::Fixed
+                ) && !floating_box_with_boxes(cascade, child_id, boxes)
+            })
         });
         if let Some(child_id) = next {
             pending.push(Task::ContinueChildren {

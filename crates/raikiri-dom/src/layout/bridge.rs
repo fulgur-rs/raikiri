@@ -58,7 +58,7 @@ fn multicol_style_from_computed(cv: &ComputedValues) -> Option<MulticolStyle> {
 ///
 /// Bridges currently active:
 /// - [`bridge_direction`] — [`Direction`] → [`taffy::Direction`]
-/// - [`bridge_display`] — [`DisplayValue`] → [`taffy::Display`]
+/// - [`Node::set_box_properties`] — canonical CSS display and position → Taffy identity
 /// - [`bridge_float`] — [`ComputedValues::float`] / [`ComputedValues::clear`] →
 ///   [`taffy::Style::float`] / [`taffy::Style::clear`] (CSS2 §9.5.1 / §9.5.2)
 /// - [`bridge_margin`] — `Sides<ComputedLengthPercentageOrAuto>` → [`taffy::Rect<LengthPercentageAuto>`]
@@ -166,8 +166,6 @@ pub(crate) fn apply_computed_to_style(
         }
         let vertical_sized = vertical_logical_sized(cascade, idx);
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
-        // Preserve full DisplayValue for table dispatch before taffy collapses it.
-        doc.nodes[idx].display = cv.display;
         // Taffy does not carry CSS `order` in Style. Retain the computed value
         // on Node so flex/grid child traversal can build order-modified order.
         doc.nodes[idx].order = cv.order;
@@ -181,6 +179,7 @@ pub(crate) fn apply_computed_to_style(
             multicol_style_from_computed(cv).filter(|_| !lays_out_without_columns(cv.display));
         doc.nodes[idx].column_span_all =
             cv.column_span == raikiri_style::property::ColumnSpanValue::All;
+        doc.nodes[idx].set_box_properties(cv.display, cv.position.clone());
         // Table engine inputs — no taffy::Style counterpart (taffy 0.12
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
@@ -270,18 +269,10 @@ pub(crate) fn apply_computed_to_style(
         doc.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         doc.nodes[idx].needs_relative_block_paint_offset = false;
-        let is_multicol_container = doc.nodes[idx].multicol.is_some();
         let vertical_axes = uses_vertical_axes(cascade, idx);
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv, vertical_axes);
-        bridge_display(style, cv);
-        // CSS Multi-column Layout 1, 2: a multi-column container establishes
-        // a new block formatting context, so the margins of its children do
-        // not collapse with its own and it avoids floats, as a flow root does.
-        if is_multicol_container && style.display == Display::Block {
-            style.display = Display::FlowRoot;
-        }
-        bridge_position(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
+        bridge_inset(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
         // Layout and paint containment establish an independent formatting
         // context, including when the box's content is one IFC paragraph.
@@ -317,7 +308,6 @@ pub(crate) fn apply_computed_to_style(
             // in for the anonymous box its contents would get, so none of
             // the element's own box properties apply to it.
             *style = taffy::Style {
-                display: Display::Block,
                 direction: style.direction,
                 ..taffy::Style::default()
             };
@@ -329,12 +319,8 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].column_span_all = false;
             doc.nodes[idx].multicol_auto_width = true;
             doc.nodes[idx].has_logical_min_block_size = false;
+            doc.nodes[idx].refresh_box_style();
         }
-        // Classified again once paragraph roots are assigned; until then a
-        // box is known by its Taffy display, so a failed pass leaves no
-        // classification from the previous one.
-        doc.nodes[idx].formatting_context =
-            FormattingContext::from_taffy_display(doc.nodes[idx].style.display);
     }
     // Whether a box is a non-atomic inline box depends on its parent's
     // display, which the loop above has now bridged for every node.
@@ -363,7 +349,23 @@ pub(crate) fn apply_computed_to_style(
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
     // root stays one flex or grid item when `order` sorts the items.
-    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
+    if let Err(error) = crate::layout::ifc::assign::assign_ifc_roots(doc, cascade) {
+        // A failed paragraph build must not expose the preceding pass's
+        // classification. No paragraph layout is valid on this path, so
+        // retain only the new backend display classification for elements.
+        for node in doc.nodes.layout_nodes_mut() {
+            if node.kind() == NodeKind::Element {
+                node.formatting_context =
+                    FormattingContext::from_taffy_display(node.taffy_display());
+            }
+        }
+        return Err(error);
+    }
+    // A text node or an anonymous table cell can be a paragraph root of its
+    // own, so every node layout may lay out is classified.
+    for node in doc.nodes.layout_nodes_mut() {
+        node.formatting_context = classify_formatting_context(node);
+    }
     refresh_order_modified_children(doc);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
@@ -371,7 +373,7 @@ pub(crate) fn apply_computed_to_style(
             continue;
         }
         let is_table = matches!(
-            doc.nodes[idx].display,
+            doc.nodes[idx].display(),
             DisplayValue::Table | DisplayValue::InlineTable
         );
         if is_table {
@@ -379,11 +381,6 @@ pub(crate) fn apply_computed_to_style(
         } else {
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
-    }
-    // A text node or an anonymous table cell can be a paragraph root of its
-    // own, so every node layout may lay out is classified.
-    for node in doc.nodes.layout_nodes_mut() {
-        node.formatting_context = classify_formatting_context(node);
     }
     Ok(())
 }
@@ -393,14 +390,14 @@ pub(crate) fn apply_computed_to_style(
 /// multicol container and a bare text root. Taffy has no table or multicol
 /// display, so both are block containers to it.
 fn classify_formatting_context(node: &Node) -> FormattingContext {
-    match node.style.display {
+    match node.taffy_display() {
         Display::None => FormattingContext::None,
         _ if node.flags.contains(NodeFlags::IS_IFC_ROOT) => FormattingContext::Inline,
         _ if node.kind() != NodeKind::Element => FormattingContext::Text,
         Display::Flex => FormattingContext::Flex,
         Display::Grid => FormattingContext::Grid,
         _ if matches!(
-            node.display,
+            node.display(),
             DisplayValue::Table | DisplayValue::InlineTable
         ) =>
         {
@@ -532,69 +529,6 @@ fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes
         TaffyDirection::Rtl
     } else {
         TaffyDirection::Ltr
-    };
-}
-
-/// [`DisplayValue`] → [`taffy::Display`] mapping.
-///
-/// Maps [`DisplayValue`] to
-/// [`taffy::Display`]. Taffy 0.x has only Block / Flex / Grid /
-/// None (no distinct `Inline` / `InlineBlock` variants), so:
-/// - `Inline` → `Block` (initially Block; text-only nodes render as leaves)
-/// - `InlineBlock` → `Block` (separate handling for a block child within
-///   an inline-level flow parent is a follow-up)
-/// - `None` → `None`
-/// - `Flex` → `Flex` (a CSS Display 3 §2.2 `<display-inside>` keyword,
-///   equivalent to `block flex` under the outer-defaulting rule;
-///   [`crate::taffy_impl`]'s `LayoutFlexboxContainer` impl + taffy's
-///   `compute_flexbox_layout` perform the actual layout)
-/// - `Grid` → `Grid` (a CSS Display 3 §2.2 `<display-inside>` keyword,
-///   equivalent to `block grid` under the outer-defaulting rule;
-///   [`crate::taffy_impl`]'s `LayoutGridContainer` impl + taffy's
-///   `compute_grid_layout` perform the actual layout)
-/// - Table internal types (`table` / `inline-table` / `table-row-group` /
-///   `table-header-group` / `table-footer-group` / `table-row` /
-///   `table-column-group` / `table-column` / `table-cell` / `table-caption`)
-///   → `Block` (temporary block approximation: taffy 0.12 lacks table layout.
-///   TODO(table-layout): once [`crate::layout::table`]'s dedicated table
-///   formatting context (CSS 2.1 §17.2.1 anonymous table object generation
-///   included) is implemented, replace with dedicated Display / layout handling.)
-/// - `flow-root` → `FlowRoot` (independent block formatting context)
-/// - `list-item` / `contents` → `Block` (block approximation via catch-all
-///   until dedicated handling is added)
-/// - catch-all arm → `Block` (`non_exhaustive` forward-compat)
-fn bridge_display(style: &mut taffy::Style, cv: &ComputedValues) {
-    style.display = match cv.display {
-        DisplayValue::Block => Display::Block,
-        DisplayValue::Inline => Display::Block,
-        // Ruby boxes are inline boxes to the block layout; the inline engine
-        // lays them out (CSS Ruby 1 §2).
-        display if display.is_ruby() => Display::Block,
-        DisplayValue::InlineBlock => Display::Block,
-        DisplayValue::FlowRoot => Display::FlowRoot,
-        DisplayValue::None => Display::None,
-        display if display.is_flex_container() => Display::Flex,
-        display if display.is_grid_container() => Display::Grid,
-        // Table model — CSS Display 3 §2 / CSS 2.1 §17.2. Taffy 0.12 has no
-        // table layout, so map to Block as temporary approximation.
-        // Real table routing uses `Node::display` (preserved in
-        // `apply_computed_to_style` before this collapse) rather than
-        // `Style::display`.
-        DisplayValue::Table => Display::Block,
-        DisplayValue::InlineTable => Display::Block,
-        DisplayValue::TableRowGroup => Display::Block,
-        DisplayValue::TableHeaderGroup => Display::Block,
-        DisplayValue::TableFooterGroup => Display::Block,
-        DisplayValue::TableRow => Display::Block,
-        DisplayValue::TableColumnGroup => Display::Block,
-        DisplayValue::TableColumn => Display::Block,
-        DisplayValue::TableCell => Display::Block,
-        DisplayValue::TableCaption => Display::Block,
-        _ => {
-            // non_exhaustive catch-all — unknown future variant (e.g.
-            // `list-item` / `contents`) goes to Block
-            Display::Block
-        }
     };
 }
 
@@ -791,19 +725,12 @@ fn bridge_overflow(style: &mut taffy::Style, cv: &ComputedValues) {
     };
 }
 
-fn bridge_position(
+fn bridge_inset(
     style: &mut taffy::Style,
     cv: &ComputedValues,
     calc_values: &mut Vec<std::sync::Arc<crate::taffy_impl::ArenaCalc>>,
     diag: &mut Vec<LayoutWarn>,
 ) {
-    style.position = match cv.position {
-        PositionValue::Absolute | PositionValue::Fixed => TaffyPosition::Absolute,
-        PositionValue::Static | PositionValue::Relative | PositionValue::Sticky => {
-            TaffyPosition::Relative
-        }
-        _ => TaffyPosition::Relative,
-    };
     // Insets keep a mixed `calc()` in the document arena, like min/max sizes,
     // so its percentage resolves against the used containing block.
     let mut inset = |value: ComputedLengthPercentageOrAuto, site: &'static str| {
@@ -986,7 +913,7 @@ fn bridge_min_max_size(
 /// Raikiri-style's [`BoxSizing`] is `#[non_exhaustive]`, following the sibling
 /// forward-compatibility pattern. Unknown variants quietly use the spec initial
 /// (`ContentBox`) rather than silently extending a spec violation: the safest
-/// default (like the [`bridge_display`] catch-all → `Block`).
+/// default (like the [`Node::set_box_properties`] catch-all → `Block`).
 ///
 /// Taffy's `taffy::BoxSizing` is **not** `#[non_exhaustive]`, so the output
 /// mapping is complete with its two `ContentBox` and `BorderBox` arms.
@@ -1075,7 +1002,7 @@ fn bridge_flex(
         FlexDirectionValue::ColumnReverse => TaffyFlexDirection::ColumnReverse,
         // cov:ignore: unreachable while FlexDirectionValue is
         // Row|RowReverse|Column|ColumnReverse only; required for its
-        // #[non_exhaustive] contract (see doc above, `bridge_display`
+        // #[non_exhaustive] contract (see doc above, `Node::set_box_properties`
         // catch-all's rationale).
         _ => TaffyFlexDirection::Row,
     };
@@ -1345,7 +1272,7 @@ fn bridge_grid(
         }),
         // cov:ignore: unreachable while GridTemplateAreasValue is
         // None|Areas(_) only; required for its #[non_exhaustive] contract
-        // (see `bridge_display` catch-all doc).
+        // (see `Node::set_box_properties` catch-all doc).
         _ => None,
     };
 
@@ -1369,7 +1296,7 @@ fn bridge_grid(
         GridAutoFlowValue::ColumnDense => TaffyGridAutoFlow::ColumnDense,
         // cov:ignore: unreachable while GridAutoFlowValue is
         // Row|Column|RowDense|ColumnDense only; required for its
-        // #[non_exhaustive] contract (see `bridge_display` catch-all doc).
+        // #[non_exhaustive] contract (see `Node::set_box_properties` catch-all doc).
         _ => TaffyGridAutoFlow::Row,
     };
 

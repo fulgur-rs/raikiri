@@ -61,7 +61,7 @@ fn a_flex_container_drops_a_white_space_only_child() {
     let root = doc.root_index();
     let parent = doc.append_element(Some(root), "div", Style::default(), None::<&str>);
     doc.append_text(parent, "\n  ");
-    doc.nodes[parent].style.display = taffy::Display::Flex;
+    doc.nodes[parent].set_display(raikiri_style::property::DisplayValue::Flex);
     doc.mark_in_document_flags();
 
     let parent_id = taffy::NodeId::from(parent);

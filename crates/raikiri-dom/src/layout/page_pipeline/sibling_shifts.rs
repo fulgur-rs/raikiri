@@ -45,7 +45,7 @@ impl SiblingShifts {
     /// placed by its parent's paragraph.
     fn moves(document: &Document, parent: usize, sibling: usize) -> bool {
         let node = &document.nodes[sibling];
-        node.style.position != TaffyPosition::Absolute
+        node.taffy_position() != TaffyPosition::Absolute
             && !node.style.float.is_floated()
             && !node.in_ifc_subtree()
             && !document.nodes[parent]

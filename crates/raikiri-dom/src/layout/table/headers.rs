@@ -51,17 +51,20 @@ impl HeaderRepeats {
             let node = &document.nodes[table];
             let cv = &cascade.computed[table];
             if node.is_display_none()
-                || cv.display != DisplayValue::Table
+                || node.display() != DisplayValue::Table
                 || cv.writing_mode.is_vertical()
                 || cv.cssom_writing_mode.is_vertical()
                 || cv.float != FloatValue::None
-                || !matches!(cv.position, PositionValue::Static | PositionValue::Relative)
+                || !matches!(
+                    node.position(),
+                    PositionValue::Static | PositionValue::Relative
+                )
             {
                 continue;
             }
             let Some(header) = node.children.iter().copied().find(|&id| {
                 !document.nodes[id].is_display_none()
-                    && cascade.computed[id].display == DisplayValue::TableHeaderGroup
+                    && document.nodes[id].display() == DisplayValue::TableHeaderGroup
             }) else {
                 continue;
             };
@@ -86,7 +89,7 @@ impl HeaderRepeats {
                         .iter()
                         .all(|&cell| anonymous(cell) && owned_by_header(cell));
                 }
-                document.nodes[row.marker].display == DisplayValue::TableRow
+                document.nodes[row.marker].display() == DisplayValue::TableRow
                     && row.cells.iter().all(|&cell| {
                         anonymous(cell) || document.parent_of(cell) == Some(row.marker)
                     })
@@ -104,14 +107,14 @@ impl HeaderRepeats {
                 if child == header {
                     continue;
                 }
-                match cascade.computed[child].display {
+                match document.nodes[child].display() {
                     DisplayValue::TableRow => body_rows.push(child),
                     DisplayValue::TableRowGroup
                     | DisplayValue::TableHeaderGroup
                     | DisplayValue::TableFooterGroup => {
                         body_rows.extend(document.nodes[child].children.iter().copied().filter(
                             |&row| {
-                                cascade.computed[row].display == DisplayValue::TableRow
+                                document.nodes[row].display() == DisplayValue::TableRow
                                     && !document.nodes[row].is_display_none()
                             },
                         ));
@@ -129,7 +132,7 @@ impl HeaderRepeats {
                 .flat_map(|row| row.cells.iter().copied())
                 .any(|cell| super::get_rowspan(document, cell) != 1);
             let bottom_caption = node.children.iter().any(|&id| {
-                cascade.computed[id].display == DisplayValue::TableCaption
+                document.nodes[id].display() == DisplayValue::TableCaption
                     && document.nodes[id].caption_side
                         == raikiri_style::property::CaptionSideValue::Bottom
             });
@@ -139,7 +142,7 @@ impl HeaderRepeats {
             let mut has_page_boundary = false;
             while let Some(id) = descendants.pop() {
                 let computed = &cascade.computed[id];
-                has_fixed |= matches!(computed.position, PositionValue::Fixed);
+                has_fixed |= matches!(document.nodes[id].position(), PositionValue::Fixed);
                 has_page_boundary |= matches!(
                     computed.break_before,
                     BreakBetween::Page | BreakBetween::Always
@@ -308,7 +311,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
     let mut parts = Vec::new();
     let mut pending = document.nodes[table].children.clone();
     while let Some(id) = pending.pop() {
-        match document.nodes[id].display {
+        match document.nodes[id].display() {
             DisplayValue::TableRow
             | DisplayValue::TableRowGroup
             | DisplayValue::TableHeaderGroup
@@ -326,10 +329,10 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
         // rest of its content, or of a group's or the table's content
         // that has no row; anonymous cells are placed in their owner.
         let mut cells = Vec::new();
-        if document.nodes[part].display == DisplayValue::TableRow {
+        if document.nodes[part].display() == DisplayValue::TableRow {
             for &cell in &document.nodes[part].children {
                 let node = &document.nodes[cell];
-                if node.display == DisplayValue::TableCell && !node.is_display_none() {
+                if node.display() == DisplayValue::TableCell && !node.is_display_none() {
                     let (x, y) = absolute_position(document, cell);
                     let size = node.unrounded_layout.size;
                     cells.push((x, y, size, node.hides_empty_table_cell));
@@ -349,7 +352,7 @@ pub(crate) fn finish_table_boxes(document: &mut Document, table: usize, gap: f32
         if cells.is_empty() {
             // A row without cells still takes its own used height, which the
             // parts around it enclose.
-            if document.nodes[part].display == DisplayValue::TableRow {
+            if document.nodes[part].display() == DisplayValue::TableRow {
                 let bottom = part_origin.1 + document.nodes[part].unrounded_layout.size.height;
                 table_bottom = table_bottom.max(bottom);
                 let owners: Vec<usize> = document

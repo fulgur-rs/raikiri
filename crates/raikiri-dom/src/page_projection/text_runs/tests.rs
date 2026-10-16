@@ -1197,3 +1197,51 @@ fn inter_character_annotation_glyphs_are_reported_upright_one_below_the_other() 
     assert_eq!(positions[1].1 - positions[0].1, 5.0, "{positions:?}");
     assert!(document.omitted_text_run_roots(&cascade).is_empty());
 }
+
+#[test]
+fn a_fixed_outside_marker_ignores_the_body_relative_translation() {
+    use crate::layout::test_support::with_ahem;
+
+    for body_offset in [0, 20] {
+        let mut document = Document::new();
+        with_ahem(&mut document);
+        let html = document.append_element(
+            Some(0),
+            "html",
+            taffy::Style::default(),
+            Some("display:block"),
+        );
+        let body = document.append_element(
+            Some(html),
+            "body",
+            taffy::Style::default(),
+            Some(format!(
+                "display:block;margin:0;font:20px/1 Ahem;position:relative;top:{body_offset}px"
+            )),
+        );
+        let fixed = document.append_element(
+            Some(body), "li", taffy::Style::default(),
+            Some("display:list-item;list-style:decimal outside;position:fixed;left:0;top:70px;padding-top:20px"),
+        );
+        document.append_text(fixed, "X");
+        let cascade =
+            raikiri_style::cascade(&document, &raikiri_style::build_rule_tree(&document)).unwrap();
+        let mut page = raikiri_traits::PageBox::new();
+        page.width = 100.0;
+        page.height = 100.0;
+        let slices = crate::layout_pages(&mut document, &cascade, page).unwrap();
+        document
+            .project_pages(&cascade, page, &slices, &[])
+            .unwrap();
+        assert_eq!(
+            document.list_marker_text_top(&cascade, fixed, (0.0, true), 70.0, 100.0),
+            Some(Some(80.0))
+        );
+        assert!(
+            document
+                .page_text_runs(&cascade, 0)
+                .iter()
+                .any(|run| run.is_standalone_marker() && run.text.trim_end() == "1.")
+        );
+    }
+}

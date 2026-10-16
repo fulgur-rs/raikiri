@@ -101,12 +101,12 @@ fn children(
         let node = &doc.nodes[id];
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
-            || node.display == DisplayValue::None
+            || node.display() == DisplayValue::None
             || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         {
             continue;
         }
-        if node.display == DisplayValue::Contents {
+        if node.display() == DisplayValue::Contents {
             let has_overlay = [PseudoElem::Before, PseudoElem::After]
                 .into_iter()
                 .any(|pseudo| {
@@ -170,10 +170,9 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     node.flags = source.flags;
     node.flags
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
-    node.style.display = taffy::Display::Block;
     node.style.direction = source.style.direction;
     node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
-    node.display = DisplayValue::TableCell;
+    node.set_display(DisplayValue::TableCell);
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;
     node.caption_side = source.caption_side;
@@ -272,7 +271,7 @@ fn row(
     }
     for &entry in ids {
         let id = entry.node();
-        if matches!(entry, Content::Node(_)) && doc.nodes[id].display == DisplayValue::TableCell {
+        if matches!(entry, Content::Node(_)) && doc.nodes[id].display() == DisplayValue::TableCell {
             flush(&mut pending, &mut cells, objects, &mut column)?;
             column = super::next_table_column(column, super::get_colspan(doc, id))?;
             cells.push(id);
@@ -300,11 +299,11 @@ fn rows(
     if reorder {
         let first_head = ids.iter().copied().find(|&id| {
             matches!(id, Content::Node(_))
-                && doc.nodes[id.node()].display == DisplayValue::TableHeaderGroup
+                && doc.nodes[id.node()].display() == DisplayValue::TableHeaderGroup
         });
         let first_foot = ids.iter().copied().find(|&id| {
             matches!(id, Content::Node(_))
-                && doc.nodes[id.node()].display == DisplayValue::TableFooterGroup
+                && doc.nodes[id.node()].display() == DisplayValue::TableFooterGroup
         });
         ids.sort_by_key(|&id| {
             if Some(id) == first_head {
@@ -335,7 +334,7 @@ fn rows(
             pending.push(entry);
             continue;
         }
-        match doc.nodes[id].display {
+        match doc.nodes[id].display() {
             DisplayValue::TableRow => {
                 flush(&mut pending, &mut out, objects, row_count)?;
                 let content = children(doc, cascade, id, objects);
@@ -383,7 +382,7 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     for id in 0..doc.nodes.len() {
         if doc.nodes[id].is_in_document()
             && matches!(
-                doc.nodes[id].display,
+                doc.nodes[id].display(),
                 DisplayValue::Table | DisplayValue::InlineTable
             )
         {
