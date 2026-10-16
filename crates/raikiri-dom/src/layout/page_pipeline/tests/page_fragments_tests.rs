@@ -3110,6 +3110,21 @@ fn a_relatively_offset_section_moves_by_its_flow_position() {
 }
 
 #[test]
+fn a_raised_section_whose_flow_position_starts_the_page_stays() {
+    // The section's flow position is the top of page 1 (y 40); its offset
+    // paints it 5px higher, across the page edge. Moving its flow position
+    // to that page start would not move it at all, so it stays.
+    let laid_out = paragraph_after_a_spacer(
+        Some("position:relative;top:-5px"),
+        40.0,
+        "orphans:2;widows:2",
+        40.0,
+    );
+    assert_eq!(laid_out.section, (35.0, 30.0));
+    assert_eq!(laid_out.after_top, 70.0);
+}
+
+#[test]
 fn a_paragraph_in_a_display_contents_wrapper_moves() {
     let laid_out =
         paragraph_after_a_spacer(Some("display:contents"), 15.0, "orphans:2;widows:2", 40.0);
