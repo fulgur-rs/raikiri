@@ -489,7 +489,7 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
         max_for(Some("max-width: calc(100px + 1%)"))
             .width
             .into_raw()
-            .is_calc()
+            .is_plain_calc()
     );
 
     // Case 3b: an inset calc() is preserved the same way.
@@ -505,8 +505,8 @@ fn apply_computed_to_style_bridges_max_size_to_taffy() {
     let rules = build_rule_tree(&doc);
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     apply_computed_to_style(&mut doc, &cr).expect("styles");
-    assert!(doc.nodes[p].style.inset.left.into_raw().is_calc());
-    assert!(doc.nodes[p].style.inset.top.into_raw().is_calc());
+    assert!(doc.nodes[p].style.inset.left.into_raw().is_plain_calc());
+    assert!(doc.nodes[p].style.inset.top.into_raw().is_plain_calc());
     assert_eq!(doc.nodes[p].style.inset.right, LengthPercentageAuto::auto());
 
     // Case 4: `max-width: none` → LengthPercentageAuto::auto() (no maximum).
@@ -1209,7 +1209,7 @@ fn bridge_alignment_align_self_value_delegates_to_self_alignment_to_taffy() {
 }
 
 #[test]
-fn bridge_alignment_align_self_normal_maps_to_stretch_not_none() {
+fn bridge_alignment_align_self_normal_preserves_normal_instead_of_auto() {
     // Regression test: `align-self: normal` must
     // NOT collapse to the same `None` mapping as `align-self: auto`.
     // `auto` computes to the parent's `align-items` value (CSS Box
@@ -1223,7 +1223,7 @@ fn bridge_alignment_align_self_normal_maps_to_stretch_not_none() {
     cv.align_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
     let mut style = Style::default();
     bridge_alignment(&mut style, &cv);
-    assert_eq!(style.align_self, Some(TaffyAlignItems::STRETCH));
+    assert_eq!(style.align_self, Some(TaffyAlignItems::NORMAL));
 }
 
 #[test]
@@ -1531,7 +1531,7 @@ fn bridge_gap_hands_a_mixed_calc_to_taffy() {
     let mut diag = Vec::new();
     bridge_gap(&mut style, &cv, &mut calc_values, &mut diag);
     let raw = style.gap.width.into_raw();
-    assert!(raw.is_calc());
+    assert!(raw.is_plain_calc());
     assert_eq!(
         crate::taffy_impl::resolve_calc(raw.calc_value(), 200.0),
         25.0
@@ -2016,7 +2016,7 @@ fn bridge_alignment_maps_justify_items_and_justify_self() {
     cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::End);
     let mut style = Style::default();
     bridge_alignment(&mut style, &cv);
-    assert_eq!(style.justify_items, Some(TaffyAlignItems::CENTER));
+    assert_eq!(style.justify_items, TaffyAlignItems::CENTER);
     assert_eq!(style.justify_self, Some(TaffyAlignItems::END));
 
     // `justify-self: normal` behaves as `stretch` (CSS Box Alignment 3
@@ -2027,7 +2027,7 @@ fn bridge_alignment_maps_justify_items_and_justify_self() {
     cv.justify_self = AlignSelfValue::Value(SelfAlignmentValue::Normal);
     let mut style = Style::default();
     bridge_alignment(&mut style, &cv);
-    assert_eq!(style.justify_self, Some(TaffyAlignItems::STRETCH));
+    assert_eq!(style.justify_self, Some(TaffyAlignItems::NORMAL));
 }
 
 #[test]

@@ -3,13 +3,14 @@
 use super::geometry::IfcAxes;
 use super::root::{IfcLines, IfcRoot};
 use crate::Document;
+use crate::taffy_impl::block_flow::context::BlockContext;
 use raikiri_style::{CascadeResult, ComputedTextIndent};
 use raikiri_traits::NodeKind;
 use shodo::geometry::BaselineKind;
 use shodo::geometry::{Direction, PhysicalSize, WritingMode};
 use shodo::style::LineOptions;
 use shodo::{AtomicIntrinsics, AtomicSizes, LayoutContext, LineConstraint, LineResult, Paragraph};
-use taffy::{BlockContext, Clear};
+use taffy::Clear;
 
 /// Logical inline space of one line, in content-box coordinates.
 #[derive(Clone, Copy, Debug, PartialEq)]

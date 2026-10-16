@@ -256,7 +256,7 @@ dependencies = [
  "stylo_taffy",
  "stylo_traits",
  "svgtypes",
- "taffy 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "taffy 0.14.0",
  "thin-vec",
  "thread_local",
  "url",
@@ -295,7 +295,7 @@ dependencies = [
  "skrifa 0.44.0",
  "smallvec",
  "stylo",
- "taffy 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "taffy 0.14.0",
  "usvg",
 ]
 
@@ -2631,7 +2631,7 @@ dependencies = [
  "skrifa 0.44.0",
  "smol_str",
  "stacker",
- "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da)",
+ "taffy 0.15.0",
  "tempfile",
  "url",
  "wuff",
@@ -2655,7 +2655,7 @@ dependencies = [
  "rustc-hash",
  "shodo",
  "smol_str",
- "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da)",
+ "taffy 0.15.0",
  "url",
 ]
 
@@ -2734,7 +2734,7 @@ dependencies = [
  "raikiri-svg",
  "raikiri-traits",
  "shodo",
- "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da)",
+ "taffy 0.15.0",
  "url",
 ]
 
@@ -3533,7 +3533,7 @@ checksum = "bfac7e7262ee946db8937b127e07688880d7224e539e504ac2fe033f83f41323"
 dependencies = [
  "stylo",
  "stylo_atoms",
- "taffy 0.14.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "taffy 0.14.0",
 ]
 
 [[package]]
@@ -3632,10 +3632,10 @@ dependencies = [
 
 [[package]]
 name = "taffy"
-version = "0.14.0"
-source = "git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da#3547b97fc2cea1090d52c0ea92ebe211b80d04da"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c8480887e8803986d96a7173729565520d4bbb721ad6b7ad6941a22897207aa"
 dependencies = [
- "arrayvec",
  "serde",
  "slotmap",
  "smallvec",

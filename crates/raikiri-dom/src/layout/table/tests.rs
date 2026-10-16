@@ -4002,3 +4002,47 @@ fn a_satisfied_span_minimum_keeps_all_authored_column_widths() {
         [40.0, 40.0, 10.0]
     );
 }
+
+#[test]
+fn negative_absolute_insets_do_not_expand_the_available_table_width() {
+    use crate::layout::test_support::{ifc_ahem_fonts, page_box_800x600};
+    for inset in ["left:-100px", "right:-100px"] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        let container = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:relative;width:100px;height:100px"),
+        );
+        let table = doc.append_element(Some(container), "table", Style::default(), Some(format!("display:table;position:absolute;{inset};height:100px;border-spacing:0;font-family:Ahem;font-size:10px;line-height:10px")));
+        let row = doc.append_element(
+            Some(table),
+            "tr",
+            Style::default(),
+            Some("display:table-row"),
+        );
+        let cell = doc.append_element(
+            Some(row),
+            "td",
+            Style::default(),
+            Some("display:table-cell;padding:0"),
+        );
+        doc.append_text(cell, "x x x x x x x x x");
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+        assert_eq!(
+            doc.nodes[table].unrounded_layout.size.width, 100.0,
+            "{inset}"
+        );
+    }
+}

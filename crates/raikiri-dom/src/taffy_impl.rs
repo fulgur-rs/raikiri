@@ -10,14 +10,14 @@
 
 use taffy::tree::{RequestedAxis, RunMode};
 use taffy::{
-    AvailableSpace, BlockContext, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
+    AvailableSpace, BoxGenerationMode, CacheTree, CollapsibleMarginSet, CoreStyle,
     DetailedGridInfo, ExpandedDimension, Layout, LayoutBlockContainer, LayoutFlexboxContainer,
     LayoutGridContainer, LayoutInput, LayoutOutput, LayoutPartialTree, NodeId,
     Position as TaffyPosition, Size, Style, TraversePartialTree, TraverseTree,
-    compute_block_layout, compute_cached_layout, compute_flexbox_layout, compute_grid_layout,
-    compute_leaf_layout,
+    compute_cached_layout, compute_flexbox_layout, compute_grid_layout, compute_leaf_layout,
 };
 
+use self::block_flow::{compute_block_flow, context::BlockContext};
 use crate::document::Document;
 use crate::layout::ifc::geometry::IfcAxes;
 use crate::node::{FormattingContext, NodeData, NodeFlags};
@@ -140,7 +140,7 @@ fn flex_item_percent_basis(tree: &Document, node: usize) -> Option<Size<Option<f
 /// basis.
 fn has_percent_edge(style: &Style) -> bool {
     let margin_depends_on_basis = |edge: taffy::LengthPercentageAuto| {
-        edge.into_raw().is_calc()
+        edge.into_raw().is_plain_calc()
             || edge.resolve_to_option(0.0, resolve_calc)
                 != edge.resolve_to_option(1.0, resolve_calc)
     };
@@ -169,7 +169,7 @@ fn edge_depends_on_basis(edge: taffy::LengthPercentage) -> bool {
     use taffy::ResolveOrZero;
     // A `calc()` edge always carries a percentage term (one without folds to
     // a length) and may clamp to zero at small probe bases.
-    edge.into_raw().is_calc()
+    edge.into_raw().is_plain_calc()
         || edge.resolve_or_zero(Some(0.0), resolve_calc)
             != edge.resolve_or_zero(Some(1.0), resolve_calc)
 }
@@ -451,27 +451,19 @@ impl LayoutPartialTree for Document {
 }
 
 impl Document {
-    /// Unified `compute_child_layout` implementation that both
-    /// [`LayoutPartialTree::compute_child_layout`] (called with
-    /// `block_ctx: None`) and [`LayoutBlockContainer::compute_block_child_layout`]
-    /// (called with the caller's [`BlockContext`]) delegate to.
+    /// Unified child dispatch for the native layout traits and project flow.
     ///
-    /// Threading `block_ctx` through to `compute_block_layout`'s `Display::Block`
-    /// arm is what keeps a normal-flow block descendant in the same Block
-    /// Formatting Context as its ancestor instead of each one starting a fresh,
-    /// independent `BlockFormattingContext` — per CSS2 §9.4.1
-    /// <https://www.w3.org/TR/CSS2/visuren.html#block-formatting> a box is only
-    /// in the *same* BFC as its parent when it doesn't itself establish a new
-    /// one (taffy's own `is_in_same_bfc` gate in `compute_block_layout`:
-    /// in-flow, not floated, not absolutely positioned, not a table, not a
-    /// scroll container). Without this, floats placed by one child would not
-    /// be visible to (and would not cause wraparound in) that child's own
-    /// nested block descendants, only its direct siblings.
+    /// Public Taffy flex/grid algorithms enter through
+    /// [`LayoutPartialTree::compute_child_layout`] without a shared context.
+    /// Project block and inline flow pass their own [`BlockContext`] here,
+    /// keeping ordinary descendants in the same float formatting context.
+    /// Such layouts bypass size-only caching because a cached result cannot
+    /// replay float placement or unresolved margin-strut side effects.
     ///
     /// Overflow is bridged to `taffy::Style::overflow`; the remaining
     /// overflow-area details are handled by the paint and block-layout paths.
     #[inline(never)]
-    fn compute_child_layout_with_block_ctx(
+    pub(crate) fn compute_child_layout_with_block_ctx(
         &mut self,
         node_id: NodeId,
         inputs: LayoutInput,
@@ -499,6 +491,8 @@ impl Document {
             for node in self.nodes.layout_nodes_mut() {
                 node.cache.clear();
             }
+            self.grid_layout_info.clear();
+            self.taffy_hoisted_children.clear();
             self.layout_dirty = false;
         }
         let inputs = vertical_oof::absolute_child_inputs(self, usize::from(node_id), inputs);
@@ -775,6 +769,8 @@ impl Document {
 #[cfg(test)]
 mod tests;
 
+pub(crate) mod block_flow;
+mod oof;
 mod orthogonal_flow;
 mod vertical_block;
 mod vertical_oof;
@@ -830,7 +826,7 @@ fn compute_ifc_root(
             && !style.overflow.x.is_scroll_container()
             && !style.overflow.y.is_scroll_container()
             && !style.contain.establishes_independent_formatting_context()
-            && style.align_content.is_none()
+            && style.align_content.keyword == taffy::AlignContentKeyword::Normal
             && tree.nodes[idx].multicol.is_none()
             && tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
                 root.writing_mode == shodo::geometry::WritingMode::HorizontalTb
@@ -1012,7 +1008,7 @@ fn ifc_content_width_bounds(
 fn ifc_length_only(value: taffy::LengthPercentageAuto) -> taffy::LengthPercentageAuto {
     let raw = value.into_raw();
     // Calc pointers carry address bits in `tag()`, so test them first.
-    let length = if raw.is_calc() {
+    let length = if raw.is_plain_calc() {
         !calc_has_percentage(raw.calc_value())
     } else {
         raw.tag() == taffy::CompactLength::LENGTH_TAG
@@ -1065,8 +1061,9 @@ fn ifc_content_axis_bounds(
         let raw = value.into_raw();
         // A percentage of an indefinite basis behaves as the initial value,
         // as taffy's leaf sizing resolves it.
-        let basis = dimension_basis
-            .or_else(|| (raw.is_calc() && !calc_has_percentage(raw.calc_value())).then_some(0.0));
+        let basis = dimension_basis.or_else(|| {
+            (raw.is_plain_calc() && !calc_has_percentage(raw.calc_value())).then_some(0.0)
+        });
         let Some(resolved) = crate::layout::resolve_length_percentage_auto(value, basis) else {
             return auto;
         };
@@ -1765,12 +1762,12 @@ pub(crate) fn block_layout(
     let (width, inline_inset) = tree.block_definite_width(idx, &inputs);
     let basis = width.map(|width| width - inline_inset);
     tree.block_item_percent_bases.push((idx, basis));
-    let mut output = compute_block_layout(tree, node_id, inputs, block_ctx.as_deref_mut());
+    let mut output = compute_block_flow(tree, node_id, inputs, block_ctx.as_deref_mut());
     tree.block_item_percent_bases.pop();
     if basis.is_none() && block_ctx.is_none() && tree.has_percent_vertical_edge_child(idx) {
         let basis = Some(output.size.width - inline_inset);
         tree.block_item_percent_bases.push((idx, basis));
-        output = compute_block_layout(tree, node_id, inputs, None);
+        output = compute_block_flow(tree, node_id, inputs, None);
         tree.block_item_percent_bases.pop();
     }
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
@@ -1963,7 +1960,8 @@ pub(crate) fn flex_layout(
         height: size.height.map(|height| (height - inset.height).max(0.0)),
     };
     tree.flex_item_percent_bases.push((idx, basis));
-    let output = compute_flexbox_layout(tree, node_id, inputs);
+    let mut output = compute_flexbox_layout(tree, node_id, inputs);
+    oof::layout_local_oof(tree, node_id, &mut output);
     tree.flex_item_percent_bases.pop();
     center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, None);
     output
@@ -1972,10 +1970,11 @@ pub(crate) fn flex_layout(
 /// Lay out the grid container `node_id` with taffy's grid algorithm.
 fn grid_layout(tree: &mut Document, node_id: NodeId, inputs: LayoutInput) -> LayoutOutput {
     let idx = usize::from(node_id);
-    let output = compute_grid_layout(tree, node_id, inputs);
+    let mut output = compute_grid_layout(tree, node_id, inputs);
+    oof::layout_local_oof(tree, node_id, &mut output);
     // Taffy reports the tracks only from a layout it performs.
-    let grid = tree.last_grid_info.take().filter(|&(grid, _)| grid == idx);
-    if let Some((_, grid)) = grid {
+    let grid = tree.grid_layout_info.remove(&idx);
+    if let Some(taffy::DetailedLayoutInfo::Grid(grid)) = grid {
         center_absolute_children_in_block_axis(tree, idx, &inputs, output.size, Some(&grid));
     }
     output
@@ -2117,23 +2116,17 @@ impl Document {
     }
 }
 
-/// A block-level child's style as its block container's layout reads it.
+/// A borrowed style query with optional resolved block-child edges.
 ///
-/// Percentage padding and borders refer to the containing block's width on
-/// all four sides (CSS Box 4 §4), but taffy 0.14's block algorithm resolves
-/// a child's top and bottom against the container's height when it lists
-/// the children, which feeds `box-sizing` and the recorded insets. Those
-/// edges are handed over here already resolved against the container's
-/// content-box width, the same basis the child's own layout uses.
-///
-/// Upstream taffy fixed this after 0.14.0 (DioxusLabs/taffy#1187); this
-/// wrapper and [`block_layout`]'s bookkeeping can go once raikiri depends on
-/// a taffy release that carries the fix.
+/// Project block flow supplies its percentage basis here. The public
+/// out-of-flow adapter uses unresolved edges and captures CSS table identity
+/// for [`taffy::LayoutContainingBlock::get_oof_item_style`].
 #[derive(Clone, Copy)]
 pub struct BlockChildStyle<'a> {
     style: &'a Style,
     padding: taffy::Rect<taffy::LengthPercentage>,
     border: taffy::Rect<taffy::LengthPercentage>,
+    oof_table: bool,
 }
 
 impl<'a> BlockChildStyle<'a> {
@@ -2156,11 +2149,13 @@ impl<'a> BlockChildStyle<'a> {
                 style,
                 padding: resolve_vertical(style.padding, basis),
                 border: resolve_vertical(style.border, basis),
+                oof_table: taffy::OofItemStyle::is_table(style),
             },
             None => Self {
                 style,
                 padding: style.padding,
                 border: style.border,
+                oof_table: taffy::OofItemStyle::is_table(style),
             },
         }
     }
@@ -2177,6 +2172,9 @@ impl CoreStyle for BlockChildStyle<'_> {
     }
     fn is_compressible_replaced(&self) -> bool {
         self.style.is_compressible_replaced()
+    }
+    fn is_replaced(&self) -> bool {
+        self.style.is_replaced()
     }
     fn box_sizing(&self) -> taffy::BoxSizing {
         self.style.box_sizing()
@@ -2234,6 +2232,24 @@ impl taffy::BlockItemStyle for BlockChildStyle<'_> {
     }
 }
 
+impl taffy::OofItemStyle for BlockChildStyle<'_> {
+    fn align_self(&self) -> Option<taffy::AlignSelf> {
+        self.style.align_self
+    }
+    fn justify_self(&self) -> Option<taffy::AlignSelf> {
+        self.style.justify_self
+    }
+    fn is_table(&self) -> bool {
+        self.oof_table
+    }
+    fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<String>> {
+        self.style.grid_row.clone()
+    }
+    fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<String>> {
+        self.style.grid_column.clone()
+    }
+}
+
 impl LayoutBlockContainer for Document {
     type BlockContainerStyle<'a>
         = &'a Style
@@ -2273,22 +2289,6 @@ impl LayoutBlockContainer for Document {
             })
             .and_then(|&(_, basis)| basis);
         BlockChildStyle::new(style, basis)
-    }
-
-    /// Overrides the default (which forwards to
-    /// [`LayoutPartialTree::compute_child_layout`] and discards `block_ctx`,
-    /// always starting a fresh Block Formatting Context) so that a
-    /// same-BFC block child — the case `compute_block_layout` calls this
-    /// for — actually continues the caller's [`BlockContext`]. See
-    /// [`Document::compute_child_layout_with_block_ctx`]'s doc for why this
-    /// matters once floats are involved.
-    fn compute_block_child_layout(
-        &mut self,
-        node_id: NodeId,
-        inputs: LayoutInput,
-        block_ctx: Option<&mut BlockContext<'_>>,
-    ) -> LayoutOutput {
-        self.compute_child_layout_with_block_ctx(node_id, inputs, block_ctx)
     }
 }
 
@@ -2384,7 +2384,10 @@ impl LayoutGridContainer for Document {
             .collect::<Vec<_>>()
             .into_boxed_slice();
         self.nodes[parent].grid_column_count = grid_column_count;
-        self.last_grid_info = Some((parent, detailed_grid_info));
+        self.grid_layout_info.insert(
+            parent,
+            taffy::DetailedLayoutInfo::Grid(Box::new(detailed_grid_info)),
+        );
     }
 }
 

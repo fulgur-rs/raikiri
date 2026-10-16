@@ -1,0 +1,196 @@
+use super::BlockFormattingContext;
+use taffy::CollapsibleMarginSet;
+use taffy::{Clear, FloatDirection, Point, Size};
+
+#[test]
+fn rollback_preserves_prior_floats_and_discards_speculative_clearance_and_ceiling() {
+    let mut owner = BlockFormattingContext::new();
+    let mut flow = owner.root_block_context();
+    flow.set_width(100.0);
+    flow.place_floated_box(
+        Size {
+            width: 30.0,
+            height: 20.0,
+        },
+        0.0,
+        FloatDirection::Left,
+        Clear::None,
+        true,
+    );
+    let saved = flow.snapshot();
+    flow.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 40.0,
+        },
+        100.0,
+        FloatDirection::Right,
+        Clear::None,
+        true,
+    );
+    assert_eq!(flow.cleared_threshold(Clear::Right), Some(140.0));
+    flow.commit_strut();
+    flow.restore(&saved);
+    let slot = flow.find_content_slot(0.0, Clear::None, None);
+    assert_eq!((slot.x, slot.y, slot.width), (30.0, 0.0, 70.0));
+    assert_eq!(flow.cleared_threshold(Clear::Left), Some(20.0));
+    assert_eq!(flow.cleared_threshold(Clear::Right), None);
+    assert_eq!(flow.floated_content_height_contribution(), 20.0);
+    assert!(flow.has_adjoining_float(Clear::Left));
+    assert!(!flow.has_adjoining_float(Clear::Right));
+    let placed = flow.place_floated_box(
+        Size {
+            width: 20.0,
+            height: 40.0,
+        },
+        0.0,
+        FloatDirection::Right,
+        Clear::None,
+        false,
+    );
+    assert_eq!(placed, Point { x: 80.0, y: 0.0 });
+}
+
+#[test]
+fn subcontext_maps_float_placement_and_clearance_to_its_local_border_box() {
+    let mut owner = BlockFormattingContext::new();
+    let mut root = owner.root_block_context();
+    root.set_width(200.0);
+    assert!(root.is_bfc_root());
+    {
+        let mut child = root.sub_context(15.0, [10.0, 20.0]);
+        assert!(!child.is_bfc_root());
+        assert_eq!(
+            child.place_floated_box(
+                Size {
+                    width: 30.0,
+                    height: 40.0
+                },
+                5.0,
+                FloatDirection::Left,
+                Clear::None,
+                false
+            ),
+            Point { x: 0.0, y: 5.0 }
+        );
+        assert_eq!(child.cleared_threshold(Clear::Left), Some(45.0));
+        assert_eq!(child.floated_content_height_contribution(), 45.0);
+    }
+    let slot = root.find_content_slot(20.0, Clear::None, None);
+    assert_eq!((slot.x, slot.y, slot.width), (40.0, 20.0, 160.0));
+    assert_eq!(root.cleared_threshold(Clear::Left), Some(60.0));
+    root.add_child_floated_content_height_contribution(60.0);
+    assert_eq!(root.floated_content_height_contribution(), 60.0);
+}
+
+#[test]
+fn nested_leading_strut_retains_signed_ancestor_margins_at_the_hypothetical_origin() {
+    let mut owner = BlockFormattingContext::new();
+    let mut root = owner.root_block_context();
+    let mut child = root.sub_context_for_collapsing_child(
+        10.0,
+        [0.0, 0.0],
+        0.0,
+        CollapsibleMarginSet::from_margin(30.0),
+        false,
+    );
+    assert_eq!(
+        child.hypothetical_top_position(CollapsibleMarginSet::from_margin(-20.0)),
+        Some(0.0)
+    );
+    let grandchild = child.sub_context_for_collapsing_child(
+        5.0,
+        [0.0, 0.0],
+        99.0,
+        CollapsibleMarginSet::from_margin(-40.0),
+        true,
+    );
+    assert_eq!(
+        grandchild.hypothetical_top_position(CollapsibleMarginSet::ZERO),
+        Some(-25.0)
+    );
+    assert_eq!(
+        grandchild.hypothetical_top_position(CollapsibleMarginSet::from_margin(50.0)),
+        Some(-5.0)
+    );
+}
+
+#[test]
+fn committing_flow_freezes_the_leading_float_flags_before_later_children() {
+    let mut owner = BlockFormattingContext::new();
+    let mut root = owner.root_block_context();
+    root.set_width(100.0);
+    root.place_floated_box(
+        Size {
+            width: 10.0,
+            height: 10.0,
+        },
+        0.0,
+        FloatDirection::Left,
+        Clear::None,
+        true,
+    );
+    root.commit_strut();
+    assert!(!root.has_adjoining_float(Clear::Both));
+    assert_eq!(root.top_adjoining_floats(), [true, false]);
+    let flags = {
+        let mut child = root.sub_context(0.0, [0.0, 0.0]);
+        child.place_floated_box(
+            Size {
+                width: 10.0,
+                height: 10.0,
+            },
+            0.0,
+            FloatDirection::Right,
+            Clear::None,
+            true,
+        );
+        child.commit_strut();
+        child.top_adjoining_floats()
+    };
+    root.merge_adjoining_floats(flags);
+    assert!(root.has_adjoining_float(Clear::Right));
+    assert!(!root.has_adjoining_float(Clear::Left));
+    assert_eq!(root.top_adjoining_floats(), [true, false]);
+}
+
+#[test]
+fn independent_context_has_no_outer_float_or_clearance() {
+    let mut outer_owner = BlockFormattingContext::new();
+    let mut outer = outer_owner.root_block_context();
+    outer.set_width(100.0);
+    outer.place_floated_box(
+        Size {
+            width: 30.0,
+            height: 40.0,
+        },
+        0.0,
+        FloatDirection::Left,
+        Clear::None,
+        true,
+    );
+    let mut inner_owner = BlockFormattingContext::new();
+    let mut inner = inner_owner.root_block_context();
+    inner.set_width(100.0);
+    assert!(!inner.has_floats());
+    assert_eq!(inner.cleared_threshold(Clear::Both), None);
+    let slot = inner.find_content_slot(0.0, Clear::None, None);
+    assert_eq!((slot.x, slot.width), (0.0, 100.0));
+    assert!(outer.has_active_floats(0.0));
+}
+
+#[test]
+fn rollback_restores_content_edges_and_origin_resolution() {
+    let mut owner = BlockFormattingContext::new();
+    let mut root = owner.root_block_context();
+    root.set_width(100.0);
+    root.set_origin_resolved(true);
+    root.apply_content_box_inset([10.0, 20.0]);
+    let saved = root.snapshot();
+    root.set_origin_resolved(false);
+    root.apply_content_box_inset([30.0, 40.0]);
+    root.restore(&saved);
+    assert!(root.origin_resolved());
+    let slot = root.find_content_slot(0.0, Clear::None, None);
+    assert_eq!((slot.x, slot.width), (10.0, 70.0));
+}

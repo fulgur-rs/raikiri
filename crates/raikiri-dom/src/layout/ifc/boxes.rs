@@ -6,6 +6,7 @@ use super::generated_blocks;
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
+use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use crate::taffy_impl::resolve_calc;
 use shodo::geometry::{Direction, WritingMode};
 use shodo::{
@@ -15,9 +16,8 @@ use shodo::{
 use std::collections::{HashMap, HashSet};
 use taffy::util::ResolveOrZero;
 use taffy::{
-    AvailableSpace, BlockContext, BlockFormattingContext, Clear, CollapsibleMarginSet,
-    FloatDirection, LayoutBlockContainer, LayoutInput, LayoutPartialTree, Line, RequestedAxis,
-    RunMode, Size, SizingMode,
+    AvailableSpace, Clear, CollapsibleMarginSet, FloatDirection, LayoutInput, LayoutPartialTree,
+    Line, RequestedAxis, RunMode, Size, SizingMode,
 };
 
 /// A child of an ifc root that is not part of the paragraph's text: it is
@@ -1396,7 +1396,6 @@ fn layout_block_child(
             collapse_top,
         );
     }
-    use taffy::LayoutBlockContainer;
     let mut margin = resolved_margins(tree, node, geometry.width);
     let stretch = (geometry.width - margin.left - margin.right).max(0.0);
     let width = used_block_width(tree, node, geometry.width).unwrap_or(stretch);
@@ -1474,7 +1473,7 @@ fn layout_block_child(
             // border or height keep them in (taffy decides and returns them).
             vertical_margins_are_collapsible: Line::TRUE,
         };
-        let output = tree.compute_block_child_layout(
+        let output = tree.compute_child_layout_with_block_ctx(
             taffy::NodeId::from(node),
             inputs,
             Some(&mut child_ctx),
@@ -1623,7 +1622,7 @@ fn layout_vertical_block_child(
     };
     let node_id = taffy::NodeId::from(node);
     let output = if in_the_roots_formatting_context(tree, node) {
-        tree.compute_block_child_layout(node_id, inputs, None)
+        tree.compute_child_layout_with_block_ctx(node_id, inputs, None)
     } else {
         tree.compute_child_layout(node_id, inputs)
     };
@@ -2079,11 +2078,13 @@ fn relative_inset(
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
-    if tree.nodes[node].taffy_position() != taffy::Position::Relative
-        || style.inset.left.is_auto()
-            && style.inset.right.is_auto()
-            && style.inset.top.is_auto()
-            && style.inset.bottom.is_auto()
+    if !matches!(
+        tree.nodes[node].taffy_position(),
+        taffy::Position::Relative | taffy::Position::Sticky
+    ) || style.inset.left.is_auto()
+        && style.inset.right.is_auto()
+        && style.inset.top.is_auto()
+        && style.inset.bottom.is_auto()
     {
         return (0.0, 0.0);
     }

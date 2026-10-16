@@ -16,9 +16,7 @@ impl BoxProperties {
         Self { display, position }
     }
 
-    /// Preserve the style accepted by the programmatic document constructors.
-    /// Taffy merges static and relative positioning; retain the CSS initial
-    /// value until the bridge captures the computed position.
+    /// Preserve the display and position accepted by programmatic constructors.
     pub(crate) fn from_taffy_style(style: &taffy::Style) -> Self {
         let display = match style.display {
             taffy::Display::None => DisplayValue::None,
@@ -28,7 +26,10 @@ impl BoxProperties {
             taffy::Display::Grid => DisplayValue::Grid,
         };
         let position = match style.position {
-            taffy::Position::Relative => PositionValue::Static,
+            taffy::Position::Static => PositionValue::Static,
+            taffy::Position::Relative => PositionValue::Relative,
+            taffy::Position::Fixed => PositionValue::Fixed,
+            taffy::Position::Sticky => PositionValue::Sticky,
             taffy::Position::Absolute => PositionValue::Absolute,
         };
         Self::new(display, position)
@@ -73,11 +74,13 @@ impl BoxProperties {
 
     pub(crate) fn taffy_position(&self) -> taffy::Position {
         if self.display == DisplayValue::Contents {
-            return taffy::Position::Relative;
+            return taffy::Position::Static;
         }
         match self.position() {
             PositionValue::Absolute | PositionValue::Fixed => taffy::Position::Absolute,
-            _ => taffy::Position::Relative,
+            PositionValue::Relative => taffy::Position::Relative,
+            PositionValue::Sticky => taffy::Position::Sticky,
+            _ => taffy::Position::Static,
         }
     }
 
