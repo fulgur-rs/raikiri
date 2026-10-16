@@ -354,3 +354,30 @@ fn a_definite_height_container_breaks_paragraphs_between_its_columns() {
         );
     }
 }
+
+#[test]
+fn paragraphs_past_the_last_column_sit_in_overflow_columns() {
+    // CSS Multi-column Layout 1, 8.2: content that does not fit in the
+    // columns of a definite-height container continues in columns after
+    // them, outside the container.
+    for css in [".mc{height:30px}", ".mc{max-height:30px}"] {
+        let document = lay_out("<div class=mc><p>A</p><p>B</p><p>C</p></div>", css);
+        let runs: Vec<_> = document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect();
+        assert_eq!(
+            runs,
+            [
+                ("A", (0.0, 16.0)),
+                ("B", (60.0, 16.0)),
+                ("C", (120.0, 16.0))
+            ]
+            .map(|(text, origin)| (text.to_owned(), origin)),
+            "{css}"
+        );
+    }
+}

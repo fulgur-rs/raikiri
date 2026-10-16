@@ -134,6 +134,16 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
     assert!(line_ranges_in_columns(&[], context, false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), true).is_empty());
+    // Past the last column of a definite-height container, an overflow
+    // column holds every line.
+    let definite = FragmentationContext {
+        available_height: Some(30.0),
+        ..context
+    };
+    assert_eq!(
+        line_ranges_in_columns(&extents, definite.in_column(3, 300.0, 0.0), false),
+        vec![(0, 5, 3)],
+    );
 }
 
 #[test]
@@ -3343,7 +3353,11 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         multicol_has_only_paragraph_children(&doc, parent)
     };
     assert!(paragraphs("display:block;margin:0"));
-    assert!(paragraphs("display:none"));
+    // A single paragraph keeps the existing path.
+    assert!(!paragraphs("display:none"));
+    assert!(paragraphs(
+        "display:block;padding-left:2px;border-right:2px solid"
+    ));
     for style in [
         "display:grid",
         "display:list-item",
@@ -3352,6 +3366,8 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;height:20px",
         "display:block;min-height:20px",
         "display:block;max-height:20px",
+        "display:block;padding-top:2px",
+        "display:block;border-bottom:2px solid",
     ] {
         assert!(!paragraphs(style), "{style}");
     }
