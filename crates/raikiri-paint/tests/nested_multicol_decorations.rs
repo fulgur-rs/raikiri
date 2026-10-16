@@ -99,3 +99,15 @@ fn cloned_decorations_draw_both_borders_on_every_row_box() {
     );
     assert_eq!(differing_pixels(&actual, &expected), 0);
 }
+
+#[test]
+fn each_row_box_of_a_sliced_nested_container_draws_a_whole_outline() {
+    let actual = raster(&format!(
+        "<div style='{OUTER}'><div style='column-count:1;outline:5px solid blue;outline-offset:-5px'><div style='height:110px'></div></div></div>"
+    ));
+    let expected = raster(
+        "<div style='position:absolute;left:0;top:0;width:70px;height:50px;border:5px solid blue'></div>\
+         <div style='position:absolute;left:90px;top:0;width:70px;height:40px;border:5px solid blue'></div>",
+    );
+    assert_eq!(differing_pixels(&actual, &expected), 0);
+}
