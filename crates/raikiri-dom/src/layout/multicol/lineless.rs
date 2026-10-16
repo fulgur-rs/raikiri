@@ -407,7 +407,8 @@ fn balanced_height_after(
     // themselves bound the height from below: the content left after the
     // fixed columns, shared equally, and the tallest box that avoids breaks
     // and fits within `high` (a taller one breaks anyway).
-    let before: f32 = probe(high).map_or(0.0, |placement| {
+    let reference = probe(high);
+    let before: f32 = reference.as_ref().map_or(0.0, |placement| {
         placement
             .pieces
             .iter()
@@ -417,10 +418,19 @@ fn balanced_height_after(
             .sum()
     });
     let content: f32 = items.iter().map(|item| item.height).sum();
+    // Boxes the fixed columns already hold do not bound the rest.
+    let left = |index: usize| {
+        reference.as_ref().is_none_or(|placement| {
+            placement.pieces[index]
+                .iter()
+                .any(|piece| piece.column >= fixed)
+        })
+    };
     let tallest = items
         .iter()
-        .filter(|item| !item.splittable && item.height <= high + EPSILON)
-        .map(|item| item.height)
+        .enumerate()
+        .filter(|&(index, item)| !item.splittable && item.height <= high + EPSILON && left(index))
+        .map(|(_, item)| item.height)
         .fold(0.0_f32, f32::max);
     let mut low = ((content - before) / column_count as f32).max(tallest);
     if low > 0.0 && low <= high && fits(low) {

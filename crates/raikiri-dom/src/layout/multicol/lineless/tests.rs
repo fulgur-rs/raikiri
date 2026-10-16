@@ -494,3 +494,19 @@ fn a_box_avoiding_breaks_taller_than_a_row_breaks_anyway_in_the_last_row() {
     assert_eq!(rows.heights, vec![100.0, 100.0]);
     assert_eq!(rows.pieces.len(), 4);
 }
+
+#[test]
+fn boxes_of_earlier_rows_do_not_bound_the_balanced_last_row() {
+    let rows = fill_item_rows(
+        &[avoid(100.0), split(250.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        100.0,
+        200.0,
+        usize::MAX,
+    )
+    .unwrap();
+    // The 150px left after the first row share the last row equally.
+    assert_eq!(rows.heights, vec![100.0, 75.0]);
+}
