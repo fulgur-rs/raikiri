@@ -159,3 +159,42 @@ fn rules_that_only_the_rows_of_a_continued_nested_container_have_are_painted() {
         );
     }
 }
+
+#[test]
+fn each_row_box_of_a_continued_nested_container_is_a_slice_of_the_whole_box() {
+    let (mut document, cascade, outer) = crate::layout::test_support::ahem_paragraph_with(
+        "width:200px;height:300px;column-count:1;column-gap:10px",
+        |document, root| {
+            let inner = document.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;height:500px;column-count:1"),
+            );
+            document.append_element(
+                Some(inner),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;height:600px"),
+            );
+        },
+    );
+    let inner = document.nodes[outer].children[0];
+    layout_single_page(&mut document, &cascade, PageBox::default()).unwrap();
+    let second = (0..document.fragment_tree.fragments.len())
+        .find(|&index| {
+            let fragment = &document.fragment_tree.fragments[index];
+            fragment.node_id == inner && fragment.fragmentainer == 1
+        })
+        .unwrap();
+    // A box painted without a record of its own is the first row's.
+    assert_eq!(
+        document.fragment_block_slice(inner, None),
+        Some((0.0, 500.0))
+    );
+    assert_eq!(
+        document.fragment_block_slice(inner, Some(second)),
+        Some((300.0, 500.0))
+    );
+    assert_eq!(document.fragment_block_slice(outer, None), None);
+}

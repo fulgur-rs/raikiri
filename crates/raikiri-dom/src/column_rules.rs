@@ -1,7 +1,7 @@
 //! Producer-owned column rule geometry shared by native and page painters.
 
 use crate::Document;
-use crate::fragment::FragmentationContext;
+use crate::fragment::{FragmentationContext, MulticolGroup};
 use raikiri_style::property::{BorderColor, BorderStyle, CssColor, PositionValue};
 use raikiri_style::{CascadeResult, ComputedValues};
 use raikiri_traits::{LayoutError, NodeId, PaintClip, PaintRect};
@@ -253,7 +253,9 @@ pub(crate) fn prepare(
 impl Document {
     /// The rules of the row of a nested column container's columns in outer
     /// column `fragmentainer`, relative to that row's box.
-    fn row_column_rules(&self, owner: usize, width: f32, fragmentainer: usize) -> Vec<PaintRect> {
+    /// The row of a continued nested container `owner` in outer column
+    /// `fragmentainer`.
+    fn row_in(&self, owner: usize, fragmentainer: usize) -> Option<&MulticolGroup> {
         // Layout records one row per outer column from the first row's on,
         // so the row is found by its offset from the first.
         let rows = &self.nodes[owner].multicol_rows;
@@ -261,6 +263,10 @@ impl Document {
             .and_then(|first| fragmentainer.checked_sub(first.context.column_index))
             .and_then(|row| rows.get(row))
             .filter(|row| row.context.column_index == fragmentainer)
+    }
+
+    fn row_column_rules(&self, owner: usize, width: f32, fragmentainer: usize) -> Vec<PaintRect> {
+        self.row_in(owner, fragmentainer)
             .into_iter()
             .flat_map(|row| {
                 row.occupied
@@ -307,6 +313,30 @@ impl Document {
             .into_iter()
             .map(|rect| ColumnRule::new(owner, rect, values))
             .collect()
+    }
+
+    /// Where the box of `owner` recorded by layout fragment `fragment` lies
+    /// in the whole box it is a slice of: its block offset from the whole
+    /// box's block start, and the whole box's block size. Only the boxes of
+    /// a nested container continued in later outer columns, one per row of
+    /// its columns, are slices; any other box gives `None`.
+    #[doc(hidden)]
+    pub fn fragment_block_slice(
+        &self,
+        owner: usize,
+        fragment: Option<usize>,
+    ) -> Option<(f32, f32)> {
+        let rows = &self.nodes[owner].multicol_rows;
+        let total = rows.last()?.slice?.1;
+        // A box painted without a record of its own is the first row's.
+        let fragmentainer = fragment
+            .and_then(|index| self.fragment_tree.fragments.get(index))
+            .filter(|fragment| fragment.node_id == owner)
+            .map_or(rows.first()?.context.column_index, |fragment| {
+                fragment.fragmentainer
+            });
+        let (start, _) = self.row_in(owner, fragmentainer)?.slice?;
+        Some((start, total))
     }
 
     /// Producer-computed rules relative to the owner's border-box origin.
