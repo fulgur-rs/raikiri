@@ -814,7 +814,16 @@ impl NamedValues {
         let mut last_elements = std::collections::HashMap::<&SmolStr, usize>::new();
         let mut last_strings =
             std::collections::HashMap::<&SmolStr, (usize, &[ContentComponent])>::new();
-        for (idx, computed) in cascade.computed.iter().enumerate() {
+        // Tree order, not arena order: nodes moved or inserted after parsing
+        // sit in the arena by when they were created.
+        let in_document = document.preorder(document.root_index()).filter(|&idx| {
+            document
+                .nodes
+                .get(idx)
+                .is_some_and(|node| node.is_in_document())
+        });
+        for idx in in_document {
+            let computed = &cascade.computed[idx];
             for template in &computed.running_templates {
                 last_elements.insert(&template.name, idx);
             }
