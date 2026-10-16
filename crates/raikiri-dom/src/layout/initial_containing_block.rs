@@ -18,6 +18,21 @@ pub(crate) fn prepare_root_element(document: &mut Document) {
     }
 }
 
+/// The element whose writing mode and direction the ICB takes: the HTML
+/// `body` element when the root is `html` and has one, else the root
+/// (CSS Writing Modes 3 §8, principal writing mode).
+fn principal_element(document: &Document, root: usize) -> usize {
+    if document.nodes[root].tag_name() != Some("html") {
+        return root;
+    }
+    document.nodes[root]
+        .children
+        .iter()
+        .copied()
+        .find(|&child| document.nodes[child].tag_name() == Some("body"))
+        .unwrap_or(root)
+}
+
 /// Install a definite page-area box in the layout arena and return its key.
 pub(crate) fn prepare(document: &mut Document, width: f32, height: f32) -> usize {
     let mut node = Node::new_element(
@@ -36,8 +51,9 @@ pub(crate) fn prepare(document: &mut Document, width: f32, height: f32) -> usize
     );
     if let Some(root) = root_element(document) {
         node.children.push(root);
-        node.used_writing_mode = document.nodes[root].used_writing_mode;
-        node.style.direction = document.nodes[root].style.direction;
+        let principal = principal_element(document, root);
+        node.used_writing_mode = document.nodes[principal].used_writing_mode;
+        node.style.direction = document.nodes[principal].style.direction;
     }
     document.nodes.set_initial_containing_block(node)
 }

@@ -45,7 +45,6 @@ css/css-backgrounds/background-attachment-fixed-block-002.html | Mismatches on L
 css/css-backgrounds/background-attachment-fixed-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-local-block-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-attachment-local-inline-002.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-backgrounds/background-clip/clip-border-area-on-body-not-propagated-to-root.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-image-007.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/background-position-calc-minmax-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-backgrounds/border-radius-clipping-with-transform-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
@@ -66,7 +65,6 @@ css/css-flexbox/content-height-with-scrollbars.html | Mismatches on Linux since 
 css/css-flexbox/flexbox-definite-cross-size-constrained-percentage.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox-margin-auto-horiz-002.xhtml | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/flexbox_justifycontent-left-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-flexbox/flexbox_quirks_body.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
@@ -88,7 +86,6 @@ css/css-page/fixedpos-006-print.html | On the 0.5in-margin print page, the singl
 css/css-page/page-name-002-print.html | On the 0.5in-margin print page, the single-page paint draws content of the neighbouring page: the line after each forced break also shows in the bottom margin of the page before it | RAIKIRI-287 | 2026-10-14 | 2026-12-14
 css/css-break/root-margin-001-print.html | The root element's 10in block-start margin is not truncated at the unforced break, so the 192px-tall page area turns it into five blank pages instead of one | RAIKIRI-288 | 2026-10-14 | 2026-12-14
 css/css-multicol/column-balancing-paged-001-print.html | On the 5in x 3in print page the multicol content breaks across pages differently from the reference from page 2 on | RAIKIRI-289 | 2026-10-14 | 2026-12-14
-css/css-page/page-box-000-print.html | The reference's root border is painted at the paper edge instead of around the page area inside the 0.5in margins, and does not inset the content | RAIKIRI-262 | 2026-10-14 | 2026-12-14
 css/css-page/page-size-006-print.html | The harness default font sets "second page" 176px wide, so it wraps on the 164px line of the test but not on the 182px line of the reference; it passed only while the harness reflowed text at the page area width | RAIKIRI-293 | 2026-10-14 | 2026-12-14
 css/CSS2/visudet/content-height-004.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
 css/css-backgrounds/background-attachment-fixed-border-radius-offset.html | The image painting differs from the reference once the images load; it matched only with images left out | RAIKIRI-320 | 2026-10-14 | 2026-12-14
@@ -151,3 +148,6 @@ css/css-text/text-group-align/text-group-align-start.html | text-group-align is 
 css/css-writing-modes/text-combine-upright-compression-001.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
 css/css-writing-modes/text-combine-upright-shadow.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
 css/css-text-decor/text-decoration-inset-016.html | The reference positions abspos headings at 10em and 12em and assumes one line; with the WPT fonts shrink-to-fit correctly wraps those reference headings | RAIKIRI-390 | 2026-10-16 | 2026-12-16
+css/css-flexbox/gap-003-lr.html | Flex containers in vertical writing modes are laid out on horizontal axes, so block-size sets the physical height; it matched only while the body ignored its writing mode and filled the page | RAIKIRI-312 | 2026-10-16 | 2026-12-16
+css/css-flexbox/gap-003-rl.html | Flex containers in vertical writing modes are laid out on horizontal axes, so block-size sets the physical height; it matched only while the body ignored its writing mode and filled the page | RAIKIRI-312 | 2026-10-16 | 2026-12-16
+css/css-ruby/ruby-line-break-suppression-005.html | A trailing soft hyphen followed by collapsible white space breaks the line and adds an empty line; it matched only while the body ignored its 1px width | RAIKIRI-396 | 2026-10-16 | 2026-12-16
