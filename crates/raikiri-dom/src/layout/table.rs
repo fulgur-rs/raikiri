@@ -2632,6 +2632,28 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
 fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
     let n = grid.n_cols as usize;
     let mut fixed: Vec<Option<f32>> = vec![None; n];
+    // A specified `<col>` width takes priority over first-row cell widths
+    // (CSS 2.1 §17.5.2.1).
+    // Percentages resolve against the same avail basis as cell percentages.
+    for (c, sz) in grid.col_widths.iter().enumerate() {
+        if c >= n {
+            continue;
+        }
+        let minimum = resolve_dimension(sz.min_width, None);
+        let maximum = resolve_dimension(sz.max_width, None);
+        if let Some(mut x) = fixed_column_width(sz.width, avail) {
+            if let Some(minimum) = minimum {
+                x = f32_max_compat(x, minimum);
+            }
+            if let Some(maximum) = maximum
+                && !minimum.is_some_and(|minimum| minimum > maximum)
+            {
+                x = x.min(maximum);
+            }
+            fixed[c] = Some(x);
+        }
+    }
+    // First-row cells set widths only for columns without a specified `<col>` width.
     for cell in &grid.cells {
         if cell.row != 0 || cell.col_span != 1 {
             continue;
@@ -2641,20 +2663,14 @@ fn resolve_fixed_column_widths(grid: &TableGrid, avail: f32) -> Vec<f32> {
             fixed[c] = fixed_column_width(cell.specified_width, avail);
         }
     }
-    // `<col>` widths fix columns with no first-row cell width (CSS 2.1 §17.5.2.1).
-    // Percentages resolve against the same avail basis as cell percentages.
-    // Length min/max clamp the fallback (same min-wins rule as auto path).
+    // A `<col>` minimum fixes an otherwise unspecified column.
     for (c, sz) in grid.col_widths.iter().enumerate() {
         if c >= n || fixed[c].is_some() {
             continue;
         }
         let minimum = resolve_dimension(sz.min_width, None);
         let maximum = resolve_dimension(sz.max_width, None);
-        let v = fixed_column_width(sz.width, avail).or(minimum);
-        if let Some(mut x) = v {
-            if let Some(minimum) = minimum {
-                x = f32_max_compat(x, minimum);
-            }
+        if let Some(mut x) = minimum {
             if let Some(maximum) = maximum
                 && !minimum.is_some_and(|minimum| minimum > maximum)
             {
