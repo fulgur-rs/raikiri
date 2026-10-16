@@ -465,6 +465,29 @@ fn boxes_inside_a_z_auto_positioned_box_sort_with_the_boxes_around_it() {
 }
 
 #[test]
+fn boxes_handed_on_twice_keep_tree_order_within_a_level() {
+    // `a` comes before `b` in the tree, and both have level 10, so `a`
+    // paints first although it reaches the layer through one more
+    // `z-index: auto` box.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div id=x style='{item};z-index:20'></div></div>\
+             <div><div id=p style='position:relative'><div id=q style='position:relative'>\
+             <div id=a style='{item};z-index:10'></div></div>\
+             <div id=b style='{item};z-index:10'></div></div></div>"
+        ),
+        0,
+    );
+    let (a, b, x) = (
+        position(&events, "Box(a)"),
+        position(&events, "Box(b)"),
+        position(&events, "Box(x)"),
+    );
+    assert!(a < b && b < x, "{events:?}");
+}
+
+#[test]
 fn boxes_inside_many_z_auto_positioned_boxes_sort_together() {
     // Each `z-index: auto` box hands on its box as it paints; all of them
     // still end up in one order by level, the lowest level first.

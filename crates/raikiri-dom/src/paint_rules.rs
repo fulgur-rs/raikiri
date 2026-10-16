@@ -630,15 +630,15 @@ pub struct PositionedQueue<F> {
 }
 
 /// The order of a box in a [`PositionedQueue`]: the run of boxes it sorts
-/// in, its stack level, and its place in the tree, as the place of each box
-/// that handed it on, outermost first, followed by its index among the
-/// boxes handed on with it.
+/// in, its stack level, and its place in the tree, as the index of each box
+/// that handed it on among the boxes listed with that box, outermost first,
+/// followed by its own. Compared as a whole, the places follow tree order:
+/// the boxes a box hands on come after it and before the boxes after it.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct PositionedKey {
     run: usize,
     level: i32,
     place: Vec<usize>,
-    index: usize,
 }
 
 impl<F: Clone> PositionedQueue<F> {
@@ -672,7 +672,6 @@ impl<F: Clone> PositionedQueue<F> {
                 run,
                 level,
                 place: vec![at],
-                index: 0,
             };
             if held_levels(document, cascade, id) != HeldLevels::None
                 && !hoists_positioned_content(document, cascade, id)
@@ -700,16 +699,15 @@ impl<F: Clone> PositionedQueue<F> {
             return; // cov:ignore: no box has been taken yet
         };
         let clip = self.boxes[taken].0;
-        let mut place = last.place;
-        place.push(last.index);
         let mut index = 0;
         self.push(frames, clip, &kind, |id| {
+            let mut place = last.place.clone();
+            place.push(index);
             index += 1;
             PositionedKey {
                 run: last.run,
                 level: positioned_layer_level(document, cascade, id),
-                place: place.clone(),
-                index,
+                place,
             }
         });
     }
