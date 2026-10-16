@@ -2946,6 +2946,7 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
         | PropertyValue::ContextualColor(_)
+        | PropertyValue::ContextualShorthand(_)
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::LineBreak(_)
@@ -3054,8 +3055,19 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
                 {
                     target.color = color;
                 }
-            } else {
+            } else if value.key == crate::property::PropertyKey::BackgroundColor {
                 target.background_color_expression = Some(value.source);
+            } else {
+                target.set_contextual_color(value.key, Some(value.source));
+            }
+        }
+        // Cascade expansion replaces the shorthand first; a direct caller
+        // gets the same longhands.
+        PropertyValue::ContextualShorthand(shorthand) => {
+            let crate::property::ContextualShorthand { value, colors } = *shorthand;
+            apply_value(value, target);
+            for color in colors {
+                apply_value(PropertyValue::ContextualColor(color), target);
             }
         }
         PropertyValue::FontFamily(f) => target.font_family = f,
@@ -3216,10 +3228,22 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::BorderRightStyle(v) => target.border.right.style = v,
         PropertyValue::BorderBottomStyle(v) => target.border.bottom.style = v,
         PropertyValue::BorderLeftStyle(v) => target.border.left.style = v,
-        PropertyValue::BorderTopColor(v) => target.border.top.color = v,
-        PropertyValue::BorderRightColor(v) => target.border.right.color = v,
-        PropertyValue::BorderBottomColor(v) => target.border.bottom.color = v,
-        PropertyValue::BorderLeftColor(v) => target.border.left.color = v,
+        PropertyValue::BorderTopColor(v) => {
+            target.border.top.color = v;
+            target.set_contextual_color(crate::property::PropertyKey::BorderTopColor, None);
+        }
+        PropertyValue::BorderRightColor(v) => {
+            target.border.right.color = v;
+            target.set_contextual_color(crate::property::PropertyKey::BorderRightColor, None);
+        }
+        PropertyValue::BorderBottomColor(v) => {
+            target.border.bottom.color = v;
+            target.set_contextual_color(crate::property::PropertyKey::BorderBottomColor, None);
+        }
+        PropertyValue::BorderLeftColor(v) => {
+            target.border.left.color = v;
+            target.set_contextual_color(crate::property::PropertyKey::BorderLeftColor, None);
+        }
         // Border longhand CSS-wide markers are resolved in `apply_winners` before
         // reaching here (they need the parent computed value or rollback candidates).
         // Keep them panic-free for direct callers that bypass that phase.
@@ -3280,7 +3304,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Overflow(pair) => expand_overflow(pair, |v| apply_value(v, target)),
         PropertyValue::TextDecorationLine(v) => target.text_decoration_line = v,
         PropertyValue::TextDecorationStyle(v) => target.text_decoration_style = v,
-        PropertyValue::TextDecorationColor(v) => target.text_decoration_color = v,
+        PropertyValue::TextDecorationColor(v) => {
+            target.text_decoration_color = v;
+            target.set_contextual_color(crate::property::PropertyKey::TextDecorationColor, None);
+        }
         PropertyValue::TextDecorationThickness(v) => target.text_decoration_thickness = v,
         PropertyValue::TextDecorationSkipInk(v) => target.text_decoration_skip_ink = v,
         PropertyValue::TextDecorationSkipSpaces(v) => target.text_decoration_skip_spaces = v,
@@ -3391,7 +3418,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Outline(outline) => expand_outline(outline, |v| apply_value(v, target)),
         PropertyValue::OutlineWidth(v) => target.outline.width = v,
         PropertyValue::OutlineStyle(v) => target.outline.style = v,
-        PropertyValue::OutlineColor(v) => target.outline.color = v,
+        PropertyValue::OutlineColor(v) => {
+            target.outline.color = v;
+            target.set_contextual_color(crate::property::PropertyKey::OutlineColor, None);
+        }
         PropertyValue::OutlineOffset(v) => target.outline_offset = v,
         PropertyValue::GridArea(area) => {
             let area = Arc::unwrap_or_clone(area);
@@ -3489,8 +3519,14 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ColumnWidth(value) => target.column_width = value,
         PropertyValue::ColumnRuleWidth(value) => target.column_rule.width = value,
         PropertyValue::ColumnRuleStyle(value) => target.column_rule.style = value,
-        PropertyValue::ColumnRuleColor(value) => target.column_rule.color = value,
-        PropertyValue::ColumnRule(value) => target.column_rule = value,
+        PropertyValue::ColumnRuleColor(value) => {
+            target.column_rule.color = value;
+            target.set_contextual_color(crate::property::PropertyKey::ColumnRuleColor, None);
+        }
+        PropertyValue::ColumnRule(value) => {
+            target.column_rule = value;
+            target.set_contextual_color(crate::property::PropertyKey::ColumnRuleColor, None);
+        }
         // cov:ignore: direct unexpanded shorthand callers are defensive-only.
         PropertyValue::Columns(value) => {
             target.column_count = value.count;

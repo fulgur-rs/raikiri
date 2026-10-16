@@ -79,10 +79,14 @@ fn node_name(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<J
 
 /// DOM §4.9 "HTML-uppercased qualified name" for HTML-namespace elements.
 fn html_uppercased_name(doc: &raikiri_dom::Document, index: usize, tag: &str) -> String {
+    let qualified = match doc.element_prefix(index) {
+        Some(prefix) => format!("{prefix}:{tag}"),
+        None => tag.to_owned(),
+    };
     if doc.element_namespace_uri(index) == Some(super::interfaces::HTML_NS) {
-        tag.to_ascii_uppercase()
+        qualified.to_ascii_uppercase()
     } else {
-        tag.to_owned()
+        qualified
     }
 }
 
@@ -351,8 +355,12 @@ fn set_attribute_ns(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     };
     let qualified_name = dom_string(args, 1, context)?;
     let value = dom_string(args, 2, context)?;
-    let (namespace, prefix, local) =
-        super::document::validate_and_extract(context, namespace, &qualified_name)?;
+    let (namespace, prefix, local) = super::document::validate_and_extract(
+        context,
+        namespace,
+        &qualified_name,
+        super::document::NameContext::Attribute,
+    )?;
     let Some(namespace) = namespace else {
         if !local.bytes().any(|byte| byte.is_ascii_uppercase()) {
             // Without an uppercase letter, the exact name is the one
@@ -365,7 +373,7 @@ fn set_attribute_ns(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
         }
         with_state(context, |s| {
             let had_css_type = super::stylesheet::has_css_type(s.host.document(), index);
-            // cov:ignore: `validate_and_extract` accepted `local` as an XML name.
+            // cov:ignore: `validate_and_extract` accepted `local` as an attribute local name.
             let _ = s
                 .host
                 .document_mut()

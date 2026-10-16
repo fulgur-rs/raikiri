@@ -38,6 +38,17 @@ pub fn is_supported_property_name(name: &str) -> bool {
 /// Produce a `PropertyValue` from a property name and parser.
 /// Return `None` for an unknown name or invalid value.
 pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyValue> {
+    let start = input.position();
+    let value = parse_value_with_black_currentcolor(name, input)?;
+    Some(with_contextual_colors(value, input.slice_from(start)))
+}
+
+/// [`parse_value`] before [`with_contextual_colors`] restores the symbolic
+/// `currentcolor` in border, outline, column-rule and text-decoration colors.
+fn parse_value_with_black_currentcolor(
+    name: &str,
+    input: &mut Parser<'_, '_>,
+) -> Option<PropertyValue> {
     if is_custom_property_name(name) {
         let value = consume_deferred_value(input)?;
         return Some(PropertyValue::CustomProperty(CustomProperty {

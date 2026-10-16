@@ -600,6 +600,7 @@ pub(super) fn paginate(
                 ..context
             },
             height,
+            slice: None,
             occupied,
         });
         result.end = group_y + height;

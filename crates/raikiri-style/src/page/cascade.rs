@@ -379,20 +379,13 @@ impl PageMarginBoxCascadeResult {
         for declaration in &mut merged.declarations {
             if let PropertyValue::ContextualColor(expression) = &declaration.value {
                 let is_color = expression.key == PropertyKey::Color;
-                let color = crate::property::resolve_contextual_color(
-                    &expression.source,
-                    if is_color { inherited.color } else { own_color },
-                )
-                .unwrap_or(if is_color {
-                    inherited.color
-                } else {
-                    CssColor::TRANSPARENT
-                });
-                let resolved = if is_color {
-                    PropertyValue::Color(color)
-                } else {
-                    PropertyValue::BackgroundColor(color)
-                };
+                let resolved = expression
+                    .resolved_value(if is_color { inherited.color } else { own_color })
+                    .unwrap_or(if is_color {
+                        PropertyValue::Color(inherited.color)
+                    } else {
+                        PropertyValue::BackgroundColor(CssColor::TRANSPARENT)
+                    });
                 declaration.update_value(|value| *value = resolved);
             }
         }
@@ -1726,20 +1719,12 @@ pub(crate) fn cascade_page_with_normal_line_height(
     };
     for (key, value) in &mut resolved {
         if let PropertyValue::ContextualColor(color) = value.as_property_value()
-            && let Some(color) = crate::property::resolve_contextual_color(
-                &color.source,
-                if *key == PropertyKey::Color {
-                    inherited.color
-                } else {
-                    own_color
-                },
-            )
-        {
-            let value_resolved = if *key == PropertyKey::Color {
-                PropertyValue::Color(color)
+            && let Some(value_resolved) = color.resolved_value(if *key == PropertyKey::Color {
+                inherited.color
             } else {
-                PropertyValue::BackgroundColor(color)
-            };
+                own_color
+            })
+        {
             *value = resolve_against_inherited(value_resolved, inherited, &ctx);
         }
     }

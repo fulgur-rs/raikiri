@@ -125,6 +125,9 @@ pub(crate) struct MulticolGroup {
     pub(crate) context: FragmentationContext,
     pub(crate) height: f32,
     pub(crate) occupied: std::collections::BTreeSet<usize>,
+    /// The block range of this row's box within the whole box that the rows
+    /// of a continued nested container slice; other groups have none.
+    pub(crate) slice: Option<(f32, f32)>,
 }
 
 /// A resumable point in a fragmented child flow.

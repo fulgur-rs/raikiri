@@ -167,9 +167,9 @@ fn serialize_inner_html_keeps_digit_leading_attribute_names() {
         doc.serialize_inner_html(host).unwrap(),
         "<span 1bad=\"x\"></span>"
     );
-    // The single setter still rejects the same name: that check belongs to
-    // DOM `setAttribute`, not to fragment serialization.
-    assert!(doc.set_element_attribute(span, "2bad", "y").is_err());
+    // The single setter still rejects names DOM `setAttribute` rejects: that
+    // check belongs to it, not to fragment serialization.
+    assert!(doc.set_element_attribute(span, "2 bad", "y").is_err());
 
     let mut spaced = Document::new();
     let spaced_host = spaced.append_element(Some(0), "div", Style::default(), None::<&str>);
