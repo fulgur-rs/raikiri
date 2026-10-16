@@ -111,10 +111,31 @@ fn is_transformable_with_properties(
 ) -> bool {
     // spec: https://www.w3.org/TR/css-transforms-1/#terminology
     // Non-replaced inline and table-column boxes are not transformable.
-    !matches!(
+    !generates_table_column_box(document, id, cv, properties)
+        && !generates_inline_box_with_properties(document, id, cv, properties)
+}
+
+/// Whether the element's `display: table-column` or `table-column-group`
+/// survives blockification (CSS Display 3 §2.7): the root, out-of-flow boxes
+/// and flex and grid items become block boxes instead.
+fn generates_table_column_box(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+    properties: BoxPropertiesRef<'_>,
+) -> bool {
+    matches!(
         properties.display(),
         DisplayValue::TableColumn | DisplayValue::TableColumnGroup
-    ) && !generates_inline_box_with_properties(document, id, cv, properties)
+    ) && !super::ifc::assign::is_layout_root(document, id)
+        && !matches!(
+            properties.position(),
+            PositionValue::Absolute | PositionValue::Fixed
+        )
+        && cv.float == FloatValue::None
+        && !BoxTree::for_layout(document)
+            .parent(id, BoxParentScope::LayoutRoot)
+            .is_some_and(|parent| document.nodes[parent].display().is_flex_or_grid_container())
 }
 
 /// Whether layout and paint containment apply to the element.

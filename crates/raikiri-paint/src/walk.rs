@@ -6161,6 +6161,7 @@ pub(crate) fn paint_inline_box(
     piece: &raikiri_dom::InlineBoxPiece,
     background_slice: Option<&crate::ifc_text::BackgroundSlice>,
     progression: InlineProgression,
+    transformed: bool,
     x: f32,
     y: f32,
     pixel_source: Option<&dyn ImagePixelSource>,
@@ -6186,9 +6187,9 @@ pub(crate) fn paint_inline_box(
         raikiri_style::resolve::ComputedLengthPercentageOrCalc::Px(0.0),
     );
     // The same rule as the element visit: radii only for a box that draws a
-    // border or a background, and never under a filter. An inline box is
-    // not transformable, so its transform does not apply (CSS Transforms 1
-    // §3).
+    // border or a background, and never under a filter or an applied
+    // transform. `transformed` is false for a non-replaced inline box, which
+    // is not transformable (CSS Transforms 1 §3), whatever its `transform`.
     let has_background_image = cv.has_background_image();
     let joined_radius = |border: &Sides<raikiri_style::resolve::ComputedBorder>| {
         let has_border = [&border.top, &border.right, &border.bottom, &border.left]
@@ -6197,6 +6198,7 @@ pub(crate) fn paint_inline_box(
         paintable_border_radius(
             &cv.border_radius,
             (has_border || cv.background_color.a > 0 || has_background_image)
+                && !transformed
                 && cv.filter.is_empty(),
         )
     };

@@ -429,3 +429,47 @@ fn transforms_on_inline_boxes_change_nothing() {
         recorded(body, css),
     );
 }
+
+#[test]
+fn transformed_atomic_inlines_keep_square_corners() {
+    // The element visit drops corner radii under an applied transform; the
+    // inline engine paints atomic inline boxes and atomic `::before` boxes
+    // with the same rule.
+    let image = "url(\"data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E\")";
+    for (body, css) in [
+        (
+            "<p>a<span class=b></span>b</p>",
+            ".b { display: inline-block; width: 20px; height: 10px; \
+             background: red; transform: rotate(10deg) }"
+                .to_string(),
+        ),
+        (
+            "<p>ab</p>",
+            format!(
+                "p::before {{ content: {image}; padding: 2px; background: red; \
+                 transform: rotate(10deg) }}"
+            ),
+        ),
+    ] {
+        assert_eq!(
+            recorded(
+                body,
+                &format!("{css} .b, p::before {{ border-radius: 4px }}")
+            ),
+            recorded(body, &css),
+            "{css}",
+        );
+    }
+}
+
+#[test]
+fn blockified_table_columns_take_their_transform() {
+    // CSS Display 3 §2.7: a grid item's `table-column` is blockified, so the
+    // box is transformable.
+    let body = "<div style=\"display: grid\"><div class=c></div></div>";
+    let css = ".c { display: table-column; background: red; height: 10px }";
+    assert_ne!(
+        recorded(body, &format!("{css} .c {{ transform: translateX(5px) }}")),
+        recorded(body, css),
+    );
+}

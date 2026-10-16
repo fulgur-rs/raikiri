@@ -372,6 +372,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 vertical: true,
                 reversed: false,
             },
+            transform_applies(document, cascade, piece.node, cv),
             x,
             y,
             pixel_source,
@@ -480,6 +481,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                     writing_mode,
                     cv.direction == raikiri_style::property::Direction::Rtl,
                 ),
+                transform_applies(document, cascade, piece.node, cv),
                 position.x + dx,
                 position.y + position.shift_y + dy - line_shift,
                 pixel_source,
@@ -1071,3 +1073,19 @@ fn draw_shadow(
 
 #[cfg(test)]
 mod tests;
+
+/// Whether the box of the element or pseudo-element `id` that an inline
+/// piece paints has a transform that applies to it: an atomic `::before` or
+/// `::after` with a transform, or a transformable element with one.
+fn transform_applies(
+    document: &Document,
+    cascade: &CascadeResult,
+    id: usize,
+    cv: &raikiri_style::ComputedValues,
+) -> bool {
+    if generated_origin(id).is_some() {
+        raikiri_dom::paint_rules::pseudo_transform(cascade, id).is_some()
+    } else {
+        document.get_node(id).is_some() && raikiri_dom::has_applied_transform(document, id, cv)
+    }
+}
