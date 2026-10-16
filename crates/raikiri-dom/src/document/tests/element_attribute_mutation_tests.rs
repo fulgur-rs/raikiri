@@ -28,6 +28,48 @@ fn xml_name_validation_accepts_the_non_ascii_name_ranges() {
 }
 
 #[test]
+fn dom_name_rules_follow_the_validate_and_extract_definitions() {
+    for name in ["a", "a@b", "x\u{e9}/", "Ab-1", "a:b", "a\u{1}"] {
+        assert_eq!(
+            is_valid_element_local_name(name),
+            !name.ends_with('/'),
+            "{name:?}"
+        );
+    }
+    for name in [":a", "_a.b", "\u{e9}x", "\u{e9}\u{1F196}", "_-.:9"] {
+        assert!(is_valid_element_local_name(name), "{name:?}");
+    }
+    for name in ["", "1a", "-a", "_a b", ":a@", "a b", "a\0", "a>", "\u{e9}="] {
+        assert!(!is_valid_element_local_name(name), "{name:?}");
+    }
+    for name in ["1a", "data@x", "a:b", "\u{e9}", "@"] {
+        assert!(is_valid_attribute_local_name(name), "{name:?}");
+        assert!(is_valid_namespace_prefix(name), "{name:?}");
+    }
+    for name in [
+        "", "a b", "a\tb", "a\nb", "a\u{c}b", "a\rb", "a\0", "a/b", "a>b",
+    ] {
+        assert!(!is_valid_attribute_local_name(name), "{name:?}");
+        assert!(!is_valid_namespace_prefix(name), "{name:?}");
+    }
+    assert!(!is_valid_attribute_local_name("a=b"));
+    assert!(is_valid_namespace_prefix("a=b"));
+
+    let mut doc = Document::new();
+    assert!(doc.create_detached_element("1a").is_err());
+    let element = doc.create_detached_element("a\u{e9}").unwrap();
+    doc.set_element_attribute(element, "data@x", "1").unwrap();
+    doc.set_element_namespaced_attribute(element, "urn:x", None, "1a", "2")
+        .unwrap();
+    assert!(doc.set_element_attribute(element, "a=b", "3").is_err());
+    assert_eq!(
+        doc.remove_element_attribute(element, "data@x"),
+        Ok(Some("1".into()))
+    );
+    assert!(doc.remove_element_attribute(element, "a b").is_err());
+}
+
+#[test]
 #[should_panic(expected = "set_element_attribute called on non-Element")]
 fn set_element_attribute_panics_for_a_non_element() {
     let mut doc = Document::new();

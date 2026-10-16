@@ -81,6 +81,43 @@ fn is_valid_xml_name(name: &str) -> bool {
     chars.next().is_some_and(is_xml_name_start) && chars.all(is_xml_name_char)
 }
 
+/// Whether `ch` may not appear in a DOM attribute local name or namespace
+/// prefix: ASCII whitespace, U+0000 NULL, `/` and `>`.
+fn is_dom_name_breaker(ch: char) -> bool {
+    matches!(ch, '\t' | '\n' | '\u{C}' | '\r' | ' ' | '\0' | '/' | '>')
+}
+
+/// DOM "valid namespace prefix"
+/// <https://dom.spec.whatwg.org/#valid-namespace-prefix>: non-empty, with
+/// no ASCII whitespace, NULL, `/` or `>`.
+pub fn is_valid_namespace_prefix(prefix: &str) -> bool {
+    !prefix.is_empty() && !prefix.chars().any(is_dom_name_breaker)
+}
+
+/// DOM "valid attribute local name"
+/// <https://dom.spec.whatwg.org/#valid-attribute-local-name>: a valid
+/// namespace prefix that also has no `=`.
+pub fn is_valid_attribute_local_name(name: &str) -> bool {
+    is_valid_namespace_prefix(name) && !name.contains('=')
+}
+
+/// DOM "valid element local name"
+/// <https://dom.spec.whatwg.org/#valid-element-local-name>. A name that
+/// starts with an ASCII letter only excludes the characters a valid
+/// namespace prefix excludes. Any other name must start with `:`, `_` or a
+/// non-ASCII code point and continue with ASCII alphanumerics, `-`, `.`,
+/// `:`, `_` or non-ASCII code points.
+pub fn is_valid_element_local_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() => !chars.any(is_dom_name_breaker),
+        Some(first) if matches!(first, ':' | '_') || !first.is_ascii() => chars.all(|ch| {
+            ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | ':' | '_') || !ch.is_ascii()
+        }),
+        _ => false,
+    }
+}
+
 fn qualified_name(prefix: Option<&str>, local: &str) -> String {
     prefix.map_or_else(|| local.to_owned(), |prefix| format!("{prefix}:{local}"))
 }
@@ -722,7 +759,7 @@ impl Document {
 
     /// Create an HTML element without attaching it to a parent.
     pub fn create_detached_element(&mut self, tag: &str) -> Result<usize, String> {
-        if !is_valid_xml_name(tag) {
+        if !is_valid_element_local_name(tag) {
             return Err(format!("invalid HTML element name: {tag:?}"));
         }
         Ok(self.append_element(None, tag, Style::default(), None::<&str>))
@@ -1274,7 +1311,7 @@ impl Document {
     ) -> Result<(), String> {
         let namespace = namespace.into();
         let local = local.into();
-        if namespace.is_empty() || !is_valid_xml_name(local.as_str()) {
+        if namespace.is_empty() || !is_valid_attribute_local_name(local.as_str()) {
             return Err("invalid namespace-qualified attribute name".to_owned());
         }
         let value = value.into();
@@ -1311,8 +1348,9 @@ impl Document {
     /// it does not invalidate layout caches or mark tree membership dirty.
     /// Stored page placements and links are cleared.
     ///
-    /// Returns an error when `local` is not an XML name. HTML-namespace element
-    /// names are ASCII-lowercased; foreign-content names preserve their case.
+    /// Returns an error when `local` is not a valid DOM attribute local name.
+    /// HTML-namespace element names are ASCII-lowercased; foreign-content
+    /// names preserve their case.
     ///
     /// Panics (debug + release): `id` is not an Element.
     pub fn set_element_attribute(
@@ -1346,7 +1384,7 @@ impl Document {
         value: SmolStr,
         fold_html_case: bool,
     ) -> Result<(), String> {
-        if !is_valid_xml_name(local.as_str()) {
+        if !is_valid_attribute_local_name(local.as_str()) {
             return Err(format!("invalid attribute name: {local}"));
         }
         self.page_projection.clear();
@@ -1459,8 +1497,9 @@ impl Document {
     /// caches or mark tree membership dirty.
     /// Stored page placements and links are cleared.
     ///
-    /// Returns an error when `local` is not an XML name. HTML-namespace element
-    /// names are ASCII-lowercased; foreign-content names preserve their case.
+    /// Returns an error when `local` is not a valid DOM attribute local name.
+    /// HTML-namespace element names are ASCII-lowercased; foreign-content
+    /// names preserve their case.
     ///
     /// Panics (debug + release): `id` is not an Element.
     pub fn remove_element_attribute(
@@ -1468,7 +1507,7 @@ impl Document {
         id: usize,
         local: &str,
     ) -> Result<Option<SmolStr>, String> {
-        if !is_valid_xml_name(local) {
+        if !is_valid_attribute_local_name(local) {
             return Err(format!("invalid attribute name: {local}"));
         }
         self.page_projection.clear();

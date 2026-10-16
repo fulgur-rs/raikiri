@@ -83,7 +83,7 @@ fn create_element_ns_rejects_an_invalid_qualified_name() {
     );
     ok(
         &mut rt,
-        "try { document.createElementNS('urn:x', 'a:b:c'); false } \
+        "try { document.createElementNS('urn:x', 'a:1'); false } \
          catch (e) { e.name === 'InvalidCharacterError' }",
     );
 }
@@ -309,24 +309,43 @@ fn document_url_and_document_uri_default_to_about_blank() {
     );
 }
 
-/// [`super::is_xml_name_start`]/[`super::is_xml_name_char`] duplicate
-/// `raikiri_dom`'s own XML `Name` character classes range for range; this
-/// mirrors that crate's own direct-function coverage of the same ranges
-/// (`raikiri-dom`'s `xml_name_validation_accepts_the_non_ascii_name_ranges`)
-/// rather than routing every representative code point through a
-/// `createElementNS` call.
+/// DOM "validate and extract" checks each half of a qualified name with
+/// the relaxed element/attribute name rules rather than XML `Name`.
 #[test]
-fn xml_name_character_classes_accept_every_non_ascii_range() {
-    for ch in [
-        'À', 'Ø', 'ø', 'Ͱ', 'Ϳ', '\u{200c}', '⁰', 'Ⰰ', '々', '豈', 'ﷰ', '𐀀',
-    ] {
-        assert!(super::is_xml_name_start(ch), "{ch:?}");
+fn qualified_names_follow_the_dom_element_and_attribute_name_rules() {
+    let mut rt = rt();
+    for valid in ["a:b:c", "p:_x", "é:é", "@:x", "a:🆖", "p=:x"] {
+        ok(
+            &mut rt,
+            &format!("document.createElementNS('urn:x', '{valid}').localName.length > 0"),
+        );
     }
-    for ch in ['0', '-', '.', '·', '\u{0300}', '\u{203f}'] {
-        assert!(super::is_xml_name_char(ch), "{ch:?}");
+    for invalid in ["a:1", "a:", ":a", "a b:c", "p/:x", "p>:x", "a:b c"] {
+        ok(
+            &mut rt,
+            &format!(
+                "try {{ document.createElementNS('urn:x', '{invalid}'); false }} \
+                 catch (e) {{ e.name === 'InvalidCharacterError' }}"
+            ),
+        );
     }
-    assert!(!super::is_xml_name_char('#'));
-    assert!(super::is_xml_name("π\u{0300}"));
-    assert!(!super::is_xml_name("0name"));
-    assert!(!super::is_xml_name("ab#"));
+    let el = "var e = document.createElement('div'); ";
+    for valid in ["data@x", "1a", "a:b", "xé"] {
+        ok(
+            &mut rt,
+            &format!(
+                "{el} e.setAttributeNS('urn:x', 'p:{valid}', 'v'); \
+                 e.setAttributeNS(null, '{valid}'.replace(':', ''), 'w'); true"
+            ),
+        );
+    }
+    for invalid in ["p:a=b", "p:", "p:a b", "p:a/b"] {
+        ok(
+            &mut rt,
+            &format!(
+                "{el} try {{ e.setAttributeNS('urn:x', '{invalid}', 'v'); false }} \
+                 catch (x) {{ x.name === 'InvalidCharacterError' }}"
+            ),
+        );
+    }
 }

@@ -18,90 +18,43 @@ use super::webidl::{
 const XML_NAMESPACE: &str = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NAMESPACE: &str = "http://www.w3.org/2000/xmlns/";
 
-// The XML `Name` production. `createElementNS`'s "validate and extract"
-// needs to validate a namespace prefix and a local name independently of
-// each other (see `validate_and_extract`), which `raikiri_dom`'s
-// equivalent check cannot do: it is private, and it always validates and
-// allocates an element in the same call (`create_detached_element`), with
-// no way to just check a candidate string's characters. So the same
-// character classes are kept here too, ASCII- and Unicode-range-for-range
-// identical to `raikiri_dom::document::is_valid_xml_name`'s own.
-fn is_xml_name_start(ch: char) -> bool {
-    matches!(
-        ch,
-        ':' | 'A'..='Z'
-            | '_'
-            | 'a'..='z'
-            | '\u{C0}'..='\u{D6}'
-            | '\u{D8}'..='\u{F6}'
-            | '\u{F8}'..='\u{2FF}'
-            | '\u{370}'..='\u{37D}'
-            | '\u{37F}'..='\u{1FFF}'
-            | '\u{200C}'..='\u{200D}'
-            | '\u{2070}'..='\u{218F}'
-            | '\u{2C00}'..='\u{2FEF}'
-            | '\u{3001}'..='\u{D7FF}'
-            | '\u{F900}'..='\u{FDCF}'
-            | '\u{FDF0}'..='\u{FFFD}'
-            | '\u{10000}'..='\u{EFFFF}'
-    )
+/// Which kind of local name [`validate_and_extract`] checks.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum NameContext {
+    Element,
+    Attribute,
 }
 
-fn is_xml_name_char(ch: char) -> bool {
-    is_xml_name_start(ch)
-        || matches!(
-            ch,
-            '0'..='9' | '-' | '.' | '\u{B7}' | '\u{300}'..='\u{36F}' | '\u{203F}'..='\u{2040}'
-        )
-}
-
-/// A non-empty XML `Name`: used on an already-split prefix or local name
-/// half (DOM's "validate" step itself runs over the whole qualified name;
-/// splitting first and checking each half catches an extra, empty, or
-/// invalid-on-its-own segment a whole-string check would miss).
-fn is_xml_name(name: &str) -> bool {
-    let mut chars = name.chars();
-    chars.next().is_some_and(is_xml_name_start) && chars.all(is_xml_name_char)
-}
-
-/// DOM §4.5 "validate and extract": split `qualified_name` into an optional
-/// prefix and a local name, returned with the namespace, then check the namespace/prefix combinations
-/// the spec restricts. `namespace` is normalized from an empty string to
+/// DOM §4.5 "validate and extract": split `qualified_name` at its first `:`
+/// into an optional prefix and a local name, returned with the namespace.
+/// The prefix must be a valid namespace prefix and the local name a valid
+/// element or attribute local name for `name_context`; then the
+/// namespace/prefix combinations the spec restricts are checked. `namespace` is normalized from an empty string to
 /// `None` first (the algorithm's own first step); both inputs are already
 /// `DOMString`-converted.
 pub(crate) fn validate_and_extract(
     context: &mut Context,
     namespace: Option<String>,
     qualified_name: &str,
+    name_context: NameContext,
 ) -> JsResult<(Option<String>, Option<String>, String)> {
     let namespace = namespace.filter(|n| !n.is_empty());
     let (prefix, local_name) = match qualified_name.split_once(':') {
-        None => {
-            if !is_xml_name(qualified_name) {
-                return Err(throw_dom_exception(
-                    context,
-                    "InvalidCharacterError",
-                    "qualifiedName is not a valid XML qualified name",
-                ));
-            }
-            (None, qualified_name.to_owned())
-        }
-        Some((prefix, local)) => {
-            if prefix.is_empty()
-                || local.is_empty()
-                || local.contains(':')
-                || !is_xml_name(prefix)
-                || !is_xml_name(local)
-            {
-                return Err(throw_dom_exception(
-                    context,
-                    "InvalidCharacterError",
-                    "qualifiedName is not a valid XML qualified name",
-                ));
-            }
-            (Some(prefix.to_owned()), local.to_owned())
-        }
+        None => (None, qualified_name),
+        Some((prefix, local)) => (Some(prefix), local),
     };
+    let valid_local = match name_context {
+        NameContext::Element => raikiri_dom::document::is_valid_element_local_name(local_name),
+        NameContext::Attribute => raikiri_dom::document::is_valid_attribute_local_name(local_name),
+    };
+    if !prefix.is_none_or(raikiri_dom::document::is_valid_namespace_prefix) || !valid_local {
+        return Err(throw_dom_exception(
+            context,
+            "InvalidCharacterError",
+            "qualifiedName is not a valid qualified name",
+        ));
+    }
+    let (prefix, local_name) = (prefix.map(str::to_owned), local_name.to_owned());
     if prefix.is_some() && namespace.is_none() {
         return Err(throw_dom_exception(
             context,
@@ -146,7 +99,8 @@ pub(crate) fn create_element_ns(
         _ => Some(dom_string(args, 0, context)?),
     };
     let qualified_name = dom_string(args, 1, context)?;
-    let (namespace, _, local_name) = validate_and_extract(context, namespace, &qualified_name)?;
+    let (namespace, _, local_name) =
+        validate_and_extract(context, namespace, &qualified_name, NameContext::Element)?;
     guard_node_budget(context)?;
     let result = with_state(context, |s| {
         s.host.document_mut().create_detached_element(&local_name)
@@ -154,7 +108,7 @@ pub(crate) fn create_element_ns(
     let index = match result {
         Ok(index) => index,
         // cov:ignore: `validate_and_extract` already confirmed `local_name`
-        // (the qualified name, or its local half) is a valid XML Name.
+        // (the qualified name, or its local half) is a valid element local name.
         Err(message) => {
             return Err(throw_dom_exception(
                 context,
