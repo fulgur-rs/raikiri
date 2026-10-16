@@ -1,4 +1,8 @@
-use super::{Item, balanced_height, place, stacked_height};
+use super::{
+    Item, Piece, Rows, Stop, balance_rows, balanced_height, fill_item_rows, place, place_columns,
+    stacked_height,
+};
+use raikiri_style::property::ColumnFillValue;
 
 fn shape(items: &[Item], height: f32) -> Vec<Vec<(usize, f32, f32)>> {
     place(items, height, usize::MAX)
@@ -325,4 +329,321 @@ fn self_collapsing_boxes_and_skipped_columns_count_toward_the_limits() {
 #[test]
 fn balancing_boxes_with_no_block_size_gives_empty_columns() {
     assert_eq!(balanced_height(&[split(0.0)], 2, usize::MAX), 0.0);
+}
+
+fn row_shape(rows: &Rows) -> Vec<(usize, usize, usize, f32, f32)> {
+    rows.pieces
+        .iter()
+        .map(|piece| (piece.entry, piece.row, piece.column, piece.y, piece.height))
+        .collect()
+}
+
+#[test]
+fn a_definite_nested_container_ends_with_overflow_columns_in_its_last_row() {
+    // 500px of columns cut at a 300px outer column leave a 200px row, whose
+    // overflow column takes the 100px left of the box.
+    let rows = fill_item_rows(
+        &[split(600.0)],
+        1,
+        ColumnFillValue::Auto,
+        Some(500.0),
+        300.0,
+        300.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![300.0, 200.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 300.0),
+            (0, 1, 0, 0.0, 200.0),
+            (0, 1, 1, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn an_auto_height_nested_container_fills_rows_and_balances_the_last() {
+    let rows = fill_item_rows(
+        &[split(400.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        50.0,
+        250.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![50.0, 150.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 50.0),
+            (0, 0, 1, 0.0, 50.0),
+            (0, 1, 0, 0.0, 150.0),
+            (0, 1, 1, 0.0, 150.0)
+        ]
+    );
+
+    let rows = fill_item_rows(
+        &[split(250.0)],
+        1,
+        ColumnFillValue::Auto,
+        None,
+        100.0,
+        100.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![100.0, 100.0, 50.0]);
+}
+
+#[test]
+fn a_nested_container_that_fits_its_first_row_has_no_rows() {
+    let fill = |content| {
+        fill_item_rows(
+            &[split(80.0)],
+            2,
+            ColumnFillValue::Balance,
+            content,
+            50.0,
+            100.0,
+            usize::MAX,
+        )
+    };
+    assert_eq!(fill(None), None);
+    assert_eq!(fill(Some(40.0)), None);
+    // No room in the first row, or past the fragment budget, gives none.
+    assert_eq!(
+        fill_item_rows(
+            &[split(80.0)],
+            1,
+            ColumnFillValue::Auto,
+            None,
+            0.0,
+            100.0,
+            usize::MAX
+        ),
+        None
+    );
+    assert_eq!(
+        fill_item_rows(
+            &[split(800.0)],
+            1,
+            ColumnFillValue::Auto,
+            None,
+            10.0,
+            10.0,
+            4
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_balanced_last_row_keeps_a_box_that_avoids_breaks_whole() {
+    let rows = fill_item_rows(
+        &[split(100.0), avoid(80.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        50.0,
+        200.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![50.0, 80.0]);
+    assert_eq!(row_shape(&rows)[2..], [(1, 1, 0, 0.0, 80.0)]);
+}
+
+#[test]
+fn a_definite_nested_container_balances_its_last_row_when_it_fits() {
+    let rows = fill_item_rows(
+        &[split(300.0)],
+        2,
+        ColumnFillValue::Balance,
+        Some(250.0),
+        100.0,
+        200.0,
+        usize::MAX,
+    )
+    .unwrap();
+    // The row keeps the height left of the container.
+    assert_eq!(rows.heights, vec![100.0, 150.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 100.0),
+            (0, 0, 1, 0.0, 100.0),
+            (0, 1, 0, 0.0, 50.0),
+            (0, 1, 1, 0.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn a_box_avoiding_breaks_taller_than_a_row_breaks_anyway_in_the_last_row() {
+    let rows = fill_item_rows(
+        &[avoid(400.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        100.0,
+        100.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![100.0, 100.0]);
+    assert_eq!(rows.pieces.len(), 4);
+}
+
+#[test]
+fn boxes_of_earlier_rows_do_not_bound_the_balanced_last_row() {
+    let rows = fill_item_rows(
+        &[avoid(100.0), split(250.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        100.0,
+        200.0,
+        usize::MAX,
+    )
+    .unwrap();
+    // The 150px left after the first row share the last row equally.
+    assert_eq!(rows.heights, vec![100.0, 75.0]);
+}
+
+#[test]
+fn balance_all_balances_every_row_of_a_nested_container() {
+    let fill = |column_fill, content| {
+        fill_item_rows(
+            &[split(150.0), avoid(100.0)],
+            2,
+            column_fill,
+            content,
+            100.0,
+            200.0,
+            usize::MAX,
+        )
+        .unwrap()
+    };
+    // `balance` leaves the first row sequential.
+    let rows = fill(ColumnFillValue::Balance, None);
+    assert_eq!(rows.heights, vec![100.0, 100.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 100.0),
+            (0, 0, 1, 0.0, 50.0),
+            (1, 1, 0, 0.0, 100.0)
+        ]
+    );
+    // `balance-all` balances it too, keeping the content it holds.
+    let rows = fill(ColumnFillValue::BalanceAll, None);
+    assert_eq!(rows.heights, vec![75.0, 100.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 75.0),
+            (0, 0, 1, 0.0, 75.0),
+            (1, 1, 0, 0.0, 100.0)
+        ]
+    );
+    // A definite container's row keeps its share of the container's height.
+    let rows = fill(ColumnFillValue::BalanceAll, Some(300.0));
+    assert_eq!(rows.heights, vec![100.0, 200.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 75.0),
+            (0, 0, 1, 0.0, 75.0),
+            (1, 1, 0, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn balance_all_keeps_a_row_tall_enough_for_the_boxes_avoiding_breaks_in_it() {
+    let fill = |column_fill| {
+        fill_item_rows(
+            &[avoid(70.0), avoid(30.0), avoid(90.0), avoid(50.0)],
+            2,
+            column_fill,
+            None,
+            120.0,
+            200.0,
+            usize::MAX,
+        )
+        .unwrap()
+    };
+    assert_eq!(fill(ColumnFillValue::Balance).heights, vec![120.0, 50.0]);
+    // An even share of the first row's 190px does not hold its boxes.
+    let rows = fill(ColumnFillValue::BalanceAll);
+    assert_eq!(rows.heights, vec![100.0, 50.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 70.0),
+            (1, 0, 0, 70.0, 30.0),
+            (2, 0, 1, 0.0, 90.0),
+            (3, 1, 0, 0.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn a_definite_nested_container_needing_more_rows_than_the_budget_has_no_rows() {
+    let fill = |max_pieces| {
+        fill_item_rows(
+            &[split(1000.0)],
+            2,
+            ColumnFillValue::Balance,
+            Some(1000.0),
+            10.0,
+            10.0,
+            max_pieces,
+        )
+    };
+    assert!(fill(3).is_none());
+    assert_eq!(fill(usize::MAX).unwrap().heights.len(), 100);
+}
+
+#[test]
+fn a_whole_box_leaves_a_shorter_first_column_for_the_next_one() {
+    let whole = Item {
+        whole: true,
+        ..split(80.0)
+    };
+    let height_of = |column: usize| if column == 0 { 50.0 } else { 100.0 };
+    let placement = place_columns(&[whole], &height_of, usize::MAX, usize::MAX, true).unwrap();
+    assert_eq!(
+        placement.pieces,
+        vec![vec![Piece {
+            column: 1,
+            top: 0.0,
+            height: 80.0
+        }]]
+    );
+    // Columns of one height leave nothing to gain by moving it.
+    assert_eq!(
+        place_columns(&[whole], &|_| 50.0, usize::MAX, usize::MAX, true).err(),
+        Some(Stop::Cut)
+    );
+}
+
+#[test]
+fn balance_all_stops_balancing_rows_once_its_probes_use_up_the_budget() {
+    let items = [split(150.0), avoid(100.0)];
+    let balance = |budget| {
+        let mut heights = vec![100.0, 200.0];
+        balance_rows(&items, 2, 1, &mut heights, usize::MAX, budget);
+        heights
+    };
+    assert_eq!(balance(usize::MAX), vec![75.0, 200.0]);
+    assert_eq!(balance(0), vec![75.0, 200.0]);
+    let mut heights = vec![100.0, 100.0, 200.0];
+    balance_rows(&items, 1, 2, &mut heights, usize::MAX, 0);
+    // The first row's probes spend the budget, so the second keeps its height.
+    assert_eq!(heights[1], 100.0);
 }

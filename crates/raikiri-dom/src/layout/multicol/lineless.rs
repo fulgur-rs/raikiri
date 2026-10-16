@@ -184,6 +184,23 @@ fn place_within(
     max_columns: usize,
     keep_whole: bool,
 ) -> Result<Placement, Stop> {
+    place_columns(
+        items,
+        &|_| column_height,
+        max_pieces,
+        max_columns,
+        keep_whole,
+    )
+}
+
+/// [`place_within`] with a block size of its own for each column.
+fn place_columns(
+    items: &[Item],
+    height_of: &dyn Fn(usize) -> f32,
+    max_pieces: usize,
+    max_columns: usize,
+    keep_whole: bool,
+) -> Result<Placement, Stop> {
     let mut column = 0usize;
     let mut cursor = 0.0_f32;
     let mut pending_margin = 0.0_f32;
@@ -199,7 +216,7 @@ fn place_within(
             }
             placements.push(vec![Piece {
                 column,
-                top: (cursor + pending_margin.max(item.margin_top)).min(column_height),
+                top: (cursor + pending_margin.max(item.margin_top)).min(height_of(column)),
                 height: 0.0,
             }]);
             pending_margin = pending_margin.max(item.margin_top).max(item.margin_bottom);
@@ -210,20 +227,23 @@ fn place_within(
         // A box that must stay whole moves to the next column like a box
         // that avoids breaks, rather than being cut, when it fits there: in
         // the rest of this column, or in a whole new one if content precedes
-        // it here.
+        // it here or the new one is taller.
+        let taller_next = cursor <= 0.0 && height_of(column + 1) > height_of(column) + EPSILON;
+        let moves_whole = item.whole
+            && (cursor > 0.0 || taller_next)
+            && item.height <= height_of(column + 1) + EPSILON;
         let splittable = item.splittable
             && !(item.whole
-                && (cursor + gap + item.height <= column_height + EPSILON
-                    || cursor > 0.0 && item.height <= column_height + EPSILON));
+                && (cursor + gap + item.height <= height_of(column) + EPSILON || moves_whole));
         let fits_after_gap = if splittable {
-            cursor + gap < column_height - EPSILON
+            cursor + gap < height_of(column) - EPSILON
         } else {
-            cursor + gap + item.height <= column_height + EPSILON
+            cursor + gap + item.height <= height_of(column) + EPSILON
         };
         // A gap that fills the column leaves no room for a box that avoids
         // breaks either, so it starts the next column with the gap truncated.
-        let gap_fills_column = !splittable && gap >= column_height - EPSILON;
-        if (cursor > 0.0 || gap_fills_column)
+        let gap_fills_column = !splittable && gap >= height_of(column) - EPSILON;
+        if (cursor > 0.0 || gap_fills_column || moves_whole)
             && !fits_after_gap
             && (item.height > 0.0 || !splittable)
         {
@@ -238,11 +258,11 @@ fn place_within(
         pending_margin = item.margin_bottom;
         // A box that avoids breaks but is taller than a whole column breaks
         // anyway (CSS Fragmentation 3, 4.4), unless painting cannot slice it.
-        let breaks_anyway = !splittable && !item.whole && item.height > column_height + EPSILON;
+        let breaks_anyway = !splittable && !item.whole && item.height > height_of(column) + EPSILON;
         if splittable || breaks_anyway {
             let mut left = item.height;
             loop {
-                let room = column_height - cursor;
+                let room = height_of(column) - cursor;
                 // A gap that fills the column leaves no room for the box,
                 // which then starts in the next column.
                 if room < -EPSILON || (room <= EPSILON && left > EPSILON) {
@@ -320,11 +340,13 @@ impl Placement {
             .unwrap_or(0)
     }
 
-    /// The tallest column, counting the trailing margin of the stream.
-    fn extent(&self) -> f32 {
+    /// The tallest column from column `first` on, counting the trailing
+    /// margin of the stream.
+    fn extent_after(&self, first: usize) -> f32 {
         self.pieces
             .iter()
             .flatten()
+            .filter(|piece| piece.column >= first)
             .map(|piece| piece.top + piece.height)
             .fold(self.end, f32::max)
     }
@@ -347,28 +369,77 @@ fn stacked_height(items: &[Item], max_pieces: usize) -> Option<f32> {
 /// `max_pieces` already exceed the budget and bound each probe.
 fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f32 {
     let max_columns = column_count.min(max_pieces.saturating_add(1));
-    let probe = |height: f32| place_within(items, height, usize::MAX, max_columns, false).ok();
+    // One unbounded column takes a piece per box, which the unlimited
+    // budget always allows.
+    let high = stacked_height(items, usize::MAX).unwrap_or(0.0);
+    balanced_height_after(items, 0, &|_| 0.0, column_count, max_columns, high, false)
+}
+
+/// [`balanced_height`] for the `column_count` columns that follow the first
+/// `fixed` columns, whose heights `fixed_height` gives, with the content
+/// placed in at most `max_columns` columns after those. Boxes that must stay
+/// whole are not cut when `keep_whole` is set. `high` bounds the search
+/// from above and is the answer when nothing shorter fits.
+fn balanced_height_after(
+    items: &[Item],
+    fixed: usize,
+    fixed_height: &dyn Fn(usize) -> f32,
+    column_count: usize,
+    max_columns: usize,
+    high: f32,
+    keep_whole: bool,
+) -> f32 {
+    let limit = fixed.saturating_add(max_columns);
+    let probe = |height: f32| {
+        let height_of = |column: usize| {
+            if column < fixed {
+                fixed_height(column)
+            } else {
+                height
+            }
+        };
+        place_columns(items, &height_of, usize::MAX, limit, keep_whole).ok()
+    };
     // Every column holds its content, and the last one the trailing margin.
     let fits = |height: f32| {
         probe(height).is_some_and(|placement| {
-            placement.columns_used() <= column_count && placement.extent() <= height + EPSILON
+            placement.columns_used() <= limit && placement.extent_after(fixed) <= height + EPSILON
         })
     };
     // Margins collapse and are truncated at breaks, so only the boxes
-    // themselves bound the height from below.
+    // themselves bound the height from below: the content left after the
+    // fixed columns, shared equally, and the tallest box that avoids breaks
+    // and fits within `high` (a taller one breaks anyway).
+    let reference = probe(high);
+    let before: f32 = reference.as_ref().map_or(0.0, |placement| {
+        placement
+            .pieces
+            .iter()
+            .flatten()
+            .filter(|piece| piece.column < fixed)
+            .map(|piece| piece.height)
+            .sum()
+    });
     let content: f32 = items.iter().map(|item| item.height).sum();
+    // Boxes the fixed columns already hold do not bound the rest.
+    let left = |index: usize| {
+        reference.as_ref().is_none_or(|placement| {
+            placement.pieces[index]
+                .iter()
+                .any(|piece| piece.column >= fixed)
+        })
+    };
     let tallest = items
         .iter()
-        .filter(|item| !item.splittable)
-        .map(|item| item.height)
+        .enumerate()
+        .filter(|&(index, item)| !item.splittable && item.height <= high + EPSILON && left(index))
+        .map(|(_, item)| item.height)
         .fold(0.0_f32, f32::max);
-    let mut low = (content / column_count as f32).max(tallest);
-    if low > 0.0 && fits(low) {
+    let mut low = ((content - before) / column_count as f32).max(tallest);
+    if low > 0.0 && low <= high && fits(low) {
         return low;
     }
-    // One unbounded column takes a piece per box, which the unlimited
-    // budget always allows.
-    let mut high = stacked_height(items, usize::MAX).unwrap_or(low);
+    let mut high = high.max(low);
     // Each probe places the children once; the bound keeps the search linear
     // in the number of children.
     for _ in 0..24 {
@@ -381,12 +452,338 @@ fn balanced_height(items: &[Item], column_count: usize, max_pieces: usize) -> f3
     }
     // The search stops near the answer; the content extent of the columns
     // it found is the exact height when that still fits.
-    let extent = probe(high).map_or(0.0, |placement| placement.extent());
+    let extent = probe(high).map_or(0.0, |placement| placement.extent_after(fixed));
     if extent > 0.0 && fits(extent) {
         extent
     } else {
         high
     }
+}
+
+/// The pieces that `balance-all` probes may place while balancing the rows
+/// of one nested container.
+const BALANCE_ALL_WORK: usize = 1 << 22;
+
+/// Balance the columns of each of the first `rows` rows of `column_count`
+/// columns for `column-fill: balance-all`: each row gets the shortest column
+/// height that still holds the content its columns hold at the heights in
+/// `heights`, one per row (CSS Multi-column 1, 8.1). Columns past the last
+/// row take that row's height. Rows are balanced in order, so the content
+/// left for later rows does not change. Rows after the probes have placed
+/// `budget` pieces keep their heights.
+fn balance_rows(
+    items: &[Item],
+    column_count: usize,
+    rows: usize,
+    heights: &mut [f32],
+    max_pieces: usize,
+    budget: usize,
+) {
+    let last = heights.len().saturating_sub(1);
+    let row_of = |column: usize| (column / column_count).min(last);
+    // Pieces placed so far by the probes below.
+    let work = std::cell::Cell::new(0usize);
+    // The block size of the pieces in the columns before `end`.
+    let held = |heights: &[f32], end: usize| {
+        place_columns(
+            items,
+            &|column| heights[row_of(column)],
+            max_pieces,
+            usize::MAX,
+            true,
+        )
+        .ok()
+        .map(|placement| {
+            let pieces: usize = placement.pieces.iter().map(Vec::len).sum();
+            work.set(work.get().saturating_add(pieces.max(1)));
+            let height: f32 = placement
+                .pieces
+                .iter()
+                .flatten()
+                .filter(|piece| piece.column < end)
+                .map(|piece| piece.height)
+                .sum();
+            (placement, height)
+        })
+    };
+    // The heights each probe tries: the committed heights, with the row being
+    // balanced at the height under test.
+    let mut trial = heights.to_vec();
+    for row in 0..rows.min(last) {
+        // Every probe places the whole stream, so a container with many rows
+        // stops balancing once the probes have placed `budget` pieces; the
+        // remaining rows keep their full height, as with `balance`.
+        if work.get() > budget {
+            break;
+        }
+        let end = column_count * (row + 1);
+        // A stream that does not fit leaves the row as it is; the caller's
+        // own placement then rejects it.
+        let target = held(heights, end).map_or(f32::INFINITY, |(_, height)| height);
+        let full = heights[row];
+        let fits = |trial: &mut Vec<f32>, height: f32| {
+            trial[row] = height;
+            held(trial, end).is_some_and(|(_, height)| height >= target - EPSILON)
+        };
+        // The row's content shared equally is the answer when nothing in it
+        // avoids breaks taller than that share.
+        let before = held(heights, end - column_count).map_or(0.0, |(_, height)| height);
+        let share = (target - before) / column_count as f32;
+        if share > 0.0 && share <= full && fits(&mut trial, share) {
+            heights[row] = share;
+            continue;
+        }
+        let mut low = 0.0_f32;
+        let mut high = full;
+        for _ in 0..24 {
+            let middle = (low + high) / 2.0;
+            if fits(&mut trial, middle) {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        // The content extent of the row's columns is the exact height when
+        // it still holds the row's content.
+        trial[row] = high;
+        let extent = held(&trial, end).map_or(0.0, |(placement, _)| {
+            placement
+                .pieces
+                .iter()
+                .flatten()
+                .filter(|piece| piece.column >= end - column_count && piece.column < end)
+                .map(|piece| piece.top + piece.height)
+                .fold(0.0_f32, f32::max)
+        });
+        heights[row] = Some(extent)
+            .filter(|&extent| extent > 0.0 && extent <= full && fits(&mut trial, extent))
+            .unwrap_or(high);
+        trial[row] = heights[row];
+    }
+}
+
+/// The stream item of `child`, a box of block size `height`.
+fn item(tree: &Document, child: usize, height: f32) -> Item {
+    let node = &tree.nodes[child];
+    let (margin_top, margin_bottom) = block_margins(node).unwrap_or_default();
+    Item {
+        height,
+        margin_top,
+        margin_bottom,
+        splittable: !matches!(
+            node.break_inside,
+            BreakInside::Avoid | BreakInside::AvoidColumn
+        ),
+        // Painting draws every fragment's decorations whole, so a box with
+        // block-axis borders or padding, or with effects sized from the
+        // whole box, would repeat them at each break instead of slicing them
+        // (CSS Fragmentation 3, 5.4). Such a box may still sit whole in one
+        // column.
+        whole: has_block_edge_decorations(node) || node.paints_whole_box_effects,
+    }
+}
+
+/// One piece of a child in a row of a nested container's columns.
+#[derive(Debug, PartialEq)]
+pub(super) struct RowPiece {
+    /// Index of the child in the stream.
+    pub(super) entry: usize,
+    pub(super) row: usize,
+    /// Column within the row; the last row may hold overflow columns.
+    pub(super) column: usize,
+    /// Block offset of the piece from the row's top.
+    pub(super) y: f32,
+    pub(super) height: f32,
+    /// Index of the piece among the child's pieces, and their count.
+    pub(super) index: usize,
+    pub(super) count: usize,
+}
+
+/// The pieces of a nested container's children in rows of its columns,
+/// and the used block size of each row.
+#[derive(Debug, PartialEq)]
+pub(super) struct Rows {
+    pub(super) pieces: Vec<RowPiece>,
+    pub(super) heights: Vec<f32>,
+}
+
+/// Fill the children (from [`supported`]) of a nested column container,
+/// whose own columns are cut again at the end of each outer column, into
+/// rows of `column_count` columns: the first row holds `first` of block
+/// size and every later row `later` (CSS Fragmentation 3, 2). A container
+/// with a definite content height `content` ends with the row that reaches
+/// it, which takes the content that is left in overflow columns (CSS
+/// Multi-column 1, 8.2); an auto-height one ends with its content, and a
+/// balanced one balances its last row. `None` when one row holds everything,
+/// when a box that must stay whole would be cut, or past `max_pieces`.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn fill_rows(
+    tree: &Document,
+    children: &[usize],
+    column_count: usize,
+    column_fill: ColumnFillValue,
+    content: Option<f32>,
+    first: f32,
+    later: f32,
+    max_pieces: usize,
+) -> Option<Rows> {
+    let items: Vec<Item> = children
+        .iter()
+        .map(|&child| item(tree, child, tree.nodes[child].unrounded_layout.size.height))
+        .collect();
+    fill_item_rows(
+        &items,
+        column_count,
+        column_fill,
+        content,
+        first,
+        later,
+        max_pieces,
+    )
+}
+
+/// [`fill_rows`] for the stream `items`.
+fn fill_item_rows(
+    items: &[Item],
+    column_count: usize,
+    column_fill: ColumnFillValue,
+    content: Option<f32>,
+    first: f32,
+    later: f32,
+    max_pieces: usize,
+) -> Option<Rows> {
+    if column_count == 0 || !(first > EPSILON && later > EPSILON) || !later.is_finite() {
+        return None;
+    }
+    let row_of = |column: usize, last: usize| (column / column_count).min(last);
+    let (placement, heights) = if let Some(content) = content {
+        let mut heights = Vec::new();
+        let mut left = content;
+        while left > EPSILON {
+            let height = left.min(if heights.is_empty() { first } else { later });
+            heights.push(height);
+            left -= height;
+            if heights.len() > max_pieces {
+                return None;
+            }
+        }
+        if heights.len() < 2 {
+            return None;
+        }
+        let last = heights.len() - 1;
+        // `balance-all` balances the columns of every row; a row keeps its
+        // share of the container's height.
+        let mut columns = heights.clone();
+        if column_fill == ColumnFillValue::BalanceAll {
+            balance_rows(
+                items,
+                column_count,
+                last,
+                &mut columns,
+                max_pieces,
+                BALANCE_ALL_WORK,
+            );
+        }
+        let height_of = |column: usize| columns[row_of(column, last)];
+        let placement = place_columns(items, &height_of, max_pieces, usize::MAX, true).ok()?;
+        // Content that fits the last row's columns is balanced in them
+        // unless they fill sequentially; the row keeps its height.
+        let fixed = column_count * last;
+        let placement = if column_fill != ColumnFillValue::Auto
+            && placement.columns_used() <= fixed + column_count
+        {
+            let height = balanced_height_after(
+                items,
+                fixed,
+                &height_of,
+                column_count,
+                column_count,
+                heights[last],
+                true,
+            );
+            let balanced = |column: usize| {
+                if column < fixed {
+                    height_of(column)
+                } else {
+                    height
+                }
+            };
+            place_columns(items, &balanced, max_pieces, usize::MAX, true).ok()?
+        } else {
+            placement
+        };
+        (placement, heights)
+    } else {
+        let height_of = |column: usize| if column < column_count { first } else { later };
+        let placement = place_columns(items, &height_of, max_pieces, usize::MAX, true).ok()?;
+        let last = (placement.columns_used().max(1) - 1) / column_count;
+        if last == 0 {
+            return None;
+        }
+        // The last row is as tall as its content, or balanced: the shortest
+        // height that keeps the content in that row's columns.
+        let mut columns: Vec<f32> = (0..=last)
+            .map(|row| if row == 0 { first } else { later })
+            .collect();
+        if column_fill == ColumnFillValue::BalanceAll {
+            balance_rows(
+                items,
+                column_count,
+                last,
+                &mut columns,
+                max_pieces,
+                BALANCE_ALL_WORK,
+            );
+        }
+        let height_of = |column: usize| columns[row_of(column, last)];
+        let fixed = column_count * last;
+        let placement = if column_fill == ColumnFillValue::Auto {
+            placement
+        } else {
+            let height = balanced_height_after(
+                items,
+                fixed,
+                &height_of,
+                column_count,
+                column_count,
+                later,
+                true,
+            );
+            let balanced = |column: usize| {
+                if column < fixed {
+                    height_of(column)
+                } else {
+                    height
+                }
+            };
+            place_columns(items, &balanced, max_pieces, fixed + column_count, true).ok()?
+        };
+        let mut heights = columns[..last].to_vec();
+        heights.push(placement.extent_after(fixed));
+        (placement, heights)
+    };
+    let last = heights.len() - 1;
+    let pieces = placement
+        .pieces
+        .iter()
+        .enumerate()
+        .flat_map(|(entry, pieces)| {
+            let count = pieces.len();
+            pieces.iter().enumerate().map(move |(index, piece)| {
+                let row = row_of(piece.column, last);
+                RowPiece {
+                    entry,
+                    row,
+                    column: piece.column - row * column_count,
+                    y: piece.top,
+                    height: piece.height,
+                    index,
+                    count,
+                }
+            })
+        })
+        .collect();
+    Some(Rows { pieces, heights })
 }
 
 /// Lay out `children` (from [`supported`]) as one stream cut into columns.
@@ -430,27 +827,7 @@ pub(super) fn layout(
     let items: Vec<Item> = children
         .iter()
         .zip(&sizes)
-        .map(|(&child, size)| {
-            let (margin_top, margin_bottom) = block_margins(&tree.nodes[child]).unwrap_or_default();
-            Item {
-                height: size.height,
-                margin_top,
-                margin_bottom,
-                splittable: !matches!(
-                    tree.nodes[child].break_inside,
-                    BreakInside::Avoid | BreakInside::AvoidColumn
-                ),
-                // Painting draws every fragment's decorations whole, so a box
-                // with block-axis borders or padding, or with effects sized
-                // from the whole box, would repeat them at each break instead
-                // of slicing them (CSS Fragmentation 3, 5.4). Such a box may
-                // still sit whole in one column.
-                whole: {
-                    let node = &tree.nodes[child];
-                    has_block_edge_decorations(node) || node.paints_whole_box_effects
-                },
-            }
-        })
+        .map(|(&child, size)| item(tree, child, size.height))
         .collect();
     // One fragment for the container, the rest for the child pieces.
     let max_pieces = tree
