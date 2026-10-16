@@ -29,7 +29,7 @@ use raikiri_style::property::{
     CssColor, CssPosition, CssPositionOffset, DisplayValue, Gradient, GradientStopColor,
     HueInterpolationMethod, Length, LengthPercentageOrCalc, MixColorSpace, ObjectFit, OutlineColor,
     OutlineStyle, OverflowValue, PositionValue, PropertyKey, PropertyValue, Sides, TextShadowColor,
-    UnboundedColor, VerticalAlign, Visibility, VisualBox, WritingMode, ZIndexValue,
+    UnboundedColor, VerticalAlign, Visibility, VisualBox, ZIndexValue,
 };
 use raikiri_style::{
     CascadeResult, ComputedBackgroundSize, ComputedBorderImage, ComputedBorderRadius,
@@ -3074,18 +3074,6 @@ pub(crate) fn paint_document_impl(
                     .get_node(node_id)
                     .and_then(|node| node.collapsed_border())
                     .unwrap_or(&cv.border);
-                // cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
-                let mut paint_background_width = layout.size.width;
-                if let Some(width) = vertical_table_cell_background_width(
-                    document,
-                    cascade,
-                    node_id,
-                    &layout,
-                    &cv.border,
-                    &paint_padding,
-                ) {
-                    paint_background_width = width; // cov:ignore: vertical background geometry is exercised by the ignored exact WPT reftest.
-                }
                 // A hidden table must not paint its own collapsed border. Keep
                 // row/cell visibility handling unchanged; `visibility: collapse`
                 // is table-layout-specific and existing row painting relies on it.
@@ -3316,8 +3304,6 @@ pub(crate) fn paint_document_impl(
                     let grid = node.table_grid_box();
                     let own_paint_x = paint_x + grid.map_or(0.0, |rect| rect.x);
                     let own_paint_width = grid.map_or(layout.size.width, |rect| rect.width);
-                    let own_background_width =
-                        grid.map_or(paint_background_width, |rect| rect.width);
                     let own_paint_y = paint_y + grid.map_or(0.0, |rect| rect.y);
                     let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
                     let own_background_height =
@@ -3409,7 +3395,7 @@ pub(crate) fn paint_document_impl(
                             paint_element_background(
                                 image_cache,
                                 scene,
-                                own_background_width,
+                                own_paint_width,
                                 own_background_height,
                                 own_paint_x,
                                 own_paint_y,
@@ -4783,145 +4769,6 @@ fn paint_inline_svg(
     );
     scene.pop_layer();
     true
-}
-
-/// Pixel offset contributed by `vertical-align` to an inline-level box's
-/// position. Positive values move downward, as does a box's `abs_y` in the
-/// downward-growing Y coordinate system.
-///
-/// # Supported behavior
-///
-/// [`VerticalAlign::Sub`] / [`VerticalAlign::Super`] shift relative to the
-/// parent's font-size; [`VerticalAlign::Length`] uses the computed px value.
-/// Positive lengths raise and negative lengths lower (CSS 2.1 §10.8.1), so
-/// the sign reverses in paint's downward-growing Y coordinate system.
-///
-/// [`VerticalAlign::Middle`] / [`VerticalAlign::TextTop`] /
-/// [`VerticalAlign::TextBottom`] all remain at zero shift because shifting by
-/// font metrics is not implemented. `Top` / `Bottom` do not shift here; the
-/// relevant minimal line-box layout determines box positions. The `_` arm
-/// is a defensive default to make this function total (`VerticalAlign` is
-/// `#[non_exhaustive]`). [`VerticalAlign::Baseline`] also has no shift
-/// (CSS 2.1 §10.8.1: "Align the baseline of the box with the baseline of
-/// the parent box").
-///
-/// CSS 2.1 §10.8.1 "Applies to: inline-level and 'table-cell' elements"
-/// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
-/// (`table-cell` is not implemented in this crate): a block-level box's
-/// `vertical-align: sub` does not contribute a shift.
-///
-/// # Shift size
-///
-/// CSS 2.1 §10.8.1 calls the `sub`/`super` offset only "the proper position
-/// for subscripts/superscripts", leaving its size implementation-defined.
-/// CSS Inline Layout Module Level 3 §4.2.3 "Post-Alignment
-/// Shift: the baseline-shift longhand"
-/// <https://www.w3.org/TR/css-inline-3/#baseline-shift-property> provides
-/// a concrete UA-default fallback. Font metrics take priority there, but
-/// this function does not use them or read any font tables:
-///
-/// - `sub`, spec verbatim: "Lower by the offset appropriate for
-///   subscripts of the parent's box. The UA may use the parent's font
-///   metrics to find this offset; otherwise it defaults to dropping by
-///   one fifth of the parent's used font-size."
-/// - `super`, spec verbatim: "Raise by the offset appropriate for
-///   superscripts of the parent's box. The UA may use the parent's font
-///   metrics to find this offset; otherwise it defaults to raising by one
-///   third of the parent's used font-size."
-///
-/// `vertical-align` (CSS 2.1) and `baseline-shift` (CSS Inline 3) are
-/// different properties. As the [`raikiri_style::property::VerticalAlign`]
-/// docs explain, this crate still uses CSS 2.1 as the primary source for
-/// keyword grammar. CSS Inline 3 is cited here only for the **size** of the
-/// shift undefined by CSS 2.1: its UA-default fallback for the same
-/// `sub`/`super` keywords.
-///
-/// `parent_font_size_px` must be the used font-size of the **box's parent**,
-/// not the box itself. Author/UA `font-size: smaller` commonly shrinks
-/// `sub`/`super` content already; "the parent's used font-size" in the
-/// cited specification refers to the size before that shrinkage.
-///
-/// # Composing nested `vertical-align` (unverified approximation)
-///
-/// This function returns a shift for only one box. The caller
-/// ([`paint_document`]) simply adds ancestor shifts to the `shift_y` stack
-/// frame. With a real inline formatting context, each box shifts relative
-/// to its immediate parent's baseline, propagating through line-box
-/// construction. This is a rough approximation, not a rule stated by any
-/// of the primary sources.
-///
-/// # Exclusion from the box model (unimplemented)
-///
-/// The shift is added only during painting, after taffy determines box
-/// positions. Taffy does not see `vertical_align`, and the result is not
-/// clipped. CSS 2.1 / CSS Inline 3 expect shifted positions to affect
-/// box-model calculations (including line-box height), but they do not here:
-/// a large shift may paint outside the page box.
-/// Return the intrinsic horizontal background width for a vertical table cell.
-///
-/// The vertical table projection gives an auto cell the containing block's
-/// physical width so its border spans the table. `background-clip: content-box`
-/// still follows the cell's measured content width, which keeps an authored
-/// cell background from filling the synthetic block-axis remainder.
-#[allow(clippy::too_many_arguments)]
-// cov:ignore: vertical table cell background geometry is covered by the ignored exact WPT reftest.
-fn vertical_table_cell_background_width(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    layout: &taffy::Layout,
-    border: &raikiri_style::property::Sides<raikiri_style::resolve::ComputedBorder>,
-    padding: &taffy::Rect<f32>,
-) -> Option<f32> {
-    // The narrowed width applies to the whole background, so it is used only
-    // when every layer clips to the content box; a layer clipped to a larger
-    // box must keep the full cell width.
-    let cv = cascade.computed.get(node_id)?;
-    if cv.display != DisplayValue::TableCell
-        || !cv
-            .background_layers()
-            .iter()
-            .all(|layer| layer.clip == raikiri_style::property::VisualBox::ContentBox)
-    {
-        return None;
-    }
-    let mut current = Some(node_id);
-    let mut vertical = false;
-    while let Some(id) = current {
-        if matches!(
-            cascade
-                .authored_writing_modes
-                .get(id)
-                .and_then(|mode| *mode),
-            Some(
-                WritingMode::VerticalRl
-                    | WritingMode::VerticalLr
-                    | WritingMode::SidewaysRl
-                    | WritingMode::SidewaysLr
-            )
-        ) {
-            vertical = true;
-            break;
-        }
-        current = document.parent_of(id);
-    }
-    if !vertical {
-        return None;
-    }
-    let cell = document.get_node(node_id)?;
-    let intrinsic_right = cell
-        .children
-        .iter()
-        .filter_map(|child_id| document.get_node(*child_id))
-        .map(|child| child.unrounded_layout.location.x + child.unrounded_layout.size.width)
-        .filter(|right| right.is_finite())
-        .fold(0.0, f32::max);
-    if intrinsic_right <= 0.0 {
-        return None;
-    }
-    Some(
-        (intrinsic_right + border.right.width().px() + padding.right).clamp(0.0, layout.size.width),
-    )
 }
 
 /// The final background layer of `cv` without its image: what a box paints
@@ -7514,6 +7361,78 @@ fn fixed_position_px(
     Some((x, y))
 }
 
+/// Pixel offset contributed by `vertical-align` to an inline-level box's
+/// position. Positive values move downward, as does a box's `abs_y` in the
+/// downward-growing Y coordinate system.
+///
+/// # Supported behavior
+///
+/// [`VerticalAlign::Sub`] / [`VerticalAlign::Super`] shift relative to the
+/// parent's font-size; [`VerticalAlign::Length`] uses the computed px value.
+/// Positive lengths raise and negative lengths lower (CSS 2.1 §10.8.1), so
+/// the sign reverses in paint's downward-growing Y coordinate system.
+///
+/// [`VerticalAlign::Middle`] / [`VerticalAlign::TextTop`] /
+/// [`VerticalAlign::TextBottom`] all remain at zero shift because shifting by
+/// font metrics is not implemented. `Top` / `Bottom` do not shift here; the
+/// relevant minimal line-box layout determines box positions. The `_` arm
+/// is a defensive default to make this function total (`VerticalAlign` is
+/// `#[non_exhaustive]`). [`VerticalAlign::Baseline`] also has no shift
+/// (CSS 2.1 §10.8.1: "Align the baseline of the box with the baseline of
+/// the parent box").
+///
+/// CSS 2.1 §10.8.1 "Applies to: inline-level and 'table-cell' elements"
+/// <https://www.w3.org/TR/CSS21/visudet.html#propdef-vertical-align>
+/// (`table-cell` is not implemented in this crate): a block-level box's
+/// `vertical-align: sub` does not contribute a shift.
+///
+/// # Shift size
+///
+/// CSS 2.1 §10.8.1 calls the `sub`/`super` offset only "the proper position
+/// for subscripts/superscripts", leaving its size implementation-defined.
+/// CSS Inline Layout Module Level 3 §4.2.3 "Post-Alignment
+/// Shift: the baseline-shift longhand"
+/// <https://www.w3.org/TR/css-inline-3/#baseline-shift-property> provides
+/// a concrete UA-default fallback. Font metrics take priority there, but
+/// this function does not use them or read any font tables:
+///
+/// - `sub`, spec verbatim: "Lower by the offset appropriate for
+///   subscripts of the parent's box. The UA may use the parent's font
+///   metrics to find this offset; otherwise it defaults to dropping by
+///   one fifth of the parent's used font-size."
+/// - `super`, spec verbatim: "Raise by the offset appropriate for
+///   superscripts of the parent's box. The UA may use the parent's font
+///   metrics to find this offset; otherwise it defaults to raising by one
+///   third of the parent's used font-size."
+///
+/// `vertical-align` (CSS 2.1) and `baseline-shift` (CSS Inline 3) are
+/// different properties. As the [`raikiri_style::property::VerticalAlign`]
+/// docs explain, this crate still uses CSS 2.1 as the primary source for
+/// keyword grammar. CSS Inline 3 is cited here only for the **size** of the
+/// shift undefined by CSS 2.1: its UA-default fallback for the same
+/// `sub`/`super` keywords.
+///
+/// `parent_font_size_px` must be the used font-size of the **box's parent**,
+/// not the box itself. Author/UA `font-size: smaller` commonly shrinks
+/// `sub`/`super` content already; "the parent's used font-size" in the
+/// cited specification refers to the size before that shrinkage.
+///
+/// # Composing nested `vertical-align` (unverified approximation)
+///
+/// This function returns a shift for only one box. The caller
+/// ([`paint_document`]) simply adds ancestor shifts to the `shift_y` stack
+/// frame. With a real inline formatting context, each box shifts relative
+/// to its immediate parent's baseline, propagating through line-box
+/// construction. This is a rough approximation, not a rule stated by any
+/// of the primary sources.
+///
+/// # Exclusion from the box model (unimplemented)
+///
+/// The shift is added only during painting, after taffy determines box
+/// positions. Taffy does not see `vertical_align`, and the result is not
+/// clipped. CSS 2.1 / CSS Inline 3 expect shifted positions to affect
+/// box-model calculations (including line-box height), but they do not here:
+/// a large shift may paint outside the page box.
 fn vertical_align_shift_px(
     va: VerticalAlign,
     display: DisplayValue,
