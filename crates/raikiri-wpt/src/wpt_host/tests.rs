@@ -1281,3 +1281,14 @@ fn a_right_to_left_root_scrolls_to_negative_offsets() {
     let width = f64::from(DEFAULT_REFTTEST_WIDTH);
     assert_eq!(offsets, format!("{},0,{}", width - 3000.0, width - 3000.0));
 }
+
+#[test]
+fn the_viewport_scrolling_area_reaches_descendant_margin_edges() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div style='position:absolute;top:0;height:1000px;margin-bottom:500px'></div>",
+    );
+    let offset = text(&mut rt, "scrollTo(0, 99999); String(scrollY)");
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(offset, format!("{}", 1500.0 - height));
+}

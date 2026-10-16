@@ -138,9 +138,10 @@ pub trait DocumentHost: 'static {
         Ok(None)
     }
     /// The viewport scrolling area before it is cut to the viewport's
-    /// overflow direction: the initial containing block unioned with every
-    /// box laid out in it, in the coordinates [`Self::box_geometry`] uses at
-    /// a zero scroll offset, or `None` when the embedder does not know it.
+    /// overflow direction: the initial containing block unioned with the
+    /// margin box of every box laid out in it, in the coordinates
+    /// [`Self::box_geometry`] uses at a zero scroll offset, or `None` when the
+    /// embedder does not know it.
     /// Called after [`Self::flush`]. The default does not know it.
     ///
     /// Spec: <https://drafts.csswg.org/cssom-view/#scrolling-area>

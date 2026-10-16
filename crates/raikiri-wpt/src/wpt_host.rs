@@ -530,7 +530,7 @@ impl DocumentHost for WptDocumentHost {
     }
 
     /// The initial containing block (the viewport-sized page box at the
-    /// origin) unioned with the border box of every box laid out in it. A
+    /// origin) unioned with the margin box of every box laid out in it. A
     /// fixed-position subtree stays with the viewport, so it adds nothing.
     fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
         let Some(scene) = self.page_scene.as_ref() else {
@@ -549,15 +549,18 @@ impl DocumentHost for WptDocumentHost {
             if fixed {
                 continue;
             }
+            let node = document.get_node(index);
             if let Some(border_box) = border_box_of(scene, index) {
+                let margin = node.map(|n| n.unrounded_layout.margin).unwrap_or_default();
                 area = rect(
-                    area.left.min(border_box.left),
-                    area.top.min(border_box.top),
-                    area.right.max(border_box.right),
-                    area.bottom.max(border_box.bottom),
+                    area.left.min(border_box.left - f64::from(margin.left)),
+                    area.top.min(border_box.top - f64::from(margin.top)),
+                    area.right.max(border_box.right + f64::from(margin.right)),
+                    area.bottom
+                        .max(border_box.bottom + f64::from(margin.bottom)),
                 );
             }
-            if let Some(node) = document.get_node(index) {
+            if let Some(node) = node {
                 pending.extend(node.children.iter().copied());
             }
         }
