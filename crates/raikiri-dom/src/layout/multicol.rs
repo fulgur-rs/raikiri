@@ -88,17 +88,20 @@ pub(crate) fn compute_multicol_layout(
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
-    // Children that hold no lines are sliced at the column edges. Only an
-    // outermost container takes this path; a nested one is fragmented by its
-    // outer context as well.
-    let lineless_children = (inputs.run_mode == RunMode::PerformLayout
-        && !span_scope
-        && style.horizontal
-        && tree.fragmentation_stack.is_empty())
-    .then(|| lineless::supported(tree, index))
-    .flatten();
+    // Children that hold no lines are sliced at the column edges, in a
+    // nested container as well as an outermost one.
+    let lineless_children =
+        (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
+            .then(|| lineless::supported(tree, index))
+            .flatten();
+    // A nested container that turns out taller than its outer column falls
+    // back to the custom path, which also breaks it at the outer column end.
+    let nested_fallback = custom_scope && !tree.fragmentation_stack.is_empty();
     let custom_scope = custom_scope && lineless_children.is_none();
     let stack_depth = tree.fragmentation_stack.len();
+    let outer_height = stack_depth
+        .checked_sub(1)
+        .and_then(|outer| tree.fragmentation_stack[outer].available_height);
     tree.fragmentation_stack.push(context);
     let mut output = crate::taffy_impl::block_layout(tree, node_id, inputs, block_ctx);
     if tree.fragment_tree.limit_exceeded {
@@ -259,8 +262,20 @@ pub(crate) fn compute_multicol_layout(
                 minimum,
                 lineless_definite,
                 lineless_maximum,
+                outer_height,
             )
             .unwrap_or_else(|| {
+                if nested_fallback {
+                    return relayout_nested_multicol_children(
+                        tree,
+                        node_id,
+                        resolved,
+                        output.size,
+                        fragmentainer_height.is_some(),
+                        content_origin,
+                        block_end_inset,
+                    );
+                }
                 space_min_constrained_children(
                     tree,
                     index,

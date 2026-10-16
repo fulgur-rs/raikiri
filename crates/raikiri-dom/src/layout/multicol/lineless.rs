@@ -44,6 +44,8 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.style.direction != TaffyDirection::Ltr
             // An orthogonal flow is monolithic in the column's block axis.
             || !is_horizontal(node)
+            // So is a box with size containment (CSS Contain 2, 3.1).
+            || node.size_containment.height
             || node.style.position != TaffyPosition::Relative
                 && node.style.position != defaults.position
             || node.style.float.is_floated()
@@ -405,6 +407,7 @@ pub(super) fn layout(
     minimum: f32,
     definite: bool,
     maximum: Option<f32>,
+    outer_height: Option<f32>,
 ) -> Option<f32> {
     // A definite container uses the content height layout gave it, which
     // already reflects min/max constraints and stretching by its parent.
@@ -491,12 +494,20 @@ pub(super) fn layout(
             return None;
         }
     };
-    tree.fragment_tree.retire_previous_roots(parent);
     let used_height = if definite_height.is_some() {
         border_box.height
     } else {
         origin.y + column_height + block_end_inset
     };
+    // Columns sliced here are not cut again at the end of an outer column,
+    // so a nested container taller than the outer column is left to the
+    // strategies that are.
+    if outer_height.is_some_and(|outer| used_height > outer + EPSILON) {
+        return None;
+    }
+    tree.fragment_tree.retire_previous_roots(parent);
+    tree.nodes[parent].multicol_groups.clear();
+    tree.nodes[parent].multicol_rows.clear();
     let container = tree.fragment_tree.try_push(LayoutFragment {
         node_id: parent,
         parent: None,

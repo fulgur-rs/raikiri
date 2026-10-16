@@ -2918,7 +2918,6 @@ css/css-multicol/multicol-nested-023.html
 css/css-multicol/multicol-nested-024.html
 css/css-multicol/multicol-overflow-clip-positioned.html
 css/css-multicol/multicol-overflow-clip.html
-css/css-multicol/multicol-rule-nested-balancing-004.html
 css/css-multicol/multicol-span-all-button-001.html
 css/css-multicol/multicol-span-all-dynamic-add-001.html
 css/css-multicol/multicol-span-all-dynamic-add-002.html
@@ -4645,6 +4644,12 @@ css/css-page/page-box-008-print.html
 # --- later pages of another inline size in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once later pages of a vertical-rl root whose page area height differs are laid out again at that height; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-size-012-print.html
+
+# --- nested multicol columns split by their own multicol (WPT pin 97ea26e2, EXACT, Linux, 2026-10-16) ---
+# Pass once a nested multicol splits blocks with no content across its columns; KEEP in two audit-vacuous-passes runs.
+css/css-multicol/multicol-rule-nested-balancing-002.html
+css/css-multicol/nested-at-outer-boundary-as-fieldset.html
+css/css-multicol/nested-past-fragmentation-line.html
 
 # --- body background across pages in vertical and sideways writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-16) ---
 # Pass once sideways roots paginate along x, the body's block-end margin is truncated at the end of the flow, and a right-to-left root box is stitched from its left end; KEEP in two audit-vacuous-passes runs.

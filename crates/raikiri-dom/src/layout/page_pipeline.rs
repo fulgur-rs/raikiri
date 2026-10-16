@@ -4132,21 +4132,7 @@ fn paginate_flow(
             (row, document.nodes[row].unrounded_layout.location.y)
         })
         .collect();
-    // A float moved to a later page carries its own content with it, but
-    // the in-flow content after it in the source sits beside or above it,
-    // so the shift ends where the float's subtree does. A later float may
-    // not start above an earlier one (CSS 2.1 §9.5.1), so it keeps the
-    // shift of the last moved float until in-flow content opens a page.
-    // The page the flow was on before the float moved is restored with it.
-    let mut pending_float_shift: Option<(usize, f32, u32)> = None;
-    let mut later_float_shift = 0.0_f32;
-    // The page-flow outer edges of the moved floats on each side (left,
-    // right), for each formatting context the floats were placed in: a
-    // later float in the same context needs to move only as far as it would
-    // otherwise start above one of them, or above its bottom when it clears
-    // that side or does not fit beside it. Floats in other contexts do not
-    // interact.
-    let mut later_float_edges: HashMap<usize, Vec<FloatEdge>> = HashMap::new();
+    let mut float_shifts = FloatShifts::default();
     // A nested box that moved inside an ancestor whose height cannot grow
     // to hold it overflows that ancestor: the part of the shift the
     // ancestor did not absorb ends where its subtree does, and the page the
@@ -4319,24 +4305,11 @@ fn paginate_flow(
         if let Some(page) = restored_page {
             current_page = page;
         }
-        if let Some((float_id, delta, flow_page)) = pending_float_shift
-            && !is_descendant_or_self(document, node_id, float_id)
-        {
+        if let Some((delta, flow_page)) = float_shifts.end_pending_outside(document, node_id) {
             flow_shift -= delta;
             current_page = flow_page;
-            pending_float_shift = None;
-            // A follower shifted less than the float before it keeps the
-            // larger budget, which the other side's floor may still need.
-            later_float_shift = later_float_shift.max(delta);
         }
-        let float_edges = (later_float_shift != 0.0 && pending_float_shift.is_none())
-            .then(|| {
-                let context = float_context_root(document, cascade, node_id, body_id);
-                later_float_edges
-                    .get(&context)
-                    .map(|edges| (context, edges.clone()))
-            })
-            .flatten();
+        let float_edges = float_shifts.edges_for(document, cascade, node_id, body_id);
         if let Some((float_context, float_edges)) = float_edges {
             let floating = is_floating_box_for_pagination(document, cascade, node_id);
             let computed = &cascade.computed[node_id];
@@ -4415,19 +4388,18 @@ fn paginate_flow(
                 accumulated_relative_offset_y(document, cascade, body_id, node_id);
             let flow_raw_y = candidate.raw_y - follower_offset;
             let shift = floor.map_or(0.0, |floor| {
-                (floor - (flow_raw_y + flow_shift - margin_top)).clamp(0.0, later_float_shift)
+                (floor - (flow_raw_y + flow_shift - margin_top)).clamp(0.0, float_shifts.later)
             });
             if shift > 0.0 {
                 flow_shift += shift;
                 if floating {
-                    pending_float_shift = Some((node_id, shift, current_page));
+                    float_shifts.pending = Some((node_id, shift, current_page));
                     // The shifted float is now the one later floats on its
                     // side keep below.
                     if let Some(index) = float_side_index(cascade.computed[node_id].float) {
                         let layout = &document.nodes[node_id].unrounded_layout;
                         let top = flow_raw_y + flow_shift;
-                        record_float_edge(
-                            &mut later_float_edges,
+                        float_shifts.record_edge(
                             float_context,
                             FloatEdge {
                                 node: node_id,
@@ -5326,12 +5298,13 @@ fn paginate_flow(
                         flow_shift += node_delta;
                     }
                     if page_overflow && is_floating_box_for_pagination(document, cascade, node_id) {
-                        let (inherited, flow_page) = pending_float_shift
+                        let (inherited, flow_page) = float_shifts
+                            .pending
                             .filter(|(float_id, _, _)| *float_id == node_id)
                             .map_or((0.0, page_before_candidate), |(_, delta, page)| {
                                 (delta, page)
                             });
-                        pending_float_shift = Some((node_id, inherited + node_delta, flow_page));
+                        float_shifts.pending = Some((node_id, inherited + node_delta, flow_page));
                         // A clearing follower stays below the margin box,
                         // which a negative block-end margin pulls up.
                         if let Some(index) = float_side_index(computed.float) {
@@ -5351,8 +5324,7 @@ fn paginate_flow(
                                 flow_target_y
                             };
                             let layout = &document.nodes[node_id].unrounded_layout;
-                            record_float_edge(
-                                &mut later_float_edges,
+                            float_shifts.record_edge(
                                 context,
                                 FloatEdge {
                                     node: node_id,
@@ -5368,8 +5340,7 @@ fn paginate_flow(
                             // border box, and a later float may have to
                             // follow it that far.
                             if !forced_transition {
-                                later_float_shift =
-                                    later_float_shift.max(inherited + node_delta + margin_top);
+                                float_shifts.extend_later(inherited + node_delta + margin_top);
                             }
                         }
                         // A formatting context of its own holds its floats
@@ -5423,15 +5394,7 @@ fn paginate_flow(
                         if !moved_in_bounded_ancestor {
                             let context = float_context_root(document, cascade, node_id, body_id);
                             let flow_top = node_target_y - relative_offset;
-                            if let Some(edges) = later_float_edges.get_mut(&context) {
-                                edges.retain(|edge| edge.bottom > flow_top + 0.001);
-                                if edges.is_empty() {
-                                    later_float_edges.remove(&context);
-                                }
-                            }
-                            if later_float_edges.is_empty() {
-                                later_float_shift = 0.0;
-                            }
+                            float_shifts.drop_edges_above(context, flow_top);
                         }
                     }
                     effective_y += node_delta;
@@ -7059,12 +7022,96 @@ struct FloatEdge {
     width: f32,
 }
 
-/// Adds a moved float to the floats of its formatting context. A float
-/// that moves again replaces its earlier place.
-fn record_float_edge(edges: &mut HashMap<usize, Vec<FloatEdge>>, context: usize, edge: FloatEdge) {
-    let edges = edges.entry(context).or_default();
-    edges.retain(|earlier| earlier.node != edge.node);
-    edges.push(edge);
+/// The shifts of the floats moved to a later page, and the edges later
+/// floats and clearing boxes keep below.
+#[derive(Default)]
+struct FloatShifts {
+    /// The float whose shift is in effect, the shift, and the page the flow
+    /// was on before the float moved.
+    ///
+    /// A float moved to a later page carries its own content with it, but
+    /// the in-flow content after it in the source sits beside or above it,
+    /// so the shift ends where the float's subtree does. The page the flow
+    /// was on before the float moved is restored with it.
+    pending: Option<(usize, f32, u32)>,
+    /// The largest shift a later float may still need.
+    ///
+    /// A later float may not start above an earlier one (CSS 2.1 §9.5.1),
+    /// so it keeps the shift of the last moved float until in-flow content
+    /// opens a page.
+    later: f32,
+    /// The page-flow outer edges of the moved floats on each side (left,
+    /// right), for each formatting context the floats were placed in.
+    ///
+    /// A later float in the same context needs to move only as far as it
+    /// would otherwise start above one of them, or above its bottom when it
+    /// clears that side or does not fit beside it. Floats in other contexts
+    /// do not interact.
+    edges: HashMap<usize, Vec<FloatEdge>>,
+}
+
+impl FloatShifts {
+    /// End the pending shift when `node_id` is outside the moved float's
+    /// subtree, and return the shift and the page to restore.
+    fn end_pending_outside(&mut self, document: &Document, node_id: usize) -> Option<(f32, u32)> {
+        let (float_id, delta, flow_page) = self.pending?;
+        if is_descendant_or_self(document, node_id, float_id) {
+            return None;
+        }
+        self.pending = None;
+        // A follower shifted less than the float before it keeps the
+        // larger budget, which the other side's floor may still need.
+        self.extend_later(delta);
+        Some((delta, flow_page))
+    }
+
+    /// The formatting context of `node_id` and the edges of the moved
+    /// floats in it, while a later float may still need to move and no
+    /// float shift is pending.
+    fn edges_for(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        body_id: usize,
+    ) -> Option<(usize, Vec<FloatEdge>)> {
+        (self.later != 0.0 && self.pending.is_none())
+            .then(|| {
+                let context = float_context_root(document, cascade, node_id, body_id);
+                self.edges
+                    .get(&context)
+                    .map(|edges| (context, edges.clone()))
+            })
+            .flatten()
+    }
+
+    /// Raise the shift later floats may still need to at least `shift`.
+    fn extend_later(&mut self, shift: f32) {
+        self.later = self.later.max(shift);
+    }
+
+    /// Add a moved float to the floats of its formatting context. A float
+    /// that moves again replaces its earlier place.
+    fn record_edge(&mut self, context: usize, edge: FloatEdge) {
+        let edges = self.edges.entry(context).or_default();
+        edges.retain(|earlier| earlier.node != edge.node);
+        edges.push(edge);
+    }
+
+    /// Drop the edges of `context` that do not reach below `flow_top` (within
+    /// a small tolerance), and the later-float shift once no edges remain in
+    /// any context.
+    fn drop_edges_above(&mut self, context: usize, flow_top: f32) {
+        if let Some(edges) = self.edges.get_mut(&context) {
+            edges.retain(|edge| edge.bottom > flow_top + 0.001);
+            if edges.is_empty() {
+                self.edges.remove(&context);
+            }
+        }
+        if self.edges.is_empty() {
+            self.later = 0.0;
+        }
+    }
 }
 
 /// The box whose block formatting context places the floats and clearance
