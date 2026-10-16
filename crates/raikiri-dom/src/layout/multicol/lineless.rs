@@ -227,11 +227,14 @@ fn place_columns(
         // A box that must stay whole moves to the next column like a box
         // that avoids breaks, rather than being cut, when it fits there: in
         // the rest of this column, or in a whole new one if content precedes
-        // it here.
+        // it here or the new one is taller.
+        let taller_next = cursor <= 0.0 && height_of(column + 1) > height_of(column) + EPSILON;
+        let moves_whole = item.whole
+            && (cursor > 0.0 || taller_next)
+            && item.height <= height_of(column + 1) + EPSILON;
         let splittable = item.splittable
             && !(item.whole
-                && (cursor + gap + item.height <= height_of(column) + EPSILON
-                    || cursor > 0.0 && item.height <= height_of(column + 1) + EPSILON));
+                && (cursor + gap + item.height <= height_of(column) + EPSILON || moves_whole));
         let fits_after_gap = if splittable {
             cursor + gap < height_of(column) - EPSILON
         } else {
@@ -240,7 +243,7 @@ fn place_columns(
         // A gap that fills the column leaves no room for a box that avoids
         // breaks either, so it starts the next column with the gap truncated.
         let gap_fills_column = !splittable && gap >= height_of(column) - EPSILON;
-        if (cursor > 0.0 || gap_fills_column)
+        if (cursor > 0.0 || gap_fills_column || moves_whole)
             && !fits_after_gap
             && (item.height > 0.0 || !splittable)
         {

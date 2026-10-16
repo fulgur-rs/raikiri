@@ -1992,6 +1992,23 @@ fn a_nested_multicol_taller_than_the_outer_column_continues_in_the_next_one() {
         ]
     );
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 2);
+    // Layout numbers the records of the container once it finishes, so the
+    // later row's box is not a first fragment.
+    let records: Vec<_> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == inner)
+        .collect();
+    assert_eq!(
+        records
+            .iter()
+            .filter(|fragment| fragment.fragment_index == 0)
+            .count(),
+        1
+    );
+    assert!(records.iter().all(|fragment| fragment.fragmentainer == 0
+        || fragment.fragment_index > 0 && fragment.fragment_count == records.len()));
 }
 
 #[test]

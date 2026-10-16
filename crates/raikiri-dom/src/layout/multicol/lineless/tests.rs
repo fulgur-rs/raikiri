@@ -1,4 +1,6 @@
-use super::{Item, Rows, balanced_height, fill_item_rows, place, stacked_height};
+use super::{
+    Item, Piece, Rows, Stop, balanced_height, fill_item_rows, place, place_columns, stacked_height,
+};
 use raikiri_style::property::ColumnFillValue;
 
 fn shape(items: &[Item], height: f32) -> Vec<Vec<(usize, f32, f32)>> {
@@ -604,4 +606,27 @@ fn a_definite_nested_container_needing_more_rows_than_the_budget_has_no_rows() {
     };
     assert!(fill(3).is_none());
     assert_eq!(fill(usize::MAX).unwrap().heights.len(), 100);
+}
+
+#[test]
+fn a_whole_box_leaves_a_shorter_first_column_for_the_next_one() {
+    let whole = Item {
+        whole: true,
+        ..split(80.0)
+    };
+    let height_of = |column: usize| if column == 0 { 50.0 } else { 100.0 };
+    let placement = place_columns(&[whole], &height_of, usize::MAX, usize::MAX, true).unwrap();
+    assert_eq!(
+        placement.pieces,
+        vec![vec![Piece {
+            column: 1,
+            top: 0.0,
+            height: 80.0
+        }]]
+    );
+    // Columns of one height leave nothing to gain by moving it.
+    assert_eq!(
+        place_columns(&[whole], &|_| 50.0, usize::MAX, usize::MAX, true).err(),
+        Some(Stop::Cut)
+    );
 }
