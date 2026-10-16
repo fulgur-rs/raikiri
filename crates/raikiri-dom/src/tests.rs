@@ -835,3 +835,56 @@ fn non_element_exports_preserve_programmatic_document_block_geometry() {
     assert_eq!(doc.nodes[root].taffy_display(), Display::Flex);
     assert_eq!(doc.nodes[text].taffy_display(), Display::Flex);
 }
+
+#[test]
+fn programmatic_flow_root_keeps_a_descendant_margin_inside_its_box() {
+    for (display, container_y, child_y, total_height) in [
+        (Display::Block, 20.0, 0.0, 40.0),
+        (Display::FlowRoot, 10.0, 20.0, 50.0),
+    ] {
+        let mut doc = Document::new();
+        let root = doc.append_element(
+            Some(0),
+            "root",
+            Style {
+                display: Display::Block,
+                size: Size {
+                    width: Dimension::length(200.0),
+                    height: Dimension::auto(),
+                },
+                ..Style::default()
+            },
+            None::<&str>,
+        );
+        let mut container_style = Style {
+            display,
+            ..Style::default()
+        };
+        container_style.margin.top = taffy::LengthPercentageAuto::length(10.0);
+        let container = doc.append_element(Some(root), "container", container_style, None::<&str>);
+        let mut child_style = Style {
+            display: Display::Block,
+            size: Size {
+                width: Dimension::length(20.0),
+                height: Dimension::length(20.0),
+            },
+            ..Style::default()
+        };
+        child_style.margin.top = taffy::LengthPercentageAuto::length(20.0);
+        let child = doc.append_element(Some(container), "child", child_style, None::<&str>);
+        compute_root_layout(
+            &mut doc,
+            taffy::NodeId::from(root),
+            Size {
+                width: AvailableSpace::Definite(200.0),
+                height: AvailableSpace::Definite(300.0),
+            },
+        );
+        assert_eq!(
+            doc.nodes[container].unrounded_layout.location.y,
+            container_y
+        );
+        assert_eq!(doc.nodes[child].unrounded_layout.location.y, child_y);
+        assert_eq!(doc.nodes[root].unrounded_layout.size.height, total_height);
+    }
+}
