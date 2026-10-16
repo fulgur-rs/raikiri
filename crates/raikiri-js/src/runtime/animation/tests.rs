@@ -501,7 +501,7 @@ fn promise_getters_reject_foreign_receivers() {
 }
 
 #[test]
-fn primitive_options_convert_to_a_number() {
+fn primitive_options_convert_to_a_number_but_durations_do_not() {
     let (mut runtime, target) = runtime_with_target();
     expose_target(&mut runtime, target);
     runtime
@@ -509,8 +509,13 @@ fn primitive_options_convert_to_a_number() {
             "const fromString = target.animate({ wordSpacing: ['0px', '40px'] }, '40');\
              fromString.pause();\
              fromString.currentTime = 10;\
-             const fromBoolean = target.animate({ opacity: [0, 1] }, { duration: true });\
-             fromBoolean.finished.then(() => { globalThis.booleanAt = performance.now(); })",
+             const autoObject = { toString: () => 'auto' };\
+             const fromAuto = target.animate({ opacity: [0, 1] }, { duration: autoObject });\
+             fromAuto.finished.then(() => { globalThis.autoAt = performance.now(); });\
+             globalThis.refusedDurations = [true, null, 'AUTO', '40'].every(duration => {\
+               try { target.animate({ opacity: [0, 1] }, { duration }); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             })",
         )
         .expect("primitive options convert to numbers");
     assert_eq!(
@@ -518,5 +523,10 @@ fn primitive_options_convert_to_a_number() {
         Some("word-spacing: 10px;")
     );
     runtime.run_until_idle().unwrap();
-    assert!(runtime.evaluate("booleanAt === 1").unwrap().to_boolean());
+    assert!(
+        runtime
+            .evaluate("autoAt === 0 && refusedDurations")
+            .unwrap()
+            .to_boolean()
+    );
 }

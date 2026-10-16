@@ -244,7 +244,8 @@ fn parse_keyframes(
 /// `(unrestricted double or KeyframeAnimationOptions)`: `undefined` and
 /// `null` are an empty dictionary, an object is a dictionary, and any other
 /// primitive is converted to a number. A dictionary's `duration` is a
-/// number or `"auto"`; absent and `"auto"` mean zero for a keyframe effect.
+/// Number or a value whose string is `"auto"`; absent and `"auto"` mean zero
+/// for a keyframe effect.
 fn parse_duration(options: Option<&JsValue>, context: &mut Context) -> JsResult<f64> {
     let options = options.cloned().unwrap_or_default();
     let duration = if options.is_null_or_undefined() {
@@ -254,17 +255,18 @@ fn parse_duration(options: Option<&JsValue>, context: &mut Context) -> JsResult<
     } else {
         JsValue::from(options.to_number(context)?)
     };
+    // `(unrestricted double or DOMString)`: only a Number selects the double;
+    // every other value converts to a string, and only "auto" is valid.
     let duration = if duration.is_undefined() {
         0.0
-    } else if let Some(keyword) = duration.as_string() {
-        if keyword.to_std_string_escaped() != "auto" {
-            return Err(type_error(
-                "animation duration must be a number or \"auto\"",
-            ));
-        }
+    } else if let Some(duration) = duration.as_number() {
+        duration
+    } else if duration.to_string(context)?.to_std_string_escaped() == "auto" {
         0.0
     } else {
-        duration.to_number(context)?
+        return Err(type_error(
+            "animation duration must be a number or \"auto\"",
+        ));
     };
     if duration.is_finite() && duration >= 0.0 {
         Ok(duration)
