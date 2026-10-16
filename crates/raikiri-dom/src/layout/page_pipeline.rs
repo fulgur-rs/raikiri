@@ -3636,6 +3636,57 @@ impl PageNames {
         }
     }
 
+    /// The page type `candidate` compares its own against to detect a named
+    /// page change, and whether content already placed in its flow lets that
+    /// change open a new page. `saw_child` tells whether any earlier box was
+    /// placed. Also records the page type an enclosing flow sets for later
+    /// candidates.
+    fn comparison(
+        &mut self,
+        candidate: &PageCandidate,
+        saw_child: bool,
+        column_contexts: &mut ColumnContexts,
+        document: &Document,
+        cascade: &CascadeResult,
+        page: u32,
+    ) -> (bool, Option<String>) {
+        if !candidate.page_name_in_flow {
+            return (false, self.current.clone());
+        }
+        match candidate.named_flex_context {
+            Some(context) if candidate.deferred_named_break_after => {
+                // Empty enclosing column boxes do not open an anonymous
+                // page before the row's established deferred boundary.
+                let seen = column_contexts.is_occupied(context, page, document, cascade)
+                    || self.current.is_some();
+                self.outer = candidate.page_name.clone();
+                (saw_child && seen, self.current.clone())
+            }
+            Some(context)
+                if candidate.is_named || candidate.is_text || candidate.is_rendered_leaf =>
+            {
+                // Nested column flows share the physical page opened by
+                // their preceding sibling, including an inner flow's end.
+                // A previously seen anonymous type is still a page type.
+                let seen = column_contexts.is_occupied(context, page, document, cascade)
+                    || self.current.is_some();
+                (saw_child && seen, self.current.clone())
+            }
+            Some(_) => (false, candidate.page_name.clone()),
+            None => {
+                let previous = if candidate.is_named {
+                    self.current.clone()
+                } else {
+                    self.outer.clone()
+                };
+                if !candidate.is_float_descendant {
+                    self.outer = candidate.page_name.clone();
+                }
+                (saw_child, previous)
+            }
+        }
+    }
+
     /// Give `page` the current page type.
     fn name_page(&mut self, page: u32) {
         let index = page as usize;
@@ -3966,44 +4017,14 @@ fn paginate_flow(
         {
             column_contexts.occupy(Some(context), current_page, document, cascade);
         }
-        let (name_context_seen, comparison_page_name) = if !name_participates_in_flow {
-            (false, page_names.current.clone())
-        } else {
-            match candidate.named_flex_context {
-                Some(context) if candidate.deferred_named_break_after => {
-                    // Empty enclosing column boxes do not open an anonymous
-                    // page before the row's established deferred boundary.
-                    let seen =
-                        column_contexts.is_occupied(context, current_page, document, cascade)
-                            || page_names.current.is_some();
-                    page_names.outer = candidate.page_name.clone();
-                    (saw_child && seen, page_names.current.clone())
-                }
-                Some(context)
-                    if candidate.is_named || candidate.is_text || candidate.is_rendered_leaf =>
-                {
-                    // Nested column flows share the physical page opened by
-                    // their preceding sibling, including an inner flow's end.
-                    // A previously seen anonymous type is still a page type.
-                    let seen =
-                        column_contexts.is_occupied(context, current_page, document, cascade)
-                            || page_names.current.is_some();
-                    (saw_child && seen, page_names.current.clone())
-                }
-                Some(_) => (false, candidate.page_name.clone()),
-                None => {
-                    let previous = if candidate.is_named {
-                        page_names.current.clone()
-                    } else {
-                        page_names.outer.clone()
-                    };
-                    if !candidate.is_float_descendant {
-                        page_names.outer = candidate.page_name.clone();
-                    }
-                    (saw_child, previous)
-                }
-            }
-        };
+        let (name_context_seen, comparison_page_name) = page_names.comparison(
+            &candidate,
+            saw_child,
+            &mut column_contexts,
+            document,
+            cascade,
+            current_page,
+        );
         // Leaving a flex item's internal named flow keeps the last opened
         // physical page until an outer boundary or natural overflow opens one.
         let keep_local_page_type =
