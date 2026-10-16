@@ -553,7 +553,7 @@ fn inside_inline_opacity_group(
                 && atomic_on_first_line(document, parent, node_id);
         }
         match cascade.computed.get(parent) {
-            Some(cv) if cv.display == DisplayValue::Inline => {
+            Some(cv) if cv.display.is_inline_flow() => {
                 if opacity_layer(cv).is_some() {
                     return true;
                 }

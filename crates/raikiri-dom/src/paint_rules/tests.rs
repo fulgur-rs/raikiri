@@ -542,9 +542,23 @@ fn atomic_inlines_hoist_positioned_content_unless_an_inline_forms_an_opacity_gro
         Style::default(),
         Some("display:inline-block"),
     );
+    let ruby = doc.append_element(
+        Some(plain),
+        "ruby",
+        Style::default(),
+        Some("display:ruby;opacity:0.5"),
+    );
+    let in_ruby = doc.append_element(
+        Some(ruby),
+        "span",
+        Style::default(),
+        Some("display:inline-block"),
+    );
     doc.mark_in_document_flags();
     let cascade = cascaded(&doc);
     assert!(hoists_positioned_content(&doc, &cascade, open));
+    // Ruby boxes are inline boxes too and form the same groups.
+    assert!(!hoists_positioned_content(&doc, &cascade, in_ruby));
     // A positioned inline with a z-index forms no group in the painters, so
     // the boxes inside it still join the enclosing layer.
     assert!(hoists_positioned_content(&doc, &cascade, passed));
