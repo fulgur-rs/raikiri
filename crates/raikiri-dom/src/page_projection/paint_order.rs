@@ -112,6 +112,7 @@ const LEGACY_COLUMN_CLIPS: &str = "legacy column clipping may be incomplete";
 /// [`generated_content::MAX_LETTER_GROUPS`]: crate::generated_content::MAX_LETTER_GROUPS
 const LETTER_GROUP_LIMIT: &str = "::first-letter opacity groups past the id limit are approximated";
 
+#[derive(Clone, Copy)]
 enum Frame {
     Visit(usize),
     Paragraph(usize),
@@ -536,7 +537,21 @@ impl Document {
                             _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                             LayerClose::Paint => {
                                 layer.flushing = true;
-                                std::mem::take(&mut layer.positioned)
+                                paint_rules::sort_positioned_frames(
+                                    self,
+                                    cascade,
+                                    std::mem::take(&mut layer.positioned),
+                                    Frame::PopClip,
+                                    |frame| match frame {
+                                        Frame::Visit(node_id) => {
+                                            paint_rules::PositionedFrame::Box(*node_id)
+                                        }
+                                        Frame::PushClip(owner) => {
+                                            paint_rules::PositionedFrame::Open(*owner)
+                                        }
+                                        _ => paint_rules::PositionedFrame::Close,
+                                    },
+                                )
                             }
                             LayerClose::Hoist => Vec::new(),
                         })

@@ -312,3 +312,45 @@ fn a_page_outside_the_layout_lists_nothing() {
     let (document, cascade, _, _) = page.paint_inputs();
     assert!(document.page_paint_order(cascade, 99, None).is_empty());
 }
+
+#[test]
+fn stacking_contexts_in_different_items_paint_in_stack_level_order() {
+    // CSS 2.1 Appendix E step 9: positioned descendants paint in z-index
+    // order within the nearest stacking context, whatever box holds them.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div style='display:flex'><div><div id=a style='{item};z-index:10'></div>\
+             <div id=b style='{item};z-index:20'></div></div>\
+             <div><div id=c style='{item};z-index:15'></div></div></div>"
+        ),
+        0,
+    );
+    let (a, b, c) = (
+        position(&events, "Box(a)"),
+        position(&events, "Box(b)"),
+        position(&events, "Box(c)"),
+    );
+    assert!(a < c && c < b, "{events:?}");
+}
+
+#[test]
+fn a_box_moved_out_of_a_clip_keeps_its_clip() {
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div style='overflow:hidden'>\
+             <div id=a style='{item};z-index:10'></div>\
+             <div id=b style='{item};z-index:20'></div></div>\
+             <div><div id=c style='{item};z-index:15'></div></div></div>"
+        ),
+        0,
+    );
+    let start = position(&events, "Box(a)") - 1;
+    assert_eq!(
+        events[start..],
+        [
+            "PushClip", "Box(a)", "PopClip", "Box(c)", "PushClip", "Box(b)", "PopClip"
+        ],
+    );
+}
