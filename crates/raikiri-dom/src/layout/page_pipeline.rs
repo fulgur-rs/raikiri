@@ -4328,21 +4328,15 @@ fn paginate_flow(
                 .ifc_root
                 .map(|(root, _)| root)
                 .filter(|&root| document.is_source_node(root) && root != node_id);
-            let line_block_parent = paragraph_root
-                .or(document.parent_of(node_id))
-                .filter(|parent_id| {
-                    !uses_positioned_coordinates && !checked_paragraphs.is_fully_checked(*parent_id)
-                })
-                .and_then(|parent_id| {
-                    if document.layout_parent_of(parent_id)? == roots.contents_box {
-                        Some((parent_id, false))
-                    } else {
-                        (!candidate.is_float_descendant
-                            && !candidate.is_out_of_flow_descendant
-                            && is_block_flow_paragraph(document, cascade, parent_id, body_id))
-                        .then_some((parent_id, true))
-                    }
-                });
+            let line_block_parent = line_block_parent(
+                document,
+                cascade,
+                &roots,
+                &candidate,
+                paragraph_root,
+                &checked_paragraphs,
+                uses_positioned_coordinates,
+            );
             if let Some((block_id, nested)) = line_block_parent
                 && checked_paragraphs.block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)
@@ -6787,6 +6781,42 @@ impl CheckedParagraphs {
     fn is_fully_checked(&self, block_id: usize) -> bool {
         self.block_text.contains(&block_id) && self.orphans_widows.contains(&block_id)
     }
+}
+
+/// The block whose lines hold `candidate`'s text and that the paragraph
+/// checks may move as a unit, with whether it is nested in plain block flow
+/// rather than a direct child of the flow's contents box.
+///
+/// The block is `paragraph_root`, the inline layout root of the text's
+/// paragraph, or else the text's parent. A block nested in plain block flow
+/// is moved the same way as a direct child; its ancestors then grow to hold
+/// it. There is no such block for text placed by positioned insets, for a
+/// block whose checks have all run, or for a nested block that is not in
+/// plain block flow or that lies inside a float or an out-of-flow box.
+fn line_block_parent(
+    document: &Document,
+    cascade: &CascadeResult,
+    roots: &candidates::FlowRoots,
+    candidate: &PageCandidate,
+    paragraph_root: Option<usize>,
+    checked_paragraphs: &CheckedParagraphs,
+    uses_positioned_coordinates: bool,
+) -> Option<(usize, bool)> {
+    paragraph_root
+        .or(document.parent_of(candidate.node_id))
+        .filter(|parent_id| {
+            !uses_positioned_coordinates && !checked_paragraphs.is_fully_checked(*parent_id)
+        })
+        .and_then(|parent_id| {
+            if document.layout_parent_of(parent_id)? == roots.contents_box {
+                Some((parent_id, false))
+            } else {
+                (!candidate.is_float_descendant
+                    && !candidate.is_out_of_flow_descendant
+                    && is_block_flow_paragraph(document, cascade, parent_id, roots.element))
+                .then_some((parent_id, true))
+            }
+        })
 }
 
 /// Whether the text from `text_y` with `text_height` starts at or below the
