@@ -240,30 +240,39 @@ fn parse_keyframes(
     )))
 }
 
-/// The iteration duration from `options`: a number, or a dictionary whose
-/// `duration` member is a number or `"auto"`. Absent and `"auto"` mean zero
-/// for a keyframe effect.
+/// The iteration duration from `options`, converted as the WebIDL union
+/// `(unrestricted double or KeyframeAnimationOptions)`: `undefined` and
+/// `null` are an empty dictionary, an object is a dictionary, and any other
+/// primitive is converted to a number. A dictionary's `duration` is a
+/// number or `"auto"`; absent and `"auto"` mean zero for a keyframe effect.
 fn parse_duration(options: Option<&JsValue>, context: &mut Context) -> JsResult<f64> {
-    let duration = match options {
-        Some(value) if value.is_number() => value.clone(),
-        Some(value) if value.is_undefined() => JsValue::undefined(),
-        Some(value) => value
-            .as_object()
-            .ok_or_else(|| type_error("animation options must be a number or a dictionary"))?
-            .get(js_string!("duration"), context)?,
-        None => JsValue::undefined(),
+    let options = options.cloned().unwrap_or_default();
+    let duration = if options.is_null_or_undefined() {
+        JsValue::undefined()
+    } else if let Some(dictionary) = options.as_object() {
+        dictionary.get(js_string!("duration"), context)?
+    } else {
+        JsValue::from(options.to_number(context)?)
     };
-    if duration.is_undefined()
-        || duration
-            .as_string()
-            .is_some_and(|value| value.to_std_string_escaped() == "auto")
-    {
-        return Ok(0.0);
+    let duration = if duration.is_undefined() {
+        0.0
+    } else if let Some(keyword) = duration.as_string() {
+        if keyword.to_std_string_escaped() != "auto" {
+            return Err(type_error(
+                "animation duration must be a number or \"auto\"",
+            ));
+        }
+        0.0
+    } else {
+        duration.to_number(context)?
+    };
+    if duration.is_finite() && duration >= 0.0 {
+        Ok(duration)
+    } else {
+        Err(type_error(
+            "animation duration must be a finite, non-negative number",
+        ))
     }
-    duration
-        .as_number()
-        .filter(|duration| duration.is_finite() && *duration >= 0.0)
-        .ok_or_else(|| type_error("animation duration must be a finite, non-negative number"))
 }
 
 fn parse_effect(args: &[JsValue], context: &mut Context) -> JsResult<(Option<KeyframePair>, f64)> {

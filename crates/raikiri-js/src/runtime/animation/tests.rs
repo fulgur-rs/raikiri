@@ -359,7 +359,9 @@ fn absent_and_auto_durations_are_zero() {
                target.animate({ wordSpacing: ['0px', '40px'] }),\
                target.animate({ wordSpacing: ['0px', '40px'] }, undefined),\
                target.animate({ wordSpacing: ['0px', '40px'] }, {}),\
-               target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 'auto' })\
+               target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 'auto' }),\
+               target.animate({ wordSpacing: ['0px', '40px'] }, null),\
+               target.animate({ wordSpacing: ['0px', '40px'] }, false)\
              ];\
              for (const animation of animations) { animation.pause(); animation.currentTime = 0; }",
         )
@@ -496,4 +498,25 @@ fn promise_getters_reject_foreign_receivers() {
         )
         .unwrap();
     assert!(result.to_boolean());
+}
+
+#[test]
+fn primitive_options_convert_to_a_number() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "const fromString = target.animate({ wordSpacing: ['0px', '40px'] }, '40');\
+             fromString.pause();\
+             fromString.currentTime = 10;\
+             const fromBoolean = target.animate({ opacity: [0, 1] }, { duration: true });\
+             fromBoolean.finished.then(() => { globalThis.booleanAt = performance.now(); })",
+        )
+        .expect("primitive options convert to numbers");
+    assert_eq!(
+        animation_style(&mut runtime, target).as_deref(),
+        Some("word-spacing: 10px;")
+    );
+    runtime.run_until_idle().unwrap();
+    assert!(runtime.evaluate("booleanAt === 1").unwrap().to_boolean());
 }
