@@ -111,6 +111,16 @@ fn expanded(run: &PositionedGlyphRun<'_>) -> Vec<(u32, f64, f64)> {
         .collect()
 }
 
+/// Whether the painter draws the glyphs of `run`. Characters no font covers
+/// are shaped with a stub face that has no `head` table and no outlines, so
+/// their runs take space but draw nothing.
+fn drawable(run: &PositionedGlyphRun<'_>) -> bool {
+    use skrifa::raw::TableProvider;
+    skrifa::FontRef::from_index(run.font.data.as_bytes(), run.font.index)
+        .and_then(|font| font.head())
+        .is_ok()
+}
+
 fn close(a: &(u32, f64, f64), b: &(u32, f64, f64)) -> bool {
     a.0 == b.0 && (a.1 - b.1).abs() < TOLERANCE && (a.2 - b.2).abs() < TOLERANCE
 }
@@ -128,6 +138,7 @@ fn assert_runs_match_paint(result: &DocumentLayout) -> usize {
             let shift = f64::from(origin) - f64::from(page.geometry().content_box.y);
             page.text_runs()
                 .iter()
+                .filter(|run| drawable(run))
                 .flat_map(expanded)
                 .map(move |(id, x, y)| (id, x, y + shift))
                 .collect::<Vec<_>>()
@@ -135,7 +146,11 @@ fn assert_runs_match_paint(result: &DocumentLayout) -> usize {
         .collect();
     for page in result.pages() {
         let runs = page.text_runs();
-        let expected: Vec<_> = runs.iter().flat_map(expanded).collect();
+        let expected: Vec<_> = runs
+            .iter()
+            .filter(|run| drawable(run))
+            .flat_map(expanded)
+            .collect();
         let mut drawn = drawn(&page, result.page_count());
         for glyph in &expected {
             let found = drawn.iter().position(|other| close(glyph, other));
@@ -167,7 +182,7 @@ fn assert_runs_match_paint(result: &DocumentLayout) -> usize {
             "page {}: drawn glyphs missing from the runs: {stray:?}",
             page.index()
         );
-        total += expected.len();
+        total += runs.iter().map(|run| run.glyphs.len()).sum::<usize>();
     }
     total
 }
@@ -495,8 +510,9 @@ fn right_to_left_runs_match_paint_left_to_right() {
     check(&result);
     let page = result.pages().next().expect("page");
     for run in page.text_runs() {
-        // Ahem gives every glyph a 1em advance, so glyphs listed left to
-        // right sit exactly at their accumulated advances.
+        // Every glyph has a 1em advance (Ahem's, or the stub face's for the
+        // Hebrew letters no font covers), so glyphs listed left to right sit
+        // exactly at their accumulated advances.
         for glyph in &run.glyphs {
             assert!(glyph.x_offset.abs() < 1e-3, "{run:?}");
         }

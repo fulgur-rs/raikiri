@@ -1421,18 +1421,13 @@ fn rtl_lines_place_glyphs() {
             "abc",
             &[35, 45, 55],
         ),
-        // Hebrew letters have no glyph in Ahem, so every one draws the same
-        // notdef box: the positions of the boxes are compared, not the order
-        // of the letters inside the right-to-left run.
-        (
-            "width:100px",
-            "abc \u{05d0}\u{05d1}\u{05d2}",
-            &[0, 10, 20, 40, 50, 60],
-        ),
+        // No font covers the Hebrew letters, so they take space but draw no
+        // glyphs: the Latin letters land where the bidi order puts them.
+        ("width:100px", "abc \u{05d0}\u{05d1}\u{05d2}", &[0, 10, 20]),
         (
             "direction:rtl;width:100px",
             "\u{05d0}\u{05d1} abc",
-            &[40, 50, 60, 80, 90],
+            &[40, 50, 60],
         ),
         // The content box does not start at the page's left edge, and its
         // width is not authored.
@@ -3544,4 +3539,45 @@ fn a_wrapping_vertical_inline_slices_its_shadow_from_the_joined_box() {
             ([px(5), px(-38), px(15), px(42)], green),
         ]
     );
+}
+
+#[test]
+fn characters_no_font_covers_draw_no_glyphs_but_keep_their_decorations() {
+    // U+FDD0 is a noncharacter, so no font covers it and shodo shapes it with
+    // its stub face, which has no outlines for a renderer to scale.
+    let scene = painted_root(
+        "width:100px;text-shadow:1px 1px red;text-decoration:underline",
+        |doc, root| {
+            doc.append_text(root, "\u{FDD0}");
+        },
+    );
+    let runs: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::GlyphRun(run) => Some(run),
+            _ => None,
+        })
+        .collect();
+    assert!(runs.is_empty(), "drew {} glyph runs", runs.len());
+    assert!(
+        scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Fill(_))),
+        "the underline and its shadow still paint"
+    );
+}
+
+#[test]
+fn only_a_face_with_a_head_table_has_glyph_outlines() {
+    // An sfnt header with no table records, like shodo's stub face.
+    let stub = peniko::FontData::new(
+        peniko::Blob::from(vec![0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+        0,
+    );
+    assert!(!crate::text::has_glyph_outlines(&stub));
+    let ahem = std::fs::read(std::path::Path::new(FONT_DIR).join("Ahem.ttf")).expect("Ahem");
+    let ahem = peniko::FontData::new(peniko::Blob::from(ahem), 0);
+    assert!(crate::text::has_glyph_outlines(&ahem));
 }

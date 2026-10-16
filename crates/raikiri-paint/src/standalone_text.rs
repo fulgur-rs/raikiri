@@ -114,7 +114,7 @@ pub(crate) fn draw(
             let Fragment::GlyphRun(run) = fragment else {
                 continue;
             };
-            let Some(font) = run.font_data() else {
+            let Some(font) = run.font_data().filter(crate::text::has_glyph_outlines) else {
                 continue;
             };
             let glyphs: Vec<AnyrenderGlyph> = run

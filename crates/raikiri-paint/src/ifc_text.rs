@@ -683,19 +683,21 @@ pub(crate) fn hold_ifc_lines<'a>(
                     physical_glyph_transform(&converter, draw.glyph_transform, draw.run.skew());
                 let run_transform = run_transform(transform, draw);
                 let scene = paint.target(draw.group);
-                scene.draw_glyphs(
-                    &font,
-                    font_size,
-                    true,
-                    &coords,
-                    synthetic_embolden(draw.run.embolden(), font_size),
-                    Fill::NonZero,
-                    draw.color,
-                    1.0,
-                    run_transform,
-                    glyph_transform,
-                    draw.glyphs.iter().map(anyrender_glyph),
-                );
+                if crate::text::has_glyph_outlines(&font) {
+                    scene.draw_glyphs(
+                        &font,
+                        font_size,
+                        true,
+                        &coords,
+                        synthetic_embolden(draw.run.embolden(), font_size),
+                        Fill::NonZero,
+                        draw.color,
+                        1.0,
+                        run_transform,
+                        glyph_transform,
+                        draw.glyphs.iter().map(anyrender_glyph),
+                    );
+                }
                 // Emphasis marks sit over or under their characters; vertical
                 // runs need rotated placement, which is not drawn yet.
                 if !vertical && !draw.turned {
@@ -1042,19 +1044,21 @@ fn draw_shadow(
         })
         .collect();
     draw_resolved_decoration_phase(scene, &decorations, DecorationPhase::BeforeGlyphs);
-    scene.draw_glyphs(
-        run.font,
-        font_size,
-        true,
-        run.coords,
-        synthetic_embolden(run.draw.run.embolden(), font_size),
-        Fill::NonZero,
-        css_color_to_peniko(color),
-        1.0,
-        shadow_transform,
-        run.glyph_transform,
-        run.draw.glyphs.iter().map(anyrender_glyph),
-    );
+    if crate::text::has_glyph_outlines(run.font) {
+        scene.draw_glyphs(
+            run.font,
+            font_size,
+            true,
+            run.coords,
+            synthetic_embolden(run.draw.run.embolden(), font_size),
+            Fill::NonZero,
+            css_color_to_peniko(color),
+            1.0,
+            shadow_transform,
+            run.glyph_transform,
+            run.draw.glyphs.iter().map(anyrender_glyph),
+        );
+    }
     let (x, baseline) = run.emphasis_origin;
     crate::emphasis::draw_marks_in(
         scene,
