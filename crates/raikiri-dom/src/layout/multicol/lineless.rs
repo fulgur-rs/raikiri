@@ -460,21 +460,29 @@ fn balanced_height_after(
     }
 }
 
+/// The pieces that `balance-all` probes may place while balancing the rows
+/// of one nested container.
+const BALANCE_ALL_WORK: usize = 1 << 22;
+
 /// Balance the columns of each of the first `rows` rows of `column_count`
 /// columns for `column-fill: balance-all`: each row gets the shortest column
 /// height that still holds the content its columns hold at the heights in
 /// `heights`, one per row (CSS Multi-column 1, 8.1). Columns past the last
 /// row take that row's height. Rows are balanced in order, so the content
-/// left for later rows does not change.
+/// left for later rows does not change. Rows after the probes have placed
+/// `budget` pieces keep their heights.
 fn balance_rows(
     items: &[Item],
     column_count: usize,
     rows: usize,
     heights: &mut [f32],
     max_pieces: usize,
+    budget: usize,
 ) -> Option<()> {
     let last = heights.len().checked_sub(1)?;
     let row_of = |column: usize| (column / column_count).min(last);
+    // Pieces placed so far by the probes below.
+    let work = std::cell::Cell::new(0usize);
     // The block size of the pieces in the columns before `end`.
     let held = |heights: &[f32], end: usize| {
         place_columns(
@@ -486,6 +494,8 @@ fn balance_rows(
         )
         .ok()
         .map(|placement| {
+            let pieces: usize = placement.pieces.iter().map(Vec::len).sum();
+            work.set(work.get().saturating_add(pieces.max(1)));
             let height: f32 = placement
                 .pieces
                 .iter()
@@ -497,6 +507,12 @@ fn balance_rows(
         })
     };
     for row in 0..rows.min(last) {
+        // Every probe places the whole stream, so a container with many rows
+        // stops balancing once the probes have placed `budget` pieces; the
+        // remaining rows keep their full height, as with `balance`.
+        if work.get() > budget {
+            break;
+        }
         let end = column_count * (row + 1);
         let (_, target) = held(heights, end)?;
         let full = heights[row];
@@ -654,7 +670,14 @@ fn fill_item_rows(
         // share of the container's height.
         let mut columns = heights.clone();
         if column_fill == ColumnFillValue::BalanceAll {
-            balance_rows(items, column_count, last, &mut columns, max_pieces)?;
+            balance_rows(
+                items,
+                column_count,
+                last,
+                &mut columns,
+                max_pieces,
+                BALANCE_ALL_WORK,
+            )?;
         }
         let height_of = |column: usize| columns[row_of(column, last)];
         let placement = place_columns(items, &height_of, max_pieces, usize::MAX, true).ok()?;
@@ -698,7 +721,14 @@ fn fill_item_rows(
             .map(|row| if row == 0 { first } else { later })
             .collect();
         if column_fill == ColumnFillValue::BalanceAll {
-            balance_rows(items, column_count, last, &mut columns, max_pieces)?;
+            balance_rows(
+                items,
+                column_count,
+                last,
+                &mut columns,
+                max_pieces,
+                BALANCE_ALL_WORK,
+            )?;
         }
         let height_of = |column: usize| columns[row_of(column, last)];
         let fixed = column_count * last;

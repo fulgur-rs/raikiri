@@ -1,5 +1,6 @@
 use super::{
-    Item, Piece, Rows, Stop, balanced_height, fill_item_rows, place, place_columns, stacked_height,
+    Item, Piece, Rows, Stop, balance_rows, balanced_height, fill_item_rows, place, place_columns,
+    stacked_height,
 };
 use raikiri_style::property::ColumnFillValue;
 
@@ -629,4 +630,20 @@ fn a_whole_box_leaves_a_shorter_first_column_for_the_next_one() {
         place_columns(&[whole], &|_| 50.0, usize::MAX, usize::MAX, true).err(),
         Some(Stop::Cut)
     );
+}
+
+#[test]
+fn balance_all_stops_balancing_rows_once_its_probes_use_up_the_budget() {
+    let items = [split(150.0), avoid(100.0)];
+    let balance = |budget| {
+        let mut heights = vec![100.0, 200.0];
+        balance_rows(&items, 2, 1, &mut heights, usize::MAX, budget).unwrap();
+        heights
+    };
+    assert_eq!(balance(usize::MAX), vec![75.0, 200.0]);
+    assert_eq!(balance(0), vec![75.0, 200.0]);
+    let mut heights = vec![100.0, 100.0, 200.0];
+    balance_rows(&items, 1, 2, &mut heights, usize::MAX, 0).unwrap();
+    // The first row's probes spend the budget, so the second keeps its height.
+    assert_eq!(heights[1], 100.0);
 }
