@@ -10,6 +10,7 @@
 //! [`WptDocumentHost::script_source`]).
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 use raikiri_js::runtime::{BoxGeometry, DocumentHost, DomRect, HostError, PositionKind};
@@ -82,11 +83,21 @@ pub(crate) struct WptDocumentHost {
     /// `<style>` sources connected at the last flush, in tree order.
     style_sources: Vec<raikiri_html::StylesheetSource>,
     /// Descendant content extents per arena index, rebuilt on every `flush`.
-    /// Each entry is the union of descendant border-box right/bottom edges,
-    /// or negative infinity when no descendant has a fragment. The scroll
-    /// size itself still needs the padding box, so it is derived per call
-    /// from this cache without walking the subtree again.
-    scroll_content_extents: Vec<(f64, f64)>,
+    /// Each entry is the bounding box of the descendant border boxes as
+    /// painted, in the node's own untransformed coordinates, or `None` when
+    /// no descendant has a fragment. The scroll size itself still needs the
+    /// padding box, so it is derived per call from this cache without
+    /// walking the subtree again.
+    scroll_content_extents: Vec<Option<DomRect>>,
+    /// Per arena index, the transform the painter draws the node's boxes
+    /// through from their layout coordinates, or `None` when a singular
+    /// transform hides them. Rebuilt on every `flush`; a node past the end
+    /// is drawn where layout put it.
+    paint_transforms: Vec<Option<raikiri_traits::PaintTransform>>,
+    /// The border boxes of the `::before` and `::after` boxes laid out in
+    /// paragraphs, by originating element, in the coordinates of
+    /// [`border_box_of`]. Rebuilt on every `flush`.
+    generated_boxes: HashMap<usize, Vec<DomRect>>,
     #[cfg(test)]
     pub(crate) flushes: std::rc::Rc<std::cell::Cell<usize>>,
 }
@@ -171,6 +182,8 @@ impl WptDocumentHost {
             computed_styles: None,
             style_sources,
             scroll_content_extents: Vec::new(),
+            paint_transforms: Vec::new(),
+            generated_boxes: HashMap::new(),
             #[cfg(test)]
             flushes: Default::default(),
         }
@@ -415,12 +428,49 @@ impl DocumentHost for WptDocumentHost {
             projection_box,
             0,
             0.0,
-            page_name,
+            page_name.clone(),
         ));
+        // Layout leaves no page placements behind; the paint transforms below
+        // are read from the same tall page the scene was cut from.
+        self.setup
+            .uncascaded
+            .dom
+            .project_pages(
+                &cascade,
+                projection_box,
+                &[raikiri_dom::PageSlice {
+                    page_index: 0,
+                    content_origin_y: 0.0,
+                    page_name,
+                }],
+                &[],
+            )
+            .map_err(|error| HostError(format!("live DOM page projection: {error:?}")))?;
+        let document = &self.setup.uncascaded.dom;
+        let nodes =
+            (0..document.node_count()).map(|index| raikiri_traits::NodeId::new(index as u64));
+        let paint_transforms = document.page_paint_transforms(&cascade, 0, nodes);
+        // The paint order leaves out the root's own transform, which moves
+        // the whole canvas (CSS Transforms 1 §6); a singular one hides it.
+        let root = raikiri_dom::root_box(document, &cascade, self.setup.page_box, 0.0, 1)
+            .and_then(|root| root.transform);
+        self.paint_transforms = match root {
+            None => paint_transforms,
+            Some(root) if inverse(root).is_none() => vec![None; paint_transforms.len()],
+            Some(root) => paint_transforms
+                .into_iter()
+                .map(|transform| transform.map(|transform| root * transform))
+                .collect(),
+        };
         self.computed_styles = Some(cascade.computed);
         let scene = self.page_scene.as_ref().expect("scene just built");
-        self.scroll_content_extents =
-            compute_scroll_content_extents(&self.setup.uncascaded.dom, scene);
+        self.generated_boxes = collect_generated_boxes(document, scene);
+        self.scroll_content_extents = compute_scroll_content_extents(
+            document,
+            scene,
+            &self.paint_transforms,
+            &self.generated_boxes,
+        );
         Ok(())
     }
 
@@ -452,7 +502,10 @@ impl DocumentHost for WptDocumentHost {
             .scroll_content_extents
             .get(node)
             .copied()
-            .unwrap_or((f64::NEG_INFINITY, f64::NEG_INFINITY));
+            .flatten()
+            .map_or((f64::NEG_INFINITY, f64::NEG_INFINITY), |content| {
+                (content.right, content.bottom)
+            });
         let padding = self
             .setup
             .uncascaded
@@ -530,7 +583,8 @@ impl DocumentHost for WptDocumentHost {
     }
 
     /// The initial containing block (the viewport-sized page box at the
-    /// origin) unioned with the margin box of every box laid out in it. A
+    /// origin) unioned with the margin box of every box laid out in it, as
+    /// its transforms draw it. A
     /// fixed-position subtree whose containing block is the viewport stays
     /// with the viewport, so it adds nothing.
     fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
@@ -553,15 +607,22 @@ impl DocumentHost for WptDocumentHost {
                 continue;
             }
             let node = document.get_node(index);
-            if let Some(border_box) = border_box_of(scene, index) {
+            let painted =
+                border_box_of(scene, index).zip(paint_transform_of(&self.paint_transforms, index));
+            if let Some((border_box, transform)) = painted {
                 let margin = node.map(|n| n.unrounded_layout.margin).unwrap_or_default();
-                area = rect(
-                    area.left.min(border_box.left - f64::from(margin.left)),
-                    area.top.min(border_box.top - f64::from(margin.top)),
-                    area.right.max(border_box.right + f64::from(margin.right)),
-                    area.bottom
-                        .max(border_box.bottom + f64::from(margin.bottom)),
+                let margin_box = rect(
+                    border_box.left - f64::from(margin.left),
+                    border_box.top - f64::from(margin.top),
+                    border_box.right + f64::from(margin.right),
+                    border_box.bottom + f64::from(margin.bottom),
                 );
+                area = union(area, transform_rect(transform, margin_box));
+            }
+            if let Some(transform) = paint_transform_of(&self.paint_transforms, index) {
+                for &generated in self.generated_boxes.get(&index).into_iter().flatten() {
+                    area = union(area, transform_rect(transform, generated));
+                }
             }
             let contained = contained
                 || style.is_some_and(|style| {
@@ -680,24 +741,29 @@ fn border_box_of(scene: &raikiri::PageScene, node: usize) -> Option<DomRect> {
 
 /// Descendant content extents for every arena index, in one post-order pass.
 ///
-/// Each entry is the union of descendant border-box right/bottom edges (the
+/// Each entry is the bounding box of the descendant border boxes (the
 /// content half of the scrolling area in CSSOM View §6 "scrolling area":
 /// the union of the padding box with every descendant fragment, extended by
 /// the end-side padding after that content per CSS Overflow 3 §3.3
 /// "Scrollable Overflow"; this layout only produces in-flow descendants).
-/// Negative infinity when no descendant has a fragment. Descendants
-/// extending above or left of the padding box stay in the union; the caller
-/// clamps them out when deriving the scroll size from the padding box
-/// origin, since they are not reachable by scrolling.
+/// A descendant counts where its transforms draw it, mapped back into the
+/// node's own untransformed coordinates, since transforms affect scrollable
+/// overflow (CSS Transforms 1 §3); a rotated or skewed box adds its bounding
+/// box. `None` when no descendant has a fragment. Descendants extending
+/// above or left of the padding box stay in the union; the caller clamps
+/// them out when deriving the scroll size from the padding box origin, since
+/// they are not reachable by scrolling.
 ///
 /// The page scene only has fragments for nodes that intersect the page, so
 /// descendants laid out entirely off the page are not counted.
 fn compute_scroll_content_extents(
     document: &raikiri_dom::Document,
     scene: &raikiri::PageScene,
-) -> Vec<(f64, f64)> {
+    transforms: &[Option<raikiri_traits::PaintTransform>],
+    generated: &HashMap<usize, Vec<DomRect>>,
+) -> Vec<Option<DomRect>> {
     let count = document.node_count();
-    let mut extents = vec![(f64::NEG_INFINITY, f64::NEG_INFINITY); count];
+    let mut extents: Vec<Option<DomRect>> = vec![None; count];
     let mut visited = vec![false; count];
     for start in 0..count {
         if visited[start] {
@@ -709,21 +775,44 @@ fn compute_scroll_content_extents(
                 continue;
             }
             if expanded {
-                let mut content_right = f64::NEG_INFINITY;
-                let mut content_bottom = f64::NEG_INFINITY;
-                if let Some(node) = document.get_node(index) {
-                    for &child in &node.children {
-                        if let Some(descendant) = border_box_of(scene, child) {
-                            content_right = content_right.max(descendant.right);
-                            content_bottom = content_bottom.max(descendant.bottom);
-                        }
-                        if child < count {
-                            content_right = content_right.max(extents[child].0);
-                            content_bottom = content_bottom.max(extents[child].1);
-                        }
+                // A node a singular transform hides draws its descendants
+                // nowhere; measuring them unmoved keeps its own metrics.
+                let own_transform = paint_transform_of(transforms, index);
+                let hidden = own_transform.is_none();
+                let to_local = own_transform
+                    .and_then(inverse)
+                    .unwrap_or(raikiri_traits::PaintTransform::IDENTITY);
+                // The node's own generated boxes are drawn with it.
+                let mut content = generated
+                    .get(&index)
+                    .into_iter()
+                    .flatten()
+                    .copied()
+                    .reduce(union);
+                for &child in document
+                    .get_node(index)
+                    .map_or(&[][..], |n| &n.children[..])
+                {
+                    // A child hidden only by its own singular transform adds
+                    // nothing; inside a hidden subtree every child is hidden
+                    // too, so it is measured unmoved relative to its parent.
+                    let drawn = match paint_transform_of(transforms, child) {
+                        Some(drawn) => drawn,
+                        None if hidden => raikiri_traits::PaintTransform::IDENTITY,
+                        None => continue,
+                    };
+                    let own = border_box_of(scene, child);
+                    let below = extents.get(child).copied().flatten();
+                    let reach = match (own, below) {
+                        (Some(own), Some(below)) => Some(union(own, below)),
+                        (reach, None) | (None, reach) => reach,
+                    };
+                    if let Some(reach) = reach {
+                        let placed = transform_rect(to_local * drawn, reach);
+                        content = Some(content.map_or(placed, |content| union(content, placed)));
                     }
                 }
-                extents[index] = (content_right, content_bottom);
+                extents[index] = content;
                 visited[index] = true;
             } else {
                 if visited[index] {
@@ -741,6 +830,122 @@ fn compute_scroll_content_extents(
         }
     }
     extents
+}
+
+/// The border boxes of the `::before` and `::after` boxes that paragraphs lay
+/// out, by originating element, in the coordinates of [`border_box_of`]. A
+/// box split across lines has one rectangle per piece. Floated and
+/// absolutely positioned generated boxes are not laid out in a paragraph and
+/// have no box to report.
+fn collect_generated_boxes(
+    document: &raikiri_dom::Document,
+    scene: &raikiri::PageScene,
+) -> HashMap<usize, Vec<DomRect>> {
+    let mut boxes: HashMap<usize, Vec<DomRect>> = HashMap::new();
+    for index in 0..document.node_count() {
+        let root = document.get_node(index).filter(|node| node.is_ifc_root());
+        let Some((node, border_box)) = root.zip(border_box_of(scene, index)) else {
+            continue;
+        };
+        let layout = node.unrounded_layout;
+        let origin = (
+            border_box.left + f64::from(layout.border.left + layout.padding.left),
+            border_box.top + f64::from(layout.border.top + layout.padding.top),
+        );
+        let inline = node.ifc_inline_boxes().unwrap_or_default();
+        let blocks = node.ifc_generated_block_pieces();
+        let pieces = inline
+            .iter()
+            .map(|piece| (piece.node, piece.border_box))
+            .chain(blocks.iter().map(|piece| (piece.node, piece.border_box)));
+        for (id, piece) in pieces {
+            let Some((owner, raikiri_style::PseudoElem::Before | raikiri_style::PseudoElem::After)) =
+                raikiri_dom::generated_content::generated_origin(id)
+            else {
+                continue;
+            };
+            let left = origin.0 + f64::from(piece.x);
+            let top = origin.1 + f64::from(piece.y);
+            boxes.entry(owner).or_default().push(rect(
+                left,
+                top,
+                left + f64::from(piece.width),
+                top + f64::from(piece.height),
+            ));
+        }
+    }
+    boxes
+}
+
+/// The transform the painter draws node `index` through: the identity past
+/// the end of `transforms`, `None` when a singular transform hides it.
+fn paint_transform_of(
+    transforms: &[Option<raikiri_traits::PaintTransform>],
+    index: usize,
+) -> Option<raikiri_traits::PaintTransform> {
+    transforms
+        .get(index)
+        .copied()
+        .unwrap_or(Some(raikiri_traits::PaintTransform::IDENTITY))
+}
+
+/// The transform that undoes `transform`, or `None` when it is singular.
+fn inverse(transform: raikiri_traits::PaintTransform) -> Option<raikiri_traits::PaintTransform> {
+    let raikiri_traits::PaintTransform {
+        a, b, c, d, e, f, ..
+    } = transform;
+    let determinant = a * d - b * c;
+    if determinant == 0.0 || !determinant.is_finite() {
+        return None;
+    }
+    Some(raikiri_traits::PaintTransform::new(
+        d / determinant,
+        -b / determinant,
+        -c / determinant,
+        a / determinant,
+        (c * f - d * e) / determinant,
+        (b * e - a * f) / determinant,
+    ))
+}
+
+/// The bounding box of `area` as `transform` draws it.
+fn transform_rect(transform: raikiri_traits::PaintTransform, area: DomRect) -> DomRect {
+    if transform == raikiri_traits::PaintTransform::IDENTITY {
+        return area;
+    }
+    let corners = [
+        (area.left, area.top),
+        (area.right, area.top),
+        (area.left, area.bottom),
+        (area.right, area.bottom),
+    ]
+    .map(|(x, y)| {
+        let (x, y) = transform.apply((x as f32, y as f32));
+        (f64::from(x), f64::from(y))
+    });
+    let (mut left, mut top, mut right, mut bottom) = (
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    );
+    for (x, y) in corners {
+        left = left.min(x);
+        top = top.min(y);
+        right = right.max(x);
+        bottom = bottom.max(y);
+    }
+    rect(left, top, right, bottom)
+}
+
+/// The smallest rectangle holding both `first` and `second`.
+fn union(first: DomRect, second: DomRect) -> DomRect {
+    rect(
+        first.left.min(second.left),
+        first.top.min(second.top),
+        first.right.max(second.right),
+        first.bottom.max(second.bottom),
+    )
 }
 
 /// The runtime's view of computed `position`. `static`, a running element
