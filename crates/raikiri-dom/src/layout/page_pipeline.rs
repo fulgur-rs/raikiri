@@ -4332,45 +4332,6 @@ fn paginate_flow(
                         .then_some((parent_id, true))
                     }
                 });
-            // Moves the block, which sits at `from_y`, so that its flow
-            // position starts at `target_y`, and returns how far it moved.
-            // Its relative offsets move along with it. A nested block that
-            // begins its ancestors, with no border or padding between them,
-            // takes the ancestors along rather than leaving them empty on
-            // this page; the ancestors above them grow to hold the move.
-            let mut move_line_block = |document: &mut Document,
-                                       block_id: usize,
-                                       nested: bool,
-                                       from_y: f32,
-                                       target_y: f32| {
-                let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
-                // A negative or undefined move, which a relative offset can
-                // produce, leaves the block where it is.
-                let delta = Some(target_y + relative - from_y)
-                    .filter(|delta| delta.is_finite() && *delta > 0.0)
-                    .unwrap_or(0.0);
-                if delta > 0.0 {
-                    let moved = if nested {
-                        first_box_ancestor_at_top(document, block_id, body_id)
-                    } else {
-                        block_id
-                    };
-                    let moved_y = current_abs_y(document, moved) + delta;
-                    materialize_y(document, moved, moved_y);
-                    if nested {
-                        grow_ancestors_for_shift(
-                            document,
-                            cascade,
-                            moved,
-                            delta,
-                            body_id,
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                        );
-                    }
-                }
-                delta
-            };
             if let Some((block_id, nested)) = line_block_parent
                 && checked_paragraphs.block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)
@@ -4395,8 +4356,17 @@ fn paginate_flow(
                     let target_page = current_page.saturating_add(1).max(natural_page);
                     check_candidate_page!('candidate_loop, target_page);
                     let target_y = page_origin(target_page);
-                    let delta =
-                        move_line_block(document, block_id, nested, block_effective_y, target_y);
+                    let delta = move_line_block(
+                        document,
+                        cascade,
+                        body_id,
+                        block_id,
+                        nested,
+                        block_effective_y,
+                        target_y,
+                        &mut subtree_shifts,
+                        page_before_candidate,
+                    );
                     flow_shift += delta;
                     effective_y += delta;
                 }
@@ -4531,10 +4501,14 @@ fn paginate_flow(
                     check_candidate_page!('candidate_loop, target_page);
                     let delta = move_line_block(
                         document,
+                        cascade,
+                        body_id,
                         block_id,
                         nested,
                         block_effective_y,
                         page_origin(target_page),
+                        &mut subtree_shifts,
+                        page_before_candidate,
                     );
                     flow_shift += delta;
                     effective_y += delta;
@@ -6940,6 +6914,45 @@ impl SubtreeShifts {
         });
         restored_page
     }
+}
+
+/// Moves `block_id`, which sits at `from_y`, so that its flow position starts
+/// at `target_y`, and returns how far it moved. Its relative offsets move
+/// along with it. A `nested` block that begins its ancestors, with no border
+/// or padding between them, takes the ancestors along rather than leaving
+/// them empty on this page; the ancestors above them grow to hold the move,
+/// recorded in `shifts` with `flow_page` as for [`grow_ancestors_for_shift`].
+#[allow(clippy::too_many_arguments)]
+fn move_line_block(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    body_id: usize,
+    block_id: usize,
+    nested: bool,
+    from_y: f32,
+    target_y: f32,
+    shifts: &mut SubtreeShifts,
+    flow_page: u32,
+) -> f32 {
+    let relative = accumulated_relative_offset_y(document, cascade, body_id, block_id);
+    // A negative or undefined move, which a relative offset can produce,
+    // leaves the block where it is.
+    let delta = Some(target_y + relative - from_y)
+        .filter(|delta| delta.is_finite() && *delta > 0.0)
+        .unwrap_or(0.0);
+    if delta > 0.0 {
+        let moved = if nested {
+            first_box_ancestor_at_top(document, block_id, body_id)
+        } else {
+            block_id
+        };
+        let moved_y = current_abs_y(document, moved) + delta;
+        materialize_y(document, moved, moved_y);
+        if nested {
+            grow_ancestors_for_shift(document, cascade, moved, delta, body_id, shifts, flow_page);
+        }
+    }
+    delta
 }
 
 /// Grows the auto-height ancestors of `node_id`, which moved down by
