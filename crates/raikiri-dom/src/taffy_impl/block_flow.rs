@@ -178,18 +178,19 @@ fn layout_context(
     if ctx.is_bfc_root() {
         natural_end = natural_end.max(ctx.floated_content_height_contribution());
     }
-    let mut height = metrics
+    let height = metrics
         .preferred
         .height
         .unwrap_or_else(|| metrics.clamp_height(natural_end + metrics.inset.bottom));
+    // When `min-height` raises the used height above the content, the last
+    // child's bottom margin no longer adjoins the bottom edge. As in
+    // browsers, it then neither escapes nor adds to the height that
+    // `min-height` fixed.
     let minimum_separates = collapse_end
         && metrics
             .min
             .height
-            .is_some_and(|min| min > 0.0 && min >= height);
-    if minimum_separates {
-        height = metrics.clamp_height(natural_end + flow.trailing.resolve() + metrics.inset.bottom);
-    }
+            .is_some_and(|min| min > 0.0 && min > natural_end + metrics.inset.bottom);
     let size = Size { width, height };
     children::align(
         tree,
