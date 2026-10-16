@@ -6648,3 +6648,88 @@ fn root_and_body_decorations_use_their_actual_border_boxes() {
         }
     }
 }
+
+/// Paint `markup` on a 100px page and spell out row `y`: `B` for blue, `R`
+/// for red, `.` for white and `?` for anything else.
+fn background_clip_row(markup: &str, y: usize) -> String {
+    let rgba = paint_ahem_page(markup, square_page(100.0), 0);
+    rgba[y * 100 * 4..(y + 1) * 100 * 4]
+        .chunks_exact(4)
+        .map(|px| match px {
+            [0, 0, 255, 255] => 'B',
+            [255, 0, 0, 255] => 'R',
+            [255, 255, 255, 255] => '.',
+            _ => '?',
+        })
+        .collect()
+}
+
+/// Spell out a row from `(char, count)` runs.
+fn row_of(runs: &[(char, usize)]) -> String {
+    runs.iter()
+        .flat_map(|&(c, n)| std::iter::repeat_n(c, n))
+        .collect()
+}
+
+#[test]
+fn a_vertical_cell_in_a_horizontal_table_paints_every_background_layer_across_its_column() {
+    // The second row widens the column to 80px. Alignment space is part of
+    // the cell's content box, so with no padding or border every clip box
+    // spans the whole column, whatever the cell's writing mode.
+    let row = |background: &str| {
+        background_clip_row(
+            &format!(
+                "<!DOCTYPE html><html><body style='margin:0;background:white'>\
+                 <table style='border-spacing:0'><tr>\
+                 <td style='padding:0;writing-mode:vertical-lr;background:{background}'>\
+                 <div style='width:20px;height:20px'></div></td></tr>\
+                 <tr><td style='padding:0'><div style='width:80px;height:5px'></div></td></tr>\
+                 </table></body></html>"
+            ),
+            15,
+        )
+    };
+    assert_eq!(
+        row("linear-gradient(blue,blue) content-box"),
+        row_of(&[('B', 80), ('.', 20)])
+    );
+    assert_eq!(
+        row("linear-gradient(blue,blue) content-box, linear-gradient(red,red) border-box"),
+        row_of(&[('B', 80), ('.', 20)])
+    );
+    assert_eq!(
+        row("linear-gradient(red,red) border-box, linear-gradient(blue,blue) content-box"),
+        row_of(&[('R', 80), ('.', 20)])
+    );
+}
+
+#[test]
+fn a_cell_in_a_vertical_table_clips_each_background_layer_to_its_own_box() {
+    // The vertical table stretches the cell across the page. Its content box
+    // is the child's 20px after the 4px border and 8px padding on the left;
+    // the padding box runs to the 2px right border.
+    let row = |background: &str| {
+        background_clip_row(
+            &format!(
+                "<!DOCTYPE html><html><body style='margin:0;background:white'>\
+                 <table style='writing-mode:vertical-lr;border-spacing:0'><tr>\
+                 <td style='padding:5px 6px 7px 8px;border:solid black;\
+                 border-width:1px 2px 3px 4px;vertical-align:baseline;background:{background}'>\
+                 <div style='width:20px;height:20px'></div></td></tr></table></body></html>"
+            ),
+            15,
+        )
+    };
+    assert_eq!(
+        row("linear-gradient(blue,blue) content-box"),
+        row_of(&[('?', 4), ('.', 8), ('B', 20), ('.', 66), ('?', 2)])
+    );
+    assert_eq!(
+        row("linear-gradient(blue,blue) content-box, linear-gradient(red,red) border-box"),
+        row_of(&[('?', 4), ('R', 8), ('B', 20), ('R', 66), ('?', 2)])
+    );
+    assert_eq!(
+        row("linear-gradient(red,red) border-box, linear-gradient(blue,blue) content-box"),
+        row_of(&[('?', 4), ('R', 94), ('?', 2)])
+    );
+}
