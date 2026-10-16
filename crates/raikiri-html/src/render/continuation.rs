@@ -106,13 +106,37 @@ impl PageAxis {
         }
     }
 
-    /// `page_box` grown by `extent` along the flow.
-    fn extend(self, mut page_box: raikiri_traits::PageBox, extent: f32) -> raikiri_traits::PageBox {
+    /// The page box that measuring pages `extent` long along the flow are
+    /// projected onto, and the pages they are projected as.
+    ///
+    /// On y the measuring page box is grown by `extent`. On x the page area's
+    /// width is the containing block of the root and the edge that flow
+    /// positions count from, so it stays as laid out; a page ending `extent`
+    /// after the last measuring page gives that page its extent instead.
+    fn measuring_pages(
+        self,
+        page_box: raikiri_traits::PageBox,
+        measured: &[PageSlice],
+        extent: f32,
+    ) -> (raikiri_traits::PageBox, Vec<PageSlice>) {
+        let mut pages = measured.to_vec();
         match self {
-            Self::Y => page_box.height += extent,
-            Self::X => page_box.width += extent,
+            Self::Y => {
+                let mut page_box = page_box;
+                page_box.height += extent;
+                (page_box, pages)
+            }
+            Self::X => {
+                if let Some(last) = measured.last() {
+                    pages.push(PageSlice {
+                        page_index: last.page_index + 1,
+                        content_origin_y: last.content_origin_y + extent,
+                        page_name: None,
+                    });
+                }
+                (page_box, pages)
+            }
         }
-        page_box
     }
 }
 
@@ -355,21 +379,14 @@ fn relayout_from(
         .with_abort_check(inputs.abort_check);
     let mut token_y = None;
     for _ in 0..MAX_MEASURE_PASSES {
-        let measure_box = axis.extend(geometry.page_box, measure_height);
         let (measure_steps, measure_widths) =
             axis.layout_schedule(std::slice::from_ref(&measure_height), &[]);
         // Only a cancellation landing in this pass fails it; the first
         // layout and projection already met the same work limits.
-        // On x the flow positions of a page count from the edge of the page
-        // area the root was laid out in, which the measuring page must share.
-        let layout_box = match axis {
-            PageAxis::Y => geometry.page_box,
-            PageAxis::X => measure_box,
-        };
         let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
             &mut document,
             &cascade,
-            layout_box,
+            geometry.page_box,
             measure_steps,
             measure_widths,
             inputs.resolver,
@@ -377,7 +394,9 @@ fn relayout_from(
             &measure_control,
         )
         .and_then(|measured| {
-            let measure_geometries: Vec<_> = measured
+            let (measure_box, projected) =
+                axis.measuring_pages(geometry.page_box, &measured, measure_height);
+            let measure_geometries: Vec<_> = projected
                 .iter()
                 .map(|_| (measure_box, geometry.margins, geometry.content_insets))
                 .collect();
@@ -385,7 +404,7 @@ fn relayout_from(
                 .project_pages_with_control(
                     &cascade,
                     measure_box,
-                    &measured,
+                    &projected,
                     &measure_geometries,
                     &measure_control,
                 )

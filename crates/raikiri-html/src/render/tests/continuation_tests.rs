@@ -107,37 +107,54 @@ fn a_paragraph_continues_at_the_width_of_later_pages() {
     assert_eq!(all, expected);
 }
 
+/// Pages of a `vertical-rl` root: lines run down the page, so the page
+/// area's height is their length, 160px on page 0 and 360px on later pages.
+/// Every page area is 160px wide, which holds sixteen 10px Ahem lines.
+const VERTICAL_PAGES: &str = "<style>\
+    @page { size: 200px 400px; margin: 20px }\
+    @page :first { margin-top: 220px }\
+    :root { writing-mode: vertical-rl }\
+    body { margin: 0 }\
+    p { margin: 0; font: 10px/10px Ahem }\
+    </style>";
+
+/// The `(width, height)` of the text fragments on page `page_index`.
+fn text_sizes(out: &PipelineOutput, page_index: u32) -> Vec<(f32, f32)> {
+    let (document, _) = out.layout_for_page(page_index);
+    document
+        .page_fragments(page_index)
+        .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Text)
+        .map(|fragment| {
+            let rect = fragment.rect();
+            (rect.width, rect.height)
+        })
+        .collect()
+}
+
 #[test]
 fn a_vertical_paragraph_continues_at_the_height_of_later_pages() {
-    // Lines run down the page, so the page area's height is their length:
-    // 160px on page 0 and 360px on later pages. Every page area is 160px
-    // wide, which holds sixteen 10px Ahem lines.
-    let pages = "<style>\
-        @page { size: 200px 400px; margin: 20px }\
-        @page :first { margin-top: 220px }\
-        :root { writing-mode: vertical-rl }\
-        body { margin: 0 }\
-        p { margin: 0; font: 10px/10px Ahem }\
-        </style>";
-    let out = run(&format!("{pages}<p>{}</p>", words(100).join(" ")));
+    let out = run(&format!("{VERTICAL_PAGES}<p>{}</p>", words(100).join(" ")));
     assert_eq!(out.slices.len(), 2);
     assert_eq!(out.continuations.len(), 1);
     assert_eq!(out.continuations[0].first_page, 1);
-    let text_on = |page_index: u32| {
-        let (document, _) = out.layout_for_page(page_index);
-        document
-            .page_fragments(page_index)
-            .filter(|fragment| fragment.kind() == raikiri_dom::FragmentKind::Text)
-            .map(|fragment| {
-                let rect = fragment.rect();
-                (rect.width, rect.height)
-            })
-            .collect::<Vec<_>>()
-    };
     // Three 40px words fit on a 160px line: sixteen lines hold 48 words.
     // Seven fit on a 360px line, so the other 52 take eight lines.
-    assert_eq!(text_on(0), vec![(160.0, 160.0)]);
-    assert_eq!(text_on(1), vec![(80.0, 360.0)]);
+    assert_eq!(text_sizes(&out, 0), vec![(160.0, 160.0)]);
+    assert_eq!(text_sizes(&out, 1), vec![(80.0, 360.0)]);
+}
+
+#[test]
+fn a_vertical_page_start_after_a_percentage_width_box_is_measured_in_the_page_area() {
+    // The box takes half of the 160px page area, leaving eight lines on
+    // page 0 for 24 words. The other 76 take eleven 360px lines.
+    let out = run(&format!(
+        "{VERTICAL_PAGES}<div style='width:50%'></div><p>{}</p>",
+        words(100).join(" ")
+    ));
+    assert_eq!(out.slices.len(), 2);
+    assert_eq!(out.continuations.len(), 1);
+    assert_eq!(text_sizes(&out, 0), vec![(80.0, 160.0)]);
+    assert_eq!(text_sizes(&out, 1), vec![(110.0, 360.0)]);
 }
 
 #[test]
