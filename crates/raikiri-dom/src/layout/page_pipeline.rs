@@ -4604,23 +4604,8 @@ fn paginate_flow(
         let margins_collapse_through = height <= 0.0
             && margins_may_collapse_through(document, cascade, node_id)
             && !has_in_flow_content(document, cascade, node_id);
-        let style = &document.nodes[node_id].style;
-        let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
-            .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
-            .unwrap_or(0.0);
-        // The block-end margin of an in-flow box is truncated at the break
-        // after it (CSS Fragmentation 3 §5.2), so it does not break the box.
-        // A float's margin box stays whole.
-        let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
-            used_style_length_percentage_auto(style.margin.bottom, content_width)
-                .or_else(|| {
-                    used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
-                })
-                .unwrap_or(0.0)
-                .max(0.0)
-        } else {
-            0.0
-        };
+        let (margin_top, trailing_margin) =
+            break_margins(document, cascade, node_id, content_width);
         let page_start = page_origin(current_page);
         let page_end = page_start + page_step_at(current_page);
         // A block with `break-inside: avoid-page` stays intact when its used
@@ -6794,6 +6779,35 @@ impl SubtreeShifts {
         });
         restored_page
     }
+}
+
+/// The used block-start margin of `node_id`, and the block-end margin that
+/// travels with it when deciding whether it fits on its page. The block-end
+/// margin of an in-flow box is truncated at the break after it (CSS
+/// Fragmentation 3 §5.2), so it does not break the box and counts as zero.
+/// A float's margin box stays whole.
+fn break_margins(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+    content_width: f32,
+) -> (f32, f32) {
+    let style = &document.nodes[node_id].style;
+    let computed = &cascade.computed[node_id];
+    let margin_top = used_style_length_percentage_auto(style.margin.top, content_width)
+        .or_else(|| used_computed_length_percentage_or_auto(computed.margin.top, content_width))
+        .unwrap_or(0.0);
+    let trailing_margin = if is_floating_box_for_pagination(document, cascade, node_id) {
+        used_style_length_percentage_auto(style.margin.bottom, content_width)
+            .or_else(|| {
+                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+            })
+            .unwrap_or(0.0)
+            .max(0.0)
+    } else {
+        0.0
+    };
+    (margin_top, trailing_margin)
 }
 
 /// Places the repeated header of the table that `row` belongs to, when no
