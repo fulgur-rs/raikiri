@@ -1,6 +1,7 @@
 //! A page's body content listed in paint order, after a full layout.
 
 use raikiri_dom::PaintEvent;
+use raikiri_dom::paint_rules::{PositionedFrame, PositionedQueue};
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
@@ -462,6 +463,34 @@ fn boxes_inside_a_z_auto_positioned_box_sort_with_the_boxes_around_it() {
         at.sort_unstable();
         assert_eq!(at, listed, "z-index {inner}: {events:?}");
     }
+}
+
+#[test]
+fn a_queue_ignores_boxes_handed_on_before_it_hands_out_a_box() {
+    // Only a box the queue handed out can hand boxes on; boxes offered
+    // before that have no place to sort at and are dropped.
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources("<!doctype html><div></div>".as_bytes(), &resources)
+        .expect("parse");
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout");
+    let LayoutStatus::Completed(result) = status else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("a page");
+    let (document, cascade, _, _) = page.paint_inputs();
+    let mut queue = PositionedQueue::new(document, cascade, Vec::new(), |f: &PositionedFrame| *f);
+    queue.hand_on(document, cascade, vec![PositionedFrame::Box(0)], |f| *f);
+    assert!(queue.next(PositionedFrame::Close).is_empty());
 }
 
 #[test]

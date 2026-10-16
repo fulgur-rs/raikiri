@@ -694,9 +694,9 @@ impl<F: Clone> PositionedQueue<F> {
         frames: Vec<F>,
         kind: impl Fn(&F) -> PositionedFrame,
     ) {
-        // The painters hand boxes on only from a box the queue handed out.
+        // Only a box the queue handed out has a place to hand boxes on at.
         let Some((last, taken)) = self.last.clone() else {
-            return; // cov:ignore: no box has been taken yet
+            return;
         };
         let clip = self.boxes[taken].0;
         let mut index = 0;
