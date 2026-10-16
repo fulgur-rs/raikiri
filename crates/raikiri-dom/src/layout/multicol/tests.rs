@@ -3016,6 +3016,30 @@ fn an_absolute_box_breaks_where_its_overflow_below_its_border_ends() {
 }
 
 #[test]
+fn an_absolute_box_starts_where_its_overflow_above_it_starts() {
+    let (mut doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:150px",
+            &["position:absolute;top:110px;width:10px;height:10px"],
+        )],
+    );
+    let absolute = ids[0].1[0];
+    // The child is moved up into the first column.
+    doc.append_element(
+        Some(absolute),
+        "div",
+        Style::default(),
+        Some("position:relative;top:-30px;height:10px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(
+        fragment_rects(&doc, absolute),
+        vec![(0, 0.0, 110.0, 10.0), (1, 0.0, 10.0, 10.0)]
+    );
+}
+
+#[test]
 fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box() {
     let (doc, _, ids) = absolute_fixture(
         "display:block;width:200px;columns:2;column-gap:0",

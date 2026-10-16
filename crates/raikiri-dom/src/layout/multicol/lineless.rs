@@ -198,14 +198,18 @@ fn absolute_pieces(
                 .size
                 .height
                 .max(layout.border.top + layout.scrollable_overflow_rect.bottom);
-            if !start.is_finite() || !extent.is_finite() || start < 0.0 {
+            // Descendants that overflow above the box start its pieces in an
+            // earlier column.
+            let painted_start =
+                start + (layout.border.top + layout.scrollable_overflow_rect.top).min(0.0);
+            if !painted_start.is_finite() || !extent.is_finite() || painted_start < 0.0 {
                 return None;
             }
             let end = start + extent;
-            let first_column = column_of(start);
+            let first_column = column_of(painted_start);
             // The column holding the box's block end, which a box that ends
             // exactly at a column end does not reach past.
-            let end_column = column_of((end - EPSILON).max(start)).max(first_column);
+            let end_column = column_of((end - EPSILON).max(painted_start)).max(first_column);
             count = count.checked_add(end_column - first_column + 1)?;
             if count > budget {
                 return None;
