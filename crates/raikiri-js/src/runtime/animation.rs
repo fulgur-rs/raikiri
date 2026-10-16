@@ -5,7 +5,8 @@ use boa_engine::object::JsObject;
 use boa_engine::object::builtins::{JsFunction, JsPromise};
 use boa_engine::property::PropertyKey;
 use boa_engine::{
-    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace, js_string,
+    Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsSymbol, JsValue, Trace,
+    js_string,
 };
 
 use raikiri_style::is_valid_easing_function;
@@ -203,19 +204,36 @@ fn is_css_number_syntax(value: &str) -> bool {
     index == bytes.len()
 }
 
-/// Check a keyframe sequence the static sampler does not render: every
-/// keyframe is a dictionary whose `composite` is a known operation, offsets
-/// that are present lie in [0, 1] in non-decreasing order, and every
-/// `easing` is an `<easing-function>`.
-fn validate_keyframe_sequence(sequence: &JsObject, context: &mut Context) -> JsResult<()> {
+/// Check a keyframe sequence, which the static sampler does not render.
+/// The keyframes come from iterating `sequence` with its `@@iterator`
+/// `method`; every keyframe is a dictionary whose `composite` is a known
+/// operation, offsets that are present lie in [0, 1] in non-decreasing
+/// order, and every `easing` is an `<easing-function>`.
+fn validate_keyframe_sequence(
+    sequence: &JsObject,
+    method: &JsObject,
+    context: &mut Context,
+) -> JsResult<()> {
     const COMPOSITE_OR_AUTO: &[&str] = &["replace", "add", "accumulate", "auto"];
-    let length = sequence
-        .get(js_string!("length"), context)?
-        .to_length(context)?;
+    let iterator = method.call(&sequence.clone().into(), &[], context)?;
+    let iterator = iterator
+        .as_object()
+        .ok_or_else(|| type_error("keyframe iterator must be an object"))?;
+    let next = iterator.get(js_string!("next"), context)?;
+    let next = next
+        .as_callable()
+        .ok_or_else(|| type_error("keyframe iterator next must be callable"))?;
     let mut previous_offset = 0.0;
     let mut easings = Vec::new();
-    for index in 0..length {
-        let keyframe = sequence.get(index, context)?;
+    loop {
+        let result = next.call(&iterator.clone().into(), &[], context)?;
+        let result = result
+            .as_object()
+            .ok_or_else(|| type_error("keyframe iterator result must be an object"))?;
+        if result.get(js_string!("done"), context)?.to_boolean() {
+            break;
+        }
+        let keyframe = result.get(js_string!("value"), context)?;
         if keyframe.is_null_or_undefined() {
             continue;
         }
@@ -265,8 +283,14 @@ fn parse_keyframes(
     let object = value
         .as_object()
         .ok_or_else(|| type_error("animation keyframes must be an object"))?;
-    if object.is_array() {
-        validate_keyframe_sequence(&object, context)?;
+    // An object with `@@iterator` is a keyframe sequence; any other object
+    // holds property-indexed keyframes.
+    let method = object.get(JsSymbol::iterator(), context)?;
+    if !method.is_null_or_undefined() {
+        let method = method
+            .as_callable()
+            .ok_or_else(|| type_error("keyframes @@iterator must be callable"))?;
+        validate_keyframe_sequence(&object, &method, context)?;
         return Ok(None);
     }
     let keys = object.own_property_keys(context)?;
@@ -585,10 +609,12 @@ fn finished(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
 }
 
 /// Replace any queued finishing task with one due at the effect end time,
-/// or resolve `finished` at once when that time has passed. Does nothing
-/// once `finished` is resolved or before anyone has asked for it.
+/// or resolve `finished` at once when that time has passed. An animation
+/// that leaves the finished state, by pausing or seeking back, gets a new
+/// pending `finished` promise. Does nothing before anyone has asked for
+/// `finished`.
 fn schedule_finish(animation: &JsObject, context: &mut Context) -> JsResult<()> {
-    if animation_data(animation).finish_resolve.is_none() {
+    if animation_data(animation).finished.is_none() {
         return Ok(());
     }
     let id = animation_data(animation).id;
@@ -604,9 +630,19 @@ fn schedule_finish(animation: &JsObject, context: &mut Context) -> JsResult<()> 
         )
     })?
     .ok_or_else(|| type_error("Animation is no longer available"))?;
+    let finished_now = remaining.is_some_and(|remaining| remaining <= 0.0);
+    if animation_data(animation).finish_resolve.is_none() {
+        if finished_now {
+            return Ok(());
+        }
+        let (promise, resolvers) = JsPromise::new_pending(context);
+        let mut data = animation_data_mut(animation);
+        data.finished = Some(promise.into());
+        data.finish_resolve = Some(resolvers.resolve);
+    }
     match remaining {
         None => {}
-        Some(remaining) if remaining <= 0.0 => {
+        Some(_) if finished_now => {
             resolve_finished(animation, context)?;
         }
         Some(remaining) => {
@@ -673,11 +709,7 @@ fn pause(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
         effect.paused = true;
         effect.current_time_ms.get_or_insert(0.0);
     })?;
-    with_state(context, |state| {
-        let token = state.animations.get_mut(id)?.finish_task.take()?;
-        state.event_loop.cancel_native_task(token);
-        Some(())
-    })?;
+    schedule_finish(&this_animation(this)?, context)?;
     Ok(JsValue::undefined())
 }
 

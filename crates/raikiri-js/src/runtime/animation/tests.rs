@@ -786,3 +786,66 @@ fn seeking_a_running_animation_reschedules_finished() {
             .to_boolean()
     );
 }
+
+#[test]
+fn keyframe_iterables_are_consumed_through_their_iterator() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const refused = keyframes => {\
+               try { target.animate(keyframes, 1); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             };\
+             const iterable = iterator => ({ [Symbol.iterator]: () => iterator });\
+             const thrown = {};\
+             let rethrown = false;\
+             try { target.animate({ *[Symbol.iterator]() { throw thrown; } }, 1); }\
+             catch (error) { rethrown = error === thrown; }\
+             rethrown\
+             && [new Set([{ offset: 2 }]), { [Symbol.iterator]: 1 }, iterable(1),\
+                 iterable({ next: 1 }), iterable({ next: () => 1 })].every(refused)\
+             && !refused(new Set([{ offset: 0 }, { offset: 1 }]))\
+             && !refused({ *[Symbol.iterator]() { yield { easing: 'ease' }; yield null; } })",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn leaving_the_finished_state_replaces_the_finished_promise() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.times = {};\
+             const replay = target.animate({ wordSpacing: ['0px', '40px'] }, 10);\
+             const first = replay.finished;\
+             first.then(() => {\
+               times.first = performance.now();\
+               replay.currentTime = 20;\
+               times.samePastEnd = replay.finished === first;\
+               replay.currentTime = 0;\
+               times.replaced = replay.finished !== first;\
+               replay.finished.then(() => { times.second = performance.now(); });\
+             });\
+             const paused = target.animate({ wordSpacing: ['0px', '40px'] }, 5);\
+             const before = paused.finished;\
+             before.then(() => {\
+               paused.pause();\
+               times.pausedReplaced = paused.finished !== before;\
+               paused.finished.then(() => { times.pausedFinished = true; });\
+             })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate(
+                "times.first === 10 && times.samePastEnd && times.replaced && times.second === 20\
+                 && times.pausedReplaced && !('pausedFinished' in times)"
+            )
+            .unwrap()
+            .to_boolean()
+    );
+}
