@@ -405,25 +405,34 @@ fn sideways_writing_modes_lay_lines_out_vertically() {
     use raikiri_style::property as p;
 
     // `sideways-rl` runs its lines from top to bottom and `sideways-lr` from
-    // bottom to top.
-    for (mode, computed, shodo_mode, inline_edges_px) in [
+    // bottom to top, or the other way in a right-to-left direction.
+    for (mode, direction, computed, shodo_mode, inline_edges_px) in [
         (
             "sideways-rl",
+            "ltr",
             p::WritingMode::SidewaysRl,
             WritingMode::SidewaysRl,
             (2.0, 3.0),
         ),
         (
             "sideways-lr",
+            "ltr",
             p::WritingMode::SidewaysLr,
             WritingMode::SidewaysLr,
             (3.0, 2.0),
         ),
+        (
+            "sideways-lr",
+            "rtl",
+            p::WritingMode::SidewaysLr,
+            WritingMode::SidewaysLr,
+            (2.0, 3.0),
+        ),
     ] {
         let fixture = block_fixture(
             &format!(
-                "writing-mode:{mode};padding-top:2px;padding-bottom:3px;\
-                 padding-left:4px;padding-right:5px"
+                "writing-mode:{mode};direction:{direction};padding-top:2px;\
+                 padding-bottom:3px;padding-left:4px;padding-right:5px"
             ),
             |doc, root| {
                 doc.append_text(root, "x");
