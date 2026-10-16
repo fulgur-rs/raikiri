@@ -3202,6 +3202,14 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
         true
     ));
     assert!(!supported(
+        "display:block;position:relative;min-height:100%",
+        true
+    ));
+    assert!(supported(
+        "display:block;position:relative;min-height:0",
+        true
+    ));
+    assert!(!supported(
         "display:block;position:relative;break-inside:avoid",
         true
     ));

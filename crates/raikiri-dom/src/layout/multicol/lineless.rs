@@ -123,7 +123,12 @@ fn wrapped_blocks(tree: &Document, wrapper: usize) -> Option<Vec<usize>> {
             BreakInside::Avoid | BreakInside::AvoidColumn
         )
         || node.style.size.height != Dimension::auto()
-        || style_dimension_length(node.style.min_size.height.into()).is_some_and(|px| px > 0.0)
+        // A minimum, even a percentage one, can hold the wrapper open past
+        // its blocks.
+        || {
+            let minimum: Dimension = node.style.min_size.height.into();
+            minimum != Dimension::auto() && style_dimension_length(minimum) != Some(0.0)
+        }
         || node.style.max_size.height != LengthPercentageAuto::auto()
     {
         return None;
