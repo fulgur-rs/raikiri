@@ -51,13 +51,14 @@ pub mod property;
 pub use property::{
     BackgroundAttachment, BackgroundRepeat, BackgroundRepeatKeyword, BackgroundSize, BasicShape,
     BorderRadius, BoxShadowItem, CircleShape, ClipPath, ColumnCountValue, ColumnWidthValue,
-    ColumnsShorthand, CssColor, CssPosition, CssPositionOffset, DisplayValue, EllipseShape,
-    FillRule, FontFamilyKind, FontFamilyName, GeometryBox, InsetBorderRadius, InsetShape, Length,
-    LengthOrAuto, LengthOrNormal, LetterSpacingValue, ListStylePosition, ListStyleType, ObjectFit,
-    Outline, OutlineColor, OutlineStyle, PathShape, PolygonShape, PropertyKey, PropertyValue,
-    ShapeRadius, Sides, TextDecorationSkipInk, TextDecorationSkipSpaces, TextOrientation,
-    TextShadowColor, TextShadowItem, TextShadowLength, TextSpacingTrim, TextUnderlineOffset,
-    ViewportSize, ViewportUnit, VisualBox, WordSpaceTransform, WordSpacingValue,
+    ColumnsShorthand, CounterResetValue, CssColor, CssPosition, CssPositionOffset, DisplayValue,
+    EllipseShape, FillRule, FontFamilyKind, FontFamilyName, GeometryBox, InsetBorderRadius,
+    InsetShape, Length, LengthOrAuto, LengthOrNormal, LetterSpacingValue, ListStylePosition,
+    ListStyleType, ObjectFit, Outline, OutlineColor, OutlineStyle, PathShape, PolygonShape,
+    PropertyKey, PropertyValue, ShapeRadius, Sides, TextDecorationSkipInk,
+    TextDecorationSkipSpaces, TextOrientation, TextShadowColor, TextShadowItem, TextShadowLength,
+    TextSpacingTrim, TextUnderlineOffset, ViewportSize, ViewportUnit, VisualBox,
+    WordSpaceTransform, WordSpacingValue,
 };
 
 mod layer;

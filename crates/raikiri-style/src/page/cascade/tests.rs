@@ -3685,7 +3685,7 @@ property_key_samples! {
         row_end: GridLineValue::Line(2),
         column_end: GridLineValue::Line(2),
     })),
-    CounterReset => PropertyValue::CounterReset(Arc::new(vec![("c".into(), 0)])),
+    CounterReset => PropertyValue::CounterReset(Arc::new(vec![("c".into(), crate::property::CounterResetValue::Integer(0))])),
     CounterIncrement => PropertyValue::CounterIncrement(Arc::new(vec![("c".into(), 1)])),
     CounterSet => PropertyValue::CounterSet(Arc::new(vec![("c".into(), 2)])),
     Content =>

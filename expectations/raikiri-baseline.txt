@@ -4697,3 +4697,25 @@ css/css-counter-styles/upper-roman/css3-counter-styles-024a.html
 css/css-lists/counter-list-item-2.html
 css/css-lists/counter-list-item-3.html
 css/css-lists/li-value-counter-reset-001.html
+# Pass once counter-reset accepts reversed(), ol reversed maps to a reversed list-item counter, and a reversed counter without a starting value calculates one from the increments in its scope; KEEP in audit-vacuous-passes.
+css/css-lists/counter-list-item.html
+css/css-lists/counter-reset-reversed-nested.html
+css/css-lists/counter-reset-reversed-with-regular.html
+css/css-lists/foo-counter-reversed-006a.html
+css/css-lists/foo-counter-reversed-006b.html
+css/css-lists/foo-counter-reversed-006c.html
+css/css-lists/foo-counter-reversed-006d.html
+css/css-lists/foo-counter-reversed-006e.html
+css/css-lists/foo-counter-reversed-008a.html
+css/css-lists/foo-counter-reversed-008b.html
+css/css-lists/li-list-item-counter-005.html
+css/css-lists/li-value-reversed-002.html
+css/css-lists/li-value-reversed-003.html
+css/css-lists/li-value-reversed-006a.html
+css/css-lists/li-value-reversed-006b.html
+css/css-lists/li-value-reversed-006d.html
+css/css-lists/li-value-reversed-006e.html
+css/css-lists/li-value-reversed-008a.html
+css/css-lists/li-value-reversed-008b.html
+css/css-lists/li-value-reversed-015.html
+css/css-lists/li-value-reversed-027.html

@@ -313,7 +313,10 @@ fn parent_fixture() -> ComputedValues {
         list_style_type: ListStyleType::Named(SmolStr::new("upper-roman")),
         list_style_position: ListStylePosition::Inside,
         list_style_image: BackgroundImage::Url("marker.png".into()),
-        counter_reset: Arc::new(vec![(SmolStr::new("chapter"), 3)]),
+        counter_reset: Arc::new(vec![(
+            SmolStr::new("chapter"),
+            CounterResetValue::Integer(3),
+        )]),
         counter_increment: Arc::new(vec![(SmolStr::new("section"), 2)]),
         counter_set: Arc::new(vec![(SmolStr::new("page"), 5)]),
         content: empty_content_list(),

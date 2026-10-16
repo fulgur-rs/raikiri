@@ -16,8 +16,7 @@ use crate::property::{
     TextDecorationColor, TextDecorationLine, TextDecorationShorthand, TextDecorationStyle,
     TextDecorationThickness, TextEmphasisFill, TextEmphasisHEdge, TextEmphasisPosition,
     TextEmphasisShape, TextEmphasisStyle, TextEmphasisVEdge, TextOrientation, TextShadowColor,
-    TextUnderlinePosition, UnicodeBidi, WritingMode, empty_counter_entries,
-    initial_grid_auto_track_list,
+    TextUnderlinePosition, UnicodeBidi, WritingMode, initial_grid_auto_track_list,
 };
 use crate::resolve::ComputedLengthPercentageOrCalc;
 use crate::resolve::{
@@ -2198,7 +2197,13 @@ fn counter_reset_wired_through_cascade_from_inline_style() {
     // apply_value → ComputedValues smoke test. counter_reset is Arc<Vec<..>>;
     // compare the dereferenced `*cv.counter_reset`.
     let cv = cascade_doc("", "div", Some("counter-reset: chapter"));
-    assert_eq!(*cv.counter_reset, vec![(SmolStr::new("chapter"), 0)]);
+    assert_eq!(
+        *cv.counter_reset,
+        vec![(
+            SmolStr::new("chapter"),
+            crate::property::CounterResetValue::Integer(0)
+        )]
+    );
     // Other counter properties remain at their non-inherited initial (empty) values.
     assert!(cv.counter_increment.is_empty());
     assert!(cv.counter_set.is_empty());
@@ -6993,7 +6998,7 @@ fn inheritance_walk_uses_initial_arc_for_non_inherited_counter_on_child() {
     // (a) inherit_from incorrectly passes along the parent's Arc, or
     // (b) inherit_from allocates per-node `Arc::new(Vec::new())`.
     // Both violate the memory goal above.
-    let shared = crate::property::empty_counter_entries();
+    let shared = crate::property::empty_counter_reset_entries();
     assert!(
         std::sync::Arc::ptr_eq(&r.computed[child].counter_reset, &shared),
         "child counter_reset must point to shared empty Arc slot \
@@ -7549,9 +7554,15 @@ fn apply_value_direct_counter_reset_inherit() {
     // grammar, but `apply_value` must still reset `target.counter_reset`
     // to the empty entries sentinel if an internal caller supplies one.
     let mut cv = SpecifiedValues::initial();
-    cv.counter_reset = std::sync::Arc::new(vec![(SmolStr::new("foo"), 1)]);
+    cv.counter_reset = std::sync::Arc::new(vec![(
+        SmolStr::new("foo"),
+        crate::property::CounterResetValue::Integer(1),
+    )]);
     apply_value(PropertyValue::CounterResetInherit, &mut cv);
-    assert_eq!(cv.counter_reset, empty_counter_entries());
+    assert_eq!(
+        cv.counter_reset,
+        crate::property::empty_counter_reset_entries()
+    );
 }
 
 #[test]

@@ -18,8 +18,8 @@ use crate::property::{
     BorderImageRepeat, BorderImageSlice, BorderImageWidthSide, BorderStyle, BoxDecorationBreak,
     BoxSizing, BreakBetween, BreakInside, CaptionSideValue, ClearValue, ClipPath, ColumnCountValue,
     ColumnFillValue, ColumnSpanValue, Contain, ContentAlignmentValue, ContentComponent,
-    ContentList, CssColor, Direction, DisplayValue, EmptyCellsValue, FilterFunction,
-    FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind, FontFamilyName,
+    ContentList, CounterResetValue, CssColor, Direction, DisplayValue, EmptyCellsValue,
+    FilterFunction, FlexDirectionValue, FlexWrapValue, FloatValue, FontFamilyKind, FontFamilyName,
     FontFeatureSettings, FontKerning, FontLanguageOverride, FontOpticalSizing, FontPaletteValue,
     FontStyle, FontSynthesisValue, FontVariantCaps, FontVariantEastAsian, FontVariantEmoji,
     FontVariantLigatures, FontVariantNumeric, FontVariantPosition, FontVariationSettings,
@@ -34,7 +34,8 @@ use crate::property::{
     TextTransform, TextUnderlinePosition, TextWrapMode, TextWrapStyle, UnicodeBidi, VerticalAlign,
     Visibility, VisualBox, WhiteSpace, WhiteSpaceCollapse, WillChange, WordBreak,
     WordSpaceTransform, WritingMode, ZIndexValue, empty_content_list, empty_counter_entries,
-    empty_filter_list, empty_quotes_entries, empty_string_set_entries, initial_font_family,
+    empty_counter_reset_entries, empty_filter_list, empty_quotes_entries, empty_string_set_entries,
+    initial_font_family,
 };
 use crate::resolve::{
     ComputedBackgroundSize, ComputedBorder, ComputedBorderRadius, ComputedBorderSpacing,
@@ -712,7 +713,7 @@ pub struct ComputedValues {
     /// DoS defense following the Content/StringSet pattern. Because
     /// `Arc<Vec<T>>: Deref<Target = Vec<T>>`, downstream `.iter()`, `.len()`, and
     /// `.is_empty()` calls remain unchanged (no dom/paint consumer changes).
-    pub counter_reset: Arc<Vec<(SmolStr, i32)>>,
+    pub counter_reset: Arc<Vec<(SmolStr, CounterResetValue)>>,
     /// `counter-increment`. **Not inherited**. The spec's initial value is
     /// `none` (CSS Lists 3 §4.2
     /// <https://www.w3.org/TR/css-lists-3/#increment-set>), represented here
@@ -2149,7 +2150,7 @@ impl ComputedValues {
             // represented by an empty list (see the field documentation).
             // A shared empty Arc avoids per-node allocations (see the
             // documentation for `empty_counter_entries` in property.rs).
-            counter_reset: empty_counter_entries(),
+            counter_reset: empty_counter_reset_entries(),
             counter_increment: empty_counter_entries(),
             counter_set: empty_counter_entries(),
             // CSS Content 3 §1: the spec initializes content to `normal`. Here

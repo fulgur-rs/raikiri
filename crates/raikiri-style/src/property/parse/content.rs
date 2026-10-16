@@ -84,6 +84,63 @@ pub(super) fn parse_counter_property(
     }
 }
 
+/// Parse the value of `counter-reset`.
+///
+/// Grammar (CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>):
+///   `[ <counter-name> <integer>? | <reversed-counter-name> <integer>? ]+ | none`,
+///   where `<reversed-counter-name> = reversed( <counter-name> )`.
+///
+/// A plain counter's integer defaults to 0; a reversed counter without an
+/// integer keeps `None`, its starting value being calculated at layout time.
+/// Error handling follows [`parse_counter_property`]: a reserved or missing
+/// first name rejects the declaration, and a later invalid entry is left
+/// unconsumed for the caller's `expect_exhausted` check.
+pub(super) fn parse_counter_reset_property(
+    input: &mut Parser<'_, '_>,
+) -> Option<Vec<(SmolStr, CounterResetValue)>> {
+    if input.try_parse(|i| i.expect_ident_matching("none")).is_ok() {
+        return Some(Vec::new());
+    }
+
+    let mut result = Vec::new();
+    loop {
+        let entry = input.try_parse(|i| -> Result<(SmolStr, bool), ParseError<'_, ()>> {
+            if i.try_parse(|i| i.expect_function_matching("reversed"))
+                .is_ok()
+            {
+                let name = i.parse_nested_block(|i| {
+                    let name = parse_counter_name(i).ok_or_else(|| i.new_custom_error(()))?;
+                    i.expect_exhausted()?;
+                    Ok(name)
+                })?;
+                return Ok((name, true));
+            }
+            let ident = i.expect_ident()?.clone();
+            if is_reserved_counter_name(&ident) {
+                Err(i.new_custom_error(()))
+            } else {
+                Ok((SmolStr::new(ident.as_ref()), false))
+            }
+        });
+        let Ok((name, reversed)) = entry else {
+            break;
+        };
+        let value = input.try_parse(|i| i.expect_integer()).ok();
+        let value = if reversed {
+            CounterResetValue::Reversed(value)
+        } else {
+            CounterResetValue::Integer(value.unwrap_or(0))
+        };
+        result.push((name, value));
+    }
+
+    if result.is_empty() {
+        None
+    } else {
+        Some(result)
+    }
+}
+
 /// Parse the `quotes` value.
 ///
 /// Grammar (legacy CSS2 §12.3.1 subset; see [`PropertyValue::Quotes`] docs):

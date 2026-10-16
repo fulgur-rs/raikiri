@@ -648,3 +648,208 @@ fn list_item_after_pseudo_increments_carry_to_following_siblings() {
     }
     assert_eq!(snapshots[following][&Symbol::new("list-item")], vec![2]);
 }
+
+/// Counter `name`'s innermost value in each of `nodes`' snapshots.
+fn innermost_values(doc: &Document, nodes: &[usize], name: &str) -> Vec<i32> {
+    nodes
+        .iter()
+        .map(|&node| *stack_at(doc, node, name).last().expect("counter in scope"))
+        .collect()
+}
+
+#[test]
+fn reversed_counter_starting_value_follows_the_increments_up_to_the_first_set() {
+    // CSS Lists 3 §4.4.2: the starting value is the sum of the negated
+    // increments up to the first `counter-set` (excluded), plus that set's
+    // value, plus the last non-zero negated increment.
+    let cases: [(&[&str], [i32; 1], &[i32]); 4] = [
+        (
+            &[
+                "counter-increment: foo -2",
+                "counter-increment: foo -2",
+                "counter-increment: foo -1; counter-set: foo 5",
+                "counter-increment: foo -2",
+            ],
+            [10],
+            &[8, 6, 5, 3],
+        ),
+        (
+            &[
+                "counter-increment: foo -3",
+                "counter-increment: foo -2; counter-set: foo 5",
+                "counter-increment: foo -1",
+                "counter-increment: foo -8",
+            ],
+            [10],
+            &[7, 5, 4, -4],
+        ),
+        (
+            &[
+                "counter-increment: foo 2; counter-set: foo 5",
+                "counter-increment: foo 2",
+                "counter-increment: foo 2",
+            ],
+            [3],
+            &[5, 7, 9],
+        ),
+        (
+            &[
+                "counter-increment: foo 3",
+                "counter-increment: foo 1",
+                "counter-increment: foo 8; counter-set: foo 5",
+            ],
+            [-7],
+            &[-4, -3, 5],
+        ),
+    ];
+    for (items, start, expected) in cases {
+        let mut doc = Document::new();
+        let list = doc.append_element(
+            Some(doc.root_index()),
+            "div",
+            Style::default(),
+            Some("counter-reset: reversed(foo)"),
+        );
+        let nodes: Vec<usize> = items
+            .iter()
+            .map(|style| doc.append_element(Some(list), "div", Style::default(), Some(*style)))
+            .collect();
+        doc.mark_in_document_flags();
+        assert_eq!(innermost_values(&doc, &[list], "foo"), start, "{items:?}");
+        assert_eq!(innermost_values(&doc, &nodes, "foo"), expected, "{items:?}");
+    }
+}
+
+#[test]
+fn reversed_counter_counts_following_siblings_and_skips_display_none() {
+    let mut doc = Document::new();
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("counter-reset: reversed(foo)"),
+    );
+    let inner = doc.append_element(
+        Some(list),
+        "div",
+        Style::default(),
+        Some("counter-increment: foo -1"),
+    );
+    doc.append_element(
+        Some(list),
+        "div",
+        Style::default(),
+        Some("display: none; counter-increment: foo -5"),
+    );
+    let following = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("counter-increment: foo -2"),
+    );
+    doc.mark_in_document_flags();
+    // num = 1 + 2, plus the last non-zero negated increment 2.
+    assert_eq!(
+        innermost_values(&doc, &[list, inner, following], "foo"),
+        [5, 4, 2]
+    );
+}
+
+#[test]
+fn reversed_list_item_counter_counts_list_items_down() {
+    let mut doc = Document::new();
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Style::default(),
+        Some("counter-reset: reversed(list-item)"),
+    );
+    let item = |doc: &mut Document, style: &str| {
+        doc.append_element(
+            Some(list),
+            "li",
+            Style::default(),
+            Some(format!("display: list-item; {style}").as_str()),
+        )
+    };
+    let first = item(&mut doc, "");
+    let nested = doc.append_element(
+        Some(first),
+        "ol",
+        Style::default(),
+        Some("counter-reset: list-item"),
+    );
+    let nested_item = doc.append_element(
+        Some(nested),
+        "li",
+        Style::default(),
+        Some("display: list-item"),
+    );
+    let second = item(&mut doc, "");
+    let third = item(&mut doc, "");
+    doc.mark_in_document_flags();
+    assert_eq!(
+        innermost_values(&doc, &[first, second, third], "list-item"),
+        [3, 2, 1]
+    );
+    // A nested ascending list-item counter still counts up.
+    assert_eq!(stack_at(&doc, nested_item, "list-item"), [3, 1]);
+}
+
+#[test]
+fn reversed_counter_with_a_given_starting_value_keeps_it() {
+    let mut doc = Document::new();
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Style::default(),
+        Some("counter-reset: reversed(list-item) 10"),
+    );
+    let item = doc.append_element(
+        Some(list),
+        "li",
+        Style::default(),
+        Some("display: list-item"),
+    );
+    doc.mark_in_document_flags();
+    assert_eq!(innermost_values(&doc, &[list, item], "list-item"), [10, 9]);
+}
+
+#[test]
+fn pseudo_local_reversed_counter_is_calculated_from_its_own_directives() {
+    let mut doc = Document::new();
+    let style = doc.append_element(
+        Some(doc.root_index()),
+        "style",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.append_text(
+        style,
+        "div::before { counter-reset: reversed(c); counter-increment: c -2; content: counter(c) } \
+         p::before { display: list-item; list-style: none; \
+         counter-reset: reversed(list-item); content: counter(list-item) }",
+    );
+    let div = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        None::<&str>,
+    );
+    let p = doc.append_element(Some(doc.root_index()), "p", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    for (node, expected) in [(div, "2"), (p, "1")] {
+        let (_, text) = crate::generated_content::generated_text(
+            &doc,
+            &cr,
+            node,
+            raikiri_style::PseudoElem::Before,
+            &snapshots,
+        )
+        .expect("::before content");
+        assert_eq!(text, expected);
+    }
+}

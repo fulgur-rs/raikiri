@@ -413,9 +413,9 @@ pub(crate) fn parse_property_grammar(
             {
                 Some(PropertyValue::CounterResetInherit)
             } else {
-                parse_counter_property(input, 0).map(|v| {
+                parse_counter_reset_property(input).map(|v| {
                     if v.is_empty() {
-                        PropertyValue::CounterReset(empty_counter_entries())
+                        PropertyValue::CounterReset(empty_counter_reset_entries())
                     } else {
                         PropertyValue::CounterReset(Arc::new(v))
                     }

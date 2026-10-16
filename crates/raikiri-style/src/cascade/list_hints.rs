@@ -9,17 +9,17 @@
 //!   implicit increment, shows `start`.
 //! - An `li` element's `value` attribute, when it parses as an integer, sets
 //!   `counter-set: list-item <value>`.
-//!
-//! A reversed list counts down from a value computed from its item count,
-//! which needs `reversed()` counter support; a `start` attribute on an `ol`
-//! with `reversed` therefore gives no hint here.
+//! - An `ol` element with a `reversed` attribute counts down instead: it sets
+//!   `counter-reset: reversed(list-item)`, whose starting value is calculated
+//!   from the items at layout time, or `reversed(list-item) <start + 1>` when
+//!   it also has a valid `start`.
 
 use std::sync::Arc;
 
 use smol_str::SmolStr;
 
 use crate::error::CascadeError;
-use crate::property::PropertyValue;
+use crate::property::{CounterResetValue, PropertyValue};
 use crate::style_dom::StyleElement;
 
 use super::candidate::CandidateSink;
@@ -36,19 +36,29 @@ pub(crate) fn push_list_attribute_hints(
     if elem.namespace_uri().is_some() {
         return Ok(());
     }
-    let counter = |value: i32| Arc::new(vec![(SmolStr::new_static(LIST_ITEM_COUNTER), value)]);
+    let counter = || SmolStr::new_static(LIST_ITEM_COUNTER);
     if elem.tag_name().eq_ignore_ascii_case("ol") {
-        if elem.attr("reversed").is_none()
-            && let Some(start) = elem.attr("start").and_then(parse_integer)
-        {
-            sink.push_hint(PropertyValue::CounterReset(counter(
-                start.saturating_sub(1),
-            )))?;
+        let start = elem.attr("start").and_then(parse_integer);
+        let reset = if elem.attr("reversed").is_some() {
+            Some(CounterResetValue::Reversed(
+                start.map(|start| start.saturating_add(1)),
+            ))
+        } else {
+            start.map(|start| CounterResetValue::Integer(start.saturating_sub(1)))
+        };
+        if let Some(reset) = reset {
+            sink.push_hint(PropertyValue::CounterReset(Arc::new(vec![(
+                counter(),
+                reset,
+            )])))?;
         }
     } else if elem.tag_name().eq_ignore_ascii_case("li")
         && let Some(value) = elem.attr("value").and_then(parse_integer)
     {
-        sink.push_hint(PropertyValue::CounterSet(counter(value)))?;
+        sink.push_hint(PropertyValue::CounterSet(Arc::new(vec![(
+            counter(),
+            value,
+        )])))?;
     }
     Ok(())
 }
