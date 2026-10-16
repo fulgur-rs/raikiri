@@ -315,21 +315,26 @@ impl ReadyState {
 
 // ---- write / writeln (HTML "dynamic markup insertion") ----------------
 
-/// Where `document.write` inserts while a parser-run script executes: right
-/// after the script, then after the last node the script already wrote that
-/// is still beside it.
-#[derive(Clone, Debug)]
+/// Where `document.write` inserts while a parser-run script executes: in
+/// front of the node that followed the script when it started, which a
+/// pausing parser would not have created yet. Writes therefore stay in call
+/// order however the script moves what it wrote. Once that node has left
+/// the script's parent, or when there was none, writes go to the end of the
+/// parent, where a parser waiting at the script would append them.
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct WritePoint {
     script: usize,
-    written: Vec<usize>,
+    boundary: Option<usize>,
 }
 
 impl WritePoint {
-    pub(crate) fn after(script: usize) -> Self {
-        Self {
-            script,
-            written: Vec::new(),
-        }
+    pub(crate) fn after(script: usize, document: &raikiri_dom::Document) -> Self {
+        let boundary = document.parent_of(script).and_then(|parent| {
+            let siblings = &document.get_node(parent)?.children;
+            let position = siblings.iter().position(|&child| child == script)?;
+            siblings.get(position + 1).copied()
+        });
+        Self { script, boundary }
     }
 }
 
@@ -373,7 +378,7 @@ fn write_markup(
         markup.push_str(&dom_string(args, index, context)?);
     }
     markup.push_str(suffix);
-    let Some(mut point) = with_state(context, |s| s.write_point.clone())? else {
+    let Some(point) = with_state(context, |s| s.write_point)? else {
         return Err(throw_dom_exception(
             context,
             "NotSupportedError",
@@ -388,19 +393,9 @@ fn write_markup(
         let parent = document.parent_of(point.script)?;
         let tag = document.get_node(parent)?.tag_name()?.to_owned();
         let namespace = document.element_namespace_uri(parent)?.to_owned();
-        let after = point
-            .written
-            .iter()
-            .rev()
-            .copied()
-            .find(|&node| document.parent_of(node) == Some(parent))
-            .unwrap_or(point.script);
-        let siblings = &document.get_node(parent)?.children;
-        let next = siblings
-            .iter()
-            .position(|&child| child == after)
-            .and_then(|position| siblings.get(position + 1))
-            .copied();
+        let next = point
+            .boundary
+            .filter(|&boundary| document.parent_of(boundary) == Some(parent));
         Some((parent, next, tag, namespace))
     })?;
     let Some((parent, next, tag, namespace)) = place else {
@@ -429,8 +424,6 @@ fn write_markup(
     let inserted = with_state(context, |s| {
         s.host.document_mut().pre_insert(parent, holder, next)?;
         super::stylesheet::note_child_list_change(s, parent, &written);
-        point.written.extend_from_slice(&written);
-        s.write_point = Some(point);
         Ok(())
     })?;
     inserted.map_err(|error| super::tree::map_mutation_error(context, error))?;

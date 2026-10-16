@@ -373,7 +373,7 @@ impl<'a> Executor<'a> {
 /// point `document.write` uses until it returns.
 fn enter_script(state: &mut State, script: usize) {
     state.current_script = Some(script);
-    state.write_point = Some(document::WritePoint::after(script));
+    state.write_point = Some(document::WritePoint::after(script, state.host.document()));
 }
 
 fn leave_script(state: &mut State) {

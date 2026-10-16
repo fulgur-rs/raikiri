@@ -1416,6 +1416,22 @@ fn a_write_after_the_last_written_node_left_follows_the_earlier_ones() {
 }
 
 #[test]
+fn writes_stay_before_the_original_next_sibling_when_written_nodes_move() {
+    let (report, children) = body_after_writes(&["document.write('a'); document.write('b'); \
+         document.body.appendChild(document.body.childNodes[2]); document.write('c');"]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:a|#text:c|P:|#text:b");
+}
+
+#[test]
+fn writes_go_to_the_end_once_the_original_next_sibling_left() {
+    let (report, children) =
+        body_after_writes(&["document.querySelector('p').remove(); document.write('x');"]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:x");
+}
+
+#[test]
 fn a_script_that_left_the_tree_writes_nothing() {
     let (report, children) =
         body_after_writes(&["document.currentScript.remove(); document.write('lost');"]);
