@@ -319,3 +319,185 @@ fn column_properties_do_not_apply_to_flex_grid_or_table_boxes() {
         assert!(rules(&document).is_empty(), "{display}");
     }
 }
+
+#[test]
+fn a_definite_height_container_breaks_paragraphs_between_its_columns() {
+    // Paragraphs fill the columns as the lines of one paragraph do, padding
+    // or not.
+    for css in [".mc{height:40px}", ".mc{height:40px;padding:5px}"] {
+        let placements = |body: &str| {
+            let document = lay_out(
+                &format!("<div class=mc style='column-rule:2px solid red'>{body}</div>"),
+                css,
+            );
+            let runs: Vec<_> = document
+                .page(0)
+                .unwrap()
+                .text_runs()
+                .iter()
+                .map(|run| (run.text.to_owned(), run.origin))
+                .collect();
+            (runs, rules(&document))
+        };
+        let paragraphs = placements("<p>A</p><p>B</p><p>C</p><p>D</p>");
+        assert_eq!(paragraphs, placements("<p>A<br>B<br>C<br>D</p>"), "{css}");
+        let inset = if css.contains("padding") { 5.0 } else { 0.0 };
+        assert_eq!(
+            paragraphs.0[2],
+            ("C".to_owned(), (60.0 + inset, 16.0 + inset)),
+            "{css}"
+        );
+        assert_eq!(
+            paragraphs.1,
+            vec![(49.0 + inset, inset, 2.0, 40.0)],
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn paragraphs_past_the_last_column_sit_in_overflow_columns() {
+    // CSS Multi-column Layout 1, 8.2: content that does not fit in the
+    // columns of a definite-height container continues in columns after
+    // them, outside the container.
+    for css in [".mc{height:30px}", ".mc{max-height:30px}"] {
+        let document = lay_out(
+            "<div class=mc><p>A</p><p>B</p><p>C<br>D<br>E</p></div>",
+            css,
+        );
+        let runs: Vec<_> = document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect();
+        assert_eq!(
+            runs,
+            [
+                ("A", (0.0, 16.0)),
+                ("B", (60.0, 16.0)),
+                ("C", (120.0, 16.0)),
+                ("D", (180.0, 16.0)),
+                ("E", (240.0, 16.0))
+            ]
+            .map(|(text, origin)| (text.to_owned(), origin)),
+            "{css}"
+        );
+    }
+}
+
+#[test]
+fn right_to_left_paragraphs_keep_their_column_progression() {
+    let runs = |body: &str| {
+        let document = lay_out(
+            &format!("<div class=mc>{body}</div>"),
+            ".mc{height:40px;direction:rtl}",
+        );
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect::<Vec<_>>()
+    };
+    let paragraphs = runs("<p>A</p><p>B</p><p>C</p><p>D</p>");
+    let first = paragraphs.iter().find(|(text, _)| text == "A").unwrap().1;
+    let last = paragraphs.iter().find(|(text, _)| text == "D").unwrap().1;
+    // Columns progress from right to left, so later paragraphs never sit
+    // right of earlier ones.
+    assert!(last.0 <= first.0, "{paragraphs:?}");
+}
+
+#[test]
+fn a_paragraph_broken_between_columns_hands_its_end_to_the_next_one() {
+    let runs = |body: &str| {
+        let document = lay_out(&format!("<div class=mc>{body}</div>"), ".mc{height:40px}");
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect::<Vec<_>>()
+    };
+    let expected = |placements: &[(&str, (f32, f32))]| {
+        placements
+            .iter()
+            .map(|&(text, origin)| (text.to_owned(), origin))
+            .collect::<Vec<_>>()
+    };
+    // Each paragraph starts where the one before it ends, and lines past the
+    // last column continue in overflow columns.
+    assert_eq!(
+        runs("<p>A<br>B<br>C<br>D<br>E</p><p>F</p>"),
+        expected(&[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (120.0, 16.0)),
+            ("F", (120.0, 36.0)),
+        ])
+    );
+    assert_eq!(
+        runs("<p>X</p><p>A<br>B<br>C<br>D<br>E</p>"),
+        expected(&[
+            ("X", (0.0, 16.0)),
+            ("A", (0.0, 36.0)),
+            ("B", (60.0, 16.0)),
+            ("C", (60.0, 36.0)),
+            ("D", (120.0, 16.0)),
+            ("E", (120.0, 36.0)),
+        ])
+    );
+    assert_eq!(
+        runs("<p>A<br>B<br>C<br>D<br>E</p>"),
+        expected(&[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (120.0, 16.0)),
+        ])
+    );
+}
+
+#[test]
+fn a_relatively_positioned_paragraph_is_offset_once() {
+    let document = lay_out(
+        "<div class=mc><p style='position:relative;left:10px'>A</p><p>B</p></div>",
+        ".mc{height:40px}",
+    );
+    let runs: Vec<_> = document
+        .page(0)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .map(|run| (run.text.to_owned(), run.origin))
+        .collect();
+    assert_eq!(
+        runs,
+        [("A", (10.0, 16.0)), ("B", (0.0, 36.0))].map(|(text, origin)| (text.to_owned(), origin))
+    );
+}
+
+#[test]
+fn a_paragraph_the_planner_declines_still_hands_its_end_to_the_next_one() {
+    // A right-to-left paragraph is broken between the columns line by line
+    // rather than by the paragraph planner; the next one still follows it.
+    let document = lay_out(
+        "<div class=mc><p style='direction:rtl'>A<br>B<br>C<br>D<br>E</p><p>F</p></div>",
+        ".mc{height:40px}",
+    );
+    let runs: Vec<_> = document
+        .page(0)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .map(|run| (run.text.to_owned(), run.origin))
+        .collect();
+    assert_eq!(runs[4], ("E".to_owned(), (140.0, 16.0)));
+    assert_eq!(runs[5], ("F".to_owned(), (120.0, 36.0)));
+}

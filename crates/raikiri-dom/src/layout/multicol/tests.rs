@@ -134,6 +134,25 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
     assert!(line_ranges_in_columns(&[], context, false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), false).is_empty());
     assert!(line_ranges_in_columns(&extents, context.in_column(3, 300.0, 0.0), true).is_empty());
+    // Past the last column of a definite-height container, the lines continue
+    // through as many overflow columns as they need.
+    let definite = FragmentationContext {
+        available_height: Some(30.0),
+        ..context
+    };
+    assert_eq!(
+        line_ranges_in_columns(&extents, definite.in_column(3, 300.0, 0.0), false),
+        vec![(0, 2, 3), (2, 4, 4), (4, 5, 5)],
+    );
+    // Lines that start in the declared columns continue past them too.
+    let short = FragmentationContext {
+        available_height: Some(20.0),
+        ..context
+    };
+    assert_eq!(
+        line_ranges_in_columns(&extents, short, false),
+        vec![(0, 1, 0), (1, 2, 1), (2, 3, 2), (3, 4, 3), (4, 5, 4)],
+    );
 }
 
 #[test]
@@ -3316,4 +3335,53 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     // The root has no parent.
     let doc = Document::new();
     assert!(!lineless::starts_the_outer_columns(&doc, 0));
+}
+
+#[test]
+fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
+    let paragraphs = |child_style: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px"),
+        );
+        let first = doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        doc.append_text(first, "A");
+        let second = doc.append_element(Some(parent), "p", Style::default(), Some(child_style));
+        doc.append_text(second, "B");
+        layout_nested_flex_float_fixture(&mut doc);
+        multicol_has_only_paragraph_children(&doc, parent)
+    };
+    assert!(paragraphs("display:block;margin:0"));
+    // A single paragraph keeps the existing path.
+    assert!(!paragraphs("display:none"));
+    assert!(paragraphs(
+        "display:block;margin:0 4px;padding-left:2px;border-right:2px solid"
+    ));
+    for style in [
+        "display:grid",
+        "display:list-item",
+        "display:block;position:absolute",
+        "display:block;float:left",
+        "display:block;height:20px",
+        "display:block;min-height:20px",
+        "display:block;max-height:20px",
+        "display:block;padding-top:2px",
+        "display:block;border-bottom:2px solid",
+        "display:block;margin-top:20px",
+        "display:block;margin-bottom:20px",
+        "display:block;margin:0;writing-mode:vertical-rl",
+        "display:block;margin:0;position:relative;left:10px",
+    ] {
+        assert!(!paragraphs(style), "{style}");
+    }
 }

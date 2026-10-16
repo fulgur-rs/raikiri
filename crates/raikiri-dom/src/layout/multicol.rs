@@ -88,6 +88,17 @@ pub(crate) fn compute_multicol_layout(
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
+    // A definite-height container of paragraphs breaks them between lines
+    // too.
+    let definite_paragraphs = !custom_scope
+        && !span_scope
+        && tree.fragmentation_stack.is_empty()
+        && style.horizontal
+        && available_height.is_some_and(|height| height > 0.0)
+        && multicol_has_direct_block_child(tree, index)
+        && tree.nodes[index].style.direction == TaffyDirection::Ltr
+        && multicol_has_only_paragraph_children(tree, index)
+        && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
     // nested container as well as an outermost one.
     let lineless_children =
@@ -102,7 +113,7 @@ pub(crate) fn compute_multicol_layout(
     // A nested container that turns out taller than its outer column falls
     // back to the custom path, which also breaks it at the outer column end.
     let nested_fallback = custom_scope && !tree.fragmentation_stack.is_empty();
-    let custom_scope = custom_scope && lineless_children.is_none();
+    let mut custom_scope = custom_scope && lineless_children.is_none();
     let stack_depth = tree.fragmentation_stack.len();
     let outer_height = stack_depth
         .checked_sub(1)
@@ -121,6 +132,7 @@ pub(crate) fn compute_multicol_layout(
             || lineless::starts_the_outer_columns(tree, index)
                 && outer_height.is_some_and(|outer| output.size.height <= outer + lineless::EPSILON)
     });
+    custom_scope |= definite_paragraphs && lineless_children.is_none();
     let fragmentainer_height = available_height.or_else(|| {
         multicol_max_fragmentainer_height(
             tree,
@@ -582,6 +594,57 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
     })
 }
 
+// Whether `node_id` has several child boxes and every one is an in-flow
+// block of lines with no block-edge padding or border, whose height comes
+// from its content, which the custom path breaks between lines in a
+// definite-height container as well.
+fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool {
+    let mut children = tree.nodes[node_id]
+        .children
+        .iter()
+        .map(|&child| &tree.nodes[child])
+        .filter(|child| {
+            child.is_in_document() && child.kind() == NodeKind::Element && !child.is_display_none()
+        });
+    // One paragraph already breaks between its lines on the existing path.
+    children.clone().nth(1).is_some()
+        && children.all(|child| {
+            let zero = LengthPercentage::length(0.0);
+            let zero_margin = LengthPercentageAuto::length(0.0);
+            // Block-edge decoration needs slice or clone geometry for each
+            // piece, which only the lines are given; the pieces are stacked
+            // without collapsing adjoining margins; and the line offsets are
+            // read as horizontal block offsets.
+            child.formatting_context == FormattingContext::Inline
+                && !child
+                    .authored_writing_mode
+                    .is_some_and(WritingMode::is_vertical)
+                && matches!(child.display(), DisplayValue::Block)
+                && [child.style.padding.top, child.style.padding.bottom]
+                    .into_iter()
+                    .chain([child.style.border.top, child.style.border.bottom])
+                    .all(|edge| edge == zero)
+                && [child.style.margin.top, child.style.margin.bottom]
+                    .into_iter()
+                    .all(|edge| edge == zero_margin)
+                && child.taffy_position() != TaffyPosition::Absolute
+                // A relative offset is applied after the columns place the
+                // box, so it must not be carried into its column location.
+                && [
+                    child.style.inset.left,
+                    child.style.inset.right,
+                    child.style.inset.top,
+                    child.style.inset.bottom,
+                ]
+                .iter()
+                .all(|inset| inset.is_auto())
+                && !child.style.float.is_floated()
+                && child.style.size.height.is_auto()
+                && child.style.min_size.height.is_auto()
+                && child.style.max_size.height.is_auto()
+        })
+}
+
 // A logical non-auto child minimum paired with break avoidance participates
 // in block sizing before column projection. Keep that case on the foundational
 // path until the custom projection can account for the minimum's unfragmented
@@ -789,9 +852,16 @@ fn layout_column_group(
     // a target height; measuring against the current column would otherwise
     // keep every child in the first column and leave the container taller
     // than necessary.
-    let auto_measurements = if context.column_fill != ColumnFillValue::Auto
+    // Paragraphs in definite-height columns are placed by the same planner,
+    // so that a paragraph broken between columns hands its end to the next.
+    let definite_paragraphs = fragment_height.is_some()
+        && tree.fragmentation_stack.len() <= 1
+        && multicol_has_only_paragraph_children(tree, index)
+        && !multicol_has_nested_descendant(tree, index);
+    let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
         && fragment_height.is_none()
-        && !multicol_has_nested_descendant(tree, index)
+        && !multicol_has_nested_descendant(tree, index))
+        || definite_paragraphs
     {
         let mut measurements = Vec::with_capacity(children.len());
         for &child in children {
@@ -825,8 +895,14 @@ fn layout_column_group(
     // while the inline post-pass already assigns lines to several columns.
     let group_balance = auto_measurements
         .as_ref()
-        .and_then(|(entries, _)| paragraph_group::balance(tree, index, entries, context));
+        .and_then(|(entries, _)| match fragment_height {
+            Some(height) => paragraph_group::fill_definite(tree, index, entries, context, height),
+            None => paragraph_group::balance(tree, index, entries, context),
+        });
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
+        if fragment_height.is_some() {
+            return None;
+        }
         let mut boxes = entries.iter().filter(|(child, output, _, _, _, _)| {
             tree.nodes[*child].kind() != NodeKind::Text
                 || output.size.height != 0.0
@@ -1075,6 +1151,15 @@ fn layout_column_group(
             column = placement.last_column;
             cursor = placement.last_y;
             maximum = maximum.max(group_balance.as_ref().map_or(0.0, |group| group.height));
+        } else if let Some((last_column, end)) = definite_paragraphs
+            .then(|| paragraph_end_in_later_column(tree, child, column))
+            .flatten()
+        {
+            // A paragraph broken between definite-height columns hands the
+            // end of its last piece to the next box.
+            maximum = maximum.max(fragment_height.unwrap_or(0.0));
+            column = last_column;
+            cursor = end + margin_bottom;
         } else {
             cursor = y - content_origin.y + child_output.size.height + margin_bottom;
         }
@@ -1097,15 +1182,42 @@ fn layout_column_group(
                 slice: None,
             });
     }
-    let minimum_height =
-        if auto_measurements.is_some() && !multicol_has_nested_descendant(tree, index) {
-            0.0
-        } else {
-            fragment_height
-                .map(|height| fallback_height.min(height))
-                .unwrap_or(fallback_height)
-        };
+    let minimum_height = if auto_measurements.is_some()
+        && fragment_height.is_none()
+        && !multicol_has_nested_descendant(tree, index)
+    {
+        0.0
+    } else {
+        fragment_height
+            .map(|height| fallback_height.min(height))
+            .unwrap_or(fallback_height)
+    };
     (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
+}
+
+/// The last column of `child`'s line pieces and the block end of the piece
+/// there, from the column's top, when they reach past `column`.
+fn paragraph_end_in_later_column(
+    tree: &Document,
+    child: usize,
+    column: usize,
+) -> Option<(usize, f32)> {
+    let root = tree.nodes[child].ifc.as_ref()?;
+    let last = root
+        .multicol_fragments
+        .as_ref()?
+        .iter()
+        .rfind(|range| range.line_start < range.line_end)?;
+    if last.fragmentainer <= column {
+        return None;
+    }
+    let lines = &root.lines.as_ref()?.lines;
+    let first = lines.get(last.line_start)?;
+    let end = lines.get(last.line_end - 1)?;
+    Some((
+        last.fragmentainer,
+        end.block_offset() + end.block_size() - first.block_offset(),
+    ))
 }
 
 /// A nested column container that continues from one column of its outer
@@ -2068,13 +2180,31 @@ fn line_ranges_in_columns(
     preserve_block_offsets: bool,
 ) -> Vec<(usize, usize, usize)> {
     let line_count = extents.len();
-    if line_count == 0 || context.column_index >= context.column_count && !preserve_block_offsets {
+    if line_count == 0 {
         return Vec::new();
     }
     let available_columns = context.column_count.saturating_sub(context.column_index);
     let mut ranges = Vec::with_capacity(available_columns.max(1).min(line_count));
     let mut start = 0usize;
-    if preserve_block_offsets
+    let definite_height = context.available_height.filter(|height| *height > 0.0);
+    if let Some(height) = definite_height
+        && !preserve_block_offsets
+    {
+        // Lines that do not fit in the columns of a definite-height container
+        // continue in as many overflow columns as they need (CSS Multi-column
+        // 1, 8.2).
+        let mut column = context.column_index;
+        while start < line_count {
+            let origin = extents[start].0;
+            let mut end = start + 1;
+            while end < line_count && extents[end].1 - origin <= height + f32::EPSILON {
+                end += 1;
+            }
+            ranges.push((start, end, column));
+            column += 1;
+            start = end;
+        }
+    } else if preserve_block_offsets
         && let Some(height) = context.available_height.filter(|height| *height > 0.0)
     {
         while start < line_count {
@@ -2179,7 +2309,9 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
             ..context
         };
         let ranges = line_ranges_in_columns(extents, trial_context, false);
-        let fits = !ranges.is_empty()
+        let fits = ranges
+            .last()
+            .is_some_and(|&(_, _, column)| column < context.column_count)
             && ranges.iter().all(|&(start, end, _)| {
                 extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
             });
