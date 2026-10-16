@@ -4141,11 +4141,7 @@ fn paginate_flow(
     let mut sibling_margins = SiblingMargins::default();
     let mut last_named = LastNamedBox::default();
     let mut saw_child = false;
-    // Paragraph blocks whose leading line or whose orphans and widows move
-    // them as a unit to the next page. Track the first text child so a block
-    // is not reflowed repeatedly for later lines.
-    let mut checked_block_text = HashSet::new();
-    let mut checked_orphans_widows = HashSet::new();
+    let mut checked_paragraphs = CheckedParagraphs::default();
     // Footnotes are collected in source order and stacked upward from the
     // bottom edge of their anchor page. The normal-flow height is removed
     // from `flow_shift`, leaving the box only in this page-local area.
@@ -4476,9 +4472,7 @@ fn paginate_flow(
             let line_block_parent = paragraph_root
                 .or(document.parent_of(node_id))
                 .filter(|parent_id| {
-                    !uses_positioned_coordinates
-                        && (!checked_block_text.contains(parent_id)
-                            || !checked_orphans_widows.contains(parent_id))
+                    !uses_positioned_coordinates && !checked_paragraphs.is_fully_checked(*parent_id)
                 })
                 .and_then(|parent_id| {
                     if document.layout_parent_of(parent_id)? == body_id {
@@ -4530,7 +4524,7 @@ fn paginate_flow(
                 delta
             };
             if let Some((block_id, nested)) = line_block_parent
-                && checked_block_text.insert(block_id)
+                && checked_paragraphs.block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)
                     .is_some_and(|value| value >= 0.0)
             {
@@ -4581,7 +4575,7 @@ fn paginate_flow(
                 });
             if let Some((block_id, nested)) =
                 line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
-                && checked_orphans_widows.insert(block_id)
+                && checked_paragraphs.orphans_widows.insert(block_id)
                 && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
             {
                 let page_start = page_origin(current_page);
@@ -6637,6 +6631,24 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// Paragraph blocks whose leading line or whose orphans and widows move them
+/// as a unit to the next page. Each block is checked once, from its first
+/// text child, so it is not reflowed again for later lines.
+#[derive(Default)]
+struct CheckedParagraphs {
+    /// Blocks whose first line was checked against the page end.
+    block_text: HashSet<usize>,
+    /// Blocks whose orphans and widows were checked.
+    orphans_widows: HashSet<usize>,
+}
+
+impl CheckedParagraphs {
+    /// Whether both checks already ran for `block_id`.
+    fn is_fully_checked(&self, block_id: usize) -> bool {
+        self.block_text.contains(&block_id) && self.orphans_widows.contains(&block_id)
+    }
 }
 
 /// The adjoining block margins between siblings, which an unforced page
