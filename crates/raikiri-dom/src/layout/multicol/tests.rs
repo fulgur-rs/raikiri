@@ -3265,3 +3265,35 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
     );
     assert!(lineless::supported(&doc, parent, true).is_none());
 }
+
+#[test]
+fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
+    let starts = |outer: &str, before: Option<&str>, nested: &str| {
+        let children: Vec<(&str, &[&str])> = before
+            .into_iter()
+            .chain([nested])
+            .map(|css| (css, &[] as &[&str]))
+            .collect();
+        let (doc, _, ids) = absolute_fixture(outer, &children);
+        lineless::starts_the_outer_columns(&doc, ids.last().unwrap().0)
+    };
+    let nested = "display:block;columns:2;height:50px";
+    assert!(starts(DEFINITE_COLUMNS, None, nested));
+    // Earlier content, a top margin or a top padding moves it down.
+    assert!(!starts(DEFINITE_COLUMNS, Some("height:40px"), nested));
+    assert!(!starts(
+        DEFINITE_COLUMNS,
+        None,
+        "columns:2;height:50px;margin-top:10px"
+    ));
+    assert!(!starts(
+        &format!("{DEFINITE_COLUMNS};padding-top:10px"),
+        None,
+        nested
+    ));
+    // A parent that is not a multicol container may itself sit anywhere.
+    assert!(!starts("display:block;height:100px", None, nested));
+    // The root has no parent.
+    let doc = Document::new();
+    assert!(!lineless::starts_the_outer_columns(&doc, 0));
+}
