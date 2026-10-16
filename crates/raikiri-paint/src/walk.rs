@@ -4302,9 +4302,11 @@ pub(crate) fn paint_document_impl(
                         // A zero-height block at a multicolumn break can own
                         // an overflowing parallel flow. It has no fragment
                         // area in the column, so its descendants must not
-                        // paint into the following sibling's fragment.
+                        // paint into the following sibling's fragment. A
+                        // block that layout broke into column pieces places
+                        // its descendants in those pieces itself.
                         Some(_) // cov:ignore: exercised by ignored exact paged-text WPT.
-                            if document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
+                            if !fragmented_nodes.contains(&child) && document.get_node(child).is_some_and(|child_node| { // cov:ignore: exercised by ignored exact paged-text WPT.
                                 child_node.kind() == NodeKind::Element // cov:ignore: exercised by ignored exact paged-text WPT.
                                     && child_node.unrounded_layout.size.height <= 0.0 // cov:ignore: exercised by ignored exact paged-text WPT.
                                     && !child_node.children.is_empty() // cov:ignore: exercised by ignored exact paged-text WPT.

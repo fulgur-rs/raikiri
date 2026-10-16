@@ -1,5 +1,4 @@
-//! A nested column container continued in later outer columns paints its
-//! border and background as one box sliced at each outer column end.
+//! Boxes broken across columns paint as slices of the whole box.
 
 use anyrender::{PaintScene, Scene};
 use kurbo::Affine;
@@ -109,5 +108,17 @@ fn each_row_box_of_a_sliced_nested_container_draws_a_whole_outline() {
         "<div style='position:absolute;left:0;top:0;width:70px;height:50px;border:5px solid blue'></div>\
          <div style='position:absolute;left:90px;top:0;width:70px;height:40px;border:5px solid blue'></div>",
     );
+    assert_eq!(differing_pixels(&actual, &expected), 0);
+}
+
+#[test]
+fn an_absolute_box_breaks_across_the_columns_and_paints_over_later_blocks() {
+    // The 400px child of the absolute box fills four 100px columns, two of
+    // them overflow columns, and covers the red block after its containing
+    // block.
+    let actual = raster(
+        "<div style='column-count:2;column-fill:auto;column-gap:0;height:100px;width:50px'><div style='position:relative;width:30px'><div style='position:absolute;top:0;width:5px;height:10px;background:green'><div style='background:green;width:25px;height:400px'></div></div></div><div style='background:red;width:20px;height:140px'></div></div>",
+    );
+    let expected = raster("<div style='width:100px;height:100px;background:green'></div>");
     assert_eq!(differing_pixels(&actual, &expected), 0);
 }

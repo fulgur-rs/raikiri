@@ -492,6 +492,14 @@ pub struct Node {
     pub(crate) has_logical_min_block_size: bool,
     /// Whether manual multicol placement replaced the relative block position.
     pub(crate) needs_relative_block_paint_offset: bool,
+    /// Whether this box is the containing block of its absolutely
+    /// positioned descendants through its `position` alone, with no
+    /// transform, filter or containment that would make it the containing
+    /// block of fixed boxes as well. Bridged from the cascade.
+    pub(crate) contains_absolute_boxes: bool,
+    /// Whether this box is `position: fixed`, which Taffy lays out as
+    /// absolutely positioned.
+    pub(crate) fixed_position: bool,
     /// The physical axes in which size containment sizes this box as if it
     /// had no content (CSS Containment 2 §3.1, §3.2).
     pub(crate) size_containment: taffy::Size<bool>,
@@ -633,6 +641,8 @@ impl Node {
             under_vertical_writing: false,
             has_logical_min_block_size: false,
             needs_relative_block_paint_offset: false,
+            contains_absolute_boxes: false,
+            fixed_position: false,
             size_containment: taffy::Size {
                 width: false,
                 height: false,

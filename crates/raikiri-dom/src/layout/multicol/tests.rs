@@ -1880,9 +1880,9 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
         Some("display:block;height:100px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&doc, parent).is_some());
+    assert!(lineless::supported(&doc, parent, true).is_some());
     doc.append_text(child, "text");
-    assert!(lineless::supported(&doc, parent).is_none());
+    assert!(lineless::supported(&doc, parent, true).is_none());
 
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
@@ -1900,7 +1900,7 @@ fn containers_with_content_or_replaced_children_keep_other_strategies() {
         Some("display:block;height:100px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&doc, parent).is_none());
+    assert!(lineless::supported(&doc, parent, true).is_none());
 }
 
 #[test]
@@ -1919,7 +1919,7 @@ fn a_block_with_size_containment_is_not_sliced() {
         "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
         &["display:block;height:400px;contain:size"],
     );
-    assert!(lineless::supported(&doc, parent).is_none());
+    assert!(lineless::supported(&doc, parent, true).is_none());
 }
 
 #[test]
@@ -2236,7 +2236,7 @@ fn an_inherited_vertical_writing_mode_keeps_blocks_without_lines_whole() {
         Some("display:block;height:200px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(lineless::supported(&doc, parent).is_none());
+    assert!(lineless::supported(&doc, parent, true).is_none());
     assert!(fragment_rects(&doc, child).len() <= 1);
 }
 
@@ -2530,7 +2530,7 @@ fn blocks_without_lines_skip_children_that_generate_no_box() {
             .map(|style| doc.append_element(Some(parent), "div", Style::default(), Some(*style)))
             .collect();
         layout_nested_flex_float_fixture(&mut doc);
-        (super::lineless::supported(&doc, parent), ids)
+        (super::lineless::supported(&doc, parent, true), ids)
     };
     // A box with no display and a comment are skipped, and a minimum height
     // makes the other block one without lines.
@@ -2893,4 +2893,172 @@ fn a_nested_multicol_whose_last_row_and_bottom_padding_overflow_the_outer_column
     doc.set_element_inline_style(inner, Some("display:block;columns:2;column-gap:0".into()));
     layout_nested_flex_float_fixture(&mut doc);
     assert_eq!(doc.nodes[inner].multicol_rows.len(), 2);
+}
+
+/// A multicol container whose children are each a containing block for the
+/// absolutely positioned boxes listed with it.
+fn absolute_fixture(
+    container_css: &str,
+    children: &[(&str, &[&str])],
+) -> (Document, usize, Vec<(usize, Vec<usize>)>) {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let parent = doc.append_element(Some(body), "div", Style::default(), Some(container_css));
+    let ids = children
+        .iter()
+        .map(|(css, boxes)| {
+            let child = doc.append_element(Some(parent), "div", Style::default(), Some(*css));
+            let boxes = boxes
+                .iter()
+                .map(|css| doc.append_element(Some(child), "div", Style::default(), Some(*css)))
+                .collect();
+            (child, boxes)
+        })
+        .collect();
+    layout_nested_flex_float_fixture(&mut doc);
+    (doc, parent, ids)
+}
+
+fn fragment_clips(doc: &Document, node: usize) -> Vec<crate::fragment::FragmentRect> {
+    doc.fragment_tree
+        .fragments
+        .iter()
+        .filter(|fragment| fragment.node_id == node)
+        .filter_map(|fragment| fragment.fragmentainer_clip)
+        .collect()
+}
+
+const DEFINITE_COLUMNS: &str =
+    "display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto";
+
+#[test]
+fn an_absolute_box_breaks_at_the_column_ends_of_its_containing_block() {
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:50px",
+            &["position:absolute;top:30px;width:10px;height:100px"],
+        )],
+    );
+    let (block, boxes) = &ids[0];
+    let block_record = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .position(|fragment| fragment.node_id == *block)
+        .unwrap();
+    // Each piece is the whole box, moved into its column and clipped to it.
+    assert_eq!(
+        fragment_rects(&doc, boxes[0]),
+        vec![(0, 0.0, 30.0, 100.0), (1, 100.0, -70.0, 100.0)]
+    );
+    assert!(
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.node_id == boxes[0])
+            .all(|fragment| fragment.parent == Some(block_record))
+    );
+    assert_eq!(
+        fragment_clips(&doc, boxes[0]),
+        vec![
+            crate::fragment::FragmentRect {
+                x: 0.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+            crate::fragment::FragmentRect {
+                x: 100.0,
+                y: 0.0,
+                width: 100.0,
+                height: 100.0,
+            },
+        ]
+    );
+}
+
+#[test]
+fn an_absolute_box_past_the_last_column_continues_in_overflow_columns() {
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:10px",
+            &["position:absolute;top:0;width:10px;height:250px"],
+        )],
+    );
+    let columns: Vec<usize> = fragment_rects(&doc, ids[0].1[0])
+        .into_iter()
+        .map(|(column, ..)| column)
+        .collect();
+    assert_eq!(columns, vec![0, 1, 2]);
+}
+
+#[test]
+fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box() {
+    let (doc, _, ids) = absolute_fixture(
+        "display:block;width:200px;columns:2;column-gap:0",
+        &[(
+            "display:block;position:relative;height:100px",
+            &["position:absolute;top:0;width:10px;height:300px"],
+        )],
+    );
+    // The columns balance at 50px; the second, last one grows to hold the
+    // 250px left of the box.
+    assert_eq!(
+        fragment_rects(&doc, ids[0].1[0]),
+        vec![(0, 0.0, 0.0, 300.0), (1, 0.0, -50.0, 300.0)]
+    );
+    assert_eq!(fragment_clips(&doc, ids[0].1[0])[1].height, 250.0);
+}
+
+#[test]
+fn absolute_boxes_the_columns_cannot_hold_keep_the_other_strategies() {
+    let unbroken = |block: &str, absolute: &str| {
+        let (doc, _, ids) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &[absolute])]);
+        fragment_rects(&doc, ids[0].1[0]).is_empty()
+    };
+    let block = "display:block;position:relative;height:50px";
+    // A box that starts above the columns.
+    assert!(unbroken(
+        block,
+        "position:absolute;top:-10px;width:10px;height:20px"
+    ));
+    // A cut containing block cannot hold a box in a column after its own.
+    assert!(unbroken(
+        "display:block;position:relative;height:150px",
+        "position:absolute;top:0;width:10px;height:250px",
+    ));
+    // Pieces that would not fit in the fragment budget.
+    assert!(unbroken(
+        block,
+        "position:absolute;top:0;width:10px;height:10000000px",
+    ));
+}
+
+#[test]
+fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
+    let supported = |block: &str, absolute: &str, out_of_flow: bool| {
+        let (doc, parent, _) = absolute_fixture(DEFINITE_COLUMNS, &[(block, &[absolute])]);
+        lineless::supported(&doc, parent, out_of_flow).is_some()
+    };
+    let absolute = "position:absolute;top:0;width:10px;height:20px";
+    let block = "display:block;position:relative;height:50px";
+    assert!(supported(block, absolute, true));
+    assert!(!supported(block, absolute, false));
+    // A static block is not their containing block.
+    assert!(!supported("display:block;height:50px", absolute, true));
+    // A transformed block contains fixed boxes too.
+    assert!(!supported(
+        "display:block;position:relative;height:50px;transform:scale(2)",
+        absolute,
+        true,
+    ));
+    // A fixed box has the viewport as its containing block.
+    assert!(!supported(
+        block,
+        "position:fixed;top:0;width:10px;height:20px",
+        true
+    ));
 }
