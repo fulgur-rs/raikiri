@@ -23,9 +23,8 @@ use crate::resolve::{
     ComputedTextIndent, ResolveContext, lift_border_spacing, lift_length_percentage_or_calc,
     lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
     resolve_background_size, resolve_border_radius, resolve_border_spacing,
-    resolve_border_width_with_provenance, resolve_border_with_width_provenance,
-    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_css_position,
+    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
     resolve_line_height, resolve_margin_length_or_auto,
@@ -474,8 +473,31 @@ fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList 
     }
 }
 
+/// The style values that gate page-context widths in phase 3.
+#[derive(Clone, Copy)]
+pub(super) struct PageStyleGates {
+    border_styles: Sides<BorderStyle>,
+    column_rule_style: BorderStyle,
+    outline_style: OutlineStyle,
+}
+
+impl PageStyleGates {
+    /// Construct the computed style values used by page-context phase 3.
+    pub(super) fn new(
+        border_styles: Sides<BorderStyle>,
+        column_rule_style: BorderStyle,
+        outline_style: OutlineStyle,
+    ) -> Self {
+        Self {
+            border_styles,
+            column_rule_style,
+            outline_style,
+        }
+    }
+}
+
 /// **phase 3** for the page context — absolutize one winner against the page
-/// context's own `font-size` and apply the `border-*-width` style gate.
+/// context's own `font-size` and apply the border and column-rule style gates.
 ///
 /// Page-path sibling of the element path's
 /// [`crate::specified::SpecifiedValues::finalize`] (`absolutize_with`); both
@@ -497,8 +519,8 @@ fn grid_track_list_from_computed(list: &ComputedGridTrackList) -> GridTrackList 
 /// - `own_line_height`: this context's own `lh` basis, from
 ///   [`page_context_line_height_basis`](super::cascade::page_context_line_height_basis);
 ///   `rlh` uses `ctx.root_line_height` instead.
-/// - `border_styles` / `outline_style`: the context's style winners, which gate
-///   `border-*-width` / `outline-width`.
+/// - `style_gates`: the context's style winners, which gate `border-*-width`,
+///   `column-rule-width`, and `outline-width`.
 /// - `overflow_pair`: the raw `overflow-x`/`overflow-y` winners from
 ///   [`page_context_overflow_pair`](super::cascade::page_context_overflow_pair),
 ///   since [`resolve_overflow`]'s cross-axis coupling needs both axes while
@@ -508,10 +530,14 @@ pub(super) fn absolutize_in_page_context(
     font_size: ComputedLength,
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
-    border_styles: Sides<BorderStyle>,
-    outline_style: OutlineStyle,
+    style_gates: PageStyleGates,
     overflow_pair: OverflowXY,
 ) -> PropertyValue {
+    let PageStyleGates {
+        border_styles,
+        column_rule_style,
+        outline_style,
+    } = style_gates;
     let border_width_is_computed: [bool; 5] =
         std::array::from_fn(|index| value.border_width_is_computed(index));
     let value = value.into_property_value();
@@ -689,16 +715,24 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::ColumnRule(rule) => {
             PropertyValue::ColumnRule(basis.border(rule, border_width_is_computed[4]))
         }
-        PropertyValue::ColumnRuleWidth(width) => PropertyValue::ColumnRuleWidth(Length::Px(
-            resolve_border_width_with_provenance(
+        PropertyValue::ColumnRuleWidth(width) => {
+            let border = Border {
                 width,
-                font_size,
-                own_line_height,
-                border_width_is_computed[4],
-                ctx,
-            )
-            .px(),
-        )),
+                style: column_rule_style,
+                color: BorderColor::CurrentColor,
+            };
+            PropertyValue::ColumnRuleWidth(Length::Px(
+                resolve_border_with_width_provenance(
+                    border,
+                    font_size,
+                    own_line_height,
+                    border_width_is_computed[4],
+                    ctx,
+                )
+                .width
+                .px(),
+            ))
+        }
         PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(
                 resolve_length(length, font_size, own_line_height, ctx).px(),

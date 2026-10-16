@@ -1998,7 +1998,10 @@ fn page_column_rule_width_snaps_authored_values_and_preserves_inherit() {
     root.column_rule.width = crate::resolve::ComputedLength(74.0 / 1.5);
     root.column_rule.style = BorderStyle::Solid;
     let mut tree = RuleTree::empty();
-    tree.add_stylesheet("@page { column-rule-width: inherit }", Origin::Author);
+    tree.add_stylesheet(
+        "@page { column-rule-width: inherit; column-rule-style: solid }",
+        Origin::Author,
+    );
     let page = cascade_page_with_media_context_and_border_width_device_scale(
         &tree,
         &PageContextQuery::default(),
@@ -2009,6 +2012,76 @@ fn page_column_rule_width_snaps_authored_values_and_preserves_inherit() {
     assert_eq!(
         page.declarations().get(&PropertyKey::ColumnRuleWidth),
         Some(&PropertyValue::ColumnRuleWidth(Length::Px(74.0 / 1.5))),
+    );
+}
+
+#[test]
+fn page_column_rule_width_is_gated_by_the_winning_style() {
+    for (declarations, scale, expected) in [
+        ("column-rule-width: 0.75px", Some(2.0), 0.0),
+        (
+            "column-rule-width: 0.75px; column-rule-style: none",
+            None,
+            0.0,
+        ),
+        (
+            "column-rule-width: 0.75px; column-rule-style: hidden",
+            Some(2.0),
+            0.0,
+        ),
+        (
+            "column-rule-width: 0.75px; column-rule-style: solid",
+            Some(2.0),
+            0.5,
+        ),
+        (
+            "column-rule-width: 0.75px; column-rule-style: solid",
+            None,
+            0.75,
+        ),
+        (
+            "column-rule: 0.75px solid red; column-rule-style: none",
+            Some(2.0),
+            0.0,
+        ),
+        (
+            "column-rule-style: none; column-rule: 0.75px solid red",
+            Some(2.0),
+            0.5,
+        ),
+    ] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(&format!("@page {{ {declarations} }}"), Origin::Author);
+        let page = cascade_page_with_media_context_and_border_width_device_scale(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+            &MediaContext::default(),
+            scale,
+        );
+        assert_eq!(
+            page.declarations().get(&PropertyKey::ColumnRuleWidth),
+            Some(&PropertyValue::ColumnRuleWidth(Length::Px(expected))),
+            "@page {{ {declarations} }} at scale {scale:?}",
+        );
+    }
+
+    let mut root = ComputedValues::initial();
+    root.column_rule.width = crate::resolve::ComputedLength(4.0);
+    root.column_rule.style = BorderStyle::Solid;
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@page { column-rule-width: inherit }", Origin::Author);
+    let page = cascade_page_with_media_context_and_border_width_device_scale(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&root),
+        &MediaContext::default(),
+        Some(2.0),
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::ColumnRuleWidth),
+        Some(&PropertyValue::ColumnRuleWidth(Length::Px(0.0))),
+        "inherited width is gated by the page context's initial column-rule-style",
     );
 }
 
@@ -2663,8 +2736,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Padding(Box::new(Sides::all(LengthPercentageOrCalc::Length(
@@ -2679,8 +2751,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Margin(Box::new(Sides::all(LengthOrAuto::Length(Length::Px(32.0))))),
@@ -2697,8 +2768,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Border(Sides::all(Border {
@@ -2714,8 +2784,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::BoxShadow(Arc::new(Vec::new())),
@@ -2735,8 +2804,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Overflow(OverflowXY {
@@ -2778,8 +2846,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Background(Box::new(BackgroundShorthand {
@@ -2816,8 +2883,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Font(Box::new(FontShorthand {
@@ -2839,8 +2905,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Font(Box::new(FontShorthand {
@@ -2859,8 +2924,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::FontSize(Length::Px(24.0)),
@@ -2885,8 +2949,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Font(Box::new(FontShorthand {
@@ -2901,8 +2964,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::FontSize(Length::Px(12.0)),
@@ -2919,8 +2981,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Font(Box::new(FontShorthand {
@@ -2953,8 +3014,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::TextDecoration(TextDecorationShorthand {
@@ -2973,8 +3033,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextDecorationInset(TextDecorationInset::Auto),
@@ -2990,8 +3049,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextDecorationInset(TextDecorationInset::Lengths {
@@ -3009,8 +3067,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Length(Length::Percent(25.0))),
@@ -3028,8 +3085,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextUnderlineOffset(TextUnderlineOffset::Calc(LengthPercentageCalc {
@@ -3053,8 +3109,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::FlexBasis(basis),
@@ -3075,8 +3130,7 @@ fn absolutize_in_page_context_shorthand_fall_throughs() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::TextDecorationThickness(thickness),
@@ -3101,8 +3155,7 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::PaddingInline(StartEnd {
@@ -3119,8 +3172,7 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::PaddingBlock(StartEnd {
@@ -3140,8 +3192,7 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::MarginInline(StartEnd {
@@ -3158,8 +3209,7 @@ fn absolutize_in_page_context_logical_shorthand_fall_throughs() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::MarginBlock(StartEnd {
@@ -3210,8 +3260,7 @@ fn absolutize_in_page_context_covers_flex_basis_and_gap_arms() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::FlexBasis(expected),
@@ -3235,8 +3284,7 @@ fn absolutize_in_page_context_covers_flex_basis_and_gap_arms() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::RowGap(gap),
@@ -3250,8 +3298,7 @@ fn absolutize_in_page_context_covers_flex_basis_and_gap_arms() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::ColumnGap(gap),
@@ -3283,8 +3330,7 @@ fn absolutize_in_page_context_covers_background_size_cover_and_contain_arms() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::BackgroundSize(Arc::from([size])),
@@ -3318,8 +3364,7 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::BackgroundSize(Arc::from([size])),
@@ -3337,8 +3382,7 @@ fn absolutize_in_page_context_covers_background_size_and_position_percent_axis_a
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::BackgroundPosition(Arc::from([position])),
@@ -3382,8 +3426,7 @@ fn absolutize_in_page_context_covers_vertical_align_length_arm() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::VerticalAlign(expected),
@@ -3418,8 +3461,7 @@ fn absolutize_in_page_context_covers_tab_size_arm() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::TabSize(expected),
@@ -3450,8 +3492,7 @@ fn absolutize_in_page_context_preserves_writing_mode() {
                 fs,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::None,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
                 OverflowXY::both(OverflowValue::Visible),
             ),
             PropertyValue::WritingMode(specified),
@@ -3480,8 +3521,7 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextShadow(Arc::new(Vec::new())),
@@ -3510,8 +3550,7 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextShadow(Arc::new(vec![expected])),
@@ -3540,8 +3579,7 @@ fn absolutize_in_page_context_covers_text_shadow_arm() {
             calc_fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::TextShadow(Arc::new(vec![calc_expected])),
@@ -3566,8 +3604,7 @@ fn absolutize_in_page_context_covers_opacity_arm_clamp() {
             fs,
             None,
             &ctx,
-            styles,
-            outline,
+            PageStyleGates::new(styles, BorderStyle::Solid, outline),
             overflow,
         ),
         PropertyValue::Opacity(1.0),
@@ -3581,8 +3618,7 @@ fn absolutize_in_page_context_covers_opacity_arm_clamp() {
             fs,
             None,
             &ctx,
-            styles,
-            outline,
+            PageStyleGates::new(styles, BorderStyle::Solid, outline),
             overflow,
         ),
         PropertyValue::Opacity(0.0),
@@ -3597,8 +3633,7 @@ fn absolutize_in_page_context_covers_opacity_arm_clamp() {
             fs,
             None,
             &ctx,
-            styles,
-            outline,
+            PageStyleGates::new(styles, BorderStyle::Solid, outline),
             overflow,
         ),
         PropertyValue::Opacity(0.5),
@@ -3732,8 +3767,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::FontSize(Length::Px(24.0)),
@@ -3746,8 +3780,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
             fs,
             None,
             &ctx,
-            styles,
-            OutlineStyle::None,
+            PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::None),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::FontSize(Length::Px(20.0 / 1.2)),
@@ -6490,8 +6523,7 @@ fn phase_3_variant_classification_matches_the_documented_counts() {
                 font_size,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::Solid,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::Solid),
                 overflow_pair,
             ) == *value
         })
@@ -6532,8 +6564,7 @@ fn page_declarations_carry_no_specified_layer_residue() {
                 font_size,
                 None,
                 &ctx,
-                styles,
-                OutlineStyle::Solid,
+                PageStyleGates::new(styles, BorderStyle::Solid, OutlineStyle::Solid),
                 overflow_pair,
             )
         })
@@ -6560,8 +6591,11 @@ fn page_width_calc_stays_a_residue_until_used_value_layout() {
         ComputedLength(20.0),
         None,
         &ctx,
-        Sides::all(BorderStyle::Solid),
-        OutlineStyle::Solid,
+        PageStyleGates::new(
+            Sides::all(BorderStyle::Solid),
+            BorderStyle::Solid,
+            OutlineStyle::Solid,
+        ),
         OverflowXY::both(OverflowValue::Hidden),
     );
     assert_eq!(specified_layer_residue(&resolved), Some("calc()"));
@@ -7136,8 +7170,11 @@ fn absolutize_in_page_context_resolves_single_axis_translate() {
             ComputedLength(10.0),
             None,
             &ResolveContext::new(ComputedLength(16.0)),
-            Sides::all(BorderStyle::None),
-            OutlineStyle::None,
+            PageStyleGates::new(
+                Sides::all(BorderStyle::None),
+                BorderStyle::Solid,
+                OutlineStyle::None,
+            ),
             OverflowXY::both(OverflowValue::Visible),
         ),
         PropertyValue::Transform(Arc::new(vec![

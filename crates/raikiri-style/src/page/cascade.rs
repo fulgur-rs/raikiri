@@ -25,7 +25,7 @@ use crate::rule::{Declaration, ParsedDeclaration, expand_shorthand_into};
 use crate::ruletree::{Origin, RuleTree};
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 
-use super::absolutize::absolutize_in_page_context;
+use super::absolutize::{PageStyleGates, absolutize_in_page_context};
 use super::types::*;
 
 // ---------------------------------------------------------------------------
@@ -526,6 +526,7 @@ impl PageCascadeResult {
     /// `font-size` (`absolutize_in_page_context`):
     ///
     /// - `padding` / `margin` / `width` / `height` / `border-*-width` /
+    ///   `column-rule-width` /
     ///   `line-height` — [`Length::Em`] / `Rem` /
     ///   `Pt` become [`Length::Px`]. `em` is
     ///   relative to "the font associated with their context" (§6 above), which
@@ -549,6 +550,13 @@ impl PageCascadeResult {
     ///   property does not apply to the page or page-margin box." So
     ///   `@page { border-top-width: 5px }` alone computes to `0px`, matching
     ///   the element path.
+    /// - `column-rule-width` is **gated to `0px` when the page context's
+    ///   computed `column-rule-style` is `none` or `hidden`** — CSS Multi-column
+    ///   1 §4.4 <https://www.w3.org/TR/css-multicol-1/#propdef-column-rule-width>
+    ///   gives this as part of the computed value. An **undeclared** style is
+    ///   its initial value `none` (§4.3, `Initial: none`), because the property
+    ///   is not inherited. The page context still has this computed value even
+    ///   though column rules do not apply to the page box.
     /// - `overflow-x` / `overflow-y` apply the CSS
     ///   Overflow 3 §3.1 cross-axis coupling
     ///   ([`crate::property::resolve_overflow`]) the same way the element
@@ -1754,7 +1762,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
     }
 
     // Step 4 (phase 3): absolutize the remaining lengths against the page
-    // context's own font-size and apply the `border-*-width` style gate.
+    // context's own font-size and apply the border and column-rule width gates.
     // Splitting this out of step 3 is forced by the same constraint the element
     // path has: `padding: 2em` needs the page
     // context's font-size, which step 3 only finalises once *all* winners have
@@ -1767,6 +1775,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // sibling is `SpecifiedValues::finalize`, not `finalize_as_root`. `ctx`
     // (built above, before step 3) already carries this basis.
     let border_styles = page_context_border_styles(&resolved);
+    let column_rule_style = page_context_column_rule_style(&resolved);
     let outline_style = page_context_outline_style(&resolved);
     // The page context's raw `overflow-x`/`overflow-y` winners
     // — mirrors `border_styles` above: the CSS Overflow
@@ -1833,8 +1842,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
                     font_size,
                     own_line_height,
                     &ctx,
-                    border_styles,
-                    outline_style,
+                    PageStyleGates::new(border_styles, column_rule_style, outline_style),
                     overflow_pair,
                 ),
             )
@@ -2127,6 +2135,21 @@ fn page_context_border_styles(
         }
     }
     sides
+}
+
+/// The page context's computed `column-rule-style`, used to gate the
+/// `column-rule-width` longhand in phase 3. An absent declaration means the
+/// initial `none` (CSS Multi-column 1 §4.3); the property is not inherited.
+fn page_context_column_rule_style(
+    declarations: &HashMap<PropertyKey, ResolvedAgainstInherited>,
+) -> BorderStyle {
+    declarations
+        .values()
+        .find_map(|value| match value.as_property_value() {
+            PropertyValue::ColumnRuleStyle(style) => Some(*style),
+            _ => None,
+        })
+        .unwrap_or(INITIAL_BORDER.style)
 }
 
 /// The page context's computed `outline-style`, used to gate the
