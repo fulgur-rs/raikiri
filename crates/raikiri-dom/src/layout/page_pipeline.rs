@@ -4424,36 +4424,11 @@ fn paginate_flow(
                     && paragraph_root == Some(block_id)
                     && deferred_shifts.line_splits.is_empty()
                     && lines_can_shift_inside(document, block_id);
-                // Only the widows are short: the break moves up between
-                // earlier lines (CSS Fragmentation 3 §3.3), so the last
-                // `widows` lines start the next page and the lines before
-                // them stay.
-                let earlier_break = (splittable
-                    && line_fit.violates_line_constraints
-                    && line_fit.lines_before_break >= line_fit.orphans)
-                    .then(|| {
-                        widows_break_on_next_page(
-                            &line_metrics,
-                            effective_y,
-                            current_page,
-                            line_fit.widows,
-                            &page_origins,
-                        )
-                    })
-                    .flatten();
-                let final_break = splittable
-                    .then(|| {
-                        widows_break_on_last_page(
-                            &line_metrics,
-                            effective_y,
-                            current_page,
-                            line_fit.orphans,
-                            line_fit.widows,
-                            earlier_break,
-                            &page_origins,
-                        )
-                    })
-                    .flatten();
+                let [earlier_break, final_break] = if splittable {
+                    line_fit.line_moves(&line_metrics, effective_y, current_page, &page_origins)
+                } else {
+                    [None, None]
+                };
                 if earlier_break.is_some() || final_break.is_some() {
                     for (line, shift, page) in earlier_break.into_iter().chain(final_break) {
                         check_candidate_page!('candidate_loop, page);
@@ -6790,6 +6765,44 @@ impl ParagraphLineFit {
     /// has lines enough for both `orphans` and `widows`.
     fn has_room_for_both_constraints(&self) -> bool {
         self.starts_on_page && self.orphans + self.widows <= self.total_lines
+    }
+
+    /// The line moves that split a paragraph able to move its lines down
+    /// inside it: a break moved up between earlier lines, then the break on
+    /// the paragraph's last page.
+    ///
+    /// When only the widows are short, the break moves up between earlier
+    /// lines (CSS Fragmentation 3 §3.3), so the last `widows` lines start the
+    /// next page and the lines before them stay.
+    fn line_moves(
+        &self,
+        line_metrics: &[(f32, f32)],
+        effective_y: f32,
+        current_page: u32,
+        page_origins: &PageOrigins,
+    ) -> [Option<LineBreakMove>; 2] {
+        let earlier_break = (self.violates_line_constraints
+            && self.lines_before_break >= self.orphans)
+            .then(|| {
+                widows_break_on_next_page(
+                    line_metrics,
+                    effective_y,
+                    current_page,
+                    self.widows,
+                    page_origins,
+                )
+            })
+            .flatten();
+        let final_break = widows_break_on_last_page(
+            line_metrics,
+            effective_y,
+            current_page,
+            self.orphans,
+            self.widows,
+            earlier_break,
+            page_origins,
+        );
+        [earlier_break, final_break]
     }
 
     /// Measures `line_metrics`, the block-start and block-end edges of each
