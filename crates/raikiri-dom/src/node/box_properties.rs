@@ -2,6 +2,7 @@
 
 use raikiri_style::ComputedValues;
 use raikiri_style::property::{DisplayValue, PositionValue};
+use raikiri_traits::NodeKind;
 
 /// The computed display and position captured before layout classifies a box.
 #[derive(Debug, Clone)]
@@ -49,7 +50,13 @@ impl BoxProperties {
     }
 
     /// Lower CSS display to the box types supported by Taffy.
-    pub(crate) fn taffy_display(&self, multicol: bool) -> taffy::Display {
+    pub(crate) fn taffy_display(&self, multicol: bool, kind: NodeKind) -> taffy::Display {
+        // Non-elements have no CSS display property. Preserve the native
+        // default used by programmatic document layout instead of lowering
+        // their inline text identity as an element's block box.
+        if kind != NodeKind::Element && self.display == DisplayValue::Inline {
+            return taffy::Display::DEFAULT;
+        }
         let display = match self.display {
             DisplayValue::None => taffy::Display::None,
             DisplayValue::FlowRoot => taffy::Display::FlowRoot,
@@ -75,8 +82,8 @@ impl BoxProperties {
     }
 
     /// Refresh the derived identity exported to Taffy and the public style API.
-    pub(crate) fn apply_to_style(&self, style: &mut taffy::Style, multicol: bool) {
-        style.display = self.taffy_display(multicol);
+    pub(crate) fn apply_to_style(&self, style: &mut taffy::Style, multicol: bool, kind: NodeKind) {
+        style.display = self.taffy_display(multicol, kind);
         style.position = self.taffy_position();
     }
 }

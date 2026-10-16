@@ -30,6 +30,7 @@
 //! places such a box against its parent too, so it is laid out again here
 //! the same way.
 
+use super::box_tree::BoxTree;
 use super::*;
 use crate::node::{BoxPropertiesRef, FormattingContext};
 use raikiri_style::property::WillChange;
@@ -64,8 +65,10 @@ fn generates_inline_box_with_properties(
         && !node.is_inline_svg_root()
         && !ATOMIC_TAGS.contains(&tag)
         && !REPLACED_BOX_TAGS.contains(&tag)
-        && !document
-            .taffy_parent_of(id)
+        // The bridge asks before rebuilding anonymous cells. Inspect the
+        // current source ancestry rather than the preceding pass's wrappers.
+        && !BoxTree::for_layout(document)
+            .parent(id, BoxParentScope::LayoutRoot)
             .is_some_and(|parent| document.nodes[parent].display().is_flex_or_grid_container())
 }
 

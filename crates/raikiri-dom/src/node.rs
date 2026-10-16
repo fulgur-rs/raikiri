@@ -610,7 +610,8 @@ impl Node {
 
     /// The backend display derived from this box's CSS identity.
     pub(crate) fn taffy_display(&self) -> taffy::Display {
-        self.box_properties.taffy_display(self.multicol.is_some())
+        self.box_properties
+            .taffy_display(self.multicol.is_some(), self.kind())
     }
 
     /// The backend position derived from this box's CSS identity.
@@ -626,8 +627,9 @@ impl Node {
 
     /// Refresh the backend projection after rebuilding other style fields.
     pub(crate) fn refresh_box_style(&mut self) {
+        let kind = self.kind();
         self.box_properties
-            .apply_to_style(&mut self.style, self.multicol.is_some());
+            .apply_to_style(&mut self.style, self.multicol.is_some(), kind);
     }
 
     /// Change the display of an engine-created box while retaining its position.
@@ -644,11 +646,11 @@ impl Node {
         } else {
             BoxProperties::new(DisplayValue::Inline, PositionValue::Static)
         };
-        Self {
+        let mut node = Self {
             formatting_context: match data {
-                NodeData::Element(_) => {
-                    FormattingContext::from_taffy_display(box_properties.taffy_display(false))
-                }
+                NodeData::Element(_) => FormattingContext::from_taffy_display(
+                    box_properties.taffy_display(false, NodeKind::Element),
+                ),
                 _ => FormattingContext::Text,
             },
             style,
@@ -703,7 +705,9 @@ impl Node {
             percent_basis_height: None,
             flags: NodeFlags::IS_IN_DOCUMENT,
             data,
-        }
+        };
+        node.refresh_box_style();
+        node
     }
 
     /// Construct the Document root node for arena index 0.

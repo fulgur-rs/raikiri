@@ -778,3 +778,60 @@ fn taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry() {
         ),
     }
 }
+
+#[test]
+fn non_element_exports_preserve_programmatic_document_block_geometry() {
+    let mut doc = Document::new();
+    let root = doc.root_index();
+    let first = doc.append_element(
+        Some(root),
+        "first",
+        Style {
+            display: Display::Block,
+            size: Size {
+                width: Dimension::length(40.0),
+                height: Dimension::length(20.0),
+            },
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let text = doc.append_text(first, "text without a paragraph");
+    let mut second_style = Style {
+        display: Display::Block,
+        size: Size {
+            width: Dimension::length(60.0),
+            height: Dimension::length(30.0),
+        },
+        ..Style::default()
+    };
+    second_style.margin.top = taffy::LengthPercentageAuto::length(15.0);
+    let second = doc.append_element(Some(root), "second", second_style, None::<&str>);
+    compute_root_layout(
+        &mut doc,
+        taffy::NodeId::from(root),
+        Size {
+            width: AvailableSpace::Definite(200.0),
+            height: AvailableSpace::Definite(300.0),
+        },
+    );
+    assert_eq!(
+        doc.nodes[first].unrounded_layout.location,
+        taffy::Point { x: 0.0, y: 0.0 }
+    );
+    assert_eq!(
+        doc.nodes[second].unrounded_layout.location,
+        taffy::Point { x: 0.0, y: 35.0 }
+    );
+    assert_eq!(
+        doc.nodes[root].unrounded_layout.size,
+        Size {
+            width: 60.0,
+            height: 65.0
+        }
+    );
+    assert_eq!(doc.layout_style(root).unwrap().display, Display::Flex);
+    assert_eq!(doc.layout_style(text).unwrap().display, Display::Flex);
+    assert_eq!(doc.nodes[root].taffy_display(), Display::Flex);
+    assert_eq!(doc.nodes[text].taffy_display(), Display::Flex);
+}
