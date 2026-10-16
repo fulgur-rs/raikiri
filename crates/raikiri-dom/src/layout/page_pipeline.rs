@@ -1812,6 +1812,26 @@ fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Ve
     positioned_owned_text_line_bounds(document, &owned)
 }
 
+/// Block offset of the first line of `owned` from the border-box top of its
+/// paragraph `root`, after the paragraph's column ranges have moved it.
+/// `fallback` is the line top used when no positioned first line is found:
+/// the paragraph has no line records, or `owned` has no lines.
+fn text_first_line_offset(
+    document: &Document,
+    root: usize,
+    owned: &IfcTextLines,
+    fallback: f32,
+) -> f32 {
+    let layout = document
+        .ifc_layout_node(root)
+        .expect("valid paragraph root")
+        .unrounded_layout;
+    let first_top = positioned_owned_text_line_bounds(document, owned)
+        .and_then(|lines| lines.first().map(|line| line.0))
+        .unwrap_or(fallback);
+    layout.border.top + layout.padding.top + first_top
+}
+
 fn positioned_owned_text_line_bounds(
     document: &Document,
     owned: &IfcTextLines,
@@ -4201,22 +4221,11 @@ fn paginate_flow(
             let candidate_page_name = candidate.page_name.clone();
             let mut effective_y = if uses_positioned_coordinates {
                 if let Some((root, _)) = candidate.ifc_root {
-                    let layout = document
-                        .ifc_layout_node(root)
-                        .expect("valid paragraph root")
-                        .unrounded_layout;
-                    let first_top = positioned_owned_text_line_bounds(
-                        document,
-                        text_lines
-                            .get(node_id)
-                            .expect("text candidate has indexed ownership"),
-                    )
-                    .and_then(|lines| lines.first().map(|line| line.0))
-                    .unwrap_or(0.0);
+                    let owned = text_lines
+                        .get(node_id)
+                        .expect("text candidate has indexed ownership");
                     current_abs_y(document, root)
-                        + layout.border.top
-                        + layout.padding.top
-                        + first_top
+                        + text_first_line_offset(document, root, owned, 0.0)
                 } else {
                     current_abs_y(document, node_id)
                 }
@@ -4435,29 +4444,14 @@ fn paginate_flow(
             if let Some((ifc_root, offset)) = ifc_root {
                 materialize_y(document, ifc_root, effective_y - offset);
             } else if let Some((root, _)) = candidate.ifc_root
-                && let Some(first) = text_lines
-                    .get(node_id)
-                    .and_then(|owned| owned.lines.first().copied())
+                && let Some(owned) = text_lines.get(node_id)
+                && let Some(first) = owned.lines.first()
             {
                 // A later text of a paragraph whose root already moved: its
                 // lines go where the flow puts them, and the ones after
                 // follow (an earlier box of the paragraph may have grown).
-                let layout = document
-                    .ifc_layout_node(root)
-                    .expect("valid paragraph root")
-                    .unrounded_layout;
-                let first_top = positioned_owned_text_line_bounds(
-                    document,
-                    text_lines
-                        .get(node_id)
-                        .expect("text candidate has indexed ownership"),
-                )
-                .and_then(|lines| lines.first().map(|line| line.0))
-                .unwrap_or(first.top);
                 let current = current_abs_y(document, root)
-                    + layout.border.top
-                    + layout.padding.top
-                    + first_top;
+                    + text_first_line_offset(document, root, owned, first.top);
                 follow_moved_ifc_text(document, root, node_id, effective_y - current, &text_lines);
             }
             materialize_y(document, node_id, effective_y);
@@ -5719,25 +5713,13 @@ fn follow_moved_ifc_text(
     if delta == 0.0 || !delta.is_finite() {
         return;
     }
-    let Some(first) = text_lines
+    let Some((owned, first)) = text_lines
         .get(text)
-        .and_then(|owned| owned.lines.first().copied())
+        .and_then(|owned| Some((owned, owned.lines.first().copied()?)))
     else {
         return; // cov:ignore: callers pass texts indexed with at least one line.
     };
-    let first_top = positioned_owned_text_line_bounds(
-        document,
-        text_lines
-            .get(text)
-            .expect("indexed first text line has an owner"),
-    )
-    .and_then(|lines| lines.first().map(|line| line.0))
-    .unwrap_or(first.top);
-    let layout = document
-        .ifc_layout_node(root)
-        .expect("valid paragraph root")
-        .unrounded_layout;
-    let old_top = layout.border.top + layout.padding.top + first_top;
+    let old_top = text_first_line_offset(document, root, owned, first.top);
     let Some(ifc) = document.table_layout_node_mut(root).ifc.as_mut() else {
         return; // cov:ignore: the paragraph root of an indexed text carries its inline layout.
     };
