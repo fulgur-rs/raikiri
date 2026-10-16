@@ -173,6 +173,163 @@ fn currentcolor_background_shorthand_uses_own_color() {
     assert_eq!(values.background_color, RED);
 }
 
+const PINK: CssColor = CssColor {
+    r: 255,
+    g: 128,
+    b: 128,
+    a: 255,
+};
+const MIX: &str = "color-mix(in srgb, currentcolor, white)";
+
+/// The border, outline, column-rule and text-decoration colors, in that order.
+fn line_colors(values: &ComputedValues) -> [BorderColor; 7] {
+    let outline = match values.outline.color {
+        OutlineColor::Resolved(color) => BorderColor::Resolved(color),
+        OutlineColor::CurrentColor => BorderColor::CurrentColor,
+        OutlineColor::Invert => BorderColor::Resolved(CssColor::TRANSPARENT),
+    };
+    let decoration = match values.text_decoration_color {
+        TextDecorationColor::Resolved(color) => BorderColor::Resolved(color),
+        TextDecorationColor::CurrentColor => BorderColor::CurrentColor,
+    };
+    [
+        values.border.top.color,
+        values.border.right.color,
+        values.border.bottom.color,
+        values.border.left.color,
+        outline,
+        values.column_rule.color,
+        decoration,
+    ]
+}
+
+#[test]
+fn currentcolor_mix_in_line_colors_uses_the_elements_own_color() {
+    let pink = BorderColor::Resolved(PINK);
+    let longhands = format!(
+        "border-top-color: {MIX}; border-right-color: {MIX}; border-bottom-color: {MIX}; \
+         border-left-color: {MIX}; outline-color: {MIX}; column-rule-color: {MIX}; \
+         text-decoration-color: {MIX}; color: red"
+    );
+    let shorthands = format!(
+        "border: 1px solid {MIX}; outline: {MIX} 1px solid; column-rule: solid {MIX}; \
+         text-decoration: underline {MIX}; color: red"
+    );
+    let sides = format!(
+        "color: red; border-top: {MIX} solid; border-right: 2px {MIX}; \
+         border-bottom: solid {MIX}; border-left: {MIX}; outline-color: {MIX}; \
+         column-rule-color: {MIX}; text-decoration-color: {MIX}"
+    );
+    let variables = format!(
+        "--line: {MIX}; color: red; border: 1px solid var(--line); \
+         outline: var(--line) solid; column-rule: var(--line); \
+         text-decoration: var(--line) underline"
+    );
+    for source in [longhands, shorthands, sides, variables] {
+        let values = cascade_doc("", "div", Some(&source));
+        assert_eq!(line_colors(&values), [pink; 7], "{source}");
+    }
+}
+
+#[test]
+fn currentcolor_mix_in_border_color_follows_the_one_to_four_value_rule() {
+    let pink = BorderColor::Resolved(PINK);
+    let blue = BorderColor::Resolved(BLUE);
+    for (colors, expected) in [
+        (MIX.to_owned(), [pink; 4]),
+        (format!("{MIX} blue"), [pink, blue, pink, blue]),
+        (format!("blue {MIX}"), [blue, pink, blue, pink]),
+        (format!("blue blue {MIX}"), [blue, blue, pink, blue]),
+        (format!("blue {MIX} blue"), [blue, pink, blue, pink]),
+        (
+            format!("blue currentcolor blue {MIX}"),
+            [blue, BorderColor::CurrentColor, blue, pink],
+        ),
+    ] {
+        let values = cascade_doc(
+            "",
+            "div",
+            Some(&format!("color: red; border-color: {colors}")),
+        );
+        let [top, right, bottom, left, ..] = line_colors(&values);
+        assert_eq!([top, right, bottom, left], expected, "{colors}");
+    }
+}
+
+#[test]
+fn currentcolor_mix_line_colors_follow_declaration_order() {
+    let values = cascade_doc(
+        "",
+        "div",
+        Some(&format!(
+            "color: red; border: 1px solid {MIX}; border-top-color: blue; \
+             outline-color: blue; outline-color: {MIX}; column-rule: solid {MIX}; \
+             column-rule-color: blue; text-decoration-color: {MIX}; \
+             text-decoration: underline blue"
+        )),
+    );
+    let pink = BorderColor::Resolved(PINK);
+    let blue = BorderColor::Resolved(BLUE);
+    assert_eq!(
+        line_colors(&values),
+        [blue, pink, pink, pink, pink, blue, blue]
+    );
+
+    // A bare keyword and colors without `currentcolor` keep their usual form.
+    let plain = cascade_doc(
+        "",
+        "div",
+        Some("color: red; border: 1px solid currentcolor; outline: rgb(0 0 255) solid"),
+    );
+    let [top, .., outline, _, _] = line_colors(&plain);
+    assert_eq!([top, outline], [BorderColor::CurrentColor, blue]);
+}
+
+#[test]
+fn currentcolor_mix_line_colors_use_inherited_color_when_own_is_unset() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(0, "div", Some("color: blue"));
+    let child = doc.push_element(
+        parent,
+        "div",
+        Some(&format!("border: 1px solid {MIX}; outline: {MIX} solid")),
+    );
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+    let light_blue = BorderColor::Resolved(CssColor {
+        r: 128,
+        g: 128,
+        b: 255,
+        a: 255,
+    });
+    let [top, .., outline, _, _] = line_colors(&result.computed[child]);
+    assert_eq!([top, outline], [light_blue, light_blue]);
+}
+
+#[test]
+fn applying_contextual_shorthands_directly_sets_their_colors() {
+    let mut target = SpecifiedValues::initial();
+    target.color = RED;
+    let parsed = |name: &str, source: &str| {
+        let mut input = cssparser::ParserInput::new(source);
+        let mut parser = cssparser::Parser::new(&mut input);
+        crate::property::parse_value(name, &mut parser).expect("valid value")
+    };
+    apply_value(parsed("column-rule", &format!("solid {MIX}")), &mut target);
+    apply_value(parsed("outline", &format!("{MIX} solid")), &mut target);
+    let values = target.clone().finalize_as_root();
+    let [.., outline, column_rule, _] = line_colors(&values);
+    assert_eq!(
+        [outline, column_rule],
+        [BorderColor::Resolved(PINK), BorderColor::Resolved(PINK)]
+    );
+
+    // A whole `column-rule` value replaces the earlier symbolic color.
+    apply_value(parsed("column-rule", "solid blue"), &mut target);
+    let values = target.finalize_as_root();
+    assert_eq!(values.column_rule.color, BorderColor::Resolved(BLUE));
+}
+
 #[test]
 fn currentcolor_resolution_preserves_alpha_and_color_recursion_boundaries() {
     let values = cascade_doc(

@@ -7628,6 +7628,67 @@ pub struct ContextualColor {
     pub(crate) key: PropertyKey,
 }
 
+impl ContextualColor {
+    /// The plain longhand declaration this expression becomes once
+    /// `currentcolor` is known to be `current`.
+    ///
+    /// CSS Color 4 §6.4 <https://www.w3.org/TR/css-color-4/#resolving-other-colors>
+    /// keeps `currentcolor` inside `color-mix()` and relative colors symbolic
+    /// until used, so the element's own `color` decides the result.
+    pub(crate) fn resolved_value(&self, current: CssColor) -> Option<PropertyValue> {
+        let color = crate::property::resolve_contextual_color(&self.source, current)?;
+        Some(match self.key {
+            PropertyKey::Color => PropertyValue::Color(color),
+            PropertyKey::BackgroundColor => PropertyValue::BackgroundColor(color),
+            PropertyKey::BorderTopColor => {
+                PropertyValue::BorderTopColor(BorderColor::Resolved(color))
+            }
+            PropertyKey::BorderRightColor => {
+                PropertyValue::BorderRightColor(BorderColor::Resolved(color))
+            }
+            PropertyKey::BorderBottomColor => {
+                PropertyValue::BorderBottomColor(BorderColor::Resolved(color))
+            }
+            PropertyKey::BorderLeftColor => {
+                PropertyValue::BorderLeftColor(BorderColor::Resolved(color))
+            }
+            PropertyKey::OutlineColor => PropertyValue::OutlineColor(OutlineColor::Resolved(color)),
+            PropertyKey::ColumnRuleColor => {
+                PropertyValue::ColumnRuleColor(BorderColor::Resolved(color))
+            }
+            PropertyKey::TextDecorationColor => {
+                PropertyValue::TextDecorationColor(TextDecorationColor::Resolved(color))
+            }
+            _ => return None,
+        })
+    }
+}
+
+/// A shorthand whose color components retain `currentcolor` inside a color
+/// function such as `color-mix()`.
+///
+/// `value` is the shorthand as parsed, with those components resolved against
+/// a black `currentcolor`; `colors` holds the symbolic form of each affected
+/// color longhand. Expanding the shorthand sets every longhand from `value`
+/// and then replaces the listed color longhands, so the element's own `color`
+/// decides them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ContextualShorthand {
+    pub(crate) value: PropertyValue,
+    pub(crate) colors: Box<[ContextualColor]>,
+}
+
+impl ContextualShorthand {
+    /// The symbolic color for the `key` longhand, when the shorthand has one.
+    pub(crate) fn color(&self, key: PropertyKey) -> Option<PropertyValue> {
+        self.colors
+            .iter()
+            .find(|color| color.key == key)
+            .cloned()
+            .map(PropertyValue::ContextualColor)
+    }
+}
+
 impl DeferredValue {
     /// Return a canonical defaulting marker for the supported deferred longhands.
     pub(crate) fn css_wide_keyword(&self) -> Option<CssWideKeyword> {
@@ -9670,8 +9731,11 @@ pub enum PropertyValue {
     CustomProperty(CustomProperty),
     /// A known property value containing `var()` or a math function.
     Deferred(DeferredValue),
-    /// A `color` or `background-color` expression containing `currentcolor`.
+    /// A color longhand expression containing `currentcolor` that is resolved
+    /// against the element's own `color`.
     ContextualColor(ContextualColor),
+    /// A shorthand with color components that keep `currentcolor` symbolic.
+    ContextualShorthand(Box<ContextualShorthand>),
     /// `color: <color>` — inherited, initial: black.
     Color(CssColor),
     /// `background-color: <color>` — **non-inherited**, initial: `transparent`.
@@ -11901,6 +11965,7 @@ impl PropertyValue {
             PropertyValue::CustomProperty(_) => PropertyKey::Custom,
             PropertyValue::Deferred(value) => value.key,
             PropertyValue::ContextualColor(value) => value.key,
+            PropertyValue::ContextualShorthand(value) => value.value.key(),
             PropertyValue::Grid(_) => PropertyKey::Grid,
             PropertyValue::GridArea(_) => PropertyKey::GridArea,
             PropertyValue::Color(_) => PropertyKey::Color,

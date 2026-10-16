@@ -520,6 +520,7 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::ContextualColor(_)
+        | PropertyValue::ContextualShorthand(_)
         | PropertyValue::BackgroundColor(_)
         | PropertyValue::FontFamily(_)
         | PropertyValue::FontSize(_)

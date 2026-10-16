@@ -4646,6 +4646,13 @@ css/css-page/page-box-008-print.html
 css/css-backgrounds/color-mix-currentcolor-background-repaint.html
 css/css-backgrounds/color-mix-currentcolor-background-repaint-parent.html
 
+# --- color-mix() currentColor border and outline repaint (WPT pin 97ea26e2, EXACT, Linux, 2026-10-16) ---
+# Pass once border and outline colors keep currentColor inside color-mix() symbolic and resolve it against the element's color after a class change; KEEP in two audit-vacuous-passes runs.
+css/css-backgrounds/color-mix-currentcolor-border-repaint.html
+css/css-backgrounds/color-mix-currentcolor-border-repaint-parent.html
+css/css-backgrounds/color-mix-currentcolor-outline-repaint.html
+css/css-backgrounds/color-mix-currentcolor-outline-repaint-parent.html
+
 # --- later pages of another inline size in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
 # Pass once later pages of a vertical-rl root whose page area height differs are laid out again at that height; KEEP in two audit-vacuous-passes runs.
 css/css-page/page-size-012-print.html

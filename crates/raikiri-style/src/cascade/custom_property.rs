@@ -476,6 +476,11 @@ pub(crate) fn project_deferred_value(
         marker.property = property.into();
         return Some(PropertyValue::Deferred(marker));
     }
+    if let PropertyValue::ContextualShorthand(shorthand) = value {
+        return shorthand
+            .color(key)
+            .or_else(|| project_deferred_value(shorthand.value, key));
+    }
     if value.key() == key {
         return Some(value);
     }

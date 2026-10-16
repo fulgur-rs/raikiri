@@ -3613,7 +3613,7 @@ fn absolutize_in_page_context_font_size_relative_safety_net() {
 // Includes page-only inherit markers, which are resolved before this
 // phase and therefore remain unchanged here. ContextualColor is also a
 // computed expression; it requires no page-context length conversion.
-const PHASE_3_PASS_THROUGH_VARIANTS: usize = 178;
+const PHASE_3_PASS_THROUGH_VARIANTS: usize = 179;
 /// Number of corpus variants transformed by page-context resolution.
 /// This is derived from the corpus size and the pass-through count.
 fn phase_3_transformed_variants() -> usize {
@@ -4444,6 +4444,17 @@ fn key_sharing_extras() -> Vec<PropertyValue> {
             source: "currentcolor".into(),
             key: PropertyKey::BackgroundColor,
         }),
+        PropertyValue::ContextualShorthand(Box::new(crate::property::ContextualShorthand {
+            value: PropertyValue::Outline(Outline {
+                width: Length::Px(1.0),
+                style: OutlineStyle::Solid,
+                color: OutlineColor::Resolved(CssColor::BLACK),
+            }),
+            colors: Box::new([crate::property::ContextualColor {
+                source: "color-mix(in srgb, currentcolor, red)".into(),
+                key: PropertyKey::OutlineColor,
+            }]),
+        })),
         PropertyValue::Deferred(DeferredValue {
             property: "width".into(),
             value: "calc(1px + 1px)".into(),
@@ -4550,6 +4561,7 @@ property_value_variant_registry! {
     CustomProperty,
     Deferred,
     ContextualColor,
+    ContextualShorthand,
     Color,
     BackgroundColor,
     FontFamily,
@@ -5541,6 +5553,7 @@ fn specified_layer_residue(value: &PropertyValue) -> Option<&'static str> {
             | PropertyValue::Deferred(_) => None,
             // CSS Color 5 retains expressions containing currentcolor as computed values.
             PropertyValue::ContextualColor(_) => None,
+            PropertyValue::ContextualShorthand(_) => None,
             // `text-shadow` — each item's 3 lengths (`offset-x`/`offset-y`/
             // `blur-radius`) can carry specified-layer residue (same `length`
             // check `Padding`/`Margin` use above); `<color>` carries no
