@@ -120,7 +120,7 @@ pub(crate) fn prepare(
         }
         let values = &cascade.computed[node_id];
         let out_of_flow = matches!(
-            values.position,
+            node.position(),
             PositionValue::Absolute | PositionValue::Fixed
         );
         let parent_owner = if out_of_flow { None } else { parent_owner };

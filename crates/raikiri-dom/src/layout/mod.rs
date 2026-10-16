@@ -116,6 +116,9 @@ pub(crate) use sanitize::sanitize_taffy;
 #[doc(hidden)]
 pub use fixed::generates_inline_box;
 pub use fixed::{establishes_fixed_containing_block, is_transformable};
+pub(crate) use fixed::{
+    establishes_fixed_containing_block_for_layout, is_transformable_for_layout,
+};
 /// Boxes of the inline elements of a paragraph laid out by the inline engine.
 #[doc(hidden)]
 pub use ifc::inline_boxes::{BoxRect, GeneratedBlockPiece, InlineBoxPiece};
@@ -152,7 +155,10 @@ pub use page_pipeline::{
 pub use relative::placed_without_relative_offset;
 #[doc(hidden)]
 pub use relative::used_relative_offset;
-pub(crate) use relative::{Precedence, used_relative_insets};
+pub(crate) use relative::{
+    Precedence, layout_relative_insets, placed_without_relative_offset_for_layout,
+    used_relative_offset_for_layout,
+};
 pub use root_box::{RootBox, root_box};
 
 pub(crate) use page_pipeline::{

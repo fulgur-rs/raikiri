@@ -75,6 +75,15 @@ pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> 
     is_transformable_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
 }
 
+/// Whether the captured box accepts transforms; shared with page projection.
+pub(crate) fn is_transformable_for_layout(
+    document: &Document,
+    id: usize,
+    cv: &ComputedValues,
+) -> bool {
+    is_transformable_with_properties(document, id, cv, document.nodes[id].box_properties())
+}
+
 fn is_transformable_with_properties(
     document: &Document,
     id: usize,
@@ -121,7 +130,7 @@ pub fn establishes_fixed_containing_block(
 }
 
 /// Whether the captured layout box contains its fixed-position descendants.
-pub(super) fn establishes_fixed_containing_block_for_layout(
+pub(crate) fn establishes_fixed_containing_block_for_layout(
     document: &Document,
     id: usize,
     cv: &ComputedValues,

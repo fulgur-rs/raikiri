@@ -45,7 +45,7 @@ pub(crate) fn used_relative_insets(
 }
 
 /// The insets of a box captured by the current layout pass.
-pub(super) fn layout_relative_insets(
+pub(crate) fn layout_relative_insets(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
@@ -172,7 +172,7 @@ pub fn placed_without_relative_offset(
 }
 
 /// Whether the captured box's relative offset is left for paint.
-pub(super) fn placed_without_relative_offset_for_layout(
+pub(crate) fn placed_without_relative_offset_for_layout(
     document: &Document,
     cascade: &CascadeResult,
     body: Option<usize>,
@@ -332,7 +332,7 @@ pub fn used_relative_offset(
 mod tests;
 
 /// The painted relative offset of a box captured by the current layout pass.
-pub(super) fn used_relative_offset_for_layout(
+pub(crate) fn used_relative_offset_for_layout(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
