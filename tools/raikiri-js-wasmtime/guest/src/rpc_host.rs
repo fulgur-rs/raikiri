@@ -68,6 +68,13 @@ impl DocumentHost for RpcDocumentHost {
         }
     }
     // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
+    fn is_fixed_to_viewport(&mut self, node: usize) -> Result<bool, HostError> {
+        match self.call(HostOperation::FixedToViewport(node))? {
+            HostValue::Flag(v) => Ok(v),
+            _ => Err(HostError("fixed-to-viewport response kind".into())),
+        }
+    }
+    // cov:ignore: exercised by raikiri-js-wasmtime-guest tests; tools/ is outside the workspace llvm-cov run.
     fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
         match self.call(HostOperation::Viewport)? {
             HostValue::Size(v) => Ok(v),

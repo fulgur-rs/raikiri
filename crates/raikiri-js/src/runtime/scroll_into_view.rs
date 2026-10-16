@@ -16,7 +16,7 @@ use super::host::PositionKind;
 use super::interfaces::HTML_NS;
 use super::node::first_element_child;
 use super::style::read_computed;
-use super::webidl::{this_element, with_state};
+use super::webidl::{host_failure, this_element, with_state};
 use super::window::{clamp_viewport_scroll, scroll_behavior};
 
 /// A `ScrollLogicalPosition` value.
@@ -251,25 +251,10 @@ pub(crate) fn root_axes(context: &mut Context, root: usize) -> JsResult<RootAxes
     })
 }
 
-/// Whether an ancestor of `index` is fixed-position, which keeps `index`
-/// fixed with respect to the viewport too. An ancestor with no box does
-/// not count.
-fn has_fixed_ancestor(context: &mut Context, index: usize) -> JsResult<bool> {
-    let mut current = with_state(context, |s| s.host.document().parent_of(index))?;
-    while let Some(ancestor) = current {
-        if box_geometry(context, ancestor)?.is_some_and(|g| g.position == PositionKind::Fixed) {
-            return Ok(true);
-        }
-        current = with_state(context, |s| s.host.document().parent_of(ancestor))?;
-    }
-    Ok(false)
-}
-
 /// `Element.scrollIntoView(arg)`: scroll the viewport so the element's
 /// border box is aligned as `block` and `inline` ask, along the axes of
-/// the document element's writing mode. An element without a box, a
-/// fixed-position one or one inside a fixed-position ancestor (the
-/// viewport does not move either), or one that
+/// the document element's writing mode. An element without a box, one
+/// fixed to the viewport (scrolling would not move it), or one that
 /// `container: "nearest"` confines to an inner scroll container leaves the
 /// viewport where it is. Every `behavior` scrolls instantly, so the
 /// returned promise resolves to a non-interrupted `ScrollResult`.
@@ -301,7 +286,9 @@ fn scroll(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<(
     let Some(geometry) = box_geometry(context, index)? else {
         return Ok(());
     };
-    if geometry.position == PositionKind::Fixed || has_fixed_ancestor(context, index)? {
+    let fixed = with_state(context, |s| s.host.is_fixed_to_viewport(index))?
+        .map_err(|error| host_failure(context, error))?;
+    if fixed {
         return Ok(());
     }
     let root = with_state(context, |s| {
@@ -322,9 +309,7 @@ fn scroll(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<(
     } = root_axes(context, root)?;
     let viewport = with_state(context, |s| s.host.viewport_size())?;
     // A document without a viewport has nothing to scroll.
-    let Some((width, height)) =
-        viewport.map_err(|error| super::webidl::host_failure(context, error))?
-    else {
+    let Some((width, height)) = viewport.map_err(|error| host_failure(context, error))? else {
         return Ok(());
     };
     let (scroll_x, scroll_y) = with_state(context, |s| (s.viewport_scroll_x, s.viewport_scroll_y))?;

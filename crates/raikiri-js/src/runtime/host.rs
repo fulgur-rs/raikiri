@@ -148,6 +148,26 @@ pub trait DocumentHost: 'static {
     fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
         Ok(None)
     }
+    /// Whether `node` stays put when the viewport scrolls: it, or a box it
+    /// is laid out inside, is fixed-position with the viewport as its
+    /// containing block. Called after [`Self::flush`]. The default cannot
+    /// see which boxes contain fixed-position descendants, so it counts
+    /// every fixed-position box on the way up.
+    ///
+    /// Spec: <https://drafts.csswg.org/css-position-3/#fixed-cb>
+    fn is_fixed_to_viewport(&mut self, node: usize) -> Result<bool, HostError> {
+        let mut current = Some(node);
+        while let Some(index) = current {
+            if self
+                .box_geometry(index)?
+                .is_some_and(|geometry| geometry.position == PositionKind::Fixed)
+            {
+                return Ok(true);
+            }
+            current = self.document().parent_of(index);
+        }
+        Ok(false)
+    }
     /// Serialized computed value of `property` on `node`, or `None` when the
     /// property is not supported. Called after [`Self::flush`].
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError>;

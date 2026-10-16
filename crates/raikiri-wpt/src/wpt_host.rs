@@ -573,6 +573,33 @@ impl DocumentHost for WptDocumentHost {
         Ok(Some(area))
     }
 
+    /// A fixed-position box stays with the viewport unless an ancestor is
+    /// the containing block of its fixed-position descendants (a transform,
+    /// filter, containment or matching `will-change`).
+    fn is_fixed_to_viewport(&mut self, node: usize) -> Result<bool, HostError> {
+        let Some(styles) = self.computed_styles.as_ref() else {
+            return Err(HostError("fixed position read before flush".into()));
+        };
+        let document = &self.setup.uncascaded.dom;
+        // Walking up, a box that contains fixed-position descendants ends
+        // the viewport attachment of every fixed box below it.
+        let mut fixed = false;
+        let mut current = Some(node);
+        while let Some(index) = current {
+            let style = styles.get(index);
+            if style.is_some_and(|style| {
+                raikiri_dom::establishes_fixed_containing_block(document, index, style)
+            }) {
+                fixed = false;
+            }
+            if style.is_some_and(|style| position_kind(&style.position) == PositionKind::Fixed) {
+                fixed = true;
+            }
+            current = document.parent_of(index);
+        }
+        Ok(fixed)
+    }
+
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         let Some(property) = raikiri_style::ComputedProperty::from_name(property) else {
             return Ok(None);

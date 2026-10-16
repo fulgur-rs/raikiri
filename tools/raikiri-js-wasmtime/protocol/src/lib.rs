@@ -6,7 +6,7 @@ use raikiri_js::runtime::{
 pub use raikiri_js::runtime::{DecodedImage, ImagePixels};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
-pub const VERSION: u32 = 6;
+pub const VERSION: u32 = 7;
 pub const MAX_MESSAGE: usize = 16 * 1024 * 1024;
 
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, String> {
@@ -66,6 +66,8 @@ pub enum HostOperation {
     Visible(usize),
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
     Viewport,
+    // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
+    FixedToViewport(usize),
     /// The pixels of a loaded image, sized against a default object size
     /// (width, height) in CSS px.
     // cov:ignore: exercised by raikiri-js-wasmtime-protocol tests; tools/ is outside the workspace llvm-cov run.
