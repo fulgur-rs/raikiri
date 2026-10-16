@@ -1008,7 +1008,9 @@ fn keyframe_properties_are_converted_in_idl_name_order() {
              && thrown(() => target.animate({ get opacity() { throw marker; } }, 1)) === marker\
              && thrown(() => target.animate({ opacity: [0, { toString() { throw marker; } }] }, 1)) === marker\
              && thrown(() => target.animate({ opacity: { [Symbol.iterator]: 1 } }, 1)) instanceof TypeError\
-             && thrown(() => target.animate({ wordSpacing: '0px' }, 1)) instanceof TypeError",
+             && thrown(() => target.animate({ wordSpacing: '0px' }, 1)) instanceof TypeError\
+             && thrown(() => target.animate({ get ['--x']() { throw marker; } }, 1)) === marker\
+             && thrown(() => target.animate({ get ['--']() { throw marker; } }, 1)) === null",
         )
         .unwrap();
     assert!(result.to_boolean());

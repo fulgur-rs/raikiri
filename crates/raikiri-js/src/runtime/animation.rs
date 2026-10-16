@@ -325,9 +325,13 @@ enum PropertyValues {
     List(Vec<String>),
 }
 
-/// Whether `name` is the IDL attribute name of a supported CSS property:
-/// `cssFloat` for `float`, otherwise the camel-cased property name.
+/// Whether `name` names a keyframe animation property: a custom property
+/// name, or the IDL attribute name of a supported CSS property (`cssFloat`
+/// for `float`, otherwise the camel-cased property name).
 fn is_animatable_idl_name(name: &str) -> bool {
+    if let Some(custom) = name.strip_prefix("--") {
+        return !custom.is_empty();
+    }
     if name == "cssFloat" {
         return true;
     }
