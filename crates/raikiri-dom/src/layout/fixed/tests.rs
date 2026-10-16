@@ -375,7 +375,8 @@ fn over_constrained_nested_fixed_boxes_follow_the_page_direction() {
     let fixed_css = "position:fixed;left:10px;right:20px;top:0;width:100px;height:10px";
     let (doc, fixed) = laid_out_with("direction:rtl", "", "margin-right:30px", "", fixed_css);
     assert_eq!(absolute_rect(&doc, fixed), (680.0, 0.0, 100.0, 10.0));
-    // The page area takes the root element's direction, not the body's.
+    // The page area takes the principal direction, which an HTML body
+    // gives the root (CSS Writing Modes 3 §8).
     let (doc, fixed) = laid_out_with(
         "direction:rtl",
         "direction:ltr",
@@ -383,9 +384,9 @@ fn over_constrained_nested_fixed_boxes_follow_the_page_direction() {
         "",
         fixed_css,
     );
-    assert_eq!(absolute_rect(&doc, fixed), (680.0, 0.0, 100.0, 10.0));
-    let (doc, fixed) = laid_out_in("direction:rtl", "margin-right:30px", "", fixed_css);
     assert_eq!(absolute_rect(&doc, fixed), (10.0, 0.0, 100.0, 10.0));
+    let (doc, fixed) = laid_out_in("direction:rtl", "margin-right:30px", "", fixed_css);
+    assert_eq!(absolute_rect(&doc, fixed), (680.0, 0.0, 100.0, 10.0));
 }
 
 #[test]

@@ -155,7 +155,7 @@ fn positioned_descendants_use_the_root_padding_box_or_the_page_area() {
 }
 
 #[test]
-fn the_icb_uses_the_root_direction_for_a_definite_root_width() {
+fn the_icb_uses_the_principal_direction_for_a_definite_root_width() {
     let mut doc = Document::new();
     let html = doc.append_element(
         Some(0),
@@ -167,13 +167,31 @@ fn the_icb_uses_the_root_direction_for_a_definite_root_width() {
         Some(html),
         "body",
         Style::default(),
-        Some("display:block;direction:ltr;width:200px;height:30px"),
+        Some("display:block;width:200px;height:30px"),
     );
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     assert_eq!(doc.nodes[html].unrounded_layout.location.x, 500.0);
     assert_eq!(doc.nodes[body].unrounded_layout.location.x, 100.0);
+
+    // An HTML body's direction overrides the root's (CSS Writing Modes 3 §8).
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;direction:ltr;width:300px"),
+    );
+    doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;direction:rtl;width:200px;height:30px"),
+    );
+    let cascade = raikiri_style::cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 500.0);
 }
 
 #[test]
@@ -890,5 +908,233 @@ fn paginated_flex_auto_height_encloses_a_forced_break_in_its_item() {
             doc.nodes[flex].unrounded_layout.size.height, 130.0,
             "{display}"
         );
+    }
+}
+
+#[test]
+fn the_icb_takes_the_writing_mode_of_the_html_body() {
+    // CSS Writing Modes 3 §8: an HTML root takes its used writing mode
+    // from its body child, and the ICB takes the root's used writing mode.
+    // A definite-width root then starts at the ICB's block-start edge.
+    // A `display: none` body and containment on either element leave the
+    // root's own writing mode in place (CSS Containment 2 §2).
+    for (root_css, body_css, expected_x) in [
+        (
+            "writing-mode:vertical-rl",
+            "writing-mode:horizontal-tb",
+            0.0,
+        ),
+        (
+            "writing-mode:horizontal-tb",
+            "writing-mode:vertical-rl",
+            700.0,
+        ),
+        (
+            "writing-mode:vertical-rl",
+            "writing-mode:horizontal-tb;display:none",
+            700.0,
+        ),
+        (
+            "writing-mode:vertical-rl",
+            "writing-mode:horizontal-tb;contain:layout",
+            700.0,
+        ),
+        (
+            "writing-mode:vertical-rl;contain:paint",
+            "writing-mode:horizontal-tb",
+            700.0,
+        ),
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some(format!("display:block;width:100px;{root_css}").as_str()),
+        );
+        doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some(format!("display:block;margin:0;{body_css}").as_str()),
+        );
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+        layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+        assert_eq!(
+            doc.nodes[html].unrounded_layout.location.x, expected_x,
+            "html {root_css}, body {body_css}"
+        );
+    }
+
+    // A hidden first body is passed over for the next body child.
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:100px;writing-mode:horizontal-tb"),
+    );
+    for body_css in ["display:none", "display:block;writing-mode:vertical-rl"] {
+        doc.append_element(Some(html), "body", Style::default(), Some(body_css));
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 700.0);
+}
+
+#[test]
+fn a_foreign_body_lookalike_is_not_the_principal_element() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:100px;writing-mode:horizontal-tb"),
+    );
+    let foreign = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    doc.set_element_namespace(foreign, Some("urn:x".into()));
+    doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 0.0);
+}
+
+#[test]
+fn fixed_boxes_take_the_principal_direction_of_the_page_area() {
+    use crate::layout::test_support::absolute_rect;
+    // With both insets, `left` wins in the body's ltr direction even though
+    // the root is rtl.
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;direction:rtl"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;direction:ltr"),
+    );
+    let fixed = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:fixed;left:10px;right:10px;top:0;width:50px;height:10px"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, fixed).0, 10.0);
+}
+
+#[test]
+fn paginated_heights_keep_a_flex_items_overflow_outside_its_used_height() {
+    // The item's used height is clamped below its content. Pagination only
+    // grows it by what a forced break inside it inserts: the 40px of
+    // content before the break is pushed 60px to the next page.
+    for (container, item) in [
+        ("display:flex;max-height:200px", "display:block"),
+        (
+            "display:flex;flex-direction:column;max-height:200px",
+            "display:block;min-height:0",
+        ),
+    ] {
+        for (forced_break, page_height, expected_height) in
+            [(false, 600.0, 200.0), (true, 100.0, 260.0)]
+        {
+            // A forced break inside an item of a row flex container with a
+            // capped height is not taken yet; only the column case breaks.
+            if forced_break && !container.contains("column") {
+                continue;
+            }
+            let mut doc = Document::new();
+            let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+            let body = doc.append_element(
+                Some(html),
+                "body",
+                Style::default(),
+                Some("display:block;margin:0"),
+            );
+            let flex = doc.append_element(Some(body), "div", Style::default(), Some(container));
+            let item = doc.append_element(Some(flex), "div", Style::default(), Some(item));
+            if forced_break {
+                doc.append_element(
+                    Some(item),
+                    "div",
+                    Style::default(),
+                    Some("display:block;height:40px;break-after:page"),
+                );
+            }
+            doc.append_element(
+                Some(item),
+                "div",
+                Style::default(),
+                Some("display:block;width:50px;height:400px"),
+            );
+            let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+            let mut page = page_box_800x600();
+            page.height = page_height;
+            crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+            assert_eq!(
+                doc.nodes[item].unrounded_layout.size.height, expected_height,
+                "{container}, forced break {forced_break}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_vertical_root_truncates_a_block_end_margin_at_a_page_break() {
+    // With leading text the body is a paragraph whose block children sit
+    // between its lines, and its end follows them.
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for leading_text in [false, true] {
+            let mut doc = Document::new();
+            let html = doc.append_element(
+                Some(0),
+                "html",
+                Style::default(),
+                Some(format!("display:block;writing-mode:{writing_mode}").as_str()),
+            );
+            let body = doc.append_element(
+                Some(html),
+                "body",
+                Style::default(),
+                Some("display:block;font:10px/10px Ahem"),
+            );
+            if leading_text {
+                doc.append_text(body, "t");
+            }
+            let first = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:block;margin-block-end:10000px"),
+            );
+            doc.append_text(first, "a");
+            let second =
+                doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+            doc.append_text(second, "b");
+            let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+            let pages =
+                crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600())
+                    .expect("pages");
+            assert_eq!(
+                pages.len(),
+                2,
+                "{writing_mode}, leading text {leading_text}"
+            );
+        }
     }
 }

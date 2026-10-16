@@ -281,15 +281,17 @@ pub(crate) fn place_fixed_boxes_in_page_area(
     root: usize,
     area_size: Size<f32>,
 ) {
-    // The page area takes the direction of the root element (CSS Writing
-    // Modes 4 §8), not an override on the body.
-    let direction = document.nodes[root].style.direction;
-    // So does its writing mode.
+    // The page area is the initial containing block, which takes the
+    // principal writing mode and direction (CSS Writing Modes 3 §8).
+    let principal = document
+        .nodes
+        .initial_containing_block_key()
+        .unwrap_or(root);
     let page = Area {
         origin: Point::ZERO,
         size: area_size,
-        direction,
-        vertical: is_vertical(document, root),
+        direction: document.nodes[principal].style.direction,
+        vertical: is_vertical(document, principal),
     };
     visit_out_of_flow_boxes(
         document,

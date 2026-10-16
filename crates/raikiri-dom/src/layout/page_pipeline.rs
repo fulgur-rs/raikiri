@@ -574,53 +574,93 @@ fn block_border_box_end(
     min_end.max(auto_end.min(max_end))
 }
 
+/// Whether pagination may extend the auto height of `node_id` around its
+/// committed content.
+fn grows_with_paginated_content(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    let ordinary_block = node.formatting_context == FormattingContext::Block
+        && matches!(
+            node.display(),
+            DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+        );
+    let flex = node.formatting_context == FormattingContext::Flex;
+    // A row-flex item can have a used stretch height even when its
+    // auto-sized flex line must still grow around paginated content.
+    let assigned_height = node.percent_basis_height.is_some()
+        && (node.style.aspect_ratio.is_some()
+            || node.taffy_position() == TaffyPosition::Absolute
+            || document.taffy_parent_of(node_id).is_some_and(|parent| {
+                let parent_node = &document.nodes[parent];
+                match parent_node.formatting_context {
+                    FormattingContext::Flex => parent_node.percent_basis_height.is_some(),
+                    FormattingContext::Grid => {
+                        parent_node.percent_basis_height.is_some()
+                            || !grid_rows_size_to_content(document, parent)
+                    }
+                    _ => false,
+                }
+            }));
+    node.kind() == NodeKind::Element
+        && !node.is_display_none()
+        && (ordinary_block || flex)
+        && !assigned_height
+        && node.multicol.is_none()
+        && !node.size_containment.height
+        && (node.style.size.height.is_auto()
+            || definite_content_height(document, node_id).is_none())
+}
+
+/// How far the content of each flex item that
+/// [`update_paginated_block_heights`] may extend already reaches past the
+/// item's block-end edge before pagination moves anything, by node id.
+///
+/// A flex item's used height comes from the flex algorithm, which may clamp
+/// or shrink it below its content; that content overflows the item rather
+/// than extending it. Only the growth pagination adds is enclosed. Other
+/// boxes are left out: their auto height is the one the extension measures.
+fn unpaginated_content_overflow(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    page_area_height: f32,
+) -> HashMap<usize, f32> {
+    document
+        .preorder(root)
+        .filter(|&node_id| {
+            document.taffy_parent_of(node_id).is_some_and(|parent| {
+                document.nodes[parent].formatting_context == FormattingContext::Flex
+            }) && grows_with_paginated_content(document, node_id)
+        })
+        .filter_map(|node_id| {
+            let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
+            let overflow = end
+                - current_abs_y(document, node_id)
+                - document.nodes[node_id].unrounded_layout.size.height;
+            (overflow.is_finite() && overflow > 0.0).then_some((node_id, overflow))
+        })
+        .collect()
+}
+
 /// Extend auto-height block and flex boxes around their committed paginated
 /// content, from descendants to ancestors. Page shifts may have been inherited
 /// from a parallel flow rather than introduced at the box's own break.
+/// Content that `overflow` says already overflowed a box before pagination
+/// keeps overflowing it by the same amount.
 fn update_paginated_block_heights(
     document: &mut Document,
     cascade: &CascadeResult,
     root: usize,
     page_area_height: f32,
+    overflow: &HashMap<usize, f32>,
 ) {
     let order: Vec<_> = document.preorder(root).collect();
     for node_id in order.into_iter().rev() {
-        let node = &document.nodes[node_id];
-        let ordinary_block = node.formatting_context == FormattingContext::Block
-            && matches!(
-                node.display(),
-                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-            );
-        let flex = node.formatting_context == FormattingContext::Flex;
-        // A row-flex item can have a used stretch height even when its
-        // auto-sized flex line must still grow around paginated content.
-        let assigned_height = node.percent_basis_height.is_some()
-            && (node.style.aspect_ratio.is_some()
-                || node.taffy_position() == TaffyPosition::Absolute
-                || document.taffy_parent_of(node_id).is_some_and(|parent| {
-                    let parent_node = &document.nodes[parent];
-                    match parent_node.formatting_context {
-                        FormattingContext::Flex => parent_node.percent_basis_height.is_some(),
-                        FormattingContext::Grid => {
-                            parent_node.percent_basis_height.is_some()
-                                || !grid_rows_size_to_content(document, parent)
-                        }
-                        _ => false,
-                    }
-                }));
-        if node.kind() != NodeKind::Element
-            || node.is_display_none()
-            || !(ordinary_block || flex)
-            || assigned_height
-            || node.multicol.is_some()
-            || node.size_containment.height
-            || (!node.style.size.height.is_auto()
-                && definite_content_height(document, node_id).is_some())
-        {
+        if !grows_with_paginated_content(document, node_id) {
             continue;
         }
         let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
-        let height = end - current_abs_y(document, node_id);
+        let height =
+            end - current_abs_y(document, node_id) - overflow.get(&node_id).copied().unwrap_or(0.0);
         if height.is_finite() && height > document.nodes[node_id].unrounded_layout.size.height {
             document.nodes[node_id].unrounded_layout.size.height = height;
         }
@@ -1089,7 +1129,8 @@ fn layout_single_page_with_table_projection(
         state.page_width = Some(content_width);
     }
     document.fixed_page_area = Some((content_width, content_height));
-    let icb = super::initial_containing_block::prepare(document, content_width, content_height);
+    let icb =
+        super::initial_containing_block::prepare(document, cascade, content_width, content_height);
     let available_space = taffy::Size {
         width: AvailableSpace::Definite(content_width),
         height: AvailableSpace::Definite(content_height),
@@ -3855,6 +3896,8 @@ fn paginate_flow(
     // Keep the scheduled inline size identical to the first layout pass.
     let content_width = insets.page_area_width(margins, page_box);
     let content_height = insets.page_area_height(margins, page_box);
+    let unpaginated_overflow =
+        unpaginated_content_overflow(document, cascade, body_id, content_height);
     // A page with margins consuming the entire paper still needs a finite
     // cursor for forced breaks.  No valid page box reaches this path in normal
     // CSS, but the fallback keeps the API panic-free for direct callers.
@@ -5274,7 +5317,13 @@ fn paginate_flow(
             .any(|header| header.table == table)
     });
     super::table::headers::finish_boxes(document, &table_headers);
-    update_paginated_block_heights(document, cascade, body_id, content_height);
+    update_paginated_block_heights(
+        document,
+        cascade,
+        body_id,
+        content_height,
+        &unpaginated_overflow,
+    );
     table_headers.index();
     document.table_objects.headers = table_headers;
 

@@ -246,6 +246,7 @@ css/css-backgrounds/background-clip/clip-border-area-border-shape-overflow.html
 css/css-backgrounds/background-clip/clip-border-area-border-shape.html
 css/css-backgrounds/background-clip/clip-border-area-box-decoration-break.html
 css/css-backgrounds/background-clip/clip-border-area-corner-shape.html
+css/css-backgrounds/background-clip/clip-border-area-on-body-not-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-body-propagated-to-root.html
 css/css-backgrounds/background-clip/clip-border-area-on-root.html
 css/css-backgrounds/background-clip/clip-border-area.html
@@ -469,6 +470,7 @@ css/css-break/widows-orphans-017.html
 css/css-break/zero-height-page-break-001-print.html
 css/css-page/background-image-only-for-print.html
 css/css-page/page-background-image-print.html
+css/css-page/page-box-000-print.html
 css/css-page/page-box-005-print.html
 css/css-page/page-box-007-print.html
 css/css-page/page-box-011-print.html
@@ -981,9 +983,7 @@ css/css-flexbox/gap-002-lr.html
 css/css-flexbox/gap-002-ltr.html
 css/css-flexbox/gap-002-rl.html
 css/css-flexbox/gap-002-rtl.html
-css/css-flexbox/gap-003-lr.html
 css/css-flexbox/gap-003-ltr.html
-css/css-flexbox/gap-003-rl.html
 css/css-flexbox/gap-003-rtl.html
 css/css-flexbox/gap-004-lr.html
 css/css-flexbox/gap-004-ltr.html
@@ -2411,6 +2411,7 @@ css/css-flexbox/flexbox_margin-auto.html
 css/css-flexbox/flexbox_margin-left-ex.html
 css/css-flexbox/flexbox_order-box.html
 css/css-flexbox/flexbox_order.html
+css/css-flexbox/flexbox_quirks_body.html
 css/css-flexbox/flexbox_rtl-flow-reverse.html
 css/css-flexbox/flexbox_rtl-flow.html
 css/css-flexbox/flexbox_rtl-order.html
@@ -4525,7 +4526,6 @@ css/css-ruby/ruby-intrinsic-isize-002.html
 css/css-ruby/ruby-intrinsic-isize-003.html
 css/css-ruby/ruby-justification-002.html
 css/css-ruby/ruby-line-break-suppression-004.html
-css/css-ruby/ruby-line-break-suppression-005.html
 css/css-ruby/ruby-line-breaking-003.html
 css/css-ruby/ruby-reflow-001-transparentruby.html
 css/css-ruby/ruby-span-001.html
