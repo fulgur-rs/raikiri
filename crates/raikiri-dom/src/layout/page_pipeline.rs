@@ -745,26 +745,6 @@ fn record_candidate_pages(
     }
 }
 
-/// Make `node_id` the source of the pending forced break when it forces a
-/// break after itself, unless that source is already the node itself or one
-/// of its ancestors.
-fn note_break_after(
-    document: &Document,
-    cascade: &CascadeResult,
-    node_id: usize,
-    deferred_named_break_after: bool,
-    pending_break_source: &mut Option<usize>,
-) {
-    let breaks_after =
-        page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
-            || deferred_named_break_after;
-    let source_is_ancestor =
-        pending_break_source.is_some_and(|source| is_descendant_or_self(document, node_id, source));
-    if breaks_after && !source_is_ancestor {
-        *pending_break_source = Some(node_id);
-    }
-}
-
 /// Break the lines of every paragraph again for a page-specific
 /// containing-block width.
 ///
@@ -3928,10 +3908,7 @@ fn paginate_flow(
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut reach = PageReach::default();
-    // Keep a break-after attached to its source box until its descendants
-    // have been visited.  Applying it to the first flex child would turn a
-    // break-after on the flex container into an extra blank page.
-    let mut pending_break_source: Option<usize> = None;
+    let mut pending_break = PendingBreak::default();
     let mut deferred_shifts = DeferredShifts::default();
     // Where each table row sits in its parent before pagination; the table
     // boxes around the rows that moved follow them once every row is placed.
@@ -3957,7 +3934,7 @@ fn paginate_flow(
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade)),
     );
     let mut column_contexts = ColumnContexts::new(document.nodes.len());
-    let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
+    let mut preceding_flex_items = PrecedingFlexItems::default();
     let mut trailing_flex_children = TrailingFlexChildren::default();
     let mut entered_paragraphs = EnteredParagraphs::default();
     macro_rules! check_candidate_page {
@@ -3985,10 +3962,7 @@ fn paginate_flow(
         if name_participates_in_flow
             && candidate.is_flex_item
             && let Some(context) = candidate.named_flex_context
-            && let Some((_, height, page)) =
-                preceding_flex_items.insert(context, (node_id, candidate.height, current_page))
-            && height > 0.0
-            && page == current_page
+            && preceding_flex_items.record(context, candidate.height, current_page)
         {
             column_contexts.occupy(Some(context), current_page, document, cascade);
         }
@@ -4530,8 +4504,7 @@ fn paginate_flow(
                 && height > 0.0
                 && name_participates_in_flow
                 && candidate_page_name != comparison_page_name;
-            let pending_break_applies = pending_break_source
-                .is_some_and(|source| !is_descendant_or_self(document, node_id, source));
+            let pending_break_applies = pending_break.applies_to(document, node_id);
             let consumes_pending_break = pending_break_applies && name_participates_in_flow;
             if saw_child {
                 if consumes_pending_break || named_page_change {
@@ -4605,14 +4578,13 @@ fn paginate_flow(
                 in_flow,
             )?; // cov:ignore: LLVM coverage maps this multiline call's error exit to its own line.
             if consumes_pending_break {
-                pending_break_source = None;
+                pending_break.clear();
             }
-            note_break_after(
+            pending_break.note_after(
                 document,
                 cascade,
                 node_id,
                 candidate.deferred_named_break_after,
-                &mut pending_break_source,
             );
             continue;
         }
@@ -4835,8 +4807,7 @@ fn paginate_flow(
                 && !candidate.is_flex_item
                 && !candidate.is_grid_item
                 && participates_in_margin_adjacency;
-        let pending_break_applies = pending_break_source
-            .is_some_and(|source| !is_descendant_or_self(document, node_id, source));
+        let pending_break_applies = pending_break.applies_to(document, node_id);
         let page_transition = saw_child
             && (pending_break_applies
                 || (forced_before && !forced_break_at_page_start)
@@ -5129,7 +5100,7 @@ fn paginate_flow(
                     starts_after_forced_break = true;
                 }
                 if pending_break_applies {
-                    pending_break_source = None;
+                    pending_break.clear();
                 }
             } else if effective_y.is_finite() && effective_y >= 0.0 {
                 // A box with no block size at a page's end still fits on
@@ -5351,14 +5322,13 @@ fn paginate_flow(
         if candidate.is_flex_item
             && let Some(context) = candidate.named_flex_context
         {
-            preceding_flex_items.insert(context, (node_id, height, current_page));
+            preceding_flex_items.record(context, height, current_page);
         }
-        note_break_after(
+        pending_break.note_after(
             document,
             cascade,
             node_id,
             candidate.deferred_named_break_after,
-            &mut pending_break_source,
         );
     }
 
@@ -6628,6 +6598,67 @@ impl FootnoteAreas {
         let top = (page_end - *used - height).max(page_start);
         *used += height;
         top
+    }
+}
+
+/// A forced break after a box, kept attached to that box until its
+/// descendants have been visited. Applying it to the first flex child would
+/// turn a break-after on the flex container into an extra blank page.
+#[derive(Default)]
+struct PendingBreak {
+    source: Option<usize>,
+}
+
+impl PendingBreak {
+    /// Whether the pending break falls before `node_id`, which is outside the
+    /// box that forced it.
+    fn applies_to(&self, document: &Document, node_id: usize) -> bool {
+        self.source
+            .is_some_and(|source| !is_descendant_or_self(document, node_id, source))
+    }
+
+    /// Drop the pending break once a later box has consumed it.
+    fn clear(&mut self) {
+        self.source = None;
+    }
+
+    /// Make `node_id` the source of the pending break when it forces a break
+    /// after itself, unless that source is already the node itself or one of
+    /// its ancestors.
+    fn note_after(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        node_id: usize,
+        deferred_named_break_after: bool,
+    ) {
+        let breaks_after =
+            page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
+                || deferred_named_break_after;
+        let source_is_ancestor = self
+            .source
+            .is_some_and(|source| is_descendant_or_self(document, node_id, source));
+        if breaks_after && !source_is_ancestor {
+            self.source = Some(node_id);
+        }
+    }
+}
+
+/// The last flex item placed in each named flex context, keyed by context:
+/// its block size and the page it was placed on.
+#[derive(Default)]
+struct PrecedingFlexItems {
+    by_context: HashMap<usize, (f32, u32)>,
+}
+
+impl PrecedingFlexItems {
+    /// Record a flex item of `context` with `height` on `page`. Returns
+    /// whether the item it replaces had a block size and sat on that same
+    /// page.
+    fn record(&mut self, context: usize, height: f32, page: u32) -> bool {
+        self.by_context.insert(context, (height, page)).is_some_and(
+            |(previous_height, previous_page)| previous_height > 0.0 && previous_page == page,
+        )
     }
 }
 
