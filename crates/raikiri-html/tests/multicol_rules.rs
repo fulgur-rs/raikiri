@@ -482,3 +482,22 @@ fn a_relatively_positioned_paragraph_is_offset_once() {
         [("A", (10.0, 16.0)), ("B", (0.0, 36.0))].map(|(text, origin)| (text.to_owned(), origin))
     );
 }
+
+#[test]
+fn a_paragraph_the_planner_declines_still_hands_its_end_to_the_next_one() {
+    // A right-to-left paragraph is broken between the columns line by line
+    // rather than by the paragraph planner; the next one still follows it.
+    let document = lay_out(
+        "<div class=mc><p style='direction:rtl'>A<br>B<br>C<br>D<br>E</p><p>F</p></div>",
+        ".mc{height:40px}",
+    );
+    let runs: Vec<_> = document
+        .page(0)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .map(|run| (run.text.to_owned(), run.origin))
+        .collect();
+    assert_eq!(runs[4], ("E".to_owned(), (140.0, 16.0)));
+    assert_eq!(runs[5], ("F".to_owned(), (120.0, 36.0)));
+}

@@ -1151,6 +1151,15 @@ fn layout_column_group(
             column = placement.last_column;
             cursor = placement.last_y;
             maximum = maximum.max(group_balance.as_ref().map_or(0.0, |group| group.height));
+        } else if let Some((last_column, end)) = definite_paragraphs
+            .then(|| paragraph_end_in_later_column(tree, child, column))
+            .flatten()
+        {
+            // A paragraph broken between definite-height columns hands the
+            // end of its last piece to the next box.
+            maximum = maximum.max(fragment_height.unwrap_or(0.0));
+            column = last_column;
+            cursor = end + margin_bottom;
         } else {
             cursor = y - content_origin.y + child_output.size.height + margin_bottom;
         }
@@ -1184,6 +1193,31 @@ fn layout_column_group(
             .unwrap_or(fallback_height)
     };
     (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
+}
+
+/// The last column of `child`'s line pieces and the block end of the piece
+/// there, from the column's top, when they reach past `column`.
+fn paragraph_end_in_later_column(
+    tree: &Document,
+    child: usize,
+    column: usize,
+) -> Option<(usize, f32)> {
+    let root = tree.nodes[child].ifc.as_ref()?;
+    let last = root
+        .multicol_fragments
+        .as_ref()?
+        .iter()
+        .rfind(|range| range.line_start < range.line_end)?;
+    if last.fragmentainer <= column {
+        return None;
+    }
+    let lines = &root.lines.as_ref()?.lines;
+    let first = lines.get(last.line_start)?;
+    let end = lines.get(last.line_end - 1)?;
+    Some((
+        last.fragmentainer,
+        end.block_offset() + end.block_size() - first.block_offset(),
+    ))
 }
 
 /// A nested column container that continues from one column of its outer
