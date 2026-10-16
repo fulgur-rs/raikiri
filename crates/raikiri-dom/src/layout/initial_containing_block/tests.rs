@@ -728,3 +728,127 @@ fn only_page_fixed_boxes_repeat_instead_of_extending_overflow_pages() {
         assert_eq!(pages.len(), expected_pages, "{transform}");
     }
 }
+
+#[test]
+fn an_auto_width_table_root_shrink_wraps_its_content_inside_the_icb() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:table;border:10px solid green;border-spacing:0;margin:auto;padding:0"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;padding:0;font:0px/0px Ahem"),
+    );
+    for width in [200, 80] {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!(
+                "display:inline-block;width:{width}px;height:300px"
+            )),
+        );
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, html),
+        (250.0, 0.0, 300.0, 320.0)
+    );
+}
+
+#[test]
+fn paginated_flex_stretch_keeps_the_items_used_height_despite_visible_overflow() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let flex = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:flex;box-sizing:border-box;width:130px;height:70px;border:10px solid"),
+    );
+    let item = doc.append_element(
+        Some(flex),
+        "div",
+        Style::default(),
+        Some("display:block;box-sizing:border-box;flex:1;border:10px solid"),
+    );
+    doc.append_element(
+        Some(item),
+        "div",
+        Style::default(),
+        Some("display:block;box-sizing:border-box;height:140px;border:10px solid"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("pages");
+    assert_eq!(doc.nodes[item].unrounded_layout.size.height, 50.0);
+}
+
+#[test]
+fn paginated_flex_auto_height_encloses_a_forced_break_in_its_item() {
+    for display in [
+        "block",
+        "flex;flex-direction:row",
+        "flex;flex-direction:column",
+    ] {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let flex = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some(&format!("display:{display};border:10px solid")),
+        );
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        for i in 0..4 {
+            let child = doc.append_element(
+                Some(item),
+                "div",
+                Style::default(),
+                Some(if i == 1 {
+                    "display:block;height:20px;break-after:page;font:10px/10px Ahem"
+                } else {
+                    "display:block;height:20px;font:10px/10px Ahem"
+                }),
+            );
+            doc.append_text(child, "x");
+        }
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:20px"),
+        );
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+        let mut page = page_box_800x600();
+        page.height = 100.0;
+        crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert_eq!(
+            doc.nodes[flex].unrounded_layout.size.height, 130.0,
+            "{display}"
+        );
+    }
+}

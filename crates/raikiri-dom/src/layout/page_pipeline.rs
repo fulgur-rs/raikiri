@@ -538,6 +538,11 @@ fn block_border_box_end(
         let end =
             offset + layout.location.y - relative_shift + layout.size.height + layout.margin.bottom;
         if end.is_finite() {
+            // A reverse column flex container's source order need not end
+            // with its lowest item. Its item margins never collapse.
+            if root.formatting_context == FormattingContext::Flex {
+                content_end = content_end.max(end);
+            }
             last_flow_end = Some(end);
             last_flow_margin = layout.margin.bottom;
         }
@@ -560,7 +565,7 @@ fn block_border_box_end(
     min_end.max(auto_end.min(max_end))
 }
 
-/// Extend ordinary auto-height block boxes around their committed paginated
+/// Extend auto-height block and flex boxes around their committed paginated
 /// content, from descendants to ancestors. Page shifts may have been inherited
 /// from a parallel flow rather than introduced at the box's own break.
 fn update_paginated_block_heights(
@@ -572,13 +577,32 @@ fn update_paginated_block_heights(
     let order: Vec<_> = document.preorder(root).collect();
     for node_id in order.into_iter().rev() {
         let node = &document.nodes[node_id];
-        if node.kind() != NodeKind::Element
-            || node.is_display_none()
-            || !matches!(
+        let ordinary_block = node.formatting_context == FormattingContext::Block
+            && matches!(
                 node.display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-            )
-            || node.formatting_context != FormattingContext::Block
+            );
+        let flex = node.formatting_context == FormattingContext::Flex;
+        // A row-flex item can have a used stretch height even when its
+        // auto-sized flex line must still grow around paginated content.
+        let assigned_height = node.percent_basis_height.is_some()
+            && (node.style.aspect_ratio.is_some()
+                || node.taffy_position() == TaffyPosition::Absolute
+                || document.taffy_parent_of(node_id).is_some_and(|parent| {
+                    let parent_node = &document.nodes[parent];
+                    match parent_node.formatting_context {
+                        FormattingContext::Flex => parent_node.percent_basis_height.is_some(),
+                        FormattingContext::Grid => {
+                            parent_node.percent_basis_height.is_some()
+                                || !grid_rows_size_to_content(document, parent)
+                        }
+                        _ => false,
+                    }
+                }));
+        if node.kind() != NodeKind::Element
+            || node.is_display_none()
+            || !(ordinary_block || flex)
+            || assigned_height
             || node.multicol.is_some()
             || node.size_containment.height
             || (!node.style.size.height.is_auto()
