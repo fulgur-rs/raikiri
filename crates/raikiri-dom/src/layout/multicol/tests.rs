@@ -3380,6 +3380,7 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;margin-top:20px",
         "display:block;margin-bottom:20px",
         "display:block;margin:0;writing-mode:vertical-rl",
+        "display:block;margin:0;position:relative;left:10px",
     ] {
         assert!(!paragraphs(style), "{style}");
     }

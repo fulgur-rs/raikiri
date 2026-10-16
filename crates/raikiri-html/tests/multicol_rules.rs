@@ -463,3 +463,22 @@ fn a_paragraph_broken_between_columns_hands_its_end_to_the_next_one() {
         ])
     );
 }
+
+#[test]
+fn a_relatively_positioned_paragraph_is_offset_once() {
+    let document = lay_out(
+        "<div class=mc><p style='position:relative;left:10px'>A</p><p>B</p></div>",
+        ".mc{height:40px}",
+    );
+    let runs: Vec<_> = document
+        .page(0)
+        .unwrap()
+        .text_runs()
+        .iter()
+        .map(|run| (run.text.to_owned(), run.origin))
+        .collect();
+    assert_eq!(
+        runs,
+        [("A", (10.0, 16.0)), ("B", (0.0, 36.0))].map(|(text, origin)| (text.to_owned(), origin))
+    );
+}

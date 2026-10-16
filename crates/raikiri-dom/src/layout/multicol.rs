@@ -628,6 +628,16 @@ fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool
                     .into_iter()
                     .all(|edge| edge == zero_margin)
                 && child.taffy_position() != TaffyPosition::Absolute
+                // A relative offset is applied after the columns place the
+                // box, so it must not be carried into its column location.
+                && [
+                    child.style.inset.left,
+                    child.style.inset.right,
+                    child.style.inset.top,
+                    child.style.inset.bottom,
+                ]
+                .iter()
+                .all(|inset| inset.is_auto())
                 && !child.style.float.is_floated()
                 && child.style.size.height.is_auto()
                 && child.style.min_size.height.is_auto()
