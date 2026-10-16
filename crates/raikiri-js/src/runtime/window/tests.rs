@@ -578,6 +578,85 @@ fn scroll_to_with_numbers_sets_and_clamps() {
     ok(&mut rt, "scrollX === 3 && scrollY === 0");
 }
 
+/// A runtime with a 100x100 viewport over a scrolling area of
+/// `(left, top, width, height)` and `computed` values on the document
+/// element.
+fn rt_with_scrolling_area(area: (f64, f64, f64, f64), computed: &[(&str, &str)]) -> DomRuntime {
+    let (mut host, html, ..) = StubHost::page();
+    host.viewport = Ok(Some((100.0, 100.0)));
+    host.scrolling_area = Ok(Some(StubHost::dom_rect(area.0, area.1, area.2, area.3)));
+    for (property, value) in computed {
+        host.computed
+            .insert((html, (*property).to_owned()), (*value).to_owned());
+    }
+    DomRuntime::new(host).unwrap()
+}
+
+#[test]
+fn viewport_scroll_stops_at_the_scrolling_area_edge() {
+    let mut rt = rt_with_scrolling_area((0.0, 0.0, 300.0, 250.0), &[]);
+    rt.evaluate("scrollTo(1000, 1000);").unwrap();
+    ok(&mut rt, "scrollX === 200 && scrollY === 150");
+    rt.evaluate("scrollBy(-50, 10);").unwrap();
+    ok(&mut rt, "scrollX === 150 && scrollY === 150");
+    rt.evaluate("scrollTo({left: -5, top: 20});").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 20");
+    rt.evaluate(
+        "document.documentElement.scrollTop = 900; document.documentElement.scrollLeft = 900;",
+    )
+    .unwrap();
+    ok(&mut rt, "scrollX === 200 && scrollY === 150");
+    // A scrolling area no larger than the viewport leaves nothing to scroll.
+    let mut rt = rt_with_scrolling_area((0.0, 0.0, 100.0, 100.0), &[]);
+    rt.evaluate("scrollTo(10, 10);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+}
+
+#[test]
+fn leftward_and_upward_overflow_scroll_to_negative_offsets() {
+    // Right-to-left: overflow goes left, so x runs from the area's left edge
+    // to zero, and content right of the viewport is out of reach.
+    let mut rt = rt_with_scrolling_area((-200.0, 0.0, 400.0, 300.0), &[("direction", "rtl")]);
+    rt.evaluate("scrollTo(-1000, 1000);").unwrap();
+    ok(&mut rt, "scrollX === -200 && scrollY === 200");
+    rt.evaluate("scrollTo(50, 0);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+    rt.evaluate("scrollBy(-30, 0);").unwrap();
+    ok(&mut rt, "scrollX === -30");
+    // vertical-lr with right-to-left: y runs from the area's top edge to zero.
+    let mut rt = rt_with_scrolling_area(
+        (0.0, -150.0, 100.0, 250.0),
+        &[("writing-mode", "vertical-lr"), ("direction", "rtl")],
+    );
+    rt.evaluate("scrollTo(0, -1000);").unwrap();
+    ok(&mut rt, "scrollY === -150");
+    rt.evaluate("document.documentElement.scrollTop = 40;")
+        .unwrap();
+    ok(&mut rt, "scrollY === 0");
+    // Without a known scrolling area only the zero side is bounded.
+    let (mut host, html, ..) = StubHost::page();
+    host.computed
+        .insert((html, "writing-mode".to_owned()), "vertical-rl".to_owned());
+    let mut rt = DomRuntime::new(host).unwrap();
+    rt.evaluate("scrollTo(-5000, 5000);").unwrap();
+    ok(&mut rt, "scrollX === -5000 && scrollY === 5000");
+    rt.evaluate("scrollTo(5, -5);").unwrap();
+    ok(&mut rt, "scrollX === 0 && scrollY === 0");
+}
+
+#[test]
+fn a_scrolling_area_failure_fails_the_host() {
+    let (mut host, ..) = StubHost::page();
+    host.viewport = Ok(Some((100.0, 100.0)));
+    host.scrolling_area = Err(());
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(rt.evaluate("scrollTo(1, 1);").is_err());
+    let (mut host, ..) = StubHost::page();
+    host.viewport = Err(());
+    let mut rt = DomRuntime::new(host).unwrap();
+    assert!(rt.evaluate("scrollBy(1, 1);").is_err());
+}
+
 #[test]
 fn scroll_by_accumulates_and_ignores_non_finite_deltas() {
     let mut rt = rt();
@@ -744,4 +823,15 @@ fn url_install_propagates_global_registration_errors() {
         .object()
         .prototype();
     assert!(super::super::url::install(rt.context_mut(), prototype).is_err());
+}
+
+#[test]
+fn default_scrolling_area_and_a_missing_root_bound_only_the_zero_side() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(DefaultUrlHost(host)).unwrap();
+    rt.evaluate("scrollTo(5000, -5);").unwrap();
+    ok(&mut rt, "scrollX === 5000 && scrollY === 0");
+    rt.evaluate("document.removeChild(document.documentElement); scrollTo(7, 9);")
+        .unwrap();
+    ok(&mut rt, "scrollX === 7 && scrollY === 9");
 }

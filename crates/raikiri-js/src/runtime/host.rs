@@ -137,6 +137,17 @@ pub trait DocumentHost: 'static {
     fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
         Ok(None)
     }
+    /// The viewport scrolling area before it is cut to the viewport's
+    /// overflow direction: the initial containing block unioned with the
+    /// margin box of every box laid out in it, in the coordinates
+    /// [`Self::box_geometry`] uses at a zero scroll offset, or `None` when the
+    /// embedder does not know it.
+    /// Called after [`Self::flush`]. The default does not know it.
+    ///
+    /// Spec: <https://drafts.csswg.org/cssom-view/#scrolling-area>
+    fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
+        Ok(None)
+    }
     /// Serialized computed value of `property` on `node`, or `None` when the
     /// property is not supported. Called after [`Self::flush`].
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError>;

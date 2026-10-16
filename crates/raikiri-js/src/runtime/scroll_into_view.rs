@@ -17,7 +17,7 @@ use super::interfaces::HTML_NS;
 use super::node::first_element_child;
 use super::style::read_computed;
 use super::webidl::{this_element, with_state};
-use super::window::{clamp_viewport_offset, scroll_behavior};
+use super::window::{clamp_viewport_scroll, scroll_behavior};
 
 /// A `ScrollLogicalPosition` value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,6 +200,57 @@ fn has_inner_scroll_container(context: &mut Context, index: usize, root: usize) 
     Ok(false)
 }
 
+/// The physical axes of the document element's writing mode: which axis is
+/// the block axis, and whether each axis starts at its low (left or top)
+/// edge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RootAxes {
+    /// Whether the block axis is horizontal (a vertical writing mode).
+    pub(crate) vertical: bool,
+    /// Whether the block-start edge is the low edge of the block axis.
+    pub(crate) block_start_is_low: bool,
+    /// Whether the inline-start edge is the low edge of the inline axis.
+    pub(crate) inline_start_is_low: bool,
+}
+
+impl RootAxes {
+    /// Whether the horizontal axis starts at its left edge.
+    pub(crate) fn x_start_is_low(self) -> bool {
+        if self.vertical {
+            self.block_start_is_low
+        } else {
+            self.inline_start_is_low
+        }
+    }
+
+    /// Whether the vertical axis starts at its top edge.
+    pub(crate) fn y_start_is_low(self) -> bool {
+        if self.vertical {
+            self.inline_start_is_low
+        } else {
+            self.block_start_is_low
+        }
+    }
+}
+
+/// The physical axes of `root`'s computed `writing-mode` and `direction`.
+pub(crate) fn root_axes(context: &mut Context, root: usize) -> JsResult<RootAxes> {
+    let writing_mode = read_computed(context, root, "writing-mode")?;
+    let direction = read_computed(context, root, "direction")?;
+    let ltr = direction.as_deref() != Some("rtl");
+    let (vertical, block_start_is_low, inline_start_is_low) = match writing_mode.as_deref() {
+        Some("vertical-rl" | "sideways-rl") => (true, false, ltr),
+        Some("vertical-lr") => (true, true, ltr),
+        Some("sideways-lr") => (true, true, !ltr),
+        _ => (false, true, ltr),
+    };
+    Ok(RootAxes {
+        vertical,
+        block_start_is_low,
+        inline_start_is_low,
+    })
+}
+
 /// Whether an ancestor of `index` is fixed-position, which keeps `index`
 /// fixed with respect to the viewport too. An ancestor with no box does
 /// not count.
@@ -264,16 +315,11 @@ fn scroll(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<(
     if options.nearest_container && has_inner_scroll_container(context, index, root)? {
         return Ok(());
     }
-    let writing_mode = read_computed(context, root, "writing-mode")?;
-    let direction = read_computed(context, root, "direction")?;
-    let ltr = direction.as_deref() != Some("rtl");
-    // Which physical axis is the block axis, and where each axis starts.
-    let (vertical, block_start_is_low, inline_start_is_low) = match writing_mode.as_deref() {
-        Some("vertical-rl" | "sideways-rl") => (true, false, ltr),
-        Some("vertical-lr") => (true, true, ltr),
-        Some("sideways-lr") => (true, true, !ltr),
-        _ => (false, true, ltr),
-    };
+    let RootAxes {
+        vertical,
+        block_start_is_low,
+        inline_start_is_low,
+    } = root_axes(context, root)?;
     let viewport = with_state(context, |s| s.host.viewport_size())?;
     // A document without a viewport has nothing to scroll.
     let Some((width, height)) =
@@ -302,9 +348,10 @@ fn scroll(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<(
     };
     let x = axis_offset(x_position, x_start_is_low, horizontal, scroll_x, width);
     let y = axis_offset(y_position, y_start_is_low, vertical_span, scroll_y, height);
+    let (x, y) = clamp_viewport_scroll(context, x, y)?;
     with_state(context, |s| {
-        s.viewport_scroll_x = clamp_viewport_offset(x);
-        s.viewport_scroll_y = clamp_viewport_offset(y);
+        s.viewport_scroll_x = x;
+        s.viewport_scroll_y = y;
     })?;
     Ok(())
 }
