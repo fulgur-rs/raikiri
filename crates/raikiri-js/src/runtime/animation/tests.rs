@@ -849,3 +849,24 @@ fn leaving_the_finished_state_replaces_the_finished_promise() {
             .to_boolean()
     );
 }
+
+#[test]
+fn property_indexed_keyframe_members_are_validated() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const refused = keyframes => {\
+               try { target.animate(keyframes, 1); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             };\
+             [{ easing: 'bogus' }, { easing: ['linear', 'bogus'] }, { composite: 'x' },\
+              { composite: new Set(['add', 'x']) }, { offset: 2 }, { offset: [0.6, 0.4] },\
+              { offset: NaN }, { opacity: [0, 1], easing: { [Symbol.iterator]: 1 } }].every(refused)\
+             && !refused({ opacity: [0, 1], easing: ['ease', 'steps(2)'], composite: 'add',\
+                           offset: [0, null, 1] })\
+             && !refused({ color: 'red', easing: 'linear', composite: ['auto'], offset: null })",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}

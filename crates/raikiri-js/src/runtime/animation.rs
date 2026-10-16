@@ -204,38 +204,89 @@ fn is_css_number_syntax(value: &str) -> bool {
     index == bytes.len()
 }
 
+const COMPOSITE_OR_AUTO: &[&str] = &["replace", "add", "accumulate", "auto"];
+
+/// The `@@iterator` method of `value`, or `None` when `value` is not an
+/// object or has none; a method that is not callable throws.
+fn iterator_method(value: &JsValue, context: &mut Context) -> JsResult<Option<JsObject>> {
+    let Some(object) = value.as_object() else {
+        return Ok(None);
+    };
+    let method = object.get(JsSymbol::iterator(), context)?;
+    if method.is_null_or_undefined() {
+        return Ok(None);
+    }
+    method
+        .as_callable()
+        .map(Some)
+        .ok_or_else(|| type_error("@@iterator must be callable"))
+}
+
+/// Call `each` on every value `method` yields when iterating `iterable`.
+fn for_each_iterated(
+    iterable: &JsValue,
+    method: &JsObject,
+    context: &mut Context,
+    mut each: impl FnMut(JsValue, &mut Context) -> JsResult<()>,
+) -> JsResult<()> {
+    let iterator = method.call(iterable, &[], context)?;
+    let iterator = iterator
+        .as_object()
+        .ok_or_else(|| type_error("iterator must be an object"))?;
+    let next = iterator.get(js_string!("next"), context)?;
+    let next = next
+        .as_callable()
+        .ok_or_else(|| type_error("iterator next must be callable"))?;
+    loop {
+        let result = next.call(&iterator.clone().into(), &[], context)?;
+        let result = result
+            .as_object()
+            .ok_or_else(|| type_error("iterator result must be an object"))?;
+        if result.get(js_string!("done"), context)?.to_boolean() {
+            return Ok(());
+        }
+        each(result.get(js_string!("value"), context)?, context)?;
+    }
+}
+
+/// Accept the next keyframe offset when it lies in [0, 1] and does not
+/// precede `previous`.
+fn check_offset(previous: &mut f64, offset: f64) -> JsResult<()> {
+    if !(*previous..=1.0).contains(&offset) {
+        return Err(type_error(
+            "keyframe offsets must lie in [0, 1] in non-decreasing order",
+        ));
+    }
+    *previous = offset;
+    Ok(())
+}
+
+fn check_easings(easings: &[String]) -> JsResult<()> {
+    if easings
+        .iter()
+        .all(|easing| is_valid_easing_function(easing))
+    {
+        Ok(())
+    } else {
+        Err(type_error("keyframe easing must be an <easing-function>"))
+    }
+}
+
 /// Check a keyframe sequence, which the static sampler does not render.
 /// The keyframes come from iterating `sequence` with its `@@iterator`
 /// `method`; every keyframe is a dictionary whose `composite` is a known
 /// operation, offsets that are present lie in [0, 1] in non-decreasing
 /// order, and every `easing` is an `<easing-function>`.
 fn validate_keyframe_sequence(
-    sequence: &JsObject,
+    sequence: &JsValue,
     method: &JsObject,
     context: &mut Context,
 ) -> JsResult<()> {
-    const COMPOSITE_OR_AUTO: &[&str] = &["replace", "add", "accumulate", "auto"];
-    let iterator = method.call(&sequence.clone().into(), &[], context)?;
-    let iterator = iterator
-        .as_object()
-        .ok_or_else(|| type_error("keyframe iterator must be an object"))?;
-    let next = iterator.get(js_string!("next"), context)?;
-    let next = next
-        .as_callable()
-        .ok_or_else(|| type_error("keyframe iterator next must be callable"))?;
     let mut previous_offset = 0.0;
     let mut easings = Vec::new();
-    loop {
-        let result = next.call(&iterator.clone().into(), &[], context)?;
-        let result = result
-            .as_object()
-            .ok_or_else(|| type_error("keyframe iterator result must be an object"))?;
-        if result.get(js_string!("done"), context)?.to_boolean() {
-            break;
-        }
-        let keyframe = result.get(js_string!("value"), context)?;
+    for_each_iterated(sequence, method, context, |keyframe, context| {
         if keyframe.is_null_or_undefined() {
-            continue;
+            return Ok(());
         }
         let keyframe = keyframe
             .as_object()
@@ -250,24 +301,56 @@ fn validate_keyframe_sequence(
         easings.extend(string_member(&keyframe, js_string!("easing"), context)?);
         let offset = keyframe.get(js_string!("offset"), context)?;
         if offset.is_null_or_undefined() {
-            continue;
+            return Ok(());
         }
-        let offset = offset.to_number(context)?;
-        if !(previous_offset..=1.0).contains(&offset) {
-            return Err(type_error(
-                "keyframe offsets must lie in [0, 1] in non-decreasing order",
-            ));
-        }
-        previous_offset = offset;
+        check_offset(&mut previous_offset, offset.to_number(context)?)
+    })?;
+    check_easings(&easings)
+}
+
+/// Call `each` on the values of a `(T or sequence<T>)` dictionary member:
+/// nothing when absent, every yielded value for an iterable object, and
+/// the value itself otherwise.
+fn for_each_member_value(
+    dictionary: &JsObject,
+    name: JsString,
+    context: &mut Context,
+    mut each: impl FnMut(JsValue, &mut Context) -> JsResult<()>,
+) -> JsResult<()> {
+    let value = dictionary.get(name, context)?;
+    if value.is_undefined() {
+        return Ok(());
     }
-    if easings
-        .iter()
-        .all(|easing| is_valid_easing_function(easing))
-    {
+    match iterator_method(&value, context)? {
+        Some(method) => for_each_iterated(&value, &method, context, each),
+        None => each(value, context),
+    }
+}
+
+/// Check the `BasePropertyIndexedKeyframe` members of property-indexed
+/// keyframes: every `composite` is a known operation, every `easing` is an
+/// `<easing-function>`, and non-null offsets lie in [0, 1] in
+/// non-decreasing order.
+fn validate_property_indexed_members(object: &JsObject, context: &mut Context) -> JsResult<()> {
+    for_each_member_value(
+        object,
+        js_string!("composite"),
+        context,
+        |value, context| enum_value(&value, COMPOSITE_OR_AUTO, context).map(drop),
+    )?;
+    let mut easings = Vec::new();
+    for_each_member_value(object, js_string!("easing"), context, |value, context| {
+        easings.push(value.to_string(context)?.to_std_string_escaped());
         Ok(())
-    } else {
-        Err(type_error("keyframe easing must be an <easing-function>"))
-    }
+    })?;
+    let mut previous_offset = 0.0;
+    for_each_member_value(object, js_string!("offset"), context, |value, context| {
+        if value.is_null() {
+            return Ok(());
+        }
+        check_offset(&mut previous_offset, value.to_number(context)?)
+    })?;
+    check_easings(&easings)
 }
 
 /// Parse keyframes into the one sampled property, or `None` when they fall
@@ -285,14 +368,11 @@ fn parse_keyframes(
         .ok_or_else(|| type_error("animation keyframes must be an object"))?;
     // An object with `@@iterator` is a keyframe sequence; any other object
     // holds property-indexed keyframes.
-    let method = object.get(JsSymbol::iterator(), context)?;
-    if !method.is_null_or_undefined() {
-        let method = method
-            .as_callable()
-            .ok_or_else(|| type_error("keyframes @@iterator must be callable"))?;
-        validate_keyframe_sequence(&object, &method, context)?;
+    if let Some(method) = iterator_method(value, context)? {
+        validate_keyframe_sequence(value, &method, context)?;
         return Ok(None);
     }
+    validate_property_indexed_members(&object, context)?;
     let keys = object.own_property_keys(context)?;
     let [PropertyKey::String(name)] = keys.as_slice() else {
         return Ok(None);
@@ -475,13 +555,24 @@ fn enum_member(
     values: &'static [&'static str],
     context: &mut Context,
 ) -> JsResult<Option<&'static str>> {
-    let Some(value) = string_member(dictionary, name, context)? else {
+    let value = dictionary.get(name, context)?;
+    if value.is_undefined() {
         return Ok(None);
-    };
+    }
+    enum_value(&value, values, context).map(Some)
+}
+
+/// A WebIDL enumeration value: a string outside `values` throws.
+fn enum_value(
+    value: &JsValue,
+    values: &'static [&'static str],
+    context: &mut Context,
+) -> JsResult<&'static str> {
+    let value = value.to_string(context)?.to_std_string_escaped();
     values
         .iter()
         .find(|candidate| **candidate == value)
-        .map(|candidate| Some(*candidate))
+        .copied()
         .ok_or_else(|| type_error("animation option is not a valid enumeration value"))
 }
 
