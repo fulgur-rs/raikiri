@@ -1,12 +1,12 @@
 //! Lay out a paragraph together with the boxes that sit in its lines.
 
+use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use super::clear_breaks::ClearBreakIndex;
 use super::flow::{FlowGeometry, LineSpace, MAX_SPACE_RETRIES, line_space, resolve_indent};
 use super::generated_blocks;
 use super::root::{IfcBoxFragment, IfcLines, IfcRoot, with_state};
 use crate::Document;
 use crate::fragment::FragmentationContext;
-use crate::taffy_impl::block_flow::context::{BlockContext, BlockFormattingContext};
 use crate::taffy_impl::resolve_calc;
 use shodo::geometry::{Direction, WritingMode};
 use shodo::{

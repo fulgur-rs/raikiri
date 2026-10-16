@@ -13,6 +13,8 @@ raikiri-net    = { workspace = true }
 raikiri-dom    = { workspace = true }
 raikiri-html   = { workspace = true }
 raikiri-paint  = { workspace = true }
+# Physical axes of the retained IFC layout exposed by raikiri-dom.
+shodo         = { workspace = true }
 # Re-export `Url` so Consumers can name `raikiri::Url` when constructing
 # `raikiri::ParseOptions { base_url: Some(Url::parse(...)), ... }` without
 # adding `url` as a direct dep.

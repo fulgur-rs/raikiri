@@ -196,12 +196,11 @@ fn vertical_rl_body_stacks_its_paragraphs_from_the_right() {
     let body = absolute_rect(&doc, body);
     let first = absolute_rect(&doc, paragraphs[0]);
     let second = absolute_rect(&doc, paragraphs[1]);
-    // One 10px column each, from the right edge of the body's content box
-    // (inside its 8px margin) leftwards, 10px apart from the left margin of
-    // the first.
-    assert_eq!(body, (0.0, 0.0, 800.0, 600.0));
-    assert_eq!((first.0, first.1, first.2), (782.0, 8.0, 10.0));
-    assert_eq!((second.0, second.1, second.2), (762.0, 8.0, 10.0));
+    // The orthogonal auto-sized body uses its max-content inline size (50px).
+    // Its two 10px columns and their left margins occupy 40px across the page.
+    assert_eq!(body, (8.0, 8.0, 40.0, 50.0));
+    assert_eq!((first.0, first.1, first.2), (38.0, 8.0, 10.0));
+    assert_eq!((second.0, second.1, second.2), (18.0, 8.0, 10.0));
 }
 
 #[test]
@@ -328,15 +327,14 @@ fn layout_body_in(
 
 #[test]
 fn vertical_body_of_text_keeps_its_bottom_margin() {
-    // The body's lines run down the page: its top and bottom margins are
-    // inline margins, carried as padding like the left and right ones.
+    // The body's inline margins remain margins outside its own border box.
     let (doc, ids) = layout_body(
         "display:block;margin:8px;writing-mode:vertical-rl",
         &[("text", "", "aa bb")],
     );
-    let eight = LengthPercentage::length(8.0);
-    let padding = doc.nodes[ids[0]].style.padding;
-    assert_eq!((padding.top, padding.bottom), (eight, eight));
+    let layout = doc.nodes[ids[0]].unrounded_layout;
+    assert_eq!((layout.margin.top, layout.margin.bottom), (8.0, 8.0));
+    assert_eq!((layout.padding.top, layout.padding.bottom), (0.0, 0.0));
 }
 
 #[test]
@@ -436,15 +434,9 @@ fn vertical_body_percentages_follow_the_root_inline_size() {
     let body = "display:block;margin:0;padding-top:10%;writing-mode:vertical-rl";
     let children = [("text", "", "aa bb")];
     let (doc, ids) = layout_body_in("display:block;writing-mode:vertical-rl", body, &children);
-    assert_eq!(
-        doc.nodes[ids[0]].style.padding.top,
-        LengthPercentage::length(60.0)
-    );
+    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.top, 60.0);
     let (doc, ids) = layout_body_in("display:block", body, &children);
-    assert_eq!(
-        doc.nodes[ids[0]].style.padding.top,
-        LengthPercentage::length(80.0)
-    );
+    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.top, 80.0);
 }
 
 #[test]
@@ -486,8 +478,8 @@ fn vertical_container_padding_percentages_follow_a_horizontal_parent() {
 #[test]
 fn vertical_container_padding_looks_through_a_contents_parent() {
     // A horizontal `display: contents` parent has no box: the containing
-    // block is the vertical body around it, whose inline size is the 600px
-    // page height, so `padding-right: 10%` is 60px.
+    // block is the vertical body around it. Its auto inline size fits the
+    // 200px-tall child, so `padding-right: 10%` is 20px.
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
     let body = doc.append_element(
@@ -518,8 +510,8 @@ fn vertical_container_padding_looks_through_a_contents_parent() {
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
     layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
-    assert_eq!(absolute_rect(&doc, container).2, 160.0);
-    assert_eq!(absolute_rect(&doc, child).0, 720.0);
+    assert_eq!(absolute_rect(&doc, container).2, 120.0);
+    assert_eq!(absolute_rect(&doc, child).0, 80.0);
 }
 
 #[test]

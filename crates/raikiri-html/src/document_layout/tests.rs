@@ -1137,8 +1137,8 @@ fn link_paint_quads_cover_every_line_of_a_link() {
     }
 }
 
-// The painter adds the body's relative offset, and places a fixed box in
-// the page area from its insets, apart from the offsets around it.
+// Layout includes the body's relative offset in its used coordinates;
+// viewport-fixed geometry remains relative to the page area.
 #[test]
 fn link_paint_quads_of_a_fixed_box_leave_the_offsets_around_it() {
     let layout = laid_out(
@@ -1152,8 +1152,10 @@ fn link_paint_quads_of_a_fixed_box_leave_the_offsets_around_it() {
     let a = find(&page.dom(), page.dom().root(), "a").unwrap();
     assert_eq!(
         page.paint_transform(span),
-        Some(PaintTransform::translate(10.0, 4.0))
+        Some(PaintTransform::IDENTITY)
     );
+    let body = page.fragments().find(|fragment| page.dom().local_name(fragment.node()) == Some("body")).expect("body box");
+    assert_eq!((body.rect().x, body.rect().y), (10.0, 4.0));
     let fixed = page.paint_transform(a).unwrap();
     assert_eq!((fixed.e, fixed.f), (0.0, 0.0));
 }
@@ -1817,7 +1819,7 @@ fn a_layout_without_a_base_url_uses_the_parse_time_base_url() {
 }
 
 #[test]
-fn root_box_spans_the_pages_known_on_its_page() {
+fn root_box_keeps_its_used_height_when_the_page_count_is_deferred() {
     let result = laid_out(
         "<style>@page { size: 200px 100px; margin: 0 } body { margin: 0 }</style>\
          <div style=\"height: 250px\"></div>",
@@ -1826,12 +1828,11 @@ fn root_box_spans_the_pages_known_on_its_page() {
     let page = result.page(1).expect("second page");
     let root = page.root_box().expect("root box");
     assert_eq!(root.border_box.y, -100.0);
-    assert_eq!(root.border_box.height, 300.0);
-    // Before the number of pages is known, the root reaches through the
-    // pages streamed so far.
+    assert_eq!(root.border_box.height, 250.0);
+    // Deferring the page count changes metadata, not the laid-out root box.
     let streamed = page.with_deferred_page_count(999_999_999);
     assert_eq!(
         streamed.root_box().expect("root box").border_box.height,
-        200.0
+        250.0
     );
 }

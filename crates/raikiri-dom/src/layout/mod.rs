@@ -13,6 +13,7 @@ use raikiri_traits::{NodeId, NodeKind, ReplacedResolver};
 use std::collections::{HashMap, HashSet};
 
 use crate::document::Document;
+use crate::taffy_impl::block_flow::context::BlockContext;
 use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
 use crate::taffy_impl::block_flow::context::BlockContext;
@@ -90,7 +91,8 @@ mod static_position;
 #[cfg(test)]
 pub(crate) mod test_support;
 
-use body_overflow::*;
+use body_overflow::propagate_body_overflow_to_viewport;
+pub(crate) use body_overflow::viewport_overflow_source;
 pub(crate) use box_tree::{BoxParentScope, box_parent};
 pub(crate) use compact_length::{
     resolve_dimension, resolve_length_percentage, resolve_length_percentage_auto,

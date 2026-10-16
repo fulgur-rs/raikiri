@@ -112,7 +112,7 @@ fn ifc_parent_inline_size(
             .unwrap_or(0.0)
     };
     let vertical = tree
-        .parent_of(node)
+        .taffy_parent_of(node)
         .is_some_and(|parent| tree.nodes[parent].used_writing_mode.is_vertical());
     Some(if vertical {
         parent_size

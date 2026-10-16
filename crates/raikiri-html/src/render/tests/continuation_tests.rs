@@ -647,8 +647,8 @@ fn a_formatting_context_body_keeps_its_last_blocks_margin() {
 #[test]
 fn generated_overflow_leaves_a_definite_body_height() {
     // The `::after` overflows the 10px body onto the third page. The body
-    // keeps the box layout gave it, the page area and its border, and does
-    // not follow its overflow there.
+    // keeps its authored 10px content height plus its 1px borders, and
+    // does not follow its generated overflow onto those later pages.
     let out = run(&format!(
         "{}<style>body {{ height: 10px; border: 1px solid }} \
          body::after {{ content: ''; display: block; height: 400px }}</style>",
@@ -656,7 +656,7 @@ fn generated_overflow_leaves_a_definite_body_height() {
     ));
     assert_eq!(
         body_on_pages(&out),
-        vec![Some((20.0, 160.0)), Some((20.0, 2.0)), None]
+        vec![Some((20.0, 12.0)), None, None]
     );
 }
 

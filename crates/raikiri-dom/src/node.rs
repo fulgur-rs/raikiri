@@ -635,6 +635,9 @@ impl Node {
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
         self.box_properties = BoxProperties::new(display, position);
+        if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
+            self.box_properties.blockify_root();
+        }
         self.refresh_box_style();
     }
 

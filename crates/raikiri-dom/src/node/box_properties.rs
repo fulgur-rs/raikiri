@@ -4,6 +4,33 @@ use raikiri_style::ComputedValues;
 use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::NodeKind;
 
+/// CSS Display 3 §2.8: blockify the document element while preserving its
+/// inner formatting algorithm. Unlike ordinary contents boxes, a contents
+/// root computes to block and retains its own box properties.
+fn blockify_root_display(display: DisplayValue) -> DisplayValue {
+    match display {
+        DisplayValue::Inline | DisplayValue::Contents => DisplayValue::Block,
+        DisplayValue::InlineBlock => DisplayValue::FlowRoot,
+        DisplayValue::InlineFlex => DisplayValue::Flex,
+        DisplayValue::InlineGrid => DisplayValue::Grid,
+        DisplayValue::InlineTable => DisplayValue::Table,
+        DisplayValue::Ruby => DisplayValue::BlockRuby,
+        DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup
+        | DisplayValue::TableRow
+        | DisplayValue::TableColumnGroup
+        | DisplayValue::TableColumn
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption
+        | DisplayValue::RubyBase
+        | DisplayValue::RubyText
+        | DisplayValue::RubyBaseContainer
+        | DisplayValue::RubyTextContainer => DisplayValue::Block,
+        other => other,
+    }
+}
+
 /// The computed display and position captured before layout classifies a box.
 #[derive(Debug, Clone)]
 pub(crate) struct BoxProperties {
@@ -33,6 +60,10 @@ impl BoxProperties {
             taffy::Position::Absolute => PositionValue::Absolute,
         };
         Self::new(display, position)
+    }
+
+    pub(crate) fn blockify_root(&mut self) {
+        self.display = blockify_root_display(self.display);
     }
 
     pub(crate) fn display(&self) -> DisplayValue {
@@ -115,6 +146,11 @@ impl<'a> BoxPropertiesRef<'a> {
             display: values.display,
             position: &values.position,
         }
+    }
+
+    pub(crate) fn blockify_root(mut self) -> Self {
+        self.display = blockify_root_display(self.display);
+        self
     }
 
     pub(crate) fn display(self) -> DisplayValue {

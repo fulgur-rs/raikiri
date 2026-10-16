@@ -431,12 +431,6 @@ pub struct Document {
     /// index taffy has started and not finished, listed when taffy counted
     /// them.
     pub(crate) taffy_child_walks: std::cell::RefCell<HashMap<usize, Vec<taffy::NodeId>>>,
-    /// Used left and right margins of `<body>` that the most recent layout
-    /// carried as inline padding of the synthetic body root.
-    pub(crate) body_inline_margins: (f32, f32),
-    /// Used block-start margin of `<body>` that the most recent layout placed
-    /// inside the synthetic body root.
-    pub(crate) body_block_start_margin: f32,
     /// Width and height of the page area of the most recent layout: the
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
@@ -748,8 +742,6 @@ impl Document {
             normal_line_height: None,
             layout_cascade_generation: None,
             taffy_child_walks: Default::default(),
-            body_inline_margins: (0.0, 0.0),
-            body_block_start_margin: 0.0,
             fixed_page_area: None,
             in_flow_heights: HashMap::new(),
             pagination_on_transposed_axes: false,
@@ -1160,38 +1152,6 @@ impl Document {
     /// [`Self::inclusive_ancestors`] (so not through a `<template>` host).
     pub fn is_ancestor_or_self(&self, ancestor: usize, node: usize) -> bool {
         self.inclusive_ancestors(node).any(|id| id == ancestor)
-    }
-
-    /// Used left and right margins of `<body>`, in CSS pixels, as of the most
-    /// recent layout.
-    ///
-    /// Layout lays `<body>` out as the root box spanning the page content
-    /// width and carries these margins as extra inline padding of that root,
-    /// so the body's `unrounded_layout.padding` includes them and its
-    /// content already sits inside them. A consumer that needs the body's
-    /// own border box insets the root box by these values; one that needs
-    /// the authored padding subtracts them from the laid-out padding. Both
-    /// are 0 before the first layout.
-    #[doc(hidden)]
-    pub fn body_inline_margins(&self) -> (f32, f32) {
-        self.body_inline_margins
-    }
-
-    /// Used block-start margin of `<body>`, in CSS pixels, as of the most
-    /// recent layout.
-    ///
-    /// This is the body's top margin collapsed with the top margins of its
-    /// first in-flow children when they adjoin (CSS 2.1 §8.3.1), or the
-    /// body's own margin when they do not. Layout lays `<body>` out as the
-    /// root box at the top of the page content box and moves the body's
-    /// content down by this value, so laid-out coordinates already include
-    /// it. A consumer that needs the body's own border box insets the top of
-    /// the root box by it. It can be negative, and is 0 before the first
-    /// layout. The `<html>` margin is not included: margins of the root
-    /// element's box do not collapse, and the body root does not carry them.
-    #[doc(hidden)]
-    pub fn body_block_start_margin(&self) -> f32 {
-        self.body_block_start_margin
     }
 
     /// Fragments emitted by the most recent layout pass.
@@ -2150,8 +2110,6 @@ impl Document {
             normal_line_height,
             layout_cascade_generation: _,
             taffy_child_walks: _,
-            body_inline_margins: _,
-            body_block_start_margin: _,
             fixed_page_area: _,
             in_flow_heights: _,
             pagination_on_transposed_axes: _,
@@ -3057,6 +3015,15 @@ impl Document {
     /// `NodeId` newtype.
     pub fn root_index(&self) -> usize {
         self.root
+    }
+
+    /// Arena index of the document element, excluding detached fragments and
+    /// layout-only boxes. Source DOM parent and child links determine it.
+    pub fn document_element_index(&self) -> Option<usize> {
+        self.nodes[self.root].children.iter().copied().find(|&id| {
+            self.get_node(id)
+                .is_some_and(|node| node.kind() == raikiri_traits::NodeKind::Element)
+        })
     }
 
     /// Mark the layout cache dirty after a tree mutation. The next

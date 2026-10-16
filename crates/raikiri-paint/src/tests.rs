@@ -1062,8 +1062,8 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
 
-    // Check that margin=20 makes p.location nonzero: a precondition for
-    // actually exercising the accumulation logic.
+    // The paragraph's top margin collapses through its ordinary body;
+    // accumulating both boxes must still reach (20,20) in page-area space.
     let p_loc = doc.get_node(p).unwrap().unrounded_layout.location;
     assert!(
         p_loc.x >= 20.0,
@@ -1071,9 +1071,8 @@ fn paint_single_page_positions_glyphs_via_absolute_offset() {
         p_loc.x
     );
     assert!(
-        p_loc.y >= 20.0,
-        "p.location.y should reflect margin=20, got {}",
-        p_loc.y
+        p_loc.y + doc.get_node(body).unwrap().unrounded_layout.location.y >= 20.0,
+        "the body's collapsed margin must contribute to the paragraph origin"
     );
 
     // Expected accumulated location = body.location + p.location + text.location.
@@ -2177,6 +2176,7 @@ fn trace_records_box_clip_opacity_and_text_in_walk_order() {
         .map(|e| match e {
             PaintTraceEvent::PushOpacity(id, _) if *id == o => "PushOpacity(o)",
             PaintTraceEvent::PushOpacity(..) => "PushOpacity",
+            PaintTraceEvent::Box(id) if *id == html => "Box(html)",
             PaintTraceEvent::Box(id) if *id == body => "Box(body)",
             PaintTraceEvent::Box(id) if *id == o => "Box(o)",
             PaintTraceEvent::Box(_) => "Box",
@@ -2191,6 +2191,7 @@ fn trace_records_box_clip_opacity_and_text_in_walk_order() {
     assert_eq!(
         kinds,
         [
+            "Box(html)",
             "Box(body)",
             "PushOpacity(o)",
             "Box(o)",

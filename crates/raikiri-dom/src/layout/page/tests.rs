@@ -1688,48 +1688,47 @@ fn lay_out_body_with_children(
 #[test]
 fn body_inline_margins_place_and_narrow_the_body_content() {
     let (width, body, flow, abs) = lay_out_body_with_children("display:block;margin:0 10px 0 30px");
-    assert_eq!(flow.location.x, 30.0);
+    assert_eq!(body.location.x + flow.location.x, 30.0);
     assert_eq!(flow.size.width, width - 40.0);
     // The static position of an out-of-flow child starts at the same edge.
-    assert_eq!(abs.location.x, 30.0);
-    // The synthetic root keeps the page content width.
-    assert_eq!(body.size.width, width);
-    assert_eq!((body.padding.left, body.padding.right), (30.0, 10.0));
-    assert_eq!((body.margin.left, body.margin.right), (0.0, 0.0));
+    assert_eq!(body.location.x + abs.location.x, 30.0);
+    assert_eq!(body.size.width, width - 40.0);
+    assert_eq!((body.padding.left, body.padding.right), (0.0, 0.0));
+    assert_eq!((body.margin.left, body.margin.right), (30.0, 10.0));
 }
 
 #[test]
 fn body_inline_margins_add_to_padding_and_resolve_percentages() {
-    let (width, _, flow, _) =
+    let (width, body, flow, _) =
         lay_out_body_with_children("display:block;margin:0 10%;padding:0 5px 0 2px");
     let margin = width * 0.1;
-    assert!((flow.location.x - (margin + 2.0)).abs() < 1e-3);
+    assert!((body.location.x + flow.location.x - (margin + 2.0)).abs() < 1e-3);
     assert!((flow.size.width - (width - 2.0 * margin - 7.0)).abs() < 1e-3);
 }
 
 #[test]
-fn content_box_body_border_box_spans_the_page_content_width() {
+fn content_box_body_border_box_excludes_its_inline_margins() {
     let (width, body, flow, _) =
         lay_out_body_with_children("display:block;margin:0 20px;border:0 solid;border-width:0 3px");
-    assert_eq!(body.size.width, width);
-    assert_eq!(flow.location.x, 23.0);
+    assert_eq!(body.size.width, width - 40.0);
+    assert_eq!(body.location.x + flow.location.x, 23.0);
     assert_eq!(flow.size.width, width - 46.0);
 }
 
 #[test]
-fn body_inline_margins_ignore_auto_and_negative_values() {
+fn body_inline_auto_and_negative_margins_follow_the_block_width_equation() {
     let (width, _, flow, _) =
         lay_out_body_with_children("display:block;margin-left:auto;margin-right:-20px");
     assert_eq!(flow.location.x, 0.0);
-    assert_eq!(flow.size.width, width);
+    assert_eq!(flow.size.width, width + 20.0);
 }
 
 #[test]
 fn border_box_body_takes_its_inline_margins_out_of_the_content_box() {
     let (width, body, flow, _) =
         lay_out_body_with_children("display:block;box-sizing:border-box;margin:0 20px");
-    assert_eq!(body.size.width, width);
-    assert_eq!(flow.location.x, 20.0);
+    assert_eq!(body.size.width, width - 40.0);
+    assert_eq!(body.location.x + flow.location.x, 20.0);
     assert_eq!(flow.size.width, width - 40.0);
 }
 
@@ -1757,7 +1756,10 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
     let width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
     let layout = doc.nodes[abs].unrounded_layout;
     assert_eq!(layout.size.width, width / 2.0);
-    assert_eq!(layout.location.x, width / 2.0);
+    assert_eq!(
+        doc.nodes[body].unrounded_layout.location.x + layout.location.x,
+        width / 2.0
+    );
 }
 
 #[test]

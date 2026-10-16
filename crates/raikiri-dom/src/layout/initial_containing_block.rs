@@ -7,11 +7,7 @@ use taffy::{Dimension, Size, Style};
 /// The document element whose principal box is a child of the ICB.
 /// Source parents and children remain the DOM tree throughout layout.
 pub(crate) fn root_element(document: &Document) -> Option<usize> {
-    document.nodes[document.root]
-        .children
-        .iter()
-        .copied()
-        .find(|&id| document.nodes[id].kind() == raikiri_traits::NodeKind::Element)
+    document.document_element_index()
 }
 
 /// Capture the document-element role before box lowering and IFC selection.
@@ -27,7 +23,9 @@ pub(crate) fn prepare(document: &mut Document, width: f32, height: f32) -> usize
     let mut node = Node::new_element(
         "".into(),
         Style {
-            display: taffy::Display::FlowRoot,
+            // The native root establishes its BFC and resolves a Block root's
+            // definite dimensions before its children need percentage bases.
+            display: taffy::Display::Block,
             size: Size {
                 width: Dimension::length(width),
                 height: Dimension::length(height),

@@ -38,15 +38,15 @@ fn contents_chain_stops_at_a_box_from_the_cascade() {
 }
 
 #[test]
-fn only_layout_root_scope_keeps_a_contents_body() {
-    let (document, cascade, [html, body, _, child]) = contents_chain("display:contents");
+fn a_contents_body_is_flattened_in_both_parent_scopes() {
+    let (document, cascade, [html, _, _, child]) = contents_chain("display:contents");
     assert_eq!(
         box_parent(&document, &cascade, child, BoxParentScope::Document),
         Some(html)
     );
     assert_eq!(
         box_parent(&document, &cascade, child, BoxParentScope::LayoutRoot),
-        Some(body)
+        Some(html)
     );
 }
 

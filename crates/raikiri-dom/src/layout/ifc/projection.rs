@@ -149,7 +149,7 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
 /// box it sits in, with the `<br>`'s own `line-height` (resolved, like
 /// `normal` or a number, against that box's font) and baseline alignment.
 /// The box is the nearest ancestor that generates one: `display: contents`
-/// generates none, except on the body layout starts at. Its
+/// generates none, while the document element is blockified. Its
 /// `vertical-align` places that box, not the break.
 /// `None` outside quirks mode, where the break takes the enclosing box's
 /// strut unchanged.

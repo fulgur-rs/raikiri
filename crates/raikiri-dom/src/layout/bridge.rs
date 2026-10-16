@@ -275,6 +275,7 @@ pub(crate) fn apply_computed_to_style(
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
         doc.nodes[idx].needs_relative_block_paint_offset = false;
         let vertical_axes = uses_vertical_axes(cascade, idx);
+        let is_contents = doc.nodes[idx].display() == DisplayValue::Contents;
         let style = &mut doc.nodes[idx].style;
         bridge_direction(style, cv, vertical_axes);
         bridge_inset(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
@@ -307,7 +308,7 @@ pub(crate) fn apply_computed_to_style(
         bridge_alignment(style, cv);
         bridge_gap(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_grid(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        if cv.display == DisplayValue::Contents {
+        if is_contents {
             // A `display: contents` element generates no box (CSS Display 3
             // §2.5). Where layout still keeps a node for it, the node stands
             // in for the anonymous box its contents would get, so none of

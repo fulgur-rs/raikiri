@@ -235,52 +235,6 @@ impl CanvasArea {
     }
 }
 
-/// Paint the root element border at the page edge when the document uses it
-/// as the page-box reference.  The document walk starts at `body`, so the
-/// root decoration needs this separate page-local paint site.
-pub(crate) fn paint_root_element_border(
-    image_cache: &crate::walk::ImageBrushCache,
-    scene: &mut impl PaintScene,
-    document: &Document,
-    cascade: &CascadeResult,
-    page_box: PageBox,
-    pixel_source: Option<&dyn ImagePixelSource>,
-    warnings: &mut Vec<RenderWarning>,
-) {
-    let Some(html_id) = find_html(document) else {
-        return;
-    };
-    let Some(computed) = cascade.computed.get(html_id) else {
-        return;
-    };
-    // The root element's border image replaces its border styles like any
-    // other box's (CSS Backgrounds 3 §6.1).
-    if paint_element_border_image(
-        image_cache,
-        scene,
-        page_box.width,
-        page_box.height,
-        0.0,
-        0.0,
-        computed,
-        &computed.border_image,
-        &computed.border,
-        pixel_source,
-        warnings,
-    ) {
-        return;
-    }
-    paint_element_border(
-        scene,
-        page_box.width,
-        page_box.height,
-        0.0,
-        0.0,
-        &computed.border,
-        computed.color,
-    );
-}
-
 /// Paint the page-context border around the page content area.
 ///
 /// Page borders are ordinary `@page` declarations, but they do not belong to
@@ -1987,7 +1941,7 @@ pub(crate) fn paint_document_impl(
     root_transform: Affine,
     mut trace: Option<&mut Vec<crate::PaintTraceEvent>>,
 ) {
-    let Some(body_id) = raikiri_dom::paint_rules::find_paint_root(document) else {
+    let Some(root_id) = document.document_element_index() else {
         return;
     };
 
@@ -1999,27 +1953,11 @@ pub(crate) fn paint_document_impl(
         raikiri_dom::paint_rules::named_page_matches(document, cascade, node_id, active_page_name)
     };
 
-    // The body's parent (`<html>`) font-size is available only from a
-    // separate traversal (`find_paint_root`), not from this stack. Use the body's
-    // own font-size as a self-referential fallback. The UA default display
-    // for body is block, so `vertical_align_shift_px` always ignores this
-    // value through its inline-level gate. Except for pathological input
-    // overriding body with `display: inline`, its accuracy does not matter.
-    let body_font_size = cascade.computed[body_id].font_size.px();
-    // The paint walk starts at `<body>` because the html box itself is not a
-    // paint item here. Seed the context with html's originating decoration so
-    // root-element lines still propagate through the body subtree.
-    let empty_decorations = text::DecorationContext::default();
-    let root_decorations = find_html(document)
-        .map(|html_id| {
-            text::decorations_for_element(
-                &empty_decorations,
-                NodeId::new(html_id as u64),
-                &cascade.computed[html_id],
-                0.0,
-            )
-        })
-        .unwrap_or_else(|| empty_decorations.clone());
+    let root_font_size = cascade.computed[root_id].font_size.px();
+    let canvas_owner = canvas_background_owner(document, cascade);
+    // The walk visits the root itself, so originating decorations enter the
+    // context exactly once through the ordinary element path.
+    let root_decorations = text::DecorationContext::default();
     let layout_fragments = document.layout_fragments();
     let mut fragments_by_parent_and_node =
         std::collections::HashMap::<(Option<usize>, usize), Vec<usize>>::new();
@@ -2204,86 +2142,6 @@ pub(crate) fn paint_document_impl(
     } else {
         (0.0, content_origin_y)
     };
-    // A body background is normally propagated to the canvas. When the body
-    // has authored padding, its border box can still extend beyond the
-    // synthetic canvas width used by this paint walk; paint that visible
-    // padding strip as part of the body box. This preserves the CSS body
-    // background in cases such as `body { width: 20em; padding-right: 1em }`
-    // without flooding the rest of the page.
-    // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
-    if cascade.computed[body_id].background_color.a != 0
-        // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
-        && !cascade.computed[body_id].has_background_image()
-    // cov:ignore: authored body-padding propagation is exercised by the ignored image-enabled WPT run.
-    {
-        let Some(body) = document.get_node(body_id) else {
-            return;
-        };
-        // The root's padding also carries the body's horizontal margins;
-        // only the authored padding is part of the body box.
-        let right_padding =
-            (body.unrounded_layout.padding.right - document.body_inline_margins().1).max(0.0);
-        if right_padding > 0.0 {
-            // Layout moves the content of a body that is not one paragraph
-            // below the body's block-start margin without changing its
-            // padding; a paragraph body carries that margin in its padding.
-            let content_shift = if body.is_ifc_root() {
-                0.0
-            } else {
-                document.body_block_start_margin()
-            };
-            let content_end = body
-                .children
-                .iter()
-                .filter_map(|&child| {
-                    let node = document.get_node(child)?;
-                    (node.is_in_document() && node.unrounded_layout.size.height > 0.0).then_some(
-                        node.unrounded_layout.location.x + node.unrounded_layout.size.width,
-                    )
-                })
-                .fold(0.0_f32, f32::max);
-            let content_bottom = body
-                .children
-                .iter()
-                .filter_map(|&child| {
-                    let node = document.get_node(child)?;
-                    node.is_in_document().then_some(
-                        node.unrounded_layout.location.y + node.unrounded_layout.size.height,
-                    )
-                })
-                .fold(0.0_f32, f32::max);
-            if content_end > 0.0 && content_bottom > 0.0 {
-                // On a page that follows the x axis the strip belongs to the
-                // page whose page area it lies across; keep it out of the
-                // margins beside that area. The clip is in page coordinates,
-                // so it undoes the root element's transform.
-                let band_clip = pages_follow_x_axis.map(|_| {
-                    let left = f64::from(margins.left + insets.left);
-                    let extent = f64::from(FLOW_EXTENT);
-                    Rect::new(left, -extent, left + f64::from(content_width), extent)
-                });
-                if let Some(clip) = &band_clip {
-                    scene.push_clip_layer(root_transform.inverse(), clip);
-                }
-                scene.fill(
-                    Fill::NonZero,
-                    Affine::IDENTITY,
-                    css_color(cascade.computed[body_id].background_color),
-                    None,
-                    &Rect::new(
-                        (page_offset_x + body.unrounded_layout.padding.left) as f64,
-                        (page_offset_y + body.unrounded_layout.padding.top + content_shift) as f64,
-                        (page_offset_x + content_end + right_padding) as f64,
-                        (page_offset_y + content_bottom + body.unrounded_layout.padding.bottom)
-                            as f64,
-                    ),
-                );
-                if band_clip.is_some() {
-                    scene.pop_layer();
-                }
-            }
-        }
-    }
     // Element backgrounds can extend past the page content box, for example
     // through negative margins. Clip those backgrounds to the physical
     // content box without clipping text ink, which may legitimately overflow
@@ -2385,10 +2243,10 @@ pub(crate) fn paint_document_impl(
     let mut stack = vec![
         PaintFrame::EndDeferral,
         PaintFrame::Visit {
-            node_id: body_id,
+            node_id: root_id,
             parent_abs_x: 0.0,
             parent_abs_y: 0.0,
-            parent_font_size: body_font_size,
+            parent_font_size: root_font_size,
             shift_y: 0.0,
             transform_x: 0.0,
             transform_y: 0.0,
@@ -3045,6 +2903,8 @@ pub(crate) fn paint_document_impl(
                 let abs_x = parent_abs_x + layout.location.x;
                 let abs_y = parent_abs_y + layout.location.y;
                 let cv = &cascade.computed[node_id];
+                let generates_box =
+                    node_id == root_id || raikiri_dom::paint_rules::generates_box(cv);
                 let paint_padding = used_padding_for_paint(cv, &layout);
                 let has_border = [
                     &cv.border.top,
@@ -3074,20 +2934,20 @@ pub(crate) fn paint_document_impl(
                 let blockified_item = document.layout_parent_of(node_id).is_some_and(|parent| {
                     cascade.computed[parent].display.is_flex_or_grid_container()
                 });
-                let own_shift = if placed_by_inline_engine || blockified_item {
+                let own_shift = if node_id == root_id || placed_by_inline_engine || blockified_item
+                {
                     0.0
                 } else {
                     vertical_align_shift_px(cv.vertical_align, cv.display, parent_font_size)
                 };
                 let child_shift_y = shift_y + own_shift;
                 // Taffy and the IFC block/atomic placement paths already apply
-                // relative insets. Keep the legacy paint offset for the body
-                // root, floats, explicit multicol fragments and manually
-                // placed table parts. Those paths still use paint-side insets.
+                // relative insets. Floats, explicit multicol fragments and
+                // manually placed table parts still use paint-side insets.
                 let needs_paint_inset = raikiri_dom::placed_without_relative_offset(
                     document,
                     cascade,
-                    Some(body_id),
+                    Some(root_id),
                     node_id,
                     cv,
                 ) || (is_fragment_visit && !cv.display.is_inline_level());
@@ -3103,7 +2963,9 @@ pub(crate) fn paint_document_impl(
                 } else {
                     (0.0, 0.0)
                 };
-                let transformable = raikiri_dom::is_transformable(document, node_id, cv);
+                // The caller already applies the root matrix to the whole document.
+                let transformable =
+                    node_id != root_id && raikiri_dom::is_transformable(document, node_id, cv);
                 let (own_transform_x, own_transform_y) = if transformable {
                     transform_translation(cv, layout.size.width, layout.size.height)
                 } else {
@@ -3215,7 +3077,7 @@ pub(crate) fn paint_document_impl(
                 let visibility_hidden_table =
                     raikiri_dom::paint_rules::is_visibility_hidden_table(cv);
                 let mut paints_on_page = !visibility_hidden_table
-                    && (node_id == body_id
+                    && (node_id == root_id
                         || ((fixed_in_viewport || named_page_matches(node_id))
                             && (fixed_in_viewport
                                 || inside_fixed
@@ -3432,15 +3294,10 @@ pub(crate) fn paint_document_impl(
                     && !raikiri_dom::paint_rules::hides_empty_table_cell(document, cascade, node_id)
                 {
                     if let Some(t) = trace.as_deref_mut()
-                        && raikiri_dom::paint_rules::generates_box(cv)
+                        && generates_box
                     {
                         t.push(crate::PaintTraceEvent::Box(node_id));
                     }
-                    // A body background is propagated to the page canvas.  For
-                    // a non-zero page margin, painting the body border box as
-                    // well would leak that color into the translated top/bottom
-                    // margin on every page after the first; the canvas pass has
-                    // already filled the content rectangle at page-local coords.
                     let grid = node.table_grid_box();
                     let own_paint_x = paint_x + grid.map_or(0.0, |rect| rect.x);
                     let own_paint_width = grid.map_or(layout.size.width, |rect| rect.width);
@@ -3483,12 +3340,9 @@ pub(crate) fn paint_document_impl(
                     // A `display: contents` element has no box whose
                     // background, borders or outline could paint; its
                     // generated content still does.
-                    let paints_table_part = raikiri_dom::paint_rules::generates_box(cv)
+                    let paints_table_part = generates_box
                         && !raikiri_dom::paint_rules::is_visibility_hidden_table_part(cv);
-                    if node_id != body_id && paints_table_part {
-                        // The body canvas background was already propagated by
-                        // `paint_canvas_background`; do not paint it a second
-                        // time on the synthetic body root.
+                    if paints_table_part {
                         // Paint element background (CSS Backgrounds 3 §2.2).
                         // Shift applies to the box itself per CSS 2.1 §10.8.1.
                         let clip_background = page_content_clip.filter(|_| {
@@ -3534,22 +3388,26 @@ pub(crate) fn paint_document_impl(
                                 &path,
                             );
                         }
-                        paint_element_background(
-                            image_cache,
-                            scene,
-                            own_background_width,
-                            own_background_height,
-                            own_paint_x,
-                            own_paint_y,
-                            cv.background_color,
-                            cv.background_layers(),
-                            cv.color,
-                            &paint_border_radius,
-                            painted_border,
-                            &paint_padding,
-                            pixel_source,
-                            warnings,
-                        );
+                        // Propagation transfers only the background to the canvas;
+                        // shadows and borders still belong to the element's box.
+                        if canvas_owner != Some(node_id) {
+                            paint_element_background(
+                                image_cache,
+                                scene,
+                                own_background_width,
+                                own_background_height,
+                                own_paint_x,
+                                own_paint_y,
+                                cv.background_color,
+                                cv.background_layers(),
+                                cv.color,
+                                &paint_border_radius,
+                                painted_border,
+                                &paint_padding,
+                                pixel_source,
+                                warnings,
+                            );
+                        }
                         if table_part_clip.is_some() {
                             scene.pop_layer();
                         }
@@ -4421,7 +4279,7 @@ pub(crate) fn paint_document_impl(
                 let finish_lines = hold_lines.then_some(PaintFrame::FinishLines { root: node_id });
                 // A `display: contents` element has no box, so its children
                 // share the enclosing layer.
-                if !defers && raikiri_dom::paint_rules::generates_box(cv) {
+                if !defers && generates_box {
                     let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
                         && matches!(cv.column_count, ColumnCountValue::Auto)
                         && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
@@ -4509,7 +4367,7 @@ pub(crate) fn paint_document_impl(
                 }
             }
             NodeKind::Document => {
-                // Usually unreachable because paint_document starts at body.
+                // The walk starts at the document element.
                 // A Document node may have children (unattached `<html>`), but
                 // they are not handled yet. Skip the subtree defensively.
             }
