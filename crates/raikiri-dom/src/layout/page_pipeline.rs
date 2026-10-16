@@ -668,7 +668,7 @@ impl ColumnContexts {
 /// its start page.
 ///
 /// A box ending exactly at a page edge belongs to the preceding page.
-/// `f32::EPSILON` is too small at ordinary CSS coordinates and rounds away,
+/// [`f32::EPSILON`] is too small at ordinary CSS coordinates and rounds away,
 /// so callers map the end through the half-open interval directly:
 /// ceil(end / step) - 1. The box remains visible on every slice it
 /// intersects; line-level splitting is a later pass.
