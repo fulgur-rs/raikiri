@@ -437,3 +437,60 @@ fn a_nested_container_that_fits_its_first_row_has_no_rows() {
         None
     );
 }
+
+#[test]
+fn a_balanced_last_row_keeps_a_box_that_avoids_breaks_whole() {
+    let rows = fill_item_rows(
+        &[split(100.0), avoid(80.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        50.0,
+        200.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![50.0, 80.0]);
+    assert_eq!(row_shape(&rows)[2..], [(1, 1, 0, 0.0, 80.0)]);
+}
+
+#[test]
+fn a_definite_nested_container_balances_its_last_row_when_it_fits() {
+    let rows = fill_item_rows(
+        &[split(300.0)],
+        2,
+        ColumnFillValue::Balance,
+        Some(250.0),
+        100.0,
+        200.0,
+        usize::MAX,
+    )
+    .unwrap();
+    // The row keeps the height left of the container.
+    assert_eq!(rows.heights, vec![100.0, 150.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 100.0),
+            (0, 0, 1, 0.0, 100.0),
+            (0, 1, 0, 0.0, 50.0),
+            (0, 1, 1, 0.0, 50.0)
+        ]
+    );
+}
+
+#[test]
+fn a_box_avoiding_breaks_taller_than_a_row_breaks_anyway_in_the_last_row() {
+    let rows = fill_item_rows(
+        &[avoid(400.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        100.0,
+        100.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![100.0, 100.0]);
+    assert_eq!(rows.pieces.len(), 4);
+}

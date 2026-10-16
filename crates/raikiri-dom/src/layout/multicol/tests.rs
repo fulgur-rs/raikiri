@@ -2067,6 +2067,15 @@ fn a_nested_multicol_moves_to_the_next_outer_column_rather_than_cutting_a_box() 
         Point { x: 100.0, y: 0.0 }
     );
     assert!(doc.nodes[inner].multicol_rows.is_empty());
+
+    // A break avoided before the container leaves cutting the box instead.
+    doc.set_element_inline_style(
+        doc.nodes[outer].children[0],
+        Some("display:block;height:60px;break-after:avoid".into()),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[inner].unrounded_layout.location.x, 0.0);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 2);
 }
 
 #[test]

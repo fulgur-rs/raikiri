@@ -281,29 +281,28 @@ impl Document {
     /// later outer columns has a box per row of its columns, and each box
     /// draws the rules of its own row.
     #[doc(hidden)]
-    pub fn fragment_column_rules<'a>(
-        &'a self,
-        cascade: &'a CascadeResult,
+    pub fn fragment_column_rules(
+        &self,
+        cascade: &CascadeResult,
         owner: usize,
         fragment: Option<usize>,
     ) -> Vec<ColumnRule> {
-        let row = fragment
-            .and_then(|index| self.fragment_tree.fragments.get(index))
-            .filter(|fragment| {
-                fragment.node_id == owner && !self.nodes[owner].multicol_rows.is_empty()
-            });
-        let Some(fragment) = row else {
+        let rows = &self.nodes[owner].multicol_rows;
+        let Some(first) = rows.first() else {
             return self.column_rules(cascade, owner).collect();
         };
+        // A box painted without a record of its own is the first row's.
+        let fragmentainer = fragment
+            .and_then(|index| self.fragment_tree.fragments.get(index))
+            .filter(|fragment| fragment.node_id == owner)
+            .map_or(first.context.column_index, |fragment| {
+                fragment.fragmentainer
+            });
         let values = &cascade.computed[owner];
-        self.row_column_rules(
-            owner,
-            values.column_rule.width().px(),
-            fragment.fragmentainer,
-        )
-        .into_iter()
-        .map(|rect| ColumnRule::new(owner, rect, values))
-        .collect()
+        self.row_column_rules(owner, values.column_rule.width().px(), fragmentainer)
+            .into_iter()
+            .map(|rect| ColumnRule::new(owner, rect, values))
+            .collect()
     }
 
     /// Producer-computed rules relative to the owner's border-box origin.

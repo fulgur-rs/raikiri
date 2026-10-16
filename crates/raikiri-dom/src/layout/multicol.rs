@@ -904,6 +904,7 @@ fn layout_column_group(
                 height,
                 margin_top,
                 child_output.size,
+                !avoid_column_break,
             );
             if continuation.is_none()
                 && cursor > 0.0
@@ -918,6 +919,7 @@ fn layout_column_group(
                     height,
                     margin_top,
                     child_output.size,
+                    false,
                 )
             {
                 maximum = maximum.max(cursor);
@@ -1121,8 +1123,12 @@ struct NestedContinuation {
 
 /// Plan how the nested column container `child`, laid out at `cursor` in
 /// column `column` of `outer`, continues in the following outer columns.
-/// `None` when it fits in the rest of the column, when its content is not
-/// plain paragraphs, or when the outer columns run out.
+/// Children that hold no lines continue in outer overflow columns past the
+/// last one. `break_before` says a break before the container is allowed,
+/// which is preferred to cutting one of those children at the end of this
+/// column. `None` when it fits in the rest of the column, when its content
+/// is neither plain paragraphs nor children without lines, or when the
+/// outer columns run out for paragraphs.
 #[allow(clippy::too_many_arguments)]
 fn plan_nested_continuation(
     tree: &Document,
@@ -1133,6 +1139,7 @@ fn plan_nested_continuation(
     fragmentainer_height: f32,
     margin_top: f32,
     border_box_size: Size<f32>,
+    break_before: bool,
 ) -> Option<NestedContinuation> {
     let node = &tree.nodes[child];
     let style = node.multicol?;
@@ -1204,7 +1211,7 @@ fn plan_nested_continuation(
                     .iter()
                     .any(|later| later.entry == piece.entry && later.row > 0)
         });
-        if cursor > 0.0 && cut_at_outer_end {
+        if break_before && cursor > 0.0 && cut_at_outer_end {
             return None;
         }
         let root = latest_root(tree, child)?;
@@ -1229,9 +1236,6 @@ fn plan_nested_continuation(
             columns,
             end,
         });
-    }
-    if rows < 2 {
-        return None;
     }
     let root = latest_root(tree, child)?;
     let children: Vec<usize> = node
