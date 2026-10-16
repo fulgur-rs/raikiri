@@ -38,7 +38,7 @@ impl FlowAxes {
     /// The axes pagination breaks the document along, when its root element
     /// lays out its blocks on vertical axes.
     pub(super) fn of_root(document: &Document, cascade: &CascadeResult) -> Option<Self> {
-        let root = document.nodes[find_body(document)?].parent?;
+        let root = super::super::initial_containing_block::root_element(document)?;
         if !crate::layout::bridge::lays_out_vertically(cascade, root) {
             return None;
         }
@@ -277,7 +277,7 @@ pub(super) struct TransposedDocument {
     /// The physical width of the page area, which the root element's box is
     /// placed in.
     page_area_width: f32,
-    /// The ancestors of the body, which keep their physical layout.
+    /// Source nodes above the flow root, which keep their physical layout.
     outside: Vec<usize>,
     /// Each layout key's frame: the key its location is relative to, or
     /// `None` for the page area.
@@ -288,10 +288,6 @@ pub(super) struct TransposedDocument {
     transposed: Vec<TaffyLayout>,
     styles: Vec<taffy::Style>,
     in_flow_heights: HashMap<usize, f32>,
-    body_id: usize,
-    /// The part of the body's block-end padding that is its block-end
-    /// margin, held back from the paginator.
-    body_block_end_margin: f32,
 }
 
 impl TransposedDocument {
@@ -299,14 +295,14 @@ impl TransposedDocument {
     /// with [`Self::restore`].
     pub(super) fn transpose(
         document: &mut Document,
-        body_id: usize,
+        flow_root: usize,
         axes: FlowAxes,
         page_area_width: f32,
     ) -> Self {
         let keys = document.nodes.len() + document.table_objects.cells.len();
-        // Layout starts at the body, which spans the page area; the boxes
-        // around it have no layout of their own.
-        let outside: Vec<usize> = document.ancestors(body_id).collect();
+        // Only the virtual document node is outside the flow. The html
+        // box and its children all have real layouts and local frames.
+        let outside: Vec<usize> = document.ancestors(flow_root).collect();
         let frames: Vec<Option<usize>> = (0..keys)
             .map(|key| layout_frame(document, key).filter(|frame| !outside.contains(frame)))
             .collect();
@@ -317,7 +313,7 @@ impl TransposedDocument {
             |key: usize| frames[key].map_or(page_area_width, |frame| physical[frame].size.width);
         // The boxes around the body stay where they are, so that offsets
         // summed up to the page area are those of the body's coordinates.
-        let mut transposed: Vec<TaffyLayout> = (0..keys)
+        let transposed: Vec<TaffyLayout> = (0..keys)
             .map(|key| {
                 if outside.contains(&key) {
                     physical[key]
@@ -326,19 +322,6 @@ impl TransposedDocument {
                 }
             })
             .collect();
-        // Layout carries the body's left and right margins as padding. On
-        // vertical axes these are its block margins; the block-end one is
-        // truncated at the end of the flow like any other trailing margin,
-        // so the paginator must not see it as padding that ends the body.
-        let (margin_left, margin_right) = document.body_inline_margins;
-        let body_block_end_margin = if axes.right_to_left {
-            margin_left
-        } else {
-            margin_right
-        };
-        let body_padding = &mut transposed[body_id].padding.bottom;
-        let body_block_end_margin = body_block_end_margin.clamp(0.0, body_padding.max(0.0));
-        *body_padding -= body_block_end_margin;
         let mut styles = Vec::with_capacity(keys);
         for (key, &layout) in transposed.iter().enumerate() {
             let node = document.table_layout_node_mut(key);
@@ -352,8 +335,6 @@ impl TransposedDocument {
         document.pagination_on_transposed_axes = true;
         Self {
             axes,
-            body_id,
-            body_block_end_margin,
             page_area_width,
             outside,
             frames,
@@ -393,11 +374,7 @@ impl TransposedDocument {
             } else {
                 let parent_width =
                     frame.map_or(self.page_area_width, |frame| current[frame].size.height);
-                let mut layout = current[key];
-                if key == self.body_id {
-                    layout.padding.bottom += self.body_block_end_margin;
-                }
-                self.axes.physical_layout(layout, parent_width)
+                self.axes.physical_layout(current[key], parent_width)
             };
             let node = document.table_layout_node_mut(key);
             node.unrounded_layout = layout;

@@ -149,7 +149,7 @@ pub(crate) fn language_of(doc: &Document, node: usize) -> Option<String> {
 /// box it sits in, with the `<br>`'s own `line-height` (resolved, like
 /// `normal` or a number, against that box's font) and baseline alignment.
 /// The box is the nearest ancestor that generates one: `display: contents`
-/// generates none, except on the body layout starts at. Its
+/// generates none, while the document element is blockified. Its
 /// `vertical-align` places that box, not the break.
 /// `None` outside quirks mode, where the break takes the enclosing box's
 /// strut unchanged.
@@ -1334,7 +1334,8 @@ fn project_children_builder(
                 offsets
             },
             cleared_breaks,
-            fixed: anonymous_children.is_none() && root_node.position() == &PositionValue::Fixed,
+            fixed: anonymous_children.is_none()
+                && super::super::fixed::is_page_fixed(doc, cascade, root),
             ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
             nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
             text_nowrap: Arc::new(text_nowrap),

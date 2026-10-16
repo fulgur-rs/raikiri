@@ -297,41 +297,25 @@ fn find_body_returns_first_body_in_document_order() {
 }
 
 #[test]
-fn apply_page_content_box_sets_body_style_size_to_content_dimensions() {
-    // The production Step 4 helper writes the page content box, not the full
-    // paper size: horizontal margins plus left/right content insets narrow
-    // the width, and vertical margins plus top/bottom content insets narrow
-    // the height.
-    use raikiri_traits::PageBox;
-    use taffy::{Dimension, Size};
-
+fn the_icb_uses_the_page_area_inside_page_margins_and_insets() {
+    use raikiri_style::{Origin, build_rule_tree, cascade};
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
-
-    let margins = PageMargins {
-        top: 20.0,
-        right: 10.0,
-        bottom: 20.0,
-        left: 10.0,
-    };
-    let insets = PageContentInsets {
-        top: 1.0,
-        right: 2.0,
-        bottom: 3.0,
-        left: 4.0,
-    };
-    apply_page_content_box_to_body(&mut doc, body, PageBox::A4, margins, insets);
-
-    let size: Size<Dimension> = doc.nodes[body].style.size;
-    assert_eq!(
-        size.width,
-        Dimension::length(PageBox::A4.width - 10.0 - 10.0 - 4.0 - 2.0)
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let mut rules = build_rule_tree(&doc);
+    rules.add_stylesheet(
+        "@page { margin:20px 10px; padding:1px 2px 3px 4px }",
+        Origin::Author,
     );
-    assert_eq!(
-        size.height,
-        Dimension::length(PageBox::A4.height - 20.0 - 20.0 - 1.0 - 3.0)
-    );
+    let cr = cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
+    let icb = doc
+        .nodes
+        .initial_containing_block_key()
+        .expect("page-area ICB");
+    let size = doc.nodes[icb].unrounded_layout.size;
+    assert_eq!(size.width, PageBox::A4.width - 26.0);
+    assert_eq!(size.height, PageBox::A4.height - 44.0);
 }
 
 #[test]
@@ -1704,48 +1688,47 @@ fn lay_out_body_with_children(
 #[test]
 fn body_inline_margins_place_and_narrow_the_body_content() {
     let (width, body, flow, abs) = lay_out_body_with_children("display:block;margin:0 10px 0 30px");
-    assert_eq!(flow.location.x, 30.0);
+    assert_eq!(body.location.x + flow.location.x, 30.0);
     assert_eq!(flow.size.width, width - 40.0);
     // The static position of an out-of-flow child starts at the same edge.
-    assert_eq!(abs.location.x, 30.0);
-    // The synthetic root keeps the page content width.
-    assert_eq!(body.size.width, width);
-    assert_eq!((body.padding.left, body.padding.right), (30.0, 10.0));
-    assert_eq!((body.margin.left, body.margin.right), (0.0, 0.0));
+    assert_eq!(body.location.x + abs.location.x, 30.0);
+    assert_eq!(body.size.width, width - 40.0);
+    assert_eq!((body.padding.left, body.padding.right), (0.0, 0.0));
+    assert_eq!((body.margin.left, body.margin.right), (30.0, 10.0));
 }
 
 #[test]
 fn body_inline_margins_add_to_padding_and_resolve_percentages() {
-    let (width, _, flow, _) =
+    let (width, body, flow, _) =
         lay_out_body_with_children("display:block;margin:0 10%;padding:0 5px 0 2px");
     let margin = width * 0.1;
-    assert!((flow.location.x - (margin + 2.0)).abs() < 1e-3);
+    assert!((body.location.x + flow.location.x - (margin + 2.0)).abs() < 1e-3);
     assert!((flow.size.width - (width - 2.0 * margin - 7.0)).abs() < 1e-3);
 }
 
 #[test]
-fn content_box_body_border_box_spans_the_page_content_width() {
+fn content_box_body_border_box_excludes_its_inline_margins() {
     let (width, body, flow, _) =
         lay_out_body_with_children("display:block;margin:0 20px;border:0 solid;border-width:0 3px");
-    assert_eq!(body.size.width, width);
-    assert_eq!(flow.location.x, 23.0);
+    assert_eq!(body.size.width, width - 40.0);
+    assert_eq!(body.location.x + flow.location.x, 23.0);
     assert_eq!(flow.size.width, width - 46.0);
 }
 
 #[test]
-fn body_inline_margins_ignore_auto_and_negative_values() {
+fn body_inline_auto_and_negative_margins_follow_the_block_width_equation() {
     let (width, _, flow, _) =
         lay_out_body_with_children("display:block;margin-left:auto;margin-right:-20px");
     assert_eq!(flow.location.x, 0.0);
-    assert_eq!(flow.size.width, width);
+    assert_eq!(flow.size.width, width + 20.0);
 }
 
 #[test]
 fn border_box_body_takes_its_inline_margins_out_of_the_content_box() {
     let (width, body, flow, _) =
         lay_out_body_with_children("display:block;box-sizing:border-box;margin:0 20px");
-    assert_eq!(body.size.width, width);
-    assert_eq!(flow.location.x, 20.0);
+    assert_eq!(body.size.width, width - 40.0);
+    assert_eq!(body.location.x + flow.location.x, 20.0);
     assert_eq!(flow.size.width, width - 40.0);
 }
 
@@ -1773,7 +1756,10 @@ fn body_inline_margins_keep_absolute_offsets_against_the_page() {
     let width = page_margins(&cr, PageBox::A4).content_width(PageBox::A4);
     let layout = doc.nodes[abs].unrounded_layout;
     assert_eq!(layout.size.width, width / 2.0);
-    assert_eq!(layout.location.x, width / 2.0);
+    assert_eq!(
+        doc.nodes[body].unrounded_layout.location.x + layout.location.x,
+        width / 2.0
+    );
 }
 
 #[test]

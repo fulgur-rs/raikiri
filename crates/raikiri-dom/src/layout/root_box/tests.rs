@@ -3,13 +3,17 @@ use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
 fn fixture(page_css: &str, html_style: &str) -> (Document, CascadeResult) {
+    fixture_with_text(page_css, html_style, "hi")
+}
+
+fn fixture_with_text(page_css: &str, html_style: &str, text: &str) -> (Document, CascadeResult) {
     let mut document = Document::new();
     let html = document.append_element(Some(0), "html", Style::default(), Some(html_style));
     let head = document.append_element(Some(html), "head", Style::default(), None::<&str>);
     let style = document.append_element(Some(head), "style", Style::default(), None::<&str>);
     document.append_text(style, page_css);
     let body = document.append_element(Some(html), "body", Style::default(), None::<&str>);
-    document.append_text(body, "hi");
+    document.append_text(body, text);
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     (document, cascade)
@@ -242,43 +246,81 @@ fn an_over_constrained_rtl_root_keeps_its_right_margin() {
 
 #[test]
 fn a_vertical_rl_root_is_stitched_across_the_pages_from_its_left_end() {
-    let (document, cascade) = laid_out(
+    let (mut document, cascade) = fixture_with_text(
         "@page { size: 200px 100px; margin: 0 }",
-        "display: block; writing-mode: vertical-rl; margin: 10px 20px 30px 40px; padding: 10%",
-        page(200.0, 100.0),
+        "display:block;writing-mode:vertical-rl;margin:10px 20px 30px 40px;padding:10%;\
+         font-family:Ahem;font-size:16px;line-height:16px",
+        &"hi ".repeat(24),
     );
+    let pages = crate::layout::layout_pages(
+        crate::layout::test_support::with_ahem(&mut document),
+        &cascade,
+        page(200.0, 100.0),
+    )
+    .expect("pages");
+    assert_eq!(pages.len(), 3);
     let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 3).expect("root box");
-    // Percentages resolve against the inline size, the page area's height.
     assert_eq!(root.padding, PaintInsets::new(10.0, 10.0, 10.0, 10.0));
     let rect = root.border_box;
-    // Down the page it fills the area between its margins; across it, the
-    // flow of all three pages between its margins.
     assert_eq!((rect.y, rect.height), (10.0, 60.0));
-    assert_eq!(rect.width, 3.0 * 200.0 - 20.0 - 40.0);
-    // The first page shows the left end of the box, inside its left margin,
-    // and each later page the part to the right of the one before.
-    assert_eq!(rect.x, 40.0);
+    // Each 32px word needs its own 16px column in the 40px content height.
+    // The 24 columns and 20px padding determine the actual root width.
+    assert_eq!(rect.width, 404.0);
+    assert_eq!(rect.x, -224.0);
     let later = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 3).expect("root box");
-    assert_eq!(later.border_box.x, rect.x - 200.0);
-    assert_eq!(later.border_box.y, rect.y);
+    assert_eq!(later.border_box.x, -24.0);
+    assert_eq!(later.border_box.y, 10.0);
     let last = root_box(&document, &cascade, page(200.0, 100.0), 400.0, 3).expect("root box");
-    assert_eq!(last.border_box.x + last.border_box.width, 200.0 - 20.0);
+    assert_eq!(last.border_box.x, 176.0);
+}
+
+#[test]
+fn a_laid_out_vertical_rl_root_follows_each_pages_paint_translation() {
+    let (document, cascade) = laid_out(
+        "@page { size:800px 600px; margin:0 } body { margin:0 }",
+        "display:block;writing-mode:vertical-rl;width:1600px;height:600px;margin:0;transform:scale(2)",
+        page(800.0, 600.0),
+    );
+    let first = root_box(&document, &cascade, page(800.0, 600.0), 0.0, 2).unwrap();
+    let second = root_box(&document, &cascade, page(800.0, 600.0), 800.0, 2).unwrap();
+    assert_eq!(first.border_box.x, -800.0);
+    assert_eq!(second.border_box.x, 0.0);
+    let deferred_count = root_box(&document, &cascade, page(800.0, 600.0), 0.0, 1).unwrap();
+    assert_eq!(deferred_count.border_box, first.border_box);
+    // A narrower named page keeps the original layout's right edge aligned.
+    let narrow = root_box(&document, &cascade, page(700.0, 600.0), 800.0, 2).unwrap();
+    assert_eq!(narrow.border_box.x, -100.0);
+    for (root, center) in [
+        (first, (0.0, 300.0)),
+        (second, (800.0, 300.0)),
+        (narrow, (700.0, 300.0)),
+    ] {
+        assert_eq!(root.transform.unwrap().apply(center), center);
+    }
 }
 
 #[test]
 fn a_vertical_lr_root_runs_across_the_pages_from_the_left() {
-    let (document, cascade) = laid_out(
+    let (mut document, cascade) = fixture_with_text(
         "@page { size: 200px 100px; margin: 0 }",
-        "display: block; writing-mode: vertical-lr; margin: auto 20px auto 40px; height: 50px",
-        page(200.0, 100.0),
+        "display:block;writing-mode:vertical-lr;margin:auto 20px auto 40px;height:50px;\
+         font-family:Ahem;font-size:10px;line-height:10px",
+        &"aa ".repeat(60),
     );
+    let pages = crate::layout::layout_pages(
+        crate::layout::test_support::with_ahem(&mut document),
+        &cascade,
+        page(200.0, 100.0),
+    )
+    .expect("pages");
+    assert_eq!(pages.len(), 2);
     let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 2).expect("root box");
     let rect = root.border_box;
-    // Auto margins down the page center the box there.
+    // Two 20px words and their 10px space fit in each 10px column.
     assert_eq!((rect.y, rect.height), (25.0, 50.0));
-    assert_eq!((rect.x, rect.width), (40.0, 2.0 * 200.0 - 40.0 - 20.0));
+    assert_eq!((rect.x, rect.width), (40.0, 300.0));
     let later = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 2).expect("root box");
-    assert_eq!(later.border_box.x, rect.x - 200.0);
+    assert_eq!(later.border_box.x, -160.0);
 }
 
 #[test]
@@ -304,7 +346,8 @@ fn a_vertical_root_maps_its_logical_sizes_onto_physical_axes() {
     let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 2).expect("root box");
     let rect = root.border_box;
     assert_eq!((rect.width, rect.height), (300.0, 50.0));
-    // The box ends at the right edge of the last page's area.
+    // The first page aligns the box's right edge; later pages translate it.
+    assert_eq!(rect.x + rect.width, 200.0);
     let last = root_box(&document, &cascade, page(200.0, 100.0), 200.0, 2).expect("root box");
-    assert_eq!(last.border_box.x + last.border_box.width, 200.0);
+    assert_eq!(last.border_box.x + last.border_box.width, 400.0);
 }

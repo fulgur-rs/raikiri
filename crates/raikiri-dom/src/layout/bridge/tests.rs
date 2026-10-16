@@ -863,53 +863,20 @@ fn width_auto_with_side_borders_uses_border_box_for_taffy() {
 }
 
 #[test]
-fn apply_page_content_box_clobbers_body_width_from_bridge() {
-    // PageBox compromise:
-    // Regression check for `<body style="width: 100px">`:
-    //   Step 1 (`apply_computed_to_style`) → bridge_size writes
-    //       length(100.0) to body.style.size.width
-    //   Step 4 (`apply_page_content_box_to_body`) → content-box width overwrites it.
-    // After Step 4, body.style.size.width is the page content-box width rather than the
-    // author value. Preserve this intentional overwrite until a future
-    // @page cascade and per-page PageBox refactor; detect silent regressions.
-    // With default (zero) margins and insets the content box matches the paper
-    // size here; `apply_page_content_box_sets_body_style_size_to_content_dimensions`
-    // pins the margin/inset subtraction that distinguishes the two.
-    use raikiri_traits::PageBox;
-
+fn page_layout_preserves_authored_body_width_from_bridge() {
     let mut doc = Document::new();
-    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
-    let body = doc.append_element(Some(html), "body", Style::default(), Some("width: 100px"));
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;width:100px"),
+    );
     let rules = raikiri_style::build_rule_tree(&doc);
-    let cr = raikiri_style::cascade(&doc, &rules).expect("cascade Ok");
-
-    // Step 1: the bridge writes the author value (100px) to body.style.size.width.
-    apply_computed_to_style(&mut doc, &cr).expect("styles");
-    assert_eq!(
-        doc.nodes[body].style.size.width,
-        Dimension::length(100.0),
-        "bridge_size must first write author width (100px) to body.style.size.width"
-    );
-
-    // Step 4: the page content box overwrites the author value with the content width.
-    apply_page_content_box_to_body(
-        &mut doc,
-        body,
-        PageBox::A4,
-        PageMargins::default(),
-        PageContentInsets::default(),
-    );
-    assert_eq!(
-        doc.nodes[body].style.size.width,
-        Dimension::length(PageBox::A4.width),
-        "apply_page_content_box_to_body must clobber author width with the content-box width"
-    );
-    // Author and content-box values differ, proving the overwrite actually occurs.
-    assert_ne!(
-        doc.nodes[body].style.size.width,
-        Dimension::length(100.0),
-        "post-clobber body.style.size.width must NOT equal author 100px"
-    );
+    let cr = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout");
+    assert_eq!(doc.nodes[body].style.size.width, Dimension::length(100.0));
+    assert_eq!(doc.nodes[body].unrounded_layout.size.width, 100.0);
 }
 
 #[test]

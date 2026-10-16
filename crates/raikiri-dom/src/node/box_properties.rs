@@ -4,6 +4,33 @@ use raikiri_style::ComputedValues;
 use raikiri_style::property::{DisplayValue, PositionValue};
 use raikiri_traits::NodeKind;
 
+/// CSS Display 3 §2.8: blockify the document element while preserving its
+/// inner formatting algorithm. Unlike ordinary contents boxes, a contents
+/// root computes to block and retains its own box properties.
+fn blockify_root_display(display: DisplayValue) -> DisplayValue {
+    match display {
+        DisplayValue::Inline | DisplayValue::Contents => DisplayValue::Block,
+        DisplayValue::InlineBlock => DisplayValue::FlowRoot,
+        DisplayValue::InlineFlex => DisplayValue::Flex,
+        DisplayValue::InlineGrid => DisplayValue::Grid,
+        DisplayValue::InlineTable => DisplayValue::Table,
+        DisplayValue::Ruby => DisplayValue::BlockRuby,
+        DisplayValue::TableRowGroup
+        | DisplayValue::TableHeaderGroup
+        | DisplayValue::TableFooterGroup
+        | DisplayValue::TableRow
+        | DisplayValue::TableColumnGroup
+        | DisplayValue::TableColumn
+        | DisplayValue::TableCell
+        | DisplayValue::TableCaption
+        | DisplayValue::RubyBase
+        | DisplayValue::RubyText
+        | DisplayValue::RubyBaseContainer
+        | DisplayValue::RubyTextContainer => DisplayValue::Block,
+        other => other,
+    }
+}
+
 /// The computed display and position captured before layout classifies a box.
 #[derive(Debug, Clone)]
 pub(crate) struct BoxProperties {
@@ -35,6 +62,10 @@ impl BoxProperties {
         Self::new(display, position)
     }
 
+    pub(crate) fn blockify_root(&mut self) {
+        self.display = blockify_root_display(self.display);
+    }
+
     pub(crate) fn display(&self) -> DisplayValue {
         self.display
     }
@@ -51,7 +82,12 @@ impl BoxProperties {
     }
 
     /// Lower CSS display to the box types supported by Taffy.
-    pub(crate) fn taffy_display(&self, multicol: bool, kind: NodeKind) -> taffy::Display {
+    pub(crate) fn taffy_display(
+        &self,
+        multicol: bool,
+        kind: NodeKind,
+        root: bool,
+    ) -> taffy::Display {
         // Non-elements have no CSS display property. Preserve the native
         // default used by programmatic document layout instead of lowering
         // their inline text identity as an element's block box.
@@ -65,7 +101,7 @@ impl BoxProperties {
             display if display.is_grid_container() => taffy::Display::Grid,
             _ => taffy::Display::Block,
         };
-        if multicol && display == taffy::Display::Block {
+        if (multicol || root) && display == taffy::Display::Block {
             taffy::Display::FlowRoot
         } else {
             display
@@ -85,8 +121,14 @@ impl BoxProperties {
     }
 
     /// Refresh the derived identity exported to Taffy and the public style API.
-    pub(crate) fn apply_to_style(&self, style: &mut taffy::Style, multicol: bool, kind: NodeKind) {
-        style.display = self.taffy_display(multicol, kind);
+    pub(crate) fn apply_to_style(
+        &self,
+        style: &mut taffy::Style,
+        multicol: bool,
+        kind: NodeKind,
+        root: bool,
+    ) {
+        style.display = self.taffy_display(multicol, kind, root);
         style.position = self.taffy_position();
     }
 }
@@ -104,6 +146,11 @@ impl<'a> BoxPropertiesRef<'a> {
             display: values.display,
             position: &values.position,
         }
+    }
+
+    pub(crate) fn blockify_root(mut self) -> Self {
+        self.display = blockify_root_display(self.display);
+        self
     }
 
     pub(crate) fn display(self) -> DisplayValue {

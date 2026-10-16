@@ -289,9 +289,7 @@ pub(super) fn compute_vertical_block(
     // Percentages of the container's padding refer to the inline size of
     // its containing block (CSS Writing Modes 4 §7.1): the physical height
     // of a vertical parent, the physical width of a horizontal one.
-    let parent = tree
-        .ancestors(idx)
-        .find(|&id| tree.nodes[id].display() != DisplayValue::Contents);
+    let parent = tree.taffy_parent_of(idx);
     // A flex item is measured without a main-axis parent size; the flex
     // container's definite size is recorded for its percentage edges.
     let flex_basis = super::flex_item_percent_basis(tree, idx).unwrap_or(Size::NONE);

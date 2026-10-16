@@ -53,7 +53,6 @@ use crate::raster_budget::RasterBufferBudget;
 use anyrender::render_to_buffer;
 use anyrender_vello_cpu::VelloCpuImageRenderer;
 use raikiri_dom::Document;
-use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
 use raikiri_style::{CascadeResult, PageMarginBoxCascadeResult};
 use raikiri_traits::{NodeId, NodeKind, PageBox, RenderError};
 use std::collections::{BTreeMap, HashMap};
@@ -117,8 +116,7 @@ pub struct PageMetadata {
 }
 
 /// Coordinates of one fragment corresponding to a [`NodeId`] (in Pt,
-/// relative to the body content area, following Fulgur's per-fragment
-/// coordinate semantics in drawables.rs:430-438).
+/// relative to the page-area origin).
 ///
 /// PageScene represents a multi-page block (for example, a `<div>` split into
 /// two fragments across a page break) as multiple entries in
@@ -132,9 +130,9 @@ pub struct PageMetadata {
 pub struct Fragment {
     /// Zero-based index of the page containing this fragment.
     pub page_index: u32,
-    /// Fragment top-left x (border box, relative to the body-content-area origin, Pt).
+    /// Fragment top-left x (border box, relative to the page-area origin, Pt).
     pub x: Pt,
-    /// Fragment top-left y (border box, relative to the body-content-area origin, Pt).
+    /// Fragment top-left y (border box, relative to the page-area origin, Pt).
     pub y: Pt,
     /// Fragment width (border box, Pt).
     pub width: Pt,
@@ -160,12 +158,9 @@ pub struct Fragment {
 /// - [`root_id`](PageScene::root_id) / [`body_id`](PageScene::body_id): NodeIds
 ///   of the `<html>` / `<body>` nodes; entry points for consumers looking up
 ///   root-level styling (background / opacity)
-/// - [`body_offset_pt`](PageScene::body_offset_pt): page-absolute offset of
-///   the body root, through the page margins and insets and the `<html>`
-///   margins (following `body_offset_pt` semantics in Fulgur
-///   drawables.rs:430-438). Consumers add this to the body-content-area-
-///   relative per-fragment (x, y) in [`fragments`](PageScene::fragments) to get
-///   page-absolute coordinates
+/// - [`body_offset_pt`](PageScene::body_offset_pt): page-area origin in
+///   physical page coordinates, through the page margins and insets.
+///   Add it to fragment coordinates to obtain page-absolute coordinates.
 /// - [`margin_boxes`](PageScene::margin_boxes): matching `@page` margin-box
 ///   declaration bags for the downstream slot-layout pass
 #[non_exhaustive]
@@ -183,10 +178,9 @@ pub struct PageScene {
     pub root_id: Option<NodeId>,
     /// `<body>` NodeId, or `None` if the document has no body.
     pub body_id: Option<NodeId>,
-    /// Page-absolute offset (Pt, Pt) of the body root: the page margins and
-    /// insets plus the `<html>` margins, which do not collapse with the
-    /// body's. Add it to body-content-area-relative fragment coordinates to
-    /// obtain page-absolute coordinates.
+    /// Page-area origin in physical page coordinates (Pt, Pt). The field
+    /// retains its historical name; root and body offsets are already in
+    /// each fragment. Add this once to obtain page-absolute coordinates.
     pub body_offset_pt: (Pt, Pt),
     /// Cascaded margin-box declaration bags for this page, in source order.
     ///
@@ -318,53 +312,6 @@ impl PageScene {
     }
 }
 
-/// Resolve a computed margin to used px.
-///
-/// `basis` is the containing-block width (margin percentages resolve against
-/// the width per CSS 2.1 section 8.3). `Auto` maps to zero, which matches the
-/// block-level used-value rule for ordinary flow when `width` is also auto.
-fn used_margin_px(value: ComputedLengthPercentageOrAuto, basis: f32) -> f32 {
-    let resolved = match value {
-        ComputedLengthPercentageOrAuto::Px(px) => px,
-        ComputedLengthPercentageOrAuto::Percent(percent) => basis * percent / 100.0,
-        ComputedLengthPercentageOrAuto::Calc(calc) => calc.px + basis * calc.percent / 100.0,
-        ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent => {
-            return 0.0;
-        }
-    };
-    if resolved.is_finite() { resolved } else { 0.0 }
-}
-
-/// Extra page-absolute offset contributed by the `<html>` margins.
-///
-/// Layout places the body's content inside the body's own margins: the
-/// synthetic body root carries the horizontal ones as inline padding and the
-/// block-start one, collapsed with its first in-flow children's when they
-/// adjoin, above the content. Margins of the root element's box do not
-/// collapse (CSS 2.1 section 8.3.1), so the `<html>` margins are added on
-/// both axes as they are.
-///
-/// `content_width` is the page content width used as the percent basis.
-fn html_margin_offsets(
-    cascade: &CascadeResult,
-    html_idx: Option<usize>,
-    content_width: f32,
-) -> (Pt, Pt) {
-    let basis = if content_width.is_finite() && content_width > 0.0 {
-        content_width
-    } else {
-        0.0
-    };
-    html_idx
-        .and_then(|idx| cascade.computed.get(idx))
-        .map_or((0.0, 0.0), |computed| {
-            (
-                used_margin_px(computed.margin.left, basis),
-                used_margin_px(computed.margin.top, basis),
-            )
-        })
-}
-
 /// Extract metadata, fragments, and drawables from a post-layout Document
 /// to construct a [`PageScene`].
 ///
@@ -385,22 +332,11 @@ fn html_margin_offsets(
 ///
 /// # Fragment coordinate semantics
 ///
-/// [`Fragment`] uses Pt relative to the body content area. The synthetic
-/// body root spans the page content width at `(0, 0)`, carries the body's
-/// horizontal margins as inline padding and has its content moved below the
-/// body's used block-start margin, so descendants already sit inside the
-/// body's margins; the body's own fragment is that root box inset by the
-/// body's left, right and block-start margins, its border box.
-/// Descendants use body-relative coordinates accumulated as
-/// `parent_abs + node.unrounded_layout.location`, in the same DFS stack order
-/// as `raikiri_paint::walk::paint_document`.
-///
-/// `body_offset_pt` is the body root's position relative to the page-absolute
-/// origin, including `@page` margins, `@page` border/padding insets, and the
-/// `<html>` left and top margins, which do not collapse with the body's
-/// (CSS 2.1 section 8.3.1). Consumers add this offset to
-/// body-content-area-relative fragment coordinates to obtain page-absolute
-/// coordinates.
+/// Fragments use the page-area origin. The walk starts at the document
+/// element and accumulates each box's used location exactly once, including
+/// the root and body's margins, borders and padding. The retained
+/// `body_offset_pt` field supplies only the page margins and page insets;
+/// consumers add it to fragment coordinates to reach the physical page.
 ///
 /// Build the first page of a document using the compatibility single-page
 /// coordinates.
@@ -438,8 +374,17 @@ pub fn build_page_scene_for_page_named(
     let margins = raikiri_dom::page_margins(cascade, page_box);
     let insets = raikiri_dom::page_content_insets(cascade, page_box);
     let content_height = (margins.content_height(page_box) - insets.top - insets.bottom).max(0.0);
-    let page_top = content_origin_y;
-    let page_bottom = content_origin_y + content_height;
+    let content_width = insets.page_area_width(margins, page_box);
+    let page_axis = raikiri_dom::pages_follow_x_axis(dom, cascade);
+    let page_translation = match page_axis {
+        None => (0.0, -content_origin_y),
+        Some(false) => (-content_origin_y, 0.0),
+        Some(true) => (
+            content_origin_y + content_width
+                - dom.laid_out_page_area_width().unwrap_or(content_width),
+            0.0,
+        ),
+    };
     let page_metadata = PageMetadata {
         size: (page_box.width, page_box.height),
         page_index,
@@ -451,17 +396,11 @@ pub fn build_page_scene_for_page_named(
         },
     };
 
-    let root_id = find_first_element_by_tag(dom, "html").map(|idx| NodeId::new(idx as u64));
-    let html_arena_idx = find_first_element_by_tag(dom, "html");
-    let body_arena_idx = find_first_element_by_tag(dom, "body");
-    let body_id = body_arena_idx.map(|idx| NodeId::new(idx as u64));
-    let content_width = insets.page_area_width(margins, page_box);
-    let (body_left_extra, body_top_extra) =
-        html_margin_offsets(cascade, html_arena_idx, content_width);
-    // The body's border box is the synthetic root, which spans the page
-    // content box, inset by the margins layout placed inside it.
-    let body_inline_margins = dom.body_inline_margins();
-    let body_block_start_margin = dom.body_block_start_margin();
+    let root_arena_idx = dom.document_element_index();
+    let root_id = root_arena_idx.map(|idx| NodeId::new(idx as u64));
+    let body_id = raikiri_dom::paint_rules::find_paint_root(dom)
+        .filter(|&idx| dom.get_node(idx).and_then(|node| node.tag_name()) == Some("body"))
+        .map(|idx| NodeId::new(idx as u64));
 
     let mut node_ids: Vec<NodeId> = Vec::new();
     let mut fragments: BTreeMap<NodeId, Vec<Fragment>> = BTreeMap::new();
@@ -471,11 +410,11 @@ pub fn build_page_scene_for_page_named(
     // layout left on its descendants, and prints blank paper.
     let root_generates_box =
         cascade.root_element_computed().display != raikiri_style::property::DisplayValue::None;
-    if let Some(body_idx) = body_arena_idx.filter(|_| root_generates_box) {
-        // DFS from body, matching paint_document's traversal order.  Absolute
+    if let Some(root_idx) = root_arena_idx.filter(|_| root_generates_box) {
+        // DFS from the document element, matching the paint walk. Absolute
         // y stays in the shared document coordinate space until the fragment
         // is committed, which makes page intersection independent of nesting.
-        let mut stack: Vec<(usize, Pt, Pt)> = vec![(body_idx, 0.0, 0.0)];
+        let mut stack = vec![(root_idx, 0.0, 0.0, false, false)];
         // Content-box origin and inline element pieces of every paragraph
         // laid out by the inline engine, by root. Its text nodes have no
         // layout of their own, and its inline elements are recorded as one
@@ -484,11 +423,14 @@ pub fn build_page_scene_for_page_named(
         type SceneRect = (Pt, Pt, Pt, Pt);
         type PieceRectsByNode = HashMap<usize, Vec<SceneRect>>;
         let mut ifc_origin: HashMap<usize, (Pt, Pt)> = HashMap::new();
+        let mut ifc_vertical = HashMap::new();
         let mut ifc_pieces: HashMap<usize, PieceRectsByNode> = HashMap::new();
         let mut ifc_text_lines = HashMap::new();
-        while let Some((idx, parent_abs_x, parent_abs_y)) = stack.pop() {
+        while let Some((idx, parent_abs_x, parent_abs_y, in_viewport_fixed, inside_fixed_cb)) =
+            stack.pop()
+        {
             let Some(node) = dom.get_node(idx) else {
-                continue; // cov:ignore: DFS stack holds only body-subtree indices, always valid in a well-formed Document
+                continue; // cov:ignore: DFS stack holds only document-subtree indices, always valid in a well-formed Document
             };
             if !node.is_in_document()
                 || node.is_non_rendered_html_element()
@@ -497,6 +439,15 @@ pub fn build_page_scene_for_page_named(
             {
                 continue;
             }
+            let cv = &cascade.computed[idx];
+            let element_box = node.kind() == NodeKind::Element
+                && (idx == root_idx || raikiri_dom::paint_rules::generates_box(cv));
+            let in_viewport_fixed = in_viewport_fixed
+                || (element_box
+                    && !inside_fixed_cb
+                    && cv.position == raikiri_style::property::PositionValue::Fixed);
+            let child_fixed_cb = inside_fixed_cb
+                || (element_box && raikiri_dom::establishes_fixed_containing_block(dom, idx, cv));
             let layout = node.unrounded_layout;
             let abs_x = parent_abs_x + layout.location.x;
             let abs_y = parent_abs_y + layout.location.y;
@@ -506,13 +457,25 @@ pub fn build_page_scene_for_page_named(
                 (abs_x, abs_y, layout.size.width, layout.size.height),
                 |rect| (abs_x + rect.x, abs_y + rect.y, rect.width, rect.height),
             );
-            let is_body = idx == body_idx;
             if node.is_ifc_root() {
                 let origin = (
                     abs_x + layout.border.left + layout.padding.left,
                     abs_y + layout.border.top + layout.padding.top,
                 );
                 ifc_origin.insert(idx, origin);
+                if let Some(mode) = node.ifc_writing_mode().filter(|mode| mode.is_vertical()) {
+                    ifc_vertical.insert(
+                        idx,
+                        (
+                            layout.content_box_width(),
+                            matches!(
+                                mode,
+                                shodo::geometry::WritingMode::VerticalRl
+                                    | shodo::geometry::WritingMode::SidewaysRl
+                            ),
+                        ),
+                    );
+                }
                 let mut by_node: PieceRectsByNode = HashMap::new();
                 for piece in node.ifc_inline_boxes().unwrap_or_default() {
                     let rect = piece.border_box;
@@ -540,12 +503,17 @@ pub fn build_page_scene_for_page_named(
                     .unwrap_or((abs_x, abs_y));
                 let first_top = owned.lines.first().map_or(0.0, |l| l.top);
                 let last_bottom = owned.lines.last().map_or(0.0, |l| l.bottom);
-                vec![(
-                    root_x,
-                    root_y + first_top,
-                    owned.width,
-                    (last_bottom - first_top).max(0.0),
-                )]
+                let block_size = (last_bottom - first_top).max(0.0);
+                if let Some(&(content_width, right_to_left)) = ifc_vertical.get(&owned.root) {
+                    let x = if right_to_left {
+                        root_x + content_width - last_bottom
+                    } else {
+                        root_x + first_top
+                    };
+                    vec![(x, root_y, block_size, owned.width)]
+                } else {
+                    vec![(root_x, root_y + first_top, owned.width, block_size)]
+                }
             } else {
                 let pieces: Vec<(Pt, Pt, Pt, Pt)> = if node.in_ifc_subtree() {
                     ifc_root_of(dom, idx)
@@ -556,30 +524,31 @@ pub fn build_page_scene_for_page_named(
                 } else {
                     Vec::new()
                 };
-                if is_body {
-                    let (left, right) = body_inline_margins;
-                    vec![(
-                        abs_x + left,
-                        abs_y + body_block_start_margin,
-                        (layout.size.width - left - right).max(0.0),
-                        (layout.size.height - body_block_start_margin).max(0.0),
-                    )]
-                } else if pieces.is_empty() {
+                if pieces.is_empty() {
                     vec![border_box]
                 } else {
                     pieces
                 }
             };
+            let (dx, dy) = if in_viewport_fixed {
+                (0.0, 0.0)
+            } else {
+                page_translation
+            };
             let on_page: Vec<(Pt, Pt, Pt, Pt)> = rects
                 .into_iter()
-                .filter(|&(_, y, _, height)| {
-                    let height = height.max(0.0);
-                    is_body
-                        || if height == 0.0 {
-                            y >= page_top && y <= page_bottom
-                        } else {
-                            y < page_bottom && y + height > page_top
-                        }
+                .map(|(x, y, w, h)| (x + dx, y + dy, w, h))
+                .filter(|&(x, y, w, h)| {
+                    let (start, extent, end) = if page_axis.is_some() {
+                        (x, w.max(0.0), content_width)
+                    } else {
+                        (y, h.max(0.0), content_height)
+                    };
+                    if extent == 0.0 {
+                        start >= 0.0 && start <= end
+                    } else {
+                        start < end && start + extent > 0.0
+                    }
                 })
                 .collect();
 
@@ -591,7 +560,7 @@ pub fn build_page_scene_for_page_named(
                     entries.push(Fragment {
                         page_index,
                         x,
-                        y: y - content_origin_y,
+                        y,
                         width,
                         height,
                     });
@@ -631,7 +600,7 @@ pub fn build_page_scene_for_page_named(
                         };
                         drawables.paragraphs.insert(node_id, entry);
                     }
-                    _ => {} // cov:ignore: in-document body descendants via parsing are only Element or Text (Comment/PI bits cleared, template fragments detached, DFS starts at body)
+                    _ => {} // cov:ignore: in-document body descendants via parsing are only Element or Text (Comment/PI bits cleared, template fragments detached, DFS starts at the document element)
                 }
             }
 
@@ -644,7 +613,7 @@ pub fn build_page_scene_for_page_named(
                     (parent_abs_x, parent_abs_y)
                 };
                 for &child in node.children.iter().rev() {
-                    stack.push((child, base_x, base_y));
+                    stack.push((child, base_x, base_y, in_viewport_fixed, child_fixed_cb));
                 }
             }
         }
@@ -657,10 +626,7 @@ pub fn build_page_scene_for_page_named(
         drawables,
         root_id,
         body_id,
-        body_offset_pt: (
-            margins.left + insets.left + body_left_extra,
-            margins.top + insets.top + body_top_extra,
-        ),
+        body_offset_pt: (margins.left + insets.left, margins.top + insets.top),
         // Nor does it draw the page's margin boxes.
         margin_boxes: if root_generates_box {
             cascade.page.margin_boxes().to_vec()
@@ -691,28 +657,6 @@ fn ifc_root_of(dom: &Document, idx: usize) -> Option<usize> {
 fn element_id(dom: &Document, node_id: NodeId) -> Option<String> {
     use raikiri_traits::{Dom as _, Element as _, Node as _};
     dom.node(node_id)?.as_element()?.id().map(str::to_string)
-}
-
-/// Return the first `<tag>` element found by DFS (only in-document nodes).
-/// Internal helper for extracting root_id / body_id. It generalizes the
-/// contract of `raikiri_paint::walk::find_body` (skip inert subtrees; accept
-/// the first matching tag). This is the third copy of the find_body-shaped
-/// pattern; consolidation was intentionally deferred and duplication accepted.
-fn find_first_element_by_tag(dom: &Document, tag: &str) -> Option<usize> {
-    let mut stack: Vec<usize> = vec![dom.root_index()];
-    while let Some(idx) = stack.pop() {
-        let node = dom.get_node(idx)?;
-        if !node.is_in_document() {
-            continue;
-        }
-        if node.kind() == NodeKind::Element && node.tag_name() == Some(tag) {
-            return Some(idx);
-        }
-        for &c in node.children.iter().rev() {
-            stack.push(c);
-        }
-    }
-    None // cov:ignore: parse always synthesizes <html>/<body>; lookup fails only for hand-built Documents that cannot supply the CascadeResult this API requires
 }
 
 /// Serialize a premultiplied RGBA8 buffer to PNG bytes.
