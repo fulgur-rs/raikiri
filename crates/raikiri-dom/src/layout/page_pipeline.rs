@@ -4270,17 +4270,14 @@ fn paginate_flow(
                 let block_raw_y = root_flow_offset + current_abs_y(document, block_id) - flow_shift;
                 let relative_text_y = raw_y - block_raw_y;
                 let block_effective_y = effective_y - relative_text_y;
-                let page_start = page_origin(current_page);
-                let page_end = page_start + page_step_at(current_page);
-                let first_line_overflows = effective_y.is_finite()
-                    && height.is_finite()
-                    && effective_y >= page_start
-                    && block_effective_y >= page_start
-                    && block_effective_y < page_end
-                    && block_height.is_finite()
-                    && block_height <= page_step_at(current_page) + 0.001
-                    && effective_y + height > page_end;
-                if first_line_overflows {
+                if first_line_overflows(
+                    effective_y,
+                    height,
+                    block_effective_y,
+                    block_height,
+                    page_origin(current_page),
+                    page_step_at(current_page),
+                ) {
                     let natural_page = page_index_for_y(effective_y + height);
                     let target_page = current_page.saturating_add(1).max(natural_page);
                     check_candidate_page!('candidate_loop, target_page);
@@ -6686,6 +6683,30 @@ impl CheckedParagraphs {
     fn is_fully_checked(&self, block_id: usize) -> bool {
         self.block_text.contains(&block_id) && self.orphans_widows.contains(&block_id)
     }
+}
+
+/// Whether the text from `text_y` with `text_height` straddles the end of
+/// the page that starts at `page_start` and is `page_step` tall, while its
+/// block, from `block_y` with `block_height`, starts on that page and fits
+/// in one page. Such a fixed-height block is pushed to the next page as a
+/// unit, as monolithic content is.
+fn first_line_overflows(
+    text_y: f32,
+    text_height: f32,
+    block_y: f32,
+    block_height: f32,
+    page_start: f32,
+    page_step: f32,
+) -> bool {
+    let page_end = page_start + page_step;
+    text_y.is_finite()
+        && text_height.is_finite()
+        && text_y >= page_start
+        && block_y >= page_start
+        && block_y < page_end
+        && block_height.is_finite()
+        && block_height <= page_step + 0.001
+        && text_y + text_height > page_end
 }
 
 /// How a paragraph's lines fall against the end of the current page, and
