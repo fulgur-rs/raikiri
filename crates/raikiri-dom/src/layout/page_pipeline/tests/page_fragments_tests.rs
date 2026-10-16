@@ -3823,6 +3823,71 @@ fn white_space_between_flex_items_leaves_an_item_alone_on_its_line() {
 }
 
 #[test]
+fn a_blockified_inline_flex_item_alone_on_its_line_breaks_like_a_flex_one() {
+    use crate::layout::test_support::ifc_ahem_fonts;
+    // A grid root blockifies its `inline-flex` child into a flex container
+    // (CSS Display 3 §2.7), so the paragraph alone on its flex line moves
+    // its last two lines to page 1 as it does under `display: flex`. An
+    // inline-level `inline-flex` box is monolithic and never gets here.
+    let run = |display: &str| {
+        let mut doc = crate::Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some("display:grid;grid-template-columns:40px;padding-top:15px"),
+        );
+        let flex = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some(&format!("{display};flex-wrap:wrap;width:40px")),
+        );
+        let item = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some(
+                "display:block;font-family:Ahem;font-size:10px;line-height:10px;width:100%;\
+                 orphans:1;widows:2",
+            ),
+        );
+        let text = doc.append_text(item, "aaaa bbbb cccc");
+        let second = doc.append_element(
+            Some(flex),
+            "div",
+            Style::default(),
+            Some("display:block;height:5px;width:100%"),
+        );
+        doc.mark_in_document_flags();
+        let rules = build_rule_tree(&doc);
+        let cascade = cascade(&doc, &rules).expect("cascade");
+        doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 40.0;
+        let slices = layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        (
+            text_fragments(&doc, &cascade, page, &slices, text),
+            absolute_rect(&doc, second).1,
+        )
+    };
+
+    let flex = run("display:flex");
+    assert_eq!(
+        flex,
+        (
+            vec![
+                (0, Some(PageFragmentLineRange::new(0, 1))),
+                (1, Some(PageFragmentLineRange::new(1, 3))),
+            ],
+            60.0,
+        )
+    );
+    assert_eq!(run("display:inline-flex"), flex);
+}
+
+#[test]
 fn a_flex_item_beside_a_display_contents_child_keeps_its_natural_break() {
     // The items a `display: contents` child lifts onto the lines are not
     // measured, so the item is not known to be alone on its line.
