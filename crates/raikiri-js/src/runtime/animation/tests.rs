@@ -305,7 +305,7 @@ fn paused_effect_without_a_current_time_has_no_sample() {
                     .expect("valid keyframes"),
             ),
             start_time_ms: 0.0,
-            duration_ms: 40.0,
+            end_time_ms: 40.0,
             current_time_ms: None,
             paused: true,
             finish_task: None,
@@ -595,4 +595,75 @@ fn reading_finished_while_paused_queues_nothing() {
             .unwrap()
             .to_boolean()
     );
+}
+
+#[test]
+fn timing_members_set_the_finish_time() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.times = {};\
+             const watch = (name, options) => target.animate({ opacity: [0, 1] }, options)\
+               .finished.then(() => { times[name] = performance.now(); });\
+             watch('iterations', { duration: 10, iterations: 3 });\
+             watch('delays', { duration: 10, delay: 5, endDelay: 7 });\
+             watch('negative', { duration: 10, delay: -20 });\
+             watch('zeroForever', { duration: 0, iterations: Infinity });\
+             watch('forever', { duration: 10, iterations: Infinity })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate(
+                "times.iterations === 30 && times.delays === 22 && times.negative === 0\
+                 && times.zeroForever === 0 && !('forever' in times)"
+            )
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn invalid_timing_and_unsampled_timing_throw() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "[\
+               () => target.animate({ opacity: [0, 1] }, { iterations: -1 }),\
+               () => target.animate({ opacity: [0, 1] }, { iterations: NaN }),\
+               () => target.animate({ opacity: [0, 1] }, { delay: Infinity }),\
+               () => target.animate({ opacity: [0, 1] }, { endDelay: NaN }),\
+               () => target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 40, delay: 1 }),\
+               () => target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 40, endDelay: 1 }),\
+               () => target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 40, iterations: 2 })\
+             ].every(run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } })",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+    runtime
+        .evaluate(
+            "target.animate({ wordSpacing: ['0px', '40px'] }, { duration: 40, delay: 0, endDelay: 0, iterations: 1 })",
+        )
+        .expect("default timing members keep a sampled effect");
+}
+
+#[test]
+fn keyframe_sequences_are_validated() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const refused = keyframes => {\
+               try { target.animate(keyframes, 1); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             };\
+             [[1], [{ offset: 2 }], [{ offset: -1 }], [{ offset: 0.6 }, { offset: 0.4 }], [{ offset: NaN }]]\
+               .every(refused)\
+             && !refused([null, undefined, { offset: null }, { offset: 0 }, {}, { offset: '0.5' }, { offset: 1 }])",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
 }

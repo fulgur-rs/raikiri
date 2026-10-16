@@ -61,7 +61,9 @@ pub(crate) struct AnimationEffect {
     pub(crate) keyframes: Option<KeyframePair>,
     /// Virtual time at which the effect was created and started playing.
     pub(crate) start_time_ms: f64,
-    pub(crate) duration_ms: f64,
+    /// Effect end time relative to the start time; infinite for an effect
+    /// that repeats forever.
+    pub(crate) end_time_ms: f64,
     pub(crate) current_time_ms: Option<f64>,
     pub(crate) paused: bool,
     /// The queued task that resolves `finished`, cancelled on pause.
@@ -197,6 +199,37 @@ fn is_css_number_syntax(value: &str) -> bool {
     index == bytes.len()
 }
 
+/// Check a keyframe sequence the static sampler does not render: every
+/// keyframe is a dictionary, and offsets that are present lie in [0, 1] in
+/// non-decreasing order.
+fn validate_keyframe_sequence(sequence: &JsObject, context: &mut Context) -> JsResult<()> {
+    let length = sequence
+        .get(js_string!("length"), context)?
+        .to_length(context)?;
+    let mut previous_offset = 0.0;
+    for index in 0..length {
+        let keyframe = sequence.get(index, context)?;
+        if keyframe.is_null_or_undefined() {
+            continue;
+        }
+        let keyframe = keyframe
+            .as_object()
+            .ok_or_else(|| type_error("each keyframe must be an object"))?;
+        let offset = keyframe.get(js_string!("offset"), context)?;
+        if offset.is_null_or_undefined() {
+            continue;
+        }
+        let offset = offset.to_number(context)?;
+        if !(previous_offset..=1.0).contains(&offset) {
+            return Err(type_error(
+                "keyframe offsets must lie in [0, 1] in non-decreasing order",
+            ));
+        }
+        previous_offset = offset;
+    }
+    Ok(())
+}
+
 /// Parse keyframes into the one sampled property, or `None` when they fall
 /// outside the static sampler (null, a keyframe sequence, no property, an
 /// unsupported property, or several properties).
@@ -211,6 +244,7 @@ fn parse_keyframes(
         .as_object()
         .ok_or_else(|| type_error("animation keyframes must be an object"))?;
     if object.is_array() {
+        validate_keyframe_sequence(&object, context)?;
         return Ok(None);
     }
     let keys = object.own_property_keys(context)?;
@@ -241,24 +275,65 @@ fn parse_keyframes(
     )))
 }
 
-/// The iteration duration from `options`, converted as the WebIDL union
+/// Timing from the `options` argument of `Element.animate`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Timing {
+    duration_ms: f64,
+    delay_ms: f64,
+    end_delay_ms: f64,
+    iterations: f64,
+}
+
+impl Timing {
+    /// Whether the static sampler can render the effect: it only models a
+    /// single iteration that starts at once.
+    fn is_single_iteration(self) -> bool {
+        self.delay_ms == 0.0 && self.end_delay_ms == 0.0 && self.iterations == 1.0
+    }
+
+    /// Effect end time: delays plus the active duration, never negative.
+    fn end_time_ms(self) -> f64 {
+        let active = if self.duration_ms == 0.0 {
+            0.0
+        } else {
+            self.duration_ms * self.iterations
+        };
+        (self.delay_ms + active + self.end_delay_ms).max(0.0)
+    }
+}
+
+/// Timing from `options`, converted as the WebIDL union
 /// `(unrestricted double or KeyframeAnimationOptions)`: `undefined` and
 /// `null` are an empty dictionary, an object is a dictionary, and any other
-/// primitive is converted to a number. A dictionary's `duration` is a
-/// Number or a value whose string is `"auto"`; absent and `"auto"` mean zero
-/// for a keyframe effect.
-fn parse_duration(options: Option<&JsValue>, context: &mut Context) -> JsResult<f64> {
+/// primitive is converted to a number. A dictionary's `duration` is a Number
+/// or a value whose string is `"auto"`; absent and `"auto"` mean zero for a
+/// keyframe effect.
+fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Timing> {
     let options = options.cloned().unwrap_or_default();
+    let mut timing = Timing {
+        duration_ms: 0.0,
+        delay_ms: 0.0,
+        end_delay_ms: 0.0,
+        iterations: 1.0,
+    };
     let duration = if options.is_null_or_undefined() {
         JsValue::undefined()
     } else if let Some(dictionary) = options.as_object() {
-        dictionary.get(js_string!("duration"), context)?
+        // Dictionary members are read in lexicographic order.
+        timing.delay_ms = finite_member(&dictionary, js_string!("delay"), 0.0, context)?;
+        let duration = dictionary.get(js_string!("duration"), context)?;
+        timing.end_delay_ms = finite_member(&dictionary, js_string!("endDelay"), 0.0, context)?;
+        let iterations = dictionary.get(js_string!("iterations"), context)?;
+        if !iterations.is_undefined() {
+            timing.iterations = iterations.to_number(context)?;
+        }
+        duration
     } else {
         JsValue::from(options.to_number(context)?)
     };
     // `(unrestricted double or DOMString)`: only a Number selects the double;
     // every other value converts to a string, and only "auto" is valid.
-    let duration = if duration.is_undefined() {
+    timing.duration_ms = if duration.is_undefined() {
         0.0
     } else if let Some(duration) = duration.as_number() {
         duration
@@ -269,26 +344,56 @@ fn parse_duration(options: Option<&JsValue>, context: &mut Context) -> JsResult<
             "animation duration must be a number or \"auto\"",
         ));
     };
-    if duration.is_finite() && duration >= 0.0 {
-        Ok(duration)
-    } else {
-        Err(type_error(
+    if !(timing.duration_ms.is_finite() && timing.duration_ms >= 0.0) {
+        return Err(type_error(
             "animation duration must be a finite, non-negative number",
-        ))
+        ));
+    }
+    if timing.iterations.is_nan() || timing.iterations < 0.0 {
+        return Err(type_error("animation iterations must be non-negative"));
+    }
+    Ok(timing)
+}
+
+/// A WebIDL `double` dictionary member: absent is `default`, and a value
+/// that is not finite after conversion throws.
+fn finite_member(
+    dictionary: &JsObject,
+    name: JsString,
+    default: f64,
+    context: &mut Context,
+) -> JsResult<f64> {
+    let value = dictionary.get(name, context)?;
+    if value.is_undefined() {
+        return Ok(default);
+    }
+    let value = value.to_number(context)?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err(type_error("animation delays must be finite numbers"))
     }
 }
 
-fn parse_effect(args: &[JsValue], context: &mut Context) -> JsResult<(Option<KeyframePair>, f64)> {
+fn parse_effect(
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<(Option<KeyframePair>, Timing)> {
     let keyframes = args
         .first()
         .ok_or_else(|| type_error("animation keyframes are required"))?;
     let keyframes = parse_keyframes(keyframes, context)?;
-    let duration = parse_duration(args.get(1), context)?;
+    let timing = parse_timing(args.get(1), context)?;
+    if keyframes.is_some() && !timing.is_single_iteration() {
+        return Err(type_error(
+            "sampled animations support only one iteration without delays",
+        ));
+    }
     let keyframes = keyframes
-        .map(|(property, from, to)| KeyframePair::new(property, from, to, duration))
+        .map(|(property, from, to)| KeyframePair::new(property, from, to, timing.duration_ms))
         .transpose()
         .map_err(|_| type_error("animation keyframe values must be finite"))?;
-    Ok((keyframes, duration))
+    Ok((keyframes, timing))
 }
 
 fn animation_id(this: &JsValue) -> JsResult<usize> {
@@ -306,7 +411,7 @@ pub(crate) fn element_animate(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let target = this_element(this, context)?;
-    let (keyframes, duration_ms) = parse_effect(args, context)?;
+    let (keyframes, timing) = parse_effect(args, context)?;
     let id = with_state(context, |state| {
         let id = state.animations.len();
         let start_time_ms = state.event_loop.now;
@@ -314,7 +419,7 @@ pub(crate) fn element_animate(
             target,
             keyframes,
             start_time_ms,
-            duration_ms,
+            end_time_ms: timing.end_time_ms(),
             current_time_ms: None,
             paused: false,
             finish_task: None,
@@ -350,7 +455,7 @@ fn ready(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
 }
 
 /// `Animation.finished`: resolves with the animation once the virtual clock
-/// reaches the end of its active interval; a paused animation never
+/// reaches the effect end time; a paused animation never
 /// finishes. The finishing task is queued on first access so that long
 /// animations nobody waits on do not hold the event loop open, and pausing
 /// cancels it.
@@ -366,7 +471,8 @@ fn finished(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<Js
     let remaining = with_state(context, |state| {
         state.animations.get(id).map(|effect| {
             (!effect.paused)
-                .then_some(effect.start_time_ms + effect.duration_ms - state.event_loop.now)
+                .then_some(effect.start_time_ms + effect.end_time_ms - state.event_loop.now)
+                .filter(|remaining| remaining.is_finite())
         })
     })?
     .ok_or_else(|| type_error("Animation is no longer available"))?;
