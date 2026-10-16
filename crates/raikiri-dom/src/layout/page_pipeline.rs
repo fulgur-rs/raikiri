@@ -1871,6 +1871,33 @@ fn positioned_text_start_y(
     current_abs_y(document, root) + text_first_line_offset(document, root, owned, 0.0)
 }
 
+/// Places the text `node_id` at `y` in the paginated flow. When the text
+/// moves its inline layout root, `moved_root` holds that root and the text's
+/// offset in it, and the root goes to the matching position. Otherwise a
+/// later text of the inline layout rooted at `text_ifc_root`, whose root already
+/// moved, sends its lines where the flow puts them and the lines after
+/// follow, because an earlier box of the paragraph may have grown.
+fn place_text_candidate(
+    document: &mut Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    moved_root: Option<(usize, f32)>,
+    text_ifc_root: Option<usize>,
+    y: f32,
+) {
+    if let Some((root, offset)) = moved_root {
+        materialize_y(document, root, y - offset);
+    } else if let Some(root) = text_ifc_root
+        && let Some(owned) = text_lines.get(node_id)
+        && let Some(first) = owned.lines.first()
+    {
+        let current = current_abs_y(document, root)
+            + text_first_line_offset(document, root, owned, first.top);
+        follow_moved_ifc_text(document, root, node_id, y - current, text_lines);
+    }
+    materialize_y(document, node_id, y);
+}
+
 /// Block offset of the first line of `owned` from the border-box top of its
 /// paragraph `root`, after the paragraph's column ranges have moved it.
 /// `fallback` is the line top used when no positioned first line is found:
@@ -4496,20 +4523,14 @@ fn paginate_flow(
                     effective_y += delta;
                 }
             }
-            if let Some((ifc_root, offset)) = ifc_root {
-                materialize_y(document, ifc_root, effective_y - offset);
-            } else if let Some((root, _)) = candidate.ifc_root
-                && let Some(owned) = text_lines.get(node_id)
-                && let Some(first) = owned.lines.first()
-            {
-                // A later text of a paragraph whose root already moved: its
-                // lines go where the flow puts them, and the ones after
-                // follow (an earlier box of the paragraph may have grown).
-                let current = current_abs_y(document, root)
-                    + text_first_line_offset(document, root, owned, first.top);
-                follow_moved_ifc_text(document, root, node_id, effective_y - current, &text_lines);
-            }
-            materialize_y(document, node_id, effective_y);
+            place_text_candidate(
+                document,
+                &text_lines,
+                node_id,
+                ifc_root,
+                candidate.ifc_root.map(|(root, _)| root),
+                effective_y,
+            );
             let named_page_change = name_context_seen
                 && height > 0.0
                 && name_participates_in_flow
