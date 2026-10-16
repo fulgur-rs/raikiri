@@ -1,8 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
+use boa_engine::builtins::object::OrdinaryObject;
 use boa_engine::job::NativeJob;
 use boa_engine::object::JsObject;
 use boa_engine::object::builtins::{JsFunction, JsPromise};
+use boa_engine::property::PropertyKey;
 use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsSymbol, JsValue, Trace,
     js_string,
@@ -357,26 +359,20 @@ fn convert_keyframe_properties(
     allow_lists: bool,
     context: &mut Context,
 ) -> JsResult<Vec<(String, PropertyValues)>> {
-    let keys_function = context
-        .intrinsics()
-        .constructors()
-        .object()
-        .constructor()
-        .get(js_string!("keys"), context)?;
-    let keys = keys_function
-        .as_callable()
-        .ok_or_else(|| type_error("Object.keys must be callable"))?
-        .call(&JsValue::undefined(), &[object.clone().into()], context)?;
-    let keys = keys
-        .as_object()
-        .ok_or_else(|| type_error("Object.keys must return an array"))?;
-    let length = keys
-        .get(js_string!("length"), context)?
-        .to_length(context)?;
+    // EnumerableOwnProperties(object, key), through the object's internal
+    // methods rather than the script-replaceable `Object.keys`.
     let mut names = Vec::new();
-    for index in 0..length {
-        let name = dom_string(&keys.get(index, context)?, context)?;
-        if is_animatable_idl_name(&name) {
+    for key in object.own_property_keys(context)? {
+        let PropertyKey::String(name) = key else {
+            continue;
+        };
+        let enumerable = OrdinaryObject::property_is_enumerable(
+            &object.clone().into(),
+            &[name.clone().into()],
+            context,
+        )?;
+        let name = name.to_std_string_escaped();
+        if enumerable.to_boolean() && is_animatable_idl_name(&name) {
             names.push(name);
         }
     }

@@ -1010,7 +1010,18 @@ fn keyframe_properties_are_converted_in_idl_name_order() {
              && thrown(() => target.animate({ opacity: { [Symbol.iterator]: 1 } }, 1)) instanceof TypeError\
              && thrown(() => target.animate({ wordSpacing: '0px' }, 1)) instanceof TypeError\
              && thrown(() => target.animate({ get ['--x']() { throw marker; } }, 1)) === marker\
-             && thrown(() => target.animate({ get ['--']() { throw marker; } }, 1)) === null",
+             && thrown(() => target.animate({ get ['--']() { throw marker; } }, 1)) === null\
+             && (() => {\
+               const original = Object.keys;\
+               Object.keys = () => [];\
+               const hidden = Object.defineProperty({}, 'opacity', { get() { throw marker; } });\
+               const result = thrown(() => target.animate({ get opacity() { throw marker; } }, 1)) === marker\
+                 && thrown(() => target.animate(hidden, 1)) === null\
+                 && thrown(() => target.animate(new Proxy({ opacity: 1 },\
+                      { getOwnPropertyDescriptor() { throw marker; } }), 1)) === marker;\
+               Object.keys = original;\
+               return result;\
+             })()",
         )
         .unwrap();
     assert!(result.to_boolean());
