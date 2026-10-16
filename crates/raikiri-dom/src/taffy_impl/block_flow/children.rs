@@ -211,50 +211,88 @@ pub(super) fn layout(
         let mut area_start = metrics.inset.left + margin.left;
         let mut area_width = natural_stretch;
         let mut slot_y = None;
-        if !same && ctx.has_active_floats(flow.end + pending.resolve()) {
-            let mut after = None;
-            loop {
-                let slot = ctx.find_bfc_slot(
-                    flow.end + pending.collapse_with_margin(margin.top).resolve(),
-                    [margin.left, margin.right],
-                    container.direction,
-                    style.clear,
-                    after,
-                );
-                let proposed = measure_width(slot.stretch_width);
-                if proposed <= slot.border_width + 0.001 || slot.segment_id.is_none() {
-                    child_width = proposed;
-                    area_start = slot.x;
-                    area_width = slot.stretch_width;
-                    slot_y = Some(slot.y);
-                    break;
+        // Whether a box establishing a formatting context moved down past
+        // floats. Like clearance, that separates its top margin from the
+        // margins of its parent.
+        let mut separated = false;
+        let joins = leading && collapse_start;
+        if !same {
+            let margins = pending.collapse_with_margin(margin.top);
+            let hypothetical = if joins {
+                ctx.hypothetical_top_position(margins)
+                    .unwrap_or(flow.end + margins.resolve())
+            } else {
+                flow.end + margins.resolve()
+            };
+            // A float adjoining the unresolved strut moves with it while the
+            // margins escape, so the box is first tried beside that float
+            // without its margin. A float the box clears forces clearance.
+            let adjoining = joins && ctx.has_adjoining_float(Clear::Both);
+            let forced = joins && ctx.has_adjoining_float(style.clear);
+            let search = if forced {
+                ctx.cleared_threshold(style.clear).unwrap_or(hypothetical)
+            } else if adjoining {
+                flow.end
+            } else {
+                hypothetical
+            };
+            if forced || ctx.has_active_floats(search) {
+                let mut after = None;
+                loop {
+                    let slot = ctx.find_bfc_slot(
+                        search,
+                        [margin.left, margin.right],
+                        container.direction,
+                        style.clear,
+                        after,
+                    );
+                    let proposed = measure_width(slot.stretch_width);
+                    if proposed <= slot.border_width + 0.001 || slot.segment_id.is_none() {
+                        child_width = proposed;
+                        area_start = slot.x;
+                        area_width = slot.stretch_width;
+                        separated = forced
+                            || slot.y > if adjoining { flow.end } else { hypothetical } + 0.001;
+                        slot_y = Some(if joins && !separated {
+                            flow.end
+                        } else {
+                            slot.y
+                        });
+                        break;
+                    }
+                    after = slot.segment_id;
                 }
-                after = slot.segment_id;
             }
         }
-        let free = area_width - child_width;
         let (left_auto, right_auto) = (style.margin.left.is_auto(), style.margin.right.is_auto());
-        let (auto_left, auto_right) = match (left_auto, right_auto) {
-            (true, true) => (free.max(0.0) / 2.0, free.max(0.0) / 2.0),
-            (true, false) => (free.max(0.0), 0.0),
-            (false, true) => (0.0, free.max(0.0)),
-            _ => (0.0, 0.0),
+        // The inline position and auto margins for a border box of `used`
+        // width inside the available area.
+        let place = |used: f32, mut margin: Rect<f32>| {
+            let free = area_width - used;
+            let (auto_left, auto_right) = match (left_auto, right_auto) {
+                (true, true) => (free.max(0.0) / 2.0, free.max(0.0) / 2.0),
+                (true, false) => (free.max(0.0), 0.0),
+                (false, true) => (0.0, free.max(0.0)),
+                _ => (0.0, 0.0),
+            };
+            let offset = if container.direction == taffy::Direction::Rtl
+                && (free < 0.0 || !left_auto && !right_auto)
+            {
+                free
+            } else {
+                auto_left
+            };
+            if left_auto {
+                margin.left = auto_left + (area_start - metrics.inset.left).max(0.0);
+            }
+            if right_auto {
+                margin.right =
+                    auto_right + (width - metrics.inset.right - area_start - area_width).max(0.0);
+            }
+            (area_start + offset, margin)
         };
-        let offset = if container.direction == taffy::Direction::Rtl
-            && (free < 0.0 || !left_auto && !right_auto)
-        {
-            free
-        } else {
-            auto_left
-        };
-        let left = area_start + offset;
-        if left_auto {
-            margin.left = auto_left + (area_start - metrics.inset.left).max(0.0);
-        }
-        if right_auto {
-            margin.right =
-                auto_right + (width - metrics.inset.right - area_start - area_width).max(0.0);
-        }
+        let (mut left, placed_margin) = place(child_width, margin);
+        margin = placed_margin;
         child_input.known_dimensions.width = Some(child_width);
         child_input.available_space.width = AvailableSpace::Definite(child_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
@@ -266,7 +304,6 @@ pub(super) fn layout(
             .unwrap_or(f32::NEG_INFINITY);
         let adjoining_clearance = ctx.has_adjoining_float(style.clear);
         let saved = ctx.snapshot();
-        let joins = leading && collapse_start;
         let mut final_pass = resolved && joins && style.clear == Clear::None;
         let mut guess = slot_y
             .unwrap_or(if joins {
@@ -312,6 +349,10 @@ pub(super) fn layout(
                 && ((joins && adjoining_clearance) || hypothetical < clear_y);
             let top = if let Some(slot_y) = slot_y {
                 slot_y
+            } else if clearance && joins && !resolved {
+                // A provisional origin still includes the margins escaping
+                // above this block, so the float edge is that much higher.
+                clear_y - pending.resolve()
             } else if clearance {
                 clear_y
             } else if joins {
@@ -338,11 +379,18 @@ pub(super) fn layout(
         };
         ctx.add_child_floated_content_height_contribution(guess + floated_end);
         ctx.merge_adjoining_floats(adjoining);
-        if joins && !clearance {
+        if joins && separated {
+            flow.leading = flow.leading.collapse_with_set(pending);
+        } else if joins && !clearance {
             flow.leading = flow
                 .leading
                 .collapse_with_set(pending)
                 .collapse_with_set(top_set);
+        }
+        // An orthogonal box sizes its width from its content, whatever
+        // width it was offered, so it is placed by the width it took.
+        if (output.size.width - child_width).abs() > 0.001 {
+            (left, margin) = place(output.size.width, margin);
         }
         let offset = relative(&style, parent, container.direction);
         let location = Point {

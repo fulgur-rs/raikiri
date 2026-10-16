@@ -31,7 +31,7 @@ fn inputs() -> LayoutInput {
 }
 
 #[test]
-fn minimum_height_keeps_the_last_child_margin_inside_the_block() {
+fn minimum_height_drops_the_last_child_margin_it_separates() {
     let mut tree = Document::new();
     let root = tree.append_element(
         Some(0),
@@ -73,8 +73,10 @@ fn minimum_height_keeps_the_last_child_margin_inside_the_block() {
         None::<&str>,
     );
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
-    assert_eq!(tree.nodes[child].unrounded_layout.size.height, 120.0);
-    assert_eq!(output.size.height, 120.0);
+    // The margin neither escapes the block nor adds to the height that
+    // `min-height` fixed.
+    assert_eq!(tree.nodes[child].unrounded_layout.size.height, 80.0);
+    assert_eq!(output.size.height, 80.0);
 }
 
 #[test]
@@ -546,4 +548,134 @@ fn scrollable_overflow_keeps_the_end_padding_after_content() {
     let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
     assert_eq!(output.scrollable_overflow_rect.bottom, 120.0);
     assert_eq!(output.scrollable_overflow_rect.right, 320.0);
+}
+
+fn plain(tree: &mut Document, parent: usize) -> usize {
+    tree.append_element(
+        Some(parent),
+        "div",
+        Style {
+            display: Display::Block,
+            ..Style::default()
+        },
+        None::<&str>,
+    )
+}
+
+#[test]
+fn a_formatting_context_pushed_below_an_adjoining_float_separates_its_margin() {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let outer = plain(&mut tree, root);
+    let holder = plain(&mut tree, outer);
+    let float = block(&mut tree, holder, 200.0, 200.0);
+    tree.nodes[float].style.float = Float::Left;
+    let context = block(&mut tree, outer, 200.0, 1.0);
+    tree.nodes[context].style.display = Display::FlowRoot;
+    tree.nodes[context].style.margin.top = LengthPercentageAuto::length(200.0);
+    let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    // The box does not fit beside the float, so its margin no longer
+    // collapses with the parent's and the float stays at the top.
+    assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 0.0);
+    assert_eq!(tree.nodes[float].unrounded_layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].unrounded_layout.location.y, 200.0);
+    assert_eq!(output.size.height, 201.0);
+}
+
+#[test]
+fn a_formatting_context_beside_an_adjoining_float_keeps_its_margin() {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let outer = plain(&mut tree, root);
+    let holder = plain(&mut tree, outer);
+    let float = block(&mut tree, holder, 100.0, 10.0);
+    tree.nodes[float].style.float = Float::Left;
+    let context = block(&mut tree, outer, 100.0, 10.0);
+    tree.nodes[context].style.display = Display::FlowRoot;
+    tree.nodes[context].style.margin.top = LengthPercentageAuto::length(50.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    // The box fits beside the float, so the margin escapes and carries
+    // the float down with it.
+    assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 50.0);
+    assert_eq!(tree.nodes[float].unrounded_layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].unrounded_layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].unrounded_layout.location.x, 100.0);
+}
+
+#[test]
+fn a_formatting_context_clearing_an_adjoining_float_starts_below_it() {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let outer = plain(&mut tree, root);
+    let float = block(&mut tree, outer, 100.0, 50.0);
+    tree.nodes[float].style.float = Float::Left;
+    let context = block(&mut tree, outer, 100.0, 50.0);
+    tree.nodes[context].style.display = Display::FlowRoot;
+    tree.nodes[context].style.clear = taffy::Clear::Left;
+    tree.nodes[context].style.margin.top = LengthPercentageAuto::length(300.0);
+    let output = block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    assert_eq!(tree.nodes[outer].unrounded_layout.location.y, 0.0);
+    assert_eq!(tree.nodes[context].unrounded_layout.location.y, 50.0);
+    assert_eq!(output.size.height, 100.0);
+}
+
+/// The leading margin of `inner` escapes above it while its origin is still
+/// a guess; the cleared child must land at the float's bottom.
+#[test]
+fn clearance_under_an_unresolved_origin_excludes_the_escaping_margin() {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::Block,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let float = block(&mut tree, root, 50.0, 100.0);
+    tree.nodes[float].style.float = Float::Left;
+    let padded = plain(&mut tree, root);
+    tree.nodes[padded].style.padding.top = LengthPercentage::length(1.0);
+    let inner = plain(&mut tree, padded);
+    let first = plain(&mut tree, inner);
+    tree.nodes[first].style.margin.bottom = LengthPercentageAuto::length(49.0);
+    let cleared = plain(&mut tree, inner);
+    tree.nodes[cleared].style.clear = taffy::Clear::Left;
+    tree.nodes[cleared].style.margin.top = LengthPercentageAuto::length(98.0);
+    // Like the body of a page, the root's own top margin may still collapse
+    // with its children, so no origin in it is resolved.
+    let mut root_inputs = inputs();
+    root_inputs.vertical_margins_are_collapsible.start = true;
+    block_layout(&mut tree, NodeId::from(root), root_inputs, None);
+    let inner_y = tree.nodes[inner].unrounded_layout.location.y;
+    assert_eq!(inner_y, 50.0);
+    assert_eq!(
+        inner_y + tree.nodes[cleared].unrounded_layout.location.y,
+        100.0
+    );
 }

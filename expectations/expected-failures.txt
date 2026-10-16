@@ -71,10 +71,8 @@ css/css-flexbox/scrollbars-auto.html | Scrollbar layout differs since the reftes
 css/css-flexbox/scrollbars-no-margin.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-flexbox/scrollbars.html | Scrollbar layout differs since the reftest script started running | RAIKIRI-20 | 2026-10-12 | 2026-12-12
 css/css-tables/paint/col-change-span-bg-invalidation-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-text/overflow-wrap/overflow-wrap-min-content-size-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/white-space/text-wrap-balance-004.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-text/white-space/white-space-applies-to-text-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
-css/css-text/word-break/word-break-min-content-001.html | Mismatches on Linux since the baseline was pinned; likely pinned with macOS system fonts | RAIKIRI-109 | 2026-10-12 | 2026-12-12
 css/css-flexbox/overflow-auto-005.html | Scroll containers keep a top-left scroll origin for reversed flex directions and vertical writing modes; passed only while gradients painted their first color | RAIKIRI-143 | 2026-10-12 | 2026-12-12
 css/css-tables/paint/col-change-span-bg-invalidation-002.html | Script-driven col span changes are not applied; passed only by coincidence before the paint order fix | RAIKIRI-144 | 2026-10-12 | 2026-12-12
 css/CSS2/pagination/float-page-break-inside-avoid-2-print.html | An avoiding float taller than a page breaks inside, but its continuation keeps the inline offset of the shorter float beside it instead of starting at the left edge of the next page | RAIKIRI-188 | 2026-10-13 | 2026-12-13
@@ -152,3 +150,4 @@ css/css-text/text-group-align/text-group-align-start-vlr.html | text-group-align
 css/css-text/text-group-align/text-group-align-start.html | text-group-align is not implemented; it matched only while support/test-helpers.css was not loaded | RAIKIRI-317 | 2026-10-14 | 2026-12-14
 css/css-writing-modes/text-combine-upright-compression-001.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
 css/css-writing-modes/text-combine-upright-shadow.html | Differs from the reference once its images, support stylesheet or web fonts load; it matched only without them | RAIKIRI-321 | 2026-10-14 | 2026-12-14
+css/css-text-decor/text-decoration-inset-016.html | The reference positions abspos headings at 10em and 12em and assumes one line; with the WPT fonts shrink-to-fit correctly wraps those reference headings | RAIKIRI-390 | 2026-10-16 | 2026-12-16
