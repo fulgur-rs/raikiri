@@ -2,11 +2,13 @@ use std::collections::{HashMap, HashSet};
 
 use boa_engine::job::NativeJob;
 use boa_engine::object::JsObject;
-use boa_engine::object::builtins::JsPromise;
+use boa_engine::object::builtins::{JsFunction, JsPromise};
 use boa_engine::property::PropertyKey;
 use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsValue, Trace, js_string,
 };
+
+use raikiri_style::is_valid_easing_function;
 
 use super::interfaces::{Members, protos};
 use super::webidl::{this_element, with_state};
@@ -79,6 +81,8 @@ pub(crate) struct AnimationData {
     ready: Option<JsObject>,
     /// The `finished` promise, created on first access.
     finished: Option<JsObject>,
+    /// Resolves `finished`; taken when it runs.
+    finish_resolve: Option<JsFunction>,
 }
 
 impl KeyframePair {
@@ -200,13 +204,16 @@ fn is_css_number_syntax(value: &str) -> bool {
 }
 
 /// Check a keyframe sequence the static sampler does not render: every
-/// keyframe is a dictionary, and offsets that are present lie in [0, 1] in
-/// non-decreasing order.
+/// keyframe is a dictionary whose `composite` is a known operation, offsets
+/// that are present lie in [0, 1] in non-decreasing order, and every
+/// `easing` is an `<easing-function>`.
 fn validate_keyframe_sequence(sequence: &JsObject, context: &mut Context) -> JsResult<()> {
+    const COMPOSITE_OR_AUTO: &[&str] = &["replace", "add", "accumulate", "auto"];
     let length = sequence
         .get(js_string!("length"), context)?
         .to_length(context)?;
     let mut previous_offset = 0.0;
+    let mut easings = Vec::new();
     for index in 0..length {
         let keyframe = sequence.get(index, context)?;
         if keyframe.is_null_or_undefined() {
@@ -215,6 +222,14 @@ fn validate_keyframe_sequence(sequence: &JsObject, context: &mut Context) -> JsR
         let keyframe = keyframe
             .as_object()
             .ok_or_else(|| type_error("each keyframe must be an object"))?;
+        // BaseKeyframe members are read in lexicographic order.
+        enum_member(
+            &keyframe,
+            js_string!("composite"),
+            COMPOSITE_OR_AUTO,
+            context,
+        )?;
+        easings.extend(string_member(&keyframe, js_string!("easing"), context)?);
         let offset = keyframe.get(js_string!("offset"), context)?;
         if offset.is_null_or_undefined() {
             continue;
@@ -227,7 +242,14 @@ fn validate_keyframe_sequence(sequence: &JsObject, context: &mut Context) -> JsR
         }
         previous_offset = offset;
     }
-    Ok(())
+    if easings
+        .iter()
+        .all(|easing| is_valid_easing_function(easing))
+    {
+        Ok(())
+    } else {
+        Err(type_error("keyframe easing must be an <easing-function>"))
+    }
 }
 
 /// Parse keyframes into the one sampled property, or `None` when they fall
@@ -282,18 +304,29 @@ struct Timing {
     delay_ms: f64,
     end_delay_ms: f64,
     iterations: f64,
+    iteration_start: f64,
+    /// Whether direction, easing, fill or composite differ from the values
+    /// the static sampler assumes (`normal`, `linear`, no fill, `replace`).
+    shaped: bool,
 }
 
 impl Timing {
     /// Whether the static sampler can render the effect: it only models a
-    /// single iteration that starts at once.
-    fn is_single_iteration(self) -> bool {
-        self.delay_ms == 0.0 && self.end_delay_ms == 0.0 && self.iterations == 1.0
+    /// single finite linear iteration that starts at once and does not fill.
+    fn is_sampleable(self) -> bool {
+        self.duration_ms.is_finite()
+            && self.delay_ms == 0.0
+            && self.end_delay_ms == 0.0
+            && self.iterations == 1.0
+            && self.iteration_start == 0.0
+            && !self.shaped
     }
 
-    /// Effect end time: delays plus the active duration, never negative.
+    /// Effect end time: delays plus the active duration, never negative. The
+    /// active duration is zero when either factor is zero, even if the other
+    /// is infinite.
     fn end_time_ms(self) -> f64 {
-        let active = if self.duration_ms == 0.0 {
+        let active = if self.duration_ms == 0.0 || self.iterations == 0.0 {
             0.0
         } else {
             self.duration_ms * self.iterations
@@ -315,22 +348,25 @@ fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Ti
         delay_ms: 0.0,
         end_delay_ms: 0.0,
         iterations: 1.0,
+        iteration_start: 0.0,
+        shaped: false,
     };
+    let mut easing = None;
     let duration = if options.is_null_or_undefined() {
         JsValue::undefined()
     } else if let Some(dictionary) = options.as_object() {
-        // Dictionary members are read in lexicographic order.
-        timing.delay_ms = finite_member(&dictionary, js_string!("delay"), 0.0, context)?;
-        let duration = dictionary.get(js_string!("duration"), context)?;
-        timing.end_delay_ms = finite_member(&dictionary, js_string!("endDelay"), 0.0, context)?;
-        let iterations = dictionary.get(js_string!("iterations"), context)?;
-        if !iterations.is_undefined() {
-            timing.iterations = iterations.to_number(context)?;
-        }
+        let (duration, member_easing) = parse_timing_dictionary(&dictionary, &mut timing, context)?;
+        easing = member_easing;
         duration
     } else {
         JsValue::from(options.to_number(context)?)
     };
+    if timing.iteration_start < 0.0 {
+        return Err(type_error("animation iterationStart must be non-negative"));
+    }
+    if timing.iterations.is_nan() || timing.iterations < 0.0 {
+        return Err(type_error("animation iterations must be non-negative"));
+    }
     // `(unrestricted double or DOMString)`: only a Number selects the double;
     // every other value converts to a string, and only "auto" is valid.
     timing.duration_ms = if duration.is_undefined() {
@@ -344,15 +380,85 @@ fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Ti
             "animation duration must be a number or \"auto\"",
         ));
     };
-    if !(timing.duration_ms.is_finite() && timing.duration_ms >= 0.0) {
-        return Err(type_error(
-            "animation duration must be a finite, non-negative number",
-        ));
+    if timing.duration_ms.is_nan() || timing.duration_ms < 0.0 {
+        return Err(type_error("animation duration must be non-negative"));
     }
-    if timing.iterations.is_nan() || timing.iterations < 0.0 {
-        return Err(type_error("animation iterations must be non-negative"));
+    if easing
+        .as_deref()
+        .is_some_and(|easing| !is_valid_easing_function(easing))
+    {
+        return Err(type_error("animation easing must be an <easing-function>"));
     }
+    timing.shaped |= easing.is_some_and(|easing| !easing.trim().eq_ignore_ascii_case("linear"));
     Ok(timing)
+}
+
+/// Read the `KeyframeAnimationOptions` members this model knows: the
+/// `EffectTiming` members, then `KeyframeEffectOptions`'s `composite` and
+/// `iterationComposite`, each group in lexicographic order. Returns the raw
+/// `duration` and `easing` values for the caller to validate.
+fn parse_timing_dictionary(
+    dictionary: &JsObject,
+    timing: &mut Timing,
+    context: &mut Context,
+) -> JsResult<(JsValue, Option<String>)> {
+    const DIRECTIONS: &[&str] = &["normal", "reverse", "alternate", "alternate-reverse"];
+    const FILLS: &[&str] = &["none", "forwards", "backwards", "both", "auto"];
+    const COMPOSITES: &[&str] = &["replace", "add", "accumulate"];
+    const ITERATION_COMPOSITES: &[&str] = &["replace", "accumulate"];
+    timing.delay_ms = finite_member(dictionary, js_string!("delay"), 0.0, context)?;
+    let direction = enum_member(dictionary, js_string!("direction"), DIRECTIONS, context)?;
+    let duration = dictionary.get(js_string!("duration"), context)?;
+    let easing = string_member(dictionary, js_string!("easing"), context)?;
+    timing.end_delay_ms = finite_member(dictionary, js_string!("endDelay"), 0.0, context)?;
+    let fill = enum_member(dictionary, js_string!("fill"), FILLS, context)?;
+    timing.iteration_start = finite_member(dictionary, js_string!("iterationStart"), 0.0, context)?;
+    let iterations = dictionary.get(js_string!("iterations"), context)?;
+    if !iterations.is_undefined() {
+        timing.iterations = iterations.to_number(context)?;
+    }
+    let composite = enum_member(dictionary, js_string!("composite"), COMPOSITES, context)?;
+    enum_member(
+        dictionary,
+        js_string!("iterationComposite"),
+        ITERATION_COMPOSITES,
+        context,
+    )?;
+    timing.shaped = direction.is_some_and(|direction| direction != "normal")
+        || fill.is_some_and(|fill| !matches!(fill, "none" | "auto"))
+        || composite.is_some_and(|composite| composite != "replace");
+    Ok((duration, easing))
+}
+
+/// A WebIDL `DOMString` dictionary member, or `None` when absent.
+fn string_member(
+    dictionary: &JsObject,
+    name: JsString,
+    context: &mut Context,
+) -> JsResult<Option<String>> {
+    let value = dictionary.get(name, context)?;
+    if value.is_undefined() {
+        return Ok(None);
+    }
+    Ok(Some(value.to_string(context)?.to_std_string_escaped()))
+}
+
+/// A WebIDL enumeration dictionary member: absent is `None`, and a string
+/// outside `values` throws.
+fn enum_member(
+    dictionary: &JsObject,
+    name: JsString,
+    values: &'static [&'static str],
+    context: &mut Context,
+) -> JsResult<Option<&'static str>> {
+    let Some(value) = string_member(dictionary, name, context)? else {
+        return Ok(None);
+    };
+    values
+        .iter()
+        .find(|candidate| **candidate == value)
+        .map(|candidate| Some(*candidate))
+        .ok_or_else(|| type_error("animation option is not a valid enumeration value"))
 }
 
 /// A WebIDL `double` dictionary member: absent is `default`, and a value
@@ -371,7 +477,9 @@ fn finite_member(
     if value.is_finite() {
         Ok(value)
     } else {
-        Err(type_error("animation delays must be finite numbers"))
+        Err(type_error(
+            "animation timing members must be finite numbers",
+        ))
     }
 }
 
@@ -384,9 +492,9 @@ fn parse_effect(
         .ok_or_else(|| type_error("animation keyframes are required"))?;
     let keyframes = parse_keyframes(keyframes, context)?;
     let timing = parse_timing(args.get(1), context)?;
-    if keyframes.is_some() && !timing.is_single_iteration() {
+    if keyframes.is_some() && !timing.is_sampleable() {
         return Err(type_error(
-            "sampled animations support only one iteration without delays",
+            "sampled animations support only one finite linear iteration without delays or fill",
         ));
     }
     let keyframes = keyframes
@@ -432,6 +540,7 @@ pub(crate) fn element_animate(
         id,
         ready: None,
         finished: None,
+        finish_resolve: None,
     };
     Ok(JsObject::from_proto_and_data(Some(prototype), data).into())
 }
@@ -455,51 +564,71 @@ fn ready(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsVal
 }
 
 /// `Animation.finished`: resolves with the animation once the virtual clock
-/// reaches the effect end time; a paused animation never
-/// finishes. The finishing task is queued on first access so that long
-/// animations nobody waits on do not hold the event loop open, and pausing
-/// cancels it.
+/// reaches the effect end time; a paused animation never finishes. The
+/// finishing task is queued on first access so that long animations nobody
+/// waits on do not hold the event loop open; pausing cancels it and seeking
+/// reschedules it.
 fn finished(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
     let animation = this_animation(this)?;
     if let Some(finished) = animation_data(&animation).finished.clone() {
         return Ok(finished.into());
     }
-    let id = animation_data(&animation).id;
     let (promise, resolvers) = JsPromise::new_pending(context);
     let finished: JsObject = promise.into();
-    animation_data_mut(&animation).finished = Some(finished.clone());
+    {
+        let mut data = animation_data_mut(&animation);
+        data.finished = Some(finished.clone());
+        data.finish_resolve = Some(resolvers.resolve);
+    }
+    schedule_finish(&animation, context)?;
+    Ok(finished.into())
+}
+
+/// Replace any queued finishing task with one due at the effect end time,
+/// or resolve `finished` at once when that time has passed. Does nothing
+/// once `finished` is resolved or before anyone has asked for it.
+fn schedule_finish(animation: &JsObject, context: &mut Context) -> JsResult<()> {
+    if animation_data(animation).finish_resolve.is_none() {
+        return Ok(());
+    }
+    let id = animation_data(animation).id;
     let remaining = with_state(context, |state| {
-        state.animations.get(id).map(|effect| {
+        let effect = state.animations.get_mut(id)?;
+        if let Some(token) = effect.finish_task.take() {
+            state.event_loop.cancel_native_task(token);
+        }
+        Some(
             (!effect.paused)
                 .then_some(effect.start_time_ms + effect.end_time_ms - state.event_loop.now)
-                .filter(|remaining| remaining.is_finite())
-        })
+                .filter(|remaining| remaining.is_finite()),
+        )
     })?
     .ok_or_else(|| type_error("Animation is no longer available"))?;
     match remaining {
         None => {}
         Some(remaining) if remaining <= 0.0 => {
-            resolvers
-                .resolve
-                .call(&JsValue::undefined(), &[animation.into()], context)?;
+            resolve_finished(animation, context)?;
         }
         Some(remaining) => {
-            let job = NativeJob::new(move |context| {
-                resolvers
-                    .resolve
-                    .call(&JsValue::undefined(), &[animation.into()], context)
-            });
+            let animation = animation.clone();
+            let job = NativeJob::new(move |context| resolve_finished(&animation, context));
             with_state(context, |state| {
                 let token = state
                     .event_loop
                     .queue_cancellable_native_task(remaining, job);
-                if let Some(effect) = state.animations.get_mut(id) {
-                    effect.finish_task = Some(token);
-                }
+                state.animations[id].finish_task = Some(token);
             })?;
         }
     }
-    Ok(finished.into())
+    Ok(())
+}
+
+/// Resolve `finished` with the animation, at most once.
+fn resolve_finished(animation: &JsObject, context: &mut Context) -> JsResult<JsValue> {
+    let resolve = animation_data_mut(animation).finish_resolve.take();
+    resolve.map_or(Ok(JsValue::undefined()), |resolve| {
+        resolve.call(&JsValue::undefined(), &[animation.clone().into()], context)
+    })
 }
 
 fn animation_data(object: &JsObject) -> boa_engine::gc::GcRef<'_, AnimationData> {
@@ -572,9 +701,16 @@ fn set_current_time(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
         .and_then(JsValue::as_number)
         .filter(|time| time.is_finite())
         .ok_or_else(|| type_error("currentTime must be a finite number"))?;
+    let now = with_state(context, |state| state.event_loop.now)?;
     update_sampled_effect(id, context, |effect| {
         effect.current_time_ms = Some(current_time);
+        if !effect.paused {
+            // Seeking moves the start time so that the effect reaches
+            // `current_time` now.
+            effect.start_time_ms = now - current_time;
+        }
     })?;
+    schedule_finish(&this_animation(this)?, context)?;
     Ok(JsValue::undefined())
 }
 

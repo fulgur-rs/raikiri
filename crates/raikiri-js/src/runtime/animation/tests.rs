@@ -285,6 +285,7 @@ fn stale_animation_ids_are_rejected_by_controls() {
         id: usize::MAX,
         ready: None,
         finished: None,
+        finish_resolve: None,
     };
     let animation = JsObject::from_proto_and_data(Some(prototype), data);
     let animation: JsValue = animation.into();
@@ -666,4 +667,122 @@ fn keyframe_sequences_are_validated() {
         )
         .unwrap();
     assert!(result.to_boolean());
+}
+
+#[test]
+fn effect_timing_members_are_validated_in_dictionary_order() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const refused = options => {\
+               try { target.animate(null, options); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             };\
+             const read = [];\
+             target.animate(null, new Proxy({}, { get(_, name) { read.push(name); } }));\
+             read.join() === 'delay,direction,duration,easing,endDelay,fill,iterationStart,iterations,composite,iterationComposite'\
+             && [{ easing: 'bogus' }, { easing: '' }, { direction: 'sideways' }, { fill: 'x' },\
+                 { iterationStart: -1 }, { iterationStart: NaN }, { composite: 'auto' },\
+                 { iterationComposite: 'add' }].every(refused)\
+             && !refused({ direction: 'alternate-reverse', easing: 'steps(2, jump-none)', fill: 'both',\
+                           iterationStart: 0.5, composite: 'add', iterationComposite: 'accumulate' })",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn sampled_effects_require_default_timing_shape() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const refused = options => {\
+               try { target.animate({ wordSpacing: ['0px', '40px'] }, options); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             };\
+             [{ duration: 40, easing: 'ease' }, { duration: 40, direction: 'reverse' },\
+              { duration: 40, fill: 'forwards' }, { duration: 40, composite: 'add' },\
+              { duration: 40, iterationStart: 0.5 }, { duration: Infinity }].every(refused)\
+             && !refused({ duration: 40, easing: ' LINEAR ', direction: 'normal', fill: 'auto', composite: 'replace' })\
+             && !refused({ duration: 40, fill: 'none', iterationComposite: 'accumulate' })",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn unsampled_effects_accept_an_infinite_duration() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.times = {};\
+             target.animate(null, Infinity).finished.then(() => { times.forever = true; });\
+             target.animate(null, { duration: Infinity, iterations: 0 })\
+               .finished.then(() => { times.none = performance.now(); });\
+             globalThis.refused = [-Infinity, NaN].every(duration => {\
+               try { target.animate(null, { duration }); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             })",
+        )
+        .expect("an infinite duration is valid for unsampled keyframes");
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("refused && times.none === 0 && !('forever' in times)")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn keyframe_sequence_easing_and_composite_are_validated() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const refused = keyframes => {\
+               try { target.animate(keyframes, 1); return false; }\
+               catch (error) { return error instanceof TypeError; }\
+             };\
+             [[{ easing: 'bogus' }], [{ composite: 'x' }], [{ easing: 'linear' }, { easing: 'steps(0)' }]]\
+               .every(refused)\
+             && !refused([{ easing: 'steps(2)', composite: 'auto' }, { easing: 'cubic-bezier(0, 2, 1, -1)' }])",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn seeking_a_running_animation_reschedules_finished() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.times = {};\
+             const watch = (name, seek) => {\
+               const animation = target.animate({ wordSpacing: ['0px', '40px'] }, 100);\
+               animation.finished.then(() => { times[name] = performance.now(); });\
+               setTimeout(() => { animation.currentTime = seek; }, 10);\
+               return animation;\
+             };\
+             watch('forward', 90);\
+             watch('backward', 0);\
+             watch('past', 200);\
+             const done = target.animate({ wordSpacing: ['0px', '40px'] }, 5);\
+             done.finished.then(() => { done.currentTime = 0; times.done = performance.now(); })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate(
+                "times.forward === 20 && times.backward === 110 && times.past === 10\
+                 && times.done === 5"
+            )
+            .unwrap()
+            .to_boolean()
+    );
 }
