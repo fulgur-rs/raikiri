@@ -2781,14 +2781,17 @@ impl SpecifiedValues {
             column_span: self.column_span,
             column_rule: {
                 let mut rule = resolve_border(self.column_rule, font_size, own_line_height, ctx);
-                // CSS Values 4: snap positive subpixel widths up and larger
-                // widths down before centering the producer's rule rectangle.
-                let width = rule.width.px();
-                rule.width = ComputedLength(if width > 0.0 {
-                    width.floor().max(1.0)
-                } else {
-                    0.0
-                });
+                if ctx.border_width_device_scale.is_none() {
+                    // Preserve the output-neutral column-rule snap. Raster
+                    // contexts were already snapped to their device scale
+                    // by `resolve_border`.
+                    let width = rule.width.px();
+                    rule.width = ComputedLength(if width > 0.0 {
+                        width.floor().max(1.0)
+                    } else {
+                        0.0
+                    });
+                }
                 rule
             },
             column_width,
