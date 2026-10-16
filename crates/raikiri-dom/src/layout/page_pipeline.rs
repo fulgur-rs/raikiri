@@ -560,73 +560,209 @@ fn body_border_box_end(
     min_end.max(auto_end.min(max_end))
 }
 
-// Cache the nearest column context for each visited source node. Row flex
-// suppresses local named-flow ownership, but its content still occupies the
-// enclosing physical page. Each source edge is resolved once per layout pass.
-fn enclosing_column_context(
-    node_id: usize,
-    document: &Document,
-    cascade: &CascadeResult,
-    cache: &mut [Option<Option<usize>>],
-) -> Option<usize> {
-    let mut current = node_id;
-    let mut visited = Vec::new();
-    let context = loop {
-        if let Some(cached) = cache[current] {
-            break cached;
+/// The column flex containers that already hold content on a page.
+///
+/// Row flex suppresses local named-flow ownership, but its content still
+/// occupies the enclosing physical page. The nearest column context of each
+/// visited source node is cached, so each source edge is resolved once per
+/// layout pass.
+struct ColumnContexts {
+    /// The page each column context was last occupied on.
+    occupied: HashMap<usize, u32>,
+    cache: Vec<Option<Option<usize>>>,
+}
+
+impl ColumnContexts {
+    fn new(node_count: usize) -> Self {
+        Self {
+            occupied: HashMap::new(),
+            cache: vec![None; node_count],
         }
-        visited.push(current);
-        let Some(parent) = document.parent_of(current) else {
-            break None;
+    }
+
+    fn enclosing(
+        &mut self,
+        node_id: usize,
+        document: &Document,
+        cascade: &CascadeResult,
+    ) -> Option<usize> {
+        let mut current = node_id;
+        let mut visited = Vec::new();
+        let context = loop {
+            if let Some(cached) = self.cache[current] {
+                break cached;
+            }
+            visited.push(current);
+            let Some(parent) = document.parent_of(current) else {
+                break None;
+            };
+            let computed = &cascade.computed[parent];
+            if document.nodes[parent].formatting_context == FormattingContext::Flex
+                && matches!(
+                    computed.flex_direction,
+                    FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
+                )
+            {
+                break Some(parent);
+            }
+            current = parent;
         };
-        let computed = &cascade.computed[parent];
-        if document.nodes[parent].formatting_context == FormattingContext::Flex
-            && matches!(
-                computed.flex_direction,
-                FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
-            )
-        {
-            break Some(parent);
+        for node in visited {
+            self.cache[node] = Some(context);
         }
-        current = parent;
-    };
-    for node in visited {
-        cache[node] = Some(context);
+        context
     }
-    context
+
+    /// Whether `context` or a column context enclosing it holds content on
+    /// `page`.
+    fn is_occupied(
+        &mut self,
+        context: usize,
+        page: u32,
+        document: &Document,
+        cascade: &CascadeResult,
+    ) -> bool {
+        let mut current = Some(context);
+        while let Some(id) = current {
+            if self.occupied.get(&id) == Some(&page) {
+                return true;
+            }
+            current = self.enclosing(id, document, cascade);
+        }
+        false
+    }
+
+    /// Mark `context` and every column context enclosing it as holding
+    /// content on `page`.
+    fn occupy(
+        &mut self,
+        mut context: Option<usize>,
+        page: u32,
+        document: &Document,
+        cascade: &CascadeResult,
+    ) {
+        while let Some(id) = context {
+            if self.occupied.insert(id, page) == Some(page) {
+                break;
+            }
+            context = self.enclosing(id, document, cascade);
+        }
+    }
+
+    /// Mark the column contexts enclosing `node_id` as holding content on
+    /// `page`.
+    fn occupy_enclosing(
+        &mut self,
+        node_id: usize,
+        page: u32,
+        document: &Document,
+        cascade: &CascadeResult,
+    ) {
+        let context = self.enclosing(node_id, document, cascade);
+        self.occupy(context, page, document, cascade);
+    }
 }
 
-fn column_context_occupied(
-    context: usize,
-    page: u32,
-    occupied: &HashMap<usize, u32>,
-    document: &Document,
-    cascade: &CascadeResult,
-    cache: &mut [Option<Option<usize>>],
-) -> bool {
-    let mut current = Some(context);
-    while let Some(id) = current {
-        if occupied.get(&id) == Some(&page) {
-            return true;
-        }
-        current = enclosing_column_context(id, document, cascade, cache);
-    }
-    false
+/// The last box that took the current page name in the body's flow or in a
+/// named flex context.
+///
+/// Named class-A boxes at one source coordinate form one page transition.
+/// This coalesces zero-height named runs such as a/b/c/d/e without creating
+/// one blank page per zero-height box.
+#[derive(Default)]
+struct LastNamedBox {
+    /// The source coordinate of the box when it is named.
+    raw_y: Option<f32>,
+    context: Option<usize>,
+    was_zero_height: bool,
+    had_display_none_descendant: bool,
 }
 
-fn occupy_column_contexts(
-    mut context: Option<usize>,
+impl LastNamedBox {
+    fn new(
+        document: &Document,
+        candidate: &PageCandidate,
+        node_id: usize,
+        raw_y: f32,
+        height: f32,
+    ) -> Self {
+        Self {
+            raw_y: candidate.is_named.then_some(raw_y),
+            context: candidate.named_flex_context,
+            was_zero_height: candidate.is_named && height <= 0.001,
+            had_display_none_descendant: candidate.is_named
+                && has_display_none_descendant(document, node_id),
+        }
+    }
+
+    /// Whether a named box at `raw_y` in `context` joins the page transition
+    /// of this zero-height named box instead of starting its own.
+    fn shares_transition(&self, context: Option<usize>, raw_y: f32) -> bool {
+        context == self.context
+            && self.was_zero_height
+            && !self.had_display_none_descendant
+            && self
+                .raw_y
+                .is_some_and(|previous| (raw_y - previous).abs() <= 0.001)
+    }
+}
+
+/// The flow end of a candidate box placed at `effective_y`, or `None` when
+/// the box has no height or no usable position and so cannot run on past
+/// its start page.
+///
+/// A box ending exactly at a page edge belongs to the preceding page.
+/// [`f32::EPSILON`] is too small at ordinary CSS coordinates and rounds away,
+/// so callers map the end through the half-open interval directly:
+/// ceil(end / step) - 1. The box remains visible on every slice it
+/// intersects; line-level splitting is a later pass.
+fn candidate_flow_end(effective_y: f32, height: f32) -> Option<f32> {
+    if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
+        let end = (effective_y + height).max(effective_y);
+        (end.is_finite() && end > 0.0).then_some(end)
+    } else {
+        None
+    }
+}
+
+/// Record the pages a placed candidate occupies.
+///
+/// Its start `page` takes the current page name and counts toward the page
+/// reach. When the box runs on to `end_page`, the pages in between count too
+/// and continue the page name.
+fn record_candidate_pages(
+    reach: &mut PageReach,
+    page_names: &mut PageNames,
+    control: &PageLayoutControl<'_>,
     page: u32,
-    occupied: &mut HashMap<usize, u32>,
+    end_page: Option<u32>,
+    in_flow: bool,
+) -> Result<(), LayoutError> {
+    page_names.name_page(page);
+    reach.include(page, in_flow);
+    match end_page {
+        Some(end_page) => record_run_on(reach, page_names, control, page, end_page, in_flow),
+        None => Ok(()),
+    }
+}
+
+/// Make `node_id` the source of the pending forced break when it forces a
+/// break after itself, unless that source is already the node itself or one
+/// of its ancestors.
+fn note_break_after(
     document: &Document,
     cascade: &CascadeResult,
-    cache: &mut [Option<Option<usize>>],
+    node_id: usize,
+    deferred_named_break_after: bool,
+    pending_break_source: &mut Option<usize>,
 ) {
-    while let Some(id) = context {
-        if occupied.insert(id, page) == Some(page) {
-            break;
-        }
-        context = enclosing_column_context(id, document, cascade, cache);
+    let breaks_after =
+        page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
+            || deferred_named_break_after;
+    let source_is_ancestor =
+        pending_break_source.is_some_and(|source| is_descendant_or_self(document, node_id, source));
+    if breaks_after && !source_is_ancestor {
+        *pending_break_source = Some(node_id);
     }
 }
 
@@ -4025,13 +4161,7 @@ fn paginate_flow(
     // A margin collapsed through it follows the break and is kept.
     let mut forced_break_margin_box: Option<usize> = None;
     let mut margins_moved_boxes = false;
-    // Named class-A boxes at one source coordinate form one page transition.
-    // This coalesces zero-height named runs such as a/b/c/d/e without creating
-    // one blank page per zero-height box.
-    let mut last_named_raw_y: Option<f32> = None;
-    let mut last_named_context: Option<usize> = None;
-    let mut last_named_was_zero_height = false;
-    let mut last_named_had_display_none_descendant = false;
+    let mut last_named = LastNamedBox::default();
     let mut saw_child = false;
     // Paragraph blocks whose leading line or whose orphans and widows move
     // them as a unit to the next page. Track the first text child so a block
@@ -4045,8 +4175,7 @@ fn paginate_flow(
     let mut page_names = PageNames::new(
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade)),
     );
-    let mut seen_named_flex_contexts = HashMap::new();
-    let mut column_context_cache = vec![None; document.nodes.len()];
+    let mut column_contexts = ColumnContexts::new(document.nodes.len());
     let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
@@ -4084,14 +4213,7 @@ fn paginate_flow(
             && height > 0.0
             && page == current_page
         {
-            occupy_column_contexts(
-                Some(context),
-                current_page,
-                &mut seen_named_flex_contexts,
-                document,
-                cascade,
-                &mut column_context_cache,
-            );
+            column_contexts.occupy(Some(context), current_page, document, cascade);
         }
         let (name_context_seen, comparison_page_name) = if !name_participates_in_flow {
             (false, page_names.current.clone())
@@ -4100,14 +4222,9 @@ fn paginate_flow(
                 Some(context) if candidate.deferred_named_break_after => {
                     // Empty enclosing column boxes do not open an anonymous
                     // page before the row's established deferred boundary.
-                    let seen = column_context_occupied(
-                        context,
-                        current_page,
-                        &seen_named_flex_contexts,
-                        document,
-                        cascade,
-                        &mut column_context_cache,
-                    ) || page_names.current.is_some();
+                    let seen =
+                        column_contexts.is_occupied(context, current_page, document, cascade)
+                            || page_names.current.is_some();
                     page_names.outer = candidate.page_name.clone();
                     (saw_child && seen, page_names.current.clone())
                 }
@@ -4117,14 +4234,9 @@ fn paginate_flow(
                     // Nested column flows share the physical page opened by
                     // their preceding sibling, including an inner flow's end.
                     // A previously seen anonymous type is still a page type.
-                    let seen = column_context_occupied(
-                        context,
-                        current_page,
-                        &seen_named_flex_contexts,
-                        document,
-                        cascade,
-                        &mut column_context_cache,
-                    ) || page_names.current.is_some();
+                    let seen =
+                        column_contexts.is_occupied(context, current_page, document, cascade)
+                            || page_names.current.is_some();
                     (saw_child && seen, page_names.current.clone())
                 }
                 Some(_) => (false, candidate.page_name.clone()),
@@ -4768,44 +4880,29 @@ fn paginate_flow(
                 page_names.current = candidate_page_name;
             }
             check_candidate_page!('candidate_loop, current_page);
-            page_names.name_page(current_page);
-            reach.include(current_page, !candidate.is_out_of_flow_descendant);
             if name_participates_in_flow && height > 0.0 {
-                let context =
-                    enclosing_column_context(node_id, document, cascade, &mut column_context_cache);
-                occupy_column_contexts(
-                    context,
-                    current_page,
-                    &mut seen_named_flex_contexts,
-                    document,
-                    cascade,
-                    &mut column_context_cache,
-                );
+                column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
             }
-            if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
-                let end = (effective_y + height).max(effective_y);
-                if end.is_finite() && end > 0.0 {
-                    record_run_on(
-                        &mut reach,
-                        &mut page_names,
-                        control,
-                        current_page,
-                        page_index_for_end(end),
-                        !candidate.is_out_of_flow_descendant,
-                    )?; // cov:ignore: LLVM coverage maps this multiline call's error exit to its own line.
-                }
-            }
+            let end_page = candidate_flow_end(effective_y, height).map(page_index_for_end);
+            let in_flow = !candidate.is_out_of_flow_descendant;
+            record_candidate_pages(
+                &mut reach,
+                &mut page_names,
+                control,
+                current_page,
+                end_page,
+                in_flow,
+            )?; // cov:ignore: LLVM coverage maps this multiline call's error exit to its own line.
             if consumes_pending_break {
                 pending_break_source = None;
             }
-            let candidate_break_after =
-                page_break_is_forced(document, node_id, cascade.computed[node_id].break_after)
-                    || candidate.deferred_named_break_after;
-            let pending_source_is_ancestor = pending_break_source
-                .is_some_and(|source| is_descendant_or_self(document, node_id, source));
-            if candidate_break_after && !pending_source_is_ancestor {
-                pending_break_source = Some(node_id);
-            }
+            note_break_after(
+                document,
+                cascade,
+                node_id,
+                candidate.deferred_named_break_after,
+                &mut pending_break_source,
+            );
             continue;
         }
 
@@ -4934,10 +5031,7 @@ fn paginate_flow(
         // including the first non-empty box that follows the chain.
         let same_named_coordinate = candidate.is_named
             && (candidate.is_direct_body_element || candidate.named_flex_context.is_some())
-            && candidate.named_flex_context == last_named_context
-            && last_named_was_zero_height
-            && !last_named_had_display_none_descendant
-            && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
+            && last_named.shares_transition(candidate.named_flex_context, raw_y);
         let named_page_change = name_context_seen
             && candidate_page_name != comparison_page_name
             && !same_named_coordinate;
@@ -5525,79 +5619,56 @@ fn paginate_flow(
         {
             page_names.current = candidate_page_name;
             if candidate.is_direct_body_element || candidate.named_flex_context.is_some() {
-                last_named_context = candidate.named_flex_context;
-                last_named_raw_y = candidate.is_named.then_some(raw_y);
-                last_named_was_zero_height = candidate.is_named && height <= 0.001;
-                last_named_had_display_none_descendant =
-                    candidate.is_named && has_display_none_descendant(document, node_id);
+                last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
             }
         }
         check_candidate_page!('candidate_loop, current_page);
-        page_names.name_page(current_page);
-
-        reach.include(current_page, !candidate.is_out_of_flow_descendant);
-        if height > 0.0 && effective_y.is_finite() && effective_y >= 0.0 {
-            // A box ending exactly at a page edge belongs to the preceding
-            // page.  `f32::EPSILON` is too small at ordinary CSS coordinates
-            // and rounds away, so use the half-open interval directly:
-            // ceil(end / step) - 1.  The box remains visible on every slice it
-            // intersects; line-level splitting is a later pass.
-            let end = (effective_y + height).max(effective_y);
-            if end.is_finite() && end > 0.0 {
-                // A fixed-height direct block that fits on the physical paper
-                // is monolithic in this minimal paginator.  Page border/padding
-                // reduce the fragmentainer's content height, but must not make
-                // the block manufacture a second page merely to expose its
-                // overflow into the page decoration area.
-                let monolithic_paper_fit = candidate.is_direct_body_element
-                    && (insets.top > 0.0
-                        || insets.right > 0.0
-                        || insets.bottom > 0.0
-                        || insets.left > 0.0)
-                    && effective_y >= page_origin(current_page)
-                    && effective_y + height <= page_origin(current_page) + page_box.height + 0.001
-                    && style_dimension_length(document.nodes[node_id].style.size.height)
-                        .is_some_and(|value| value >= 0.0);
-                if !monolithic_paper_fit {
-                    record_run_on(
-                        &mut reach,
-                        &mut page_names,
-                        control,
-                        current_page,
-                        page_index_for_end(end),
-                        !candidate.is_out_of_flow_descendant,
-                    )?;
-                }
-            }
-        }
+        // A fixed-height direct block that fits on the physical paper is
+        // monolithic in this minimal paginator.  Page border/padding reduce
+        // the fragmentainer's content height, but must not make the block
+        // manufacture a second page merely to expose its overflow into the
+        // page decoration area.
+        let monolithic_paper_fit = || {
+            candidate.is_direct_body_element
+                && (insets.top > 0.0
+                    || insets.right > 0.0
+                    || insets.bottom > 0.0
+                    || insets.left > 0.0)
+                && effective_y >= page_origin(current_page)
+                && effective_y + height <= page_origin(current_page) + page_box.height + 0.001
+                && style_dimension_length(document.nodes[node_id].style.size.height)
+                    .is_some_and(|value| value >= 0.0)
+        };
+        let end_page = candidate_flow_end(effective_y, height)
+            .filter(|_| !monolithic_paper_fit())
+            .map(page_index_for_end);
+        let in_flow = !candidate.is_out_of_flow_descendant;
+        record_candidate_pages(
+            &mut reach,
+            &mut page_names,
+            control,
+            current_page,
+            end_page,
+            in_flow,
+        )?;
 
         if name_participates_in_flow
             && (candidate.is_named || (candidate.is_rendered_leaf && height > 0.0))
         {
-            let context =
-                enclosing_column_context(node_id, document, cascade, &mut column_context_cache);
-            occupy_column_contexts(
-                context,
-                current_page,
-                &mut seen_named_flex_contexts,
-                document,
-                cascade,
-                &mut column_context_cache,
-            );
+            column_contexts.occupy_enclosing(node_id, current_page, document, cascade);
         }
         if candidate.is_flex_item
             && let Some(context) = candidate.named_flex_context
         {
             preceding_flex_items.insert(context, (node_id, height, current_page));
         }
-        let candidate_break_after = page_break_is_forced(document, node_id, computed.break_after)
-            || candidate.deferred_named_break_after;
-
-        let pending_source_is_ancestor = pending_break_source
-            .is_some_and(|source| is_descendant_or_self(document, node_id, source));
-        if candidate_break_after && !pending_source_is_ancestor {
-            pending_break_source = Some(node_id);
-        }
+        note_break_after(
+            document,
+            cascade,
+            node_id,
+            candidate.deferred_named_break_after,
+            &mut pending_break_source,
+        );
     }
 
     // A row moves within its parent with the page it opens, and with the

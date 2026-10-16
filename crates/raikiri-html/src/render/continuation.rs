@@ -7,6 +7,10 @@
 //! document laid out at their own width. The copy resumes at the source
 //! position where the page began in the earlier layout: a block box, or a
 //! paragraph line that a forced break in the copy also starts.
+//!
+//! In a document whose root lays its blocks out on vertical axes the pages
+//! follow the x axis and lines run down the page, so the page area's height
+//! takes the place of its width throughout.
 
 use raikiri_dom::{
     CrossingBox, Document, PageLayoutControl, PageSlice, PageStart, PageStartToken,
@@ -51,8 +55,89 @@ pub struct ContinuationInputs<'a> {
     pub skipped: &'a [usize],
 }
 
-fn content_width(geometry: ResolvedPageGeometry) -> f32 {
-    geometry.content_box.width
+/// The axis the pages of a layout follow. The paginator lays lines out at
+/// the page area's extent across it and slices the flow along it.
+#[derive(Clone, Copy)]
+enum PageAxis {
+    /// The flow runs down the page: lines are as long as the page area is
+    /// wide.
+    Y,
+    /// The flow of a root whose blocks stack on vertical axes runs across
+    /// the page: lines are as long as the page area is tall.
+    X,
+}
+
+impl PageAxis {
+    fn of(document: &Document, cascade: &CascadeResult) -> Self {
+        match raikiri_dom::pages_follow_x_axis(document, cascade) {
+            Some(_) => Self::X,
+            None => Self::Y,
+        }
+    }
+
+    /// The extent of the page area that lines are laid out across.
+    fn inline_size(self, geometry: ResolvedPageGeometry) -> f32 {
+        match self {
+            Self::Y => geometry.content_box.width,
+            Self::X => geometry.content_box.height,
+        }
+    }
+
+    /// The extent of the page area along the flow.
+    fn block_size(self, geometry: ResolvedPageGeometry) -> f32 {
+        match self {
+            Self::Y => geometry.content_box.height,
+            Self::X => geometry.content_box.width,
+        }
+    }
+
+    /// The page steps and widths arguments of the paginator for pages whose
+    /// extents along the flow are `steps` and across it `inline_sizes`. On
+    /// x the paginator takes the extents along the flow as page widths and
+    /// lays every page out at the inline size of the page box it is given.
+    fn layout_schedule<'a>(
+        self,
+        steps: &'a [f32],
+        inline_sizes: &'a [f32],
+    ) -> (&'a [f32], &'a [f32]) {
+        match self {
+            Self::Y => (steps, inline_sizes),
+            Self::X => (&[], steps),
+        }
+    }
+
+    /// The page box that measuring pages `extent` long along the flow are
+    /// projected onto, and the pages they are projected as.
+    ///
+    /// On y the measuring page box is grown by `extent`. On x the page area's
+    /// width is the containing block of the root and the edge that flow
+    /// positions count from, so it stays as laid out; a page ending `extent`
+    /// after the last measuring page gives that page its extent instead.
+    fn measuring_pages(
+        self,
+        page_box: raikiri_traits::PageBox,
+        measured: &[PageSlice],
+        extent: f32,
+    ) -> (raikiri_traits::PageBox, Vec<PageSlice>) {
+        let mut pages = measured.to_vec();
+        match self {
+            Self::Y => {
+                let mut page_box = page_box;
+                page_box.height += extent;
+                (page_box, pages)
+            }
+            Self::X => {
+                if let Some(last) = measured.last() {
+                    pages.push(PageSlice {
+                        page_index: last.page_index + 1,
+                        content_origin_y: last.content_origin_y + extent,
+                        page_name: None,
+                    });
+                }
+                (page_box, pages)
+            }
+        }
+    }
 }
 
 /// Content widths closer than this are the same width.
@@ -116,8 +201,16 @@ pub(super) fn resume_at(
     start: PageStart,
     earlier: &[CrossingBox],
 ) -> Result<Option<Vec<Continuation>>, LayoutError> {
-    let Some((continuation, pages)) =
-        relayout_from(inputs, slices, geometries, page, start, Some(earlier), None)?
+    let Some((continuation, pages)) = relayout_from(
+        inputs,
+        PageAxis::of(document, cascade),
+        slices,
+        geometries,
+        page,
+        start,
+        Some(earlier),
+        None,
+    )?
     else {
         return Ok(None);
     };
@@ -149,7 +242,6 @@ fn continue_from(
     mut run_start: usize,
 ) -> Result<Vec<Continuation>, LayoutError> {
     loop {
-        let run_width = content_width(geometries[run_start]);
         let segment = match continuations.last() {
             Some(continuation) => Segment {
                 document: &continuation.document,
@@ -157,8 +249,12 @@ fn continue_from(
             },
             None => Segment { document, cascade },
         };
+        let axis = PageAxis::of(segment.document, segment.cascade);
+        let run_width = axis.inline_size(geometries[run_start]);
         let other_widths = (run_start + 1..slices.len())
-            .filter(|&page| (content_width(geometries[page]) - run_width).abs() > WIDTH_TOLERANCE)
+            .filter(|&page| {
+                (axis.inline_size(geometries[page]) - run_width).abs() > WIDTH_TOLERANCE
+            })
             .map(|page| page as u32);
         let Some((page, start)) = segment
             .document
@@ -183,6 +279,7 @@ fn continue_from(
             .collect();
         let Some((continuation, pages)) = relayout_from(
             inputs,
+            axis,
             slices,
             geometries,
             page,
@@ -240,6 +337,7 @@ pub fn body_fragments_after(
 #[allow(clippy::too_many_arguments)]
 fn relayout_from(
     inputs: &ContinuationInputs<'_>,
+    axis: PageAxis,
     slices: &[PageSlice],
     geometries: &[ResolvedPageGeometry],
     page: usize,
@@ -281,22 +379,24 @@ fn relayout_from(
         .with_abort_check(inputs.abort_check);
     let mut token_y = None;
     for _ in 0..MAX_MEASURE_PASSES {
-        let mut measure_box = geometry.page_box;
-        measure_box.height = measure_height + geometry.page_box.height;
+        let (measure_steps, measure_widths) =
+            axis.layout_schedule(std::slice::from_ref(&measure_height), &[]);
         // Only a cancellation landing in this pass fails it; the first
         // layout and projection already met the same work limits.
         let measured = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
             &mut document,
             &cascade,
             geometry.page_box,
-            &[measure_height],
-            &[],
+            measure_steps,
+            measure_widths,
             inputs.resolver,
             inputs.base_url,
             &measure_control,
         )
         .and_then(|measured| {
-            let measure_geometries: Vec<_> = measured
+            let (measure_box, projected) =
+                axis.measuring_pages(geometry.page_box, &measured, measure_height);
+            let measure_geometries: Vec<_> = projected
                 .iter()
                 .map(|_| (measure_box, geometry.margins, geometry.content_insets))
                 .collect();
@@ -304,7 +404,7 @@ fn relayout_from(
                 .project_pages_with_control(
                     &cascade,
                     measure_box,
-                    &measured,
+                    &projected,
                     &measure_geometries,
                     &measure_control,
                 )
@@ -342,10 +442,10 @@ fn relayout_from(
         document.continue_fragments(earlier.iter().copied());
     }
 
-    let width = content_width(geometry);
+    let width = axis.inline_size(geometry);
     let schedule = |heights: &[ResolvedPageGeometry]| -> Vec<f32> {
         lead.into_iter()
-            .chain(heights.iter().map(|geometry| geometry.content_box.height))
+            .chain(heights.iter().map(|&geometry| axis.block_size(geometry)))
             .collect()
     };
     let mut steps = schedule(&geometries[page..]);
@@ -368,12 +468,13 @@ fn relayout_from(
     };
     for _ in 0..MAX_SCHEDULE_PASSES {
         let widths = vec![width; steps.len()];
+        let (page_steps, page_widths) = axis.layout_schedule(&steps, &widths);
         let laid_out = layout_pages_with_page_geometry_and_resolver_and_base_url_and_control(
             &mut document,
             &cascade,
             geometry.page_box,
-            &steps,
-            &widths,
+            page_steps,
+            page_widths,
             inputs.resolver,
             inputs.base_url,
             &control,

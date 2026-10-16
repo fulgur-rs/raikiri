@@ -4646,3 +4646,7 @@ css/css-page/page-box-008-print.html
 # Pass once Element.animate() exposes a finished promise for waitForCompositorReady() and the background re-resolves currentColor after a class change; KEEP in two audit-vacuous-passes runs.
 css/css-backgrounds/color-mix-currentcolor-background-repaint.html
 css/css-backgrounds/color-mix-currentcolor-background-repaint-parent.html
+
+# --- later pages of another inline size in vertical writing (WPT pin 97ea26e2, EXACT, Linux, 2026-10-15) ---
+# Pass once later pages of a vertical-rl root whose page area height differs are laid out again at that height; KEEP in two audit-vacuous-passes runs.
+css/css-page/page-size-012-print.html
