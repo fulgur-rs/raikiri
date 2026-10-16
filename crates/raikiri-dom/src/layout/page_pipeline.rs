@@ -4138,15 +4138,7 @@ fn paginate_flow(
         .collect();
     let mut float_shifts = FloatShifts::default();
     let mut subtree_shifts = SubtreeShifts::default();
-    // Unpaginated border-box bottom of the last in-flow block-level child
-    // seen for each parent, while no other content followed it. The gap to
-    // the next such sibling is their collapsed margin.
-    let mut previous_block_bottoms: HashMap<usize, (usize, f32)> = HashMap::new();
-    // The empty box whose block-end margin still adjoins the latest forced
-    // break: the forced-break box itself, or an empty box right after it.
-    // A margin collapsed through it follows the break and is kept.
-    let mut forced_break_margin_box: Option<usize> = None;
-    let mut margins_moved_boxes = false;
+    let mut sibling_margins = SiblingMargins::default();
     let mut last_named = LastNamedBox::default();
     let mut saw_child = false;
     // Paragraph blocks whose leading line or whose orphans and widows move
@@ -4425,7 +4417,7 @@ fn paginate_flow(
                     .map(|(root, _)| root)
                     .or_else(|| box_parent(document, cascade, node_id, BoxParentScope::Document))
             {
-                previous_block_bottoms.remove(&parent_id);
+                sibling_margins.previous_bottoms.remove(&parent_id);
             }
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
@@ -5375,7 +5367,7 @@ fn paginate_flow(
                 }
                 current_page = target_page;
                 if forced_transition {
-                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
                     starts_after_forced_break = true;
                 }
                 if pending_break_applies {
@@ -5393,7 +5385,7 @@ fn paginate_flow(
                 // A forced break that coincides with a page edge also starts
                 // that page.
                 if forced_before {
-                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
                     starts_after_forced_break = true;
                 }
                 // An unforced break that falls inside the collapsed margin
@@ -5402,7 +5394,7 @@ fn paginate_flow(
                 // top of the page instead of keeping the part of the margin
                 // that crossed the page edge.
                 let previous = box_parent(document, cascade, node_id, BoxParentScope::Document)
-                    .and_then(|parent_id| previous_block_bottoms.get(&parent_id).copied())
+                    .and_then(|parent_id| sibling_margins.previous_bottoms.get(&parent_id).copied())
                     .map(|(previous, bottom)| (previous, raw_y - bottom))
                     .filter(|(_, gap)| gap.is_finite() && *gap > 0.0);
                 if let Some((previous, gap)) = previous
@@ -5419,9 +5411,8 @@ fn paginate_flow(
                     // top leaves its collapsed margin after the break.
                     // A later, unforced page edge inside that margin still
                     // truncates it.
-                    let follows_forced_break = forced_break_margin_box.is_some_and(|owner| {
-                        forced_margin_reaches(document, cascade, owner, previous, node_id)
-                    });
+                    let follows_forced_break =
+                        sibling_margins.follows_forced_break(document, cascade, previous, node_id);
                     let after_forced_break =
                         follows_forced_break && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
@@ -5455,7 +5446,7 @@ fn paginate_flow(
                             (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;
-                        margins_moved_boxes |= delta != 0.0;
+                        sibling_margins.moved_boxes |= delta != 0.0;
                         document.nodes[node_id].unrounded_layout.location.y += delta;
                         follow_moved_ifc_block(document, node_id, delta);
                         flow_shift += delta;
@@ -5496,22 +5487,23 @@ fn paginate_flow(
             // An empty box right after the forced-break box passes the
             // break on to the margin after it; any other box ends it.
             if !starts_after_forced_break {
-                let follows_forced_box = forced_break_margin_box.is_some_and(|owner| {
-                    previous_block_bottoms
-                        .get(&parent_id)
-                        .is_some_and(|&(previous, _)| {
-                            forced_margin_reaches(document, cascade, owner, previous, node_id)
-                        })
-                });
-                forced_break_margin_box = (follows_forced_box
+                let follows_forced_box = sibling_margins
+                    .previous_bottoms
+                    .get(&parent_id)
+                    .is_some_and(|&(previous, _)| {
+                        sibling_margins.follows_forced_break(document, cascade, previous, node_id)
+                    });
+                sibling_margins.forced_break_box = (follows_forced_box
                     && collapses_with_previous_block
                     && margins_collapse_through)
                     .then_some(node_id);
             }
             if collapses_with_previous_block {
-                previous_block_bottoms.insert(parent_id, (node_id, raw_y + height));
+                sibling_margins
+                    .previous_bottoms
+                    .insert(parent_id, (node_id, raw_y + height));
             } else {
-                previous_block_bottoms.remove(&parent_id);
+                sibling_margins.previous_bottoms.remove(&parent_id);
             }
         }
 
@@ -5675,7 +5667,7 @@ fn paginate_flow(
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
-    if margins_moved_boxes {
+    if sibling_margins.moved_boxes {
         super::fixed::restore_fixed_box_block_positions(document, cascade, body_id, content_height);
     }
 
@@ -6645,6 +6637,37 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// The adjoining block margins between siblings, which an unforced page
+/// break inside them truncates.
+#[derive(Default)]
+struct SiblingMargins {
+    /// Unpaginated border-box bottom of the last in-flow block-level child
+    /// seen for each parent, while no other content followed it. The gap to
+    /// the next such sibling is their collapsed margin.
+    previous_bottoms: HashMap<usize, (usize, f32)>,
+    /// The empty box whose block-end margin still adjoins the latest forced
+    /// break: the forced-break box itself, or an empty box right after it.
+    /// A margin collapsed through it follows the break and is kept.
+    forced_break_box: Option<usize>,
+    /// Whether truncating a margin moved a box.
+    moved_boxes: bool,
+}
+
+impl SiblingMargins {
+    /// Whether the margin between `previous` and `node_id` still adjoins
+    /// the latest forced break.
+    fn follows_forced_break(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        previous: usize,
+        node_id: usize,
+    ) -> bool {
+        self.forced_break_box
+            .is_some_and(|owner| forced_margin_reaches(document, cascade, owner, previous, node_id))
+    }
 }
 
 /// Shifts of the flow that end where a subtree does.
