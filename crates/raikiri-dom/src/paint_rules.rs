@@ -516,8 +516,8 @@ pub fn defers_to_positioned_layer(
 /// such as an inline-block paint as if they formed a stacking context, but
 /// pass them on too (Appendix E, the step for inline-block and inline-table
 /// elements, and CSS Flexbox 1 §4.3). A box that clips or forms a stacking
-/// context of its own keeps them, as does a box inside an inline element
-/// with an opacity below one, whose group the painters paint as a whole.
+/// context of its own keeps them, as does a box inside an inline opacity
+/// group, which the painters paint as a whole.
 pub fn hoists_positioned_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -532,34 +532,35 @@ pub fn hoists_positioned_content(
     })
 }
 
-/// Whether element `node_id` sits inside an inline element of its paragraph
-/// with an opacity below one. The painters paint such an inline's content as
-/// one group; other inline stacking contexts form no group yet, so the
+/// Whether element `node_id` sits inside an opacity group of its paragraph:
+/// an inline element with an opacity below one, or a translucent
+/// `::first-line` when the box is an atomic inline on the first line (see
+/// [`first_line_opacity_layer`]). The painters paint such a group's content
+/// as a whole; other inline stacking contexts form no group yet, so the
 /// positioned boxes inside them still join the enclosing layer.
 fn inside_inline_opacity_group(
     document: &Document,
     cascade: &CascadeResult,
     node_id: usize,
 ) -> bool {
-    let inline_box = |id: usize| {
-        cascade
-            .computed
-            .get(id)
-            .filter(|cv| cv.display == DisplayValue::Inline)
-            .filter(|_| {
-                document
-                    .get_node(id)
-                    .is_some_and(|node| !node.is_ifc_root())
-            })
-    };
     let mut current = node_id;
-    while let Some((parent, cv)) = box_parent(document, cascade, current, BoxParentScope::Document)
-        .and_then(|parent| inline_box(parent).map(|cv| (parent, cv)))
-    {
-        if opacity_layer(cv).is_some() {
-            return true;
+    while let Some(parent) = box_parent(document, cascade, current, BoxParentScope::Document) {
+        if document
+            .get_node(parent)
+            .is_some_and(|node| node.is_ifc_root())
+        {
+            return first_line_opacity_layer(document, parent).is_some()
+                && atomic_on_first_line(document, parent, node_id);
         }
-        current = parent;
+        match cascade.computed.get(parent) {
+            Some(cv) if cv.display == DisplayValue::Inline => {
+                if opacity_layer(cv).is_some() {
+                    return true;
+                }
+                current = parent;
+            }
+            _ => break,
+        }
     }
     false
 }
