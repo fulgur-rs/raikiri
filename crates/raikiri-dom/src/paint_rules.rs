@@ -676,10 +676,20 @@ fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id
     };
     while let Some(child) = stack.pop() {
         // Boxes that paint nothing, and the content of a nested stacking
-        // context, take no part in the enclosing context's order.
-        let Some(cv) = cascade.computed.get(child).filter(|cv| generates_box(cv)) else {
+        // context, take no part in the enclosing context's order. The
+        // children of a `display: contents` element still generate boxes in
+        // this context.
+        let Some(cv) = cascade
+            .computed
+            .get(child)
+            .filter(|cv| cv.display != DisplayValue::None)
+        else {
             continue;
         };
+        if !generates_box(cv) {
+            stack.extend(children(child));
+            continue;
+        }
         if positioned_layer_level(document, cascade, child) != 0 {
             return true;
         }

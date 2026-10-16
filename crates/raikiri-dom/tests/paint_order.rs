@@ -400,6 +400,25 @@ fn a_z_auto_positioned_box_does_not_carry_its_descendants_below_others() {
 }
 
 #[test]
+fn a_z_auto_positioned_box_keeps_descendants_behind_display_contents() {
+    // A `display: contents` wrapper generates no box, but its children still
+    // generate boxes in the enclosing stacking context.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div id=a style='{item};z-index:10'></div></div>\
+             <div><div id=p style='position:relative'><div style='display:contents'>\
+             <div id=b style='{item};z-index:20'></div></div></div></div>"
+        ),
+        0,
+    );
+    assert!(
+        position(&events, "Box(a)") < position(&events, "Box(b)"),
+        "{events:?}"
+    );
+}
+
+#[test]
 fn boxes_beside_a_z_auto_positioned_box_still_sort() {
     let item = "position:relative;width:10px;height:10px;background:red";
     let events = order(
