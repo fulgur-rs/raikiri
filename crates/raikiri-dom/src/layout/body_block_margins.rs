@@ -67,25 +67,32 @@ pub(crate) fn propagate_body_overflow_to_viewport(
 /// Whether the body's block-start margin may collapse with the top margin of
 /// its first in-flow child (CSS 2.1 §8.3.1): the body is a block container
 /// in its parent's formatting context, not a flow root, float or absolutely
-/// positioned box, and its content is not inline content laid out as one
-/// paragraph. Taffy additionally rules out a body with top padding or border,
-/// a scroll container and other boxes that establish a new block formatting
-/// context.
+/// positioned box, with no top padding or border and no independent
+/// formatting context. A paragraph may expose the margins of its leading
+/// block children until a line separates them from the body's top edge.
 pub(crate) fn body_top_margin_may_collapse(
     doc: &Document,
     cascade: &CascadeResult,
     body_id: usize,
+    percent_basis: f32,
 ) -> bool {
+    use raikiri_style::property::Contain;
+
     let computed = &cascade.computed[body_id];
     let style = &doc.nodes[body_id].style;
-    !doc.nodes[body_id].is_ifc_root()
-        && matches!(
-            computed.display,
-            DisplayValue::Block | DisplayValue::ListItem
-        )
-        && style.display == Display::Block
+    matches!(
+        computed.display,
+        DisplayValue::Block | DisplayValue::ListItem
+    ) && style.display == Display::Block
         && style.float == TaffyFloat::None
         && style.position != TaffyPosition::Absolute
+        && !style.overflow.x.is_scroll_container()
+        && !style.overflow.y.is_scroll_container()
+        && style.align_content.is_none()
+        && !computed.contain.contains(Contain::LAYOUT)
+        && !computed.contain.contains(Contain::PAINT)
+        && used_style_length_percentage(style.padding.top, percent_basis).unwrap_or(0.0) == 0.0
+        && used_style_length_percentage(style.border.top, percent_basis).unwrap_or(0.0) == 0.0
 }
 
 /// The body root's top padding and height before its block-start margin is

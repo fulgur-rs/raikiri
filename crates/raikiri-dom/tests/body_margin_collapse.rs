@@ -277,3 +277,54 @@ fn a_border_or_line_ends_the_leading_empty_margin_chain() {
         assert_close(top(&html, "#text"), expected, &html);
     }
 }
+
+#[test]
+fn mixed_body_collapse_boundaries_keep_its_margin_separate() {
+    for (body_css, html_css, expected) in [
+        ("padding-top:1px", "", 31.0),
+        ("border-top:2px solid", "", 32.0),
+        ("display:flow-root", "", 30.0),
+        ("float:left", "", 30.0),
+        ("position:absolute", "", 30.0),
+        ("overflow:hidden", "overflow:hidden", 30.0),
+        ("contain:layout", "", 30.0),
+        ("contain:paint", "", 30.0),
+        ("overflow:hidden", "", 20.0),
+    ] {
+        for generated in [false, true] {
+            let (rule, content) = if generated {
+                (
+                    "body::before{content:'';display:block;margin-top:20px}",
+                    "X",
+                )
+            } else {
+                ("", "<div style='margin-top:20px'></div>X")
+            };
+            let html = format!(
+                "<!DOCTYPE html><style>html{{{html_css}}}body{{margin:10px;font:10px/10px Ahem;{body_css}}}{rule}</style>{content}"
+            );
+            assert_close(top(&html, "#text"), expected, &html);
+        }
+    }
+}
+
+#[test]
+fn generated_formatting_roots_keep_their_top_and_bottom_margins_apart() {
+    for boundary in [
+        "display:flow-root",
+        "overflow:hidden",
+        "contain:layout",
+        "contain:paint",
+    ] {
+        let html = format!(
+            "<!DOCTYPE html><style>body{{margin:10px;font:10px/10px Ahem}}body::before{{content:'';display:block;margin:5px 0 30px;{boundary}}}</style>X"
+        );
+        assert_close(top(&html, "#text"), 40.0, &html);
+    }
+}
+
+#[test]
+fn clearance_ends_but_does_not_discard_a_leading_empty_margin_chain() {
+    let html = "<!DOCTYPE html><style>body{margin:10px;font:10px/10px Ahem}</style><div style='margin-top:20px'><div style='float:left;width:10px;height:10px'></div></div><div style='clear:both;height:10px'></div>X";
+    assert_close(top(html, "#text"), 40.0, html);
+}

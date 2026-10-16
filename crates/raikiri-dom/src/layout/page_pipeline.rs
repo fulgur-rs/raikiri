@@ -1084,7 +1084,8 @@ fn layout_single_page_with_table_projection(
         style_margin.bottom = LengthPercentageAuto::length(0.0);
     }
     propagate_body_overflow_to_viewport(document, cascade, body_id);
-    let body_top_may_collapse = body_top_margin_may_collapse(document, cascade, body_id);
+    let body_top_may_collapse =
+        body_top_margin_may_collapse(document, cascade, body_id, body_percent_basis);
 
     // Step 4: force body.style.size to the page content box, not the full paper size.
     // Page margins are painted/represented outside this taffy root.
@@ -1131,7 +1132,10 @@ fn layout_single_page_with_table_projection(
     // they leave over as top padding. Only the body's own box changes, so
     // the boxes inside keep their cached layouts.
     let mut paragraph_collapsed_top = None;
-    if body_is_paragraph && let Some(leading) = body_paragraph_leading_margin(document, body_id) {
+    if body_is_paragraph
+        && body_top_may_collapse
+        && let Some(leading) = body_paragraph_leading_margin(document, body_id)
+    {
         let collapsed = leading.collapse_with_margin(body_margin_top).resolve();
         let padding = collapsed - leading.resolve();
         if (padding.max(0.0) - body_padded_top).abs() > 1e-4 {

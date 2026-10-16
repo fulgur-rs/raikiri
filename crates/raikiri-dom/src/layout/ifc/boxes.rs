@@ -911,7 +911,9 @@ fn run_boxes_segment(
                 let block =
                     layout_block_child(tree, ctx, node.0 as usize, y, pending, geometry, perform);
                 if starts_paragraph {
-                    leading_block_margin = block.top_margin;
+                    if let Some(margin) = block.top_margin {
+                        leading_block_margin = Some(margin);
+                    }
                     leading_margin_open = block.collapses_through;
                 }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
