@@ -585,21 +585,24 @@ pub fn sort_positioned_frames<F: Clone>(
     close: F,
     kind: impl Fn(&F) -> PositionedFrame,
 ) -> Vec<F> {
-    // Each box with the clip frames open around it.
-    let mut boxes: Vec<(i32, usize, Vec<F>, F)> = Vec::new();
-    let mut open: Vec<F> = Vec::new();
-    for frame in &frames {
+    // The clips open in the list, each with the clip it opens inside, and
+    // each box with the innermost clip open around it.
+    let mut clips: Vec<(Option<usize>, usize)> = Vec::new();
+    let mut boxes: Vec<(i32, usize, Option<usize>, usize)> = Vec::new();
+    let mut open: Option<usize> = None;
+    for (index, frame) in frames.iter().enumerate() {
         match kind(frame) {
             PositionedFrame::Box(id) => boxes.push((
                 positioned_layer_level(document, cascade, id),
                 id,
-                open.clone(),
-                frame.clone(),
+                open,
+                index,
             )),
-            PositionedFrame::Open(_) => open.push(frame.clone()),
-            PositionedFrame::Close => {
-                open.pop();
+            PositionedFrame::Open(_) => {
+                clips.push((open, index));
+                open = Some(clips.len() - 1);
             }
+            PositionedFrame::Close => open = open.and_then(|clip| clips[clip].0),
         }
     }
     if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0) {
@@ -622,24 +625,27 @@ pub fn sort_positioned_frames<F: Clone>(
     }
     let mut keyed: Vec<_> = keys.into_iter().zip(boxes).collect();
     keyed.sort_by_key(|(key, _)| *key);
-    let boxes = keyed.into_iter().map(|(_, entry)| entry);
     let mut sorted = Vec::with_capacity(frames.len());
-    let mut open: Vec<F> = Vec::new();
-    for (_, _, clips, frame) in boxes {
-        let shared = open
-            .iter()
-            .zip(&clips)
-            .take_while(|(a, b)| kind(a) == kind(b))
-            .count();
+    // The clips open around the last box emitted, outermost first.
+    let mut open: Vec<usize> = Vec::new();
+    for (_, (_, _, innermost, index)) in keyed {
+        let mut path = Vec::new();
+        let mut clip = innermost;
+        while let Some(current) = clip {
+            path.push(current);
+            clip = clips[current].0;
+        }
+        path.reverse();
+        let shared = open.iter().zip(&path).take_while(|(a, b)| a == b).count();
         for _ in shared..open.len() {
             sorted.push(close.clone());
         }
         open.truncate(shared);
-        for clip in &clips[shared..] {
-            sorted.push(clip.clone());
-            open.push(clip.clone());
+        for &clip in &path[shared..] {
+            sorted.push(frames[clips[clip].1].clone());
+            open.push(clip);
         }
-        sorted.push(frame);
+        sorted.push(frames[index].clone());
     }
     for _ in 0..open.len() {
         sorted.push(close.clone());
@@ -651,27 +657,27 @@ pub fn sort_positioned_frames<F: Clone>(
 /// no stacking context and holds a box with a non-zero stack level: a
 /// positioned box, or a flex or grid item, with a non-zero `z-index`.
 fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let Some(cv) = cascade.computed.get(id) else {
-        return false; // cov:ignore: deferred boxes are elements with computed values
+    let auto = cascade.computed.get(id).is_some_and(|cv| {
+        !matches!(cv.position, PositionValue::Static)
+            && !matches!(cv.z_index, ZIndexValue::Integer(_))
+            && !establishes_stacking_context(document, id, cv)
+    });
+    let children = |id: usize| {
+        document
+            .get_node(id)
+            .into_iter()
+            .flat_map(|node| node.children.iter().copied())
     };
-    if matches!(cv.position, PositionValue::Static)
-        || matches!(cv.z_index, ZIndexValue::Integer(_))
-        || establishes_stacking_context(document, id, cv)
-    {
-        return false;
-    }
-    let mut stack: Vec<usize> = document
-        .get_node(id)
-        .map(|node| node.children.clone())
-        .unwrap_or_default();
+    let mut stack: Vec<usize> = if auto {
+        children(id).collect()
+    } else {
+        Vec::new()
+    };
     while let Some(child) = stack.pop() {
-        let Some(node) = document.get_node(child) else {
-            continue; // cov:ignore: children are nodes of the document
-        };
         if positioned_layer_level(document, cascade, child) != 0 {
             return true;
         }
-        stack.extend(node.children.iter().copied());
+        stack.extend(children(child));
     }
     false
 }
