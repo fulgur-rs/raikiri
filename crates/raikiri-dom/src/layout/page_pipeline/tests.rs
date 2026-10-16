@@ -653,6 +653,29 @@ fn page_index_in_flow_skips_positions_outside_the_flow() {
 }
 
 #[test]
+fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
+    let edge = |node, side, top, bottom, width| FloatEdge {
+        node,
+        side,
+        top,
+        bottom,
+        width,
+    };
+    // Side by side with one 40-wide float in a 100-wide context.
+    let one = [edge(1, 0, 10.0, 50.0, 40.0)];
+    assert_eq!(float_top_beside(&one, 60.0, 20.0, 100.0), 10.0);
+    // Too wide to sit beside it: below its bottom.
+    assert_eq!(float_top_beside(&one, 61.0, 20.0, 100.0), 50.0);
+    // Two floats side by side: starts at the later top when it fits beside
+    // both, otherwise where the first one ends.
+    let two = [edge(1, 0, 10.0, 50.0, 40.0), edge(2, 1, 30.0, 80.0, 30.0)];
+    assert_eq!(float_top_beside(&two, 30.0, 10.0, 100.0), 30.0);
+    assert_eq!(float_top_beside(&two, 40.0, 10.0, 100.0), 50.0);
+    // Wider than the context: no level fits.
+    assert_eq!(float_top_beside(&one, 120.0, 20.0, 100.0), f32::INFINITY);
+}
+
+#[test]
 fn page_origins_keep_fractional_end_boundaries_on_the_preceding_page() {
     let fixed = PageOrigins::new(&[], 0.1);
     assert_eq!(fixed.page_index_for_y(0.3), 3);

@@ -4213,45 +4213,9 @@ fn paginate_flow(
                 .map(|edge| edge.bottom)
                 .reduce(f32::max);
             let floor = if floating {
-                let top = float_edges
-                    .iter()
-                    .map(|edge| edge.top)
-                    .fold(f32::NEG_INFINITY, f32::max);
                 let outer_height = layout.size.height + layout.margin.top + layout.margin.bottom;
-                // The width the floats take at `level`: those that started
-                // at or above it and still reach below it sit side by side.
-                let width_at = |level: f32| -> f32 {
-                    float_edges
-                        .iter()
-                        .filter(|edge| edge.top <= level + 0.001 && edge.bottom > level + 0.001)
-                        .map(|edge| edge.width)
-                        .sum()
-                };
-                // The highest level, from the floats' top down through their
-                // bottoms, from which the float fits beside the floats along
-                // its whole height.
-                let fits_from = std::iter::once(top)
-                    .chain(
-                        float_edges
-                            .iter()
-                            .map(|edge| edge.bottom)
-                            .filter(|&bottom| bottom > top),
-                    )
-                    .filter(|&level| {
-                        let end = level + outer_height.max(0.0);
-                        let beside = std::iter::once(level)
-                            .chain(
-                                float_edges
-                                    .iter()
-                                    .map(|edge| edge.top)
-                                    .filter(|&edge_top| edge_top > level && edge_top < end),
-                            )
-                            .map(width_at)
-                            .fold(0.0, f32::max);
-                        outer_width + beside <= context_width + 0.001
-                    })
-                    .fold(f32::INFINITY, f32::min);
-                Some(top.max(fits_from).max(cleared.unwrap_or(f32::NEG_INFINITY)))
+                let top = float_top_beside(&float_edges, outer_width, outer_height, context_width);
+                Some(top.max(cleared.unwrap_or(f32::NEG_INFINITY)))
             } else if candidate.is_float_descendant {
                 None
             } else {
@@ -7479,6 +7443,57 @@ struct FloatEdge {
     top: f32,
     bottom: f32,
     width: f32,
+}
+
+/// The highest outer top, at or below the highest top of `edges`, from
+/// which a float of `outer_width` by `outer_height` fits beside them along
+/// its whole height in a context of `context_width` (CSS 2.1 §9.5.1).
+///
+/// The candidate tops are the floats' highest top and each bottom below it,
+/// where the width they take next changes. A float that fits beside none of
+/// them has an infinite top. With no edges, the top is negative infinity
+/// unless the float is wider than the context.
+fn float_top_beside(
+    edges: &[FloatEdge],
+    outer_width: f32,
+    outer_height: f32,
+    context_width: f32,
+) -> f32 {
+    let top = edges
+        .iter()
+        .map(|edge| edge.top)
+        .fold(f32::NEG_INFINITY, f32::max);
+    // The width the floats take at `level`: those that started at or above
+    // it and still reach below it sit side by side.
+    let width_at = |level: f32| -> f32 {
+        edges
+            .iter()
+            .filter(|edge| edge.top <= level + 0.001 && edge.bottom > level + 0.001)
+            .map(|edge| edge.width)
+            .sum()
+    };
+    let fits_from = std::iter::once(top)
+        .chain(
+            edges
+                .iter()
+                .map(|edge| edge.bottom)
+                .filter(|&bottom| bottom > top),
+        )
+        .filter(|&level| {
+            let end = level + outer_height.max(0.0);
+            let beside = std::iter::once(level)
+                .chain(
+                    edges
+                        .iter()
+                        .map(|edge| edge.top)
+                        .filter(|&edge_top| edge_top > level && edge_top < end),
+                )
+                .map(width_at)
+                .fold(0.0, f32::max);
+            outer_width + beside <= context_width + 0.001
+        })
+        .fold(f32::INFINITY, f32::min);
+    top.max(fits_from)
 }
 
 /// The shifts of the floats moved to a later page, and the edges later
