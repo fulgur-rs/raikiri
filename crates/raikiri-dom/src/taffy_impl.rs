@@ -820,6 +820,20 @@ fn compute_ifc_root(
         ),
         edges: ifc_horizontal_edges(&style, parent_inline_size),
         insets: ifc_all_insets(&style, parent_inline_size),
+        top_margin_escapes: block_ctx.is_some()
+            && inputs.vertical_margins_are_collapsible.start
+            && style.is_block()
+            && style.position != TaffyPosition::Absolute
+            && style.float == taffy::Float::None
+            && !style.overflow.x.is_scroll_container()
+            && !style.overflow.y.is_scroll_container()
+            && !style.contain.establishes_independent_formatting_context()
+            && style.align_content.is_none()
+            && tree.nodes[idx].multicol.is_none()
+            && tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
+                root.writing_mode == shodo::geometry::WritingMode::HorizontalTb
+            })
+            && top_inset == 0.0,
         // CSS 2.1 8.3.1: the bottom margin of a last in-flow child and that
         // of its parent are adjoining when the parent has no bottom padding
         // or border and an `auto` height, and the parent is in the same
@@ -834,6 +848,7 @@ fn compute_ifc_root(
         definite_height: None,
     };
     let mut content_baseline = None;
+    let mut leading_margin = CollapsibleMarginSet::ZERO;
     let mut escaping_margin = CollapsibleMarginSet::ZERO;
     let mut measure = measure;
     let auto_vertical_block_size = tree.nodes[idx]
@@ -925,7 +940,7 @@ fn compute_ifc_root(
         });
     let mut output =
         compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
-            let (size, baseline, escaping) = measure_ifc_root(
+            let (size, baseline, leading, escaping) = measure_ifc_root(
                 tree,
                 idx,
                 known.width,
@@ -936,6 +951,7 @@ fn compute_ifc_root(
             );
             measured_size = Some(size);
             content_baseline = baseline;
+            leading_margin = leading;
             escaping_margin = escaping;
             size
         });
@@ -945,6 +961,7 @@ fn compute_ifc_root(
         // the cumulative block extent and must replace that probe result.
         output.size.width = measured_size.width + measure.insets.left + measure.insets.right;
     }
+    output.top_margin = leading_margin;
     output.baselines.first = content_baseline.map(|baseline| baseline + top_inset);
     if inputs.run_mode == RunMode::PerformLayout {
         crate::layout::ifc::boxes::place_out_of_flow(tree, idx, output.size);
@@ -1090,6 +1107,8 @@ struct IfcMeasure {
     edges: (f32, f32),
     /// Border plus padding on every physical side.
     insets: taffy::Rect<f32>,
+    /// Leading block margins leave the content box through the root's top edge.
+    top_margin_escapes: bool,
     /// The root's bottom margin may collapse with its last block child's.
     bottom_margin_escapes: bool,
     /// The content-box height of a multicol root with a definite height:
@@ -1119,7 +1138,12 @@ fn measure_ifc_root(
     available: Size<AvailableSpace>,
     measure: IfcMeasure,
     mut block_ctx: Option<&mut BlockContext<'_>>,
-) -> (Size<f32>, Option<f32>, CollapsibleMarginSet) {
+) -> (
+    Size<f32>,
+    Option<f32>,
+    CollapsibleMarginSet,
+    CollapsibleMarginSet,
+) {
     use crate::layout::ifc::{flow, root::with_state};
     let width_only = std::mem::take(&mut tree.ifc_width_probe);
     let Some((probe, writing_mode, fixed, direction)) = tree.nodes[idx].ifc.as_ref().map(|root| {
@@ -1134,7 +1158,12 @@ fn measure_ifc_root(
             },
         )
     }) else {
-        return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
+        return (
+            Size::ZERO,
+            None,
+            CollapsibleMarginSet::ZERO,
+            CollapsibleMarginSet::ZERO,
+        );
     };
     // A fixed box shrinks to fit against its containing block, the page area
     // (CSS 2.1 10.1), while taffy hands it its parent's room. A min-content or
@@ -1203,7 +1232,12 @@ fn measure_ifc_root(
         })
     };
     let Some((min_content, max_content)) = intrinsics else {
-        return (Size::ZERO, None, CollapsibleMarginSet::ZERO);
+        return (
+            Size::ZERO,
+            None,
+            CollapsibleMarginSet::ZERO,
+            CollapsibleMarginSet::ZERO,
+        );
     };
     let (min_content, max_content) = (
         min_content.max(box_intrinsics.blocks.0),
@@ -1228,6 +1262,7 @@ fn measure_ifc_root(
         return (
             Size { width, height: 0.0 },
             None,
+            CollapsibleMarginSet::ZERO,
             CollapsibleMarginSet::ZERO,
         );
     }
@@ -1310,6 +1345,7 @@ fn measure_ifc_root(
             geometry,
             block_ctx.as_deref_mut(),
             false,
+            measure.top_margin_escapes,
             measure.bottom_margin_escapes,
         );
         let mut block_size = lines
@@ -1331,6 +1367,7 @@ fn measure_ifc_root(
                 geometry,
                 block_ctx.as_deref_mut(),
                 false,
+                measure.top_margin_escapes,
                 measure.bottom_margin_escapes,
             );
             block_size = lines
@@ -1355,6 +1392,7 @@ fn measure_ifc_root(
                 geometry,
                 block_ctx.as_deref_mut(),
                 perform,
+                measure.top_margin_escapes,
                 measure.bottom_margin_escapes,
             )
         };
@@ -1367,6 +1405,7 @@ fn measure_ifc_root(
             geometry,
             block_ctx,
             true,
+            measure.top_margin_escapes,
             measure.bottom_margin_escapes,
         );
         measured_block_size = lines
@@ -1407,6 +1446,13 @@ fn measure_ifc_root(
     } else {
         flow::first_baseline(&lines)
     };
+    let leading_margin = if measure.top_margin_escapes {
+        lines
+            .leading_block_margin
+            .unwrap_or(CollapsibleMarginSet::ZERO)
+    } else {
+        CollapsibleMarginSet::ZERO
+    };
     let escaping_margin = if known_height.is_none() {
         lines.escaping_margin
     } else {
@@ -1422,7 +1468,7 @@ fn measure_ifc_root(
         root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
         tree.nodes[idx].ifc = Some(root);
     }
-    (size, baseline, escaping_margin)
+    (size, baseline, leading_margin, escaping_margin)
 }
 
 fn fragmentation_context_for_ifc(
