@@ -1482,7 +1482,13 @@ fn pipeline_measures_the_auto_body_without_relative_offsets_and_with_negative_ma
     // outside the flow do not move that end, but still paint where they are.
     for (content, pages) in [
         (
+            // The ordinary body has auto height, so a percentage top,
+            // including a calc containing it, is auto (CSS 2.1 9.3.2).
             "<div style='position:relative;top:calc(150px + 1%);height:20px'>x</div>",
+            1,
+        ),
+        (
+            "<div style='position:relative;top:150px;height:20px'>x</div>",
             2,
         ),
         (

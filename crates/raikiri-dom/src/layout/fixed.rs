@@ -133,6 +133,16 @@ fn containable(
     ) && !generates_inline_box_with_properties(document, id, cv, properties)
 }
 
+/// Whether this fixed box uses the page area instead of an ancestor box.
+pub(super) fn is_page_fixed(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    document.nodes[id].position() == &PositionValue::Fixed
+        && !document.ancestors(id).any(|ancestor| {
+            cascade.computed.get(ancestor).is_some_and(|cv| {
+                establishes_fixed_containing_block_for_layout(document, ancestor, cv)
+            })
+        })
+}
+
 /// Whether `id` is the containing block of its fixed-position descendants.
 pub fn establishes_fixed_containing_block(
     document: &Document,

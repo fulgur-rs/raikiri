@@ -1150,11 +1150,11 @@ fn link_paint_quads_of_a_fixed_box_leave_the_offsets_around_it() {
     let page = layout.page(0).unwrap();
     let span = find(&page.dom(), page.dom().root(), "span").unwrap();
     let a = find(&page.dom(), page.dom().root(), "a").unwrap();
-    assert_eq!(
-        page.paint_transform(span),
-        Some(PaintTransform::IDENTITY)
-    );
-    let body = page.fragments().find(|fragment| page.dom().local_name(fragment.node()) == Some("body")).expect("body box");
+    assert_eq!(page.paint_transform(span), Some(PaintTransform::IDENTITY));
+    let body = page
+        .fragments()
+        .find(|fragment| page.dom().local_name(fragment.node()) == Some("body"))
+        .expect("body box");
     assert_eq!((body.rect().x, body.rect().y), (10.0, 4.0));
     let fixed = page.paint_transform(a).unwrap();
     assert_eq!((fixed.e, fixed.f), (0.0, 0.0));

@@ -117,7 +117,12 @@ fn events_arrive_with_the_page_of_the_first_fragment() {
     let firsts: Vec<NodeId> = record
         .pages
         .iter()
-        .map(|(_, nodes)| *nodes.iter().find(|&&node| !containers.contains(&node)).expect("content"))
+        .map(|(_, nodes)| {
+            *nodes
+                .iter()
+                .find(|&&node| !containers.contains(&node))
+                .expect("content")
+        })
         .collect();
     assert_eq!(record.events.len(), 3);
     for (page, events) in record.events.iter().enumerate() {

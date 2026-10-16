@@ -21,7 +21,7 @@ pub(super) fn truncate(
         control.check_aborted()?;
         let parent_node = &document.nodes[parent];
         let block_flow = parent_node.formatting_context == FormattingContext::Block
-            && parent_node.style.align_content.is_none()
+            && parent_node.style.align_content == taffy::AlignContent::NORMAL
             && (matches!(
                 parent_node.display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem

@@ -464,8 +464,8 @@ impl Document {
         else {
             return Vec::new();
         };
-        let Some(root) = paint_rules::find_paint_root(self) else {
-            return Vec::new(); // cov:ignore: a laid-out page always has a body to paint from
+        let Some(root) = self.document_element_index() else {
+            return Vec::new(); // cov:ignore: a laid-out page always has a document element
         };
         let mut items = PageItems {
             by_node: HashMap::new(),

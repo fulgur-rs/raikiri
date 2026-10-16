@@ -122,10 +122,12 @@ fn content_overflow_end(
             );
             continue;
         }
-        if matches!(
-            document.nodes[node_id].position(),
-            PositionValue::Fixed | PositionValue::Running(_)
-        ) || computed.float == FloatValue::Footnote
+        if super::fixed::is_page_fixed(document, cascade, node_id)
+            || matches!(
+                document.nodes[node_id].position(),
+                PositionValue::Running(_)
+            )
+            || computed.float == FloatValue::Footnote
         {
             // Footnote areas are page-local, so their retained paragraph
             // overflow must not extend the document's normal-flow pages.
@@ -147,7 +149,7 @@ fn content_overflow_end(
         let paint_offset = painted_relative_offset_y(document, cascade, body_id, node_id);
         let y = parent_y + node.unrounded_layout.location.y + paint_offset;
         let bottom = if node_id == body_id {
-            flow_root_border_box_end(
+            block_border_box_end(
                 document,
                 cascade,
                 body_id,
@@ -172,10 +174,15 @@ fn content_overflow_end(
         // Generated block content and overflowing lines have no source box
         // to visit. Measure retained paragraph flow even when an authored
         // height or max-height limits its ordinary containing box.
-        if in_columns.is_none() && node.multicol.is_none()
-            && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref()) {
-            end = end.max(y + node.unrounded_layout.border.top
-                + node.unrounded_layout.padding.top + lines.shifted_height());
+        if in_columns.is_none()
+            && node.multicol.is_none()
+            && let Some(lines) = node.ifc.as_ref().and_then(|root| root.lines.as_ref())
+        {
+            end = end.max(
+                y + node.unrounded_layout.border.top
+                    + node.unrounded_layout.padding.top
+                    + lines.shifted_height(),
+            );
         }
         if in_columns.is_none() {
             let roots = fragment_roots.get(&node_id).map_or(&[][..], Vec::as_slice);
@@ -357,7 +364,7 @@ fn relative_offset_is_painted(
 /// When counting overflow pages, an auto-sized root without block-end edges
 /// contributes no extra page beyond those its content already reached.
 /// `whole_box` also includes that content when extending the root's own box.
-fn flow_root_border_box_end(
+fn block_border_box_end(
     document: &Document,
     cascade: &CascadeResult,
     flow_root: usize,
@@ -551,6 +558,40 @@ fn flow_root_border_box_end(
     let content_height = content_end - (top + edges_top);
     let auto_end = top + edges_top + content_height + edges_bottom;
     min_end.max(auto_end.min(max_end))
+}
+
+/// Extend ordinary auto-height block boxes around their committed paginated
+/// content, from descendants to ancestors. Page shifts may have been inherited
+/// from a parallel flow rather than introduced at the box's own break.
+fn update_paginated_block_heights(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    root: usize,
+    page_area_height: f32,
+) {
+    let order: Vec<_> = document.preorder(root).collect();
+    for node_id in order.into_iter().rev() {
+        let node = &document.nodes[node_id];
+        if node.kind() != NodeKind::Element
+            || node.is_display_none()
+            || !matches!(
+                node.display(),
+                DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+            )
+            || node.formatting_context != FormattingContext::Block
+            || node.multicol.is_some()
+            || node.size_containment.height
+            || (!node.style.size.height.is_auto()
+                && definite_content_height(document, node_id).is_some())
+        {
+            continue;
+        }
+        let end = block_border_box_end(document, cascade, node_id, 0.0, page_area_height, true);
+        let height = end - current_abs_y(document, node_id);
+        if height.is_finite() && height > document.nodes[node_id].unrounded_layout.size.height {
+            document.nodes[node_id].unrounded_layout.size.height = height;
+        }
+    }
 }
 
 /// The column flex containers that already hold content on a page.
@@ -2173,7 +2214,7 @@ pub(crate) fn project_slices_with_control(
         // existing layout pass already computes one viewport-relative box;
         // preserve that geometry and mark the records as complete repeats
         // instead of clipping them as in-flow content.
-        let is_repeat = inherited_repeat || matches!(node.position(), PositionValue::Fixed);
+        let is_repeat = inherited_repeat || super::fixed::is_page_fixed(document, cascade, node_id);
         let include = match node.kind() {
             NodeKind::Text => node
                 .text_content()
@@ -3877,7 +3918,13 @@ fn paginate_flow(
         &table_headers,
         &table_row_leads,
     );
-    let avoided_run_ends = avoided_run_ends(document, cascade, &candidates, roots.contents_box, content_width);
+    let avoided_run_ends = avoided_run_ends(
+        document,
+        cascade,
+        &candidates,
+        roots.contents_box,
+        content_width,
+    );
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut reach = PageReach::default();
@@ -4200,17 +4247,15 @@ fn paginate_flow(
                     };
                     let moved_y = current_abs_y(document, moved) + delta;
                     materialize_y(document, moved, moved_y);
-                    if nested {
-                        grow_ancestors_for_shift(
-                            document,
-                            cascade,
-                            moved,
-                            delta,
-                            body_id,
-                            &mut subtree_shifts,
-                            page_before_candidate,
-                        );
-                    }
+                    grow_ancestors_for_shift(
+                        document,
+                        cascade,
+                        moved,
+                        delta,
+                        body_id,
+                        &mut subtree_shifts,
+                        page_before_candidate,
+                    );
                 }
                 delta
             };
@@ -4340,17 +4385,15 @@ fn paginate_flow(
                         if let Some((item, container)) = flex_line_paragraph {
                             shift_later_flex_lines(document, container, item, shift);
                         }
-                        if nested {
-                            grow_ancestors_for_shift(
-                                document,
-                                cascade,
-                                block_id,
-                                shift,
-                                body_id,
-                                &mut subtree_shifts,
-                                page_before_candidate,
-                            );
-                        }
+                        grow_ancestors_for_shift(
+                            document,
+                            cascade,
+                            block_id,
+                            shift,
+                            body_id,
+                            &mut subtree_shifts,
+                            page_before_candidate,
+                        );
                         if text_lines
                             .get(node_id)
                             .and_then(|owned| owned.lines.last())
@@ -5263,6 +5306,7 @@ fn paginate_flow(
             .any(|header| header.table == table)
     });
     super::table::headers::finish_boxes(document, &table_headers);
+    update_paginated_block_heights(document, cascade, body_id, content_height);
     table_headers.index();
     document.table_objects.headers = table_headers;
 
@@ -5278,28 +5322,6 @@ fn paginate_flow(
             content_overflow_end(document, cascade, body_id, root_flow_offset, content_height);
         if end.is_finite() && end > 0.0 {
             reach.include_checked(control, page_index_for_end(end), false)?;
-        }
-    }
-    // Auto-sized root decorations follow content moved across page breaks.
-    // Authored sizes and bounds remain part of the root's own box.
-    if !control.page_limit_reached.get()
-        && document.nodes[body_id].display() != DisplayValue::Contents
-    {
-        let end = flow_root_border_box_end(
-            document,
-            cascade,
-            body_id,
-            root_flow_offset,
-            content_height,
-            true,
-        );
-        let root_y = document
-            .parent_of(body_id)
-            .map_or(0.0, |root| document.nodes[root].unrounded_layout.location.y);
-        let layout = &mut document.nodes[body_id].unrounded_layout;
-        let height = end - root_y - layout.location.y;
-        if height.is_finite() && height > layout.size.height {
-            layout.size.height = height;
         }
     }
     // Pages past the last one the normal flow reached hold only boxes outside

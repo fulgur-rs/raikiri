@@ -693,3 +693,38 @@ fn viewport_overflow_propagation_caps_absolute_overflow_pages() {
         );
     }
 }
+
+#[test]
+fn only_page_fixed_boxes_repeat_instead_of_extending_overflow_pages() {
+    for (transform, expected_pages) in [("", 1), ("transform:translateX(10px)", 3)] {
+        let mut doc = Document::new();
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some(&format!("display:block;height:0;{transform}")),
+        );
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;margin:0;height:0"),
+        );
+        let fixed = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;position:fixed;left:0;top:199px;width:10px;height:2px"),
+        );
+        let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+        let mut page = page_box_800x600();
+        page.height = 100.0;
+        let pages =
+            crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page).expect("pages");
+        assert_eq!(
+            crate::layout::test_support::absolute_rect(&doc, fixed),
+            (0.0, 199.0, 10.0, 2.0)
+        );
+        assert_eq!(pages.len(), expected_pages, "{transform}");
+    }
+}

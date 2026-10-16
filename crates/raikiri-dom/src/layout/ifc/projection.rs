@@ -1334,7 +1334,8 @@ fn project_children_builder(
                 offsets
             },
             cleared_breaks,
-            fixed: anonymous_children.is_none() && root_node.position() == &PositionValue::Fixed,
+            fixed: anonymous_children.is_none()
+                && super::super::fixed::is_page_fixed(doc, cascade, root),
             ellipsis: anonymous_children.is_none() && style::ends_in_ellipsis(root_cv),
             nowrap: root_cv.effective_text_wrap_mode == TextWrapMode::Nowrap,
             text_nowrap: Arc::new(text_nowrap),

@@ -1840,8 +1840,8 @@ impl FlowBand {
     }
 }
 
-/// Walk the Document arena iteratively in DFS order, starting from body.
-/// A fragment (without `<body>`) returns silently. `layout_single_page` should
+/// Walk source element boxes in DFS order, starting at the document element.
+/// A document without an element returns silently. `layout_single_page` should
 /// already have returned Err before painting; this is defensive.
 ///
 /// Stack frames carry either a node visit or a matching clip-layer pop.
