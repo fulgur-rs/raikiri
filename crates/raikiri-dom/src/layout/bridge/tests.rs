@@ -2351,3 +2351,31 @@ fn bridged_writing_modes_follow_live_parents_and_refresh_before_consumers() {
         }
     }
 }
+
+#[test]
+fn changing_a_block_parent_to_flex_refreshes_inline_size_containment_before_classification() {
+    use crate::layout::test_support::{page_box_800x600, with_ahem};
+    use raikiri_style::{build_rule_tree, cascade};
+
+    let mut doc = Document::new();
+    with_ahem(&mut doc);
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("margin:0;font:20px/1 Ahem"),
+    );
+    let parent = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+    let child = doc.append_element(Some(parent), "span", Style::default(), Some("contain:size"));
+    doc.append_text(child, "XX");
+
+    let first = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout_single_page(&mut doc, &first, page_box_800x600()).unwrap();
+    assert_eq!(doc.nodes[parent].unrounded_layout.size.height, 20.0);
+
+    doc.set_element_inline_style(parent, Some("display:flex;align-items:start".into()));
+    let second = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout_single_page(&mut doc, &second, page_box_800x600()).unwrap();
+    assert_eq!(doc.nodes[child].unrounded_layout.size, taffy::Size::ZERO);
+}

@@ -2305,7 +2305,7 @@ impl AncestorFacts {
         let resolved_ch = measured_ch_width(doc, cascade, id, parent_width);
         self.content_width[id] = match (resolved_ch, cv.width) {
             // Contents has no box; both preparation and rebreaking inherit its parent width.
-            _ if cv.display == DisplayValue::Contents => parent_width.max(0.0),
+            _ if doc.nodes[id].display() == DisplayValue::Contents => parent_width.max(0.0),
             (Some(width), _) => width.max(0.0),
             (None, ComputedLengthPercentageOrAuto::Px(value)) if value.is_finite() => {
                 value.max(0.0)
@@ -2327,13 +2327,13 @@ impl AncestorFacts {
         self.vertical[id] = vertical_self || self.vertical[parent];
         self.out_of_flow_ancestor[id] = self.out_of_flow_ancestor[parent]
             || matches!(
-                values.position,
+                doc.nodes[parent].position(),
                 PositionValue::Absolute | PositionValue::Fixed
             );
         self.non_block_flow_ancestor[id] = self.non_block_flow_ancestor[parent]
-            || (values.display.is_flex_or_grid_container()
+            || (doc.nodes[parent].display().is_flex_or_grid_container()
                 || matches!(
-                    values.display,
+                    doc.nodes[parent].display(),
                     DisplayValue::Table
                         | DisplayValue::InlineTable
                         | DisplayValue::TableRowGroup
@@ -2345,7 +2345,7 @@ impl AncestorFacts {
                         | DisplayValue::TableCell
                         | DisplayValue::TableCaption
                 ));
-        self.authored_ancestor[id] = if values.display == DisplayValue::Contents
+        self.authored_ancestor[id] = if doc.nodes[parent].display() == DisplayValue::Contents
             || matches!(
                 values.width,
                 ComputedLengthPercentageOrAuto::Auto | ComputedLengthPercentageOrAuto::MinContent
@@ -2464,7 +2464,7 @@ pub(crate) fn prepare_authored_block_widths(
         // 10.3.9), and a block child that is a scroll container takes the
         // room the floats beside it leave (CSS 2.1 9.5).
         let cv = &cascade.computed[idx];
-        let engine_sized = cv.display == DisplayValue::InlineBlock
+        let engine_sized = doc.nodes[idx].display() == DisplayValue::InlineBlock
             || cv.overflow.x != OverflowValue::Visible
             || cv.overflow.y != OverflowValue::Visible;
         let engine_box = engine_sized
@@ -2479,10 +2479,10 @@ pub(crate) fn prepare_authored_block_widths(
             cascade.computed[idx].width,
             ComputedLengthPercentageOrAuto::Auto
         ) && matches!(
-            cascade.computed[idx].display,
+            doc.nodes[idx].display(),
             DisplayValue::Block | DisplayValue::InlineBlock
         ) && !ancestors.vertical[idx]
-            && matches!(cascade.computed[idx].position, PositionValue::Static)
+            && matches!(doc.nodes[idx].position(), PositionValue::Static)
             && !has_nonzero_horizontal_margin(&cascade.computed[idx])
             && !ancestors.out_of_flow_ancestor[idx]
             && !ancestors.non_block_flow_ancestor[idx]

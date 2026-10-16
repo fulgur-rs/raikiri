@@ -81,7 +81,7 @@ pub(crate) fn body_top_margin_may_collapse(
     let computed = &cascade.computed[body_id];
     let style = &doc.nodes[body_id].style;
     matches!(
-        computed.display,
+        doc.nodes[body_id].display(),
         DisplayValue::Block | DisplayValue::ListItem
     ) && doc.nodes[body_id].taffy_display() == Display::Block
         && style.float == TaffyFloat::None

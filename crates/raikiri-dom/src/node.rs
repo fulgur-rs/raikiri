@@ -8,6 +8,7 @@
 mod box_properties;
 
 use box_properties::BoxProperties;
+pub(crate) use box_properties::BoxPropertiesRef;
 use smol_str::SmolStr;
 use taffy::{Cache, Layout, Style};
 
@@ -595,6 +596,11 @@ impl Node {
     /// The CSS display retained before lowering the box for Taffy.
     pub(crate) fn display(&self) -> DisplayValue {
         self.box_properties.display()
+    }
+
+    /// Borrow the identity captured for this layout pass.
+    pub(crate) fn box_properties(&self) -> BoxPropertiesRef<'_> {
+        self.box_properties.borrowed()
     }
 
     /// The computed CSS position, including distinctions Taffy does not retain.

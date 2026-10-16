@@ -1,5 +1,6 @@
 //! Canonical CSS box identity shared by layout and the Taffy adapter.
 
+use raikiri_style::ComputedValues;
 use raikiri_style::property::{DisplayValue, PositionValue};
 
 /// The computed display and position captured before layout classifies a box.
@@ -40,6 +41,13 @@ impl BoxProperties {
         &self.position
     }
 
+    pub(crate) fn borrowed(&self) -> BoxPropertiesRef<'_> {
+        BoxPropertiesRef {
+            display: self.display,
+            position: &self.position,
+        }
+    }
+
     /// Lower CSS display to the box types supported by Taffy.
     pub(crate) fn taffy_display(&self, multicol: bool) -> taffy::Display {
         let display = match self.display {
@@ -70,5 +78,29 @@ impl BoxProperties {
     pub(crate) fn apply_to_style(&self, style: &mut taffy::Style, multicol: bool) {
         style.display = self.taffy_display(multicol);
         style.position = self.taffy_position();
+    }
+}
+
+/// A borrowed identity for one explicit style query or a captured layout box.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BoxPropertiesRef<'a> {
+    display: DisplayValue,
+    position: &'a PositionValue,
+}
+
+impl<'a> BoxPropertiesRef<'a> {
+    pub(crate) fn from_computed(values: &'a ComputedValues) -> Self {
+        Self {
+            display: values.display,
+            position: &values.position,
+        }
+    }
+
+    pub(crate) fn display(self) -> DisplayValue {
+        self.display
+    }
+
+    pub(crate) fn position(self) -> &'a PositionValue {
+        self.position
     }
 }

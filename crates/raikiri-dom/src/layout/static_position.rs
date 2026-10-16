@@ -45,7 +45,7 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             || crate::taffy_impl::used_writing_mode(document, parent_id).is_vertical()
             || parent_node.formatting_context != FormattingContext::Block
             || !matches!(
-                parent.display,
+                document.nodes[parent_id].display(),
                 DisplayValue::Block
                     | DisplayValue::InlineBlock
                     | DisplayValue::FlowRoot
@@ -88,7 +88,7 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             let child_layout = document.nodes[child_id].unrounded_layout;
             if matches!(child.float, FloatValue::Left | FloatValue::Right)
                 && !matches!(
-                    child.position,
+                    document.nodes[child_id].position(),
                     PositionValue::Absolute | PositionValue::Fixed
                 )
             {
@@ -96,9 +96,9 @@ pub(super) fn realign_inline_level_abspos_static_positions(
                 continue;
             }
             if !matches!(
-                child.position,
+                document.nodes[child_id].position(),
                 PositionValue::Absolute | PositionValue::Fixed
-            ) || !child.display.is_inline_level()
+            ) || !document.nodes[child_id].display().is_inline_level()
                 || !matches!(child.left, ComputedLengthPercentageOrAuto::Auto)
                 || !matches!(child.right, ComputedLengthPercentageOrAuto::Auto)
             {
@@ -143,11 +143,12 @@ pub(super) fn realign_inline_level_abspos_static_positions(
             // An atomic inline sits on the line as its margin box. An empty
             // inline box is a point; the content of a non-empty one is not
             // measured here.
-            let hypothetical_width = if is_non_atomic_inline(document, child_id, child.display) {
-                0.0
-            } else {
-                margin_left + child_layout.size.width + margin_right
-            };
+            let hypothetical_width =
+                if is_non_atomic_inline(document, child_id, document.nodes[child_id].display()) {
+                    0.0
+                } else {
+                    margin_left + child_layout.size.width + margin_right
+                };
             let start = left + (right - left - hypothetical_width).max(0.0) * share;
             let x = if rtl {
                 start + hypothetical_width - margin_right - child_layout.size.width
@@ -184,19 +185,23 @@ fn keep_placed_fixed_descendants(
     moved: usize,
     dx: f32,
 ) {
-    if super::establishes_fixed_containing_block(document, moved, &cascade.computed[moved]) {
+    if super::fixed::establishes_fixed_containing_block_for_layout(
+        document,
+        moved,
+        &cascade.computed[moved],
+    ) {
         return;
     }
     let mut stack = document.nodes[moved].children.clone();
     while let Some(id) = stack.pop() {
         let cv = &cascade.computed[id];
-        if cv.position == PositionValue::Fixed
+        if matches!(document.nodes[id].position(), PositionValue::Fixed)
             && !(matches!(cv.left, ComputedLengthPercentageOrAuto::Auto)
                 && matches!(cv.right, ComputedLengthPercentageOrAuto::Auto))
         {
             document.nodes[id].unrounded_layout.location.x -= dx;
         }
-        if !super::establishes_fixed_containing_block(document, id, cv) {
+        if !super::fixed::establishes_fixed_containing_block_for_layout(document, id, cv) {
             stack.extend_from_slice(&document.nodes[id].children);
         }
     }
