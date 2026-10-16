@@ -119,3 +119,43 @@ fn each_row_box_of_a_continued_nested_container_paints_its_own_rules() {
     assert!(rules(0).is_empty());
     assert_eq!(rules(1), [PaintRect::new(204.0, 0.0, 2.0, 200.0)]);
 }
+
+#[test]
+fn rules_that_only_the_rows_of_a_continued_nested_container_have_are_painted() {
+    // The rows of the container split its box that avoids breaks across
+    // both columns of each row, so each row has a rule.
+    let (mut document, cascade, outer) = crate::layout::test_support::ahem_paragraph_with(
+        "width:200px;height:50px;column-count:2;column-gap:10px;column-fill:auto",
+        |document, root| {
+            let inner = document.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;column-count:2;column-gap:10px;column-rule:2px solid red"),
+            );
+            document.append_element(
+                Some(inner),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;height:200px;break-inside:avoid-column"),
+            );
+        },
+    );
+    let inner = document.nodes[outer].children[0];
+    layout_single_page(&mut document, &cascade, PageBox::default()).unwrap();
+    // The rules recorded after layout come from the rows, which is what the
+    // painter and page projection check before drawing any.
+    assert_eq!(document.column_rules(&cascade, inner).count(), 2);
+    let boxes: Vec<usize> = (0..document.fragment_tree.fragments.len())
+        .filter(|&index| document.fragment_tree.fragments[index].node_id == inner)
+        .collect();
+    assert!(boxes.len() >= 2);
+    for index in boxes {
+        assert_eq!(
+            document
+                .fragment_column_rules(&cascade, inner, Some(index))
+                .len(),
+            1
+        );
+    }
+}
