@@ -6828,8 +6828,7 @@ fn place_first_table_header(
 /// of the table that `row`, which sits at `row_y` with `height`, belongs to.
 /// The first body row also brings the first header to its page when the
 /// header was left alone on an earlier one. Returns how far `row` moved down
-/// below the header copy, which is zero when the page already holds a copy
-/// or the header and the row cannot share a page.
+/// below the header copy, which is zero when nothing moves.
 fn make_room_for_table_header(
     document: &mut Document,
     table_headers: &mut HeaderRepeats,
