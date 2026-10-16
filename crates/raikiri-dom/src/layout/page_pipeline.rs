@@ -1898,6 +1898,35 @@ fn place_text_candidate(
     materialize_y(document, node_id, y);
 }
 
+/// Moves a text candidate that `place_text_candidate` already placed down by
+/// `delta` when a page boundary before it pushes it to a later page. The text
+/// of an inline layout paragraph is painted from its root, so when
+/// `moved_root` holds that root, the root carries the movement. Otherwise a
+/// later text of the inline layout rooted at `text_ifc_root`, whose root
+/// already moved, moves its own lines and the ones after alone. Only the
+/// moved box's own position changes; content that follows it is moved by the
+/// flow shift the caller applies to later candidates.
+fn shift_text_candidate(
+    document: &mut Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    moved_root: Option<usize>,
+    text_ifc_root: Option<usize>,
+    delta: f32,
+) {
+    let moved = moved_root.unwrap_or(node_id);
+    document
+        .table_layout_node_mut(moved)
+        .unrounded_layout
+        .location
+        .y += delta;
+    if moved_root.is_none()
+        && let Some(root) = text_ifc_root
+    {
+        follow_moved_ifc_text(document, root, node_id, delta, text_lines);
+    }
+}
+
 /// Block offset of the first line of `owned` from the border-box top of its
 /// paragraph `root`, after the paragraph's column ranges have moved it.
 /// `fallback` is the line top used when no positioned first line is found:
@@ -4282,10 +4311,12 @@ fn paginate_flow(
         let uses_positioned_coordinates = candidate.is_out_of_flow_descendant
             && has_explicit_positioned_block_ancestor(document, node_id);
         if candidate.is_text {
+            // The inline layout root whose lines hold this text, if any.
+            let text_ifc_root = candidate.ifc_root.map(|(root, _)| root);
             // In-flow text between two blocks separates them: the next block's
             // gap is no longer a margin adjoining the previous block.
             if participates_in_margin_adjacency
-                && let Some(parent_id) = candidate.ifc_root.map(|(root, _)| root).or_else(|| {
+                && let Some(parent_id) = text_ifc_root.or_else(|| {
                     BoxTree::for_layout(document).parent(node_id, BoxParentScope::Document)
                 })
             {
@@ -4308,12 +4339,7 @@ fn paginate_flow(
             let mut height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
             let mut effective_y = if uses_positioned_coordinates {
-                positioned_text_start_y(
-                    document,
-                    &text_lines,
-                    node_id,
-                    candidate.ifc_root.map(|(root, _)| root),
-                )
+                positioned_text_start_y(document, &text_lines, node_id, text_ifc_root)
             } else {
                 raw_y + flow_shift
             };
@@ -4514,7 +4540,7 @@ fn paginate_flow(
                 &text_lines,
                 node_id,
                 ifc_root,
-                candidate.ifc_root.map(|(root, _)| root),
+                text_ifc_root,
                 effective_y,
             );
             let named_page_change = name_context_seen
@@ -4535,28 +4561,20 @@ fn paginate_flow(
                     let target_y = page_origin(target_page);
                     // The candidate was materialized to `effective_y` above,
                     // so this is the additional movement for this boundary.
-                    // Keep it separate from `flow_shift`: the latter also
-                    // affects candidates whose ancestor is not moved here.
-                    let node_delta = target_y - effective_y;
-                    let shift_delta = target_y - effective_y;
-                    if node_delta.is_finite() && shift_delta.is_finite() {
-                        // The text of an ifc paragraph is painted from its
-                        // root, so the root carries the movement.
-                        let moved = ifc_root.map_or(node_id, |(root, _)| root);
-                        document
-                            .table_layout_node_mut(moved)
-                            .unrounded_layout
-                            .location
-                            .y += node_delta;
-                        // A later text of a paragraph whose root already
-                        // moved: its lines, and the ones after, move alone.
-                        if ifc_root.is_none()
-                            && let Some((root, _)) = candidate.ifc_root
-                        {
-                            follow_moved_ifc_text(document, root, node_id, node_delta, &text_lines);
-                        }
-                        flow_shift += shift_delta;
-                        effective_y += shift_delta;
+                    // The same amount advances `flow_shift`, which also moves
+                    // later candidates whose ancestor is not moved here.
+                    let delta = target_y - effective_y;
+                    if delta.is_finite() {
+                        shift_text_candidate(
+                            document,
+                            &text_lines,
+                            node_id,
+                            ifc_root.map(|(root, _)| root),
+                            text_ifc_root,
+                            delta,
+                        );
+                        flow_shift += delta;
+                        effective_y += delta;
                     }
                     current_page = target_page;
                     page_names.current = candidate_page_name.clone();
