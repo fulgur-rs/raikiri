@@ -182,14 +182,15 @@ fn layout_context(
         .preferred
         .height
         .unwrap_or_else(|| metrics.clamp_height(natural_end + metrics.inset.bottom));
-    // CSS2 §8.3.1: when `min-height` determines the used height, the last
-    // child's bottom margin no longer adjoins the bottom edge. It neither
-    // escapes nor adds to the height, which `min-height` already fixed.
+    // When `min-height` raises the used height above the content, the last
+    // child's bottom margin no longer adjoins the bottom edge. As in
+    // browsers, it then neither escapes nor adds to the height that
+    // `min-height` fixed.
     let minimum_separates = collapse_end
         && metrics
             .min
             .height
-            .is_some_and(|min| min > 0.0 && min >= height);
+            .is_some_and(|min| min > 0.0 && min > natural_end + metrics.inset.bottom);
     let size = Size { width, height };
     children::align(
         tree,

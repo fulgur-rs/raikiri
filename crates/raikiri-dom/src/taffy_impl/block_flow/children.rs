@@ -216,6 +216,7 @@ pub(super) fn layout(
         // margins of its parent.
         let mut separated = false;
         let joins = leading && collapse_start;
+        let adjoining_clearance = ctx.has_adjoining_float(style.clear);
         if !same {
             let margins = pending.collapse_with_margin(margin.top);
             let hypothetical = if joins {
@@ -228,7 +229,9 @@ pub(super) fn layout(
             // margins escape, so the box is first tried beside that float
             // without its margin. A float the box clears forces clearance.
             let adjoining = joins && ctx.has_adjoining_float(Clear::Both);
-            let forced = joins && ctx.has_adjoining_float(style.clear);
+            let forced = joins && adjoining_clearance;
+            // Moving below this point separates the box from the floats.
+            let threshold = if adjoining { flow.end } else { hypothetical };
             let search = if forced {
                 ctx.cleared_threshold(style.clear).unwrap_or(hypothetical)
             } else if adjoining {
@@ -251,8 +254,7 @@ pub(super) fn layout(
                         child_width = proposed;
                         area_start = slot.x;
                         area_width = slot.stretch_width;
-                        separated = forced
-                            || slot.y > if adjoining { flow.end } else { hypothetical } + 0.001;
+                        separated = forced || slot.y > threshold + 0.001;
                         slot_y = Some(if joins && !separated {
                             flow.end
                         } else {
@@ -302,7 +304,6 @@ pub(super) fn layout(
         let clear_y = ctx
             .cleared_threshold(style.clear)
             .unwrap_or(f32::NEG_INFINITY);
-        let adjoining_clearance = ctx.has_adjoining_float(style.clear);
         let saved = ctx.snapshot();
         let mut final_pass = resolved && joins && style.clear == Clear::None;
         let mut guess = slot_y
@@ -349,10 +350,15 @@ pub(super) fn layout(
                 && ((joins && adjoining_clearance) || hypothetical < clear_y);
             let top = if let Some(slot_y) = slot_y {
                 slot_y
-            } else if clearance && joins && !resolved {
-                // A provisional origin still includes the margins escaping
-                // above this block, so the float edge is that much higher.
-                clear_y - pending.resolve()
+            } else if clearance && joins && !resolved && !adjoining_clearance {
+                // A provisional origin leaves out part of the margins that
+                // escape above this block, so an earlier float's edge sits
+                // that much higher in its final coordinates. A float on the
+                // same strut moves with the block instead.
+                let escaped = ctx
+                    .hypothetical_top_position(pending)
+                    .map_or(pending.resolve(), |y| y - flow.end);
+                clear_y - escaped
             } else if clearance {
                 clear_y
             } else if joins {
@@ -389,7 +395,9 @@ pub(super) fn layout(
         }
         // An orthogonal box sizes its width from its content, whatever
         // width it was offered, so it is placed by the width it took.
-        if (output.size.width - child_width).abs() > 0.001 {
+        let orthogonal = tree.has_vertical_writing_mode(usize::from(child))
+            != tree.has_vertical_writing_mode(usize::from(node));
+        if orthogonal && slot_y.is_none() && (output.size.width - child_width).abs() > 0.001 {
             (left, margin) = place(output.size.width, margin);
         }
         let offset = relative(&style, parent, container.direction);

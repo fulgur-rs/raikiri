@@ -679,3 +679,72 @@ fn clearance_under_an_unresolved_origin_excludes_the_escaping_margin() {
         100.0
     );
 }
+
+#[test]
+fn clearance_under_an_unresolved_origin_counts_the_block_margin_once() {
+    let mut tree = Document::new();
+    let root = plain(&mut tree, 0);
+    let float = block(&mut tree, root, 50.0, 150.0);
+    tree.nodes[float].style.float = Float::Left;
+    let padded = plain(&mut tree, root);
+    tree.nodes[padded].style.padding.top = LengthPercentage::length(1.0);
+    let inner = plain(&mut tree, padded);
+    tree.nodes[inner].style.margin.top = LengthPercentageAuto::length(20.0);
+    let first = plain(&mut tree, inner);
+    tree.nodes[first].style.margin.bottom = LengthPercentageAuto::length(49.0);
+    let cleared = plain(&mut tree, inner);
+    tree.nodes[cleared].style.clear = taffy::Clear::Left;
+    tree.nodes[cleared].style.margin.top = LengthPercentageAuto::length(50.0);
+    let mut root_inputs = inputs();
+    root_inputs.vertical_margins_are_collapsible.start = true;
+    block_layout(&mut tree, NodeId::from(root), root_inputs, None);
+    // `inner` sits below its own margin collapsed with `first`'s: 1 + 49.
+    let inner_y = tree.nodes[inner].unrounded_layout.location.y;
+    assert_eq!(inner_y, 50.0);
+    assert_eq!(
+        inner_y + tree.nodes[cleared].unrounded_layout.location.y,
+        150.0
+    );
+}
+
+#[test]
+fn clearance_past_a_float_on_the_same_strut_keeps_the_float_coordinates() {
+    let mut tree = Document::new();
+    let root = plain(&mut tree, 0);
+    let spacer = plain(&mut tree, root);
+    tree.nodes[spacer].style.margin.bottom = LengthPercentageAuto::length(49.0);
+    let float = block(&mut tree, root, 50.0, 10.0);
+    tree.nodes[float].style.float = Float::Left;
+    let cleared = block(&mut tree, root, 50.0, 10.0);
+    tree.nodes[cleared].style.clear = taffy::Clear::Left;
+    let mut root_inputs = inputs();
+    root_inputs.vertical_margins_are_collapsible.start = true;
+    block_layout(&mut tree, NodeId::from(root), root_inputs, None);
+    let float_y = tree.nodes[float].unrounded_layout.location.y;
+    assert_eq!(
+        tree.nodes[cleared].unrounded_layout.location.y,
+        float_y + 10.0
+    );
+}
+
+#[test]
+fn a_last_child_margin_escapes_when_min_height_equals_the_content() {
+    let mut tree = Document::new();
+    let root = tree.append_element(
+        Some(0),
+        "div",
+        Style {
+            display: Display::FlowRoot,
+            ..Style::default()
+        },
+        None::<&str>,
+    );
+    let parent = plain(&mut tree, root);
+    tree.nodes[parent].style.min_size.height = LengthPercentageAuto::length(20.0);
+    let child = block(&mut tree, parent, 100.0, 20.0);
+    tree.nodes[child].style.margin.bottom = LengthPercentageAuto::length(100.0);
+    let next = block(&mut tree, root, 100.0, 10.0);
+    block_layout(&mut tree, NodeId::from(root), inputs(), None);
+    assert_eq!(tree.nodes[parent].unrounded_layout.size.height, 20.0);
+    assert_eq!(tree.nodes[next].unrounded_layout.location.y, 120.0);
+}
