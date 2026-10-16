@@ -1077,6 +1077,7 @@ fn layout_column_group(
                 },
                 height: maximum.max(cursor),
                 occupied,
+                slice: None,
             });
     }
     let minimum_height =
@@ -1454,22 +1455,34 @@ fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> 
         }
     }
     // Column rules are drawn in each row's box, which the row's group names
-    // by its fragmentainer.
+    // by its fragmentainer. The row's box shows the part of the whole box
+    // that its block range covers.
+    let mut box_start = 0.0;
     let mut rows: Vec<crate::fragment::MulticolGroup> = plan
         .rows
         .heights
         .iter()
         .enumerate()
-        .map(|(row, &height)| crate::fragment::MulticolGroup {
-            context: FragmentationContext {
-                origin_x: row_boxes[row].1.x,
-                origin_y: row_boxes[row].1.y,
-                available_height: Some(height),
-                column_index: root.fragmentainer + row,
-                ..plan.context
-            },
-            height,
-            occupied: std::collections::BTreeSet::new(),
+        .map(|(row, &height)| {
+            let box_height = match row {
+                0 => plan.first_height,
+                row if row == last => plan.end,
+                _ => height,
+            };
+            let slice = (box_start, box_start + box_height);
+            box_start = slice.1;
+            crate::fragment::MulticolGroup {
+                context: FragmentationContext {
+                    origin_x: row_boxes[row].1.x,
+                    origin_y: row_boxes[row].1.y,
+                    available_height: Some(height),
+                    column_index: root.fragmentainer + row,
+                    ..plan.context
+                },
+                height,
+                occupied: std::collections::BTreeSet::new(),
+                slice: Some(slice),
+            }
         })
         .collect();
     for fragment in &plan.rows.fragments {

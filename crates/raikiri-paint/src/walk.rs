@@ -3450,6 +3450,34 @@ pub(crate) fn paint_document_impl(
                     let own_paint_height = grid.map_or(paint_height, |rect| rect.height);
                     let own_background_height =
                         grid.map_or(paint_background_height, |rect| rect.height);
+                    // A box that is one slice of a box broken across outer
+                    // columns paints the whole box's decorations, cut at the
+                    // breaks (CSS Fragmentation 3 §5.4).
+                    let block_slice = (cv.box_decoration_break
+                        == raikiri_style::property::BoxDecorationBreak::Slice)
+                        .then(|| document.fragment_block_slice(node_id, fragment_id))
+                        .flatten();
+                    let (own_paint_y, own_paint_height, own_background_height) = match block_slice {
+                        Some((start, total)) => {
+                            const UNBOUNDED: f64 = 1.0e7;
+                            let top = if start > 0.0 {
+                                f64::from(own_paint_y)
+                            } else {
+                                -UNBOUNDED
+                            };
+                            let bottom = if start + own_paint_height < total - 0.01 {
+                                f64::from(own_paint_y + own_paint_height)
+                            } else {
+                                UNBOUNDED
+                            };
+                            scene.push_clip_layer(
+                                Affine::IDENTITY,
+                                &Rect::new(-UNBOUNDED, top, UNBOUNDED, bottom),
+                            );
+                            (own_paint_y - start, total, total)
+                        }
+                        None => (own_paint_y, own_paint_height, own_background_height),
+                    };
                     // A `display: contents` element has no box whose
                     // background, borders or outline could paint; its
                     // generated content still does.
@@ -3654,6 +3682,9 @@ pub(crate) fn paint_document_impl(
                             cv.outline_offset,
                             cv.color,
                         );
+                    }
+                    if block_slice.is_some() {
+                        scene.pop_layer();
                     }
                     // Resolve the source's natural dimensions first. SVG
                     // sources use the resulting concrete object dimensions
