@@ -512,7 +512,8 @@ impl CounterSnapshotLookup for CounterSnapshot {
 
 /// Apply the `counter-reset`, `counter-increment` and `counter-set` of
 /// `computed` (a pseudo-element) to a copy of the counters in effect at its
-/// element.
+/// element, with the implicit list-item increment of a `display: list-item`
+/// pseudo, as its [`CounterSnapshotView`] does.
 pub fn apply_counter_directives_to_snapshot(
     snapshot: &mut CounterSnapshot,
     computed: &raikiri_style::ComputedValues,
@@ -539,7 +540,11 @@ pub fn apply_counter_directives_to_snapshot(
             .or_default()
             .push(value);
     }
-    for (name, delta) in computed.counter_increment.iter() {
+    let implicit = crate::target::local_implicit_list_item_increment(
+        computed,
+        computed.display == DisplayValue::ListItem,
+    );
+    for (name, delta) in computed.counter_increment.iter().chain(implicit.iter()) {
         let stack = snapshot
             .entry(raikiri_traits::Symbol::new(name.as_str()))
             .or_default();

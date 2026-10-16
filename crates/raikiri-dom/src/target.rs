@@ -118,26 +118,34 @@ pub(crate) fn local_reset_value(
 ) -> i32 {
     value.starting_value().unwrap_or_else(|| {
         let implicit = local_implicit_list_item_increment(cv, list_item);
-        let mut increments = cv
-            .counter_increment
-            .iter()
-            .chain(implicit.iter())
-            .filter(|(counter, _)| counter.as_str() == name)
-            .peekable();
-        let increments_counter = increments.peek().is_some();
-        let increment = increments.fold(0_i32, |total, (_, delta)| total.saturating_add(*delta));
-        let set = cv
-            .counter_set
-            .iter()
-            .rev()
-            .find(|(counter, _)| counter.as_str() == name)
-            .map(|(_, value)| *value);
+        let (increment, set) = counter_directives(cv, implicit.as_ref(), name);
         let mut tally = ReversedStartTally::default();
-        if increments_counter || set.is_some() {
-            tally.record(increment, set);
-        }
+        tally.record(increment, set);
         tally.starting_value()
     })
+}
+
+/// The total increment that `cv` (with its implicit list-item increment)
+/// applies to the counter `name`, and the value its last `counter-set`
+/// entry for `name` gives, if any.
+fn counter_directives(
+    cv: &raikiri_style::ComputedValues,
+    implicit_list_item: Option<&(SmolStr, i32)>,
+    name: &str,
+) -> (i32, Option<i32>) {
+    let increment = cv
+        .counter_increment
+        .iter()
+        .chain(implicit_list_item)
+        .filter(|(counter, _)| counter.as_str() == name)
+        .fold(0_i32, |total, (_, delta)| total.saturating_add(*delta));
+    let set = cv
+        .counter_set
+        .iter()
+        .rev()
+        .find(|(counter, _)| counter.as_str() == name)
+        .map(|(_, value)| *value);
+    (increment, set)
 }
 
 /// Maximum estimated memory retained and cloned for counter snapshots.
@@ -230,6 +238,10 @@ struct CounterScopes {
     levels: HashMap<Symbol, Vec<CounterLevel>>,
     /// How reversed counters without a given starting value start.
     reversed: ReversedStarts,
+    /// How many levels in [`Self::levels`] have a
+    /// [`CounterLevel::calculated`] tally, so elements outside every such
+    /// scope skip the tally bookkeeping.
+    live_calculated: usize,
 }
 
 /// Whether one counter level is reversed, and which calculated starting
@@ -462,6 +474,7 @@ impl CounterScopes {
             ReversedStarts::Collect(tallies) => {
                 level.calculated = Some(tallies.len());
                 tallies.push(ReversedStartTally::default());
+                self.live_calculated += 1;
                 0
             }
             ReversedStarts::Resolved { starts, next } => {
@@ -482,12 +495,12 @@ impl CounterScopes {
         cv: &raikiri_style::ComputedValues,
         implicit_list_item: Option<&(SmolStr, i32)>,
     ) {
+        if self.live_calculated == 0 {
+            return;
+        }
         let ReversedStarts::Collect(tallies) = &mut self.reversed else {
             return;
         };
-        if tallies.is_empty() {
-            return;
-        }
         let mut seen: Vec<&str> = Vec::new();
         let names = cv
             .counter_increment
@@ -508,18 +521,7 @@ impl CounterScopes {
             else {
                 continue;
             };
-            let increment = cv
-                .counter_increment
-                .iter()
-                .chain(implicit_list_item)
-                .filter(|(counter, _)| counter.as_str() == name)
-                .fold(0_i32, |total, (_, delta)| total.saturating_add(*delta));
-            let set = cv
-                .counter_set
-                .iter()
-                .rev()
-                .find(|(counter, _)| counter.as_str() == name)
-                .map(|(_, value)| *value);
+            let (increment, set) = counter_directives(cv, implicit_list_item, name);
             tallies[index].record(increment, set);
         }
     }
@@ -553,7 +555,9 @@ impl CounterScopes {
             }
         }
         if let Some(levels) = self.levels.get_mut(name) {
-            levels.pop();
+            if levels.pop().is_some_and(|level| level.calculated.is_some()) {
+                self.live_calculated -= 1;
+            }
             if levels.is_empty() {
                 self.levels.remove(name);
             }
