@@ -2853,7 +2853,7 @@ impl SpecifiedValues {
 /// <https://www.w3.org/TR/css-backgrounds-3/#border-color>).
 ///
 /// **The computed initial value differs**: with style `none`, gating in
-/// [`resolve_border`] reduces the width to 0px (see
+/// [`crate::resolve::resolve_border`] reduces the width to 0px (see
 /// [`ComputedValues::initial`]).
 ///
 /// This is `pub(crate)` because phase 3 of the page path
