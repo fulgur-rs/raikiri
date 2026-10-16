@@ -663,6 +663,50 @@ impl ColumnContexts {
     }
 }
 
+/// The last box that took the current page name in the body's flow or in a
+/// named flex context.
+///
+/// Named class-A boxes at one source coordinate form one page transition.
+/// This coalesces zero-height named runs such as a/b/c/d/e without creating
+/// one blank page per zero-height box.
+#[derive(Default)]
+struct LastNamedBox {
+    /// The source coordinate of the box when it is named.
+    raw_y: Option<f32>,
+    context: Option<usize>,
+    was_zero_height: bool,
+    had_display_none_descendant: bool,
+}
+
+impl LastNamedBox {
+    fn new(
+        document: &Document,
+        candidate: &PageCandidate,
+        node_id: usize,
+        raw_y: f32,
+        height: f32,
+    ) -> Self {
+        Self {
+            raw_y: candidate.is_named.then_some(raw_y),
+            context: candidate.named_flex_context,
+            was_zero_height: candidate.is_named && height <= 0.001,
+            had_display_none_descendant: candidate.is_named
+                && has_display_none_descendant(document, node_id),
+        }
+    }
+
+    /// Whether a named box at `raw_y` in `context` joins the page transition
+    /// of this zero-height named box instead of starting its own.
+    fn shares_transition(&self, context: Option<usize>, raw_y: f32) -> bool {
+        context == self.context
+            && self.was_zero_height
+            && !self.had_display_none_descendant
+            && self
+                .raw_y
+                .is_some_and(|previous| (raw_y - previous).abs() <= 0.001)
+    }
+}
+
 /// The flow end of a candidate box placed at `effective_y`, or `None` when
 /// the box has no height or no usable position and so cannot run on past
 /// its start page.
@@ -4117,13 +4161,7 @@ fn paginate_flow(
     // A margin collapsed through it follows the break and is kept.
     let mut forced_break_margin_box: Option<usize> = None;
     let mut margins_moved_boxes = false;
-    // Named class-A boxes at one source coordinate form one page transition.
-    // This coalesces zero-height named runs such as a/b/c/d/e without creating
-    // one blank page per zero-height box.
-    let mut last_named_raw_y: Option<f32> = None;
-    let mut last_named_context: Option<usize> = None;
-    let mut last_named_was_zero_height = false;
-    let mut last_named_had_display_none_descendant = false;
+    let mut last_named = LastNamedBox::default();
     let mut saw_child = false;
     // Paragraph blocks whose leading line or whose orphans and widows move
     // them as a unit to the next page. Track the first text child so a block
@@ -4993,10 +5031,7 @@ fn paginate_flow(
         // including the first non-empty box that follows the chain.
         let same_named_coordinate = candidate.is_named
             && (candidate.is_direct_body_element || candidate.named_flex_context.is_some())
-            && candidate.named_flex_context == last_named_context
-            && last_named_was_zero_height
-            && !last_named_had_display_none_descendant
-            && last_named_raw_y.is_some_and(|previous| (raw_y - previous).abs() <= 0.001);
+            && last_named.shares_transition(candidate.named_flex_context, raw_y);
         let named_page_change = name_context_seen
             && candidate_page_name != comparison_page_name
             && !same_named_coordinate;
@@ -5584,11 +5619,7 @@ fn paginate_flow(
         {
             page_names.current = candidate_page_name;
             if candidate.is_direct_body_element || candidate.named_flex_context.is_some() {
-                last_named_context = candidate.named_flex_context;
-                last_named_raw_y = candidate.is_named.then_some(raw_y);
-                last_named_was_zero_height = candidate.is_named && height <= 0.001;
-                last_named_had_display_none_descendant =
-                    candidate.is_named && has_display_none_descendant(document, node_id);
+                last_named = LastNamedBox::new(document, &candidate, node_id, raw_y, height);
             }
         }
         check_candidate_page!('candidate_loop, current_page);
