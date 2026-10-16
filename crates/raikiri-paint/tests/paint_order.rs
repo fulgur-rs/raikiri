@@ -622,6 +622,28 @@ fn positioned_boxes_in_inline_blocks_interleave_by_stack_level() {
     assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Box(b)));
 }
 
+/// A positioned box with `z-index: auto` forms no stacking context, so the
+/// positioned boxes inside it, even behind a clip, sort by stack level with
+/// the boxes before and after it.
+#[test]
+fn positioned_boxes_in_z_auto_positioned_boxes_interleave_by_stack_level() {
+    let result = same_order(
+        "<div><div id=x style=\"position: relative; z-index: 20; height: 5px; background: teal\"></div></div>\
+         <div style=\"overflow: hidden\"><div id=p style=\"position: relative; height: 5px; background: gray\">\
+         <div id=q style=\"position: relative\">\
+         <div id=z style=\"position: relative; z-index: 15; height: 5px; background: lime\"></div>\
+         </div></div></div>\
+         <div><div id=y style=\"position: relative; z-index: 10; height: 5px; background: purple\"></div></div>",
+    );
+    let [x, p, z, y] = ["x", "p", "z", "y"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(p)) < step_at(&result, Step::Box(y)));
+    assert!(step_at(&result, Step::Box(y)) < step_at(&result, Step::Box(z)));
+    assert!(step_at(&result, Step::Box(z)) < step_at(&result, Step::Box(x)));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(z)) - 1], Step::PushClip);
+}
+
 /// An inline element with an opacity below one forms a stacking context, so
 /// the positioned boxes of an inline-block inside it paint in its group,
 /// below those of a later inline-block with a lower stack level. Both

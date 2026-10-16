@@ -1,6 +1,7 @@
 //! A page's body content listed in paint order, after a full layout.
 
 use raikiri_dom::PaintEvent;
+use raikiri_dom::paint_rules::{PositionedFrame, PositionedQueue};
 use raikiri_html::{
     FontCollectionBuilder, LayoutOptions, LayoutStatus, RenderResources, layout,
     parse_html_with_resources,
@@ -439,6 +440,130 @@ fn boxes_beside_a_z_auto_positioned_box_still_sort() {
 }
 
 #[test]
+fn boxes_inside_a_z_auto_positioned_box_sort_with_the_boxes_around_it() {
+    // CSS 2.1 Appendix E step 9: the boxes inside a positioned box with
+    // `z-index: auto` belong to the enclosing stacking context, so they
+    // interleave by level with the boxes before and after it.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    for (inner, expected) in [
+        ("30", ["Box(p)", "Box(y)", "Box(x)", "Box(z)"]),
+        ("15", ["Box(p)", "Box(y)", "Box(z)", "Box(x)"]),
+    ] {
+        let events = order(
+            &format!(
+                "<div><div id=x style='{item};z-index:20'></div></div>\
+                 <div><div id=p style='position:relative;height:10px;background:red'>\
+                 <div id=z style='{item};z-index:{inner}'></div></div></div>\
+                 <div><div id=y style='{item};z-index:10'></div></div>"
+            ),
+            0,
+        );
+        let mut at: Vec<_> = expected.iter().map(|id| position(&events, id)).collect();
+        let listed = at.clone();
+        at.sort_unstable();
+        assert_eq!(at, listed, "z-index {inner}: {events:?}");
+    }
+}
+
+#[test]
+fn a_queue_ignores_boxes_handed_on_before_it_hands_out_a_box() {
+    // Only a box the queue handed out can hand boxes on; boxes offered
+    // before that have no place to sort at and are dropped.
+    let fonts = FontCollectionBuilder::new()
+        .font_bytes("Ahem", AHEM.to_vec())
+        .build()
+        .expect("fonts");
+    let resources = RenderResources::new().fonts(fonts);
+    let doc = parse_html_with_resources("<!doctype html><div></div>".as_bytes(), &resources)
+        .expect("parse");
+    let status = layout(
+        &doc,
+        PageDefaults::default(),
+        LayoutConfig::default(),
+        LayoutOptions::new().resources(&resources),
+    )
+    .expect("layout");
+    let LayoutStatus::Completed(result) = status else {
+        panic!("expected a complete layout");
+    };
+    let page = result.pages().next().expect("a page");
+    let (document, cascade, _, _) = page.paint_inputs();
+    let mut queue = PositionedQueue::new(document, cascade, Vec::new(), |f: &PositionedFrame| *f);
+    queue.hand_on(document, cascade, vec![PositionedFrame::Box(0)], |f| *f);
+    assert!(queue.next(PositionedFrame::Close).is_empty());
+}
+
+#[test]
+fn boxes_handed_on_twice_keep_tree_order_within_a_level() {
+    // `a` comes before `b` in the tree, and both have level 10, so `a`
+    // paints first although it reaches the layer through one more
+    // `z-index: auto` box.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div id=x style='{item};z-index:20'></div></div>\
+             <div><div id=p style='position:relative'><div id=q style='position:relative'>\
+             <div id=a style='{item};z-index:10'></div></div>\
+             <div id=b style='{item};z-index:10'></div></div></div>"
+        ),
+        0,
+    );
+    let (a, b, x) = (
+        position(&events, "Box(a)"),
+        position(&events, "Box(b)"),
+        position(&events, "Box(x)"),
+    );
+    assert!(a < b && b < x, "{events:?}");
+}
+
+#[test]
+fn boxes_inside_many_z_auto_positioned_boxes_sort_together() {
+    // Each `z-index: auto` box hands on its box as it paints; all of them
+    // still end up in one order by level, the lowest level first.
+    let item = "position:relative;width:1px;height:1px;background:red";
+    let count = 200;
+    let html: String = (0..count)
+        .map(|n| {
+            format!(
+                "<div style='position:relative'><div id=b{n} style='{item};z-index:{}'></div></div>",
+                count - n
+            )
+        })
+        .collect();
+    let events = order(&html, 0);
+    let at: Vec<_> = (0..count)
+        .rev()
+        .map(|n| position(&events, &format!("Box(b{n})")))
+        .collect();
+    assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{events:?}");
+}
+
+#[test]
+fn boxes_inside_nested_z_auto_positioned_boxes_keep_their_clip_and_sort() {
+    // The boxes handed on by a nested `z-index: auto` box join the others
+    // inside the clip of the block that holds them.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div style='overflow:hidden'>\
+             <div id=p style='position:relative'><div id=q style='position:relative'>\
+             <div id=a style='{item};z-index:30'></div></div>\
+             <div id=b style='{item};z-index:5'></div></div></div>\
+             <div><div id=c style='{item};z-index:20'></div></div></div>"
+        ),
+        0,
+    );
+    let start = position(&events, "Box(p)") - 1;
+    assert_eq!(
+        events[start..],
+        [
+            "PushClip", "Box(p)", "Box(q)", "Box(b)", "PopClip", "Box(c)", "PushClip", "Box(a)",
+            "PopClip"
+        ],
+    );
+}
+
+#[test]
 fn a_z_auto_positioned_box_holding_a_z_indexed_flex_item_stays_in_place() {
     let item = "position:relative;width:10px;height:10px;background:red";
     let events = order(
@@ -454,6 +579,34 @@ fn a_z_auto_positioned_box_holding_a_z_indexed_flex_item_stays_in_place() {
         position(&events, "Box(a)") < position(&events, "Box(f)"),
         "{events:?}"
     );
+}
+
+#[test]
+fn a_z_auto_positioned_box_holding_boxes_it_paints_stays_in_place() {
+    // A box with a negative level, and a positioned box in a paragraph's
+    // lines or behind a clipping flex container, paint with the
+    // `z-index: auto` box, which keeps its place among the others.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    for inner in [
+        format!("<div style='{item};z-index:-1'></div><div id=f style='{item};z-index:20'></div>"),
+        "<span id=f style='position:relative;z-index:20;background:red'>x</span>".to_string(),
+        format!(
+            "<div style='display:flex;overflow:hidden'><div>\
+             <div id=f style='{item};z-index:20'></div></div></div>"
+        ),
+    ] {
+        let events = order(
+            &format!(
+                "<div><div id=a style='{item};z-index:10'></div></div>\
+                 <div><div style='position:relative'>{inner}</div></div>"
+            ),
+            0,
+        );
+        assert!(
+            position(&events, "Box(a)") < position(&events, "Box(f)"),
+            "{inner}: {events:?}"
+        );
+    }
 }
 
 #[test]

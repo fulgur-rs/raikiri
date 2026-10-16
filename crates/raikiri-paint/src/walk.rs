@@ -2221,6 +2221,9 @@ pub(crate) fn paint_document_impl(
         /// Whether the layer's end is painting its positioned boxes: the
         /// boxes it pops then paint where they pop rather than waiting again.
         flushing: bool,
+        /// The positioned boxes still to paint once the layer's end is
+        /// painting them.
+        queue: Option<raikiri_dom::paint_rules::PositionedQueue<PaintFrame<'a>>>,
         /// Whether the standalone `::after` of the block that opened the
         /// layer waits right below the layer's end frame. It follows the
         /// block's content wherever that paints.
@@ -2234,6 +2237,7 @@ pub(crate) fn paint_document_impl(
                 allowed,
                 close,
                 flushing: false,
+                queue: None,
                 after: false,
             }
         }
@@ -2241,6 +2245,18 @@ pub(crate) fn paint_document_impl(
     // Each open layer collects the content that waits for its end. The
     // outermost layer closes after the whole body.
     let mut deferral_scopes: Vec<DeferralLayer> = vec![DeferralLayer::new(true, LayerClose::Paint)];
+    // How the queue of a layer's positioned boxes reads its frames.
+    fn positioned_frame(frame: &PaintFrame<'_>) -> raikiri_dom::paint_rules::PositionedFrame {
+        match frame {
+            PaintFrame::Visit { node_id, .. } => {
+                raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
+            }
+            PaintFrame::PushClip { node_id, .. } => {
+                raikiri_dom::paint_rules::PositionedFrame::Open(*node_id)
+            }
+            _ => raikiri_dom::paint_rules::PositionedFrame::Close,
+        }
+    }
     let mut stack = vec![
         PaintFrame::EndDeferral,
         PaintFrame::Visit {
@@ -2471,21 +2487,18 @@ pub(crate) fn paint_document_impl(
                         _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                         LayerClose::Paint => {
                             layer.flushing = true;
-                            raikiri_dom::paint_rules::sort_positioned_frames(
-                                document,
-                                cascade,
-                                std::mem::take(&mut layer.positioned),
-                                PaintFrame::PopClip,
-                                |frame| match frame {
-                                    PaintFrame::Visit { node_id, .. } => {
-                                        raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
-                                    }
-                                    PaintFrame::PushClip { node_id, .. } => {
-                                        raikiri_dom::paint_rules::PositionedFrame::Open(*node_id)
-                                    }
-                                    _ => raikiri_dom::paint_rules::PositionedFrame::Close,
-                                },
-                            )
+                            let positioned = std::mem::take(&mut layer.positioned);
+                            layer
+                                .queue
+                                .get_or_insert_with(|| {
+                                    raikiri_dom::paint_rules::PositionedQueue::new(
+                                        document,
+                                        cascade,
+                                        positioned,
+                                        positioned_frame,
+                                    )
+                                })
+                                .next(PaintFrame::PopClip)
                         }
                         LayerClose::Hoist => Vec::new(),
                     })
@@ -2524,6 +2537,18 @@ pub(crate) fn paint_document_impl(
                                     into.extend(frames);
                                     into.push(PaintFrame::PopClip);
                                 }
+                            }
+                        }
+                        // A box the enclosing layer paints at its end hands on
+                        // its boxes to wait with the boxes still to paint.
+                        LayerClose::Hoist if outer.queue.is_some() => {
+                            if let Some(queue) = &mut outer.queue {
+                                queue.hand_on(
+                                    document,
+                                    cascade,
+                                    layer.positioned,
+                                    positioned_frame,
+                                );
                             }
                         }
                         LayerClose::Hoist => outer.positioned.extend(layer.positioned),

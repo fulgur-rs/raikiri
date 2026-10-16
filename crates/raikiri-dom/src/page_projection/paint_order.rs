@@ -170,6 +170,18 @@ struct Layer {
     /// Whether the layer's end is listing its positioned boxes: the boxes it
     /// pops then list where they pop rather than waiting again.
     flushing: bool,
+    /// The positioned boxes still to list once the layer's end is listing
+    /// them.
+    queue: Option<paint_rules::PositionedQueue<Frame>>,
+}
+
+/// How the queue of a layer's positioned boxes reads its frames.
+fn positioned_frame(frame: &Frame) -> paint_rules::PositionedFrame {
+    match frame {
+        Frame::Visit(node_id) => paint_rules::PositionedFrame::Box(*node_id),
+        Frame::PushClip(owner) => paint_rules::PositionedFrame::Open(*owner),
+        _ => paint_rules::PositionedFrame::Close,
+    }
 }
 
 impl Layer {
@@ -180,6 +192,7 @@ impl Layer {
             allowed,
             close,
             flushing: false,
+            queue: None,
         }
     }
 }
@@ -537,21 +550,18 @@ impl Document {
                             _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                             LayerClose::Paint => {
                                 layer.flushing = true;
-                                paint_rules::sort_positioned_frames(
-                                    self,
-                                    cascade,
-                                    std::mem::take(&mut layer.positioned),
-                                    Frame::PopClip,
-                                    |frame| match frame {
-                                        Frame::Visit(node_id) => {
-                                            paint_rules::PositionedFrame::Box(*node_id)
-                                        }
-                                        Frame::PushClip(owner) => {
-                                            paint_rules::PositionedFrame::Open(*owner)
-                                        }
-                                        _ => paint_rules::PositionedFrame::Close,
-                                    },
-                                )
+                                let positioned = std::mem::take(&mut layer.positioned);
+                                layer
+                                    .queue
+                                    .get_or_insert_with(|| {
+                                        paint_rules::PositionedQueue::new(
+                                            self,
+                                            cascade,
+                                            positioned,
+                                            positioned_frame,
+                                        )
+                                    })
+                                    .next(Frame::PopClip)
                             }
                             LayerClose::Hoist => Vec::new(),
                         })
@@ -575,6 +585,18 @@ impl Document {
                                         into.extend(frames);
                                         into.push(Frame::PopClip);
                                     }
+                                }
+                            }
+                            // A box the enclosing layer lists at its end hands
+                            // on its boxes to wait with the boxes still to list.
+                            LayerClose::Hoist if outer.queue.is_some() => {
+                                if let Some(queue) = &mut outer.queue {
+                                    queue.hand_on(
+                                        self,
+                                        cascade,
+                                        layer.positioned,
+                                        positioned_frame,
+                                    );
                                 }
                             }
                             LayerClose::Hoist => outer.positioned.extend(layer.positioned),
