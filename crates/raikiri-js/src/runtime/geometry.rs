@@ -20,6 +20,7 @@ use super::interfaces::{HTML_NS, Members, protos, wrap_optional};
 use super::node::first_element_child;
 use super::style::ensure_flushed;
 use super::webidl::{arg_unsigned_long, host_failure, this_element, with_state};
+use super::window::clamp_viewport_scroll;
 
 /// Native data behind a `DOMRect`/`DOMRectReadOnly` instance. `x`/`y`/
 /// `width`/`height` are the only stored fields (the spec's own model);
@@ -528,16 +529,6 @@ fn is_document_element(index: usize, context: &mut Context) -> JsResult<bool> {
     Ok(Some(index) == root)
 }
 
-/// Clamp an element scroll offset the same way as the viewport: non-finite
-/// becomes zero, negatives become zero.
-fn clamp_element_scroll(value: f64) -> f64 {
-    if !value.is_finite() {
-        0.0
-    } else {
-        value.max(0.0)
-    }
-}
-
 /// `scrollTop` (CSSOM View §6, `unrestricted double`): the viewport vertical
 /// offset when `this` is the document element, zero otherwise.
 fn scroll_top(this: &JsValue, _: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
@@ -572,8 +563,12 @@ fn set_scroll_top(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         .unwrap_or_default()
         .to_number(context)?;
     if is_document_element(index, context)? {
-        let y = clamp_element_scroll(value);
-        with_state(context, |s| s.viewport_scroll_y = y)?;
+        let x = with_state(context, |s| s.viewport_scroll_x)?;
+        let (x, y) = clamp_viewport_scroll(context, x, value)?;
+        with_state(context, |s| {
+            s.viewport_scroll_x = x;
+            s.viewport_scroll_y = y;
+        })?;
     }
     Ok(JsValue::undefined())
 }
@@ -588,8 +583,12 @@ fn set_scroll_left(this: &JsValue, args: &[JsValue], context: &mut Context) -> J
         .unwrap_or_default()
         .to_number(context)?;
     if is_document_element(index, context)? {
-        let x = clamp_element_scroll(value);
-        with_state(context, |s| s.viewport_scroll_x = x)?;
+        let y = with_state(context, |s| s.viewport_scroll_y)?;
+        let (x, y) = clamp_viewport_scroll(context, value, y)?;
+        with_state(context, |s| {
+            s.viewport_scroll_x = x;
+            s.viewport_scroll_y = y;
+        })?;
     }
     Ok(JsValue::undefined())
 }

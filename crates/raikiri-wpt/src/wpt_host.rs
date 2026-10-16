@@ -529,6 +529,41 @@ impl DocumentHost for WptDocumentHost {
         Ok(Some((f64::from(page.width), f64::from(page.height))))
     }
 
+    /// The initial containing block (the viewport-sized page box at the
+    /// origin) unioned with the border box of every box laid out in it. A
+    /// fixed-position subtree stays with the viewport, so it adds nothing.
+    fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
+        let Some(scene) = self.page_scene.as_ref() else {
+            // cov:ignore: the runtime flushes before asking.
+            return Err(HostError("scrolling area read before flush".into()));
+        };
+        let page = self.setup.page_box;
+        let mut area = rect(0.0, 0.0, f64::from(page.width), f64::from(page.height));
+        let document = &self.setup.uncascaded.dom;
+        let styles = self.computed_styles.as_ref();
+        let mut pending = vec![document.root_index()];
+        while let Some(index) = pending.pop() {
+            let fixed = styles
+                .and_then(|styles| styles.get(index))
+                .is_some_and(|style| position_kind(&style.position) == PositionKind::Fixed);
+            if fixed {
+                continue;
+            }
+            if let Some(border_box) = border_box_of(scene, index) {
+                area = rect(
+                    area.left.min(border_box.left),
+                    area.top.min(border_box.top),
+                    area.right.max(border_box.right),
+                    area.bottom.max(border_box.bottom),
+                );
+            }
+            if let Some(node) = document.get_node(index) {
+                pending.extend(node.children.iter().copied());
+            }
+        }
+        Ok(Some(area))
+    }
+
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         let Some(property) = raikiri_style::ComputedProperty::from_name(property) else {
             return Ok(None);

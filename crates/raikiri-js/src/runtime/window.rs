@@ -27,7 +27,10 @@ use boa_engine::property::{Attribute, PropertyDescriptor};
 use boa_engine::{Context, JsNativeError, JsResult, JsString, JsValue, NativeFunction, js_string};
 
 use super::interfaces::{Members, closure_function, function};
-use super::node::js_str;
+use super::node::{first_element_child, js_str};
+use super::scroll_into_view::root_axes;
+use super::style::ensure_flushed;
+use super::webidl::host_failure;
 use super::webidl::with_state;
 
 // ---- location --------------------------------------------------------
@@ -384,16 +387,81 @@ fn console_object(context: &mut Context) -> JsResult<JsObject> {
 // content origin), which keeps test and reference coherent: both scroll the
 // live viewport the same way and both ignore scroll in print equally.
 
-/// Clamp an absolute viewport offset: non-finite becomes zero, negatives
-/// become zero, everything else is kept as-is. Positive overflow beyond the
-/// scrollable size is kept here; max clamping needs layout and happens in
-/// the host where that size is known, not in this shared-state store.
-pub(crate) fn clamp_viewport_offset(value: f64) -> f64 {
-    if !value.is_finite() {
-        0.0
-    } else {
-        value.max(0.0)
+/// The offsets one axis of the viewport scroll position can take.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AxisRange {
+    min: f64,
+    max: f64,
+}
+
+impl AxisRange {
+    /// The range of an axis whose overflow goes toward its high (right or
+    /// bottom) edge when `start_is_low`, else toward its low edge: offsets
+    /// run from zero toward the scrolling area edge on that side
+    /// (`area_low`/`area_high`, infinite when the area is unknown), less the
+    /// viewport extent on the high side.
+    fn new(start_is_low: bool, area_low: f64, area_high: f64, extent: f64) -> Self {
+        if start_is_low {
+            Self {
+                min: 0.0,
+                max: (area_high - extent).max(0.0),
+            }
+        } else {
+            Self {
+                min: area_low.min(0.0),
+                max: 0.0,
+            }
+        }
     }
+
+    /// Clamp `value` into the range; a non-finite value is normalized to
+    /// zero first.
+    fn clamp(self, value: f64) -> f64 {
+        let value = if value.is_finite() { value } else { 0.0 };
+        value.clamp(self.min, self.max)
+    }
+}
+
+/// Clamp a requested viewport scroll position the way CSSOM View's "scroll
+/// a viewport" does: each axis stays between zero and the edge of the
+/// viewport scrolling area on the side the root's overflow goes to, so a
+/// right-to-left or `vertical-rl` root scrolls to negative offsets. When the
+/// host does not know the scrolling area, only the zero side is bounded.
+///
+/// Spec: <https://drafts.csswg.org/cssom-view/#perform-a-scroll>
+pub(crate) fn clamp_viewport_scroll(context: &mut Context, x: f64, y: f64) -> JsResult<(f64, f64)> {
+    let root = with_state(context, |s| {
+        let document = s.host.document();
+        first_element_child(document, document.root_index(), None)
+    })?;
+    let axes = match root {
+        Some(root) => Some(root_axes(context, root)?),
+        None => None,
+    };
+    let (x_start_is_low, y_start_is_low) = axes.map_or((true, true), |axes| {
+        (axes.x_start_is_low(), axes.y_start_is_low())
+    });
+    ensure_flushed(context)?;
+    let viewport = with_state(context, |s| s.host.viewport_size())?
+        .map_err(|error| host_failure(context, error))?;
+    let area = with_state(context, |s| s.host.viewport_scrolling_area())?
+        .map_err(|error| host_failure(context, error))?;
+    let (left, top, right, bottom, width, height) = match (area, viewport) {
+        (Some(area), Some((width, height))) => {
+            (area.left, area.top, area.right, area.bottom, width, height)
+        }
+        _ => (
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+            f64::INFINITY,
+            f64::INFINITY,
+            0.0,
+            0.0,
+        ),
+    };
+    let x_range = AxisRange::new(x_start_is_low, left, right, width);
+    let y_range = AxisRange::new(y_start_is_low, top, bottom, height);
+    Ok((x_range.clamp(x), y_range.clamp(y)))
 }
 
 /// `window.scrollX` / `window.pageXOffset` (CSSOM View): the horizontal
@@ -477,25 +545,21 @@ fn scroll_to(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
         scroll_behavior(&options, context)?;
         let (current_x, current_y) =
             with_state(context, |s| (s.viewport_scroll_x, s.viewport_scroll_y))?;
-        let x = match dict_double(&options, "left", None, context)? {
-            Some(v) => clamp_viewport_offset(v),
-            None => current_x,
-        };
-        let y = match dict_double(&options, "top", None, context)? {
-            Some(v) => clamp_viewport_offset(v),
-            None => current_y,
-        };
+        let x = dict_double(&options, "left", None, context)?.unwrap_or(current_x);
+        let y = dict_double(&options, "top", None, context)?.unwrap_or(current_y);
         // `x`/`y` aliases (`scrollTo({x: 1, y: 2})`) are not part of
         // `ScrollToOptions`: only `left`/`top` are read, so they stay
         // ignored here rather than becoming a second way to scroll.
+        let (x, y) = clamp_viewport_scroll(context, x, y)?;
         with_state(context, |s| {
             s.viewport_scroll_x = x;
             s.viewport_scroll_y = y;
         })?;
         return Ok(JsValue::undefined());
     }
-    let x = clamp_viewport_offset(num_arg(args, 0, 0.0, context)?);
-    let y = clamp_viewport_offset(num_arg(args, 1, 0.0, context)?);
+    let x = num_arg(args, 0, 0.0, context)?;
+    let y = num_arg(args, 1, 0.0, context)?;
+    let (x, y) = clamp_viewport_scroll(context, x, y)?;
     with_state(context, |s| {
         s.viewport_scroll_x = x;
         s.viewport_scroll_y = y;
@@ -519,21 +583,26 @@ fn scroll_by(_: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<J
         let dy = dict_double(&options, "top", Some(0.0), context)?.unwrap_or(0.0);
         let dx = if dx.is_finite() { dx } else { 0.0 };
         let dy = if dy.is_finite() { dy } else { 0.0 };
-        with_state(context, |s| {
-            s.viewport_scroll_x = clamp_viewport_offset(s.viewport_scroll_x + dx);
-            s.viewport_scroll_y = clamp_viewport_offset(s.viewport_scroll_y + dy);
-        })?;
+        scroll_viewport_by(context, dx, dy)?;
         return Ok(JsValue::undefined());
     }
     let dx = num_arg(args, 0, 0.0, context)?;
     let dy = num_arg(args, 1, 0.0, context)?;
     let dx = if dx.is_finite() { dx } else { 0.0 };
     let dy = if dy.is_finite() { dy } else { 0.0 };
-    with_state(context, |s| {
-        s.viewport_scroll_x = clamp_viewport_offset(s.viewport_scroll_x + dx);
-        s.viewport_scroll_y = clamp_viewport_offset(s.viewport_scroll_y + dy);
-    })?;
+    scroll_viewport_by(context, dx, dy)?;
     Ok(JsValue::undefined())
+}
+
+/// Move the viewport by finite deltas from its current offset.
+fn scroll_viewport_by(context: &mut Context, dx: f64, dy: f64) -> JsResult<()> {
+    let (x, y) = with_state(context, |s| (s.viewport_scroll_x, s.viewport_scroll_y))?;
+    let (x, y) = clamp_viewport_scroll(context, x + dx, y + dy)?;
+    with_state(context, |s| {
+        s.viewport_scroll_x = x;
+        s.viewport_scroll_y = y;
+    })?;
+    Ok(())
 }
 
 const VIEWPORT_SCROLL_GETTERS: &[(&str, NativeFunctionPointer)] = &[

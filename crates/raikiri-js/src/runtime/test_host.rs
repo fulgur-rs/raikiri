@@ -27,6 +27,9 @@ pub(crate) struct StubHost {
     /// [`DocumentHost::viewport_size`]'s return value, or a failure when
     /// `Err`.
     pub viewport: Result<Option<(f64, f64)>, ()>,
+    /// [`DocumentHost::viewport_scrolling_area`]'s return value, or a
+    /// failure when `Err`.
+    pub scrolling_area: Result<Option<DomRect>, ()>,
     /// [`DocumentHost::document_url`]'s return value; tests set this
     /// directly (`host.document_url = Some(...)`) before building a runtime.
     pub document_url: Option<String>,
@@ -73,6 +76,7 @@ impl StubHost {
                 unrendered: HashSet::new(),
                 invisible: HashSet::new(),
                 viewport: Ok(None),
+                scrolling_area: Ok(None),
                 document_url: None,
                 scripts: HashMap::new(),
                 images: HashSet::new(),
@@ -159,6 +163,10 @@ impl DocumentHost for StubHost {
     fn viewport_size(&mut self) -> Result<Option<(f64, f64)>, HostError> {
         self.viewport
             .map_err(|()| HostError("stub viewport failure".into()))
+    }
+    fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
+        self.scrolling_area
+            .map_err(|()| HostError("stub scrolling area failure".into()))
     }
     fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
         if self.fail_computed {

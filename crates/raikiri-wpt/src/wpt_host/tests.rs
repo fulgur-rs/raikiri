@@ -1254,3 +1254,30 @@ fn scroll_into_view_aligns_the_viewport_with_the_element() {
     let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
     assert_eq!(offsets, format!("2000,{}", 2050.0 - height));
 }
+
+#[test]
+fn viewport_scrolling_stops_at_the_bottom_of_the_content() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style><div style='height:2000px'></div>\
+         <div style='position:fixed;top:5000px;height:10px'></div>",
+    );
+    let offset = text(&mut rt, "scrollTo(0, 99999); scrollX + ',' + scrollY");
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(offset, format!("0,{}", 2000.0 - height));
+}
+
+#[test]
+fn a_right_to_left_root_scrolls_to_negative_offsets() {
+    let (_dir, mut rt) = runtime(
+        "<html dir=rtl><style>body{margin:0}</style>\
+         <div id=wide style='width:3000px;height:10px'></div></html>",
+    );
+    let offsets = text(
+        &mut rt,
+        "var left = document.getElementById('wide').getBoundingClientRect().left;\
+         scrollTo(99999, 0); var high = scrollX; scrollTo(-99999, 0);\
+         left + ',' + high + ',' + scrollX",
+    );
+    let width = f64::from(DEFAULT_REFTTEST_WIDTH);
+    assert_eq!(offsets, format!("{},0,{}", width - 3000.0, width - 3000.0));
+}

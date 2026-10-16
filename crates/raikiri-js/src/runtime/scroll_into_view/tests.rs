@@ -13,10 +13,15 @@ fn ok(rt: &mut DomRuntime, src: &str) {
 /// A page whose first body child has a 20px box at (300, 300) in a
 /// 100x100 viewport, with `computed` values on the document element.
 fn page(position: PositionKind, computed: &[(&str, &str)]) -> DomRuntime {
+    page_at(position, computed, (300.0, 300.0))
+}
+
+/// [`page`] with the 20px box at `origin`.
+fn page_at(position: PositionKind, computed: &[(&str, &str)], origin: (f64, f64)) -> DomRuntime {
     let (mut host, html, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
     host.document.append_child(body, target).unwrap();
-    let rect = StubHost::dom_rect(300.0, 300.0, 20.0, 20.0);
+    let rect = StubHost::dom_rect(origin.0, origin.1, 20.0, 20.0);
     host.geometry
         .insert(target, StubHost::boxed(rect, rect, position));
     host.viewport = Ok(Some((100.0, 100.0)));
@@ -346,21 +351,47 @@ fn the_body_scrolls_itself_when_the_root_does_not_propagate_it() {
 
 #[test]
 fn the_document_writing_mode_decides_the_axes() {
-    // Block and inline start, then block and inline end.
+    // Block and inline start, then block and inline end. A root whose
+    // horizontal axis starts on the right overflows leftward, so its target
+    // sits left of the viewport and scrolls to negative offsets.
     type Computed<'a> = &'a [(&'a str, &'a str)];
-    let cases: [(Computed, &str, &str); 5] = [
-        (&[("writing-mode", "vertical-rl")], "220,300", "300,220"),
-        (&[("writing-mode", "vertical-lr")], "300,300", "220,220"),
-        (&[("writing-mode", "sideways-rl")], "220,300", "300,220"),
+    let left = (-320.0, 300.0);
+    let right = (300.0, 300.0);
+    let cases: [(Computed, (f64, f64), &str, &str); 6] = [
         (
-            &[("writing-mode", "sideways-lr"), ("direction", "rtl")],
+            &[("writing-mode", "vertical-rl")],
+            left,
+            "-400,300",
+            "-320,220",
+        ),
+        (
+            &[("writing-mode", "vertical-lr")],
+            right,
             "300,300",
             "220,220",
         ),
-        (&[("direction", "rtl")], "220,300", "300,220"),
+        (
+            &[("writing-mode", "sideways-rl")],
+            left,
+            "-400,300",
+            "-320,220",
+        ),
+        (
+            &[("writing-mode", "sideways-lr"), ("direction", "rtl")],
+            right,
+            "300,300",
+            "220,220",
+        ),
+        (&[("direction", "rtl")], left, "-400,300", "-320,220"),
+        (
+            &[("writing-mode", "vertical-lr"), ("direction", "rtl")],
+            (300.0, -320.0),
+            "300,-400",
+            "220,-320",
+        ),
     ];
-    for (computed, expected, ended) in cases {
-        let mut rt = page(PositionKind::Static, computed);
+    for (computed, origin, expected, ended) in cases {
+        let mut rt = page_at(PositionKind::Static, computed, origin);
         ok(
             &mut rt,
             &format!(
