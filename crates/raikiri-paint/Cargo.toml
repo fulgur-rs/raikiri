@@ -13,6 +13,7 @@ raikiri-dom    = { workspace = true }
 raikiri-style  = { workspace = true }
 raikiri-svg    = { workspace = true }
 shodo          = { workspace = true }
+skrifa         = { workspace = true }
 anyrender      = { workspace = true }
 peniko         = { workspace = true }
 kurbo          = { workspace = true }

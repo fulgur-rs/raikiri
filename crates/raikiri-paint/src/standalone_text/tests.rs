@@ -252,12 +252,13 @@ fn standalone_text_is_laid_out_by_the_engine_only() {
 
 #[test]
 fn a_right_to_left_run_is_drawn_by_the_engine_inside_its_box() {
-    // Ahem draws the two Hebrew letters with its 1em notdef: five 10px glyphs
-    // starting at the box's left edge (x = 5), whatever their visual order.
+    // No font covers the two Hebrew letters: they take two 10px advances
+    // after the space but draw no glyphs, so only `ab ` is drawn, starting at
+    // the box's left edge (x = 5).
     let doc = engine_document();
     let mut xs = aligned_xs(&doc, "ab \u{5d0}\u{5d1}", StandaloneAlign::Start);
     xs.sort_by(f64::total_cmp);
-    assert_eq!(xs, [5.0, 15.0, 25.0, 35.0, 45.0]);
+    assert_eq!(xs, [5.0, 15.0, 25.0]);
     assert_eq!(doc.standalone_text_calls(), 1);
 }
 
@@ -480,11 +481,11 @@ fn overflowing_rl_columns_keep_the_first_column_at_the_right_edge() {
 }
 
 #[test]
-fn hebrew_run_stays_at_the_rtl_start_edge_without_mirroring() {
+fn rtl_text_stays_at_the_rtl_start_edge_without_mirroring() {
     use shodo::geometry::{Direction::Rtl, WritingMode::HorizontalTb};
     use shodo::style::TextOrientation::Mixed;
     let scene = styled_scene(
-        "\u{5d0}\u{5d1}",
+        "ab",
         HorizontalTb,
         Mixed,
         Rtl,
@@ -499,4 +500,25 @@ fn hebrew_run_stays_at_the_rtl_start_edge_without_mirroring() {
             assert!(run.glyph_transform.is_none());
         }
     }
+}
+
+#[test]
+fn margin_text_no_font_covers_draws_no_glyphs() {
+    let doc = engine_document();
+    let mut scene = Scene::new();
+    crate::text::draw_margin_text(
+        &doc,
+        &mut scene,
+        "\u{FDD0}",
+        5.0,
+        7.0,
+        100.0,
+        40.0,
+        Color::from_rgba8(0, 0, 0, 255),
+        10.0,
+        &ahem(),
+        StandaloneAlign::Start,
+        crate::text::MarginTextVerticalAlign::Top,
+    );
+    assert!(glyph_positions(&scene).is_empty());
 }

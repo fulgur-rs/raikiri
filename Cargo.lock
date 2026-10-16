@@ -2735,6 +2735,7 @@ dependencies = [
  "raikiri-svg",
  "raikiri-traits",
  "shodo",
+ "skrifa 0.44.0",
  "taffy 0.15.0",
  "url",
 ]

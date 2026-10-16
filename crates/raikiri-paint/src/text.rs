@@ -15,6 +15,18 @@ use raikiri_dom::text_decoration::{
 };
 use raikiri_dom::{DecorationKind, DecorationLine};
 
+/// Whether a glyph renderer can draw glyphs of `font`: it needs the `head`
+/// table for the units per em that scale the outlines. Characters no font
+/// covers are shaped with shodo's built-in stub face, which has no tables
+/// and so no outline for its `.notdef` glyph; such runs draw no glyphs,
+/// though their decorations and emphasis marks still paint.
+pub(crate) fn has_glyph_outlines(font: &peniko::FontData) -> bool {
+    use skrifa::raw::TableProvider;
+    skrifa::FontRef::from_index(font.data.data(), font.index)
+        .and_then(|font| font.head())
+        .is_ok()
+}
+
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
         let size = font_size as f64;
