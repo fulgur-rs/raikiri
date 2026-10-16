@@ -1129,7 +1129,8 @@ fn layout_single_page_with_table_projection(
         state.page_width = Some(content_width);
     }
     document.fixed_page_area = Some((content_width, content_height));
-    let icb = super::initial_containing_block::prepare(document, content_width, content_height);
+    let icb =
+        super::initial_containing_block::prepare(document, cascade, content_width, content_height);
     let available_space = taffy::Size {
         width: AvailableSpace::Definite(content_width),
         height: AvailableSpace::Definite(content_height),

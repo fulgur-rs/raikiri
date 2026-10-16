@@ -2,6 +2,8 @@
 
 use crate::Document;
 use crate::node::{Node, NodeFlags};
+use raikiri_style::CascadeResult;
+use raikiri_style::property::{Contain, DisplayValue};
 use taffy::{Dimension, Size, Style};
 
 /// The document element whose principal box is a child of the ICB.
@@ -18,11 +20,14 @@ pub(crate) fn prepare_root_element(document: &mut Document) {
     }
 }
 
-/// The element whose writing mode and direction the ICB takes: the HTML
-/// `body` element when the root is `html` and has one, else the root
-/// (CSS Writing Modes 3 §8, principal writing mode).
-fn principal_element(document: &Document, root: usize) -> usize {
-    if document.nodes[root].tag_name() != Some("html") {
+/// The element whose writing mode and direction the ICB takes: the first
+/// HTML `body` child of an `html` root, else the root (CSS Writing Modes 3
+/// §8, principal writing mode). A `display: none` body is skipped, and
+/// containment on either element disables the propagation (CSS Containment
+/// 2 §2).
+fn principal_element(document: &Document, cascade: &CascadeResult, root: usize) -> usize {
+    let contained = |id: usize| cascade.computed[id].contain != Contain::NONE;
+    if document.nodes[root].tag_name() != Some("html") || contained(root) {
         return root;
     }
     document.nodes[root]
@@ -30,11 +35,17 @@ fn principal_element(document: &Document, root: usize) -> usize {
         .iter()
         .copied()
         .find(|&child| document.nodes[child].tag_name() == Some("body"))
+        .filter(|&body| cascade.computed[body].display != DisplayValue::None && !contained(body))
         .unwrap_or(root)
 }
 
 /// Install a definite page-area box in the layout arena and return its key.
-pub(crate) fn prepare(document: &mut Document, width: f32, height: f32) -> usize {
+pub(crate) fn prepare(
+    document: &mut Document,
+    cascade: &CascadeResult,
+    width: f32,
+    height: f32,
+) -> usize {
     let mut node = Node::new_element(
         "".into(),
         Style {
@@ -51,7 +62,7 @@ pub(crate) fn prepare(document: &mut Document, width: f32, height: f32) -> usize
     );
     if let Some(root) = root_element(document) {
         node.children.push(root);
-        let principal = principal_element(document, root);
+        let principal = principal_element(document, cascade, root);
         node.used_writing_mode = document.nodes[principal].used_writing_mode;
         node.style.direction = document.nodes[principal].style.direction;
     }

@@ -916,28 +916,53 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
     // CSS Writing Modes 3 §8: an HTML root takes its used writing mode
     // from its body child, and the ICB takes the root's used writing mode.
     // A definite-width root then starts at the ICB's block-start edge.
-    for (root_mode, body_mode, expected_x) in [
-        ("vertical-rl", "horizontal-tb", 0.0),
-        ("horizontal-tb", "vertical-rl", 700.0),
+    // A `display: none` body and containment on either element leave the
+    // root's own writing mode in place (CSS Containment 2 §2).
+    for (root_css, body_css, expected_x) in [
+        (
+            "writing-mode:vertical-rl",
+            "writing-mode:horizontal-tb",
+            0.0,
+        ),
+        (
+            "writing-mode:horizontal-tb",
+            "writing-mode:vertical-rl",
+            700.0,
+        ),
+        (
+            "writing-mode:vertical-rl",
+            "writing-mode:horizontal-tb;display:none",
+            700.0,
+        ),
+        (
+            "writing-mode:vertical-rl",
+            "writing-mode:horizontal-tb;contain:layout",
+            700.0,
+        ),
+        (
+            "writing-mode:vertical-rl;contain:paint",
+            "writing-mode:horizontal-tb",
+            700.0,
+        ),
     ] {
         let mut doc = Document::new();
         let html = doc.append_element(
             Some(0),
             "html",
             Style::default(),
-            Some(format!("display:block;width:100px;writing-mode:{root_mode}").as_str()),
+            Some(format!("display:block;width:100px;{root_css}").as_str()),
         );
         doc.append_element(
             Some(html),
             "body",
             Style::default(),
-            Some(format!("display:block;margin:0;writing-mode:{body_mode}").as_str()),
+            Some(format!("display:block;margin:0;{body_css}").as_str()),
         );
         let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
         assert_eq!(
             doc.nodes[html].unrounded_layout.location.x, expected_x,
-            "html {root_mode}, body {body_mode}"
+            "html {root_css}, body {body_css}"
         );
     }
 }
