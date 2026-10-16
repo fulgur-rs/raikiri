@@ -318,11 +318,6 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].multicol_auto_width = true;
             doc.nodes[idx].has_logical_min_block_size = false;
         }
-        // Classified again once paragraph roots are assigned; until then a
-        // box is known by its Taffy display, so a failed pass leaves no
-        // classification from the previous one.
-        doc.nodes[idx].formatting_context =
-            FormattingContext::from_taffy_display(doc.nodes[idx].style.display);
     }
     // Whether a box is a non-atomic inline box depends on its parent's
     // display, which the loop above has now bridged for every node.
@@ -351,7 +346,22 @@ pub(crate) fn apply_computed_to_style(
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
     // root stays one flex or grid item when `order` sorts the items.
-    crate::layout::ifc::assign::assign_ifc_roots(doc, cascade)?;
+    if let Err(error) = crate::layout::ifc::assign::assign_ifc_roots(doc, cascade) {
+        // A failed paragraph build must not expose the preceding pass's
+        // classification. No paragraph layout is valid on this path, so
+        // retain only the new backend display classification for elements.
+        for node in doc.nodes.layout_nodes_mut() {
+            if node.kind() == NodeKind::Element {
+                node.formatting_context = FormattingContext::from_taffy_display(node.style.display);
+            }
+        }
+        return Err(error);
+    }
+    // A text node or an anonymous table cell can be a paragraph root of its
+    // own, so every node layout may lay out is classified.
+    for node in doc.nodes.layout_nodes_mut() {
+        node.formatting_context = classify_formatting_context(node);
+    }
     refresh_order_modified_children(doc);
     // Mark table formatting roots for blitz-compat bit preservation.
     for idx in 0..doc.nodes.len() {
@@ -367,11 +377,6 @@ pub(crate) fn apply_computed_to_style(
         } else {
             doc.nodes[idx].flags.remove(NodeFlags::IS_TABLE_ROOT);
         }
-    }
-    // A text node or an anonymous table cell can be a paragraph root of its
-    // own, so every node layout may lay out is classified.
-    for node in doc.nodes.layout_nodes_mut() {
-        node.formatting_context = classify_formatting_context(node);
     }
     Ok(())
 }
