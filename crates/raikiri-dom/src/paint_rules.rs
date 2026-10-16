@@ -602,18 +602,27 @@ pub fn sort_positioned_frames<F: Clone>(
             }
         }
     }
+    if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0) {
+        return frames;
+    }
     // A positioned box with `z-index: auto` is no stacking context, but the
     // painters paint the positioned boxes inside it with it. Moving it as a
     // whole could put a descendant of another level on the wrong side of
-    // the boxes it passes, so the list keeps tree order then.
-    if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0)
-        || boxes
-            .iter()
-            .any(|(_, id, _, _)| holds_leveled_positioned_box(document, cascade, *id))
-    {
-        return frames;
+    // the boxes it passes, so such a box stays in place and the boxes on
+    // either side of it are sorted apart.
+    let mut run = 0;
+    let mut keys = Vec::with_capacity(boxes.len());
+    for (level, id, _, _) in &boxes {
+        if holds_leveled_positioned_box(document, cascade, *id) {
+            keys.push((run + 1, 0));
+            run += 2;
+        } else {
+            keys.push((run, *level));
+        }
     }
-    boxes.sort_by_key(|(level, _, _, _)| *level);
+    let mut keyed: Vec<_> = keys.into_iter().zip(boxes).collect();
+    keyed.sort_by_key(|(key, _)| *key);
+    let boxes = keyed.into_iter().map(|(_, entry)| entry);
     let mut sorted = Vec::with_capacity(frames.len());
     let mut open: Vec<F> = Vec::new();
     for (_, _, clips, frame) in boxes {

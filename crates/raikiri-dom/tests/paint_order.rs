@@ -398,3 +398,23 @@ fn a_z_auto_positioned_box_does_not_carry_its_descendants_below_others() {
         "{events:?}"
     );
 }
+
+#[test]
+fn boxes_beside_a_z_auto_positioned_box_still_sort() {
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div id=x style='{item};z-index:20'></div></div>\
+             <div><div id=y style='{item};z-index:10'></div></div>\
+             <div><div id=p style='position:relative'>\
+             <div id=z style='{item};z-index:30'></div></div></div>"
+        ),
+        0,
+    );
+    let (x, y, z) = (
+        position(&events, "Box(x)"),
+        position(&events, "Box(y)"),
+        position(&events, "Box(z)"),
+    );
+    assert!(y < x && x < z, "{events:?}");
+}
