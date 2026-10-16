@@ -658,11 +658,19 @@ pub fn sort_positioned_frames<F: Clone>(
 /// enclosing stacking context: a positioned box, or a flex or grid item,
 /// with a non-zero `z-index`.
 fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
-    let auto = cascade.computed.get(id).is_some_and(|cv| {
-        !matches!(cv.position, PositionValue::Static)
-            && !matches!(cv.z_index, ZIndexValue::Integer(_))
-            && !establishes_stacking_context(document, id, cv)
-    });
+    // Fixed and sticky boxes form a stacking context whatever their
+    // `z-index` (CSS Positioned Layout 3 §4).
+    let forms_context = |id: usize, cv: &ComputedValues| {
+        establishes_stacking_context(document, id, cv)
+            || is_z_indexed_item(document, cascade, id, cv)
+            || matches!(cv.position, PositionValue::Fixed | PositionValue::Sticky)
+            || (!matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_)))
+    };
+    let auto = cascade
+        .computed
+        .get(id)
+        .is_some_and(|cv| !matches!(cv.position, PositionValue::Static) && !forms_context(id, cv));
     let children = |id: usize| {
         document
             .get_node(id)
@@ -693,11 +701,7 @@ fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id
         if positioned_layer_level(document, cascade, child) != 0 {
             return true;
         }
-        let nested = establishes_stacking_context(document, child, cv)
-            || is_z_indexed_item(document, cascade, child, cv)
-            || (!matches!(cv.position, PositionValue::Static)
-                && matches!(cv.z_index, ZIndexValue::Integer(_)));
-        if !nested {
+        if !forms_context(child, cv) {
             stack.extend(children(child));
         }
     }
