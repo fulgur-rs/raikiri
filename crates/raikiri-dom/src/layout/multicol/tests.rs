@@ -3073,16 +3073,49 @@ fn absolute_boxes_the_columns_cannot_hold_keep_the_other_strategies() {
         block,
         "position:absolute;top:-10px;width:10px;height:20px"
     ));
-    // A cut containing block cannot hold a box in a column after its own.
-    assert!(unbroken(
-        "display:block;position:relative;height:150px",
-        "position:absolute;top:0;width:10px;height:250px",
-    ));
     // Pieces that would not fit in the fragment budget.
     assert!(unbroken(
         block,
         "position:absolute;top:0;width:10px;height:10000000px",
     ));
+}
+
+#[test]
+fn a_cut_containing_block_holds_absolute_pieces_in_the_columns_after_its_own() {
+    // The 150px block ends 50px down the second column; the 250px box
+    // continues in an overflow column.
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:150px",
+            &["position:absolute;top:0;width:10px;height:250px"],
+        )],
+    );
+    let (block, absolute) = (ids[0].0, ids[0].1[0]);
+    let fragments = |node: usize| {
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .enumerate()
+            .filter(move |(_, fragment)| fragment.node_id == node)
+    };
+    let pieces: Vec<_> = fragments(absolute)
+        .map(|(_, fragment)| (fragment.fragmentainer, fragment.parent))
+        .collect();
+    let block_pieces: Vec<_> = fragments(block).map(|(id, _)| Some(id)).collect();
+    assert_eq!(
+        pieces,
+        vec![
+            (0, block_pieces[0]),
+            (1, block_pieces[1]),
+            (2, block_pieces[1])
+        ]
+    );
+    // The block's last piece shows the box in the column after it.
+    let clip = doc.fragment_tree.fragments[block_pieces[1].unwrap()]
+        .fragmentainer_clip
+        .unwrap();
+    assert_eq!((clip.x, clip.width), (100.0, 200.0));
 }
 
 #[test]
@@ -3231,4 +3264,56 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
         Some("height:10px"),
     );
     assert!(lineless::supported(&doc, parent, true).is_none());
+}
+
+#[test]
+fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
+    let starts = |outer: &str, before: Option<&str>, nested: &str| {
+        let children: Vec<(&str, &[&str])> = before
+            .into_iter()
+            .chain([nested])
+            .map(|css| (css, &[] as &[&str]))
+            .collect();
+        let (doc, _, ids) = absolute_fixture(outer, &children);
+        lineless::starts_the_outer_columns(&doc, ids.last().unwrap().0)
+    };
+    let nested = "display:block;columns:2;height:50px";
+    assert!(starts(DEFINITE_COLUMNS, None, nested));
+    // Earlier content, a top margin or a top padding moves it down.
+    assert!(!starts(DEFINITE_COLUMNS, Some("height:40px"), nested));
+    assert!(!starts(
+        DEFINITE_COLUMNS,
+        None,
+        "columns:2;height:50px;margin-top:10px"
+    ));
+    assert!(!starts(
+        &format!("{DEFINITE_COLUMNS};padding-top:10px"),
+        None,
+        nested
+    ));
+    // So does text before it, which collapsible white space is not.
+    let text_before_in = |outer: &str, text: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(Some(body), "div", Style::default(), Some(outer));
+        doc.append_text(parent, text);
+        let nested = doc.append_element(Some(parent), "div", Style::default(), Some(nested));
+        layout_nested_flex_float_fixture(&mut doc);
+        lineless::starts_the_outer_columns(&doc, nested)
+    };
+    let text_before = |text: &str| text_before_in(DEFINITE_COLUMNS, text);
+    assert!(!text_before("text"));
+    assert!(text_before("  "));
+    // A no-break space and preserved white space make a line.
+    assert!(!text_before("\u{a0}"));
+    assert!(!text_before_in(
+        &format!("{DEFINITE_COLUMNS};white-space:pre"),
+        " \n "
+    ));
+    // A parent that is not a multicol container may itself sit anywhere.
+    assert!(!starts("display:block;height:100px", None, nested));
+    // The root has no parent.
+    let doc = Document::new();
+    assert!(!lineless::starts_the_outer_columns(&doc, 0));
 }

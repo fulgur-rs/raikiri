@@ -136,3 +136,46 @@ fn blocks_in_a_containing_block_break_with_its_absolute_boxes() {
     );
     assert_eq!(differing_pixels(&actual, &expected), 0);
 }
+
+const NESTED_INNER: &str =
+    "column-count:2;column-fill:auto;column-gap:16px;width:50px;height:70px;padding:10px";
+
+#[test]
+fn an_absolute_box_wider_than_its_column_continues_past_a_cut_containing_block() {
+    // The 280px box breaks into four 70px pieces, the last two in overflow
+    // columns after its 110px containing block ends, and shows its full
+    // 25px width in each, like an in-flow block of the same size.
+    let actual = raster(&format!(
+        "<div style='{NESTED_INNER}'><div style='position:relative;height:110px'><div style='position:absolute;top:0;width:25px;height:280px;background:green'></div></div></div>"
+    ));
+    let expected = raster(&format!(
+        "<div style='{NESTED_INNER}'><div style='width:25px;height:280px;background:green'></div></div>"
+    ));
+    assert_eq!(differing_pixels(&actual, &expected), 0);
+}
+
+#[test]
+fn an_absolute_box_breaks_across_the_columns_of_a_nested_container() {
+    let nested = |content: &str| {
+        raster(&format!(
+            "<div style='column-count:2;column-fill:auto;column-gap:0;width:100px;height:90px'><div style='{NESTED_INNER}'>{content}</div></div>"
+        ))
+    };
+    let actual = nested(
+        "<div style='position:relative;height:110px'><div style='position:absolute;top:0;width:25px;height:280px;background:green'></div></div>",
+    );
+    let expected = nested("<div style='width:25px;height:280px;background:green'></div>");
+    assert_eq!(differing_pixels(&actual, &expected), 0);
+}
+
+#[test]
+fn a_nested_container_taller_than_the_outer_column_resolves_its_gap_in_the_outer_column() {
+    // The nested container is 50px wide in the outer column, so a 30% gap
+    // is 15px.
+    let nested = |gap: &str| {
+        raster(&format!(
+            "<div style='column-count:2;column-fill:auto;column-gap:0;width:100px;height:50px'><div style='column-count:2;column-fill:auto;column-gap:{gap};width:100%;height:100px'><div style='position:relative;width:100%;height:25px'><div style='position:absolute;top:0;left:0;width:100%;height:200px;background:green'></div></div></div></div>"
+        ))
+    };
+    assert_eq!(differing_pixels(&nested("30%"), &nested("15px")), 0);
+}

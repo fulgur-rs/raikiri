@@ -92,8 +92,13 @@ pub(crate) fn compute_multicol_layout(
     // nested container as well as an outermost one.
     let lineless_children =
         (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
-            .then(|| lineless::supported(tree, index, tree.fragmentation_stack.is_empty()))
+            .then(|| lineless::supported(tree, index, true))
             .flatten();
+    // A nested container whose children are sliced only because they hold
+    // absolutely positioned boxes.
+    let nested_out_of_flow = lineless_children.is_some()
+        && !tree.fragmentation_stack.is_empty()
+        && lineless::supported(tree, index, false).is_none();
     // A nested container that turns out taller than its outer column falls
     // back to the custom path, which also breaks it at the outer column end.
     let nested_fallback = custom_scope && !tree.fragmentation_stack.is_empty();
@@ -108,6 +113,14 @@ pub(crate) fn compute_multicol_layout(
         tree.fragmentation_stack.truncate(stack_depth);
         return output;
     }
+    // Columns sliced here are not cut again at the end of an outer column,
+    // so such a container keeps the nested strategies from the start unless
+    // it starts the outer columns and fits in the first one.
+    let lineless_children = lineless_children.filter(|_| {
+        !nested_out_of_flow
+            || lineless::starts_the_outer_columns(tree, index)
+                && outer_height.is_some_and(|outer| output.size.height <= outer + lineless::EPSILON)
+    });
     let fragmentainer_height = available_height.or_else(|| {
         multicol_max_fragmentainer_height(
             tree,
