@@ -757,17 +757,11 @@ fn balance_rows(
     }
 }
 
-/// The pieces of a wrapper whose blocks have the pieces `leaves`. A piece
-/// runs from the top of its first block, or the top of a column it
-/// continues in, to the bottom of its last block, or the end of a column it
-/// breaks at.
-fn wrapper_pieces(leaves: &[Vec<Piece>], column_height: f32) -> Vec<Piece> {
-    let (Some(first), Some(last)) = (
-        leaves.iter().flatten().next(),
-        leaves.iter().flatten().last(),
-    ) else {
-        return Vec::new();
-    };
+/// The pieces of a wrapper whose blocks start with the piece `first` and
+/// end with the piece `last`. A piece runs from the top of its first block,
+/// or the top of a column it continues in, to the bottom of its last block,
+/// or the end of a column it breaks at.
+fn wrapper_pieces(first: &Piece, last: &Piece, column_height: f32) -> Vec<Piece> {
     (first.column..=last.column)
         .map(|column| {
             let top = if column == first.column {
@@ -1174,14 +1168,18 @@ pub(super) fn layout(
             return None;
         }
     };
-    let child_pieces: Vec<Vec<Piece>> = spans
-        .iter()
-        .zip(&wrapped)
-        .map(|(span, leaves)| match leaves {
-            None => placements.pieces[span.start].clone(),
-            Some(_) => wrapper_pieces(&placements.pieces[span.clone()], column_height),
-        })
-        .collect();
+    let mut child_pieces: Vec<Vec<Piece>> = Vec::with_capacity(children.len());
+    for (span, leaves) in spans.iter().zip(&wrapped) {
+        let pieces = &placements.pieces[span.clone()];
+        child_pieces.push(match leaves {
+            None => pieces.first()?.clone(),
+            Some(_) => wrapper_pieces(
+                pieces.first()?.first()?,
+                pieces.last()?.last()?,
+                column_height,
+            ),
+        });
+    }
     let planned = placements.pieces.iter().map(Vec::len).sum::<usize>()
         + wrapped
             .iter()

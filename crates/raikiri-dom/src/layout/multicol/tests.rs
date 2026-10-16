@@ -3205,4 +3205,22 @@ fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
         "display:block;position:relative;break-inside:avoid",
         true
     ));
+    // A block with content of its own has lines or boxes to break between.
+    let (mut doc, parent, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            block,
+            &[
+                "display:block;height:20px",
+                "position:absolute;top:0;width:10px;height:20px",
+            ],
+        )],
+    );
+    doc.append_element(
+        Some(ids[0].1[0]),
+        "div",
+        Style::default(),
+        Some("height:10px"),
+    );
+    assert!(lineless::supported(&doc, parent, true).is_none());
 }
