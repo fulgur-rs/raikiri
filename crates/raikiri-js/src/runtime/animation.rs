@@ -3,13 +3,13 @@ use std::collections::{HashMap, HashSet};
 use boa_engine::job::NativeJob;
 use boa_engine::object::JsObject;
 use boa_engine::object::builtins::{JsFunction, JsPromise};
-use boa_engine::property::PropertyKey;
 use boa_engine::{
     Context, Finalize, JsData, JsNativeError, JsResult, JsString, JsSymbol, JsValue, Trace,
     js_string,
 };
 
 use raikiri_style::is_valid_easing_function;
+use raikiri_style::property::is_supported_property_name;
 
 use super::interfaces::{Members, protos};
 use super::webidl::{this_element, throw_dom_exception, with_state};
@@ -78,13 +78,24 @@ pub(crate) struct AnimationEffect {
 
 impl AnimationEffect {
     /// The current time: the held time while paused, unresolved without a
-    /// timeline, and otherwise the time elapsed since the start time.
+    /// timeline, and otherwise the time elapsed since the start time. Past
+    /// the effect end, a naturally finished animation holds at the end, and
+    /// one sought beyond the end holds where it was sought.
     fn current_time(&self, now: f64) -> Option<f64> {
         if self.paused {
-            self.current_time_ms
-        } else {
-            (!self.detached).then_some(now - self.start_time_ms)
+            return self.current_time_ms;
         }
+        if self.detached {
+            return None;
+        }
+        let elapsed = now - self.start_time_ms;
+        if elapsed < self.end_time_ms {
+            return Some(elapsed);
+        }
+        Some(
+            self.current_time_ms
+                .map_or(self.end_time_ms, |sought| sought.max(self.end_time_ms)),
+        )
     }
 }
 
@@ -93,6 +104,9 @@ impl AnimationEffect {
 pub(crate) struct AnimationData {
     #[unsafe_ignore_trace]
     id: usize,
+    /// The script-visible `Animation.id`.
+    #[unsafe_ignore_trace]
+    animation_id: String,
     /// The `ready` promise, created on first access.
     ready: Option<JsObject>,
     /// The `finished` promise, created on first access.
@@ -148,11 +162,7 @@ fn type_error(message: &str) -> boa_engine::JsError {
     JsNativeError::typ().with_message(message.to_owned()).into()
 }
 
-fn parse_pixel_value(value: &JsValue) -> JsResult<f64> {
-    let Some(value) = value.as_string() else {
-        return Err(type_error("animation keyframes must be pixel strings"));
-    };
-    let value = value.to_std_string_escaped();
+fn parse_pixel_value(value: &str) -> JsResult<f64> {
     let value = value.trim();
     let Some(unit_start) = value.len().checked_sub(2) else {
         return Err(type_error("animation keyframes must use px units"));
@@ -264,15 +274,18 @@ fn for_each_iterated(
     }
 }
 
-/// Accept the next keyframe offset when it lies in [0, 1] and does not
-/// precede `previous`.
-fn check_offset(previous: &mut f64, offset: f64) -> JsResult<()> {
-    if !(*previous..=1.0).contains(&offset) {
-        return Err(type_error(
-            "keyframe offsets must lie in [0, 1] in non-decreasing order",
-        ));
+/// Check converted keyframe offsets: the non-null ones lie in [0, 1] in
+/// non-decreasing order.
+fn check_offsets(offsets: &[Option<f64>]) -> JsResult<()> {
+    let mut previous = 0.0;
+    for &offset in offsets.iter().flatten() {
+        if !(previous..=1.0).contains(&offset) {
+            return Err(type_error(
+                "keyframe offsets must lie in [0, 1] in non-decreasing order",
+            ));
+        }
+        previous = offset;
     }
-    *previous = offset;
     Ok(())
 }
 
@@ -287,17 +300,122 @@ fn check_easings(easings: &[String]) -> JsResult<()> {
     }
 }
 
+/// A WebIDL `double?` keyframe offset: `null` is `None`, and a value that
+/// is not finite after conversion throws.
+fn offset_value(value: &JsValue, context: &mut Context) -> JsResult<Option<f64>> {
+    if value.is_null_or_undefined() {
+        return Ok(None);
+    }
+    let offset = value.to_number(context)?;
+    if offset.is_finite() {
+        Ok(Some(offset))
+    } else {
+        Err(type_error("keyframe offsets must be finite numbers"))
+    }
+}
+
+fn dom_string(value: &JsValue, context: &mut Context) -> JsResult<String> {
+    Ok(value.to_string(context)?.to_std_string_escaped())
+}
+
+/// The converted values of one keyframe property: a single value (whose
+/// conversion only matters for its side effects) or a list.
+enum PropertyValues {
+    Single,
+    List(Vec<String>),
+}
+
+/// Whether `name` is the IDL attribute name of a supported CSS property:
+/// `cssFloat` for `float`, otherwise the camel-cased property name.
+fn is_animatable_idl_name(name: &str) -> bool {
+    if name == "cssFloat" {
+        return true;
+    }
+    if name == "float" || name.contains('-') {
+        return false;
+    }
+    let mut property = String::with_capacity(name.len() + 4);
+    for character in name.chars() {
+        if character.is_ascii_uppercase() {
+            property.push('-');
+        }
+        property.push(character.to_ascii_lowercase());
+    }
+    is_supported_property_name(&property)
+}
+
+/// Convert the animation properties of a keyframe-like object: its own
+/// enumerable properties named by an animatable property's IDL name, read
+/// in code unit order. Each value is a DOMString, or, when `allow_lists`
+/// is set and the value is iterable, a sequence of them.
+fn convert_keyframe_properties(
+    object: &JsObject,
+    allow_lists: bool,
+    context: &mut Context,
+) -> JsResult<Vec<(String, PropertyValues)>> {
+    let keys_function = context
+        .intrinsics()
+        .constructors()
+        .object()
+        .constructor()
+        .get(js_string!("keys"), context)?;
+    let keys = keys_function
+        .as_callable()
+        .ok_or_else(|| type_error("Object.keys must be callable"))?
+        .call(&JsValue::undefined(), &[object.clone().into()], context)?;
+    let keys = keys
+        .as_object()
+        .ok_or_else(|| type_error("Object.keys must return an array"))?;
+    let length = keys
+        .get(js_string!("length"), context)?
+        .to_length(context)?;
+    let mut names = Vec::new();
+    for index in 0..length {
+        let name = dom_string(&keys.get(index, context)?, context)?;
+        if is_animatable_idl_name(&name) {
+            names.push(name);
+        }
+    }
+    names.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+    let mut properties = Vec::with_capacity(names.len());
+    for name in names {
+        let value = object.get(JsString::from(name.as_str()), context)?;
+        let method = if allow_lists {
+            iterator_method(&value, context)?
+        } else {
+            None
+        };
+        let values = match method {
+            Some(method) => {
+                let mut list = Vec::new();
+                for_each_iterated(&value, &method, context, |value, context| {
+                    list.push(dom_string(&value, context)?);
+                    Ok(())
+                })?;
+                PropertyValues::List(list)
+            }
+            None => {
+                dom_string(&value, context)?;
+                PropertyValues::Single
+            }
+        };
+        properties.push((name, values));
+    }
+    Ok(properties)
+}
+
 /// Check a keyframe sequence, which the static sampler does not render.
 /// The keyframes come from iterating `sequence` with its `@@iterator`
-/// `method`; every keyframe is a dictionary whose `composite` is a known
-/// operation, offsets that are present lie in [0, 1] in non-decreasing
-/// order, and every `easing` is an `<easing-function>`.
+/// `method`. Each is converted as a `BaseKeyframe` dictionary (whose
+/// `composite` must be a known operation) followed by its animation
+/// properties; then the offsets must lie in [0, 1] in non-decreasing order
+/// and every `easing` must be an `<easing-function>`.
 fn validate_keyframe_sequence(
     sequence: &JsValue,
     method: &JsObject,
     context: &mut Context,
 ) -> JsResult<()> {
-    let mut previous_offset = 0.0;
+    let mut offsets = Vec::new();
     let mut easings = Vec::new();
     for_each_iterated(sequence, method, context, |keyframe, context| {
         if keyframe.is_null_or_undefined() {
@@ -315,11 +433,11 @@ fn validate_keyframe_sequence(
         )?;
         easings.extend(string_member(&keyframe, js_string!("easing"), context)?);
         let offset = keyframe.get(js_string!("offset"), context)?;
-        if offset.is_null_or_undefined() {
-            return Ok(());
-        }
-        check_offset(&mut previous_offset, offset.to_number(context)?)
+        offsets.push(offset_value(&offset, context)?);
+        convert_keyframe_properties(&keyframe, false, context)?;
+        Ok(())
     })?;
+    check_offsets(&offsets)?;
     check_easings(&easings)
 }
 
@@ -342,20 +460,20 @@ fn for_each_member_value(
     }
 }
 
-/// The `BasePropertyIndexedKeyframe` member names, which are not animated
-/// properties.
-const KEYFRAME_METADATA: [&str; 3] = ["composite", "easing", "offset"];
-
 fn is_linear_keyword(easing: &str) -> bool {
     easing.trim().eq_ignore_ascii_case("linear")
 }
 
-/// Check the `BasePropertyIndexedKeyframe` members of property-indexed
-/// keyframes: every `composite` is a known operation, every `easing` is an
-/// `<easing-function>`, and non-null offsets lie in [0, 1] in
-/// non-decreasing order. Returns whether the members leave two keyframes
-/// as the static sampler models them: replacing, linear, at offsets 0 and 1.
-fn validate_property_indexed_members(object: &JsObject, context: &mut Context) -> JsResult<bool> {
+/// Convert property-indexed keyframes: the `BasePropertyIndexedKeyframe`
+/// members (every `composite` must be a known operation), then the
+/// animation properties; then the non-null offsets must lie in [0, 1] in
+/// non-decreasing order and every `easing` must be an `<easing-function>`.
+/// Also returns whether the members leave two keyframes as the static
+/// sampler models them: replacing, linear, at offsets 0 and 1.
+fn convert_property_indexed(
+    object: &JsObject,
+    context: &mut Context,
+) -> JsResult<(bool, Vec<(String, PropertyValues)>)> {
     let mut plain = true;
     for_each_member_value(
         object,
@@ -369,35 +487,33 @@ fn validate_property_indexed_members(object: &JsObject, context: &mut Context) -
     )?;
     let mut easings = Vec::new();
     for_each_member_value(object, js_string!("easing"), context, |value, context| {
-        easings.push(value.to_string(context)?.to_std_string_escaped());
+        easings.push(dom_string(&value, context)?);
         Ok(())
     })?;
+    let mut offsets = Vec::new();
+    for_each_member_value(object, js_string!("offset"), context, |value, context| {
+        offsets.push(offset_value(&value, context)?);
+        Ok(())
+    })?;
+    let properties = convert_keyframe_properties(object, true, context)?;
+    check_offsets(&offsets)?;
+    check_easings(&easings)?;
     // Only the first keyframe's easing shapes the interval between two
-    // keyframes; easings cycle over the keyframes.
+    // keyframes, and offsets beyond the second keyframe are ignored.
     plain &= easings
         .first()
         .is_none_or(|easing| is_linear_keyword(easing));
-    let mut previous_offset = 0.0;
-    let mut index = 0;
-    for_each_member_value(object, js_string!("offset"), context, |value, context| {
-        let expected = [0.0, 1.0].get(index).copied();
-        index += 1;
-        if value.is_null() {
-            return Ok(());
-        }
-        let offset = value.to_number(context)?;
-        check_offset(&mut previous_offset, offset)?;
-        // Offsets beyond the second keyframe are ignored.
-        plain &= expected.is_none_or(|expected| offset == expected);
-        Ok(())
-    })?;
-    check_easings(&easings)?;
-    Ok(plain)
+    plain &= offsets
+        .iter()
+        .zip([0.0, 1.0])
+        .all(|(offset, expected)| offset.is_none_or(|offset| offset == expected));
+    Ok((plain, properties))
 }
 
 /// Parse keyframes into the one sampled property, or `None` when they fall
-/// outside the static sampler (null, a keyframe sequence, no property, an
-/// unsupported property, or several properties).
+/// outside the static sampler (null, a keyframe sequence, no animation
+/// property, an unsupported property, several properties, or keyframe
+/// metadata other than the defaults).
 fn parse_keyframes(
     value: &JsValue,
     context: &mut Context,
@@ -414,43 +530,30 @@ fn parse_keyframes(
         validate_keyframe_sequence(value, &method, context)?;
         return Ok(None);
     }
-    if !validate_property_indexed_members(&object, context)? {
+    let (plain, properties) = convert_property_indexed(&object, context)?;
+    let [(name, values)] = properties.as_slice() else {
+        return Ok(None);
+    };
+    let Ok(property) = AnimationProperty::parse_cssom_name(name) else {
+        return Ok(None);
+    };
+    if !plain {
         return Ok(None);
     }
-    let keys = object.own_property_keys(context)?;
-    let properties: Vec<_> = keys
-        .iter()
-        .filter(|key| match key {
-            PropertyKey::String(name) => {
-                !KEYFRAME_METADATA.contains(&name.to_std_string_escaped().as_str())
-            }
-            _ => true,
-        })
-        .collect();
-    let [PropertyKey::String(name)] = properties.as_slice() else {
-        return Ok(None);
+    let PropertyValues::List(values) = values else {
+        return Err(type_error(
+            "animation property values must be a two-item array",
+        ));
     };
-    let property_name = name.to_std_string_escaped();
-    let Ok(property) = AnimationProperty::parse_cssom_name(&property_name) else {
-        return Ok(None);
-    };
-    let values = object.get(JsString::from(property_name), context)?;
-    let values = values
-        .as_object()
-        .filter(|values| values.is_array())
-        .ok_or_else(|| type_error("animation property values must be a two-item array"))?;
-    let length = values.get(js_string!("length"), context)?.as_number();
-    if length != Some(2.0) {
+    let [from, to] = values.as_slice() else {
         return Err(type_error(
             "animation property values must contain two keyframes",
         ));
-    }
-    let from = values.get(js_string!("0"), context)?;
-    let to = values.get(js_string!("1"), context)?;
+    };
     Ok(Some((
         property,
-        parse_pixel_value(&from)?,
-        parse_pixel_value(&to)?,
+        parse_pixel_value(from)?,
+        parse_pixel_value(to)?,
     )))
 }
 
@@ -502,7 +605,8 @@ impl Timing {
 /// primitive is converted to a number. A dictionary's `duration` is a Number
 /// or a value whose string is `"auto"`; absent and `"auto"` mean zero for a
 /// keyframe effect.
-fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Timing> {
+/// Also returns the `id` option, empty when absent.
+fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<(Timing, String)> {
     let options = options.cloned().unwrap_or_default();
     let mut timing = Timing {
         duration_ms: 0.0,
@@ -517,6 +621,7 @@ fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Ti
         duration,
         easing,
         pseudo_element,
+        id,
     } = if let Some(dictionary) = options.as_object() {
         parse_timing_dictionary(&dictionary, &mut timing, context)?
     } else {
@@ -529,6 +634,7 @@ fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Ti
             duration,
             easing: None,
             pseudo_element: None,
+            id: None,
         }
     };
     if timing.iteration_start < 0.0 {
@@ -567,7 +673,7 @@ fn parse_timing(options: Option<&JsValue>, context: &mut Context) -> JsResult<Ti
             "animation pseudoElement is not a supported pseudo-element",
         ));
     }
-    Ok(timing)
+    Ok((timing, id.unwrap_or_default()))
 }
 
 /// Raw `KeyframeAnimationOptions` members that are validated after the
@@ -576,6 +682,7 @@ struct RawOptions {
     duration: JsValue,
     easing: Option<String>,
     pseudo_element: Option<String>,
+    id: Option<String>,
 }
 
 /// Convert the `KeyframeAnimationOptions` dictionary: the `EffectTiming`
@@ -614,7 +721,7 @@ fn parse_timing_dictionary(
     } else {
         Some(pseudo_element.to_string(context)?.to_std_string_escaped())
     };
-    string_member(dictionary, js_string!("id"), context)?;
+    let id = string_member(dictionary, js_string!("id"), context)?;
     // No `AnimationTimeline` object exists, so only the default (the
     // document timeline) and `null` (no timeline) are valid.
     let timeline = dictionary.get(js_string!("timeline"), context)?;
@@ -633,6 +740,7 @@ fn parse_timing_dictionary(
         duration,
         easing,
         pseudo_element,
+        id,
     })
 }
 
@@ -717,13 +825,13 @@ fn finite_member(
 fn parse_effect(
     args: &[JsValue],
     context: &mut Context,
-) -> JsResult<(Option<KeyframePair>, Timing)> {
+) -> JsResult<(Option<KeyframePair>, Timing, String)> {
     let keyframes = args
         .first()
         .ok_or_else(|| type_error("animation keyframes are required"))?;
     // The options dictionary is converted and validated before the
     // keyframes are processed, as the KeyframeEffect constructor does.
-    let timing = parse_timing(args.get(1), context)?;
+    let (timing, id) = parse_timing(args.get(1), context)?;
     let keyframes = parse_keyframes(keyframes, context)?;
     if keyframes.is_some() && !timing.is_sampleable() {
         return Err(type_error(
@@ -734,7 +842,7 @@ fn parse_effect(
         .map(|(property, from, to)| KeyframePair::new(property, from, to, timing.duration_ms))
         .transpose()
         .map_err(|_| type_error("animation keyframe values must be finite"))?;
-    Ok((keyframes, timing))
+    Ok((keyframes, timing, id))
 }
 
 fn animation_id(this: &JsValue) -> JsResult<usize> {
@@ -752,7 +860,7 @@ pub(crate) fn element_animate(
     context: &mut Context,
 ) -> JsResult<JsValue> {
     let target = this_element(this, context)?;
-    let (keyframes, timing) = parse_effect(args, context)?;
+    let (keyframes, timing, animation_id) = parse_effect(args, context)?;
     let id = with_state(context, |state| {
         let id = state.animations.len();
         let start_time_ms = state.event_loop.now;
@@ -772,6 +880,7 @@ pub(crate) fn element_animate(
     let prototype = protos(context).animation.clone();
     let data = AnimationData {
         id,
+        animation_id,
         ready: None,
         finished: None,
         finish_resolve: None,
@@ -968,6 +1077,20 @@ fn set_current_time(this: &JsValue, args: &[JsValue], context: &mut Context) -> 
     Ok(JsValue::undefined())
 }
 
+/// `Animation.id`: the `id` option, or whatever script assigned later.
+fn animation_id_get(this: &JsValue, _: &[JsValue], _: &mut Context) -> JsResult<JsValue> {
+    let animation = this_animation(this)?;
+    let id = animation_data(&animation).animation_id.clone();
+    Ok(JsString::from(id).into())
+}
+
+fn animation_id_set(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    let animation = this_animation(this)?;
+    let id = dom_string(&args.first().cloned().unwrap_or_default(), context)?;
+    animation_data_mut(&animation).animation_id = id;
+    Ok(JsValue::undefined())
+}
+
 fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
     with_state(context, |state| {
         let mut target_order = Vec::new();
@@ -1009,7 +1132,10 @@ fn refresh_animation_styles(context: &mut Context) -> JsResult<()> {
 
 pub(crate) const ANIMATION_MEMBERS: Members = Members {
     getters: &[("ready", ready), ("finished", finished)],
-    accessors: &[("currentTime", current_time, set_current_time)],
+    accessors: &[
+        ("currentTime", current_time, set_current_time),
+        ("id", animation_id_get, animation_id_set),
+    ],
     methods: &[("pause", 0, pause)],
 };
 

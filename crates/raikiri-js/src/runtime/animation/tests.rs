@@ -283,6 +283,7 @@ fn stale_animation_ids_are_rejected_by_controls() {
         .clone();
     let data = AnimationData {
         id: usize::MAX,
+        animation_id: String::new(),
         ready: None,
         finished: None,
         finish_resolve: None,
@@ -940,7 +941,7 @@ fn default_property_indexed_metadata_keeps_the_sampler() {
              sampled.pause();\
              sampled.currentTime = 10;\
              globalThis.unsampled = [{ offset: [0, 0.5] }, { offset: [0.5, 1] }, { easing: 'ease' },\
-                                     { composite: 'add' }, { [Symbol('x')]: 1 }].every(metadata => {\
+                                     { composite: 'add' }, { opacity: ['0', '1'] }].every(metadata => {\
                const animation = target.animate({ fontSize: ['0px', '40px'], ...metadata }, 40);\
                try { animation.pause(); return false; } catch (error) { return error instanceof TypeError; }\
              })",
@@ -983,4 +984,78 @@ fn pausing_holds_the_elapsed_time() {
         animation_style(&mut runtime, target).as_deref(),
         Some("word-spacing: 20px;")
     );
+}
+
+#[test]
+fn keyframe_properties_are_converted_in_idl_name_order() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const marker = {};\
+             const thrown = run => { try { run(); return null; } catch (error) { return error; } };\
+             const read = [];\
+             const logged = name => ({ toString() { read.push(name); return '1px'; } });\
+             thrown(() => target.animate([{ opacity: logged('opacity'), color: logged('color'),\
+                                             'font-size': logged('dashed'), foo: logged('foo'),\
+                                             cssFloat: logged('cssFloat') }], 1));\
+             const order = read.join() === 'color,cssFloat,opacity';\
+             const sampled = target.animate({ wordSpacing: ['0px', '40px'], foo: 1, [Symbol('x')]: 1,\
+                                              'font-size': 1, float: 1 }, 40);\
+             sampled.pause();\
+             order\
+             && thrown(() => target.animate([{ get opacity() { throw marker; } }], 1)) === marker\
+             && thrown(() => target.animate({ get opacity() { throw marker; } }, 1)) === marker\
+             && thrown(() => target.animate({ opacity: [0, { toString() { throw marker; } }] }, 1)) === marker\
+             && thrown(() => target.animate({ opacity: { [Symbol.iterator]: 1 } }, 1)) instanceof TypeError\
+             && thrown(() => target.animate({ wordSpacing: '0px' }, 1)) instanceof TypeError",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn naturally_finished_animations_hold_their_end_time() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.times = {};\
+             const natural = target.animate({ wordSpacing: ['0px', '40px'] }, 10);\
+             const sought = target.animate({ wordSpacing: ['0px', '40px'] }, 10);\
+             sought.currentTime = 30;\
+             setTimeout(() => {\
+               times.natural = natural.currentTime;\
+               times.sought = sought.currentTime;\
+               natural.pause();\
+               times.paused = natural.currentTime;\
+             }, 20)",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate("times.natural === 10 && times.sought === 30 && times.paused === 10")
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn animation_id_comes_from_options_and_is_writable() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const named = target.animate(null, { id: 'spin' });\
+             const unnamed = target.animate(null, 1);\
+             const before = named.id === 'spin' && unnamed.id === '';\
+             named.id = 42;\
+             const getter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(named), 'id').get;\
+             let foreign = false;\
+             try { getter.call({}); } catch (error) { foreign = error instanceof TypeError; }\
+             before && named.id === '42' && foreign",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
 }
