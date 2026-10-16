@@ -4619,19 +4619,15 @@ fn paginate_flow(
             break_margins(document, cascade, node_id, content_width);
         let page_start = page_origin(current_page);
         let page_end = page_start + page_step_at(current_page);
-        // A block with `break-inside: avoid-page` stays intact when its used
-        // block size plus its trailing margin would cross the current page.
-        // This is the direct block-flow case; nested formatting contexts still
-        // require fragment-level break opportunities.
         let avoided_run_overflow = avoided_run_ends.get(&node_id).is_some_and(|end| {
-            let run_height = *end - raw_y;
-            let destination_height = page_step_at(current_page.saturating_add(1));
-            run_height.is_finite()
-                && run_height > 0.0
-                && run_height + margin_top.max(0.0) <= destination_height
-                && effective_y > page_start
-                && effective_y < page_end
-                && effective_y + run_height > page_end
+            avoided_run_moves(
+                *end - raw_y,
+                margin_top,
+                effective_y,
+                page_start,
+                page_end,
+                page_step_at(current_page.saturating_add(1)),
+            )
         });
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
@@ -4706,15 +4702,9 @@ fn paginate_flow(
             && table_row_lead + height + repeated_header_height
                 <= page_step_at(current_page.saturating_add(1)) + 0.001
             && starts_on_page_and_runs_past_it(flow_y, flow_y + height, page_start, page_end);
-        // A row group that is not already at the top of its page moves as a
-        // whole, even when it is taller than a page and breaks there.
         let row_group = avoided_row_groups.get(&node_id).copied();
-        let row_group_overflow = row_group.is_some_and(|(end, _)| {
-            flow_y.is_finite()
-                && flow_y > page_start + 0.001
-                && flow_y < page_end
-                && flow_y + (end - raw_y) > page_end
-        });
+        let row_group_overflow = row_group
+            .is_some_and(|(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end));
         // A trailing flex item may extend into the containing flex box's
         // continuation at the page edge. Earlier items still move intact when
         // they would cross a fragmentainer, preserving the existing column
@@ -6558,6 +6548,42 @@ impl PrecedingFlexItems {
             |(previous_height, previous_page)| previous_height > 0.0 && previous_page == page,
         )
     }
+}
+
+/// Whether a run of `run_height` that avoids breaks inside it, starting at
+/// `effective_y` below a block-start `margin_top`, moves whole to the next
+/// page, whose block size is `next_page_step`.
+///
+/// A run of sibling blocks joined by `break-before` or `break-after: avoid`
+/// stays intact when its block size, through the last box's trailing margin,
+/// would cross the current page. This is the direct block-flow case; nested
+/// formatting contexts still require fragment-level break opportunities.
+fn avoided_run_moves(
+    run_height: f32,
+    margin_top: f32,
+    effective_y: f32,
+    page_start: f32,
+    page_end: f32,
+    next_page_step: f32,
+) -> bool {
+    run_height.is_finite()
+        && run_height > 0.0
+        && run_height + margin_top.max(0.0) <= next_page_step
+        && effective_y > page_start
+        && effective_y < page_end
+        && effective_y + run_height > page_end
+}
+
+/// Whether a table row group of `group_height` at `flow_y` that avoids
+/// breaks inside it moves whole past `page_end`.
+///
+/// A row group that is not already at the top of its page moves as a
+/// whole, even when it is taller than a page and breaks there.
+fn row_group_moves(flow_y: f32, group_height: f32, page_start: f32, page_end: f32) -> bool {
+    flow_y.is_finite()
+        && flow_y > page_start + 0.001
+        && flow_y < page_end
+        && flow_y + group_height > page_end
 }
 
 /// Whether a flex or grid item of `height` at `effective_y`, with its

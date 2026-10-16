@@ -676,6 +676,38 @@ fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
 }
 
 #[test]
+fn avoided_run_moves_only_when_it_crosses_the_page_and_fits_the_next() {
+    // Crosses the end of the page from 0 to 100 and fits the next page.
+    assert!(avoided_run_moves(40.0, 0.0, 80.0, 0.0, 100.0, 100.0));
+    // Fits before the page end.
+    assert!(!avoided_run_moves(40.0, 0.0, 50.0, 0.0, 100.0, 100.0));
+    // Starts at the page top.
+    assert!(!avoided_run_moves(140.0, 0.0, 0.0, 0.0, 100.0, 200.0));
+    // Its margin box is taller than the next page.
+    assert!(!avoided_run_moves(90.0, 20.0, 80.0, 0.0, 100.0, 100.0));
+    // Empty or unbounded runs never move.
+    assert!(!avoided_run_moves(0.0, 0.0, 80.0, 0.0, 100.0, 100.0));
+    assert!(!avoided_run_moves(
+        f32::INFINITY,
+        0.0,
+        80.0,
+        0.0,
+        100.0,
+        100.0
+    ));
+}
+
+#[test]
+fn row_group_moves_unless_already_at_the_page_top() {
+    assert!(row_group_moves(80.0, 40.0, 0.0, 100.0));
+    // Moves even when taller than a page.
+    assert!(row_group_moves(80.0, 400.0, 0.0, 100.0));
+    assert!(!row_group_moves(0.0, 400.0, 0.0, 100.0));
+    assert!(!row_group_moves(50.0, 40.0, 0.0, 100.0));
+    assert!(!row_group_moves(f32::NAN, 40.0, 0.0, 100.0));
+}
+
+#[test]
 fn item_moves_past_page_end_only_when_moving_gains_a_page() {
     // Crosses the end of the page from 0 to 100 and fits the next page.
     assert!(item_moves_past_page_end(80.0, 40.0, 0.0, 0.0, 100.0, 100.0));
