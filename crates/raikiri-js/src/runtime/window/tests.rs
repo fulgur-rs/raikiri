@@ -824,3 +824,14 @@ fn url_install_propagates_global_registration_errors() {
         .prototype();
     assert!(super::super::url::install(rt.context_mut(), prototype).is_err());
 }
+
+#[test]
+fn default_scrolling_area_and_a_missing_root_bound_only_the_zero_side() {
+    let (host, ..) = StubHost::page();
+    let mut rt = DomRuntime::new(DefaultUrlHost(host)).unwrap();
+    rt.evaluate("scrollTo(5000, -5);").unwrap();
+    ok(&mut rt, "scrollX === 5000 && scrollY === 0");
+    rt.evaluate("document.removeChild(document.documentElement); scrollTo(7, 9);")
+        .unwrap();
+    ok(&mut rt, "scrollX === 7 && scrollY === 9");
+}
