@@ -654,8 +654,9 @@ pub fn sort_positioned_frames<F: Clone>(
 }
 
 /// Whether element `id` is a positioned box with `z-index: auto` that forms
-/// no stacking context and holds a box with a non-zero stack level: a
-/// positioned box, or a flex or grid item, with a non-zero `z-index`.
+/// no stacking context and holds a box with a non-zero stack level in the
+/// enclosing stacking context: a positioned box, or a flex or grid item,
+/// with a non-zero `z-index`.
 fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let auto = cascade.computed.get(id).is_some_and(|cv| {
         !matches!(cv.position, PositionValue::Static)
@@ -674,10 +675,20 @@ fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id
         Vec::new()
     };
     while let Some(child) = stack.pop() {
+        // Boxes that paint nothing, and the content of a nested stacking
+        // context, take no part in the enclosing context's order.
+        let Some(cv) = cascade.computed.get(child).filter(|cv| generates_box(cv)) else {
+            continue;
+        };
         if positioned_layer_level(document, cascade, child) != 0 {
             return true;
         }
-        stack.extend(children(child));
+        let nested = establishes_stacking_context(document, child, cv)
+            || (!matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_)));
+        if !nested {
+            stack.extend(children(child));
+        }
     }
     false
 }
