@@ -49,14 +49,24 @@ fn contextual_color_components(source: &str) -> Vec<Option<SmolStr>> {
         if let Ok((_, expression)) = parser.try_parse(|input| {
             parse_contextual_color(input).ok_or_else(|| input.new_custom_error::<_, ()>(()))
         }) {
-            components.push(
-                expression.filter(|source| !source.trim().eq_ignore_ascii_case("currentcolor")),
-            );
+            components.push(expression.filter(|source| !is_bare_currentcolor(source)));
         } else if parser.next().is_err() {
             break;
         }
     }
     components
+}
+
+/// Whether `source` is only the `currentcolor` keyword, in any spelling the
+/// tokenizer decodes to it (case or escapes).
+fn is_bare_currentcolor(source: &str) -> bool {
+    let mut parser_input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(|input| -> Result<(), ParseError<'_, ()>> {
+            Ok(input.expect_ident_matching("currentcolor")?)
+        })
+        .is_ok()
 }
 
 /// Keep `currentcolor` symbolic in the color components of a parsed border,

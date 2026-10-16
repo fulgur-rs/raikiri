@@ -245,6 +245,15 @@ fn currentcolor_mix_in_border_color_follows_the_one_to_four_value_rule() {
             format!("blue currentcolor blue {MIX}"),
             [blue, BorderColor::CurrentColor, blue, pink],
         ),
+        (
+            format!(r"current\63olor CurrentColor {MIX}"),
+            [
+                BorderColor::CurrentColor,
+                BorderColor::CurrentColor,
+                pink,
+                BorderColor::CurrentColor,
+            ],
+        ),
     ] {
         let values = cascade_doc(
             "",
