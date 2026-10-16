@@ -19,6 +19,8 @@ fn first_line_overflows_needs_a_block_that_starts_on_the_page_and_fits_it() {
     assert!(!first_line_overflows(80.0, 30.0, 60.0, 120.0, 0.0, 100.0));
     // A block that starts on a later page is not this page's to push.
     assert!(!first_line_overflows(80.0, 30.0, 100.0, 50.0, 0.0, 100.0));
+    // A block that continues from an earlier page is not pushed either.
+    assert!(!first_line_overflows(80.0, 30.0, -10.0, 50.0, 0.0, 100.0));
     // Text above the page start belongs to an earlier page.
     assert!(!first_line_overflows(-10.0, 120.0, 0.0, 50.0, 0.0, 100.0));
     // Unresolved positions or sizes never move the block.

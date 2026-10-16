@@ -6685,10 +6685,10 @@ impl CheckedParagraphs {
     }
 }
 
-/// Whether the text from `text_y` with `text_height` straddles the end of
-/// the page that starts at `page_start` and is `page_step` tall, while its
-/// block, from `block_y` with `block_height`, starts on that page and fits
-/// in one page. Such a fixed-height block is pushed to the next page as a
+/// Whether the text from `text_y` with `text_height` starts at or below the
+/// start of the page that starts at `page_start` and is `page_step` tall and
+/// ends past that page's end, while its block, from `block_y` with
+/// `block_height`, starts on that page and is no taller than it. Such a fixed-height block is pushed to the next page as a
 /// unit, as monolithic content is.
 fn first_line_overflows(
     text_y: f32,
