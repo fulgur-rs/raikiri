@@ -6617,7 +6617,7 @@ impl PendingBreak {
             .is_some_and(|source| !is_descendant_or_self(document, node_id, source))
     }
 
-    /// Drop the pending break once a page transition has taken it.
+    /// Drop the pending break once a later box has consumed it.
     fn clear(&mut self) {
         self.source = None;
     }
