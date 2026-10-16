@@ -4687,20 +4687,21 @@ fn paginate_flow(
         } else {
             0.0
         };
+        let page_start = page_origin(current_page);
+        let page_end = page_start + page_step_at(current_page);
         // A block with `break-inside: avoid-page` stays intact when its used
         // block size plus its trailing margin would cross the current page.
         // This is the direct block-flow case; nested formatting contexts still
         // require fragment-level break opportunities.
         let avoided_run_overflow = avoided_run_ends.get(&node_id).is_some_and(|end| {
             let run_height = *end - raw_y;
-            let page_height = page_step_at(current_page);
             let destination_height = page_step_at(current_page.saturating_add(1));
             run_height.is_finite()
                 && run_height > 0.0
                 && run_height + margin_top.max(0.0) <= destination_height
-                && effective_y > page_origin(current_page)
-                && effective_y < page_origin(current_page) + page_height
-                && effective_y + run_height > page_origin(current_page) + page_height
+                && effective_y > page_start
+                && effective_y < page_end
+                && effective_y + run_height > page_end
         });
         // Whether the box fits is decided at its normal-flow position,
         // before any relative offset.
@@ -4718,12 +4719,13 @@ fn paginate_flow(
             || page_applies_to_box(document, node_id))
             // A box already at the top of its page would break inside on
             // any page, so moving it would only leave a blank page.
-            && flow_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
-            && flow_y.is_finite()
-            && flow_y >= page_origin(current_page)
-            && flow_y < page_origin(current_page) + page_step_at(current_page)
-            && flow_y + height + trailing_margin
-                > page_origin(current_page) + page_step_at(current_page);
+            && flow_y - margin_top.max(0.0) > page_start + 0.001
+            && starts_on_page_and_runs_past_it(
+                flow_y,
+                flow_y + height + trailing_margin,
+                page_start,
+                page_end,
+            );
         // A named page requested by a class-A box starts a new page when it
         // differs from the current named page. `auto` leaves the current page
         // type in place; it does not manufacture a second break boundary.
@@ -4760,8 +4762,7 @@ fn paginate_flow(
                 current_page
             };
             margin_box_page > current_page
-                || (margin_box_y.is_finite()
-                    && (margin_box_y - page_origin(current_page)).abs() <= 0.001)
+                || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
         };
         // Keep an ordinary table row intact when it would cross the current
         // page. The row is a class-A boundary owned by the table engine; its
@@ -4778,17 +4779,13 @@ fn paginate_flow(
         let table_row_overflow = candidate.is_table_row
             && table_row_lead + height + repeated_header_height
                 <= page_step_at(current_page.saturating_add(1)) + 0.001
-            && flow_y.is_finite()
-            && flow_y >= page_origin(current_page)
-            && flow_y < page_origin(current_page) + page_step_at(current_page)
-            && flow_y + height > page_origin(current_page) + page_step_at(current_page);
+            && starts_on_page_and_runs_past_it(flow_y, flow_y + height, page_start, page_end);
         // A row group that is not already at the top of its page moves as a
         // whole, even when it is taller than a page and breaks there.
         let row_group = avoided_row_groups.get(&node_id).copied();
         let row_group_overflow = row_group.is_some_and(|(end, _)| {
-            let page_end = page_origin(current_page) + page_step_at(current_page);
             flow_y.is_finite()
-                && flow_y > page_origin(current_page) + 0.001
+                && flow_y > page_start + 0.001
                 && flow_y < page_end
                 && flow_y + (end - raw_y) > page_end
         });
@@ -4804,19 +4801,19 @@ fn paginate_flow(
         // monolithic content overflow a fresh fragmentainer).
         // The page top is judged by the margin box, since a block-start margin
         // already at the page top would stay with the item.
-        let item_can_move = effective_y - margin_top.max(0.0) > page_origin(current_page) + 0.001
+        let item_can_move = effective_y - margin_top.max(0.0) > page_start + 0.001
             && height <= page_step_at(current_page.saturating_add(1)) + 0.001;
         let flex_item_overflow = candidate.is_flex_item
             && !flex_item_is_last
             && item_can_move
             && effective_y.is_finite()
-            && effective_y < page_origin(current_page) + page_step_at(current_page)
-            && effective_y + height > page_origin(current_page) + page_step_at(current_page);
+            && effective_y < page_end
+            && effective_y + height > page_end;
         let grid_item_overflow = candidate.is_grid_item
             && item_can_move
             && effective_y.is_finite()
-            && effective_y < page_origin(current_page) + page_step_at(current_page)
-            && effective_y + height > page_origin(current_page) + page_step_at(current_page);
+            && effective_y < page_end
+            && effective_y + height > page_end;
 
         // A relative offset is not part of the flow gap between siblings, so
         // a positioned box cannot tell its margin apart from its offset.
@@ -6681,6 +6678,17 @@ impl PrecedingFlexItems {
             |(previous_height, previous_page)| previous_height > 0.0 && previous_page == page,
         )
     }
+}
+
+/// Whether a box whose block-start edge is at `start_y` starts on the page
+/// spanning `page_start..page_end` and ends at `end_y` past that page's end.
+fn starts_on_page_and_runs_past_it(
+    start_y: f32,
+    end_y: f32,
+    page_start: f32,
+    page_end: f32,
+) -> bool {
+    start_y.is_finite() && start_y >= page_start && start_y < page_end && end_y > page_end
 }
 
 /// The trailing flex item of each flex container, found once per container.
