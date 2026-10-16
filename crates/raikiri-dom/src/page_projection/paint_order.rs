@@ -170,9 +170,18 @@ struct Layer {
     /// Whether the layer's end is listing its positioned boxes: the boxes it
     /// pops then list where they pop rather than waiting again.
     flushing: bool,
-    /// Where, among the positioned boxes still to list, the boxes handed on
-    /// by the box listed now go.
-    insert_at: usize,
+    /// The positioned boxes still to list once the layer's end is listing
+    /// them.
+    queue: Option<paint_rules::PositionedQueue<Frame>>,
+}
+
+/// How the queue of a layer's positioned boxes reads its frames.
+fn positioned_frame(frame: &Frame) -> paint_rules::PositionedFrame {
+    match frame {
+        Frame::Visit(node_id) => paint_rules::PositionedFrame::Box(*node_id),
+        Frame::PushClip(owner) => paint_rules::PositionedFrame::Open(*owner),
+        _ => paint_rules::PositionedFrame::Close,
+    }
 }
 
 impl Layer {
@@ -183,7 +192,7 @@ impl Layer {
             allowed,
             close,
             flushing: false,
-            insert_at: 0,
+            queue: None,
         }
     }
 }
@@ -541,23 +550,18 @@ impl Document {
                             _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                             LayerClose::Paint => {
                                 layer.flushing = true;
-                                let (frames, insert_at) = paint_rules::sort_positioned_frames(
-                                    self,
-                                    cascade,
-                                    &mut layer.positioned,
-                                    Frame::PopClip,
-                                    |frame| match frame {
-                                        Frame::Visit(node_id) => {
-                                            paint_rules::PositionedFrame::Box(*node_id)
-                                        }
-                                        Frame::PushClip(owner) => {
-                                            paint_rules::PositionedFrame::Open(*owner)
-                                        }
-                                        _ => paint_rules::PositionedFrame::Close,
-                                    },
-                                );
-                                layer.insert_at = insert_at;
-                                frames
+                                let positioned = std::mem::take(&mut layer.positioned);
+                                layer
+                                    .queue
+                                    .get_or_insert_with(|| {
+                                        paint_rules::PositionedQueue::new(
+                                            self,
+                                            cascade,
+                                            positioned,
+                                            positioned_frame,
+                                        )
+                                    })
+                                    .next(Frame::PopClip)
                             }
                             LayerClose::Hoist => Vec::new(),
                         })
@@ -585,10 +589,15 @@ impl Document {
                             }
                             // A box the enclosing layer lists at its end hands
                             // on its boxes to wait with the boxes still to list.
-                            LayerClose::Hoist if outer.flushing => {
-                                let at = outer.insert_at;
-                                outer.insert_at += layer.positioned.len();
-                                outer.positioned.splice(at..at, layer.positioned);
+                            LayerClose::Hoist if outer.queue.is_some() => {
+                                if let Some(queue) = &mut outer.queue {
+                                    queue.hand_on(
+                                        self,
+                                        cascade,
+                                        layer.positioned,
+                                        positioned_frame,
+                                    );
+                                }
                             }
                             LayerClose::Hoist => outer.positioned.extend(layer.positioned),
                         }

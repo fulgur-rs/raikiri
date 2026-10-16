@@ -465,10 +465,31 @@ fn boxes_inside_a_z_auto_positioned_box_sort_with_the_boxes_around_it() {
 }
 
 #[test]
+fn boxes_inside_many_z_auto_positioned_boxes_sort_together() {
+    // Each `z-index: auto` box hands on its box as it paints; all of them
+    // still end up in one order by level, the lowest level first.
+    let item = "position:relative;width:1px;height:1px;background:red";
+    let count = 200;
+    let html: String = (0..count)
+        .map(|n| {
+            format!(
+                "<div style='position:relative'><div id=b{n} style='{item};z-index:{}'></div></div>",
+                count - n
+            )
+        })
+        .collect();
+    let events = order(&html, 0);
+    let at: Vec<_> = (0..count)
+        .rev()
+        .map(|n| position(&events, &format!("Box(b{n})")))
+        .collect();
+    assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{events:?}");
+}
+
+#[test]
 fn boxes_inside_nested_z_auto_positioned_boxes_keep_their_clip_and_sort() {
     // The boxes handed on by a nested `z-index: auto` box join the others
-    // inside the clip of the block that holds them. The clip opens again
-    // around each box that hands boxes on, since those wait to be sorted.
+    // inside the clip of the block that holds them.
     let item = "position:relative;width:10px;height:10px;background:red";
     let events = order(
         &format!(
@@ -484,8 +505,8 @@ fn boxes_inside_nested_z_auto_positioned_boxes_keep_their_clip_and_sort() {
     assert_eq!(
         events[start..],
         [
-            "PushClip", "Box(p)", "PopClip", "PushClip", "Box(q)", "PopClip", "PushClip", "Box(b)",
-            "PopClip", "Box(c)", "PushClip", "Box(a)", "PopClip"
+            "PushClip", "Box(p)", "Box(q)", "Box(b)", "PopClip", "Box(c)", "PushClip", "Box(a)",
+            "PopClip"
         ],
     );
 }

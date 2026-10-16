@@ -10,6 +10,8 @@ use raikiri_style::property::{
 };
 use raikiri_style::{CascadeResult, ComputedColumnWidth, ComputedValues, PseudoElem, StyleNodeId};
 use raikiri_traits::{NodeKind, PaintClip, PaintInsets, PaintRect};
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 
 /// Whether `node_id` is painted on the page whose name is `active_page_name`.
 ///
@@ -601,144 +603,172 @@ fn positioned_layer_level(document: &Document, cascade: &CascadeResult, node_id:
         })
 }
 
-/// Takes the boxes that wait for the end of a layer that paint next, in
-/// stack level order, and the index in `frames` where the positioned boxes
-/// that the last of them hands on go.
+/// The boxes that wait for the end of a layer, in the order its end paints
+/// them.
 ///
 /// The boxes of a stacking context with a stack level of zero or more paint
 /// in stack level order, whatever their depth in the tree (CSS 2.1 Appendix
-/// E step 9), and in tree order within a level (step 8). The list holds them
-/// in tree order, inside the clips of the boxes between that keep them
+/// E step 9), and in tree order within a level (step 8). The layer lists
+/// them in tree order, inside the clips of the boxes between that keep them
 /// clipped. Each box keeps its clips: a clip opens again around a box moved
-/// out of it, and boxes that stay next to each other share it as before.
-/// `close` is the frame that closes a clip.
+/// out of it, and boxes that stay next to each other share it.
 ///
-/// A box that hands on the positioned boxes it holds (see
-/// [`hoists_positioned_content`]) ends the boxes taken: the painters learn
-/// its positioned descendants only as they paint it, so the rest stay in
-/// `frames`, and the descendants join them at the returned index, where
-/// the box was, to be sorted with them on the next call.
-pub fn sort_positioned_frames<F: Clone>(
-    document: &Document,
-    cascade: &CascadeResult,
-    frames: &mut Vec<F>,
-    close: F,
-    kind: impl Fn(&F) -> PositionedFrame,
-) -> (Vec<F>, usize) {
-    // The clips open in the list, each with the clip it opens inside and
-    // whether a box sits in it, and each box with the innermost clip open
-    // around it.
-    let mut clips: Vec<(Option<usize>, usize, bool)> = Vec::new();
-    let mut boxes: Vec<(i32, usize, Option<usize>, usize)> = Vec::new();
-    let mut open: Option<usize> = None;
-    for (index, frame) in frames.iter().enumerate() {
-        match kind(frame) {
-            PositionedFrame::Box(id) => {
-                let mut clip = open;
-                while let Some(current) = clip {
-                    clips[current].2 = true;
-                    clip = clips[current].0;
-                }
-                boxes.push((
-                    positioned_layer_level(document, cascade, id),
-                    id,
-                    open,
-                    index,
-                ));
+/// The queue hands out one box at a time, so that the positioned boxes a box
+/// hands on as it paints (see [`hoists_positioned_content`]) can join the
+/// queue, at the box's place in the tree, before the next box is taken.
+pub struct PositionedQueue<F> {
+    /// The frames that open a clip, each with the clip it opens inside.
+    clips: Vec<(Option<usize>, F)>,
+    /// The boxes, each with the innermost clip open around it.
+    boxes: Vec<(Option<usize>, F)>,
+    /// The boxes still to paint, by index into `boxes`, smallest key first.
+    order: BinaryHeap<Reverse<(PositionedKey, usize)>>,
+    /// The clips open around the box taken last, outermost first.
+    open: Vec<usize>,
+    /// The box taken last, by key and index into `boxes`.
+    last: Option<(PositionedKey, usize)>,
+}
+
+/// The order of a box in a [`PositionedQueue`]: the run of boxes it sorts
+/// in, its stack level, and its place in the tree, as the place of each box
+/// that handed it on, outermost first, followed by its index among the
+/// boxes handed on with it.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PositionedKey {
+    run: usize,
+    level: i32,
+    place: Vec<usize>,
+    index: usize,
+}
+
+impl<F: Clone> PositionedQueue<F> {
+    /// The queue of the boxes in `frames`, the list a layer kept in tree
+    /// order.
+    pub fn new(
+        document: &Document,
+        cascade: &CascadeResult,
+        frames: Vec<F>,
+        kind: impl Fn(&F) -> PositionedFrame,
+    ) -> Self {
+        let mut queue = Self {
+            clips: Vec::new(),
+            boxes: Vec::new(),
+            order: BinaryHeap::new(),
+            open: Vec::new(),
+            last: None,
+        };
+        // A positioned box with `z-index: auto` is no stacking context. When
+        // it keeps the positioned boxes inside it, as one that clips does,
+        // the painters paint them with it. Moving it as a whole could put a
+        // descendant of another level on the wrong side of the boxes it
+        // passes, so such a box stays in place and the boxes on either side
+        // of it are sorted apart.
+        let mut run = 0;
+        let mut position = 0;
+        queue.push(frames, None, &kind, |id| {
+            let at = position;
+            position += 1;
+            let key = |run, level| PositionedKey {
+                run,
+                level,
+                place: vec![at],
+                index: 0,
+            };
+            if held_levels(document, cascade, id) != HeldLevels::None
+                && !hoists_positioned_content(document, cascade, id)
+            {
+                run += 2;
+                key(run - 1, 0)
+            } else {
+                key(run, positioned_layer_level(document, cascade, id))
             }
-            PositionedFrame::Open(_) => {
-                clips.push((open, index, false));
-                open = Some(clips.len() - 1);
+        });
+        queue
+    }
+
+    /// Adds the boxes in `frames`, which the box taken last handed on, at
+    /// its place in the tree and inside its clips.
+    pub fn hand_on(
+        &mut self,
+        document: &Document,
+        cascade: &CascadeResult,
+        frames: Vec<F>,
+        kind: impl Fn(&F) -> PositionedFrame,
+    ) {
+        let Some((last, taken)) = self.last.clone() else {
+            return;
+        };
+        let clip = self.boxes[taken].0;
+        let mut place = last.place;
+        place.push(last.index);
+        let mut index = 0;
+        self.push(frames, clip, &kind, |id| {
+            index += 1;
+            PositionedKey {
+                run: last.run,
+                level: positioned_layer_level(document, cascade, id),
+                place: place.clone(),
+                index,
             }
-            PositionedFrame::Close => open = open.and_then(|clip| clips[clip].0),
-        }
+        });
     }
-    if boxes.is_empty() {
-        frames.clear();
-        return (Vec::new(), 0);
-    }
-    let hoists: Vec<bool> = boxes
-        .iter()
-        .map(|(_, id, _, _)| {
-            cascade
-                .computed
-                .get(*id)
-                .is_some_and(|cv| !matches!(cv.position, PositionValue::Static))
-                && hoists_positioned_content(document, cascade, *id)
-        })
-        .collect();
-    if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0)
-        && clips.iter().all(|clip| clip.2)
-        && !hoists.contains(&true)
-    {
-        return (std::mem::take(frames), 0);
-    }
-    // A positioned box with `z-index: auto` is no stacking context. When it
-    // keeps the positioned boxes inside it, as one that clips does, the
-    // painters paint them with it. Moving it as a whole could put a
-    // descendant of another level on the wrong side of the boxes it passes,
-    // so such a box stays in place and the boxes on either side of it are
-    // sorted apart.
-    let mut run = 0;
-    let mut keys = Vec::with_capacity(boxes.len());
-    for ((level, id, _, _), hoists) in boxes.iter().zip(&hoists) {
-        if !hoists && held_levels(document, cascade, *id) != HeldLevels::None {
-            keys.push((run + 1, 0));
-            run += 2;
-        } else {
-            keys.push((run, *level));
-        }
-    }
-    let mut keyed: Vec<_> = keys
-        .into_iter()
-        .zip(boxes.into_iter().zip(hoists))
-        .collect();
-    keyed.sort_by_key(|(key, _)| *key);
-    let mut sorted = Vec::new();
-    let mut taken = vec![false; frames.len()];
-    let mut handed_on = None;
-    // The clips open around the last box emitted, outermost first.
-    let mut open: Vec<usize> = Vec::new();
-    for (_, ((_, _, innermost, index), hoists)) in keyed {
+
+    /// The frames that paint the next box, with the clips that open and
+    /// close around it, or the frames that close the clips still open once
+    /// no box is left. `close` is the frame that closes a clip.
+    pub fn next(&mut self, close: F) -> Vec<F> {
+        let mut frames = Vec::new();
+        let Some(Reverse((key, index))) = self.order.pop() else {
+            frames.extend(self.open.drain(..).map(|_| close.clone()));
+            return frames;
+        };
         let mut path = Vec::new();
-        let mut clip = innermost;
+        let mut clip = self.boxes[index].0;
         while let Some(current) = clip {
             path.push(current);
-            clip = clips[current].0;
+            clip = self.clips[current].0;
         }
         path.reverse();
-        let shared = open.iter().zip(&path).take_while(|(a, b)| a == b).count();
-        for _ in shared..open.len() {
-            sorted.push(close.clone());
-        }
-        open.truncate(shared);
+        let shared = self
+            .open
+            .iter()
+            .zip(&path)
+            .take_while(|(a, b)| a == b)
+            .count();
+        frames.extend(self.open.drain(shared..).map(|_| close.clone()));
         for &clip in &path[shared..] {
-            sorted.push(frames[clips[clip].1].clone());
-            open.push(clip);
+            frames.push(self.clips[clip].1.clone());
+            self.open.push(clip);
         }
-        sorted.push(frames[index].clone());
-        taken[index] = true;
-        if hoists {
-            handed_on = Some(index);
-            break;
+        frames.push(self.boxes[index].1.clone());
+        self.last = Some((key, index));
+        frames
+    }
+
+    /// Adds the boxes and clips in `frames`, a list in tree order, inside
+    /// clip `parent`, keying each box by `key`.
+    fn push(
+        &mut self,
+        frames: Vec<F>,
+        parent: Option<usize>,
+        kind: &impl Fn(&F) -> PositionedFrame,
+        mut key: impl FnMut(usize) -> PositionedKey,
+    ) {
+        let mut open = parent;
+        for frame in frames {
+            match kind(&frame) {
+                PositionedFrame::Box(id) => {
+                    self.order.push(Reverse((key(id), self.boxes.len())));
+                    self.boxes.push((open, frame));
+                }
+                PositionedFrame::Open(_) => {
+                    self.clips.push((open, frame));
+                    open = Some(self.clips.len() - 1);
+                }
+                PositionedFrame::Close => open = open.and_then(|clip| self.clips[clip].0),
+            }
         }
     }
-    for _ in 0..open.len() {
-        sorted.push(close.clone());
-    }
-    let at = handed_on.map_or(0, |index| {
-        taken[..index].iter().filter(|taken| !**taken).count()
-    });
-    let rest: Vec<F> = match handed_on {
-        Some(_) => std::mem::take(frames)
-            .into_iter()
-            .zip(taken)
-            .filter_map(|(frame, taken)| (!taken).then_some(frame))
-            .collect(),
-        None => Vec::new(),
-    };
-    *frames = rest;
-    (sorted, at)
 }
 
 /// The boxes with a non-zero stack level in the enclosing stacking context
