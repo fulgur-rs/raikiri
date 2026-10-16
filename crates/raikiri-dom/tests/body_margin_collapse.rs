@@ -210,3 +210,70 @@ fn a_body_margin_taller_than_a_page_starts_the_content_on_a_later_page() {
     let d = fragments(html, "d");
     assert_eq!((d[0].0, d[0].2), (1, 0.0), "{d:?}");
 }
+
+#[test]
+fn leading_empty_block_margins_collapse_with_the_body() {
+    for (prefix, expected) in [
+        ("<div style='margin-top:20px'></div>", 20.0),
+        ("<div style='margin:30px 0 -25px'></div>", 5.0),
+        (
+            "<div style='margin:20px 0 -5px'></div><div style='margin:30px 0 -10px'></div>",
+            20.0,
+        ),
+        (
+            "<div style='margin-top:20px'><div style='margin:30px 0 -10px'></div></div>",
+            20.0,
+        ),
+        (
+            "<div style='margin:20px 0 -5px'></div><div id=probe style='height:10px;margin-top:30px'></div>",
+            35.0,
+        ),
+    ] {
+        let html = format!(
+            "<!DOCTYPE html><style>body{{margin:10px;font:10px/10px Ahem}}</style>{prefix}X"
+        );
+        assert_close(top(&html, "#text"), expected, &html);
+    }
+}
+
+#[test]
+fn leading_empty_generated_block_margins_collapse_with_the_body() {
+    for (generated, content, expected) in [
+        ("margin-top:20px", "X", 20.0),
+        ("margin:30px 0 -10px", "X", 20.0),
+        (
+            "margin:20px 0 -5px",
+            "<div style='margin:30px 0 -10px'></div>X",
+            20.0,
+        ),
+        (
+            "margin-top:20px",
+            "<div style='height:10px;margin-top:30px'></div>X",
+            40.0,
+        ),
+    ] {
+        let html = format!(
+            "<!DOCTYPE html><style>body{{margin:10px;font:10px/10px Ahem}}body::before{{content:'';display:block;{generated}}}</style>{content}"
+        );
+        assert_close(top(&html, "#text"), expected, &html);
+    }
+}
+
+#[test]
+fn a_border_or_line_ends_the_leading_empty_margin_chain() {
+    for (content, expected) in [
+        (
+            "<div style='margin-top:5px;border-top:1px solid'></div><div style='margin-top:30px'></div>X",
+            41.0,
+        ),
+        (
+            "X<div style='margin-top:20px'></div><span id=probe>Y</span>",
+            10.0,
+        ),
+    ] {
+        let html = format!(
+            "<!DOCTYPE html><style>body{{margin:10px;font:10px/10px Ahem}}</style>{content}"
+        );
+        assert_close(top(&html, "#text"), expected, &html);
+    }
+}
