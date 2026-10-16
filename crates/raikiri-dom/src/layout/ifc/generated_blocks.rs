@@ -654,9 +654,13 @@ pub(crate) fn close(
     let Some(top) = content_top.or_else(|| {
         // An empty box whose margins collapse through it (CSS 2.1 8.3.1)
         // adds them to the margins above it.
-        (height > 0.0 || edges.bottom > 0.0).then(|| *flow.y + flow.pending.resolve())
+        (height > 0.0 || edges.bottom > 0.0 || block.formatting_root)
+            .then(|| *flow.y + flow.pending.resolve())
     }) else {
         *flow.pending = flow.pending.collapse_with_margin(margins.bottom);
+        if open.starts_paragraph {
+            *flow.leading_block_margin = Some(*flow.pending);
+        }
         return None;
     };
     if open.starts_paragraph && !open.has_clearance {
