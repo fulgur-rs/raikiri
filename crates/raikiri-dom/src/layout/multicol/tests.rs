@@ -3291,6 +3291,20 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
         None,
         nested
     ));
+    // So does text before it, which collapsible white space is not.
+    let text_before = |text: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent =
+            doc.append_element(Some(body), "div", Style::default(), Some(DEFINITE_COLUMNS));
+        doc.append_text(parent, text);
+        let nested = doc.append_element(Some(parent), "div", Style::default(), Some(nested));
+        layout_nested_flex_float_fixture(&mut doc);
+        lineless::starts_the_outer_columns(&doc, nested)
+    };
+    assert!(!text_before("text"));
+    assert!(text_before("  "));
     // A parent that is not a multicol container may itself sit anywhere.
     assert!(!starts("display:block;height:100px", None, nested));
     // The root has no parent.
