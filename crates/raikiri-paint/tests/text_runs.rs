@@ -1593,3 +1593,26 @@ fn transforms_of_inline_boxes_do_not_omit_fixed_text() {
     let page = result.pages().next().expect("page");
     assert!(page.text_runs().iter().any(|run| run.text == "fixed"));
 }
+
+#[test]
+fn turned_paragraphs_in_flex_or_grid_boxes_with_column_properties_keep_their_runs() {
+    // CSS Multi-column Layout 1, 2: the column properties apply only to
+    // block containers, so these boxes have no columns to clip the text to.
+    for display in ["flex", "grid"] {
+        let result = lay_out(
+            &format!(
+                "<div style=\"display: {display}; columns: 2; height: 40px\">\
+                 <div style=\"transform: rotate(10deg)\"><p>turned</p></div></div>"
+            ),
+            "",
+        );
+        let page = result.pages().next().expect("page");
+        assert!(
+            page.text_runs()
+                .iter()
+                .any(|run| run.text.contains("turned")),
+            "{display}"
+        );
+        check(&result);
+    }
+}
