@@ -942,7 +942,7 @@ fn compute_ifc_root(
         });
     let mut output =
         compute_leaf_layout(inputs, &layout_style, resolve_calc, |known, available| {
-            let (size, baseline, leading, escaping) = measure_ifc_root(
+            let measured = measure_ifc_root(
                 tree,
                 idx,
                 known.width,
@@ -951,11 +951,11 @@ fn compute_ifc_root(
                 measure,
                 block_ctx,
             );
-            measured_size = Some(size);
-            content_baseline = baseline;
-            leading_margin = leading;
-            escaping_margin = escaping;
-            size
+            measured_size = Some(measured.size);
+            content_baseline = measured.first_baseline;
+            leading_margin = measured.top_margin;
+            escaping_margin = measured.bottom_margin;
+            measured.size
         });
     if auto_vertical_block_size && let Some(measured_size) = measured_size {
         // `compute_leaf_layout` retains Taffy's intrinsic auto-width probe as
@@ -1122,6 +1122,23 @@ struct IfcMeasure {
     definite_height: Option<f32>,
 }
 
+/// A paragraph measurement with its independent leading and trailing margin sets.
+struct IfcMeasurement {
+    size: Size<f32>,
+    first_baseline: Option<f32>,
+    top_margin: CollapsibleMarginSet,
+    bottom_margin: CollapsibleMarginSet,
+}
+
+impl IfcMeasurement {
+    const EMPTY: Self = Self {
+        size: Size::ZERO,
+        first_baseline: None,
+        top_margin: CollapsibleMarginSet::ZERO,
+        bottom_margin: CollapsibleMarginSet::ZERO,
+    };
+}
+
 /// Measure an ifc root's paragraph for taffy's leaf measure callback.
 ///
 /// The width comes from `available.width`, which taffy has already reduced to
@@ -1140,12 +1157,7 @@ fn measure_ifc_root(
     available: Size<AvailableSpace>,
     measure: IfcMeasure,
     mut block_ctx: Option<&mut BlockContext<'_>>,
-) -> (
-    Size<f32>,
-    Option<f32>,
-    CollapsibleMarginSet,
-    CollapsibleMarginSet,
-) {
+) -> IfcMeasurement {
     use crate::layout::ifc::{flow, root::with_state};
     let width_only = std::mem::take(&mut tree.ifc_width_probe);
     let Some((probe, writing_mode, fixed, direction)) = tree.nodes[idx].ifc.as_ref().map(|root| {
@@ -1160,12 +1172,7 @@ fn measure_ifc_root(
             },
         )
     }) else {
-        return (
-            Size::ZERO,
-            None,
-            CollapsibleMarginSet::ZERO,
-            CollapsibleMarginSet::ZERO,
-        );
+        return IfcMeasurement::EMPTY; // cov:ignore: pre-existing defensive guard; valid IFC classification always carries a paragraph.
     };
     // A fixed box shrinks to fit against its containing block, the page area
     // (CSS 2.1 10.1), while taffy hands it its parent's room. A min-content or
@@ -1234,12 +1241,7 @@ fn measure_ifc_root(
         })
     };
     let Some((min_content, max_content)) = intrinsics else {
-        return (
-            Size::ZERO,
-            None,
-            CollapsibleMarginSet::ZERO,
-            CollapsibleMarginSet::ZERO,
-        );
+        return IfcMeasurement::EMPTY; // cov:ignore: pre-existing defensive guard; paragraph assignment requires the document's inline engine.
     };
     let (min_content, max_content) = (
         min_content.max(box_intrinsics.blocks.0),
@@ -1261,12 +1263,10 @@ fn measure_ifc_root(
     // A width-only probe of a horizontal paragraph is answered here; its
     // height is never read (the caller restores the node's layout cache).
     if width_only && !vertical && measure.run_mode == RunMode::ComputeSize {
-        return (
-            Size { width, height: 0.0 },
-            None,
-            CollapsibleMarginSet::ZERO,
-            CollapsibleMarginSet::ZERO,
-        );
+        return IfcMeasurement {
+            size: Size { width, height: 0.0 },
+            ..IfcMeasurement::EMPTY
+        };
     }
     // The content of a multicol container is broken at the column width and
     // split in its columns. A paragraph with boxes of its own is laid out in
@@ -1470,7 +1470,12 @@ fn measure_ifc_root(
         root.multicol_fragments = fragments.map(|(fragments, _)| fragments);
         tree.nodes[idx].ifc = Some(root);
     }
-    (size, baseline, leading_margin, escaping_margin)
+    IfcMeasurement {
+        size,
+        first_baseline: baseline,
+        top_margin: leading_margin,
+        bottom_margin: escaping_margin,
+    }
 }
 
 fn fragmentation_context_for_ifc(
