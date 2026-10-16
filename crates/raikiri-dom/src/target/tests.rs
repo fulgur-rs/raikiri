@@ -853,3 +853,22 @@ fn pseudo_local_reversed_counter_is_calculated_from_its_own_directives() {
         assert_eq!(text, expected);
     }
 }
+
+#[test]
+fn counter_set_without_a_counter_in_scope_instantiates_one() {
+    let mut doc = Document::new();
+    let set = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("counter-set: c 3"),
+    );
+    let following = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("counter-increment: c"),
+    );
+    doc.mark_in_document_flags();
+    assert_eq!(innermost_values(&doc, &[set, following], "c"), [3, 4]);
+}

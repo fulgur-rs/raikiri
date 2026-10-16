@@ -495,11 +495,10 @@ impl CounterScopes {
         cv: &raikiri_style::ComputedValues,
         implicit_list_item: Option<&(SmolStr, i32)>,
     ) {
-        if self.live_calculated == 0 {
-            return;
-        }
-        let ReversedStarts::Collect(tallies) = &mut self.reversed else {
-            return;
+        // Only the collecting walk numbers calculated levels.
+        let tallies = match &mut self.reversed {
+            ReversedStarts::Collect(tallies) if self.live_calculated > 0 => tallies,
+            _ => return,
         };
         let mut seen: Vec<&str> = Vec::new();
         let names = cv
@@ -554,13 +553,12 @@ impl CounterScopes {
                 self.stacks.remove(name);
             }
         }
-        if let Some(levels) = self.levels.get_mut(name) {
-            if levels.pop().is_some_and(|level| level.calculated.is_some()) {
-                self.live_calculated -= 1;
-            }
-            if levels.is_empty() {
-                self.levels.remove(name);
-            }
+        let level = self.levels.get_mut(name).and_then(Vec::pop);
+        if self.levels.get(name).is_some_and(Vec::is_empty) {
+            self.levels.remove(name);
+        }
+        if level.is_some_and(|level| level.calculated.is_some()) {
+            self.live_calculated -= 1;
         }
     }
 
