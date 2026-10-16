@@ -1210,6 +1210,19 @@ fn border_width_snaps_only_when_a_valid_device_scale_is_configured() {
 }
 
 #[test]
+fn border_width_snap_floors_authored_width_matching_a_grid_float() {
+    let mut border = SpecifiedValues::initial().border.top;
+    border.style = BorderStyle::Solid;
+    border.width = Length::Px(49.333332);
+    let ctx = ResolveContext::initial().with_border_width_device_scale(Some(1.5));
+
+    assert_eq!(
+        resolve_border(border, ComputedLength(16.0), None, &ctx).width,
+        ComputedLength(48.666668),
+    );
+}
+
+#[test]
 fn border_width_snap_keeps_none_and_hidden_styles_zero() {
     let mut border = SpecifiedValues::initial().border.top;
     border.width = Length::Px(49.75);

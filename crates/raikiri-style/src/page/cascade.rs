@@ -866,7 +866,7 @@ impl PageCascadeResult {
             &page.computed,
             rule.declarations
                 .iter()
-                .map(|declaration| declaration.value.clone()),
+                .map(|declaration| ComputedOverValue::Specified(declaration.value.clone())),
             &page.context,
             normal_line_height,
         )
@@ -1808,6 +1808,21 @@ pub(crate) fn cascade_page_with_normal_line_height(
         line_height: own_line_height,
         custom_properties,
     };
+    // Only margin boxes inherit from the page context's computed values.
+    let page_style = (!margin_boxes.is_empty()).then(|| {
+        Arc::new(PageStyle {
+            computed: computed_over(
+                inherited,
+                cascade_order
+                    .iter()
+                    .filter_map(|(_, key)| resolved.get(key).cloned())
+                    .map(ComputedOverValue::Resolved),
+                &ctx,
+                normal_line_height,
+            ),
+            context: ctx,
+        })
+    });
     let declarations: HashMap<PropertyKey, PropertyValue> = resolved
         .into_iter()
         .map(|(k, v)| {
@@ -1825,20 +1840,6 @@ pub(crate) fn cascade_page_with_normal_line_height(
             )
         })
         .collect();
-    // Only margin boxes inherit from the page context's computed values.
-    let page_style = (!margin_boxes.is_empty()).then(|| {
-        Arc::new(PageStyle {
-            computed: computed_over(
-                inherited,
-                cascade_order
-                    .iter()
-                    .filter_map(|(_, key)| declarations.get(key).cloned()),
-                &ctx,
-                normal_line_height,
-            ),
-            context: ctx,
-        })
-    });
     PageCascadeResult {
         declarations,
         size: size_best
@@ -1856,25 +1857,53 @@ pub(crate) fn cascade_page_with_normal_line_height(
 /// The computed values of a box whose winning declarations are `values`,
 /// over the parent style `parent`. CSS-wide keywords default against
 /// `parent`; every other value computes as for an element.
+enum ComputedOverValue {
+    Resolved(ResolvedAgainstInherited),
+    Specified(PropertyValue),
+}
+
 fn computed_over(
     parent: &ComputedValues,
-    values: impl Iterator<Item = PropertyValue>,
+    values: impl Iterator<Item = ComputedOverValue>,
     ctx: &ResolveContext,
     normal_line_height: Option<&dyn NormalLineHeight>,
 ) -> ComputedValues {
     let mut specified = SpecifiedValues::inherit_from(parent);
     for value in values {
-        let value = match value {
-            // `resolve_against_inherited` takes the root's line height as
-            // the `lh` basis of `font-size`, which holds for the page
-            // context only. Finalizing resolves it against `parent`.
-            value @ (PropertyValue::FontSize(_)
-            | PropertyValue::FontSizeCalc(_)
-            | PropertyValue::FontSizeRelative(_)
-            | PropertyValue::FontSizeKeyword(_)) => value,
-            value => resolve_against_inherited(value, parent, ctx).into_property_value(),
+        let (value, border_width_is_computed) = match value {
+            ComputedOverValue::Resolved(resolved) => {
+                let border_width_is_computed =
+                    std::array::from_fn(|index| resolved.border_width_is_computed(index));
+                (resolved.into_property_value(), border_width_is_computed)
+            }
+            ComputedOverValue::Specified(value) => {
+                // These forms need the box's finalization path: phase-2
+                // `resolve_against_inherited` uses the root line height for
+                // `lh`, while margin-box font-size resolves against its page
+                // parent. Keyword sizing also needs the parent's font family.
+                let keep_for_finalization = matches!(
+                    &value,
+                    PropertyValue::FontSize(_)
+                        | PropertyValue::FontSizeCalc(_)
+                        | PropertyValue::FontSizeRelative(_)
+                        | PropertyValue::FontSizeKeyword(_)
+                );
+                if keep_for_finalization {
+                    (value, [false; 5])
+                } else {
+                    let resolved = resolve_against_inherited(value, parent, ctx);
+                    let border_width_is_computed =
+                        std::array::from_fn(|index| resolved.border_width_is_computed(index));
+                    (resolved.into_property_value(), border_width_is_computed)
+                }
+            }
         };
         apply_value(value, &mut specified);
+        for (index, is_computed) in border_width_is_computed.into_iter().enumerate() {
+            if is_computed {
+                specified.border_width_is_computed[index] = true;
+            }
+        }
     }
     specified.finalize_with(parent, ctx, normal_line_height)
 }

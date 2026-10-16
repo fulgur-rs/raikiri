@@ -22,9 +22,9 @@ use crate::resolve::{
     ComputedLengthPercentage, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrNormal,
     ComputedTextIndent, ResolveContext, lift_border_spacing, lift_length_percentage_or_calc,
     lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
-    resolve_background_size, resolve_border, resolve_border_radius, resolve_border_spacing,
-    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
-    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_background_size, resolve_border_radius, resolve_border_spacing,
+    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_css_position,
+    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
     resolve_line_height, resolve_margin_length_or_auto,
@@ -242,11 +242,17 @@ impl PageLengthBasis<'_> {
     }
     /// One `border-*` side: absolutize the width and apply the style gate.
     ///
-    /// Routed through [`resolve_border`] rather than re-testing
+    /// Routed through [`crate::resolve::resolve_border`] rather than re-testing
     /// `none` / `hidden` locally — that function's doc calls itself the single
     /// source of the gate and forbids re-implementing the rule elsewhere.
-    fn border(self, specified: Border) -> Border {
-        let computed = resolve_border(specified, self.font_size, self.own_line_height, self.ctx);
+    fn border(self, specified: Border, width_is_computed: bool) -> Border {
+        let computed = resolve_border_with_width_provenance(
+            specified,
+            self.font_size,
+            self.own_line_height,
+            width_is_computed,
+            self.ctx,
+        );
         Border {
             width: Length::Px(computed.width.px()),
             style: computed.style,
@@ -255,15 +261,18 @@ impl PageLengthBasis<'_> {
     }
     /// A `border-*-width` longhand, gated by the side's computed style.
     ///
-    /// `color` is a placeholder — [`resolve_border`] never reads it, and the
+    /// `color` is a placeholder — [`crate::resolve::resolve_border`] never reads it, and the
     /// longhand carries no colour. Building the `Border` here (instead of
     /// branching on `style` locally) is what keeps the gate single-sourced.
-    fn border_width(self, width: Length, style: BorderStyle) -> Length {
-        self.border(Border {
-            width,
-            style,
-            color: BorderColor::CurrentColor,
-        })
+    fn border_width(self, width: Length, style: BorderStyle, width_is_computed: bool) -> Length {
+        self.border(
+            Border {
+                width,
+                style,
+                color: BorderColor::CurrentColor,
+            },
+            width_is_computed,
+        )
         .width
     }
     /// An `outline-width` longhand, gated by the winning `outline-style`.
@@ -502,6 +511,8 @@ pub(super) fn absolutize_in_page_context(
     outline_style: OutlineStyle,
     overflow_pair: OverflowXY,
 ) -> PropertyValue {
+    let border_width_is_computed: [bool; 5] =
+        std::array::from_fn(|index| value.border_width_is_computed(index));
     let value = value.into_property_value();
     let basis = PageLengthBasis {
         font_size,
@@ -674,7 +685,9 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::FontFeatureSettings(settings) => {
             PropertyValue::FontFeatureSettings(settings.canonicalized())
         }
-        PropertyValue::ColumnRule(rule) => PropertyValue::ColumnRule(basis.border(rule)),
+        PropertyValue::ColumnRule(rule) => {
+            PropertyValue::ColumnRule(basis.border(rule, border_width_is_computed[4]))
+        }
         PropertyValue::ColumnRuleWidth(width) => PropertyValue::ColumnRuleWidth(Length::Px(
             resolve_length(width, font_size, own_line_height, ctx).px(),
         )),
@@ -811,23 +824,52 @@ pub(super) fn absolutize_in_page_context(
         // ── border-*-width (absolutized **and** style-gated) ──────────────
         // A `none`/`hidden` style computes the width to 0, hence `border_styles`.
         PropertyValue::BorderTopWidth(w) => {
-            PropertyValue::BorderTopWidth(basis.border_width(w, border_styles.top))
+            PropertyValue::BorderTopWidth(basis.border_width(
+                w,
+                border_styles.top,
+                border_width_is_computed[0],
+            ))
         }
         PropertyValue::BorderRightWidth(w) => {
-            PropertyValue::BorderRightWidth(basis.border_width(w, border_styles.right))
+            PropertyValue::BorderRightWidth(basis.border_width(
+                w,
+                border_styles.right,
+                border_width_is_computed[1],
+            ))
         }
         PropertyValue::BorderBottomWidth(w) => {
-            PropertyValue::BorderBottomWidth(basis.border_width(w, border_styles.bottom))
+            PropertyValue::BorderBottomWidth(basis.border_width(
+                w,
+                border_styles.bottom,
+                border_width_is_computed[2],
+            ))
         }
         PropertyValue::BorderLeftWidth(w) => {
-            PropertyValue::BorderLeftWidth(basis.border_width(w, border_styles.left))
+            PropertyValue::BorderLeftWidth(basis.border_width(
+                w,
+                border_styles.left,
+                border_width_is_computed[3],
+            ))
         }
         // Each side gates on the style it carries itself, not on `border_styles`.
-        PropertyValue::Border(sides) => PropertyValue::Border(sides.map(|b| basis.border(b))),
-        PropertyValue::BorderTop(border) => PropertyValue::BorderTop(basis.border(border)),
-        PropertyValue::BorderRight(border) => PropertyValue::BorderRight(basis.border(border)),
-        PropertyValue::BorderBottom(border) => PropertyValue::BorderBottom(basis.border(border)),
-        PropertyValue::BorderLeft(border) => PropertyValue::BorderLeft(basis.border(border)),
+        PropertyValue::Border(sides) => PropertyValue::Border(Sides {
+            top: basis.border(sides.top, border_width_is_computed[0]),
+            right: basis.border(sides.right, border_width_is_computed[1]),
+            bottom: basis.border(sides.bottom, border_width_is_computed[2]),
+            left: basis.border(sides.left, border_width_is_computed[3]),
+        }),
+        PropertyValue::BorderTop(border) => {
+            PropertyValue::BorderTop(basis.border(border, border_width_is_computed[0]))
+        }
+        PropertyValue::BorderRight(border) => {
+            PropertyValue::BorderRight(basis.border(border, border_width_is_computed[1]))
+        }
+        PropertyValue::BorderBottom(border) => {
+            PropertyValue::BorderBottom(basis.border(border, border_width_is_computed[2]))
+        }
+        PropertyValue::BorderLeft(border) => {
+            PropertyValue::BorderLeft(basis.border(border, border_width_is_computed[3]))
+        }
         v @ (
             PropertyValue::BorderCssWide(_)
             | PropertyValue::BorderTopCssWide(_)
@@ -838,10 +880,26 @@ pub(super) fn absolutize_in_page_context(
         PropertyValue::BorderStyle(sides) => PropertyValue::BorderStyle(sides),
         PropertyValue::BorderWidth(sides) => {
             PropertyValue::BorderWidth(Sides {
-                top: basis.border_width(sides.top, border_styles.top),
-                right: basis.border_width(sides.right, border_styles.right),
-                bottom: basis.border_width(sides.bottom, border_styles.bottom),
-                left: basis.border_width(sides.left, border_styles.left),
+                top: basis.border_width(
+                    sides.top,
+                    border_styles.top,
+                    border_width_is_computed[0],
+                ),
+                right: basis.border_width(
+                    sides.right,
+                    border_styles.right,
+                    border_width_is_computed[1],
+                ),
+                bottom: basis.border_width(
+                    sides.bottom,
+                    border_styles.bottom,
+                    border_width_is_computed[2],
+                ),
+                left: basis.border_width(
+                    sides.left,
+                    border_styles.left,
+                    border_width_is_computed[3],
+                ),
             })
         }
         PropertyValue::BorderColor(sides) => PropertyValue::BorderColor(sides),

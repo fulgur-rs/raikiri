@@ -857,7 +857,7 @@ fn inherited_border_width_remains_snapped_at_fractional_device_scale() {
         "div",
         Some("border-top-width:inherit;border-top-style:solid"),
     );
-    let nearby_unsnapped = doc.push_element(0, "div", Some("border-top:49.333328px solid"));
+    let grid_collision_authored = doc.push_element(0, "div", Some("border-top:49.333332px solid"));
     let tree = build_rule_tree(&doc);
     let options = crate::CascadeOptions {
         border_width_device_scale: Some(1.5),
@@ -876,9 +876,46 @@ fn inherited_border_width_remains_snapped_at_fractional_device_scale() {
         assert_eq!(result.computed[node].border.top.width, snapped);
     }
     assert_eq!(
-        result.computed[nearby_unsnapped].border.top.width,
+        result.computed[grid_collision_authored].border.top.width,
         ComputedLength(73.0 / 1.5),
     );
+}
+
+#[test]
+fn border_revert_to_var_inherit_keeps_the_computed_device_pixel_value() {
+    let mut doc = TestDoc::new();
+    let parent = doc.push_element(
+        0,
+        "div",
+        Some("border-right-width:49.75px;border-right-style:solid"),
+    );
+    let child = doc.push_element(parent, "div", None);
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "div div { --u: inherit; border-right-width: var(--u); border-right-style: solid; }",
+        crate::ruletree::Origin::User,
+    );
+    tree.add_stylesheet(
+        "div div { border-right-width: revert; }",
+        crate::ruletree::Origin::Author,
+    );
+    let options = crate::CascadeOptions {
+        border_width_device_scale: Some(1.5),
+        ..crate::CascadeOptions::default()
+    };
+
+    let result = crate::cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+
+    let snapped = ComputedLength(74.0 / 1.5);
+    assert_eq!(result.computed[parent].border.right.width, snapped);
+    assert_eq!(result.computed[child].border.right.width, snapped);
 }
 
 #[test]

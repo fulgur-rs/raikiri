@@ -237,6 +237,32 @@ fn root_page_and_margin_keep_inherited_background_color_symbolic() {
     }
 }
 
+#[test]
+fn margin_box_font_size_lh_uses_page_line_height_and_rlh_uses_root() {
+    let root = ComputedValues {
+        font_size: ComputedLength(10.0),
+        line_height: ComputedLineHeight::Length(ComputedLength(20.0)),
+        ..ComputedValues::initial()
+    };
+
+    for (font_size, expected) in [("1lh", 40.0), ("calc(1lh + 1px)", 41.0), ("1rlh", 20.0)] {
+        let result = page(
+            &format!(
+                "@page {{ line-height: 40px; @top-center {{ content: 'x'; font-size: {font_size} }} }}"
+            ),
+            &root,
+        );
+        let rule = result
+            .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+            .expect("top-center margin box");
+        assert_eq!(
+            result.margin_box_style(&rule, None).font_size,
+            ComputedLength(expected),
+            "font-size: {font_size}",
+        );
+    }
+}
+
 const BLUE: CssColor = CssColor {
     r: 0,
     g: 0,
@@ -1943,6 +1969,70 @@ fn page_border_width_uses_the_requested_device_scale() {
     assert_eq!(
         page.declarations().get(&PropertyKey::BorderTopWidth),
         Some(&PropertyValue::BorderTopWidth(Length::Px(49.0))),
+    );
+}
+
+#[test]
+fn page_style_and_margin_box_do_not_resnap_a_computed_border_width() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { border-top-width: 49.75px; border-top-style: solid; \
+         @top-center { content: 'x'; border-top-width: inherit; border-top-style: inherit } }",
+        Origin::Author,
+    );
+    let page = cascade_page_with_media_context_and_border_width_device_scale(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::default(),
+        Some(1.5),
+    );
+
+    let snapped = 74.0 / 1.5;
+    assert_eq!(
+        page.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(snapped))),
+    );
+    let rule = page
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .expect("top-center margin box");
+    assert_eq!(
+        page.margin_box_style(&rule, None).border.top.width.px(),
+        snapped,
+    );
+}
+
+#[test]
+fn page_explicit_inherit_keeps_the_root_computed_border_width() {
+    let mut root = ComputedValues::initial();
+    root.border.top.width = crate::resolve::ComputedLength(74.0 / 1.5);
+    root.border.top.style = BorderStyle::Solid;
+
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { border-top-width: inherit; border-top-style: inherit; \
+         @top-center { content: 'x'; border-top-width: inherit; border-top-style: inherit } }",
+        Origin::Author,
+    );
+    let page = cascade_page_with_media_context_and_border_width_device_scale(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&root),
+        &MediaContext::default(),
+        Some(1.5),
+    );
+
+    let inherited = 74.0 / 1.5;
+    assert_eq!(
+        page.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(inherited))),
+    );
+    let rule = page
+        .cascade_margin_box(PageMarginBoxSlot::TopCenter)
+        .expect("top-center margin box");
+    assert_eq!(
+        page.margin_box_style(&rule, None).border.top.width.px(),
+        inherited,
     );
 }
 

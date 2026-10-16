@@ -1086,7 +1086,14 @@ fn resolve_border_css_wide(
     candidates: ElementCandidates<'_>,
     winner: RankedDecl,
     deferred_resolver: &mut DeferredResolver<'_>,
-) -> Option<PropertyValue> {
+) -> Option<(PropertyValue, bool)> {
+    let width_is_selected = matches!(
+        key,
+        crate::property::PropertyKey::BorderTopWidth
+            | crate::property::PropertyKey::BorderRightWidth
+            | crate::property::PropertyKey::BorderBottomWidth
+            | crate::property::PropertyKey::BorderLeftWidth
+    );
     let parent_side = |side: &crate::resolve::ComputedBorder| -> Border {
         Border {
             width: inherited_border_width(side.width()),
@@ -1153,9 +1160,17 @@ fn resolve_border_css_wide(
             _ => PropertyValue::BorderLeftColor(border.color),
         }
     };
+    let pick_keyword = |keyword| match keyword {
+        CssWideKeyword::Inherit => (pick_field(parent_border()), width_is_selected),
+        CssWideKeyword::Initial
+        | CssWideKeyword::Unset
+        | CssWideKeyword::Revert
+        | CssWideKeyword::RevertLayer => (pick_field(initial_border()), false),
+    };
     match keyword {
-        CssWideKeyword::Inherit => Some(pick_field(parent_border())),
-        CssWideKeyword::Initial | CssWideKeyword::Unset => Some(pick_field(initial_border())),
+        CssWideKeyword::Inherit | CssWideKeyword::Initial | CssWideKeyword::Unset => {
+            Some(pick_keyword(keyword))
+        }
         CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
             let rollback = find_rollback(candidates, key, winner.idx, keyword, deferred_resolver)?;
             // Resolve one level: Deferred needs custom-property substitution;
@@ -1178,16 +1193,8 @@ fn resolve_border_css_wide(
                         | PropertyValue::BorderTopColorCssWide(kw)
                         | PropertyValue::BorderRightColorCssWide(kw)
                         | PropertyValue::BorderBottomColorCssWide(kw)
-                        | PropertyValue::BorderLeftColorCssWide(kw) => match kw {
-                            CssWideKeyword::Inherit => Some(pick_field(parent_border())),
-                            CssWideKeyword::Initial | CssWideKeyword::Unset => {
-                                Some(pick_field(initial_border()))
-                            }
-                            CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-                                Some(pick_field(initial_border()))
-                            }
-                        },
-                        v => Some(v),
+                        | PropertyValue::BorderLeftColorCssWide(kw) => Some(pick_keyword(kw)),
+                        v => Some((v, false)),
                     }
                 }
                 PropertyValue::BorderTopWidthCssWide(kw)
@@ -1201,19 +1208,10 @@ fn resolve_border_css_wide(
                 | PropertyValue::BorderTopColorCssWide(kw)
                 | PropertyValue::BorderRightColorCssWide(kw)
                 | PropertyValue::BorderBottomColorCssWide(kw)
-                | PropertyValue::BorderLeftColorCssWide(kw) => match kw {
-                    CssWideKeyword::Inherit => Some(pick_field(parent_border())),
-                    CssWideKeyword::Initial | CssWideKeyword::Unset => {
-                        Some(pick_field(initial_border()))
-                    }
-                    // Unreachable via find_rollback's skip, defensive fallback.
-                    CssWideKeyword::Revert | CssWideKeyword::RevertLayer => {
-                        Some(pick_field(initial_border()))
-                    }
-                },
-                v => Some(v),
+                | PropertyValue::BorderLeftColorCssWide(kw) => Some(pick_keyword(kw)),
+                v => Some((v, false)),
             }
-            .or(Some(pick_field(initial_border())))
+            .or(Some((pick_field(initial_border()), false)))
         }
     }
 }
@@ -1301,6 +1299,7 @@ pub(crate) fn apply_winners(
                     _ => value,
                 };
             let mut literal_inherit = false;
+            let mut inherited_border_width = false;
             let mut default_value = |value: PropertyValue| {
                 if let PropertyValue::Deferred(marker) = &value {
                     literal_inherit = marker.css_wide_keyword() == Some(CssWideKeyword::Inherit)
@@ -1309,6 +1308,19 @@ pub(crate) fn apply_winners(
                 }
                 resolve_defaulting_value(value, inherited)
             };
+            let mut resolve_border_wide =
+                |keyword, deferred_resolver: &mut DeferredResolver<'_>| {
+                    let (value, width_is_computed) = resolve_border_css_wide(
+                        keyword,
+                        winner_key,
+                        inherited,
+                        candidates,
+                        winner,
+                        deferred_resolver,
+                    )?;
+                    inherited_border_width |= width_is_computed;
+                    Some(value)
+                };
             let value = match value {
                 PropertyValue::BorderRadiusInherit => Some(PropertyValue::BorderRadius(Box::new(
                     inherited_border_radius_value(inherited),
@@ -1363,14 +1375,7 @@ pub(crate) fn apply_winners(
                             | PropertyValue::BorderRightColorCssWide(kw)
                             | PropertyValue::BorderBottomColorCssWide(kw)
                             | PropertyValue::BorderLeftColorCssWide(kw),
-                        ) => resolve_border_css_wide(
-                            kw,
-                            winner_key,
-                            inherited,
-                            candidates,
-                            winner,
-                            &mut deferred_resolver,
-                        ),
+                        ) => resolve_border_wide(kw, &mut deferred_resolver),
                         Some(PropertyValue::TextDecorationThicknessInherit) => {
                             Some(PropertyValue::TextDecorationThickness(
                                 inherited_text_decoration_thickness(inherited),
@@ -1390,14 +1395,9 @@ pub(crate) fn apply_winners(
                 | PropertyValue::BorderTopColorCssWide(kw)
                 | PropertyValue::BorderRightColorCssWide(kw)
                 | PropertyValue::BorderBottomColorCssWide(kw)
-                | PropertyValue::BorderLeftColorCssWide(kw) => resolve_border_css_wide(
-                    *kw,
-                    winner_key,
-                    inherited,
-                    candidates,
-                    winner,
-                    &mut deferred_resolver,
-                ),
+                | PropertyValue::BorderLeftColorCssWide(kw) => {
+                    resolve_border_wide(*kw, &mut deferred_resolver)
+                }
                 _ => Some(to_slot(value.clone())),
             };
             // Record the precedence even for a value invalid at computed-value
@@ -1444,6 +1444,27 @@ pub(crate) fn apply_winners(
                 white_space_applied.note(&value);
                 radius_applied.note(&value);
                 apply_value(value, specified);
+                if inherited_border_width
+                    || (literal_inherit
+                        && matches!(
+                            winner_key,
+                            crate::property::PropertyKey::ColumnRule
+                                | crate::property::PropertyKey::ColumnRuleWidth
+                        ))
+                {
+                    let index = match winner_key {
+                        crate::property::PropertyKey::BorderTopWidth => Some(0),
+                        crate::property::PropertyKey::BorderRightWidth => Some(1),
+                        crate::property::PropertyKey::BorderBottomWidth => Some(2),
+                        crate::property::PropertyKey::BorderLeftWidth => Some(3),
+                        crate::property::PropertyKey::ColumnRule
+                        | crate::property::PropertyKey::ColumnRuleWidth => Some(4),
+                        _ => None,
+                    };
+                    if let Some(index) = index {
+                        specified.border_width_is_computed[index] = true;
+                    }
+                }
             }
         }
     }
@@ -2354,7 +2375,8 @@ pub(crate) fn resolve_against_inherited(
     inherited: &ComputedValues,
     ctx: &ResolveContext,
 ) -> ResolvedAgainstInherited {
-    ResolvedAgainstInherited(match resolve_defaulting_value(value, inherited) {
+    let border_width_is_computed = inherited_border_width_provenance(&value);
+    let value = match resolve_defaulting_value(value, inherited) {
         PropertyValue::BorderRadiusInherit => {
             PropertyValue::BorderRadius(Box::new(inherited_border_radius_value(inherited)))
         },
@@ -2972,7 +2994,34 @@ pub(crate) fn resolve_against_inherited(
         | PropertyValue::ColumnRuleWidth(_)
         | PropertyValue::ColumnRuleStyle(_)
         | PropertyValue::ColumnRuleColor(_)) => v,
-    })
+    };
+    ResolvedAgainstInherited(value, border_width_is_computed)
+}
+
+fn inherited_border_width_provenance(value: &PropertyValue) -> [bool; 5] {
+    let mut provenance = [false; 5];
+    match value {
+        PropertyValue::BorderTopWidthCssWide(CssWideKeyword::Inherit) => provenance[0] = true,
+        PropertyValue::BorderRightWidthCssWide(CssWideKeyword::Inherit) => provenance[1] = true,
+        PropertyValue::BorderBottomWidthCssWide(CssWideKeyword::Inherit) => provenance[2] = true,
+        PropertyValue::BorderLeftWidthCssWide(CssWideKeyword::Inherit) => provenance[3] = true,
+        PropertyValue::BorderCssWide(CssWideKeyword::Inherit) => provenance[..4].fill(true),
+        PropertyValue::BorderTopCssWide(CssWideKeyword::Inherit) => provenance[0] = true,
+        PropertyValue::BorderRightCssWide(CssWideKeyword::Inherit) => provenance[1] = true,
+        PropertyValue::BorderBottomCssWide(CssWideKeyword::Inherit) => provenance[2] = true,
+        PropertyValue::BorderLeftCssWide(CssWideKeyword::Inherit) => provenance[3] = true,
+        PropertyValue::Deferred(deferred)
+            if matches!(
+                deferred.key,
+                crate::property::PropertyKey::ColumnRule
+                    | crate::property::PropertyKey::ColumnRuleWidth
+            ) && deferred.css_wide_keyword() == Some(CssWideKeyword::Inherit) =>
+        {
+            provenance[4] = true;
+        }
+        _ => {}
+    }
+    provenance
 }
 
 /// Wrapper that **encodes in its type** passage through phase 2
@@ -2998,8 +3047,8 @@ pub(crate) fn resolve_against_inherited(
 /// This wrapper marks values that have passed phase 2 before phase 3.
 /// The direct constructor exists only in test builds; production code uses
 /// [`resolve_against_inherited`].
-#[derive(Debug)]
-pub(crate) struct ResolvedAgainstInherited(PropertyValue);
+#[derive(Clone, Debug)]
+pub(crate) struct ResolvedAgainstInherited(PropertyValue, [bool; 5]);
 
 impl ResolvedAgainstInherited {
     /// Extract a value that has passed phase 2, taking ownership.
@@ -3014,10 +3063,14 @@ impl ResolvedAgainstInherited {
         &self.0
     }
 
+    pub(crate) fn border_width_is_computed(&self, index: usize) -> bool {
+        self.1[index]
+    }
+
     /// Test-only constructor for phase-3 inputs.
     #[cfg(test)]
     pub(crate) fn for_test(value: PropertyValue) -> Self {
-        Self(value)
+        Self(value, [false; 5])
     }
 }
 
@@ -3226,10 +3279,22 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::Margin(sides) => expand_margin(*sides, |v| apply_value(v, target)),
         PropertyValue::MarginInline(pair) => expand_margin_inline(pair, |v| apply_value(v, target)),
         PropertyValue::MarginBlock(pair) => expand_margin_block(pair, |v| apply_value(v, target)),
-        PropertyValue::BorderTopWidth(v) => target.border.top.width = v,
-        PropertyValue::BorderRightWidth(v) => target.border.right.width = v,
-        PropertyValue::BorderBottomWidth(v) => target.border.bottom.width = v,
-        PropertyValue::BorderLeftWidth(v) => target.border.left.width = v,
+        PropertyValue::BorderTopWidth(v) => {
+            target.border.top.width = v;
+            target.border_width_is_computed[0] = false;
+        }
+        PropertyValue::BorderRightWidth(v) => {
+            target.border.right.width = v;
+            target.border_width_is_computed[1] = false;
+        }
+        PropertyValue::BorderBottomWidth(v) => {
+            target.border.bottom.width = v;
+            target.border_width_is_computed[2] = false;
+        }
+        PropertyValue::BorderLeftWidth(v) => {
+            target.border.left.width = v;
+            target.border_width_is_computed[3] = false;
+        }
         PropertyValue::BorderTopStyle(v) => target.border.top.style = v,
         PropertyValue::BorderRightStyle(v) => target.border.right.style = v,
         PropertyValue::BorderBottomStyle(v) => target.border.bottom.style = v,
@@ -3523,7 +3588,10 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         PropertyValue::ColumnFill(value) => target.column_fill = value,
         PropertyValue::ColumnSpan(value) => target.column_span = value,
         PropertyValue::ColumnWidth(value) => target.column_width = value,
-        PropertyValue::ColumnRuleWidth(value) => target.column_rule.width = value,
+        PropertyValue::ColumnRuleWidth(value) => {
+            target.column_rule.width = value;
+            target.border_width_is_computed[4] = false;
+        }
         PropertyValue::ColumnRuleStyle(value) => target.column_rule.style = value,
         PropertyValue::ColumnRuleColor(value) => {
             target.column_rule.color = value;
@@ -3531,6 +3599,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
         }
         PropertyValue::ColumnRule(value) => {
             target.column_rule = value;
+            target.border_width_is_computed[4] = false;
             target.set_contextual_color(crate::property::PropertyKey::ColumnRuleColor, None);
         }
         // cov:ignore: direct unexpanded shorthand callers are defensive-only.

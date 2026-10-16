@@ -3804,6 +3804,21 @@ pub fn resolve_border(
     own_line_height: Option<ComputedLength>,
     ctx: &ResolveContext,
 ) -> ComputedBorder {
+    resolve_border_with_width_provenance(specified, font_size, own_line_height, false, ctx)
+}
+
+/// Resolve a border while retaining a width that is already a computed value.
+///
+/// Explicit CSS-wide inheritance lifts the parent's computed width back into
+/// `Length::Px` for staging. That width must not be snapped a second time, but
+/// the current border's `none` / `hidden` style still gates it to zero.
+pub(crate) fn resolve_border_with_width_provenance(
+    specified: Border,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    width_is_computed: bool,
+    ctx: &ResolveContext,
+) -> ComputedBorder {
     // `matches!` + else: pass the specified width through for any unknown
     // future `BorderStyle` variant, treating it as visible. This fail-safe
     // prevents a newly added visible style from silently getting zero width.
@@ -3812,9 +3827,10 @@ pub fn resolve_border(
         ComputedLength::ZERO
     } else {
         let width = resolve_length(specified.width, font_size, own_line_height, ctx);
-        match ctx.border_width_device_scale {
-            Some(scale) => snap_border_width_to_device_pixels(width, scale),
-            None => width,
+        match (width_is_computed, ctx.border_width_device_scale) {
+            (true, _) => width,
+            (false, Some(scale)) => snap_border_width_to_device_pixels(width, scale),
+            (false, None) => width,
         }
     };
     ComputedBorder {
@@ -3836,18 +3852,8 @@ fn snap_border_width_to_device_pixels(width: ComputedLength, scale: f32) -> Comp
     if css_px <= 0.0 || !device_px.is_finite() || device_px <= 0.0 {
         return width;
     }
-    // The snapped CSS-pixel result is stored as f32. At non-integer scales,
-    // converting an integer device-pixel width back to f32 can place it just
-    // below that grid point when multiplied by the scale again (for example,
-    // 74 / 1.5 becomes 49.333332, whose product is 73.999998). Recognize that
-    // exact representable grid width as already snapped so inherited values
-    // remain idempotent without rounding other nearby values up.
-    let nearest_device_px = device_px.round();
-    let already_snapped = (nearest_device_px / scale) as f32 == css_px;
     let snapped_device_px = if device_px < 1.0 {
         1.0
-    } else if already_snapped {
-        nearest_device_px
     } else {
         device_px.floor()
     };
