@@ -2996,6 +2996,26 @@ fn an_absolute_box_past_the_last_column_continues_in_overflow_columns() {
 }
 
 #[test]
+fn an_absolute_box_breaks_where_its_overflow_below_its_border_ends() {
+    let (mut doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            "display:block;position:relative;height:10px",
+            &["position:absolute;top:0;width:10px;height:0;border-top:10px solid"],
+        )],
+    );
+    let absolute = ids[0].1[0];
+    // The child sits below the border, so the box reaches 105px down.
+    doc.append_element(Some(absolute), "div", Style::default(), Some("height:95px"));
+    layout_nested_flex_float_fixture(&mut doc);
+    let columns: Vec<usize> = fragment_rects(&doc, absolute)
+        .into_iter()
+        .map(|(column, ..)| column)
+        .collect();
+    assert_eq!(columns, vec![0, 1]);
+}
+
+#[test]
 fn the_last_column_of_an_unlimited_container_holds_the_rest_of_an_absolute_box() {
     let (doc, _, ids) = absolute_fixture(
         "display:block;width:200px;columns:2;column-gap:0",

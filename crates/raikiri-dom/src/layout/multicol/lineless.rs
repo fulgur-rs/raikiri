@@ -191,11 +191,13 @@ fn absolute_pieces(
         for node in absolute_children(tree, child) {
             let layout = tree.nodes[node].unrounded_layout;
             let start = flow_top + layout.location.y;
-            // Descendants that overflow the box are cut with it.
+            // Descendants that overflow the box are cut with it. The overflow
+            // rect is measured from the padding box, so shift it by the
+            // border to compare it with the border box.
             let extent = layout
                 .size
                 .height
-                .max(layout.scrollable_overflow_rect.bottom);
+                .max(layout.border.top + layout.scrollable_overflow_rect.bottom);
             if !start.is_finite() || !extent.is_finite() || start < 0.0 {
                 return None;
             }
@@ -232,7 +234,10 @@ fn absolute_pieces(
                         x: dx,
                         y: -parent.top,
                         width: (layout.location.x
-                            + layout.size.width.max(layout.scrollable_overflow_rect.right))
+                            + layout
+                                .size
+                                .width
+                                .max(layout.border.left + layout.scrollable_overflow_rect.right))
                         .max(context.column_width),
                         height: if Some(column) == last_column {
                             (end - column as f32 * column_height).max(column_height)
