@@ -4138,7 +4138,7 @@ fn paginate_flow(
     // Footnotes are collected in source order and stacked upward from the
     // bottom edge of their anchor page. The normal-flow height is removed
     // from `flow_shift`, leaving the box only in this page-local area.
-    let mut footnote_heights: HashMap<u32, f32> = HashMap::new();
+    let mut footnote_areas = FootnoteAreas::default();
     let mut page_names = PageNames::new(
         selected_page_name(cascade, body_id).or_else(|| first_page_name(document, cascade)),
     );
@@ -4820,11 +4820,13 @@ fn paginate_flow(
             };
             let note_page = current_page.max(anchor_page);
             check_candidate_page!('candidate_loop, note_page);
-            let used = footnote_heights.entry(note_page).or_insert(0.0);
-            let target_y = (page_origin(note_page) + page_step_at(note_page) - *used - height)
-                .max(page_origin(note_page));
+            let target_y = footnote_areas.stack(
+                note_page,
+                page_origin(note_page),
+                page_origin(note_page) + page_step_at(note_page),
+                height,
+            );
             materialize_y(document, node_id, target_y);
-            *used += height;
             flow_shift -= height;
             reach.include(note_page, false);
             saw_child = true;
@@ -6583,6 +6585,25 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// The footnote area at the bottom of each page, filled upward in source order.
+#[derive(Default)]
+struct FootnoteAreas {
+    /// The height of the notes already stacked on each page.
+    used: HashMap<u32, f32>,
+}
+
+impl FootnoteAreas {
+    /// Stacks a note of `height` on `page`, whose box spans `page_start` to
+    /// `page_end`, and returns the note's top: just above the notes already
+    /// there, but not above the page start.
+    fn stack(&mut self, page: u32, page_start: f32, page_end: f32, height: f32) -> f32 {
+        let used = self.used.entry(page).or_insert(0.0);
+        let top = (page_end - *used - height).max(page_start);
+        *used += height;
+        top
+    }
 }
 
 /// The trailing flex item of each flex container, found once per container.
