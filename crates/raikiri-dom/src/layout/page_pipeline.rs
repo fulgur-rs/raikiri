@@ -1763,6 +1763,82 @@ fn paragraph_line_bounds(
     )
 }
 
+/// A break moved up between a paragraph's lines: the first line that moves,
+/// how far it and the lines after it move, and the page they move to.
+type LineBreakMove = (usize, f32, u32);
+
+/// The break that keeps the last `widows` lines of a paragraph together at
+/// the top of the page after `current_page` (CSS Fragmentation 3 §3.3).
+/// `line_metrics` holds each line's top and bottom relative to the
+/// paragraph's lines at `effective_y`. Returns `None` when those lines would
+/// not fit on that page either, so the natural break stays.
+fn widows_break_on_next_page(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    current_page: u32,
+    widows: usize,
+    page_origins: &PageOrigins,
+) -> Option<LineBreakMove> {
+    let total_lines = line_metrics.len();
+    Some(total_lines - widows)
+        .filter(|&line| {
+            // Widows that cannot fit on the next page would not be kept
+            // together there either; the natural break stays.
+            let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
+            moved_height <= page_origins.step_at(current_page.saturating_add(1)) + 0.001 && line > 0
+        })
+        .map(|line| {
+            let target_y = page_origins.origin(current_page.saturating_add(1));
+            (
+                line,
+                target_y - (effective_y + line_metrics[line].0),
+                current_page.saturating_add(1),
+            )
+        })
+        .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0)
+}
+
+/// The break that keeps `widows` lines on the last page of a paragraph that
+/// runs over more pages, whether or not `earlier_break` repaired its first
+/// break. The pages between are full, so only the break before the last page
+/// can leave too few; it moves up the same way while the page before keeps
+/// `orphans`.
+fn widows_break_on_last_page(
+    line_metrics: &[(f32, f32)],
+    effective_y: f32,
+    current_page: u32,
+    orphans: usize,
+    widows: usize,
+    earlier_break: Option<LineBreakMove>,
+    page_origins: &PageOrigins,
+) -> Option<LineBreakMove> {
+    let total_lines = line_metrics.len();
+    let moved = |line: usize| {
+        earlier_break
+            .filter(|&(first, _, _)| line >= first)
+            .map_or(0.0, |(_, shift, _)| shift)
+    };
+    let top = |line: usize| effective_y + line_metrics[line].0 + moved(line);
+    let bottom = |line: usize| effective_y + line_metrics[line].1 + moved(line);
+    // Each line belongs to the page that holds its center (see
+    // [`line_center_on_page`]).
+    let page_of =
+        |line: usize| page_origins.page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001);
+    let first_on = |page: u32| {
+        (0..total_lines)
+            .find(|&line| page_of(line) >= page)
+            .unwrap_or(total_lines)
+    };
+    let last_page = page_of(total_lines - 1);
+    let line = total_lines - widows;
+    (last_page > current_page.saturating_add(1)
+        && total_lines - first_on(last_page) < widows
+        && line >= first_on(last_page - 1) + orphans
+        && bottom(total_lines - 1) - top(line) <= page_origins.step_at(last_page) + 0.001)
+        .then(|| (line, page_origins.origin(last_page) - top(line), last_page))
+        .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0)
+}
+
 /// Moves line `line` of the paragraph `root` and every line after it down by
 /// `shift`, and grows the root's box to hold them.
 fn shift_ifc_lines_from(document: &mut Document, root: usize, line: usize, shift: f32) {
@@ -4386,62 +4462,31 @@ fn paginate_flow(
                 // earlier lines (CSS Fragmentation 3 §3.3), so the last
                 // `widows` lines start the next page and the lines before
                 // them stay.
-                let earlier_break = (splittable
-                    && violates_line_constraints
-                    && lines_before_break >= orphans)
-                    .then(|| total_lines - widows)
-                    .filter(|&line| {
-                        // Widows that cannot fit on the next page would not
-                        // be kept together there either; the natural break
-                        // stays.
-                        let moved_height = line_metrics[total_lines - 1].1 - line_metrics[line].0;
-                        moved_height <= page_step_at(current_page.saturating_add(1)) + 0.001
-                            && line > 0
-                    })
-                    .map(|line| {
-                        let target_y = page_origin(current_page.saturating_add(1));
-                        (
-                            line,
-                            target_y - (effective_y + line_metrics[line].0),
-                            current_page.saturating_add(1),
-                        )
-                    })
-                    .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0);
-                // A paragraph that runs over more pages keeps `widows` lines
-                // on its last page too, whether or not its first break could
-                // be repaired. The pages between are full, so only the break
-                // before the last page can leave too few; it moves up the
-                // same way while the page before keeps `orphans`.
+                let earlier_break =
+                    (splittable && violates_line_constraints && lines_before_break >= orphans)
+                        .then(|| {
+                            widows_break_on_next_page(
+                                &line_metrics,
+                                effective_y,
+                                current_page,
+                                widows,
+                                &page_origins,
+                            )
+                        })
+                        .flatten();
                 let final_break = splittable
                     .then(|| {
-                        let moved = |line: usize| {
-                            earlier_break
-                                .filter(|&(first, _, _)| line >= first)
-                                .map_or(0.0, |(_, shift, _)| shift)
-                        };
-                        let top = |line: usize| effective_y + line_metrics[line].0 + moved(line);
-                        let bottom = |line: usize| effective_y + line_metrics[line].1 + moved(line);
-                        // Each line belongs to the page that holds its
-                        // center (see `line_center_on_page`).
-                        let page_of = |line: usize| {
-                            page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001)
-                        };
-                        let first_on = |page: u32| {
-                            (0..total_lines)
-                                .find(|&line| page_of(line) >= page)
-                                .unwrap_or(total_lines)
-                        };
-                        let last_page = page_of(total_lines - 1);
-                        let line = total_lines - widows;
-                        (last_page > current_page.saturating_add(1)
-                            && total_lines - first_on(last_page) < widows
-                            && line >= first_on(last_page - 1) + orphans
-                            && bottom(total_lines - 1) - top(line)
-                                <= page_step_at(last_page) + 0.001)
-                            .then(|| (line, page_origin(last_page) - top(line), last_page))
+                        widows_break_on_last_page(
+                            &line_metrics,
+                            effective_y,
+                            current_page,
+                            orphans,
+                            widows,
+                            earlier_break,
+                            &page_origins,
+                        )
                     })
-                    .flatten()
-                    .filter(|(_, shift, _)| shift.is_finite() && *shift > 0.0);
+                    .flatten();
                 if earlier_break.is_some() || final_break.is_some() {
                     for (line, shift, page) in earlier_break.into_iter().chain(final_break) {
                         check_candidate_page!('candidate_loop, page);
