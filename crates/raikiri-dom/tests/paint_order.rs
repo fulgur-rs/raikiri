@@ -459,12 +459,17 @@ fn a_z_auto_positioned_box_holding_a_z_indexed_flex_item_stays_in_place() {
 #[test]
 fn hidden_and_nested_levels_do_not_stop_sorting() {
     // A `display: none` box paints nothing, and a box inside a nested
-    // stacking context is ordered within it, so neither keeps the boxes
+    // stacking context (including a flex item with `z-index: 0`) is ordered
+    // within it, so neither keeps the boxes
     // around the `z-index: auto` box from sorting.
     let item = "position:relative;width:10px;height:10px;background:red";
     for inner in [
         format!("<div style='display:none'><div style='{item};z-index:30'></div></div>"),
         format!("<div style='opacity:0.5'><div style='{item};z-index:30'></div></div>"),
+        format!(
+            "<div style='display:flex'><div style='z-index:0'>\
+             <div style='{item};z-index:30'></div></div></div>"
+        ),
     ] {
         let events = order(
             &format!(

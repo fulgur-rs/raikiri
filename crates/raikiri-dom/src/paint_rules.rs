@@ -694,6 +694,7 @@ fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id
             return true;
         }
         let nested = establishes_stacking_context(document, child, cv)
+            || is_z_indexed_item(document, cascade, child, cv)
             || (!matches!(cv.position, PositionValue::Static)
                 && matches!(cv.z_index, ZIndexValue::Integer(_)));
         if !nested {
