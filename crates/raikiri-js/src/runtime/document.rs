@@ -316,18 +316,19 @@ impl ReadyState {
 // ---- write / writeln (HTML "dynamic markup insertion") ----------------
 
 /// Where `document.write` inserts while a parser-run script executes: right
-/// after the script, then after the last node the script already wrote.
-#[derive(Clone, Copy, Debug)]
+/// after the script, then after the last node the script already wrote that
+/// is still beside it.
+#[derive(Clone, Debug)]
 pub(crate) struct WritePoint {
     script: usize,
-    last_written: Option<usize>,
+    written: Vec<usize>,
 }
 
 impl WritePoint {
     pub(crate) fn after(script: usize) -> Self {
         Self {
             script,
-            last_written: None,
+            written: Vec::new(),
         }
     }
 }
@@ -353,7 +354,9 @@ pub(crate) fn writeln(
 /// inserted after the script, following anything it wrote before. Markup
 /// split across calls is parsed one call at a time. Written `<script>`
 /// elements run once the writing script returns, before the parser's next
-/// script. A script that has left the tree has nowhere to write.
+/// script; unlike a parser that pauses at each script end tag, the markup
+/// written after such a script is already in the tree when it runs. A
+/// script that has left the tree has nowhere to write.
 ///
 /// With no running parser script there is no insertion point, and the steps
 /// would open the document again, which this runtime does not support:
@@ -370,7 +373,7 @@ fn write_markup(
         markup.push_str(&dom_string(args, index, context)?);
     }
     markup.push_str(suffix);
-    let Some(point) = with_state(context, |s| s.write_point)? else {
+    let Some(mut point) = with_state(context, |s| s.write_point.clone())? else {
         return Err(throw_dom_exception(
             context,
             "NotSupportedError",
@@ -386,8 +389,11 @@ fn write_markup(
         let tag = document.get_node(parent)?.tag_name()?.to_owned();
         let namespace = document.element_namespace_uri(parent)?.to_owned();
         let after = point
-            .last_written
-            .filter(|&last| document.parent_of(last) == Some(parent))
+            .written
+            .iter()
+            .rev()
+            .copied()
+            .find(|&node| document.parent_of(node) == Some(parent))
             .unwrap_or(point.script);
         let siblings = &document.get_node(parent)?.children;
         let next = siblings
@@ -423,12 +429,8 @@ fn write_markup(
     let inserted = with_state(context, |s| {
         s.host.document_mut().pre_insert(parent, holder, next)?;
         super::stylesheet::note_child_list_change(s, parent, &written);
-        if let Some(&last) = written.last() {
-            s.write_point = Some(WritePoint {
-                last_written: Some(last),
-                ..point
-            });
-        }
+        point.written.extend_from_slice(&written);
+        s.write_point = Some(point);
         Ok(())
     })?;
     inserted.map_err(|error| super::tree::map_mutation_error(context, error))?;

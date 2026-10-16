@@ -1406,6 +1406,16 @@ fn a_write_after_the_last_written_node_left_goes_after_the_script() {
 }
 
 #[test]
+fn a_write_after_the_last_written_node_left_follows_the_earlier_ones() {
+    let (report, children) = body_after_writes(&[
+        "document.write('a'); document.write('b'); document.body.childNodes[2].remove(); \
+         document.write('c');",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:a|#text:c|P:");
+}
+
+#[test]
 fn a_script_that_left_the_tree_writes_nothing() {
     let (report, children) =
         body_after_writes(&["document.currentScript.remove(); document.write('lost');"]);
