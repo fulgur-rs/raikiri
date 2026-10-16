@@ -965,6 +965,21 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
             "html {root_css}, body {body_css}"
         );
     }
+
+    // A hidden first body is passed over for the next body child.
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:100px;writing-mode:horizontal-tb"),
+    );
+    for body_css in ["display:none", "display:block;writing-mode:vertical-rl"] {
+        doc.append_element(Some(html), "body", Style::default(), Some(body_css));
+    }
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 700.0);
 }
 
 #[test]

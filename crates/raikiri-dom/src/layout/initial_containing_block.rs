@@ -21,9 +21,9 @@ pub(crate) fn prepare_root_element(document: &mut Document) {
 }
 
 /// The element whose writing mode and direction the ICB takes: the first
-/// HTML `body` child of an `html` root, else the root (CSS Writing Modes 3
-/// §8, principal writing mode). A `display: none` body is skipped, and
-/// containment on either element disables the propagation (CSS Containment
+/// HTML `body` child of an `html` root whose `display` is not `none`, else
+/// the root (CSS Writing Modes 3 §8, principal writing mode). Containment
+/// on the root or that body disables the propagation (CSS Containment
 /// 2 §2).
 fn principal_element(document: &Document, cascade: &CascadeResult, root: usize) -> usize {
     let contained = |id: usize| cascade.computed[id].contain != Contain::NONE;
@@ -34,8 +34,11 @@ fn principal_element(document: &Document, cascade: &CascadeResult, root: usize) 
         .children
         .iter()
         .copied()
-        .find(|&child| document.nodes[child].tag_name() == Some("body"))
-        .filter(|&body| cascade.computed[body].display != DisplayValue::None && !contained(body))
+        .find(|&child| {
+            document.nodes[child].tag_name() == Some("body")
+                && cascade.computed[child].display != DisplayValue::None
+        })
+        .filter(|&body| !contained(body))
         .unwrap_or(root)
 }
 
