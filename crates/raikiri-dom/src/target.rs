@@ -43,8 +43,8 @@
 use std::collections::HashMap;
 use std::mem::size_of;
 
-use raikiri_style::CascadeResult;
 use raikiri_style::property::DisplayValue;
+use raikiri_style::{CascadeResult, PseudoElem};
 use raikiri_traits::Symbol;
 use smol_str::SmolStr;
 
@@ -52,6 +52,25 @@ use crate::document::Document;
 
 /// The counter that list items increment implicitly (CSS Lists 3 §4.6).
 const LIST_ITEM_COUNTER: &str = "list-item";
+
+/// The computed style of the `::before` or `::after` of `element`, when that
+/// pseudo-element generates a box.
+fn generated_pseudo(
+    cascade: &CascadeResult,
+    element: usize,
+    pseudo: PseudoElem,
+) -> Option<&raikiri_style::ComputedValues> {
+    cascade
+        .pseudo
+        .get(&(raikiri_style::StyleNodeId::new(element as u64), pseudo))
+        .map(|style| style.as_ref())
+        .filter(|style| {
+            style.display != DisplayValue::None
+                && style.content.iter().any(|component| {
+                    !matches!(component, raikiri_style::property::ContentComponent::None)
+                })
+        })
+}
 
 /// The `list-item 1` increment a list item applies on top of its own
 /// `counter-increment` (CSS Lists 3 §4.6), or `None` when `list_item` is
@@ -418,7 +437,7 @@ pub fn counter_snapshots_with_budget(
     let mut scopes = CounterScopes::default();
     enum WalkStep {
         Enter(usize),
-        Exit,
+        Exit(usize),
     }
 
     let mut stack = vec![WalkStep::Enter(doc.root)];
@@ -455,16 +474,9 @@ pub fn counter_snapshots_with_budget(
                 // element's real children, while the pseudo's own content
                 // applies those directives locally in paint.
                 snapshots[idx] = scopes.snapshot(budget)?;
-                stack.push(WalkStep::Exit);
+                stack.push(WalkStep::Exit(idx));
                 pending_pops.push(Vec::new());
-                if let Some(before) = cascade.pseudo.get(&(
-                    raikiri_style::StyleNodeId::new(idx as u64),
-                    raikiri_style::PseudoElem::Before,
-                )) && before.display != DisplayValue::None
-                    && before.content.iter().any(|component| {
-                        !matches!(component, raikiri_style::property::ContentComponent::None)
-                    })
-                {
+                if let Some(before) = generated_pseudo(cascade, idx, PseudoElem::Before) {
                     scopes.apply(
                         before,
                         before.display == DisplayValue::ListItem,
@@ -475,7 +487,17 @@ pub fn counter_snapshots_with_budget(
                 stack.extend(node.children.iter().map(|&child| WalkStep::Enter(child)));
                 stack[children_start..].reverse();
             }
-            WalkStep::Exit => {
+            WalkStep::Exit(idx) => {
+                // `::after` is the element's last child: its directives
+                // follow the real children and stay in scope for the
+                // element's following siblings.
+                if let Some(after) = generated_pseudo(cascade, idx, PseudoElem::After) {
+                    scopes.apply(
+                        after,
+                        after.display == DisplayValue::ListItem,
+                        pending_pops.last_mut(),
+                    );
+                }
                 if let Some(names) = pending_pops.pop() {
                     scopes.pop(&names);
                 }

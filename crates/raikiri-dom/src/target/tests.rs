@@ -608,3 +608,43 @@ fn list_item_before_pseudo_increments_list_item_for_itself_and_children() {
     assert_eq!(text, "5");
     assert_eq!(snapshots[child][&Symbol::new("list-item")], vec![5]);
 }
+
+#[test]
+fn list_item_after_pseudo_increments_carry_to_following_siblings() {
+    let mut doc = Document::new();
+    let style = doc.append_element(
+        Some(doc.root_index()),
+        "style",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.append_text(
+        style,
+        "div::after { display: list-item; list-style: none; content: counter(list-item) }",
+    );
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "section",
+        Style::default(),
+        Some("counter-reset: list-item"),
+    );
+    let first = doc.append_element(Some(list), "div", Style::default(), None::<&str>);
+    let second = doc.append_element(Some(list), "div", Style::default(), None::<&str>);
+    let following = doc.append_element(Some(list), "span", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    for (node, expected) in [(first, "1"), (second, "2")] {
+        let (_, text) = crate::generated_content::generated_text(
+            &doc,
+            &cr,
+            node,
+            raikiri_style::PseudoElem::After,
+            &snapshots,
+        )
+        .expect("::after content");
+        assert_eq!(text, expected);
+    }
+    assert_eq!(snapshots[following][&Symbol::new("list-item")], vec![2]);
+}
