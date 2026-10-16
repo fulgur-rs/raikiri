@@ -322,7 +322,9 @@ fn stacking_contexts_in_different_items_paint_in_stack_level_order() {
         &format!(
             "<div style='display:flex'><div><div id=a style='{item};z-index:10'></div>\
              <div id=b style='{item};z-index:20'></div></div>\
-             <div><div id=c style='{item};z-index:15'></div></div></div>"
+             <div><div id=c style='{item};z-index:15'></div>\
+             <div style='position:relative'><p>x</p></div>\
+             <div style='position:relative;opacity:0.5'></div></div></div>"
         ),
         0,
     );
@@ -376,4 +378,23 @@ fn a_z_indexed_flex_item_paints_among_positioned_descendants_by_level() {
         position(&events, "Box(c)"),
     );
     assert!(a < c && c < b, "{events:?}");
+}
+
+#[test]
+fn a_z_auto_positioned_box_does_not_carry_its_descendants_below_others() {
+    // A positioned box with `z-index: auto` forms no stacking context, so
+    // the box with `z-index: 20` inside it still paints above `z-index: 10`.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div id=a style='{item};z-index:10'></div></div>\
+             <div><div id=p style='position:relative'>\
+             <div id=b style='{item};z-index:20'></div></div></div>"
+        ),
+        0,
+    );
+    assert!(
+        position(&events, "Box(a)") < position(&events, "Box(b)"),
+        "{events:?}"
+    );
 }

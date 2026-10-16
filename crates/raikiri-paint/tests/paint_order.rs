@@ -1181,4 +1181,12 @@ fn stacking_contexts_across_boxes_keep_native_and_public_order() {
         ),
         "",
     );
+    assert_same_order(
+        &format!(
+            "<div><div style='{item};z-index:10'></div></div>\
+             <div><div style='position:relative'>\
+             <div style='{item};z-index:20'></div></div></div>"
+        ),
+        "",
+    );
 }

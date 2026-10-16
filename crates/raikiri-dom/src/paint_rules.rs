@@ -586,12 +586,13 @@ pub fn sort_positioned_frames<F: Clone>(
     kind: impl Fn(&F) -> PositionedFrame,
 ) -> Vec<F> {
     // Each box with the clip frames open around it.
-    let mut boxes: Vec<(i32, Vec<F>, F)> = Vec::new();
+    let mut boxes: Vec<(i32, usize, Vec<F>, F)> = Vec::new();
     let mut open: Vec<F> = Vec::new();
     for frame in &frames {
         match kind(frame) {
             PositionedFrame::Box(id) => boxes.push((
                 positioned_layer_level(document, cascade, id),
+                id,
                 open.clone(),
                 frame.clone(),
             )),
@@ -601,13 +602,21 @@ pub fn sort_positioned_frames<F: Clone>(
             }
         }
     }
-    if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0) {
+    // A positioned box with `z-index: auto` is no stacking context, but the
+    // painters paint the positioned boxes inside it with it. Moving it as a
+    // whole could put a descendant of another level on the wrong side of
+    // the boxes it passes, so the list keeps tree order then.
+    if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0)
+        || boxes
+            .iter()
+            .any(|(_, id, _, _)| holds_leveled_positioned_box(document, cascade, *id))
+    {
         return frames;
     }
-    boxes.sort_by_key(|(level, _, _)| *level);
+    boxes.sort_by_key(|(level, _, _, _)| *level);
     let mut sorted = Vec::with_capacity(frames.len());
     let mut open: Vec<F> = Vec::new();
-    for (_, clips, frame) in boxes {
+    for (_, _, clips, frame) in boxes {
         let shared = open
             .iter()
             .zip(&clips)
@@ -627,6 +636,38 @@ pub fn sort_positioned_frames<F: Clone>(
         sorted.push(close.clone());
     }
     sorted
+}
+
+/// Whether element `id` is a positioned box with `z-index: auto` that forms
+/// no stacking context and holds a positioned box with a non-zero stack
+/// level.
+fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    let Some(cv) = cascade.computed.get(id) else {
+        return false; // cov:ignore: deferred boxes are elements with computed values
+    };
+    if matches!(cv.position, PositionValue::Static)
+        || matches!(cv.z_index, ZIndexValue::Integer(_))
+        || establishes_stacking_context(document, id, cv)
+    {
+        return false;
+    }
+    let mut stack: Vec<usize> = document
+        .get_node(id)
+        .map(|node| node.children.clone())
+        .unwrap_or_default();
+    while let Some(child) = stack.pop() {
+        let Some(node) = document.get_node(child) else {
+            continue; // cov:ignore: children are nodes of the document
+        };
+        if cascade.computed.get(child).is_some_and(|cv| {
+            !matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(level) if level != 0)
+        }) {
+            return true;
+        }
+        stack.extend(node.children.iter().copied());
+    }
+    false
 }
 
 /// Whether a flex or grid item with computed values `cv` has an integer
