@@ -439,6 +439,58 @@ fn boxes_beside_a_z_auto_positioned_box_still_sort() {
 }
 
 #[test]
+fn boxes_inside_a_z_auto_positioned_box_sort_with_the_boxes_around_it() {
+    // CSS 2.1 Appendix E step 9: the boxes inside a positioned box with
+    // `z-index: auto` belong to the enclosing stacking context, so they
+    // interleave by level with the boxes before and after it.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    for (inner, expected) in [
+        ("30", ["Box(p)", "Box(y)", "Box(x)", "Box(z)"]),
+        ("15", ["Box(p)", "Box(y)", "Box(z)", "Box(x)"]),
+    ] {
+        let events = order(
+            &format!(
+                "<div><div id=x style='{item};z-index:20'></div></div>\
+                 <div><div id=p style='position:relative;height:10px;background:red'>\
+                 <div id=z style='{item};z-index:{inner}'></div></div></div>\
+                 <div><div id=y style='{item};z-index:10'></div></div>"
+            ),
+            0,
+        );
+        let mut at: Vec<_> = expected.iter().map(|id| position(&events, id)).collect();
+        let listed = at.clone();
+        at.sort_unstable();
+        assert_eq!(at, listed, "z-index {inner}: {events:?}");
+    }
+}
+
+#[test]
+fn boxes_inside_nested_z_auto_positioned_boxes_keep_their_clip_and_sort() {
+    // The boxes handed on by a nested `z-index: auto` box join the others
+    // inside the clip of the block that holds them. The clip opens again
+    // around each box that hands boxes on, since those wait to be sorted.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div style='overflow:hidden'>\
+             <div id=p style='position:relative'><div id=q style='position:relative'>\
+             <div id=a style='{item};z-index:30'></div></div>\
+             <div id=b style='{item};z-index:5'></div></div></div>\
+             <div><div id=c style='{item};z-index:20'></div></div></div>"
+        ),
+        0,
+    );
+    let start = position(&events, "Box(p)") - 1;
+    assert_eq!(
+        events[start..],
+        [
+            "PushClip", "Box(p)", "PopClip", "PushClip", "Box(q)", "PopClip", "PushClip", "Box(b)",
+            "PopClip", "Box(c)", "PushClip", "Box(a)", "PopClip"
+        ],
+    );
+}
+
+#[test]
 fn a_z_auto_positioned_box_holding_a_z_indexed_flex_item_stays_in_place() {
     let item = "position:relative;width:10px;height:10px;background:red";
     let events = order(
@@ -454,6 +506,34 @@ fn a_z_auto_positioned_box_holding_a_z_indexed_flex_item_stays_in_place() {
         position(&events, "Box(a)") < position(&events, "Box(f)"),
         "{events:?}"
     );
+}
+
+#[test]
+fn a_z_auto_positioned_box_holding_boxes_it_paints_stays_in_place() {
+    // A box with a negative level, and a positioned box in a paragraph's
+    // lines or behind a clipping flex container, paint with the
+    // `z-index: auto` box, which keeps its place among the others.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    for inner in [
+        format!("<div style='{item};z-index:-1'></div><div id=f style='{item};z-index:20'></div>"),
+        format!("<span id=f style='position:relative;z-index:20;background:red'>x</span>"),
+        format!(
+            "<div style='display:flex;overflow:hidden'><div>\
+             <div id=f style='{item};z-index:20'></div></div></div>"
+        ),
+    ] {
+        let events = order(
+            &format!(
+                "<div><div id=a style='{item};z-index:10'></div></div>\
+                 <div><div style='position:relative'>{inner}</div></div>"
+            ),
+            0,
+        );
+        assert!(
+            position(&events, "Box(a)") < position(&events, "Box(f)"),
+            "{inner}: {events:?}"
+        );
+    }
 }
 
 #[test]

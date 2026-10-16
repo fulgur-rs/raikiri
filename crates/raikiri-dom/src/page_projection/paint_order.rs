@@ -170,6 +170,9 @@ struct Layer {
     /// Whether the layer's end is listing its positioned boxes: the boxes it
     /// pops then list where they pop rather than waiting again.
     flushing: bool,
+    /// Where, among the positioned boxes still to list, the boxes handed on
+    /// by the box listed now go.
+    insert_at: usize,
 }
 
 impl Layer {
@@ -180,6 +183,7 @@ impl Layer {
             allowed,
             close,
             flushing: false,
+            insert_at: 0,
         }
     }
 }
@@ -537,10 +541,10 @@ impl Document {
                             _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                             LayerClose::Paint => {
                                 layer.flushing = true;
-                                paint_rules::sort_positioned_frames(
+                                let (frames, insert_at) = paint_rules::sort_positioned_frames(
                                     self,
                                     cascade,
-                                    std::mem::take(&mut layer.positioned),
+                                    &mut layer.positioned,
                                     Frame::PopClip,
                                     |frame| match frame {
                                         Frame::Visit(node_id) => {
@@ -551,7 +555,9 @@ impl Document {
                                         }
                                         _ => paint_rules::PositionedFrame::Close,
                                     },
-                                )
+                                );
+                                layer.insert_at = insert_at;
+                                frames
                             }
                             LayerClose::Hoist => Vec::new(),
                         })
@@ -576,6 +582,13 @@ impl Document {
                                         into.push(Frame::PopClip);
                                     }
                                 }
+                            }
+                            // A box the enclosing layer lists at its end hands
+                            // on its boxes to wait with the boxes still to list.
+                            LayerClose::Hoist if outer.flushing => {
+                                let at = outer.insert_at;
+                                outer.insert_at += layer.positioned.len();
+                                outer.positioned.splice(at..at, layer.positioned);
                             }
                             LayerClose::Hoist => outer.positioned.extend(layer.positioned),
                         }

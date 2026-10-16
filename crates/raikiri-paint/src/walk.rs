@@ -2221,6 +2221,9 @@ pub(crate) fn paint_document_impl(
         /// Whether the layer's end is painting its positioned boxes: the
         /// boxes it pops then paint where they pop rather than waiting again.
         flushing: bool,
+        /// Where, among the positioned boxes still to paint, the boxes handed
+        /// on by the box painting now go.
+        insert_at: usize,
         /// Whether the standalone `::after` of the block that opened the
         /// layer waits right below the layer's end frame. It follows the
         /// block's content wherever that paints.
@@ -2234,6 +2237,7 @@ pub(crate) fn paint_document_impl(
                 allowed,
                 close,
                 flushing: false,
+                insert_at: 0,
                 after: false,
             }
         }
@@ -2471,21 +2475,26 @@ pub(crate) fn paint_document_impl(
                         _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                         LayerClose::Paint => {
                             layer.flushing = true;
-                            raikiri_dom::paint_rules::sort_positioned_frames(
-                                document,
-                                cascade,
-                                std::mem::take(&mut layer.positioned),
-                                PaintFrame::PopClip,
-                                |frame| match frame {
-                                    PaintFrame::Visit { node_id, .. } => {
-                                        raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
-                                    }
-                                    PaintFrame::PushClip { node_id, .. } => {
-                                        raikiri_dom::paint_rules::PositionedFrame::Open(*node_id)
-                                    }
-                                    _ => raikiri_dom::paint_rules::PositionedFrame::Close,
-                                },
-                            )
+                            let (frames, insert_at) =
+                                raikiri_dom::paint_rules::sort_positioned_frames(
+                                    document,
+                                    cascade,
+                                    &mut layer.positioned,
+                                    PaintFrame::PopClip,
+                                    |frame| match frame {
+                                        PaintFrame::Visit { node_id, .. } => {
+                                            raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
+                                        }
+                                        PaintFrame::PushClip { node_id, .. } => {
+                                            raikiri_dom::paint_rules::PositionedFrame::Open(
+                                                *node_id,
+                                            )
+                                        }
+                                        _ => raikiri_dom::paint_rules::PositionedFrame::Close,
+                                    },
+                                );
+                            layer.insert_at = insert_at;
+                            frames
                         }
                         LayerClose::Hoist => Vec::new(),
                     })
@@ -2525,6 +2534,13 @@ pub(crate) fn paint_document_impl(
                                     into.push(PaintFrame::PopClip);
                                 }
                             }
+                        }
+                        // A box the enclosing layer paints at its end hands on
+                        // its boxes to wait with the boxes still to paint.
+                        LayerClose::Hoist if outer.flushing => {
+                            let at = outer.insert_at;
+                            outer.insert_at += layer.positioned.len();
+                            outer.positioned.splice(at..at, layer.positioned);
                         }
                         LayerClose::Hoist => outer.positioned.extend(layer.positioned),
                     }
