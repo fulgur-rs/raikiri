@@ -9,6 +9,34 @@ pub(super) mod link_ancestor_tests;
 mod paged_spanning_tests;
 mod table_follow_tests;
 
+#[test]
+fn paragraph_line_fit_counts_the_lines_before_the_page_end() {
+    // Four 10px lines from y=70 on a page that ends at 100: three fit.
+    let lines = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0), (30.0, 40.0)];
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 2, 2);
+    assert_eq!(fit.total_lines, 4);
+    assert!(fit.starts_on_page);
+    assert_eq!(fit.lines_before_break, 3);
+    assert_eq!((fit.orphans, fit.widows), (2, 2));
+    // One line after the break is fewer than the two widows.
+    assert!(fit.violates_line_constraints);
+
+    // Non-positive values are used as 1, so a single widow is enough.
+    let fit = ParagraphLineFit::measure(&lines, 70.0, 0.0, 100.0, 0, -1);
+    assert_eq!((fit.orphans, fit.widows), (1, 1));
+    assert!(!fit.violates_line_constraints);
+
+    // Lines that all fit need no break, whatever the constraints.
+    let fit = ParagraphLineFit::measure(&lines, 0.0, 0.0, 100.0, 5, 5);
+    assert_eq!(fit.lines_before_break, 4);
+    assert!(!fit.violates_line_constraints);
+
+    // A first line that starts at the page end belongs to a later page.
+    let fit = ParagraphLineFit::measure(&lines, 100.0, 0.0, 100.0, 1, 1);
+    assert!(!fit.starts_on_page);
+    assert_eq!(fit.lines_before_break, 0);
+}
+
 fn committed_column_projection(style: &str) -> (Document, CascadeResult) {
     let (mut doc, cascade, root) = crate::layout::test_support::ahem_paragraph(
         "A\nB\nC\nD",

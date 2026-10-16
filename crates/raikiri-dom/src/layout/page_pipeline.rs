@@ -4339,7 +4339,8 @@ fn paginate_flow(
                     effective_y,
                     page_start,
                     page_end,
-                    &cascade.computed[block_id],
+                    cascade.computed[block_id].orphans,
+                    cascade.computed[block_id].widows,
                 );
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
                 let fits_on_page =
@@ -6694,7 +6695,8 @@ struct ParagraphLineFit {
     total_lines: usize,
     /// Whether the first line starts on the current page.
     starts_on_page: bool,
-    /// The lines that end before the page end.
+    /// The leading lines whose block-end edge is at or before the page end,
+    /// up to the first line that is not.
     lines_before_break: usize,
     /// The used `orphans`, at least 1.
     orphans: usize,
@@ -6708,13 +6710,14 @@ struct ParagraphLineFit {
 impl ParagraphLineFit {
     /// Measures `line_metrics`, the block-start and block-end edges of each
     /// line relative to `effective_y`, against the page from `page_start`
-    /// to `page_end`, with the `orphans` and `widows` of `computed`.
+    /// to `page_end`, with the computed `orphans` and `widows`.
     fn measure(
         line_metrics: &[(f32, f32)],
         effective_y: f32,
         page_start: f32,
         page_end: f32,
-        computed: &raikiri_style::ComputedValues,
+        orphans: i32,
+        widows: i32,
     ) -> Self {
         let total_lines = line_metrics.len();
         let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
@@ -6726,8 +6729,8 @@ impl ParagraphLineFit {
             .take_while(|(_, line_bottom)| effective_y + line_bottom <= page_end + 0.001)
             .count();
         let needs_break = lines_before_break < total_lines;
-        let orphans = computed.orphans.max(1) as usize;
-        let widows = computed.widows.max(1) as usize;
+        let orphans = orphans.max(1) as usize;
+        let widows = widows.max(1) as usize;
         let violates_line_constraints = needs_break
             && (lines_before_break < orphans
                 || total_lines.saturating_sub(lines_before_break) < widows);
