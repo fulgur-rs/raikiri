@@ -676,6 +676,28 @@ fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
 }
 
 #[test]
+fn margin_box_starts_page_on_a_later_page_or_at_the_page_start() {
+    let origins = PageOrigins::new(&[], 100.0);
+    assert!(margin_box_starts_page(&origins, 100.0, 0, 0.0));
+    assert!(margin_box_starts_page(&origins, 100.0, 1, 100.0));
+    assert!(!margin_box_starts_page(&origins, 150.0, 1, 100.0));
+    assert!(!margin_box_starts_page(&origins, 50.0, 0, 0.0));
+    // Positions outside the flow stay on the current page.
+    assert!(!margin_box_starts_page(&origins, -10.0, 0, 0.0));
+    assert!(!margin_box_starts_page(&origins, f32::NAN, 0, 0.0));
+}
+
+#[test]
+fn table_row_moves_only_when_it_crosses_the_page_and_fits_the_next() {
+    assert!(table_row_moves(80.0, 40.0, 40.0, 0.0, 100.0, 100.0));
+    // Fits before the page end.
+    assert!(!table_row_moves(50.0, 40.0, 40.0, 0.0, 100.0, 100.0));
+    // Its lead and a repeated header leave too little of the next page.
+    assert!(!table_row_moves(80.0, 40.0, 120.0, 0.0, 100.0, 100.0));
+    assert!(!table_row_moves(f32::NAN, 40.0, 40.0, 0.0, 100.0, 100.0));
+}
+
+#[test]
 fn avoided_run_moves_only_when_it_crosses_the_page_and_fits_the_next() {
     // Crosses the end of the page from 0 to 100 and fits the next page.
     assert!(avoided_run_moves(40.0, 0.0, 80.0, 0.0, 100.0, 100.0));
