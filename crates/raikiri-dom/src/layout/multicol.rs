@@ -1204,20 +1204,8 @@ fn plan_nested_continuation(
         // when content before the container offers a break between boxes
         // (CSS Fragmentation 3, 4.4): the container then starts in the next
         // outer column instead.
-        if break_before && cursor > 0.0 {
-            let first_row: std::collections::HashSet<usize> = rows
-                .pieces
-                .iter()
-                .filter(|piece| piece.row == 0)
-                .map(|piece| piece.entry)
-                .collect();
-            let cut_at_outer_end = rows
-                .pieces
-                .iter()
-                .any(|piece| piece.row > 0 && first_row.contains(&piece.entry));
-            if cut_at_outer_end {
-                return None;
-            }
+        if break_before && cursor > 0.0 && cuts_a_box_at_the_first_row_end(&rows.pieces) {
+            return None;
         }
         let root = latest_root(tree, child)?;
         let columns = rows.heights.len() - 1;
@@ -1294,6 +1282,18 @@ fn plan_nested_continuation(
         columns,
         end,
     })
+}
+
+/// Whether a box with a piece in the first row continues in a later one.
+fn cuts_a_box_at_the_first_row_end(pieces: &[lineless::RowPiece]) -> bool {
+    let first_row: std::collections::HashSet<usize> = pieces
+        .iter()
+        .filter(|piece| piece.row == 0)
+        .map(|piece| piece.entry)
+        .collect();
+    pieces
+        .iter()
+        .any(|piece| piece.row > 0 && first_row.contains(&piece.entry))
 }
 
 /// The live root record of `node` laid out last.
