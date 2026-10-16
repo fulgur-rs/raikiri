@@ -605,17 +605,13 @@ pub fn sort_positioned_frames<F: Clone>(
         return frames;
     }
     boxes.sort_by_key(|(level, _, _)| *level);
-    let owner = |frame: &F| match kind(frame) {
-        PositionedFrame::Open(owner) => Some(owner),
-        _ => None,
-    };
     let mut sorted = Vec::with_capacity(frames.len());
     let mut open: Vec<F> = Vec::new();
     for (_, clips, frame) in boxes {
         let shared = open
             .iter()
             .zip(&clips)
-            .take_while(|(a, b)| owner(a) == owner(b))
+            .take_while(|(a, b)| kind(a) == kind(b))
             .count();
         for _ in shared..open.len() {
             sorted.push(close.clone());

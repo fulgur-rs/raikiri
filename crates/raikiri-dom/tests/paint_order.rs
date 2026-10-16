@@ -341,7 +341,8 @@ fn a_box_moved_out_of_a_clip_keeps_its_clip() {
         &format!(
             "<div><div style='overflow:hidden'>\
              <div id=a style='{item};z-index:10'></div>\
-             <div id=b style='{item};z-index:20'></div></div>\
+             <div id=b style='{item};z-index:20'></div>\
+             <div id=d style='{item};z-index:20'></div></div>\
              <div><div id=c style='{item};z-index:15'></div></div></div>"
         ),
         0,
@@ -350,7 +351,29 @@ fn a_box_moved_out_of_a_clip_keeps_its_clip() {
     assert_eq!(
         events[start..],
         [
-            "PushClip", "Box(a)", "PopClip", "Box(c)", "PushClip", "Box(b)", "PopClip"
+            "PushClip", "Box(a)", "PopClip", "Box(c)", "PushClip", "Box(b)", "Box(d)", "PopClip"
         ],
     );
+}
+
+#[test]
+fn a_z_indexed_flex_item_paints_among_positioned_descendants_by_level() {
+    // CSS Flexbox 1 §4.3: a flex item with an integer z-index is a stacking
+    // context at that level even when it is not positioned.
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div style='display:flex'><div><div id=a style='{item};z-index:10'></div>\
+             <div id=b style='{item};z-index:20'></div></div>\
+             <div id=c style='opacity:0.5;z-index:15;width:10px;height:10px;background:red'>\
+             </div></div>"
+        ),
+        0,
+    );
+    let (a, b, c) = (
+        position(&events, "Box(a)"),
+        position(&events, "Box(b)"),
+        position(&events, "Box(c)"),
+    );
+    assert!(a < c && c < b, "{events:?}");
 }
