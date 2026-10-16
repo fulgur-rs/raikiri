@@ -791,8 +791,8 @@ pub(crate) const DOCUMENT_MEMBERS: Members = Members {
     methods: &[
         ("createElement", 1, create_element),
         ("createElementNS", 2, super::document::create_element_ns),
-        ("write", 1, super::document::write),
-        ("writeln", 1, super::document::writeln),
+        ("write", 0, super::document::write),
+        ("writeln", 0, super::document::writeln),
         ("createRange", 0, super::selection::create_range),
         ("createTreeWalker", 2, super::selection::create_tree_walker),
     ],

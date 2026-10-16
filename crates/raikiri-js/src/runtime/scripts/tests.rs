@@ -1440,6 +1440,14 @@ fn write_outside_a_parser_script_or_with_a_failing_parser_throws() {
     assert!(report.uncaught_errors.is_empty(), "{report:?}");
     assert_eq!(children, "SCRIPT:|P:");
     assert_eq!(eval_string(&mut rt, "outside"), "NotSupportedError");
+    // Both take a variadic `DOMString... text`, so no argument is required.
+    assert_eq!(
+        eval_string(
+            &mut rt,
+            "document.write.length + ',' + document.writeln.length"
+        ),
+        "0,0"
+    );
     assert_eq!(eval_string(&mut rt, "failed"), "Error");
 }
 
