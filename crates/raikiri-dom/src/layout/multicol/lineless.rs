@@ -77,7 +77,7 @@ fn rendered_elements(tree: &Document, parent: usize) -> impl Iterator<Item = usi
 }
 
 /// Whether `id` starts at the top of the first column of the multicol
-/// container it is a child of, with no text or box before it, which leaves
+/// container it is a child of, with no line or box before it, which leaves
 /// it the whole column height.
 pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
     let Some(parent) = tree.nodes[id].parent else {
@@ -89,15 +89,9 @@ pub(super) fn starts_the_outer_columns(tree: &Document, id: usize) -> bool {
         && !outer.has_before_or_after_content
         && outer.style.padding.top == zero
         && outer.style.border.top == zero
-        && outer.children.iter().copied().find(|&child| {
-            let node = &tree.nodes[child];
-            node.is_in_document()
-                && !node.is_display_none()
-                && match &node.data {
-                    NodeData::Text(text) => !text.text_content.trim().is_empty(),
-                    _ => true,
-                }
-        }) == Some(id)
+        // Text that makes lines gives the container inline content.
+        && outer.ifc.is_none()
+        && rendered_elements(tree, parent).next() == Some(id)
         && tree.nodes[id].style.margin.top == LengthPercentageAuto::length(0.0)
 }
 
