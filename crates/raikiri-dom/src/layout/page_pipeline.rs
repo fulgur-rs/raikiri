@@ -4327,24 +4327,23 @@ fn paginate_flow(
             {
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
-                let total_lines = line_metrics.len();
-                let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
-                    let top = effective_y + line_top;
-                    top >= page_start - 0.001 && top < page_end
-                });
+                let ParagraphLineFit {
+                    total_lines,
+                    starts_on_page,
+                    lines_before_break,
+                    orphans,
+                    widows,
+                    violates_line_constraints,
+                } = ParagraphLineFit::measure(
+                    &line_metrics,
+                    effective_y,
+                    page_start,
+                    page_end,
+                    &cascade.computed[block_id],
+                );
                 let block_height = document.nodes[block_id].unrounded_layout.size.height;
                 let fits_on_page =
                     block_height.is_finite() && block_height <= page_step_at(current_page) + 0.001;
-                let lines_before_break = line_metrics
-                    .iter()
-                    .take_while(|(_, line_bottom)| effective_y + line_bottom <= page_end + 0.001)
-                    .count();
-                let needs_break = lines_before_break < total_lines;
-                let orphans = cascade.computed[block_id].orphans.max(1) as usize;
-                let widows = cascade.computed[block_id].widows.max(1) as usize;
-                let violates_line_constraints = needs_break
-                    && (lines_before_break < orphans
-                        || total_lines.saturating_sub(lines_before_break) < widows);
                 // Lines move down inside the paragraph only when it has
                 // lines enough for both constraints, grows with them (a box
                 // with a definite height keeps it), and holds nothing but
@@ -6685,6 +6684,61 @@ impl CheckedParagraphs {
     /// Whether both checks already ran for `block_id`.
     fn is_fully_checked(&self, block_id: usize) -> bool {
         self.block_text.contains(&block_id) && self.orphans_widows.contains(&block_id)
+    }
+}
+
+/// How a paragraph's lines fall against the end of the current page, and
+/// whether the natural break between them honors `orphans` and `widows`.
+struct ParagraphLineFit {
+    /// The number of lines the paragraph's text owns.
+    total_lines: usize,
+    /// Whether the first line starts on the current page.
+    starts_on_page: bool,
+    /// The lines that end before the page end.
+    lines_before_break: usize,
+    /// The used `orphans`, at least 1.
+    orphans: usize,
+    /// The used `widows`, at least 1.
+    widows: usize,
+    /// Whether the lines need a break that leaves fewer than `orphans`
+    /// lines before it or fewer than `widows` lines after it.
+    violates_line_constraints: bool,
+}
+
+impl ParagraphLineFit {
+    /// Measures `line_metrics`, the block-start and block-end edges of each
+    /// line relative to `effective_y`, against the page from `page_start`
+    /// to `page_end`, with the `orphans` and `widows` of `computed`.
+    fn measure(
+        line_metrics: &[(f32, f32)],
+        effective_y: f32,
+        page_start: f32,
+        page_end: f32,
+        computed: &raikiri_style::ComputedValues,
+    ) -> Self {
+        let total_lines = line_metrics.len();
+        let starts_on_page = line_metrics.first().is_some_and(|(line_top, _)| {
+            let top = effective_y + line_top;
+            top >= page_start - 0.001 && top < page_end
+        });
+        let lines_before_break = line_metrics
+            .iter()
+            .take_while(|(_, line_bottom)| effective_y + line_bottom <= page_end + 0.001)
+            .count();
+        let needs_break = lines_before_break < total_lines;
+        let orphans = computed.orphans.max(1) as usize;
+        let widows = computed.widows.max(1) as usize;
+        let violates_line_constraints = needs_break
+            && (lines_before_break < orphans
+                || total_lines.saturating_sub(lines_before_break) < widows);
+        Self {
+            total_lines,
+            starts_on_page,
+            lines_before_break,
+            orphans,
+            widows,
+            violates_line_constraints,
+        }
     }
 }
 
