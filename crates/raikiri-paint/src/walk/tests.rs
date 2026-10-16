@@ -149,7 +149,8 @@ fn marker_render_info_uses_author_content_and_falls_back_to_list_style() {
     );
     let (_, content) = marker_render_info(&document, &cascade, first)
         .expect("explicit list-item counter fallback marker");
-    assert_eq!(content, "9. ");
+    // The item's own implicit increment follows its reset (CSS Lists 3 §4.6).
+    assert_eq!(content, "10. ");
 
     let (document, cascade, first, _) = list_fixture(
         "display: list-item; list-style-type: disc",
