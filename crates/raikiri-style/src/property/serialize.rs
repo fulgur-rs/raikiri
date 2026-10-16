@@ -565,6 +565,7 @@ pub fn serialize_value(value: &PropertyValue) -> Option<String> {
         | PropertyValue::BorderRightColor(..)
         | PropertyValue::BorderBottomColor(..)
         | PropertyValue::BorderLeftColor(..)
+        | PropertyValue::ContextualShorthand(..)
         | PropertyValue::Border(..)
         | PropertyValue::BorderTop(..)
         | PropertyValue::BorderRight(..)

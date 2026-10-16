@@ -760,6 +760,23 @@ pub(crate) fn expand_shorthand_into(d: &ParsedDeclaration, mut push: impl FnMut(
         PropertyValue::Deferred(ref deferred) => {
             expand_deferred(d, deferred, d.important, push)
         }
+        PropertyValue::ContextualShorthand(ref shorthand) => {
+            let inner = ParsedDeclaration {
+                value: shorthand.value.clone(),
+                important: d.important,
+                logical: d.logical,
+            };
+            // Each symbolic color takes its longhand's place in the expansion,
+            // so declaration order inside the shorthand is unchanged. The
+            // `dyn` callback keeps this recursion to one instantiation.
+            let push: &mut dyn FnMut(Declaration) = &mut |declaration: Declaration| {
+                push(match shorthand.color(declaration.key) {
+                    Some(value) => Declaration::with_side(value, d.important, declaration.logical),
+                    None => declaration,
+                })
+            };
+            expand_shorthand_into(&inner, push)
+        }
         // No longhand variant exists for expansion: push one declaration unchanged.
         // Do not collapse this into `_` (see "Why there is no wildcard arm (contract)" above).
         // Adding a variant here asserts that it has no expansion target.

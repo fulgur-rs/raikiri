@@ -24,6 +24,34 @@ fn contextual_color_serialization_preserves_the_keyword_and_function_boundary() 
     assert_eq!(serialize_value(&mixed), None);
 }
 
+#[test]
+fn line_color_contextual_values_keep_their_source_and_resolve_per_key() {
+    let mix = "color-mix(in srgb, currentcolor, red)";
+    let PropertyValue::ContextualColor(color) = parse(mix, "outline-color").unwrap() else {
+        panic!("outline-color keeps currentcolor symbolic");
+    };
+    assert_eq!(color.key, PropertyKey::OutlineColor);
+    assert_eq!(
+        serialize_value(&PropertyValue::ContextualColor(color.clone())),
+        None
+    );
+    let unsupported = ContextualColor {
+        key: PropertyKey::Width,
+        ..color
+    };
+    assert_eq!(unsupported.resolved_value(CssColor::BLACK), None);
+
+    let shorthand = parse(&format!("1px solid {mix}"), "border").unwrap();
+    assert!(matches!(shorthand, PropertyValue::ContextualShorthand(_)));
+    assert_eq!(shorthand.key(), PropertyKey::Border);
+    assert_eq!(serialize_value(&shorthand), None);
+    // Colors without `currentcolor` keep the plain representation.
+    assert!(matches!(
+        parse("1px solid rgb(0 0 255)", "border").unwrap(),
+        PropertyValue::Border(_)
+    ));
+}
+
 fn parse_color_entire(source: &str) -> Option<CssColor> {
     let mut input = ParserInput::new(source);
     let mut parser = Parser::new(&mut input);

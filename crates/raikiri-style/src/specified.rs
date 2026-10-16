@@ -180,6 +180,11 @@ pub struct SpecifiedValues {
     pub background_color: CssColor,
     /// Symbolic background color retained for explicit inheritance.
     pub(crate) background_color_expression: Option<SmolStr>,
+    /// Border, outline, column-rule and text-decoration colors whose winning
+    /// value refers to `currentcolor` inside a color function. Phase 3
+    /// resolves them against this element's final `color`. These properties
+    /// are not inherited, so a node starts with none.
+    pub(crate) contextual_colors: Vec<crate::property::ContextualColor>,
     /// Staging value for [`ComputedValues::font_family`]; computed-equivalent.
     pub font_family: Arc<Vec<FontFamilyName>>,
     /// **Specified** `font-size`; phase 2 ([`resolve_font_size`]) absolutizes it
@@ -808,6 +813,7 @@ impl SpecifiedValues {
             color: CssColor::BLACK,
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,
+            contextual_colors: Vec::new(),
             // Shared Arc slot avoids an allocation per node (see the `initial_font_family` docs).
             font_family: initial_font_family(),
             // CSS Fonts 4 §2.5: the initial value is `medium` (16px here).
@@ -1333,6 +1339,7 @@ impl SpecifiedValues {
             unicode_bidi: UnicodeBidi::Normal,
             background_color: CssColor::TRANSPARENT,
             background_color_expression: None,
+            contextual_colors: Vec::new(),
             display: DisplayValue::Inline,
             counter_reset: empty_counter_entries(),
             counter_increment: empty_counter_entries(),
@@ -1923,6 +1930,30 @@ impl SpecifiedValues {
         vertical
     }
 
+    /// Record (`Some`) or clear (`None`) the symbolic color of the `key`
+    /// longhand, replacing any earlier one.
+    pub(crate) fn set_contextual_color(
+        &mut self,
+        key: crate::property::PropertyKey,
+        source: Option<SmolStr>,
+    ) {
+        self.contextual_colors.retain(|color| color.key != key);
+        if let Some(source) = source {
+            self.contextual_colors
+                .push(crate::property::ContextualColor { source, key });
+        }
+    }
+
+    /// Resolve each recorded symbolic color against this element's `color`
+    /// and store it in its longhand field.
+    fn resolve_contextual_colors(&mut self) {
+        for color in std::mem::take(&mut self.contextual_colors) {
+            if let Some(value) = color.resolved_value(self.color) {
+                crate::cascade::apply_value(value, self);
+            }
+        }
+    }
+
     fn absolutize_with(
         mut self,
         font_size: ComputedLength,
@@ -1932,6 +1963,7 @@ impl SpecifiedValues {
         ctx: &ResolveContext,
     ) -> ComputedValues {
         let vertical_logical_size = self.map_logical_preferred_sizes();
+        self.resolve_contextual_colors();
         // Reference for `1lh` on padding, margin, border, width and height. `rlh` uses the
         // tree-global `ctx.root_line_height`, so this local reference is only needed here.
         let own_line_height =

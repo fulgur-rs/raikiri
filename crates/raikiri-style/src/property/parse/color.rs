@@ -35,6 +35,112 @@ pub(super) fn parse_contextual_color(
     Some((color, expression))
 }
 
+/// The symbolic form of each top-level `<color>` component in `source`, in
+/// order: `Some` for a color function that refers to `currentcolor`, `None`
+/// for any other color. Components that are not colors are skipped.
+///
+/// A bare `currentcolor` keyword stays `None`, because the border, outline and
+/// text-decoration color types already keep that keyword until painting.
+fn contextual_color_components(source: &str) -> Vec<Option<SmolStr>> {
+    let mut parser_input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    let mut components = Vec::new();
+    loop {
+        if let Ok((_, expression)) = parser.try_parse(|input| {
+            parse_contextual_color(input).ok_or_else(|| input.new_custom_error::<_, ()>(()))
+        }) {
+            components.push(expression.filter(|source| !is_bare_currentcolor(source)));
+        } else if parser.next().is_err() {
+            break;
+        }
+    }
+    components
+}
+
+/// Whether `source` is only the `currentcolor` keyword, in any spelling the
+/// tokenizer decodes to it (case or escapes).
+fn is_bare_currentcolor(source: &str) -> bool {
+    let mut parser_input = ParserInput::new(source);
+    let mut parser = Parser::new(&mut parser_input);
+    parser
+        .parse_entirely(|input| -> Result<(), ParseError<'_, ()>> {
+            Ok(input.expect_ident_matching("currentcolor")?)
+        })
+        .is_ok()
+}
+
+/// Keep `currentcolor` symbolic in the color components of a parsed border,
+/// outline, column-rule or text-decoration value.
+///
+/// `value` was parsed from `source` with `currentcolor` inside color functions
+/// treated as black. A color longhand whose value refers to `currentcolor`
+/// becomes a [`PropertyValue::ContextualColor`]; a shorthand with such a
+/// color component becomes a [`PropertyValue::ContextualShorthand`] that
+/// carries the symbolic form of each affected color longhand. Every other
+/// value is returned unchanged.
+pub(crate) fn with_contextual_colors(value: PropertyValue, source: &str) -> PropertyValue {
+    use PropertyKey::*;
+    let keys: &[PropertyKey] = match &value {
+        PropertyValue::BorderTopColor(_) => &[BorderTopColor],
+        PropertyValue::BorderRightColor(_) => &[BorderRightColor],
+        PropertyValue::BorderBottomColor(_) => &[BorderBottomColor],
+        PropertyValue::BorderLeftColor(_) => &[BorderLeftColor],
+        PropertyValue::OutlineColor(_) | PropertyValue::Outline(_) => &[OutlineColor],
+        PropertyValue::ColumnRuleColor(_) | PropertyValue::ColumnRule(_) => &[ColumnRuleColor],
+        PropertyValue::TextDecorationColor(_) | PropertyValue::TextDecoration(_) => {
+            &[TextDecorationColor]
+        }
+        PropertyValue::BorderTop(_) => &[BorderTopColor],
+        PropertyValue::BorderRight(_) => &[BorderRightColor],
+        PropertyValue::BorderBottom(_) => &[BorderBottomColor],
+        PropertyValue::BorderLeft(_) => &[BorderLeftColor],
+        PropertyValue::Border(_) | PropertyValue::BorderColor(_) => &[
+            BorderTopColor,
+            BorderRightColor,
+            BorderBottomColor,
+            BorderLeftColor,
+        ],
+        _ => return value,
+    };
+    if !source.bytes().any(|byte| byte == b'(') {
+        return value;
+    }
+    let components = contextual_color_components(source);
+    let colors: Box<[ContextualColor]> = if matches!(value, PropertyValue::BorderColor(_)) {
+        // CSS Backgrounds 3 §3.1: one to four values set top, right, bottom
+        // and left, with a missing side copying its opposite side.
+        let side = |index: usize| match (index, components.len()) {
+            (1, 1) | (2, 1 | 2) | (3, 1) => 0,
+            (3, 2 | 3) => 1,
+            _ => index,
+        };
+        keys.iter()
+            .enumerate()
+            .filter_map(|(index, key)| {
+                let source = components.get(side(index))?.clone()?;
+                Some(ContextualColor { source, key: *key })
+            })
+            .collect()
+    } else {
+        let Some(source) = components.into_iter().flatten().next() else {
+            return value;
+        };
+        keys.iter()
+            .map(|key| ContextualColor {
+                source: source.clone(),
+                key: *key,
+            })
+            .collect()
+    };
+    match colors.len() {
+        0 => value,
+        1 if value.key() == colors[0].key => {
+            PropertyValue::ContextualColor(colors.into_vec().remove(0))
+        }
+        _ => PropertyValue::ContextualShorthand(Box::new(ContextualShorthand { value, colors })),
+    }
+}
+
 fn currentcolor_ranges(source: &str) -> Option<Vec<(usize, usize)>> {
     fn visit<'i>(
         input: &mut Parser<'i, '_>,
