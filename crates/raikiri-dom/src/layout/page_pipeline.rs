@@ -12,6 +12,7 @@ pub(crate) use link_events::page_fragment_events_from_pages;
 
 use super::ifc::boxes::IfcBoxKind;
 use super::ifc::text_lines::{IfcTextLine, TextLineIndex};
+use super::table::headers::HeaderRepeats;
 use super::*;
 use crate::node::FormattingContext;
 use crate::page_projection::records::OverflowClipSource;
@@ -3935,13 +3936,10 @@ fn paginate_flow(
         control,
     )
     .collect_flow(root_flow_offset)?;
-    let mut table_headers = super::table::headers::HeaderRepeats::prepare(
-        document,
-        cascade,
-        roots.contents,
-        page_step,
-        |id| root_flow_offset + current_abs_y(document, id),
-    );
+    let mut table_headers =
+        HeaderRepeats::prepare(document, cascade, roots.contents, page_step, |id| {
+            root_flow_offset + current_abs_y(document, id)
+        });
     let table_row_leads = table_row_leads(document, cascade, &candidates, root_flow_offset);
     let avoided_row_groups = avoided_row_groups(
         document,
@@ -4584,19 +4582,13 @@ fn paginate_flow(
         // borrow does not overlap the in-place location update below.
         let raw_y = candidate.raw_y;
         let height = candidate.height;
-        if let Some(&header_id) = table_headers.rows.get(&node_id) {
-            let header = table_headers
-                .headers
-                .get_mut(&header_id)
-                .expect("prepared header");
-            if header.placements.is_empty() {
-                let y = header.source_y + flow_shift;
-                materialize_y(document, header_id, y);
-                header.source_y = y;
-                let page = page_index_for_y(y);
-                header.placements.insert(page, (page_origin(page), y));
-            }
-        }
+        place_first_table_header(
+            document,
+            &mut table_headers,
+            node_id,
+            flow_shift,
+            &page_origins,
+        );
         let mut effective_y = if uses_positioned_coordinates {
             current_abs_y(document, node_id)
         } else {
@@ -5203,40 +5195,17 @@ fn paginate_flow(
             }
         }
 
-        if let Some(&header_id) = table_headers.rows.get(&node_id) {
-            let header = table_headers
-                .headers
-                .get_mut(&header_id)
-                .expect("prepared header");
-            if !header.body_started {
-                if header
-                    .placements
-                    .keys()
-                    .next()
-                    .is_some_and(|&page| page < current_page)
-                {
-                    // The first header belongs with the first body row, even
-                    // when the remaining space cannot fit both intact.
-                    let origin = page_origin(current_page);
-                    let table_y = current_abs_y(document, header.table);
-                    materialize_y(document, header.table, table_y + origin - header.source_y);
-                    materialize_y(document, header_id, origin);
-                    header.source_y = origin;
-                    header.placements.clear();
-                }
-                header.body_started = true;
-            }
-            if !header.placements.contains_key(&current_page)
-                && header.height + header.gap + height <= page_step_at(current_page) + 0.001
-            {
-                let origin = page_origin(current_page);
-                let delta = (origin + header.height + header.gap - effective_y).max(0.0);
-                effective_y += delta;
-                materialize_y(document, node_id, effective_y);
-                flow_shift += delta;
-                header.placements.insert(current_page, (origin, origin));
-            }
-        }
+        let header_delta = make_room_for_table_header(
+            document,
+            &mut table_headers,
+            node_id,
+            effective_y,
+            height,
+            current_page,
+            &page_origins,
+        );
+        effective_y += header_delta;
+        flow_shift += header_delta;
 
         if name_participates_in_flow
             && (candidate.is_direct_body_element
@@ -5474,7 +5443,7 @@ fn avoided_row_groups(
     document: &Document,
     cascade: &CascadeResult,
     candidates: &[PageCandidate],
-    table_headers: &super::table::headers::HeaderRepeats,
+    table_headers: &HeaderRepeats,
     table_row_leads: &HashMap<usize, f32>,
 ) -> HashMap<usize, (f32, f32)> {
     let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
@@ -6825,6 +6794,85 @@ impl SubtreeShifts {
         });
         restored_page
     }
+}
+
+/// Places the repeated header of the table that `row` belongs to, when no
+/// page holds it yet: the header follows the flow shift so far, and the page
+/// it lands on records the placement.
+fn place_first_table_header(
+    document: &mut Document,
+    table_headers: &mut HeaderRepeats,
+    row: usize,
+    flow_shift: f32,
+    page_origins: &PageOrigins,
+) {
+    let Some(&header_id) = table_headers.rows.get(&row) else {
+        return;
+    };
+    let header = table_headers
+        .headers
+        .get_mut(&header_id)
+        .expect("prepared header");
+    if header.placements.is_empty() {
+        let y = header.source_y + flow_shift;
+        materialize_y(document, header_id, y);
+        header.source_y = y;
+        let page = page_origins.page_index_for_y(y);
+        header
+            .placements
+            .insert(page, (page_origins.origin(page), y));
+    }
+}
+
+/// Makes room at the top of `current_page` for a copy of the repeated header
+/// of the table that `row`, which sits at `row_y` with `height`, belongs to.
+/// The first body row also brings the first header to its page when the
+/// header was left alone on an earlier one. Returns how far `row` moved down
+/// below the header copy, which is zero when nothing moves.
+fn make_room_for_table_header(
+    document: &mut Document,
+    table_headers: &mut HeaderRepeats,
+    row: usize,
+    row_y: f32,
+    height: f32,
+    current_page: u32,
+    page_origins: &PageOrigins,
+) -> f32 {
+    let Some(&header_id) = table_headers.rows.get(&row) else {
+        return 0.0;
+    };
+    let header = table_headers
+        .headers
+        .get_mut(&header_id)
+        .expect("prepared header");
+    if !header.body_started {
+        if header
+            .placements
+            .keys()
+            .next()
+            .is_some_and(|&page| page < current_page)
+        {
+            // The first header belongs with the first body row, even
+            // when the remaining space cannot fit both intact.
+            let origin = page_origins.origin(current_page);
+            let table_y = current_abs_y(document, header.table);
+            materialize_y(document, header.table, table_y + origin - header.source_y);
+            materialize_y(document, header_id, origin);
+            header.source_y = origin;
+            header.placements.clear();
+        }
+        header.body_started = true;
+    }
+    if !header.placements.contains_key(&current_page)
+        && header.height + header.gap + height <= page_origins.step_at(current_page) + 0.001
+    {
+        let origin = page_origins.origin(current_page);
+        let delta = (origin + header.height + header.gap - row_y).max(0.0);
+        materialize_y(document, row, row_y + delta);
+        header.placements.insert(current_page, (origin, origin));
+        return delta;
+    }
+    0.0
 }
 
 /// Moves `block_id`, which sits at `from_y`, so that its flow position starts
