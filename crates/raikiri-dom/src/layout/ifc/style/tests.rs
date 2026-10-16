@@ -1074,6 +1074,22 @@ fn ellipsis_needs_a_non_visible_inline_overflow() {
     assert!(ends("text-overflow:ellipsis;overflow:hidden"));
     assert!(ends("text-overflow:ellipsis;overflow-x:clip"));
     assert!(!ends("text-overflow:ellipsis"));
+    // The inline axis of vertical and sideways modes is vertical. `clip`
+    // keeps the other axis `visible`.
+    for mode in ["vertical-rl", "sideways-rl", "sideways-lr"] {
+        assert!(
+            ends(&format!(
+                "writing-mode:{mode};text-overflow:ellipsis;overflow-x:visible;overflow-y:clip"
+            )),
+            "{mode}"
+        );
+        assert!(
+            !ends(&format!(
+                "writing-mode:{mode};text-overflow:ellipsis;overflow-x:clip;overflow-y:visible"
+            )),
+            "{mode}"
+        );
+    }
     assert!(!ends("text-overflow:clip;overflow:hidden"));
     assert!(!ends("overflow:hidden"));
 }

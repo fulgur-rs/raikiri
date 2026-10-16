@@ -698,9 +698,16 @@ fn text_emphasis(cv: &ComputedValues) -> Option<s::TextEmphasis> {
 
 /// Whether the lines of a block container with style `cv` end in an ellipsis
 /// where they overflow it: `text-overflow: ellipsis` takes effect only when
-/// the inline axis overflow is not `visible` (CSS Overflow 3 §5.1).
+/// the inline axis overflow is not `visible` (CSS Overflow 3 §5.1). The
+/// inline axis is the vertical one in vertical and sideways writing modes.
 pub(crate) fn ends_in_ellipsis(cv: &ComputedValues) -> bool {
-    cv.text_overflow == p::TextOverflowValue::Ellipsis && cv.overflow.x != p::OverflowValue::Visible
+    let inline_overflow = if cv.cssom_writing_mode.is_vertical() {
+        cv.overflow.y
+    } else {
+        cv.overflow.x
+    };
+    cv.text_overflow == p::TextOverflowValue::Ellipsis
+        && inline_overflow != p::OverflowValue::Visible
 }
 
 /// Resolve `text-emphasis-position: auto` against the content language:

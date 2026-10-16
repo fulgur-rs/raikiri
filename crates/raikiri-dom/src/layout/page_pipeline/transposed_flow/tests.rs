@@ -162,6 +162,29 @@ fn sideways_lr_blocks_start_at_the_bottom_and_pages_continue_to_the_right() {
 }
 
 #[test]
+fn upright_text_keeps_the_direction_of_a_sideways_root() {
+    // The sideways modes are horizontal typographic modes, so `upright`
+    // leaves `rtl` in place: the inline axis of `sideways-lr` then runs from
+    // top to bottom.
+    let (doc, ids, _) = paginate(
+        "writing-mode:sideways-lr;direction:rtl;text-orientation:upright",
+        "margin:0",
+        &[("div", "width:800px;height:100px", "")],
+    );
+    assert_eq!(absolute_rect(&doc, ids[1]), (0.0, 0.0, 800.0, 100.0));
+}
+
+#[test]
+fn logical_sizes_of_a_sideways_box_map_onto_its_vertical_axes() {
+    let (doc, ids, _) = paginate(
+        "writing-mode:sideways-rl",
+        "margin:0",
+        &[("div", "inline-size:100px;block-size:200px", "")],
+    );
+    assert_eq!(absolute_rect(&doc, ids[1]), (600.0, 0.0, 200.0, 100.0));
+}
+
+#[test]
 fn a_forced_break_starts_a_page_along_the_block_axis() {
     let (doc, ids, pages) = paginate(
         "writing-mode:vertical-rl",

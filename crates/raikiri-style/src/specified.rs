@@ -1892,11 +1892,7 @@ impl SpecifiedValues {
                 logical.unwrap_or(physical)
             }
         };
-        let vertical = matches!(
-            self.writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
-        )
-        .then(|| {
+        let vertical = self.writing_mode.is_vertical().then(|| {
             (
                 pick(
                     self.width,
