@@ -4118,14 +4118,7 @@ fn paginate_flow(
     // have been visited.  Applying it to the first flex child would turn a
     // break-after on the flex container into an extra blank page.
     let mut pending_break_source: Option<usize> = None;
-    // When a forced-break box underflows into the preceding page, descendants
-    // follow the box while later siblings still begin after the break boundary.
-    let mut pending_underflow: Option<(usize, f32)> = None;
-    // Lines of a paragraph that were moved to a later page to keep enough
-    // widows there: `(root, first moved line, shift)`. The flow after the
-    // paragraph, and its texts that start on a moved line, take each shift
-    // once they are reached; its texts before that line stay where they are.
-    let mut pending_line_splits: Vec<(usize, usize, f32)> = Vec::new();
+    let mut deferred_shifts = DeferredShifts::default();
     // Where each table row sits in its parent before pagination; the table
     // boxes around the rows that moved follow them once every row is placed.
     let table_row_origins: Vec<(usize, f32)> = candidates
@@ -4231,26 +4224,13 @@ fn paginate_flow(
         let page_before_candidate = current_page;
         let moves_ifc_root = entered_paragraphs.enter(document, candidate.ifc_root, node_id);
         let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
-        pending_line_splits.retain(|&(root, first_moved, shift)| {
-            let reached = !is_descendant_or_self(document, node_id, root)
-                || candidate
-                    .ifc_root
-                    .is_some_and(|(text_root, _)| text_root == root)
-                    && text_lines
-                        .get(node_id)
-                        .and_then(|owned| owned.lines.first())
-                        .is_some_and(|line| line.line >= first_moved);
-            if reached {
-                flow_shift += shift;
-            }
-            !reached
-        });
-        if let Some((ancestor_id, correction)) = pending_underflow
-            && !is_descendant_or_self(document, node_id, ancestor_id)
-        {
-            flow_shift += correction;
-            pending_underflow = None;
-        }
+        deferred_shifts.apply_reached(
+            document,
+            &text_lines,
+            node_id,
+            candidate.ifc_root,
+            &mut flow_shift,
+        );
         if let Some(page) = subtree_shifts.leave(document, node_id, &mut flow_shift) {
             current_page = page;
         }
@@ -4587,7 +4567,7 @@ fn paginate_flow(
                 let splittable = starts_on_page
                     && orphans + widows <= total_lines
                     && paragraph_root == Some(block_id)
-                    && pending_line_splits.is_empty()
+                    && deferred_shifts.line_splits.is_empty()
                     && height_follows_content(document, block_id)
                     && document
                         .ifc_layout_node(block_id)
@@ -4680,7 +4660,7 @@ fn paginate_flow(
                         {
                             height += shift;
                         }
-                        pending_line_splits.push((block_id, line, shift));
+                        deferred_shifts.line_splits.push((block_id, line, shift));
                     }
                 } else if line_block_parent.is_some()
                     && starts_on_page
@@ -5234,7 +5214,7 @@ fn paginate_flow(
                     }
                     if node_target_y < target_y {
                         flow_shift += node_delta;
-                        pending_underflow = Some((node_id, shift_delta - node_delta));
+                        deferred_shifts.underflow = Some((node_id, shift_delta - node_delta));
                     } else {
                         // A kept margin moves the box's descendants and its
                         // later siblings along with the box.
@@ -5430,7 +5410,7 @@ fn paginate_flow(
                         if target_y < target_top {
                             // Descendants follow the negative margin; later
                             // siblings still follow the forced break boundary.
-                            pending_underflow = Some((node_id, target_top - target_y));
+                            deferred_shifts.underflow = Some((node_id, target_top - target_y));
                         } else {
                             natural_page = page_index_for_y(effective_y);
                         }
@@ -6613,6 +6593,53 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// Flow shifts that apply only once pagination has left a subtree or reached
+/// a moved line.
+#[derive(Default)]
+struct DeferredShifts {
+    /// When a forced-break box underflows into the preceding page, descendants
+    /// follow the box while later siblings still begin after the break
+    /// boundary: `(box, correction)`.
+    underflow: Option<(usize, f32)>,
+    /// Lines of a paragraph that were moved to a later page to keep enough
+    /// widows there: `(root, first moved line, shift)`. The flow after the
+    /// paragraph, and its texts that start on a moved line, take each shift
+    /// once they are reached; its texts before that line stay where they are.
+    line_splits: Vec<(usize, usize, f32)>,
+}
+
+impl DeferredShifts {
+    /// Adds to `flow_shift` every pending shift that `node_id` has reached,
+    /// line splits first, and drops them.
+    fn apply_reached(
+        &mut self,
+        document: &Document,
+        text_lines: &TextLineIndex,
+        node_id: usize,
+        ifc_root: Option<(usize, f32)>,
+        flow_shift: &mut f32,
+    ) {
+        self.line_splits.retain(|&(root, first_moved, shift)| {
+            let reached = !is_descendant_or_self(document, node_id, root)
+                || ifc_root.is_some_and(|(text_root, _)| text_root == root)
+                    && text_lines
+                        .get(node_id)
+                        .and_then(|owned| owned.lines.first())
+                        .is_some_and(|line| line.line >= first_moved);
+            if reached {
+                *flow_shift += shift;
+            }
+            !reached
+        });
+        if let Some((ancestor_id, correction)) = self.underflow
+            && !is_descendant_or_self(document, node_id, ancestor_id)
+        {
+            *flow_shift += correction;
+            self.underflow = None;
+        }
+    }
 }
 
 /// Paragraphs laid out by the inline engine that already had a candidate
