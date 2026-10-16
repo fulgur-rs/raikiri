@@ -4130,14 +4130,7 @@ fn paginate_flow(
         })
         .collect();
     let mut float_shifts = FloatShifts::default();
-    // A nested box that moved inside an ancestor whose height cannot grow
-    // to hold it overflows that ancestor: the part of the shift the
-    // ancestor did not absorb ends where its subtree does, and the page the
-    // flow was on is restored with it.
-    let mut pending_bounded_shifts: Vec<(usize, f32, u32)> = Vec::new();
-    // Formatting-context roots that grew around a moved float, with the
-    // growth the flow after them keeps.
-    let mut pending_context_growth: Vec<(usize, f32)> = Vec::new();
+    let mut subtree_shifts = SubtreeShifts::default();
     // Unpaginated border-box bottom of the last in-flow block-level child
     // seen for each parent, while no other content followed it. The gap to
     // the next such sibling is their collapsed margin.
@@ -4281,25 +4274,7 @@ fn paginate_flow(
             flow_shift += correction;
             pending_underflow = None;
         }
-        // Leaving several bounded subtrees at once returns to the page the
-        // earliest of them started from.
-        let mut restored_page: Option<u32> = None;
-        pending_context_growth.retain(|&(context, growth)| {
-            if is_descendant_or_self(document, node_id, context) {
-                return true;
-            }
-            flow_shift += growth;
-            false
-        });
-        pending_bounded_shifts.retain(|&(ancestor_id, delta, flow_page)| {
-            if is_descendant_or_self(document, node_id, ancestor_id) {
-                return true;
-            }
-            flow_shift -= delta;
-            restored_page = Some(restored_page.map_or(flow_page, |page| page.min(flow_page)));
-            false
-        });
-        if let Some(page) = restored_page {
+        if let Some(page) = subtree_shifts.leave(document, node_id, &mut flow_shift) {
             current_page = page;
         }
         if let Some((delta, flow_page)) = float_shifts.end_pending_outside(document, node_id) {
@@ -4416,8 +4391,7 @@ fn paginate_flow(
                         node_id,
                         shift,
                         body_id,
-                        &mut pending_bounded_shifts,
-                        &mut pending_context_growth,
+                        &mut subtree_shifts,
                         current_page,
                     );
                 }
@@ -4549,8 +4523,7 @@ fn paginate_flow(
                             moved,
                             delta,
                             body_id,
-                            &mut pending_bounded_shifts,
-                            &mut pending_context_growth,
+                            &mut subtree_shifts,
                             page_before_candidate,
                         );
                     }
@@ -4721,8 +4694,7 @@ fn paginate_flow(
                                 block_id,
                                 shift,
                                 body_id,
-                                &mut pending_bounded_shifts,
-                                &mut pending_context_growth,
+                                &mut subtree_shifts,
                                 page_before_candidate,
                             );
                         }
@@ -5213,8 +5185,7 @@ fn paginate_flow(
                             node_id,
                             node_delta,
                             body_id,
-                            &mut pending_bounded_shifts,
-                            &mut pending_context_growth,
+                            &mut subtree_shifts,
                             page_before_candidate,
                         );
                     } else if forced_transition
@@ -5371,11 +5342,10 @@ fn paginate_flow(
                                     context,
                                     growth,
                                     body_id,
-                                    &mut pending_bounded_shifts,
-                                    &mut pending_context_growth,
+                                    &mut subtree_shifts,
                                     page_before_candidate,
                                 );
-                                pending_context_growth.push((context, growth));
+                                subtree_shifts.growth.push((context, growth));
                             }
                         }
                     } else if !candidate.is_float_descendant
@@ -6670,24 +6640,66 @@ fn push_in_flow_boxes_rev(
     boxes.push(node_id);
 }
 
+/// Shifts of the flow that end where a subtree does.
+#[derive(Default)]
+struct SubtreeShifts {
+    /// Ancestors that could not hold a nested box that moved, with the part
+    /// of the shift each did not absorb and the page the flow was on.
+    ///
+    /// A nested box that moved inside an ancestor whose height cannot grow
+    /// to hold it overflows that ancestor: the part of the shift the
+    /// ancestor did not absorb ends where its subtree does, and the page the
+    /// flow was on is restored with it.
+    bounded: Vec<(usize, f32, u32)>,
+    /// Formatting-context roots that grew around a moved float, with the
+    /// growth the flow after them keeps.
+    growth: Vec<(usize, f32)>,
+}
+
+impl SubtreeShifts {
+    /// End the shifts of the subtrees `node_id` is outside of, applying
+    /// them to `flow_shift`, and return the page the flow returns to when a
+    /// bounded subtree ends.
+    ///
+    /// Leaving several bounded subtrees at once returns to the page the
+    /// earliest of them started from.
+    fn leave(&mut self, document: &Document, node_id: usize, flow_shift: &mut f32) -> Option<u32> {
+        let mut restored_page: Option<u32> = None;
+        self.growth.retain(|&(context, growth)| {
+            if is_descendant_or_self(document, node_id, context) {
+                return true;
+            }
+            *flow_shift += growth;
+            false
+        });
+        self.bounded.retain(|&(ancestor_id, delta, flow_page)| {
+            if is_descendant_or_self(document, node_id, ancestor_id) {
+                return true;
+            }
+            *flow_shift -= delta;
+            restored_page = Some(restored_page.map_or(flow_page, |page| page.min(flow_page)));
+            false
+        });
+        restored_page
+    }
+}
+
 /// Grows the auto-height ancestors of `node_id`, which moved down by
 /// `delta`, to hold it. The part of the shift an ancestor does not pass on
 /// to the flow after it, because its height cannot grow or a float in it
-/// already reaches below the moved content, is recorded in
-/// `pending_bounded_shifts` with `flow_page`, the page the flow returns to
-/// past that ancestor. An ancestor that grows more than the flow inside
-/// it moved is recorded in `pending_growth`, for the flow after it to
-/// follow. Returns whether an ancestor's height kept it from holding the
-/// moved content.
-#[allow(clippy::too_many_arguments)]
+/// already reaches below the moved content, is recorded in the bounded
+/// shifts of `shifts` with `flow_page`, the page the flow returns to past
+/// that ancestor. An ancestor that grows more than the flow inside it moved
+/// is recorded in the growth of `shifts`, for the flow after it to follow.
+/// Returns whether an ancestor's height kept it from holding the moved
+/// content.
 fn grow_ancestors_for_shift(
     document: &mut Document,
     cascade: &CascadeResult,
     node_id: usize,
     delta: f32,
     body_id: usize,
-    pending_bounded_shifts: &mut Vec<(usize, f32, u32)>,
-    pending_growth: &mut Vec<(usize, f32)>,
+    shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> bool {
     let mut bounded = false;
@@ -6719,7 +6731,7 @@ fn grow_ancestors_for_shift(
             body_id,
         );
         let Some(grown) = grown else {
-            pending_bounded_shifts.push((parent, flow_delta, flow_page));
+            shifts.bounded.push((parent, flow_delta, flow_page));
             bounded = true;
             break;
         };
@@ -6728,12 +6740,14 @@ fn grow_ancestors_for_shift(
         let size_absorbed = (grown.height - height).clamp(0.0, limit);
         let flow_absorbed = (in_flow - old_in_flow).clamp(0.0, limit);
         if flow_absorbed < flow_delta - 0.001 {
-            pending_bounded_shifts.push((parent, flow_delta - flow_absorbed, flow_page));
+            shifts
+                .bounded
+                .push((parent, flow_delta - flow_absorbed, flow_page));
             bounded |= grown.capped;
         } else if flow_absorbed > flow_delta + 0.001 {
             // A box holding its floats grew around a float that moved with
             // the content it overflowed: the flow after the box follows.
-            pending_growth.push((parent, flow_absorbed - flow_delta));
+            shifts.growth.push((parent, flow_absorbed - flow_delta));
         }
         if flow_absorbed <= 0.001 && size_absorbed <= 0.001 {
             break;
