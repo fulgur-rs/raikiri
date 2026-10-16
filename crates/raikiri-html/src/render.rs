@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use raikiri_style::{
     Atom, CascadeOptions, CascadeResult, ConsumerPropertyGrammar, ConsumerPropertyRegistration,
     MediaContext, PageCascadeResult, PageContextQuery, PageInheritance, RuleTree,
-    cascade_page_with_media_context, cascade_with_options,
+    cascade_page_with_media_context_and_border_width_device_scale, cascade_with_options,
 };
 
 use crate::HtmlDocument;
@@ -856,6 +856,7 @@ pub(crate) fn run_pipeline(
     let font_report = enable_inline_engine(&mut dom, resources, font_faces, &font_loader);
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = config.limits.cascade_limits();
+    cascade_options.border_width_device_scale = resources.configured_border_width_device_scale();
     // The element cascade below runs on the source document, which may have
     // no fonts, so the measurer comes from `dom`, which has them.
     cascade_options.normal_line_height = Some(dom.normal_line_height());
@@ -863,11 +864,12 @@ pub(crate) fn run_pipeline(
     // the element cascade, whose root the page context inherits from. Take it
     // from the page context inheriting initial values; the root's styles only
     // matter to font-relative page lengths, which are checked again below.
-    let provisional_page = cascade_page_with_media_context(
+    let provisional_page = cascade_page_with_media_context_and_border_width_device_scale(
         &tree,
         &first_query,
         PageInheritance::LegacyInitialValues,
         media_context,
+        cascade_options.border_width_device_scale,
     );
     cascade_options.viewport = Some(page_area_size(&provisional_page, &defaults));
     let mut first_cascade = cascade_with_options(

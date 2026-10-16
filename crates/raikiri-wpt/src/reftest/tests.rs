@@ -611,6 +611,19 @@ fn authored_page_viewport_uses_print_content_box() {
 }
 
 #[test]
+fn fractional_page_border_is_snapped_before_viewport_units_expand() {
+    let html = "<style>@page { size: 300px 200px; margin: 0; border-top: 49.75px solid } html,body { margin: 0 } .box { width: 100vw; height: 100vh; background: green }</style><div class=box></div>";
+    let image = render_raikiri(html, 800, 600).expect("render with page viewport units");
+    assert_eq!((image.width, image.height), (300, 200));
+    let last_page_area_pixel = (199 * image.width as usize + 150) * 4;
+    assert_eq!(
+        &image.rgba[last_page_area_pixel..last_page_area_pixel + 4],
+        &[0, 128, 0, 255],
+        "100vh should use the area below the snapped 49px page border"
+    );
+}
+
+#[test]
 fn authored_page_viewport_prefers_the_first_named_page() {
     let html = r#"<style>
             @page { size: 300px 400px; margin: 0; }
@@ -1887,6 +1900,38 @@ fn a_page_geometry_that_varies_keeps_the_inline_engine() {
     assert!(!engine.pages.is_empty());
     assert!(page_has_ink(&engine.pages[0], 20, 30), "bbbb on line 3");
     assert!(!page_has_ink(&engine.pages[0], 10, 20), "line 2 is empty");
+}
+
+#[test]
+fn geometry_reparse_and_width_continuation_keep_page_border_snapping() {
+    let render = |border_width: &str| {
+        let html = format!(
+            "<style>@page:first{{size:300px 200px;margin:0;border-top:{border_width} solid red}} \
+             @page:left{{size:300px 200px;margin:0;border-top:{border_width} solid red}} \
+             @page:right{{size:400px 200px;margin:0;border-top:{border_width} solid red}} \
+             html,body{{margin:0}} .box{{width:100vw;height:600px;background:green}}</style><div class=box></div>"
+        );
+        render_with_engine(&html)
+    };
+    let fractional = render("49.75px");
+    let snapped = render("49px");
+
+    assert!(fractional.pages.len() >= 3);
+    assert!(fractional.pages.iter().any(|page| page.width == 400));
+    assert_eq!(fractional.pages.len(), snapped.pages.len());
+    for (index, (fractional, snapped)) in fractional.pages.iter().zip(&snapped.pages).enumerate() {
+        assert_eq!(
+            (fractional.width, fractional.height),
+            (snapped.width, snapped.height)
+        );
+        let mismatched_pixels = fractional
+            .rgba
+            .chunks_exact(4)
+            .zip(snapped.rgba.chunks_exact(4))
+            .filter(|(actual, expected)| actual != expected)
+            .count();
+        assert_eq!(mismatched_pixels, 0, "page {index} differs");
+    }
 }
 
 fn page_context(css: &str) -> raikiri_style::PageCascadeResult {

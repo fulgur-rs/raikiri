@@ -207,6 +207,8 @@ pub struct CascadeResult {
     /// The measurer of `line-height: normal` the cascade ran with, kept for
     /// the first-letter styles resolved after it.
     normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
+    /// Output scale used to resolve border widths in this result.
+    border_width_device_scale: Option<f32>,
 }
 
 impl CascadeResult {
@@ -230,6 +232,7 @@ impl CascadeResult {
             PageInheritance::FromRoot(self.root_element_computed()),
             media_context,
             self.normal_line_height(),
+            self.border_width_device_scale,
         )
     }
 
@@ -346,6 +349,7 @@ impl CascadeResult {
             page_values,
             pseudo,
             normal_line_height,
+            border_width_device_scale,
         } = self;
         let new_of_old: HashMap<u64, u64> = old_of_new
             .iter()
@@ -386,6 +390,7 @@ impl CascadeResult {
                 .filter_map(|((id, kind), value)| Some(((node(id)?, *kind), value.clone())))
                 .collect(),
             normal_line_height: normal_line_height.clone(),
+            border_width_device_scale: *border_width_device_scale,
         }
     }
 }
@@ -509,11 +514,20 @@ pub fn cascade_with_options<D: StyleDom>(
         WalkOptions {
             limits: options.limits,
             viewport: options.viewport,
+            border_width_device_scale: options.border_width_device_scale,
             normal_line_height: measurer,
             ..WalkOptions::default()
         },
     )?;
-    let mut result = finish(dom, rule_tree, page_query, media_context, outputs, measurer);
+    let mut result = finish(
+        dom,
+        rule_tree,
+        page_query,
+        media_context,
+        outputs,
+        measurer,
+        options.border_width_device_scale,
+    );
     result.normal_line_height = normal_line_height;
     Ok(result)
 }
@@ -533,6 +547,7 @@ fn finish<D: StyleDom>(
     media_context: &MediaContext,
     outputs: WalkOutputs,
     normal_line_height: Option<&dyn crate::resolve::NormalLineHeight>,
+    border_width_device_scale: Option<f32>,
 ) -> CascadeResult {
     let root_element_index = page_inheritance_root_index(dom, outputs.computed.len());
     let page = cascade_page_with_normal_line_height(
@@ -541,6 +556,7 @@ fn finish<D: StyleDom>(
         PageInheritance::FromRoot(&outputs.computed[root_element_index]),
         media_context,
         normal_line_height,
+        border_width_device_scale,
     );
     let generation = NEXT_CASCADE_GENERATION.fetch_add(1, Ordering::Relaxed);
     CascadeResult {
@@ -561,6 +577,7 @@ fn finish<D: StyleDom>(
         page_values: outputs.page_values,
         pseudo: outputs.pseudo,
         normal_line_height: None,
+        border_width_device_scale,
     }
 }
 

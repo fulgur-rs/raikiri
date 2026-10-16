@@ -238,6 +238,7 @@ css/css-backgrounds/background-clip-content-box-001.html
 css/css-backgrounds/background-clip-content-box-002.html
 css/css-backgrounds/background-clip-content-box-with-border-radius-002.html
 css/css-backgrounds/background-clip-content-box-with-border-radius-003.html
+css/css-backgrounds/background-clip-padding-box-001.html
 css/css-backgrounds/background-clip-padding-box-with-border-radius-002.html
 css/css-backgrounds/background-clip-padding-box-with-border-radius-003.html
 css/css-backgrounds/background-clip/clip-border-area-background-geometry.html

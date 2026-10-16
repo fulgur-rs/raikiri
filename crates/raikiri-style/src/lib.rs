@@ -92,7 +92,8 @@ pub use page::{
     PageInheritance, PageMarginBoxCascadeResult, PageMarginBoxRule, PageMarginBoxSlot, PageMarks,
     PageMarksDeclaration, PageOrientation, PagePseudo, PageRotation, PageRotationDeclaration,
     PageRule, PageSelector, PageSelectorEntry, PageSize, PageSizeDeclaration, PageSizeKeyword,
-    cascade_page, cascade_page_with_media_context, is_valid_page_descriptor,
+    cascade_page, cascade_page_with_media_context,
+    cascade_page_with_media_context_and_border_width_device_scale, is_valid_page_descriptor,
     is_valid_page_selector, page_rule_drops_value,
 };
 

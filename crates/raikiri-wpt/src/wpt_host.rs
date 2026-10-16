@@ -351,10 +351,14 @@ impl DocumentHost for WptDocumentHost {
             &self.setup.uncascaded,
             &self.setup.media_context,
         );
-        let cascade = raikiri::build_cascaded_with_media_context_for_page(
+        let mut cascade_options = raikiri::CascadeOptions::default();
+        cascade_options.border_width_device_scale = Some(1.0);
+        let cascade = raikiri::build_cascaded_with_options(
             &resolved,
             &self.setup.media_context,
             &self.setup.page_query,
+            &[],
+            &cascade_options,
         )
         .map_err(|error| HostError(error.to_string()))?;
         let image_resolver = raikiri_net::ImageResolver::new(

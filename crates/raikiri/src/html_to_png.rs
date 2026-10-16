@@ -22,11 +22,9 @@
 //!   calls. [`crate::PageScene::rasterize`] centralizes this byte-identical
 //!   raster/encode sequence.
 
-use raikiri_html::ParseOptions;
 use raikiri_traits::{PageBox, RenderError};
 
 use crate::page_scene::build_page_scene;
-use crate::parse_html;
 
 /// Shared implementation for `html_to_png` and its font variant. Without
 /// `fonts`, text is laid out with the installed fonts.
@@ -47,7 +45,7 @@ pub(crate) fn html_to_png_impl<R: std::io::Read>(
     // `fonts`, the DOM takes them before its cascade, which measures
     // `line-height: normal` in them; without, its first layout takes the
     // installed fonts.
-    let mut resources = raikiri_html::RenderResources::new();
+    let mut resources = raikiri_html::RenderResources::new().border_width_device_scale(Some(1.0));
     if let Some(fonts) = fonts {
         resources = resources.fonts(fonts);
     }
@@ -131,12 +129,9 @@ where
     R: raikiri_traits::ReplacedResolver,
     I: raikiri_traits::ImagePixelSource,
 {
-    let opts = ParseOptions {
-        extra_stylesheets: &[],
-        network: None,
-        base_url: None,
-    };
-    let (mut uncascaded, cascade) = parse_html(input, &opts)?.into_parts();
+    let resources = raikiri_html::RenderResources::new().border_width_device_scale(Some(1.0));
+    let (mut uncascaded, cascade) =
+        raikiri_html::parse_html_with_resources(input, &resources)?.into_parts();
     let page_box = PageBox::from_page_size(cascade.page.size());
     let base_url = raikiri_html::effective_document_base_url(&uncascaded, None);
     for (element, computed) in cascade.computed.iter().enumerate() {

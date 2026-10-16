@@ -239,6 +239,9 @@ pub(crate) struct WalkOptions<'a> {
     /// The basis of the viewport-percentage lengths; see
     /// [`crate::CascadeOptions::viewport`].
     pub(crate) viewport: Option<(f32, f32)>,
+    /// Device pixels per CSS pixel for computed border-width snapping; see
+    /// [`crate::CascadeOptions::border_width_device_scale`].
+    pub(crate) border_width_device_scale: Option<f32>,
     /// Measures `line-height: normal`; see
     /// [`crate::CascadeOptions::normal_line_height`].
     pub(crate) normal_line_height: Option<&'a dyn crate::resolve::NormalLineHeight>,
@@ -253,6 +256,7 @@ impl Default for WalkOptions<'_> {
             stored_block_budget: STORED_BLOCK_BUDGET,
             limits: CascadeLimits::default(),
             viewport: None,
+            border_width_device_scale: None,
             normal_line_height: None,
         }
     }
@@ -712,10 +716,11 @@ pub(crate) fn walk_from<D: StyleDom>(
                          親の computed font-size は initial でなければならない \
                          (subtree の途中から walk を開始していないか?)"
                     );
-                    specified.finalize_as_root_in_viewport_with(
+                    specified.finalize_as_root_in_viewport_with_border_width_device_scale(
                         viewport.0,
                         viewport.1,
                         options.normal_line_height,
+                        options.border_width_device_scale,
                     )
                 }
             };
@@ -737,7 +742,8 @@ pub(crate) fn walk_from<D: StyleDom>(
                 None if is_element => Some(
                     ResolveContext::with_root_line_height(computed.font_size, computed.lh_basis())
                         .with_viewport(viewport.0, viewport.1)
-                        .with_vertical_root(computed.cssom_writing_mode.is_vertical()),
+                        .with_vertical_root(computed.cssom_writing_mode.is_vertical())
+                        .with_border_width_device_scale(options.border_width_device_scale),
                 ),
                 None => None,
             };

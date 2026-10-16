@@ -1748,6 +1748,21 @@ impl SpecifiedValues {
         height: f32,
         normal_line_height: Option<&dyn NormalLineHeight>,
     ) -> ComputedValues {
+        self.finalize_as_root_in_viewport_with_border_width_device_scale(
+            width,
+            height,
+            normal_line_height,
+            None,
+        )
+    }
+
+    pub(crate) fn finalize_as_root_in_viewport_with_border_width_device_scale(
+        self,
+        width: f32,
+        height: f32,
+        normal_line_height: Option<&dyn NormalLineHeight>,
+        border_width_device_scale: Option<f32>,
+    ) -> ComputedValues {
         // Phase 2: with no parent, use the initial values. The `em` / `rem` reference follows the
         // parent-metrics clause of CSS Values 4 §6.1.1 quoted above. **That clause does not cover
         // `<percentage>`**: its subject is "the font-relative lengths", not percentages. The 24px
@@ -1795,7 +1810,8 @@ impl SpecifiedValues {
             ..ResolveContext::initial()
         }
         .with_viewport(width, height)
-        .with_vertical_root(self.writing_mode.is_vertical());
+        .with_vertical_root(self.writing_mode.is_vertical())
+        .with_border_width_device_scale(border_width_device_scale);
         // The root's parent is the initial style, whose `font-family` is
         // `initial_font_family()`.
         let font_size = match self.keyword_font_size(&initial_font_family()) {
@@ -1839,7 +1855,8 @@ impl SpecifiedValues {
         let own_line_height = used_line_height_length_or(line_height, font_size, normal);
         let ctx = ResolveContext::with_root_line_height(font_size, own_line_height)
             .with_viewport(width, height)
-            .with_vertical_root(self.writing_mode.is_vertical());
+            .with_vertical_root(self.writing_mode.is_vertical())
+            .with_border_width_device_scale(border_width_device_scale);
         self.absolutize_with(font_size, line_height, normal, text_align, &ctx)
     }
 

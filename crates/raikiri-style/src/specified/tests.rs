@@ -23,6 +23,7 @@ const CTX: ResolveContext = ResolveContext {
     viewport_width: 480.0,
     viewport_height: 288.0,
     vertical_root: false,
+    border_width_device_scale: None,
 };
 
 /// Fixture passed as `parent: &ComputedValues` to `finalize`, with only its font size changed

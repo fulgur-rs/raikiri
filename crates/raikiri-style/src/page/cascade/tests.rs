@@ -1695,6 +1695,7 @@ fn page_measuring_normal(css: &str, root: &ComputedValues) -> PageCascadeResult 
         PageInheritance::FromRoot(root),
         &MediaContext::default(),
         Some(&PageNormal),
+        None,
     )
 }
 
@@ -1922,6 +1923,26 @@ fn cascade_page_border_width_is_gated_by_border_style_none() {
     assert_eq!(
         result.declarations().get(&PropertyKey::BorderTopWidth),
         Some(&PropertyValue::BorderTopWidth(Length::Px(0.0))),
+    );
+}
+
+#[test]
+fn page_border_width_uses_the_requested_device_scale() {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(
+        "@page { border-top-width: 49.75px; border-top-style: solid }",
+        Origin::Author,
+    );
+    let page = cascade_page_with_media_context_and_border_width_device_scale(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::LegacyInitialValues,
+        &MediaContext::default(),
+        Some(1.0),
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::BorderTopWidth),
+        Some(&PropertyValue::BorderTopWidth(Length::Px(49.0))),
     );
 }
 

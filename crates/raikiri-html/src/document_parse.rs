@@ -137,7 +137,7 @@ pub fn parse_html_with_limits<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
 ) -> Result<HtmlDocument, RenderError> {
-    parse_html_with_fonts(input, options, limits, None)
+    parse_html_with_fonts(input, options, limits, None, None)
 }
 
 /// [`parse_html_with_limits`] for a document laid out with `fonts`, given
@@ -149,9 +149,16 @@ pub(crate) fn parse_html_with_fonts<R: Read>(
     options: &ParseOptions<'_>,
     limits: RenderLimits,
     fonts: Option<shodo::font::FontCollection>,
+    border_width_device_scale: Option<f32>,
 ) -> Result<HtmlDocument, RenderError> {
     let uncascaded = parse_with_budgets(input, options, &limits)?;
-    assemble_document(uncascaded, options, &limits, fonts)
+    assemble_document(
+        uncascaded,
+        options,
+        &limits,
+        fonts,
+        border_width_device_scale,
+    )
 }
 
 /// Check the DOM node cap as a defensive postcondition, give the DOM `fonts`
@@ -161,6 +168,7 @@ pub(crate) fn assemble_document(
     options: &ParseOptions<'_>,
     limits: &RenderLimits,
     fonts: Option<shodo::font::FontCollection>,
+    border_width_device_scale: Option<f32>,
 ) -> Result<HtmlDocument, RenderError> {
     if let Some(limit) = limits.max_dom_nodes {
         let actual = uncascaded.dom.node_count() as u64;
@@ -181,6 +189,7 @@ pub(crate) fn assemble_document(
     let font_faces = rule_tree.font_faces_for(&media_context);
     let mut cascade_options = CascadeOptions::default();
     cascade_options.limits = limits.cascade_limits();
+    cascade_options.border_width_device_scale = border_width_device_scale;
     let cascade = raikiri_style::cascade_with_options(
         &uncascaded.dom,
         &rule_tree,

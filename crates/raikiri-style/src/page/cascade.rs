@@ -1191,7 +1191,29 @@ pub fn cascade_page_with_media_context(
     inheritance: PageInheritance<'_>,
     media_context: &MediaContext,
 ) -> PageCascadeResult {
-    cascade_page_with_normal_line_height(rule_tree, query, inheritance, media_context, None)
+    cascade_page_with_normal_line_height(rule_tree, query, inheritance, media_context, None, None)
+}
+
+/// [`cascade_page_with_media_context`] with output-scale-aware border widths.
+///
+/// Raster consumers that resolve the page area before the element cascade
+/// should pass the scale of that output so page borders and the resulting
+/// viewport use the same geometry. `None` preserves fractional widths.
+pub fn cascade_page_with_media_context_and_border_width_device_scale(
+    rule_tree: &RuleTree,
+    query: &PageContextQuery,
+    inheritance: PageInheritance<'_>,
+    media_context: &MediaContext,
+    border_width_device_scale: Option<f32>,
+) -> PageCascadeResult {
+    cascade_page_with_normal_line_height(
+        rule_tree,
+        query,
+        inheritance,
+        media_context,
+        None,
+        border_width_device_scale,
+    )
 }
 
 /// [`cascade_page_with_media_context`], measuring `line-height: normal` with
@@ -1203,6 +1225,7 @@ pub(crate) fn cascade_page_with_normal_line_height(
     inheritance: PageInheritance<'_>,
     media_context: &MediaContext,
     normal_line_height: Option<&dyn NormalLineHeight>,
+    border_width_device_scale: Option<f32>,
 ) -> PageCascadeResult {
     let layers = rule_tree.layer_order(media_context);
     // Candidate: (value, important, origin, specificity, source_order).
@@ -1588,7 +1611,8 @@ pub(crate) fn cascade_page_with_normal_line_height(
     // relies on the same fact for `font-size: 1lh`'s self-reference basis —
     // for the page context specifically, "parent" and "root" coincide (both
     // are `inherited`), so the one `ctx.root_line_height` serves both.
-    let ctx = ResolveContext::with_root_line_height(inherited.font_size, inherited.lh_basis());
+    let ctx = ResolveContext::with_root_line_height(inherited.font_size, inherited.lh_basis())
+        .with_border_width_device_scale(border_width_device_scale);
     let radius_keys = [
         PropertyKey::BorderRadiusTopLeft,
         PropertyKey::BorderRadiusTopRight,
