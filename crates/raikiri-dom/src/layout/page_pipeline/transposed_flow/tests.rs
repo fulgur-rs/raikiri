@@ -128,9 +128,10 @@ fn the_block_end_margin_of_the_body_does_not_add_a_page() {
     assert_eq!(origins(&pages), [0.0, 800.0]);
     assert_eq!(absolute_rect(&doc, ids[1]), (180.0, 0.0, 600.0, 600.0));
     assert_eq!(absolute_rect(&doc, ids[2]), (-800.0, 0.0, 800.0, 600.0));
-    // The body keeps its block margins as padding on physical axes.
-    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.left, 20.0);
-    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.right, 20.0);
+    // The body's margins stay outside its border box on physical axes.
+    let layout = doc.nodes[ids[0]].unrounded_layout;
+    assert_eq!((layout.margin.left, layout.margin.right), (20.0, 20.0));
+    assert_eq!((layout.padding.left, layout.padding.right), (0.0, 0.0));
 }
 
 #[test]

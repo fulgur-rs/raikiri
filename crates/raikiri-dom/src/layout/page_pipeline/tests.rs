@@ -1984,6 +1984,20 @@ fn page_fragment_projection_handles_empty_missing_body_and_invalid_slice_inputs(
         PageBox::A4,
         std::slice::from_ref(&slice),
     );
+    // Invalid descendant geometry must not discard the valid root box.
+    assert!(
+        pages[0]
+            .items
+            .iter()
+            .all(|item| item.node_id.0 == html as u64)
+    );
+    document.nodes[html].unrounded_layout.location.x = f32::NAN;
+    let pages = page_fragments_from_slices(
+        &document,
+        &cascade,
+        PageBox::A4,
+        std::slice::from_ref(&slice),
+    );
     assert!(pages[0].is_empty());
 }
 
@@ -2797,7 +2811,7 @@ fn layout_pages_keeps_the_margin_of_a_forced_break_box_after_a_margin_filled_pag
     // border box lands on the page origin before pagination. The forced
     // break still precedes the margin box, whose margin stays on page 1.
     assert_eq!(slices.len(), 2);
-    let second_y = doc.nodes[second].unrounded_layout.location.y;
+    let second_y = crate::layout::test_support::absolute_rect(&doc, second).1;
     // cov:ignore: panic-message text is only executed when the assertion fails.
     assert!(
         (second_y - 125.0).abs() < 0.01,
@@ -8445,19 +8459,17 @@ fn inline_body(html_css: Option<&str>, body_css: &str) -> (bool, bool, usize) {
 
 #[test]
 fn an_inline_body_still_lays_its_text_out_as_a_paragraph() {
-    // Layout starts at the body, which always generates a block box (CSS
-    // Display 3 2.7 blockifies the root element): its text is a paragraph of
-    // one line on the page, with or without a UA stylesheet, and `html` (not laid
-    // out) is never the paragraph.
-    assert_eq!(inline_body(None, ""), (true, false, 1));
+    // Only the document element is blockified. An inline or contents body
+    // participates in html's paragraph, with one line and no extra body IFC.
+    assert_eq!(inline_body(None, ""), (false, true, 1));
     assert_eq!(
         inline_body(Some("display:block"), "display:inline"),
-        (true, false, 1)
+        (false, true, 1)
     );
-    // `display: contents` on the root also computes to `block`.
+    // A contents body contributes its text directly to the root paragraph.
     assert_eq!(
         inline_body(Some("display:block"), "display:contents"),
-        (true, false, 1)
+        (false, true, 1)
     );
 }
 
@@ -11392,7 +11404,7 @@ fn a_root_margin_crossing_pages_keeps_the_body_margin() {
     // body's margin does not collapse with it and stays below the page top.
     assert_eq!(pages.len(), 3);
     assert_eq!(
-        doc.get_node(child).unwrap().unrounded_layout.location.y,
+        crate::layout::test_support::absolute_rect(&doc, child).1,
         208.0
     );
 }
@@ -11459,7 +11471,11 @@ fn a_body_margin_crossing_a_later_break_is_truncated() {
     assert_eq!(pages.len(), 4);
     let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
     let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
-    assert_eq!(body_y + child_y, 300.0, "body {body_y}, child {child_y}");
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, child).1,
+        300.0,
+        "body {body_y}, child {child_y}"
+    );
 }
 
 #[test]
@@ -11621,7 +11637,11 @@ fn a_root_margin_within_a_taller_first_page_is_kept() {
     layout_pages_with_page_steps(&mut doc, &cascade, page, &[150.0]).unwrap();
     let body_y = doc.get_node(body).unwrap().unrounded_layout.location.y;
     let child_y = doc.get_node(child).unwrap().unrounded_layout.location.y;
-    assert_eq!(body_y + child_y, 150.0, "body {body_y}, child {child_y}");
+    assert_eq!(
+        crate::layout::test_support::absolute_rect(&doc, child).1,
+        150.0,
+        "body {body_y}, child {child_y}"
+    );
 }
 
 #[test]

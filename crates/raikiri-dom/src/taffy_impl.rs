@@ -112,7 +112,7 @@ fn ifc_parent_inline_size(
             .unwrap_or(0.0)
     };
     let vertical = tree
-        .parent_of(node)
+        .taffy_parent_of(node)
         .is_some_and(|parent| tree.nodes[parent].used_writing_mode.is_vertical());
     Some(if vertical {
         parent_size
@@ -273,6 +273,7 @@ impl<'a> TaffyChildIter<'a> {
         node.kind() == raikiri_traits::NodeKind::Element
             && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
+            && !node.flags.contains(NodeFlags::IS_ROOT_ELEMENT)
     }
 
     fn includes(doc: &Document, child: usize) -> bool {
@@ -308,6 +309,11 @@ impl Document {
     /// An anonymous table cell wrapping `node` is its container, though the
     /// cell exists only in the layout view.
     pub(crate) fn taffy_parent_of(&self, node: usize) -> Option<usize> {
+        if let Some(icb) = self.nodes.initial_containing_block_key()
+            && self.nodes[icb].children.contains(&node)
+        {
+            return Some(icb);
+        }
         if let Some(cell) = self.anonymous_cell_of(node) {
             return Some(cell);
         }
@@ -571,6 +577,7 @@ impl Document {
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap
+                    && !tree.nodes[idx].flags.contains(NodeFlags::IS_ROOT_ELEMENT)
                     && !contained_width
                     && tree.nodes[idx].style.size.width.is_auto()
                     && (inputs.known_dimensions.width.is_none()

@@ -22,6 +22,39 @@ pub(super) struct Flow {
     pub positioned: Vec<super::positioned::Candidate>,
 }
 
+fn place_inline_axis(
+    style: &Style,
+    direction: taffy::Direction,
+    container_width: f32,
+    insets: [f32; 2],
+    (area_start, area_width): (f32, f32),
+    used_width: f32,
+    margin: &mut Rect<f32>,
+) -> f32 {
+    let free = area_width - used_width;
+    let (left_auto, right_auto) = (style.margin.left.is_auto(), style.margin.right.is_auto());
+    let (auto_left, auto_right) = match (left_auto, right_auto) {
+        (true, true) => (free.max(0.0) / 2.0, free.max(0.0) / 2.0),
+        (true, false) => (free.max(0.0), 0.0),
+        (false, true) => (0.0, free.max(0.0)),
+        _ => (0.0, 0.0),
+    };
+    let offset = if direction == taffy::Direction::Rtl && (free < 0.0 || !left_auto && !right_auto)
+    {
+        free
+    } else {
+        auto_left
+    };
+    if left_auto {
+        margin.left = auto_left + (area_start - insets[0]).max(0.0);
+    }
+    if right_auto {
+        margin.right =
+            auto_right + (container_width - insets[1] - area_start - area_width).max(0.0);
+    }
+    area_start + offset
+}
+
 fn margins(style: &Style, basis: f32) -> Rect<f32> {
     style
         .margin
@@ -232,29 +265,15 @@ pub(super) fn layout(
                 after = slot.segment_id;
             }
         }
-        let free = area_width - child_width;
-        let (left_auto, right_auto) = (style.margin.left.is_auto(), style.margin.right.is_auto());
-        let (auto_left, auto_right) = match (left_auto, right_auto) {
-            (true, true) => (free.max(0.0) / 2.0, free.max(0.0) / 2.0),
-            (true, false) => (free.max(0.0), 0.0),
-            (false, true) => (0.0, free.max(0.0)),
-            _ => (0.0, 0.0),
-        };
-        let offset = if container.direction == taffy::Direction::Rtl
-            && (free < 0.0 || !left_auto && !right_auto)
-        {
-            free
-        } else {
-            auto_left
-        };
-        let left = area_start + offset;
-        if left_auto {
-            margin.left = auto_left + (area_start - metrics.inset.left).max(0.0);
-        }
-        if right_auto {
-            margin.right =
-                auto_right + (width - metrics.inset.right - area_start - area_width).max(0.0);
-        }
+        let left = place_inline_axis(
+            &style,
+            container.direction,
+            width,
+            [metrics.inset.left, metrics.inset.right],
+            (area_start, area_width),
+            child_width,
+            &mut margin,
+        );
         child_input.known_dimensions.width = Some(child_width);
         child_input.available_space.width = AvailableSpace::Definite(child_width);
         child_input.vertical_margins_are_collapsible = if same { Line::TRUE } else { Line::FALSE };
@@ -344,6 +363,17 @@ pub(super) fn layout(
                 .collapse_with_set(pending)
                 .collapse_with_set(top_set);
         }
+        // A specialized child can return a used width different from the
+        // width supplied by this parent. Position its final border box.
+        let left = place_inline_axis(
+            &style,
+            container.direction,
+            width,
+            [metrics.inset.left, metrics.inset.right],
+            (area_start, area_width),
+            output.size.width,
+            &mut margin,
+        );
         let offset = relative(&style, parent, container.direction);
         let location = Point {
             x: left + offset.x,

@@ -71,6 +71,8 @@ bitflags::bitflags! {
         /// Atomic inline removed from its line by a `text-overflow`
         /// ellipsis: it keeps its box but is not painted.
         const HIDDEN_BY_TEXT_OVERFLOW = 1 << 7;
+        /// The document element, whose principal box establishes a BFC.
+        const IS_ROOT_ELEMENT = 1 << 8;
     }
 }
 
@@ -618,8 +620,11 @@ impl Node {
 
     /// The backend display derived from this box's CSS identity.
     pub(crate) fn taffy_display(&self) -> taffy::Display {
-        self.box_properties
-            .taffy_display(self.multicol.is_some(), self.kind())
+        self.box_properties.taffy_display(
+            self.multicol.is_some(),
+            self.kind(),
+            self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
+        )
     }
 
     /// The backend position derived from this box's CSS identity.
@@ -630,14 +635,21 @@ impl Node {
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
         self.box_properties = BoxProperties::new(display, position);
+        if self.flags.contains(NodeFlags::IS_ROOT_ELEMENT) {
+            self.box_properties.blockify_root();
+        }
         self.refresh_box_style();
     }
 
     /// Refresh the backend projection after rebuilding other style fields.
     pub(crate) fn refresh_box_style(&mut self) {
         let kind = self.kind();
-        self.box_properties
-            .apply_to_style(&mut self.style, self.multicol.is_some(), kind);
+        self.box_properties.apply_to_style(
+            &mut self.style,
+            self.multicol.is_some(),
+            kind,
+            self.flags.contains(NodeFlags::IS_ROOT_ELEMENT),
+        );
     }
 
     /// Change the display of an engine-created box while retaining its position.
@@ -657,7 +669,7 @@ impl Node {
         let mut node = Self {
             formatting_context: match data {
                 NodeData::Element(_) => FormattingContext::from_taffy_display(
-                    box_properties.taffy_display(false, NodeKind::Element),
+                    box_properties.taffy_display(false, NodeKind::Element, false),
                 ),
                 _ => FormattingContext::Text,
             },
@@ -983,6 +995,14 @@ impl Node {
         self.ifc
             .as_ref()
             .map_or(&[], |root| root.offsets.as_slice())
+    }
+
+    /// Whether layout lays this box out as a multi-column container. The
+    /// column properties apply only to block containers (CSS Multi-column
+    /// Layout 1, 2), so a flex, grid or table box with them is not one.
+    #[doc(hidden)]
+    pub fn is_multicol_container(&self) -> bool {
+        self.multicol.is_some()
     }
 
     /// Line ranges of an ifc root's lines split across the columns of a

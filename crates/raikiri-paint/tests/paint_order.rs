@@ -241,19 +241,19 @@ fn body_node(page: &Page<'_>) -> usize {
         .expect("a body element")
 }
 
-/// The walker's steps with the body's box taken out on pages where the
-/// page projection has no fragment of the body: the walker records the
-/// body's box on every page (see `known_difference_body_box_on_every_page`).
+/// Omit root and body recording steps when their used boxes miss the page.
+/// The walker records them on every page; the API lists only real fragments.
 fn walker_steps_on_body_pages(page: &Page<'_>) -> Vec<Step> {
+    let root = page.paint_inputs().0.document_element_index();
     let body = body_node(page);
-    let mut walker = walker_steps(page);
-    let body_on_page = page
+    let on_page: std::collections::HashSet<_> = page
         .fragments()
-        .any(|f| node_index(f.node()) == body && f.kind() == FragmentKind::Box);
-    if !body_on_page && walker.first() == Some(&Step::Box(body)) {
-        walker.remove(0);
-    }
-    walker
+        .filter(|fragment| fragment.kind() == FragmentKind::Box)
+        .map(|fragment| node_index(fragment.node()))
+        .collect();
+    walker_steps(page).into_iter().filter(|step| {
+        !matches!(step, Step::Box(id) if (Some(*id) == root || *id == body) && !on_page.contains(id))
+    }).collect()
 }
 
 /// Compares both sequences on every page and returns the layout so a
@@ -359,8 +359,7 @@ fn separated_table_part_shadows_precede_the_cell_clips() {
     assert_eq!(shadows(&collapse), 0);
 }
 
-/// The body's box reaches every page its paragraphs go on to, so both the
-/// walker and `paint_order` start each page with it.
+/// Root and body boxes reach every page their paragraphs go on to.
 #[test]
 fn body_box_on_every_page() {
     let paragraphs: String = (0..20).map(|i| format!("<p>paragraph {i}</p>")).collect();
@@ -371,11 +370,16 @@ fn body_box_on_every_page() {
     assert_eq!(result.page_count(), 3);
     for page in result.pages() {
         let body = body_node(&page);
+        let root = page
+            .paint_inputs()
+            .0
+            .document_element_index()
+            .expect("document element");
         let walker = walker_steps(&page);
         let api = api_steps(&page);
         assert_eq!(
-            walker.first(),
-            Some(&Step::Box(body)),
+            walker.get(..2),
+            Some([Step::Box(root), Step::Box(body)].as_slice()),
             "page {}",
             page.index()
         );
@@ -1137,4 +1141,18 @@ fn negative_content_inside_inline_stacking_contexts_keeps_blocks_before_the_line
     );
     let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
     assert!(step_at(&result, Step::Box(k)) < step_at(&result, Step::Text(m)));
+}
+
+/// The column properties do not apply to a flex box (CSS Multi-column
+/// Layout 1, 2), so the text overflowing an item's block still paints above
+/// the later block's background, as it does in a flex box without them.
+#[test]
+fn column_properties_on_a_flex_box_keep_overflowing_text_above_later_backgrounds() {
+    let result = same_order(
+        "<div style=\"display: flex; columns: 2\"><div>\
+         <div id=b style=\"height: 0\">overflowing text</div>\
+         <div id=c style=\"height: 20px; background: teal\"></div></div></div>",
+    );
+    let [b, c] = ["b", "c"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Text(b)));
 }

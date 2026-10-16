@@ -22,8 +22,8 @@ use raikiri_traits::NodeKind;
 /// Percentages and `calc()` resolve against the content box of the
 /// containing block: the nearest ancestor box that is not a non-atomic
 /// inline, and inside a multi-column container the column box of a child
-/// that does not span the columns. The body is laid out in the page area,
-/// so that is its containing block. The width is always known; a
+/// that does not span the columns. The root element uses the page-area
+/// ICB; the body uses its ordinary ancestor box. The width is known; a
 /// percentage of the height counts as `auto` unless layout gave the
 /// containing block a definite height (CSS 2.1 §9.3.2, §10.5): a specified
 /// one, or one its flex, grid or absolute positioning fixed.
@@ -70,14 +70,11 @@ fn relative_insets_with_box_tree(
     boxes: BoxTree<'_>,
 ) -> (Option<f32>, Option<f32>) {
     let block = containing_block(document, boxes, node_id);
-    let is_body = || super::ifc::assign::is_layout_root(document, node_id);
-    // An anonymous cell takes its direction and writing mode from its row,
-    // and the initial containing block of the body from the root element
-    // (CSS Writing Modes 4 §8).
-    let source = if is_body() {
-        document
-            .parent_of(node_id)
-            .filter(|&root| document.nodes[root].kind() == NodeKind::Element)
+    let is_root = || super::ifc::assign::is_layout_root(document, node_id);
+    // The ICB takes its writing mode and direction from the document element.
+    // An anonymous cell takes them from its source row.
+    let source = if is_root() {
+        Some(node_id)
     } else {
         block.map(|block| block.source)
     };
@@ -114,7 +111,7 @@ fn relative_insets_with_box_tree(
         })
     };
     let width = || {
-        if is_body() {
+        if is_root() {
             return Some(document.fixed_page_area.unwrap_or_default().0);
         }
         let block = document.ifc_layout_node(block?.key)?;
@@ -125,7 +122,7 @@ fn relative_insets_with_box_tree(
         })
     };
     let height = || {
-        if is_body() {
+        if is_root() {
             return Some(document.fixed_page_area.unwrap_or_default().1);
         }
         document.ifc_layout_node(block?.key)?.percent_basis_height
@@ -191,7 +188,7 @@ pub(crate) fn placed_without_relative_offset_for_layout(
 fn placed_without_offset_with_properties(
     document: &Document,
     boxes: BoxTree<'_>,
-    body: Option<usize>,
+    _body: Option<usize>,
     node_id: usize,
     cv: &ComputedValues,
     properties: BoxPropertiesRef<'_>,
@@ -211,7 +208,7 @@ fn placed_without_offset_with_properties(
             | DisplayValue::TableHeaderGroup
             | DisplayValue::TableFooterGroup
     );
-    (body == Some(node_id) || float || table_part) && !properties.display().is_inline_level()
+    (float || table_part) && !properties.display().is_inline_level()
 }
 
 /// Which of two opposing insets wins.
@@ -281,6 +278,7 @@ fn is_table_part(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> boo
 fn is_non_atomic_inline(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> bool {
     let node = &document.nodes[node_id];
     node.kind() == NodeKind::Element
+        && !super::ifc::assign::is_layout_root(document, node_id)
         && boxes.properties(node_id).is_some_and(|properties| {
             properties.display().is_inline_flow()
                 && !matches!(

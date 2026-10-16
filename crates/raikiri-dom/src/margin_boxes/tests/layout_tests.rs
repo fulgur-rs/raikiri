@@ -563,3 +563,50 @@ fn a_lime_content_image_is_placed_after_the_text() {
         Some(PaintRect::new(60.0, 0.0, 100.0, 40.0))
     );
 }
+
+#[test]
+fn named_values_follow_document_order_after_the_tree_changes() {
+    // Moving the first heading after the second, and detaching a third,
+    // leaves the arena order unlike the document order.
+    let mut doc = engine_document();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let head = doc.append_element(Some(html), "head", Style::default(), Some("display:none"));
+    let style = doc.append_element(Some(head), "style", Style::default(), None::<&str>);
+    doc.append_text(
+        style,
+        "h1 { string-set: title content() } \
+         div { position: running(hdr) } \
+         @page { margin: 40px; \
+           @top-left { content: string(title) } \
+           @top-right { content: element(hdr) } }",
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let mut moved = Vec::new();
+    for (heading, running) in [("Last", "Last head"), ("First", "First head")] {
+        let h1 = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+        doc.append_text(h1, heading);
+        let hdr = doc.append_element(Some(body), "div", Style::default(), None::<&str>);
+        doc.append_text(hdr, running);
+        moved.extend([h1, hdr]);
+    }
+    for &node in &moved[..2] {
+        doc.detach_from_parent(node);
+        doc.append_child(body, node).unwrap();
+    }
+    let detached = doc.append_element(Some(body), "h1", Style::default(), None::<&str>);
+    doc.append_text(detached, "Detached");
+    doc.detach_from_parent(detached);
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let contents: Vec<_> = layout_page(&doc, &cascade, small_page())
+        .into_iter()
+        .map(|margin_box| (margin_box.slot, margin_box.content))
+        .collect();
+    assert_eq!(
+        contents,
+        [
+            (PageMarginBoxSlot::TopLeft, "Last".to_owned()),
+            (PageMarginBoxSlot::TopRight, "Last head".to_owned()),
+        ]
+    );
+}

@@ -137,7 +137,7 @@ fn a_singular_root_transform_renders_only_the_canvas_color() {
 fn transformed_canvas_images_stay_inside_the_canvas() {
     let pages = pages(
         "",
-        "@page { margin: 20px } html { transform: rotate(30deg); \
+        "@page { margin: 20px } html { height: 100%; transform: rotate(30deg); \
          background: linear-gradient(red, red) }",
     );
     assert_eq!(pixel(&pages[0], 50, 50), RED);

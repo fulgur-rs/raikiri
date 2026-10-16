@@ -535,39 +535,49 @@ fn a_line_break_is_placed_on_the_line_it_ends() {
 }
 
 #[test]
-fn quirks_mode_a_line_break_takes_its_strut_font_from_a_contents_body() {
+fn quirks_mode_a_line_break_uses_the_box_generating_ancestor_of_a_contents_body() {
     use raikiri_traits::QuirksMode;
     use taffy::Style;
-    let mut doc = Document::new();
-    doc.set_quirks_mode(QuirksMode::Quirks);
-    let html = doc.append_element(
-        Some(0),
-        "html",
-        Style::default(),
-        Some("display:block;font-size:10px;line-height:10px"),
-    );
-    // The body layout starts at generates a box even with `display:
-    // contents`, so the break's `line-height: 2` is resolved against the
-    // body's 20px font, not the html element's 10px one.
-    let body = doc.append_element(
-        Some(html),
-        "body",
-        Style::default(),
-        Some("display:contents;margin:0;font-size:20px;line-height:20px"),
-    );
-    doc.append_element(Some(body), "br", Style::default(), Some("line-height:2"));
-    doc.append_text(body, "z");
-    doc.mark_in_document_flags();
-    let rules = raikiri_style::build_rule_tree(&doc);
-    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
-    layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
-    let heights: Vec<f32> = doc.nodes[body]
-        .ifc_lines()
-        .expect("body lines")
-        .iter()
-        .map(shodo::Line::block_size)
-        .collect();
-    assert_eq!(heights, [40.0, 20.0]);
+    for (tag, display, expected) in [
+        ("body", "contents", [20.0, 10.0]),
+        ("span", "contents", [20.0, 10.0]),
+        ("body", "block", [40.0, 20.0]),
+    ] {
+        let mut doc = Document::new();
+        doc.set_quirks_mode(QuirksMode::Quirks);
+        let html = doc.append_element(
+            Some(0),
+            "html",
+            Style::default(),
+            Some("display:block;font-size:10px;line-height:10px"),
+        );
+        // A contents element has no strut. Its paragraph and break use html's
+        // 10px strut, while a block body contributes its own 20px strut.
+        let body = doc.append_element(
+            Some(html),
+            tag,
+            Style::default(),
+            Some(format!("display:{display};margin:0;font-size:20px;line-height:20px").as_str()),
+        );
+        // The layout API currently requires a body, even for the span control.
+        if tag != "body" {
+            doc.append_element(Some(html), "body", Style::default(), Some("display:none"));
+        }
+        doc.append_element(Some(body), "br", Style::default(), Some("line-height:2"));
+        doc.append_text(body, "z");
+        doc.mark_in_document_flags();
+        let rules = raikiri_style::build_rule_tree(&doc);
+        let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+        layout_single_page(&mut doc, &cascade, raikiri_traits::PageBox::A4).expect("layout");
+        let owner = if display == "block" { body } else { html };
+        let heights: Vec<f32> = doc.nodes[owner]
+            .ifc_lines()
+            .expect("paragraph lines")
+            .iter()
+            .map(shodo::Line::block_size)
+            .collect();
+        assert_eq!(heights, expected, "{tag} {display}");
+    }
 }
 
 fn intrinsic_measurements(doc: &Document) -> usize {
@@ -635,8 +645,9 @@ fn percentage_heights_in_a_paragraph_resolve_against_its_definite_height() {
             // too.
             ("writing-mode:vertical-rl;height:100px", expected),
             ("", 10.0),
-            // The body fills the 600px page, so half of it is definite too.
-            ("height:50%", expected * 3.0),
+            // The body's auto height is indefinite, so percentages in the
+            // paragraph also behave as auto.
+            ("height:50%", 10.0),
         ] {
             let mut child = None;
             let (mut doc, cascade, _root) = ahem_paragraph_with(root_css, |doc, root| {

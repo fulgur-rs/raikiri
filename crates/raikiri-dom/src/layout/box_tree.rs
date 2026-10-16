@@ -12,14 +12,14 @@ use raikiri_traits::NodeKind;
 pub(crate) enum BoxParentScope {
     /// Allow a document or fragment ancestor as the containing boundary.
     Document,
-    /// Stop at the body layout root, returning only element ancestors.
+    /// Return only element ancestors, stopping before the document boundary.
     LayoutRoot,
 }
 
 /// The nearest ancestor box, skipping `display: contents`.
 ///
-/// [`BoxParentScope::LayoutRoot`] keeps the body even when its specified
-/// display is `contents`, and stops without a box at a non-element boundary.
+/// [`BoxParentScope::LayoutRoot`] stops before a non-element boundary.
+/// The document element is blockified, so a contents root still has a box.
 /// A missing cascade entry is treated as a boundary, as paint discovery
 /// permits partial cascades.
 pub(crate) fn box_parent(
@@ -58,17 +58,31 @@ impl<'a> BoxTree<'a> {
                 .nodes
                 .layout_node(id)
                 .map(|node| node.box_properties()),
-            Self::Cascade(_, cascade) => cascade
+            Self::Cascade(document, cascade) => cascade
                 .computed
                 .get(id)
-                .map(BoxPropertiesRef::from_computed),
+                .map(BoxPropertiesRef::from_computed)
+                .map(|identity| {
+                    if is_layout_root(document, id) {
+                        identity.blockify_root()
+                    } else {
+                        identity
+                    }
+                }),
         }
     }
 
     pub(crate) fn identity(self, id: usize) -> BoxPropertiesRef<'a> {
         match self {
             Self::Layout(document) => document.nodes[id].box_properties(),
-            Self::Cascade(_, cascade) => BoxPropertiesRef::from_computed(&cascade.computed[id]),
+            Self::Cascade(document, cascade) => {
+                let identity = BoxPropertiesRef::from_computed(&cascade.computed[id]);
+                if is_layout_root(document, id) {
+                    identity.blockify_root()
+                } else {
+                    identity
+                }
+            }
         }
     }
 
