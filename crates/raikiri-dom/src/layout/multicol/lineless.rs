@@ -44,6 +44,8 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.style.direction != TaffyDirection::Ltr
             // An orthogonal flow is monolithic in the column's block axis.
             || !is_horizontal(node)
+            // So is a box with size containment (CSS Contain 2, 3.1).
+            || node.size_containment.height
             || node.style.position != TaffyPosition::Relative
                 && node.style.position != defaults.position
             || node.style.float.is_floated()

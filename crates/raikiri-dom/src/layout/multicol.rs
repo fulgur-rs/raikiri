@@ -88,15 +88,12 @@ pub(crate) fn compute_multicol_layout(
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
-    // Children that hold no lines are sliced at the column edges. Only an
-    // outermost container takes this path; a nested one is fragmented by its
-    // outer context as well.
-    let lineless_children = (inputs.run_mode == RunMode::PerformLayout
-        && !span_scope
-        && style.horizontal
-        && tree.fragmentation_stack.is_empty())
-    .then(|| lineless::supported(tree, index))
-    .flatten();
+    // Children that hold no lines are sliced at the column edges, in a
+    // nested container as well as an outermost one.
+    let lineless_children =
+        (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
+            .then(|| lineless::supported(tree, index))
+            .flatten();
     let custom_scope = custom_scope && lineless_children.is_none();
     let stack_depth = tree.fragmentation_stack.len();
     tree.fragmentation_stack.push(context);

@@ -1913,6 +1913,50 @@ fn an_orthogonal_block_without_lines_is_not_sliced() {
 }
 
 #[test]
+fn a_block_with_size_containment_is_not_sliced() {
+    // Size containment makes the box monolithic (CSS Contain 2, 3.1).
+    let (doc, parent, _) = lineless_fixture(
+        "display:block;width:100px;height:100px;columns:4;column-gap:0;column-fill:auto",
+        &["display:block;height:400px;contain:size"],
+    );
+    assert!(lineless::supported(&doc, parent).is_none());
+}
+
+#[test]
+fn a_nested_multicol_slices_a_block_without_lines_into_its_columns() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let child = doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some("display:block;height:200px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    let pieces = fragment_rects(&doc, child);
+    assert_eq!(
+        pieces
+            .iter()
+            .map(|&(_, x, y, height)| (x, y, height))
+            .collect::<Vec<_>>(),
+        vec![(0.0, 0.0, 100.0), (50.0, 0.0, 100.0)]
+    );
+}
+
+#[test]
 fn the_trailing_margin_of_blocks_without_lines_stays_in_the_container() {
     let (doc, parent, _) = lineless_fixture(
         "display:block;width:100px;columns:1",
