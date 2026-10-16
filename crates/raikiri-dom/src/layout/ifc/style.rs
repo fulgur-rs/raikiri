@@ -717,10 +717,7 @@ pub(crate) fn resolve_auto_emphasis_position(cv: &ComputedValues, inline: &mut s
     if !matches!(cv.text_emphasis_position, p::TextEmphasisPosition::Auto)
         || matches!(
             cv.cssom_writing_mode,
-            p::WritingMode::VerticalRl
-                | p::WritingMode::VerticalLr
-                | p::WritingMode::SidewaysRl
-                | p::WritingMode::SidewaysLr
+            p::WritingMode::VerticalRl | p::WritingMode::VerticalLr
         )
     {
         return;

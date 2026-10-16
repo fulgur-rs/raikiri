@@ -9,7 +9,7 @@
 
 use super::page::{page_content_insets, page_margins, used_computed_length_percentage_or_auto};
 use crate::Document;
-use raikiri_style::property::{BoxSizing, Direction, DisplayValue};
+use raikiri_style::property::{BoxSizing, Direction, DisplayValue, WritingMode};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect, PaintTransform};
 
@@ -139,7 +139,10 @@ pub fn root_box(
             )
         }
         Some(right_to_left) => {
-            let (margin_top, height) = vertical.across_pages(computed, rtl);
+            // `sideways-lr` runs its inline axis from bottom to top, so its
+            // inline start is the bottom side.
+            let bottom_to_top = computed.cssom_writing_mode == WritingMode::SidewaysLr;
+            let (margin_top, height) = vertical.across_pages(computed, rtl != bottom_to_top);
             let (margin_start, width) =
                 horizontal.along_pages(computed, right_to_left, content_origin_y, page_count);
             // A later page sees the box moved by the flow before it, away

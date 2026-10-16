@@ -282,6 +282,19 @@ fn a_vertical_lr_root_runs_across_the_pages_from_the_left() {
 }
 
 #[test]
+fn an_over_constrained_sideways_lr_root_keeps_its_bottom_margin() {
+    // The inline axis of `sideways-lr` runs from bottom to top, so the
+    // over-constrained box gives up its inline-end (top) margin.
+    let (document, cascade) = laid_out(
+        "@page { size: 200px 100px; margin: 0 }",
+        "display: block; writing-mode: sideways-lr; margin: 10px 0 20px 0; height: 50px",
+        page(200.0, 100.0),
+    );
+    let root = root_box(&document, &cascade, page(200.0, 100.0), 0.0, 1).expect("root box");
+    assert_eq!((root.border_box.y, root.border_box.height), (30.0, 50.0));
+}
+
+#[test]
 fn a_vertical_root_maps_its_logical_sizes_onto_physical_axes() {
     let (document, cascade) = laid_out(
         "@page { size: 200px 100px; margin: 0 }",

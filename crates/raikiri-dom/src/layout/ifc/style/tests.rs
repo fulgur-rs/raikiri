@@ -1056,6 +1056,15 @@ fn auto_emphasis_position_is_under_for_horizontal_chinese_only() {
     assert_eq!(resolve(auto, None), Some(P::OverRight));
     let vertical = format!("{auto};writing-mode:vertical-rl");
     assert_eq!(resolve(&vertical, Some("zh")), Some(P::OverRight));
+    // The sideways modes are horizontal typographic modes.
+    for mode in ["sideways-rl", "sideways-lr"] {
+        let sideways = format!("{auto};writing-mode:{mode}");
+        assert_eq!(
+            resolve(&sideways, Some("zh")),
+            Some(P::UnderRight),
+            "{mode}"
+        );
+    }
     // An explicit position is kept.
     let explicit = "text-emphasis-style:dot;text-emphasis-position:over right";
     assert_eq!(resolve(explicit, Some("zh")), Some(P::OverRight));
