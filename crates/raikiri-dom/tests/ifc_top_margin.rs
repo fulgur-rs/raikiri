@@ -344,3 +344,77 @@ fn negative_generated_clearance_uses_the_hypothetical_ancestor_margin_set() {
     assert_box(&html, "root", 100.0, 20.0);
     assert_box(&html, "after", 120.0, 20.0);
 }
+
+#[test]
+fn leading_formatting_context_margins_escape_beside_external_floats() {
+    for style in [
+        "display:flow-root",
+        "overflow:hidden",
+        "contain:layout",
+        "contain:paint",
+    ] {
+        for (float_height, child_left) in [(10, 0.0), (100, 40.0)] {
+            let html = document(
+                "main{width:200px}",
+                &format!(
+                    "<div style='float:left;width:40px;height:{float_height}px'></div><section id=root><div id=child style='{style};width:100px;margin-top:20px'>X</div>Y</section><div id=after>Z</div>"
+                ),
+            );
+            assert_box(&html, "root", 20.0, 40.0);
+            assert_box(&html, "child", 20.0, 20.0);
+            assert_eq!(fragments(&html, "child")[0].1, child_left);
+            assert_box(&html, "after", 60.0, 20.0);
+        }
+    }
+}
+
+#[test]
+fn float_avoidance_compares_the_hypothetical_collapsed_border_position() {
+    for (float_height, root_top, root_height, child_top, after) in [
+        (10, 20.0, 40.0, 20.0, 60.0),
+        (100, 0.0, 140.0, 100.0, 140.0),
+    ] {
+        let html = document(
+            "main{width:200px}",
+            &format!(
+                "<div style='float:left;width:40px;height:{float_height}px'></div><section id=root><div id=child style='display:flow-root;width:200px;margin-top:20px'>X</div>Y</section><div id=after>Z</div>"
+            ),
+        );
+        assert_box(&html, "root", root_top, root_height);
+        assert_box(&html, "child", child_top, 20.0);
+        assert_box(&html, "after", after, 20.0);
+    }
+}
+
+#[test]
+fn negative_leading_clearance_also_resolves_for_a_formatting_context_child() {
+    let html = document(
+        "main{width:200px}section{margin-top:100px}",
+        "<div style='float:left;width:40px;height:90px'></div><section id=root><div id=child style='display:flow-root;clear:left;margin-top:-80px;width:100px'>X</div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "child", 90.0, 20.0);
+    assert_box(&html, "root", 100.0, 30.0);
+    assert_box(&html, "after", 130.0, 20.0);
+}
+
+#[test]
+fn an_adjoining_float_forces_clearance_for_a_formatting_context_child() {
+    let html = document(
+        "",
+        "<section id=root><div style='float:left;width:10px;height:10px'></div><div id=child style='display:flow-root;clear:both;margin-top:20px'>X</div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "root", 0.0, 50.0);
+    assert_box(&html, "child", 10.0, 20.0);
+    assert_box(&html, "after", 50.0, 20.0);
+}
+
+#[test]
+fn a_formatting_context_separates_from_an_adjoining_float_that_it_cannot_fit_beside() {
+    let html = document(
+        "main{width:200px}",
+        "<section id=root><div style='float:left;width:200px;height:10px'></div><div id=child style='display:flow-root;width:200px;margin-top:20px'>X</div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "root", 0.0, 50.0);
+    assert_box(&html, "child", 10.0, 20.0);
+    assert_box(&html, "after", 50.0, 20.0);
+}

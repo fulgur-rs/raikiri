@@ -1709,13 +1709,23 @@ fn layout_formatting_context_child(
     let clear = tree.nodes[node].style.clear;
     let own_width = used_block_width(tree, node, geometry.width);
     let x_margins = margin.left + margin.right;
-    let min_y = geometry.top_edge
-        + y
-        + if collapse_top {
-            0.0
-        } else {
-            pending.collapse_with_margin(margin.top).resolve()
-        };
+    let top_margin = pending.collapse_with_margin(margin.top);
+    let hypothetical = if collapse_top {
+        ctx.hypothetical_top_position(top_margin)
+            .unwrap_or(geometry.top_edge + y + top_margin.resolve())
+    } else {
+        geometry.top_edge + y + top_margin.resolve()
+    };
+    let adjoining_float = collapse_top && ctx.has_adjoining_float(taffy::Clear::Both);
+    let forced_clearance = collapse_top && ctx.has_adjoining_float(clear);
+    let min_y = if forced_clearance {
+        ctx.cleared_threshold(clear).unwrap_or(hypothetical)
+    } else if adjoining_float {
+        // An adjoining float moves with the escaping margin strut.
+        geometry.top_edge + y
+    } else {
+        hypothetical
+    };
     // `(stretch width, border-box position, whether floats narrowed it)`.
 
     let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
@@ -1802,7 +1812,17 @@ fn layout_formatting_context_child(
     } else {
         margin.left + auto_left
     };
-    let top = position.y - geometry.top_edge;
+    let separation_origin = if adjoining_float {
+        geometry.top_edge + y
+    } else {
+        hypothetical
+    };
+    let separated = forced_clearance || position.y > separation_origin;
+    let top = if collapse_top && !separated {
+        y
+    } else {
+        position.y - geometry.top_edge
+    };
     if perform {
         let (dx, dy) = relative_inset(
             tree,
@@ -1813,7 +1833,7 @@ fn layout_formatting_context_child(
         );
         let location = taffy::Point {
             x: position.x + extra_left + dx,
-            y: position.y + dy,
+            y: geometry.top_edge + top + dy,
         };
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
@@ -1826,7 +1846,7 @@ fn layout_formatting_context_child(
         // A box that establishes a formatting context keeps its children's
         // margins, but its own still collapses with the ones above it.
         // Specifying clear introduces no clearance without relevant floats.
-        top_margin: (!beside_floats).then(|| pending.collapse_with_margin(margin.top)),
+        top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
     }
 }

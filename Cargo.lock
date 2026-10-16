@@ -2631,7 +2631,7 @@ dependencies = [
  "skrifa 0.44.0",
  "smol_str",
  "stacker",
- "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=73a6d082f7394c73ad0b43e20d4420e80025eefb)",
+ "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da)",
  "tempfile",
  "url",
  "wuff",
@@ -2655,7 +2655,7 @@ dependencies = [
  "rustc-hash",
  "shodo",
  "smol_str",
- "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=73a6d082f7394c73ad0b43e20d4420e80025eefb)",
+ "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da)",
  "url",
 ]
 
@@ -2734,7 +2734,7 @@ dependencies = [
  "raikiri-svg",
  "raikiri-traits",
  "shodo",
- "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=73a6d082f7394c73ad0b43e20d4420e80025eefb)",
+ "taffy 0.14.0 (git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da)",
  "url",
 ]
 
@@ -3633,7 +3633,7 @@ dependencies = [
 [[package]]
 name = "taffy"
 version = "0.14.0"
-source = "git+https://github.com/fulgur-rs/taffy?rev=73a6d082f7394c73ad0b43e20d4420e80025eefb#73a6d082f7394c73ad0b43e20d4420e80025eefb"
+source = "git+https://github.com/fulgur-rs/taffy?rev=3547b97fc2cea1090d52c0ea92ebe211b80d04da#3547b97fc2cea1090d52c0ea92ebe211b80d04da"
 dependencies = [
  "arrayvec",
  "serde",
