@@ -455,7 +455,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         FlexDirectionValue::Column | FlexDirectionValue::ColumnReverse
                     );
                 let deferred_named_break_after =
-                    matches!(document.nodes[node_id].display(), DisplayValue::Flex)
+                    document.nodes[node_id].display().is_flex_container()
                         && !column_flex
                         && has_nested_named_page_descendant(document, cascade, node_id, 0);
                 // The items of a row flex container sit side by side rather
@@ -657,7 +657,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                                 == FormattingContext::Grid
                                 && document.nodes[node_id].grid_column_count == 1,
                             inside_flex: inside_flex
-                                || matches!(document.nodes[node_id].display(), DisplayValue::Flex),
+                                || document.nodes[node_id].display().is_flex_container(),
                             named_flex_context: if column_flex {
                                 Some(node_id)
                             } else if is_flex {

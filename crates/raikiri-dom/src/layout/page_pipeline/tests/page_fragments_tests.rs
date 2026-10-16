@@ -2210,6 +2210,65 @@ fn row_flex_keeps_the_existing_deferred_nested_named_boundary() {
     );
 }
 
+#[test]
+fn row_inline_flex_inside_grid_defers_nested_named_page_boundary() {
+    let run = |display: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+        let body = doc.append_element(
+            Some(html),
+            "body",
+            Style::default(),
+            Some("display:block;font:10px/10px Ahem"),
+        );
+        let grid = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:grid;grid-template-columns:100px"),
+        );
+        let flex = doc.append_element(
+            Some(grid),
+            "div",
+            Style::default(),
+            Some(&format!("{display};flex-direction:row")),
+        );
+        let item = doc.append_element(Some(flex), "div", Style::default(), Some("display:block"));
+        let named = doc.append_element(
+            Some(item),
+            "div",
+            Style::default(),
+            Some("display:block;page:a"),
+        );
+        let a = doc.append_text(named, "A");
+        let after = doc.append_element(Some(body), "div", Style::default(), Some("display:block"));
+        let b = doc.append_text(after, "B");
+        doc.mark_in_document_flags();
+        let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+        let mut page = PageBox::new();
+        page.width = 100.0;
+        page.height = 50.0;
+        let slices = layout_pages(with_ahem(&mut doc), &computed, page).unwrap();
+        let fragments = page_fragments_from_slices(&doc, &computed, page, &slices);
+        (
+            slices
+                .iter()
+                .map(|page| page.page_name.clone())
+                .collect::<Vec<_>>(),
+            [a, b].map(|id| {
+                fragments
+                    .iter()
+                    .flat_map(|page| &page.items)
+                    .find(|item| item.node_id == NodeId::new(id as u64))
+                    .map(|item| (item.page_index, item.rect.y))
+                    .unwrap()
+            }),
+        )
+    };
+
+    assert_eq!(run("display:inline-flex"), run("display:flex"));
+}
+
 fn column_review_document() -> (Document, usize, usize) {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));

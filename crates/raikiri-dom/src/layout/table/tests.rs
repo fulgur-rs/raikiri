@@ -2585,6 +2585,35 @@ fn resolve_fixed_column_widths_col_element_length_fixes_unspecified_column() {
 }
 
 #[test]
+fn resolve_fixed_column_widths_col_element_takes_priority_over_first_row_cell() {
+    let grid = super::TableGrid {
+        n_cols: 2,
+        rows: vec![],
+        cells: vec![
+            fixed_cell(0, 0, 1, Dimension::length(100.0)),
+            fixed_cell(0, 1, 1, Dimension::auto()),
+        ],
+        col_widths: vec![
+            super::ColSizing {
+                width: Dimension::length(50.0),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            },
+            super::ColSizing {
+                width: Dimension::auto(),
+                min_width: Dimension::auto(),
+                max_width: Dimension::auto(),
+            },
+        ],
+    };
+
+    assert_eq!(
+        super::resolve_fixed_column_widths(&grid, 400.0),
+        [50.0, 350.0]
+    );
+}
+
+#[test]
 fn resolve_fixed_column_widths_col_element_percent_resolves_against_avail() {
     let grid = super::TableGrid {
         n_cols: 2,

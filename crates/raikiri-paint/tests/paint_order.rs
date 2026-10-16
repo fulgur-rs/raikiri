@@ -1156,3 +1156,38 @@ fn column_properties_on_a_flex_box_keep_overflowing_text_above_later_backgrounds
     let [b, c] = ["b", "c"].map(|id| by_id(&result, id));
     assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Text(b)));
 }
+
+/// Positioned boxes held by different boxes paint in stack level order, and
+/// a box moved out of a clip keeps it.
+#[test]
+fn stacking_contexts_across_boxes_keep_native_and_public_order() {
+    let item = "position:relative;width:10px;height:10px;background:red";
+    for outer in ["display:flex", "overflow:hidden"] {
+        assert_same_order(
+            &format!(
+                "<div style='display:flex'><div style='{outer}'>\
+                 <div style='{item};z-index:10'></div>\
+                 <div style='{item};z-index:20'></div></div>\
+                 <div><div style='{item};z-index:15'></div></div></div>"
+            ),
+            "",
+        );
+    }
+    assert_same_order(
+        &format!(
+            "<div><div style='overflow:hidden'><div style='{item};z-index:10'></div>\
+             <div style='{item};z-index:20'></div></div>\
+             <div><div style='{item};z-index:15'></div></div></div>"
+        ),
+        "",
+    );
+    assert_same_order(
+        &format!(
+            "<div><div style='{item};z-index:20'></div></div>\
+             <div><div style='{item};z-index:10'></div></div>\
+             <div><div style='position:relative'>\
+             <div style='{item};z-index:20'></div></div></div>"
+        ),
+        "",
+    );
+}

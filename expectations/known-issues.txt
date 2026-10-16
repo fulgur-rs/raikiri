@@ -28,6 +28,7 @@ css/css-image-animation/ | Out of print scope (animated image playback control)
 css/css-highlight-api/ | Out of print scope (script-registered highlights over live ranges)
 css/css-paint-api/ | Out of print scope (Houdini paint worklets)
 css/css-layout-api/ | Out of print scope (Houdini layout worklets)
+css/css-multicol/with-custom-layout-on-same-element.https.html | Uses unsupported display: layout() from the CSS Layout API; this specific interaction test has no meaning until Houdini layout worklets are in scope
 css/css-typed-om/ | Out of print scope (JavaScript object model for style values)
 css/css-parser-api/ | Out of print scope (JavaScript CSS parser API, not shipped)
 css/css-font-loading/ | Out of print scope (JavaScript FontFace loading API)

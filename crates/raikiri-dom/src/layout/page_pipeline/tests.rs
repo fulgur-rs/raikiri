@@ -643,6 +643,16 @@ fn page_origins_cover_fixed_and_scheduled_steps_without_a_page_ceiling() {
 }
 
 #[test]
+fn page_index_in_flow_skips_positions_outside_the_flow() {
+    let fixed = PageOrigins::new(&[], 100.0);
+    assert_eq!(fixed.page_index_in_flow(0.0), Some(0));
+    assert_eq!(fixed.page_index_in_flow(250.0), Some(2));
+    assert_eq!(fixed.page_index_in_flow(-1.0), None);
+    assert_eq!(fixed.page_index_in_flow(f32::NAN), None);
+    assert_eq!(fixed.page_index_in_flow(f32::INFINITY), None);
+}
+
+#[test]
 fn page_origins_keep_fractional_end_boundaries_on_the_preceding_page() {
     let fixed = PageOrigins::new(&[], 0.1);
     assert_eq!(fixed.page_index_for_y(0.3), 3);

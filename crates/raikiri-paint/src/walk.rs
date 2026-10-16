@@ -1969,6 +1969,7 @@ pub(crate) fn paint_document_impl(
             .or_default()
             .push(fragment_id);
     }
+    #[derive(Clone)]
     enum PaintFrame<'a> {
         Visit {
             node_id: usize,
@@ -2470,7 +2471,21 @@ pub(crate) fn paint_document_impl(
                         _ if !layer.pending.is_empty() => std::mem::take(&mut layer.pending),
                         LayerClose::Paint => {
                             layer.flushing = true;
-                            std::mem::take(&mut layer.positioned)
+                            raikiri_dom::paint_rules::sort_positioned_frames(
+                                document,
+                                cascade,
+                                std::mem::take(&mut layer.positioned),
+                                PaintFrame::PopClip,
+                                |frame| match frame {
+                                    PaintFrame::Visit { node_id, .. } => {
+                                        raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
+                                    }
+                                    PaintFrame::PushClip { node_id, .. } => {
+                                        raikiri_dom::paint_rules::PositionedFrame::Open(*node_id)
+                                    }
+                                    _ => raikiri_dom::paint_rules::PositionedFrame::Close,
+                                },
+                            )
                         }
                         LayerClose::Hoist => Vec::new(),
                     })
