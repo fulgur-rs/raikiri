@@ -397,3 +397,35 @@ fn fixed_boxes_ignore_containing_blocks_above_the_body() {
         assert_eq!(assert_matches_paint(body, &css), 1, "{css}");
     }
 }
+
+/// The commands the painter records for the first page of `body`.
+fn recorded(body: &str, css: &str) -> String {
+    let document = lay_out(body, css);
+    let page = document.page(0).expect("page");
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page(
+        &mut scene, document, cascade, page_box, origin, 0, 1, false,
+    )
+    .expect("paint");
+    // Each layout loads its own copy of the font, so blob ids differ.
+    let mut text = format!("{:?}", scene.commands);
+    while let Some(start) = text.find("Blob { id: ") {
+        let end = start + text[start..].find(',').expect("blob id");
+        text.replace_range(start..end, "Blob");
+    }
+    text
+}
+
+#[test]
+fn transforms_on_inline_boxes_change_nothing() {
+    // CSS Transforms 1 §3: a non-replaced inline box is not transformable,
+    // so its transform neither moves it nor makes it a stacking context.
+    let body = "<p><span class=s>xx</span> yy <span class=r>zz</span></p>";
+    let css = ".s { background: red; border-radius: 4px; padding: 0 3px } \
+               .r { position: relative; left: -20px; background: lime }";
+    assert_eq!(
+        recorded(body, &format!("{css} .s {{ transform: translateX(5px) }}")),
+        recorded(body, css),
+    );
+}

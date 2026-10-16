@@ -221,7 +221,8 @@ pub(crate) fn apply_computed_to_style(
                                 .any(|part| matches!(part, ContentComponent::None))
                     })
             });
-        doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial);
+        doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial)
+            || super::fixed::has_applied_transform(doc, idx, cv);
         doc.nodes[idx].contains_absolute_boxes =
             super::fixed::establishes_absolute_containing_block(doc, idx, cv)
                 && !super::fixed::establishes_fixed_containing_block(doc, idx, cv);
@@ -491,9 +492,9 @@ fn size_containment(doc: &Document, idx: usize, cv: &ComputedValues) -> taffy::S
 
 /// Whether painting `cv` draws effects sized from the whole border box
 /// (background and border images, rounded corners, shadows, outlines, masks,
-/// clips, transforms and filters) or composites the whole box as one group
-/// (opacity and blend modes), which a fragment cannot reproduce from its own
-/// slice.
+/// clips and filters) or composites the whole box as one group (opacity and
+/// blend modes), which a fragment cannot reproduce from its own slice. A
+/// transform counts too, where it applies; the caller checks that.
 fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bool {
     cv.has_background_image()
         || cv.border_image != initial.border_image
@@ -502,7 +503,6 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
         || cv.outline.style() != initial.outline.style()
         || cv.mask_image != initial.mask_image
         || cv.clip_path != initial.clip_path
-        || !cv.transform.is_empty()
         || !cv.filter.is_empty()
         || cv.opacity != initial.opacity
         || cv.mix_blend_mode != initial.mix_blend_mode

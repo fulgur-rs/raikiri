@@ -88,6 +88,12 @@ pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> 
     is_transformable_with_properties(document, id, cv, query_box_properties(document, id, cv))
 }
 
+/// Whether the element has a transform that applies to it: a non-empty
+/// `transform` on a transformable box.
+pub fn has_applied_transform(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    !cv.transform.is_empty() && is_transformable(document, id, cv)
+}
+
 /// Whether the captured box accepts transforms; shared with page projection.
 pub(crate) fn is_transformable_for_layout(
     document: &Document,
