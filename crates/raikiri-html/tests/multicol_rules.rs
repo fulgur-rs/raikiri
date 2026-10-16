@@ -409,3 +409,57 @@ fn right_to_left_paragraphs_keep_their_column_progression() {
     // right of earlier ones.
     assert!(last.0 <= first.0, "{paragraphs:?}");
 }
+
+#[test]
+fn a_paragraph_broken_between_columns_hands_its_end_to_the_next_one() {
+    let runs = |body: &str| {
+        let document = lay_out(&format!("<div class=mc>{body}</div>"), ".mc{height:40px}");
+        document
+            .page(0)
+            .unwrap()
+            .text_runs()
+            .iter()
+            .map(|run| (run.text.to_owned(), run.origin))
+            .collect::<Vec<_>>()
+    };
+    let expected = |placements: &[(&str, (f32, f32))]| {
+        placements
+            .iter()
+            .map(|&(text, origin)| (text.to_owned(), origin))
+            .collect::<Vec<_>>()
+    };
+    // Each paragraph starts where the one before it ends, and lines past the
+    // last column continue in overflow columns.
+    assert_eq!(
+        runs("<p>A<br>B<br>C<br>D<br>E</p><p>F</p>"),
+        expected(&[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (120.0, 16.0)),
+            ("F", (120.0, 36.0)),
+        ])
+    );
+    assert_eq!(
+        runs("<p>X</p><p>A<br>B<br>C<br>D<br>E</p>"),
+        expected(&[
+            ("X", (0.0, 16.0)),
+            ("A", (0.0, 36.0)),
+            ("B", (60.0, 16.0)),
+            ("C", (60.0, 36.0)),
+            ("D", (120.0, 16.0)),
+            ("E", (120.0, 36.0)),
+        ])
+    );
+    assert_eq!(
+        runs("<p>A<br>B<br>C<br>D<br>E</p>"),
+        expected(&[
+            ("A", (0.0, 16.0)),
+            ("B", (0.0, 36.0)),
+            ("C", (60.0, 16.0)),
+            ("D", (60.0, 36.0)),
+            ("E", (120.0, 16.0)),
+        ])
+    );
+}

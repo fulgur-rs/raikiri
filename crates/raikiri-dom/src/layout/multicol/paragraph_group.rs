@@ -55,6 +55,30 @@ pub(super) fn balance(
     fill(&paragraphs, context, high)
 }
 
+/// Place paragraphs in columns of the definite height `height` in source
+/// order, continuing in overflow columns past the last one (CSS Multi-column
+/// 1, 8.2).
+pub(super) fn fill_definite(
+    tree: &Document,
+    parent: usize,
+    entries: &[Measurement],
+    context: FragmentationContext,
+    height: f32,
+) -> Option<Group> {
+    let (paragraphs, paragraph_count, _, _) = collect(tree, parent, entries)?;
+    if paragraph_count == 0 || !height.is_finite() || height <= 0.0 {
+        return None;
+    }
+    let unbounded = FragmentationContext {
+        column_count: usize::MAX,
+        ..context
+    };
+    // A piece broken at a column's end runs to that end, as the columns
+    // share the container's height.
+    let group = fill(&paragraphs, unbounded, height)?;
+    Some(finish_group(group.placements, height))
+}
+
 fn collect(
     tree: &Document,
     parent: usize,

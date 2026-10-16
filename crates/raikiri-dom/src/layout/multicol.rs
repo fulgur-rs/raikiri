@@ -842,9 +842,16 @@ fn layout_column_group(
     // a target height; measuring against the current column would otherwise
     // keep every child in the first column and leave the container taller
     // than necessary.
-    let auto_measurements = if context.column_fill != ColumnFillValue::Auto
+    // Paragraphs in definite-height columns are placed by the same planner,
+    // so that a paragraph broken between columns hands its end to the next.
+    let definite_paragraphs = fragment_height.is_some()
+        && tree.fragmentation_stack.len() <= 1
+        && multicol_has_only_paragraph_children(tree, index)
+        && !multicol_has_nested_descendant(tree, index);
+    let auto_measurements = if (context.column_fill != ColumnFillValue::Auto
         && fragment_height.is_none()
-        && !multicol_has_nested_descendant(tree, index)
+        && !multicol_has_nested_descendant(tree, index))
+        || definite_paragraphs
     {
         let mut measurements = Vec::with_capacity(children.len());
         for &child in children {
@@ -878,8 +885,14 @@ fn layout_column_group(
     // while the inline post-pass already assigns lines to several columns.
     let group_balance = auto_measurements
         .as_ref()
-        .and_then(|(entries, _)| paragraph_group::balance(tree, index, entries, context));
+        .and_then(|(entries, _)| match fragment_height {
+            Some(height) => paragraph_group::fill_definite(tree, index, entries, context, height),
+            None => paragraph_group::balance(tree, index, entries, context),
+        });
     let paragraph_balance = auto_measurements.as_ref().and_then(|(entries, _)| {
+        if fragment_height.is_some() {
+            return None;
+        }
         let mut boxes = entries.iter().filter(|(child, output, _, _, _, _)| {
             tree.nodes[*child].kind() != NodeKind::Text
                 || output.size.height != 0.0
@@ -1150,14 +1163,16 @@ fn layout_column_group(
                 slice: None,
             });
     }
-    let minimum_height =
-        if auto_measurements.is_some() && !multicol_has_nested_descendant(tree, index) {
-            0.0
-        } else {
-            fragment_height
-                .map(|height| fallback_height.min(height))
-                .unwrap_or(fallback_height)
-        };
+    let minimum_height = if auto_measurements.is_some()
+        && fragment_height.is_none()
+        && !multicol_has_nested_descendant(tree, index)
+    {
+        0.0
+    } else {
+        fragment_height
+            .map(|height| fallback_height.min(height))
+            .unwrap_or(fallback_height)
+    };
     (maximum.max(cursor) + content_origin.y + block_end_inset).max(minimum_height)
 }
 
@@ -2127,12 +2142,13 @@ fn line_ranges_in_columns(
     let available_columns = context.column_count.saturating_sub(context.column_index);
     let mut ranges = Vec::with_capacity(available_columns.max(1).min(line_count));
     let mut start = 0usize;
-    if available_columns == 0 && !preserve_block_offsets {
-        // A box pushed past the last column of a definite-height container
-        // continues through as many overflow columns as its lines need.
-        let Some(height) = context.available_height.filter(|height| *height > 0.0) else {
-            return Vec::new();
-        };
+    let definite_height = context.available_height.filter(|height| *height > 0.0);
+    if let Some(height) = definite_height
+        && !preserve_block_offsets
+    {
+        // Lines that do not fit in the columns of a definite-height container
+        // continue in as many overflow columns as they need (CSS Multi-column
+        // 1, 8.2).
         let mut column = context.column_index;
         while start < line_count {
             let origin = extents[start].0;
@@ -2249,7 +2265,9 @@ fn balanced_column_height(extents: &[(f32, f32)], context: FragmentationContext)
             ..context
         };
         let ranges = line_ranges_in_columns(extents, trial_context, false);
-        let fits = !ranges.is_empty()
+        let fits = ranges
+            .last()
+            .is_some_and(|&(_, _, column)| column < context.column_count)
             && ranges.iter().all(|&(start, end, _)| {
                 extents[end - 1].1 - extents[start].0 <= height + f32::EPSILON
             });

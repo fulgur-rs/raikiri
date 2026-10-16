@@ -144,6 +144,15 @@ fn line_ranges_in_columns_balances_when_height_is_indefinite_and_handles_empty_c
         line_ranges_in_columns(&extents, definite.in_column(3, 300.0, 0.0), false),
         vec![(0, 2, 3), (2, 4, 4), (4, 5, 5)],
     );
+    // Lines that start in the declared columns continue past them too.
+    let short = FragmentationContext {
+        available_height: Some(20.0),
+        ..context
+    };
+    assert_eq!(
+        line_ranges_in_columns(&extents, short, false),
+        vec![(0, 1, 0), (1, 2, 1), (2, 3, 2), (3, 4, 3), (4, 5, 4)],
+    );
 }
 
 #[test]
