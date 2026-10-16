@@ -676,6 +676,36 @@ fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
 }
 
 #[test]
+fn item_moves_past_page_end_only_when_moving_gains_a_page() {
+    // Crosses the end of the page from 0 to 100 and fits the next page.
+    assert!(item_moves_past_page_end(80.0, 40.0, 0.0, 0.0, 100.0, 100.0));
+    // Fits before the page end.
+    assert!(!item_moves_past_page_end(
+        50.0, 40.0, 0.0, 0.0, 100.0, 100.0
+    ));
+    // Starts past the page end.
+    assert!(!item_moves_past_page_end(
+        100.0, 40.0, 0.0, 0.0, 100.0, 100.0
+    ));
+    // Its margin box is already at the page top.
+    assert!(!item_moves_past_page_end(
+        10.0, 140.0, 10.0, 0.0, 100.0, 200.0
+    ));
+    // Taller than the next page.
+    assert!(!item_moves_past_page_end(
+        80.0, 120.0, 0.0, 0.0, 100.0, 100.0
+    ));
+    assert!(!item_moves_past_page_end(
+        f32::INFINITY,
+        40.0,
+        0.0,
+        0.0,
+        100.0,
+        100.0
+    ));
+}
+
+#[test]
 fn page_origins_keep_fractional_end_boundaries_on_the_preceding_page() {
     let fixed = PageOrigins::new(&[], 0.1);
     assert_eq!(fixed.page_index_for_y(0.3), 3);

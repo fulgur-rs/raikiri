@@ -4721,25 +4721,18 @@ fn paginate_flow(
         // flex pagination behavior.
         let flex_item_is_last = candidate.is_flex_item
             && trailing_flex_children.is_trailing(document, cascade, node_id);
-        // An item already at the top of its page, or one taller than the
-        // next page, would cross a page edge wherever it went: pushing it
-        // only leaves a blank page behind (CSS Fragmentation 3 §4.4 lets
-        // monolithic content overflow a fresh fragmentainer).
-        // The page top is judged by the margin box, since a block-start margin
-        // already at the page top would stay with the item.
-        let item_can_move = effective_y - margin_top.max(0.0) > page_start + 0.001
-            && height <= page_step_at(current_page.saturating_add(1)) + 0.001;
-        let flex_item_overflow = candidate.is_flex_item
-            && !flex_item_is_last
-            && item_can_move
-            && effective_y.is_finite()
-            && effective_y < page_end
-            && effective_y + height > page_end;
-        let grid_item_overflow = candidate.is_grid_item
-            && item_can_move
-            && effective_y.is_finite()
-            && effective_y < page_end
-            && effective_y + height > page_end;
+        let item_overflow = || {
+            item_moves_past_page_end(
+                effective_y,
+                height,
+                margin_top,
+                page_start,
+                page_end,
+                page_step_at(current_page.saturating_add(1)),
+            )
+        };
+        let flex_item_overflow = candidate.is_flex_item && !flex_item_is_last && item_overflow();
+        let grid_item_overflow = candidate.is_grid_item && item_overflow();
 
         // A relative offset is not part of the flow gap between siblings, so
         // a positioned box cannot tell its margin apart from its offset.
@@ -6565,6 +6558,32 @@ impl PrecedingFlexItems {
             |(previous_height, previous_page)| previous_height > 0.0 && previous_page == page,
         )
     }
+}
+
+/// Whether a flex or grid item of `height` at `effective_y`, with its
+/// block-start `margin_top`, crosses `page_end` and can move whole to the
+/// next page, whose block size is `next_page_step`.
+///
+/// An item already at the top of its page, or one taller than the next
+/// page, would cross a page edge wherever it went: pushing it only leaves a
+/// blank page behind (CSS Fragmentation 3 §4.4 lets monolithic content
+/// overflow a fresh fragmentainer). The page top is judged by the margin
+/// box, since a block-start margin already at the page top would stay with
+/// the item.
+fn item_moves_past_page_end(
+    effective_y: f32,
+    height: f32,
+    margin_top: f32,
+    page_start: f32,
+    page_end: f32,
+    next_page_step: f32,
+) -> bool {
+    let item_can_move =
+        effective_y - margin_top.max(0.0) > page_start + 0.001 && height <= next_page_step + 0.001;
+    item_can_move
+        && effective_y.is_finite()
+        && effective_y < page_end
+        && effective_y + height > page_end
 }
 
 /// Whether a box whose block-start edge is at `start_y` starts on the page
