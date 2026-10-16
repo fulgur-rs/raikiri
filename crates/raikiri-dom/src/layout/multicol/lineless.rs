@@ -1290,7 +1290,7 @@ pub(super) fn layout(
         }
         if let Some(leaves) = &wrapped[order] {
             let leaf_pieces = &placements.pieces[spans[order].clone()];
-            for (&leaf, leaf_pieces) in leaves.iter().zip(leaf_pieces) {
+            let pushed = leaves.iter().zip(leaf_pieces).all(|(&leaf, leaf_pieces)| {
                 push_wrapped_block(
                     tree,
                     leaf,
@@ -1299,8 +1299,10 @@ pub(super) fn layout(
                     &records,
                     context,
                     column_height,
-                )?;
-            }
+                )
+                .is_some()
+            });
+            pushed.then_some(())?;
         }
         for piece in absolute {
             tree.fragment_tree.try_push(LayoutFragment {
