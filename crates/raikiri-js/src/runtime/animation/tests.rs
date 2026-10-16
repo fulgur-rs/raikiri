@@ -309,6 +309,7 @@ fn paused_effect_without_a_current_time_has_no_sample() {
             end_time_ms: 40.0,
             current_time_ms: None,
             paused: true,
+            detached: false,
             finish_task: None,
         });
     })
@@ -387,7 +388,7 @@ fn keyframes_outside_the_sampler_keep_timing_but_never_style() {
              animations.every(animation => {\
                const refused = run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } };\
                return animation instanceof Animation\
-                 && animation.currentTime === null\
+                 && animation.currentTime === 0\
                  && refused(() => animation.pause())\
                  && refused(() => { animation.currentTime = 0; });\
              })",
@@ -681,7 +682,7 @@ fn effect_timing_members_are_validated_in_dictionary_order() {
              };\
              const read = [];\
              target.animate(null, new Proxy({}, { get(_, name) { read.push(name); } }));\
-             read.join() === 'delay,direction,duration,easing,endDelay,fill,iterationStart,iterations,composite,iterationComposite'\
+             read.join() === 'delay,direction,duration,easing,endDelay,fill,iterationStart,iterations,composite,iterationComposite,pseudoElement,id,timeline'\
              && [{ easing: 'bogus' }, { easing: '' }, { direction: 'sideways' }, { fill: 'x' },\
                  { iterationStart: -1 }, { iterationStart: NaN }, { composite: 'auto' },\
                  { iterationComposite: 'add' }].every(refused)\
@@ -869,4 +870,117 @@ fn property_indexed_keyframe_members_are_validated() {
         )
         .unwrap();
     assert!(result.to_boolean());
+}
+
+#[test]
+fn animation_options_convert_pseudo_element_id_and_timeline() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "const thrown = {};\
+             const error = options => {\
+               try { target.animate(null, options); return null; } catch (error) { return error; }\
+             };\
+             globalThis.results = {\
+               id: error({ get id() { throw thrown; } }) === thrown,\
+               timeline: error({ timeline: {} }) instanceof TypeError,\
+               pseudo: ['', 'before', ':marker', '::abc', '::part(x)']\
+                 .every(pseudoElement => error({ pseudoElement })?.name === 'SyntaxError'),\
+               validPseudo: ['::before', '::AFTER', '::marker', ':first-line', null]\
+                 .every(pseudoElement => error({ pseudoElement, id: 7 }) === null),\
+               sampledPseudo: (() => {\
+                 try { target.animate({ wordSpacing: ['0px', '1px'] }, { pseudoElement: '::before' }); return false; }\
+                 catch (error) { return error instanceof TypeError; }\
+               })(),\
+             };\
+             const detached = target.animate(null, { duration: 10, timeline: null });\
+             results.detachedTime = detached.currentTime === null;\
+             detached.ready.then(() => { results.readySettled = true; });\
+             detached.finished.then(() => { results.finishedSettled = true; })",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate(
+                "results.id && results.timeline && results.pseudo && results.validPseudo\
+                 && results.sampledPseudo && results.detachedTime\
+                 && !('readySettled' in results) && !('finishedSettled' in results)"
+            )
+            .unwrap()
+            .to_boolean()
+    );
+}
+
+#[test]
+fn options_are_validated_before_keyframes() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    let result = runtime
+        .evaluate(
+            "const read = [];\
+             const keyframes = { get offset() { read.push('offset'); } };\
+             try { target.animate(keyframes, { get delay() { read.push('delay'); }, iterations: -1 }); }\
+             catch (error) { read.push(error instanceof TypeError); }\
+             read.join() === 'delay,true'",
+        )
+        .unwrap();
+    assert!(result.to_boolean());
+}
+
+#[test]
+fn default_property_indexed_metadata_keeps_the_sampler() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "const sampled = target.animate({ wordSpacing: ['0px', '40px'], offset: [0, 1, 1],\
+                                               easing: ' Linear ', composite: ['auto', 'replace'] }, 40);\
+             sampled.pause();\
+             sampled.currentTime = 10;\
+             globalThis.unsampled = [{ offset: [0, 0.5] }, { offset: [0.5, 1] }, { easing: 'ease' },\
+                                     { composite: 'add' }, { [Symbol('x')]: 1 }].every(metadata => {\
+               const animation = target.animate({ fontSize: ['0px', '40px'], ...metadata }, 40);\
+               try { animation.pause(); return false; } catch (error) { return error instanceof TypeError; }\
+             })",
+        )
+        .unwrap();
+    assert_eq!(
+        animation_style(&mut runtime, target).as_deref(),
+        Some("word-spacing: 10px;")
+    );
+    assert!(runtime.evaluate("unsampled").unwrap().to_boolean());
+}
+
+#[test]
+fn pausing_holds_the_elapsed_time() {
+    let (mut runtime, target) = runtime_with_target();
+    expose_target(&mut runtime, target);
+    runtime
+        .evaluate(
+            "globalThis.animation = target.animate({ wordSpacing: ['0px', '40px'] }, 100);\
+             globalThis.times = { start: animation.currentTime };\
+             setTimeout(() => {\
+               times.running = animation.currentTime;\
+               animation.pause();\
+               times.paused = animation.currentTime;\
+               animation.pause();\
+             }, 50);\
+             setTimeout(() => { times.later = animation.currentTime; }, 70)",
+        )
+        .unwrap();
+    runtime.run_until_idle().unwrap();
+    assert!(
+        runtime
+            .evaluate(
+                "times.start === 0 && times.running === 50 && times.paused === 50 && times.later === 50"
+            )
+            .unwrap()
+            .to_boolean()
+    );
+    assert_eq!(
+        animation_style(&mut runtime, target).as_deref(),
+        Some("word-spacing: 20px;")
+    );
 }

@@ -106,11 +106,15 @@ fn parse_linear_stops(input: &mut Parser<'_, '_>) -> Result<()> {
     loop {
         let mut numbers = 0;
         let mut percentages = 0;
+        let mut comma = false;
         while let Ok(token) = input.next().cloned() {
             match token {
                 Token::Number { .. } if numbers == 0 => numbers += 1,
                 Token::Percentage { .. } if percentages < 2 => percentages += 1,
-                Token::Comma => break,
+                Token::Comma => {
+                    comma = true;
+                    break;
+                }
                 _ => return Err(()),
             }
         }
@@ -118,7 +122,8 @@ fn parse_linear_stops(input: &mut Parser<'_, '_>) -> Result<()> {
             return Err(());
         }
         stops += 1;
-        if input.is_exhausted() {
+        // A comma must be followed by another stop.
+        if !comma {
             return (stops >= 2).then_some(()).ok_or(());
         }
     }

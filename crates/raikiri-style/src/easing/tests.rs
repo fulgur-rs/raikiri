@@ -49,6 +49,8 @@ fn rejects_malformed_easing_functions() {
         "linear(0)",
         "linear()",
         "linear(0,)",
+        "linear(0, 1,)",
+        "linear(0, 1, )",
         "linear(0 1, 1)",
         "linear(0% 0, 1 10% 20% 30%)",
         "linear(0, foo)",
