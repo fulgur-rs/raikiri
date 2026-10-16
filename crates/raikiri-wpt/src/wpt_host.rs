@@ -449,7 +449,19 @@ impl DocumentHost for WptDocumentHost {
         let document = &self.setup.uncascaded.dom;
         let nodes =
             (0..document.node_count()).map(|index| raikiri_traits::NodeId::new(index as u64));
-        self.paint_transforms = document.page_paint_transforms(&cascade, 0, nodes);
+        let paint_transforms = document.page_paint_transforms(&cascade, 0, nodes);
+        // The paint order leaves out the root's own transform, which moves
+        // the whole canvas (CSS Transforms 1 §6); a singular one hides it.
+        let root = raikiri_dom::root_box(document, &cascade, self.setup.page_box, 0.0, 1)
+            .and_then(|root| root.transform);
+        self.paint_transforms = match root {
+            None => paint_transforms,
+            Some(root) if inverse(root).is_none() => vec![None; paint_transforms.len()],
+            Some(root) => paint_transforms
+                .into_iter()
+                .map(|transform| transform.map(|transform| root * transform))
+                .collect(),
+        };
         self.computed_styles = Some(cascade.computed);
         let scene = self.page_scene.as_ref().expect("scene just built");
         self.generated_boxes = collect_generated_boxes(document, scene);
