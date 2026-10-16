@@ -1296,3 +1296,259 @@ fn body_onload_content_attribute_runs_during_run_document_like_check_layout() {
         "typeof window.onload === 'function' && document.body.onload === window.onload"
     ));
 }
+
+// ---- document.write ------------------------------------------------------
+
+/// A host whose fragment parser turns `<script>A<script>B` into script
+/// elements holding `A` and `B`, fails on `fail`, and reads anything else as
+/// one text node.
+struct WriteHost(StubHost);
+
+impl DocumentHost for WriteHost {
+    fn document(&self) -> &Document {
+        self.0.document()
+    }
+    fn document_mut(&mut self) -> &mut Document {
+        self.0.document_mut()
+    }
+    fn flush(&mut self) -> Result<(), HostError> {
+        self.0.flush()
+    }
+    fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+        self.0.box_geometry(node)
+    }
+    fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
+        self.0.computed_value(node, property)
+    }
+    fn parse_fragment(
+        &mut self,
+        context_tag: &str,
+        context_ns: &str,
+        markup: &str,
+    ) -> Result<Document, HostError> {
+        if markup == "fail" {
+            return Err(HostError("parser unavailable".into()));
+        }
+        let Some(codes) = markup.strip_prefix("<script>") else {
+            return self.0.parse_fragment(context_tag, context_ns, markup);
+        };
+        let mut fragment = Document::new();
+        let root = fragment.root_index();
+        // `append_child` gives a document one element child at most;
+        // attaching a fragment splices in all of its children.
+        let holder = fragment.create_detached_fragment();
+        for code in codes.split("<script>") {
+            append_script(&mut fragment, holder, &[], code);
+        }
+        fragment.attach_child(root, holder);
+        Ok(fragment)
+    }
+    fn document_url(&self) -> Option<String> {
+        self.0.document_url()
+    }
+    fn fetch_script(&mut self, url: &str) -> Result<String, HostError> {
+        self.0.fetch_script(url)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+/// Run `scripts` as the body's scripts, followed by a `<p>`, and return the
+/// body's child nodes as `name:data` pairs, with the runtime.
+fn run_writes(scripts: &[&str]) -> (RunReport, String, DomRuntime) {
+    run_writes_with(Limits::default(), scripts)
+}
+
+fn run_writes_with(limits: Limits, scripts: &[&str]) -> (RunReport, String, DomRuntime) {
+    let (mut host, _, _, body) = StubHost::page();
+    for script in scripts {
+        append_script(&mut host.document, body, &[], script);
+    }
+    let p = host.document.create_detached_element("p").unwrap();
+    host.document.append_child(body, p).unwrap();
+    let mut rt = DomRuntime::with_options(WriteHost(host), RunOptions { limits }).unwrap();
+    let report = rt.run_document();
+    if report.aborted.is_some() {
+        return (report, String::new(), rt);
+    }
+    let children = eval_string(
+        &mut rt,
+        "Array.from(document.body.childNodes, function (n) { \
+             return n.nodeName + ':' + (n.nodeType === 3 ? n.data : ''); \
+         }).join('|')",
+    );
+    (report, children, rt)
+}
+
+fn body_after_writes(scripts: &[&str]) -> (RunReport, String) {
+    let (report, children, _) = run_writes(scripts);
+    (report, children)
+}
+
+#[test]
+fn written_text_follows_the_script_in_call_order() {
+    let (report, children) = body_after_writes(&[
+        "document.write('a'); document.writeln('b', 'c'); document.write();",
+        "document.write('d');",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:a|#text:bc\n|SCRIPT:|#text:d|P:",);
+}
+
+#[test]
+fn a_write_after_the_last_written_node_left_goes_after_the_script() {
+    let (report, children) = body_after_writes(&[
+        "document.write('a'); document.body.childNodes[1].remove(); document.write('b');",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:b|P:");
+}
+
+#[test]
+fn a_write_after_the_last_written_node_left_follows_the_earlier_ones() {
+    let (report, children) = body_after_writes(&[
+        "document.write('a'); document.write('b'); document.body.childNodes[2].remove(); \
+         document.write('c');",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:a|#text:c|P:");
+}
+
+#[test]
+fn writes_stay_before_the_original_next_sibling_when_written_nodes_move() {
+    let (report, children) = body_after_writes(&["document.write('a'); document.write('b'); \
+         document.body.appendChild(document.body.childNodes[2]); document.write('c');"]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:a|#text:c|P:|#text:b");
+}
+
+#[test]
+fn writes_go_to_the_end_once_the_original_next_sibling_left() {
+    let (report, children) =
+        body_after_writes(&["document.querySelector('p').remove(); document.write('x');"]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:x");
+}
+
+#[test]
+fn a_script_that_left_the_tree_writes_nothing() {
+    let (report, children) =
+        body_after_writes(&["document.currentScript.remove(); document.write('lost');"]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "P:");
+}
+
+#[test]
+fn written_scripts_run_after_the_writer_and_before_the_next_script() {
+    let (report, children) = body_after_writes(&[
+        "var log = ['writer']; \
+         document.write('<script>log.push(document.currentScript === document.body.childNodes[1]); document.write(\"inner\");'); \
+         log.push('still writer');",
+        "log.push('next'); document.write(log.join(','));",
+    ]);
+    assert_eq!(report.scripts_run, 3, "{report:?}");
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(
+        children,
+        "SCRIPT:|SCRIPT:|#text:inner|SCRIPT:|#text:writer,still writer,true,next|P:",
+    );
+}
+
+#[test]
+fn write_outside_a_parser_script_or_with_a_failing_parser_throws() {
+    let (report, children, mut rt) = run_writes(&[
+        "var outside; window.addEventListener('load', function () { \
+             try { document.write('x'); } catch (e) { outside = e.name; } \
+         }); \
+         var failed; try { document.write('fail'); } catch (e) { failed = e.name; }",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|P:");
+    assert_eq!(eval_string(&mut rt, "outside"), "NotSupportedError");
+    // Both take a variadic `DOMString... text`, so no argument is required.
+    assert_eq!(
+        eval_string(
+            &mut rt,
+            "document.write.length + ',' + document.writeln.length"
+        ),
+        "0,0"
+    );
+    assert_eq!(eval_string(&mut rt, "failed"), "Error");
+}
+
+#[test]
+fn scripts_a_written_script_writes_run_before_its_later_written_siblings() {
+    let (report, _, mut rt) = run_writes(&[r#"var log = []; var tag = '<' + 'script>';
+           document.write(tag + 'log.push("A"); document.write(tag + "log.push(\'C\')");' +
+               tag + 'log.push("B");');"#]);
+    assert_eq!(report.scripts_run, 4, "{report:?}");
+    assert_eq!(eval_string(&mut rt, "log.join()"), "A,C,B");
+}
+
+#[test]
+fn an_abort_in_the_writer_stops_its_written_scripts() {
+    let (report, ..) = run_writes_with(
+        Limits {
+            max_loop_iterations: 10_000,
+            ..Default::default()
+        },
+        &["document.write('<script>never()'); while (true) {}"],
+    );
+    assert_eq!(report.aborted, Some(Abort::LoopIterations), "{report:?}");
+    assert_eq!(report.scripts_run, 1, "{report:?}");
+}
+
+#[test]
+fn external_script_load_and_error_listeners_write_after_their_script() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.document_url = Some("https://example.test/page.html".to_owned());
+    host.scripts.insert(
+        "https://example.test/ok.js".to_owned(),
+        "document.write('run');".to_owned(),
+    );
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var scripts = document.querySelectorAll('script');\
+         scripts[1].addEventListener('load', function () { \
+             document.write('load:' + (document.currentScript === null)); \
+         });\
+         scripts[2].addEventListener('error', function () { \
+             document.write('error:' + (document.currentScript === null)); \
+         });",
+    );
+    append_script(&mut host.document, body, &[("src", "ok.js")], "");
+    append_script(&mut host.document, body, &[("src", "missing.js")], "");
+    let p = host.document.create_detached_element("p").unwrap();
+    host.document.append_child(body, p).unwrap();
+    let mut rt = DomRuntime::with_options(WriteHost(host), RunOptions::default()).unwrap();
+    let report = rt.run_document();
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(report.fetch_errors.len(), 1, "{report:?}");
+    let children = eval_string(
+        &mut rt,
+        "Array.from(document.body.childNodes, function (n) { \
+             return n.nodeName + ':' + (n.nodeType === 3 ? n.data : ''); \
+         }).join('|')",
+    );
+    assert_eq!(
+        children,
+        "SCRIPT:|SCRIPT:|#text:run|#text:load:true|SCRIPT:|#text:error:true|P:"
+    );
+    // Once the parser moved past every script, writing reopens the document.
+    assert_eq!(
+        eval_string(
+            &mut rt,
+            "try { document.write('late'); 'wrote' } catch (e) { e.name }"
+        ),
+        "NotSupportedError"
+    );
+}

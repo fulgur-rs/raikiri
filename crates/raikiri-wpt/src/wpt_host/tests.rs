@@ -1465,3 +1465,21 @@ fn the_root_transform_moves_the_scrolling_area_and_a_singular_one_empties_it() {
     let offset = text(&mut rt, "scrollTo(0, 99999); String(scrollY)");
     assert_eq!(offset, "0");
 }
+
+#[test]
+fn document_write_parses_markup_after_the_script_with_the_real_parser() {
+    let (_dir, mut rt) = runtime(
+        "<div id='out'><script>document.write(Array(4).join('&#x2685;'), '<b>bold</b>',\
+         '<script>document.write(\"[\" + document.currentScript.parentNode.id + \"]\")<\\/script>')\
+         </script></div>",
+    );
+    let report = rt.run_document();
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    let written = text(
+        &mut rt,
+        "Array.from(document.getElementById('out').childNodes, function (n) { \
+             return n.nodeName === 'SCRIPT' ? 'script' : n.textContent; \
+         }).join('|')",
+    );
+    assert_eq!(written, "script|\u{2685}\u{2685}\u{2685}|bold|script|[out]");
+}

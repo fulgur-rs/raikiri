@@ -27,7 +27,7 @@ use super::event_loop::{self, Abort};
 use super::host::HostError;
 use super::interfaces::HTML_NS;
 use super::webidl::{take_host_failure, with_state};
-use super::{DomRuntime, dispatch};
+use super::{DomRuntime, State, dispatch};
 
 /// One [`DomRuntime::run_document`] call's outcome.
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -163,14 +163,14 @@ fn resolve_script_url(base: Option<&str>, src: &str) -> Option<String> {
 /// still decides, per element, whether its `type` marks it as a classic
 /// script worth running.
 fn scripts_in_tree_order(doc: &raikiri_dom::Document) -> Option<Vec<usize>> {
+    scripts_below(doc, doc.root_index())
+}
+
+/// [`scripts_in_tree_order`] for the descendants of `root` (not `root`
+/// itself); `None` when `root` is not a node of `doc`.
+pub(crate) fn scripts_below(doc: &raikiri_dom::Document, root: usize) -> Option<Vec<usize>> {
     let mut scripts = Vec::new();
-    let mut stack: Vec<usize> = doc
-        .get_node(doc.root_index())?
-        .children
-        .iter()
-        .rev()
-        .copied()
-        .collect();
+    let mut stack: Vec<usize> = doc.get_node(root)?.children.iter().rev().copied().collect();
     while let Some(index) = stack.pop() {
         let Some(node) = doc.get_node(index) else {
             continue; // cov:ignore: every stack entry comes from a resolved node's own children, always valid in the same arena
@@ -301,6 +301,9 @@ impl<'a> Executor<'a> {
     /// reaches evaluation at all (an empty `src`, an unresolvable one, or a
     /// fetch failure) never has `currentScript` set for it in the first
     /// place, matching that a fetch failure never reaches "execute" either.
+    /// The `document.write` insertion point lasts longer: the parser is
+    /// still at this script while its `load` or `error` event fires, so
+    /// that point stays set until the dispatch returns.
     fn run_one(&mut self, index: usize) {
         let base_url = with_state(self.context, |s| s.host.document_url())
             .ok()
@@ -327,9 +330,9 @@ impl<'a> Executor<'a> {
         })
         .unwrap_or_default();
         self.report.scripts_run += 1;
-        let _ = with_state(self.context, |s| s.current_script = Some(index));
+        let _ = with_state(self.context, |s| enter_script(s, index));
         let result = evaluate_script(self.context, &code, base_url);
-        let _ = with_state(self.context, |s| s.current_script = None);
+        let _ = with_state(self.context, leave_script);
         if let Err(reason) = result {
             self.report.aborted = Some(reason);
         }
@@ -350,14 +353,19 @@ impl<'a> Executor<'a> {
         match fetched {
             Ok(code) => {
                 self.report.scripts_run += 1;
-                let _ = with_state(self.context, |s| s.current_script = Some(index));
+                let _ = with_state(self.context, |s| enter_script(s, index));
                 let result = evaluate_script(self.context, &code, Some(&url));
+                // `currentScript` ends with the evaluation, but the parser
+                // has not moved on yet: a `load` listener's
+                // `document.write` still lands after this script.
                 let _ = with_state(self.context, |s| s.current_script = None);
                 if let Err(reason) = result {
+                    let _ = with_state(self.context, leave_script);
                     self.report.aborted = Some(reason);
                     return;
                 }
                 fire_lifecycle_event(self.context, self.report, Some(index), "load", false);
+                let _ = with_state(self.context, leave_script);
             }
             Err(HostError(message)) => self.fetch_failed(index, &url, &message),
         }
@@ -365,7 +373,44 @@ impl<'a> Executor<'a> {
 
     fn fetch_failed(&mut self, index: usize, url: &str, reason: &str) {
         self.report.fetch_errors.push(format!("{url}: {reason}"));
+        // The `error` event fires while the parser still sits at this
+        // script, so a listener's `document.write` lands after it, without
+        // `currentScript` being set for a script that never ran.
+        let _ = with_state(self.context, |s| {
+            s.write_point = Some(document::WritePoint::after(index, s.host.document()));
+        });
         fire_lifecycle_event(self.context, self.report, Some(index), "error", false);
+        let _ = with_state(self.context, leave_script);
+    }
+}
+
+/// Mark `script` as the running script: `currentScript`, and the insertion
+/// point `document.write` uses until it returns.
+fn enter_script(state: &mut State, script: usize) {
+    state.current_script = Some(script);
+    state.write_point = Some(document::WritePoint::after(script, state.host.document()));
+}
+
+fn leave_script(state: &mut State) {
+    state.current_script = None;
+    state.write_point = None;
+}
+
+impl Executor<'_> {
+    /// Whether `index` is an HTML `<script>` whose `type` marks a classic
+    /// script.
+    fn is_classic(&mut self, index: usize) -> bool {
+        with_state(self.context, |s| {
+            let doc = s.host.document();
+            let Some(node) = doc.get_node(index) else {
+                return false;
+            };
+            node.kind() == NodeKind::Element
+                && node.tag_name() == Some("script")
+                && doc.element_namespace_uri(index) == Some(HTML_NS)
+                && is_classic_script_type(doc.element_attribute(index, "type"))
+        })
+        .unwrap_or(false)
     }
 }
 
@@ -380,19 +425,22 @@ impl ScriptExecutor for Executor<'_> {
             // fails; kept so the code stays correct if that ever changes.
             return ScriptExecution::Continue;
         };
-        let is_classic = with_state(self.context, |s| {
-            let doc = s.host.document();
-            let Some(node) = doc.get_node(index) else {
-                return false;
-            };
-            node.kind() == NodeKind::Element
-                && node.tag_name() == Some("script")
-                && doc.element_namespace_uri(index) == Some(HTML_NS)
-                && is_classic_script_type(doc.element_attribute(index, "type"))
-        })
-        .unwrap_or(false);
-        if is_classic {
-            self.run_one(index);
+        // Scripts `document.write` inserted are parser-inserted too: the
+        // parser reaches each right after the script that wrote it, so the
+        // ones a script writes run before scripts written earlier but placed
+        // after it. The stack keeps that depth-first order without
+        // recursing however deeply writes nest.
+        let mut pending = vec![index];
+        while let Some(script) = pending.pop() {
+            if event_loop::aborted(self.context).is_some() {
+                break;
+            }
+            if self.is_classic(script) {
+                self.run_one(script);
+            }
+            let written = with_state(self.context, |s| std::mem::take(&mut s.written_scripts))
+                .unwrap_or_default();
+            pending.extend(written.into_iter().rev());
         }
         ScriptExecution::Continue
     }
