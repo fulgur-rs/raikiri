@@ -108,7 +108,12 @@ fn shared_counter_snapshots_are_reused_until_the_tree_changes() {
 #[test]
 fn counter_snapshots_include_implicit_list_item_ordinals() {
     let mut doc = Document::new();
-    let list = doc.append_element(Some(doc.root_index()), "ol", Style::default(), None::<&str>);
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Style::default(),
+        Some("counter-reset: list-item"),
+    );
     let first = doc.append_element(
         Some(list),
         "li",
@@ -128,8 +133,12 @@ fn counter_snapshots_include_implicit_list_item_ordinals() {
         Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
-    let explicit_list =
-        doc.append_element(Some(doc.root_index()), "ol", Style::default(), None::<&str>);
+    let explicit_list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Style::default(),
+        Some("counter-reset: list-item"),
+    );
     let explicit = doc.append_element(
         Some(explicit_list),
         "li",
@@ -142,7 +151,12 @@ fn counter_snapshots_include_implicit_list_item_ordinals() {
         Style::default(),
         Some("display: list-item; list-style-type: decimal"),
     );
-    let nested_list = doc.append_element(Some(first), "ol", Style::default(), None::<&str>);
+    let nested_list = doc.append_element(
+        Some(first),
+        "ol",
+        Style::default(),
+        Some("counter-reset: list-item"),
+    );
     let nested = doc.append_element(
         Some(nested_list),
         "li",
@@ -157,18 +171,21 @@ fn counter_snapshots_include_implicit_list_item_ordinals() {
     assert_eq!(snapshots[first][&Symbol::new("list-item")], vec![1]);
     assert_eq!(snapshots[second][&Symbol::new("list-item")], vec![2]);
     assert_eq!(snapshots[third][&Symbol::new("list-item")], vec![3]);
-    assert_eq!(snapshots[explicit][&Symbol::new("list-item")], vec![7]);
+    // An explicit reset on a list item nests inside the list's own level and
+    // does not suppress the item's implicit increment (CSS Lists 3 §4.6), so
+    // numbering continues from it.
+    assert_eq!(snapshots[explicit][&Symbol::new("list-item")], vec![0, 8]);
     assert_eq!(
         snapshots[explicit_following][&Symbol::new("list-item")],
-        vec![7]
+        vec![0, 9]
     );
-    assert_eq!(snapshots[nested][&Symbol::new("list-item")], vec![1]);
+    assert_eq!(snapshots[nested][&Symbol::new("list-item")], vec![1, 1]);
     for (node, expected) in [
         (first, "1. "),
         (second, "2. "),
         (third, "3. "),
-        (explicit, "7. "),
-        (explicit_following, "7. "),
+        (explicit, "8. "),
+        (explicit_following, "9. "),
         (nested, "1. "),
     ] {
         let (_, marker) = crate::generated_content::markers::marker_render_info_with_snapshots(
@@ -202,7 +219,7 @@ fn counter_snapshot_budget_accounts_for_nested_stack_capacity_before_clone() {
     let mut scopes = CounterScopes::default();
     let mut shallow_cost = None;
     for (index, node) in nested_nodes.into_iter().enumerate() {
-        scopes.apply(&cr.computed[node], None);
+        scopes.apply(&cr.computed[node], false, None);
         if index == 0 {
             shallow_cost = scopes.estimated_snapshot_bytes();
         }
@@ -518,4 +535,40 @@ fn counter_increment_on_following_sibling_of_reset_element_continues_that_scope(
     let p = doc.append_element(Some(0), "p", Style::default(), Some("counter-increment: c"));
     doc.mark_in_document_flags();
     assert_eq!(stack_at(&doc, p, "c"), vec![6]);
+}
+
+#[test]
+fn list_items_increment_list_item_before_their_counter_set() {
+    let mut doc = Document::new();
+    let list = doc.append_element(
+        Some(doc.root_index()),
+        "ol",
+        Style::default(),
+        Some("counter-reset: list-item 4"),
+    );
+    let item = |doc: &mut Document, style: &str| {
+        doc.append_element(
+            Some(list),
+            "li",
+            Style::default(),
+            Some(format!("display: list-item; {style}").as_str()),
+        )
+    };
+    let first = item(&mut doc, "");
+    let set = item(&mut doc, "counter-set: list-item 10");
+    let after_set = item(&mut doc, "");
+    let explicit = item(&mut doc, "counter-increment: list-item 5");
+    let not_list_item =
+        doc.append_element(Some(list), "div", Style::default(), Some("display: block"));
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    let list_item = Symbol::new("list-item");
+    assert_eq!(snapshots[first][&list_item], vec![5]);
+    assert_eq!(snapshots[set][&list_item], vec![10]);
+    assert_eq!(snapshots[after_set][&list_item], vec![11]);
+    // An explicit list-item increment replaces the implicit one.
+    assert_eq!(snapshots[explicit][&list_item], vec![16]);
+    assert_eq!(snapshots[not_list_item][&list_item], vec![16]);
 }

@@ -368,3 +368,33 @@ fn marker_content_text_resolves_literals_counters_and_quotes() {
         Some("“‘’”".to_string())
     );
 }
+
+#[test]
+fn out_of_range_marker_values_fall_back_to_decimal() {
+    let (_, cascade, _, _) = list_fixture(
+        "display: list-item",
+        "display: list-item",
+        Some(
+            r#"@counter-style dice {
+                    system: additive;
+                    additive-symbols: 2 "B", 1 "A";
+                    prefix: "(";
+                    suffix: ")";
+                }"#,
+        ),
+    );
+    let marker = |style: &str, value: i32| {
+        list_marker_text_with_ordinal(&cascade, &ListStyleType::Named(style.into()), value)
+            .expect("ordered marker")
+    };
+    assert_eq!(marker("decimal", -2), "-2. ");
+    assert_eq!(marker("decimal-leading-zero", -3), "-03. ");
+    assert_eq!(marker("decimal-leading-zero", 3), "03. ");
+    assert_eq!(marker("lower-alpha", 0), "0. ");
+    assert_eq!(marker("upper-alpha", 2), "B. ");
+    assert_eq!(marker("lower-roman", -1), "-1. ");
+    assert_eq!(marker("upper-roman", 4), "IV. ");
+    // The custom style keeps its own prefix and suffix around the fallback.
+    assert_eq!(marker("dice", 3), "(BA)");
+    assert_eq!(marker("dice", -1), "(-1)");
+}

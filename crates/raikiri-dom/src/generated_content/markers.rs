@@ -72,10 +72,6 @@ fn list_item_counter_value(counters: &impl CounterSnapshotLookup, ordinal: u32) 
         .unwrap_or(ordinal as i32)
 }
 
-fn list_item_marker_ordinal(counters: &impl CounterSnapshotLookup, ordinal: u32) -> u32 {
-    list_item_counter_value(counters, ordinal).max(0) as u32
-}
-
 fn list_item_ordinal(document: &Document, cascade: &CascadeResult, node_id: usize) -> u32 {
     let Some(parent_id) = document.parent_of(node_id) else {
         return 1;
@@ -111,9 +107,13 @@ fn alpha_marker(mut value: u32) -> String {
     result
 }
 
-fn custom_marker_text(registry: &CounterStyleRegistry, name: &str, value: u32) -> Option<String> {
+fn custom_marker_text(registry: &CounterStyleRegistry, name: &str, value: i32) -> Option<String> {
     let rule = registry.get(name)?;
-    let representation = resolve_custom_counter(registry, name, value as i32)?;
+    // A value no style in the fallback chain can render uses `decimal`, but
+    // the marker keeps the requested style's own prefix and suffix
+    // (CSS Counter Styles 3, the `prefix` and `suffix` descriptors).
+    let representation =
+        resolve_custom_counter(registry, name, value).unwrap_or_else(|| value.to_string());
     Some(format!(
         "{}{}{}",
         rule.prefix.0.as_str(),
@@ -130,17 +130,23 @@ fn list_marker_text(
     list_style_type: &ListStyleType,
 ) -> Option<String> {
     let ordinal = list_item_ordinal(document, cascade, node_id);
-    list_marker_text_with_ordinal(cascade, list_style_type, ordinal)
+    list_marker_text_with_ordinal(cascade, list_style_type, ordinal as i32)
 }
 
 fn list_marker_text_with_ordinal(
     cascade: &CascadeResult,
     list_style_type: &ListStyleType,
-    ordinal: u32,
+    ordinal: i32,
 ) -> Option<String> {
     // Ordered marker styles use the CSS default `". "` suffix. The
     // author-supplied string form is handled separately and remains verbatim.
     let suffix = |text: String| format!("{text}. ");
+    // CSS Counter Styles 3 §6: the alphabetic and roman styles cover only
+    // positive values and fall back to `decimal` for the rest.
+    let positive = |format: &dyn Fn(u32) -> String| match u32::try_from(ordinal) {
+        Ok(value) if value > 0 => suffix(format(value)),
+        _ => suffix(ordinal.to_string()),
+    };
     match list_style_type {
         ListStyleType::Disc => Some("• ".to_string()),
         ListStyleType::None => None,
@@ -152,19 +158,20 @@ fn list_marker_text_with_ordinal(
                 "circle" => "◦ ".to_string(),
                 "square" => "▪ ".to_string(),
                 "decimal" => suffix(ordinal.to_string()),
+                // The negative sign does not count toward the two-digit pad
+                // (CSS Counter Styles 3 §3.6).
+                "decimal-leading-zero" if ordinal < 0 => {
+                    suffix(format!("-{:02}", ordinal.unsigned_abs()))
+                }
                 "decimal-leading-zero" => suffix(format!("{ordinal:02}")),
-                "lower-alpha" | "lower-latin" => suffix(alpha_marker(ordinal)),
-                "upper-alpha" | "upper-latin" => suffix(alpha_marker(ordinal).to_uppercase()),
-                "lower-roman" => suffix(format_counter(
-                    ordinal as i32,
-                    &CounterStyle::Named("lower-roman".into()),
-                    &cascade.counter_styles,
-                )),
-                "upper-roman" => suffix(format_counter(
-                    ordinal as i32,
-                    &CounterStyle::Named("upper-roman".into()),
-                    &cascade.counter_styles,
-                )),
+                "lower-alpha" | "lower-latin" => positive(&alpha_marker),
+                "upper-alpha" | "upper-latin" => {
+                    positive(&|value| alpha_marker(value).to_uppercase())
+                }
+                "lower-roman" | "upper-roman" => {
+                    let style = CounterStyle::Named(lower.as_str().into());
+                    positive(&|value| format_counter(value as i32, &style, &cascade.counter_styles))
+                }
                 _ => custom_marker_text(&cascade.counter_styles, name.as_str(), ordinal)
                     .unwrap_or_else(|| suffix(ordinal.to_string())),
             };
@@ -301,7 +308,7 @@ pub fn marker_render_info_with_snapshots<'a>(
     } else {
         0
     };
-    let marker_ordinal = list_item_marker_ordinal(&counters, ordinal);
+    let marker_ordinal = list_item_counter_value(&counters, ordinal);
     let content = marker_computed
         .and_then(|marker| {
             marker_content_text(

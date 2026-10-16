@@ -46,8 +46,12 @@ use std::mem::size_of;
 use raikiri_style::CascadeResult;
 use raikiri_style::property::DisplayValue;
 use raikiri_traits::Symbol;
+use smol_str::SmolStr;
 
 use crate::document::Document;
+
+/// The counter that list items increment implicitly (CSS Lists 3 §4.6).
+const LIST_ITEM_COUNTER: &str = "list-item";
 
 /// Maximum estimated memory retained and cloned for counter snapshots.
 ///
@@ -122,18 +126,6 @@ impl CounterSnapshotBudget {
             .and_then(|count| count.checked_mul(size_of::<CounterSnapshot>() as u64));
         self.charge(bytes)
     }
-
-    fn charge_implicit_list_item(&mut self) -> Result<(), CounterSnapshotLimitExceeded> {
-        // Reserve for a small hash table with capacity slack and the one-value
-        // vector allocation added to an otherwise empty snapshot.
-        let entry_bytes = (size_of::<(Symbol, Vec<i32>)>() as u64)
-            .checked_mul(2)
-            .and_then(|bytes| bytes.checked_add(16));
-        let bytes = entry_bytes
-            .and_then(|bytes| bytes.checked_mul(4))
-            .and_then(|bytes| bytes.checked_add(size_of::<i32>() as u64 + 16));
-        self.charge(bytes)
-    }
 }
 
 /// Counter-scope tracker implementing CSS Lists 3 §4.3's nested-scope model
@@ -187,9 +179,18 @@ impl CounterScopes {
     /// `counter-reset: foo 1 foo 2`) is deduplicated to the *last*
     /// occurrence's value before pushing — CSS Lists 3 §4.1, see the
     /// dedup step's own comment below.
+    ///
+    /// `list_item` marks an element whose box is a list item. CSS Lists 3
+    /// §4.6 <https://www.w3.org/TR/css-lists-3/#list-item-counter>: "in
+    /// addition to any explicitly defined counter-increment, list items
+    /// automatically increment the special list-item counter, unless the
+    /// counter-increment property explicitly specifies a different
+    /// increment for the list-item counter", so such an element gets an
+    /// implicit `list-item 1` increment after its resets and before its sets.
     fn apply(
         &mut self,
         cv: &raikiri_style::ComputedValues,
+        list_item: bool,
         mut parent_bucket: Option<&mut Vec<Symbol>>,
     ) {
         // CSS Lists 3 §4.1 <https://www.w3.org/TR/css-lists-3/#counter-reset>:
@@ -229,7 +230,13 @@ impl CounterScopes {
                 bucket.push(sym);
             }
         }
-        for (name, delta) in cv.counter_increment.iter() {
+        let implicit_list_item = (list_item
+            && !cv
+                .counter_increment
+                .iter()
+                .any(|(name, _)| name.as_str() == LIST_ITEM_COUNTER))
+        .then(|| (SmolStr::new_static(LIST_ITEM_COUNTER), 1));
+        for (name, delta) in cv.counter_increment.iter().chain(implicit_list_item.iter()) {
             let sym = Symbol::new(name.clone());
             let stack = self.stacks.entry(sym.clone()).or_default();
             match stack.last_mut() {
@@ -399,18 +406,16 @@ pub fn counter_snapshots_with_budget(
     budget.charge_base(doc.node_count())?;
     let mut snapshots = vec![HashMap::new(); doc.node_count()];
     let mut scopes = CounterScopes::default();
-    let list_item_counter = Symbol::new("list-item");
-
     enum WalkStep {
-        Enter(usize, u32),
+        Enter(usize),
         Exit,
     }
 
-    let mut stack = vec![WalkStep::Enter(doc.root, 1)];
+    let mut stack = vec![WalkStep::Enter(doc.root)];
     let mut pending_pops: Vec<Vec<Symbol>> = Vec::new();
     while let Some(step) = stack.pop() {
         match step {
-            WalkStep::Enter(idx, list_item_ordinal) => {
+            WalkStep::Enter(idx) => {
                 let node = &doc.nodes[idx];
                 if !node.is_in_document() {
                     continue;
@@ -421,7 +426,11 @@ pub fn counter_snapshots_with_budget(
                 let is_display_none = display == Some(DisplayValue::None);
                 match cv {
                     Some(_) if is_display_none || display == Some(DisplayValue::Contents) => {}
-                    Some(cv) => scopes.apply(cv, pending_pops.last_mut()),
+                    Some(cv) => scopes.apply(
+                        cv,
+                        display == Some(DisplayValue::ListItem),
+                        pending_pops.last_mut(),
+                    ),
                     // cov:ignore: cascade output has one computed value per arena node
                     None => {}
                 }
@@ -436,13 +445,6 @@ pub fn counter_snapshots_with_budget(
                 // element's real children, while the pseudo's own content
                 // applies those directives locally in paint.
                 snapshots[idx] = scopes.snapshot(budget)?;
-                if display == Some(DisplayValue::ListItem)
-                    && !snapshots[idx].contains_key(&list_item_counter)
-                {
-                    budget.charge_implicit_list_item()?;
-                    snapshots[idx]
-                        .insert(list_item_counter.clone(), vec![list_item_ordinal as i32]);
-                }
                 stack.push(WalkStep::Exit);
                 pending_pops.push(Vec::new());
                 if let Some(before) = cascade.pseudo.get(&(
@@ -453,22 +455,10 @@ pub fn counter_snapshots_with_budget(
                         !matches!(component, raikiri_style::property::ContentComponent::None)
                     })
                 {
-                    scopes.apply(before, pending_pops.last_mut());
+                    scopes.apply(before, false, pending_pops.last_mut());
                 }
                 let children_start = stack.len();
-                let mut sibling_ordinal = 0_u32;
-                for &child in &node.children {
-                    let is_list_item = cascade.computed.get(child).is_some_and(|computed| {
-                        doc.counter_display(child, computed.display) == DisplayValue::ListItem
-                    });
-                    if is_list_item {
-                        sibling_ordinal = sibling_ordinal.saturating_add(1);
-                    }
-                    stack.push(WalkStep::Enter(
-                        child,
-                        if is_list_item { sibling_ordinal } else { 0 },
-                    ));
-                }
+                stack.extend(node.children.iter().map(|&child| WalkStep::Enter(child)));
                 stack[children_start..].reverse();
             }
             WalkStep::Exit => {
