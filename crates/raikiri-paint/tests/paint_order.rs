@@ -604,6 +604,61 @@ fn positioned_boxes_in_floats_paint_after_the_layer_text() {
     assert!(step_at(&result, Step::Text(a)) < step_at(&result, Step::Box(p)));
 }
 
+/// An inline-block forms no stacking context, so the positioned boxes inside
+/// it join the enclosing stacking context and interleave with those of a
+/// later inline-block by stack level.
+#[test]
+fn positioned_boxes_in_inline_blocks_interleave_by_stack_level() {
+    let result = same_order(
+        "<div><span style=\"display: inline-block; width: 30px\">\
+         <div id=a style=\"position: relative; z-index: 10; height: 5px; background: purple\"></div>\
+         <div id=b style=\"position: relative; z-index: 20; height: 5px; background: teal\"></div>\
+         </span><span style=\"display: inline-block; width: 30px\">\
+         <div id=c style=\"position: relative; z-index: 15; height: 15px; background: lime\"></div>\
+         </span></div>",
+    );
+    let [a, b, c] = ["a", "b", "c"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(a)) < step_at(&result, Step::Box(c)));
+    assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Box(b)));
+}
+
+/// An inline element with an opacity below one forms a stacking context, so
+/// the positioned boxes of an inline-block inside it paint in its group,
+/// below those of a later inline-block with a lower stack level. Both
+/// sequences list the group at a different place among the inline-blocks
+/// (see the known difference below), so each is checked on its own.
+#[test]
+fn positioned_boxes_in_inline_blocks_stay_in_an_inline_opacity_group() {
+    let result = lay_out(
+        "<div><span style=\"opacity: 0.5\"><span style=\"display: inline-block; width: 30px\">\
+         <div id=a style=\"position: relative; z-index: 20; height: 5px; background: teal\"></div>\
+         </span></span><span style=\"display: inline-block; width: 30px\">\
+         <div id=b style=\"position: relative; z-index: 15; height: 15px; background: lime\"></div>\
+         </span></div>",
+        "",
+    );
+    let [a, b] = ["a", "b"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    for steps in [walker_steps(&page), api_steps(&page)] {
+        let at = |step| {
+            steps
+                .iter()
+                .position(|s| *s == step)
+                .unwrap_or_else(|| panic!("{step:?} in {}", describe(&page, &steps)))
+        };
+        let (at_a, at_b) = (at(Step::Box(a)), at(Step::Box(b)));
+        assert!(at_a < at_b, "{}", describe(&page, &steps));
+        assert_eq!(
+            steps[..at_a]
+                .iter()
+                .filter(|s| **s == Step::PushOpacity)
+                .count(),
+            1
+        );
+        assert!(steps[at_a..at_b].contains(&Step::PopOpacity));
+    }
+}
+
 /// The backgrounds of a table and its cells are block backgrounds of the
 /// layer: text before the table and in earlier cells stays above them.
 #[test]

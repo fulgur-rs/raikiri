@@ -512,10 +512,12 @@ pub fn defers_to_positioned_layer(
 ///
 /// Positioned descendants belong to the nearest stacking context, where they
 /// paint after its inline content (CSS 2.1 Appendix E step 8), whatever box
-/// between holds them. A float or a flex or grid item paints as if it formed
-/// a stacking context, but passes them on too. A box that clips or forms a
-/// stacking context of its own keeps them, as does a box laid out beside the
-/// lines of a paragraph, which paints among the paragraph's content.
+/// between holds them. A float, a flex or grid item, and an atomic inline
+/// such as an inline-block paint as if they formed a stacking context, but
+/// pass them on too (Appendix E, the step for inline-block and inline-table
+/// elements, and CSS Flexbox 1 §4.3). A box that clips or forms a stacking
+/// context of its own keeps them, as does a box inside an inline element
+/// that forms one, such as an inline with an opacity below one.
 pub fn hoists_positioned_content(
     document: &Document,
     cascade: &CascadeResult,
@@ -526,15 +528,41 @@ pub fn hoists_positioned_content(
             && !establishes_stacking_context(document, node_id, cv)
             && !is_z_indexed_item(document, cascade, node_id, cv)
             && !clips_overflow(cv)
-            && (!matches!(cv.float, FloatValue::None)
-                || box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
-                    |parent| {
-                        document
-                            .get_node(parent)
-                            .is_some_and(|node| !node.is_ifc_root())
-                    },
-                ))
+            && !inside_inline_stacking_context(document, cascade, node_id)
     })
+}
+
+/// Whether element `node_id` sits inside an inline element of its paragraph
+/// that forms a stacking context, whose group paints everything inside it.
+fn inside_inline_stacking_context(
+    document: &Document,
+    cascade: &CascadeResult,
+    node_id: usize,
+) -> bool {
+    let inline_box = |id: usize| {
+        cascade
+            .computed
+            .get(id)
+            .filter(|cv| cv.display == DisplayValue::Inline)
+            .filter(|_| {
+                document
+                    .get_node(id)
+                    .is_some_and(|node| !node.is_ifc_root())
+            })
+    };
+    let mut current = node_id;
+    while let Some((parent, cv)) = box_parent(document, cascade, current, BoxParentScope::Document)
+        .and_then(|parent| inline_box(parent).map(|cv| (parent, cv)))
+    {
+        if establishes_stacking_context(document, parent, cv)
+            || (!matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_)))
+        {
+            return true;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// One frame of the list a layer keeps of the boxes that wait for its end
