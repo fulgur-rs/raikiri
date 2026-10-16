@@ -875,8 +875,8 @@ pub(crate) fn pick_winners(
 /// `var()` winner; a winner that still is not a keyword (a CSS-wide keyword,
 /// or an invalid substitution) takes the inherited value too.
 ///
-/// The writing mode is the one block layout places the element's box in
-/// ([`layout_writing_mode`]): flex, grid and table boxes and multicol
+/// The writing mode is the one block layout places the element's box in:
+/// flex, grid and table boxes and multicol
 /// containers and their contents place their children on horizontal axes in
 /// every writing mode ([`ComputedValues::horizontal_children`], which looks
 /// through `display: contents` parents), so those children map through
@@ -935,24 +935,12 @@ pub(crate) fn flow_mapping(
     let writing_mode = if inherited.horizontal_children {
         WritingMode::HorizontalTb
     } else {
-        layout_writing_mode(writing_mode)
+        writing_mode
     };
     Some(FlowMapping {
         writing_mode,
         direction,
     })
-}
-
-/// The writing mode block layout lays an element's boxes out in:
-/// `vertical-rl` and `vertical-lr` stack blocks along the physical x axis,
-/// while the sideways modes still run on horizontal axes.
-fn layout_writing_mode(mode: WritingMode) -> WritingMode {
-    match mode {
-        WritingMode::VerticalRl | WritingMode::VerticalLr => mode,
-        WritingMode::HorizontalTb | WritingMode::SidewaysRl | WritingMode::SidewaysLr => {
-            WritingMode::HorizontalTb
-        }
-    }
 }
 
 pub(crate) fn beats(candidate: RankedDecl, existing: RankedDecl) -> bool {

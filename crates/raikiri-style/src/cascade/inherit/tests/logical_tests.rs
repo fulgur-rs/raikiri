@@ -70,13 +70,22 @@ fn upright_text_maps_vertical_inline_sides_as_ltr() {
 }
 
 #[test]
-fn sideways_elements_map_like_horizontal_ones() {
-    // Block layout stacks the boxes of the sideways modes on horizontal axes.
+fn sideways_elements_map_through_their_vertical_axes() {
+    // `sideways-lr` starts its blocks on the left and its lines at the
+    // bottom; `sideways-rl` maps like `vertical-rl`.
+    assert_eq!(
+        margins(&format!("writing-mode: sideways-lr; {ALL_FOUR}")),
+        sides(3.0, 4.0, 1.0, 2.0)
+    );
     assert_eq!(
         margins(&format!(
             "writing-mode: sideways-lr; direction: rtl; {ALL_FOUR}"
         )),
-        sides(2.0, 1.0, 4.0, 3.0)
+        sides(1.0, 4.0, 3.0, 2.0)
+    );
+    assert_eq!(
+        margins(&format!("writing-mode: sideways-rl; {ALL_FOUR}")),
+        margins(&format!("writing-mode: vertical-rl; {ALL_FOUR}"))
     );
 }
 

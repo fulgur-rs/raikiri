@@ -51,16 +51,16 @@ pub(crate) struct TransposedBlock {
 }
 
 /// The block direction of `idx` when it lays out its block children on
-/// vertical axes: `Some(true)` for `vertical-rl`, `Some(false)` for
-/// `vertical-lr`.
+/// vertical axes: `Some(true)` for `vertical-rl` and `sideways-rl`,
+/// `Some(false)` for `vertical-lr` and `sideways-lr`.
 ///
 /// A multicol container and its contents run vertical writing on
 /// horizontal axes, as their sizing properties do, and so do the boxes the
 /// table algorithm lays out; they are left to the horizontal block path.
 pub(crate) fn block_right_to_left(tree: &Document, idx: usize) -> Option<bool> {
     let right_to_left = match used_writing_mode(tree, idx) {
-        WritingMode::VerticalRl => true,
-        WritingMode::VerticalLr => false,
+        WritingMode::VerticalRl | WritingMode::SidewaysRl => true,
+        WritingMode::VerticalLr | WritingMode::SidewaysLr => false,
         _ => return None,
     };
     if is_table_box(tree.nodes[idx].display) {

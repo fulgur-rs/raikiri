@@ -107,7 +107,10 @@ pub(crate) fn lays_out_vertically(cascade: &CascadeResult, idx: usize) -> bool {
     let values = &cascade.computed[idx];
     if !matches!(
         values.cssom_writing_mode,
-        WritingMode::VerticalRl | WritingMode::VerticalLr
+        WritingMode::VerticalRl
+            | WritingMode::VerticalLr
+            | WritingMode::SidewaysRl
+            | WritingMode::SidewaysLr
     ) || values.display.is_flex_or_grid_container()
     {
         return false;
@@ -496,14 +499,27 @@ fn paints_whole_box_effects(cv: &ComputedValues, initial: &ComputedValues) -> bo
 /// and overflow direction.  Text direction is mapped separately, into the
 /// paragraph style of the inline engine.
 ///
-/// A box laid out on vertical axes with `text-orientation: upright` uses
-/// `ltr` whatever its `direction` (CSS Writing Modes 4 §5.1), as its
-/// logical margins and padding were mapped.
+/// A box in `vertical-rl` or `vertical-lr` with `text-orientation: upright`
+/// uses `ltr` whatever its `direction` (CSS Writing Modes 4 §5.1), as its
+/// logical margins and padding were mapped. The sideways modes are
+/// horizontal typographic modes, which `upright` does not affect.
+///
+/// `sideways-lr` runs its inline axis from bottom to top (CSS Writing Modes 4
+/// §3.1), the reverse of `vertical-lr`, whose axes the box lays out on; its
+/// direction is flipped so that the inline start stays at the bottom.
 fn bridge_direction(style: &mut taffy::Style, cv: &ComputedValues, vertical_axes: bool) {
-    let upright = vertical_axes && cv.text_orientation == TextOrientation::Upright;
-    style.direction = match cv.direction {
-        Direction::Rtl if !upright => TaffyDirection::Rtl,
-        _ => TaffyDirection::Ltr,
+    let upright = vertical_axes
+        && cv.text_orientation == TextOrientation::Upright
+        && matches!(
+            cv.cssom_writing_mode,
+            WritingMode::VerticalRl | WritingMode::VerticalLr
+        );
+    let rtl = matches!(cv.direction, Direction::Rtl) && !upright;
+    let bottom_to_top = vertical_axes && cv.cssom_writing_mode == WritingMode::SidewaysLr;
+    style.direction = if rtl != bottom_to_top {
+        TaffyDirection::Rtl
+    } else {
+        TaffyDirection::Ltr
     };
 }
 

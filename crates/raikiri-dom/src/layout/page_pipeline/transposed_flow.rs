@@ -288,6 +288,10 @@ pub(super) struct TransposedDocument {
     transposed: Vec<TaffyLayout>,
     styles: Vec<taffy::Style>,
     in_flow_heights: HashMap<usize, f32>,
+    body_id: usize,
+    /// The part of the body's block-end padding that is its block-end
+    /// margin, held back from the paginator.
+    body_block_end_margin: f32,
 }
 
 impl TransposedDocument {
@@ -313,7 +317,7 @@ impl TransposedDocument {
             |key: usize| frames[key].map_or(page_area_width, |frame| physical[frame].size.width);
         // The boxes around the body stay where they are, so that offsets
         // summed up to the page area are those of the body's coordinates.
-        let transposed: Vec<TaffyLayout> = (0..keys)
+        let mut transposed: Vec<TaffyLayout> = (0..keys)
             .map(|key| {
                 if outside.contains(&key) {
                     physical[key]
@@ -322,6 +326,19 @@ impl TransposedDocument {
                 }
             })
             .collect();
+        // Layout carries the body's left and right margins as padding. On
+        // vertical axes these are its block margins; the block-end one is
+        // truncated at the end of the flow like any other trailing margin,
+        // so the paginator must not see it as padding that ends the body.
+        let (margin_left, margin_right) = document.body_inline_margins;
+        let body_block_end_margin = if axes.right_to_left {
+            margin_left
+        } else {
+            margin_right
+        };
+        let body_padding = &mut transposed[body_id].padding.bottom;
+        let body_block_end_margin = body_block_end_margin.clamp(0.0, body_padding.max(0.0));
+        *body_padding -= body_block_end_margin;
         let mut styles = Vec::with_capacity(keys);
         for (key, &layout) in transposed.iter().enumerate() {
             let node = document.table_layout_node_mut(key);
@@ -335,6 +352,8 @@ impl TransposedDocument {
         document.pagination_on_transposed_axes = true;
         Self {
             axes,
+            body_id,
+            body_block_end_margin,
             page_area_width,
             outside,
             frames,
@@ -374,7 +393,11 @@ impl TransposedDocument {
             } else {
                 let parent_width =
                     frame.map_or(self.page_area_width, |frame| current[frame].size.height);
-                self.axes.physical_layout(current[key], parent_width)
+                let mut layout = current[key];
+                if key == self.body_id {
+                    layout.padding.bottom += self.body_block_end_margin;
+                }
+                self.axes.physical_layout(layout, parent_width)
             };
             let node = document.table_layout_node_mut(key);
             node.unrounded_layout = layout;

@@ -4694,6 +4694,22 @@ fn vertical_block_children_follow_the_logical_block_direction() {
 }
 
 #[test]
+fn sideways_rl_block_children_take_their_right_margin_as_block_start() {
+    let location = |mode: &str| {
+        let (mut doc, cascade, block, _root) = paragraph_with_block(
+            "aa",
+            "width:12px;height:8px;margin-left:1px;margin-right:5px",
+            "bb",
+            &format!("height:50px;writing-mode:{mode}"),
+        );
+        lay_out(&mut doc, &cascade);
+        let child = doc.nodes[block].unrounded_layout;
+        (child.location.x, child.location.y)
+    };
+    assert_eq!(location("sideways-rl"), location("vertical-rl"));
+}
+
+#[test]
 fn vertical_rtl_block_child_uses_the_logical_inline_start_once() {
     for (mode, expected_x) in [("vertical-rl", 80.0), ("vertical-lr", 0.0)] {
         let (mut doc, cascade, block, root) = paragraph_with_block(

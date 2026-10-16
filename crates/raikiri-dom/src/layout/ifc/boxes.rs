@@ -1467,7 +1467,10 @@ fn layout_vertical_block_child(
     let inline_basis = geometry.axes.inline_extent(geometry.content_size);
     let mut margin = resolved_margins(tree, node, inline_basis);
     let style_margin = tree.nodes[node].style.margin;
-    let vertical_rl = geometry.axes.writing_mode() == WritingMode::VerticalRl;
+    let vertical_rl = matches!(
+        geometry.axes.writing_mode(),
+        WritingMode::VerticalRl | WritingMode::SidewaysRl
+    );
     let (block_start_margin, block_end_margin) = if vertical_rl {
         (margin.right, margin.left)
     } else {
@@ -2221,7 +2224,10 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
             root.writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr
         )
     });
     let boxes = tree.nodes[idx]

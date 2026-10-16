@@ -258,7 +258,7 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
     assert_eq!(horizontal.height, ComputedLengthPercentageOrAuto::Px(30.0));
     assert_eq!(horizontal.vertical_logical_size, None);
 
-    for mode in ["vertical-rl", "vertical-lr"] {
+    for mode in ["vertical-rl", "vertical-lr", "sideways-rl", "sideways-lr"] {
         let vertical = cascade_doc(
             "",
             "div",
@@ -300,14 +300,6 @@ fn logical_preferred_sizes_map_to_the_authored_axes() {
             ComputedLengthPercentageOrAuto::Percent(50.0),
         ))
     );
-
-    let sideways = cascade_doc(
-        "",
-        "div",
-        Some("inline-size: 40px; writing-mode: sideways-rl"),
-    );
-    assert_eq!(sideways.width, ComputedLengthPercentageOrAuto::Px(40.0));
-    assert_eq!(sideways.vertical_logical_size, None);
 }
 
 #[test]

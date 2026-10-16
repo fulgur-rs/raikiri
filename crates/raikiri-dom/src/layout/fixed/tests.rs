@@ -189,14 +189,17 @@ fn auto_vertical_margins_of_grid_children_split_the_free_space_of_their_grid_are
 
 #[test]
 fn auto_vertical_margins_of_absolute_boxes_in_sideways_containers_stay_zero() {
-    // The physical height of a sideways container is its inline axis.
-    for mode in ["sideways-rl", "sideways-lr"] {
+    // The physical height of a sideways container is its inline axis. The
+    // over-constrained box gives up its inline-end inset: `bottom` in
+    // `sideways-rl` and `top` in `sideways-lr`, whose inline axis runs from
+    // bottom to top.
+    for (mode, y) in [("sideways-rl", 50.0 + 100.0), ("sideways-lr", 50.0)] {
         let (doc, abs) = laid_out(
             "",
             &format!("writing-mode:{mode};position:relative;height:200px"),
             "position:absolute;top:50%;bottom:50%;height:100px;width:10px;margin:auto",
         );
-        assert_eq!(absolute_rect(&doc, abs).1, 50.0 + 100.0, "{mode}");
+        assert_eq!(absolute_rect(&doc, abs).1, y, "{mode}");
     }
 }
 
