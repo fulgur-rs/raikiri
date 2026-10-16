@@ -457,6 +457,89 @@ fn balanced_height_after(
     }
 }
 
+/// Balance the columns of each of the first `rows` rows of `column_count`
+/// columns for `column-fill: balance-all`: each row gets the shortest column
+/// height that still holds the content its columns hold at the heights in
+/// `heights`, one per row (CSS Multi-column 1, 8.1). Columns past the last
+/// row take that row's height. Rows are balanced in order, so the content
+/// left for later rows does not change.
+fn balance_rows(
+    items: &[Item],
+    column_count: usize,
+    rows: usize,
+    heights: &mut [f32],
+    max_pieces: usize,
+) -> Option<()> {
+    let last = heights.len().checked_sub(1)?;
+    let row_of = |column: usize| (column / column_count).min(last);
+    // The block size of the pieces in the columns before `end`.
+    let held = |heights: &[f32], end: usize| {
+        place_columns(
+            items,
+            &|column| heights[row_of(column)],
+            max_pieces,
+            usize::MAX,
+            true,
+        )
+        .ok()
+        .map(|placement| {
+            let height: f32 = placement
+                .pieces
+                .iter()
+                .flatten()
+                .filter(|piece| piece.column < end)
+                .map(|piece| piece.height)
+                .sum();
+            (placement, height)
+        })
+    };
+    for row in 0..rows.min(last) {
+        let end = column_count * (row + 1);
+        let (_, target) = held(heights, end)?;
+        let full = heights[row];
+        let mut trial = heights.to_vec();
+        let fits = |trial: &mut Vec<f32>, height: f32| {
+            trial[row] = height;
+            held(trial, end).is_some_and(|(_, height)| height >= target - EPSILON)
+        };
+        // The row's content shared equally is the answer when nothing in it
+        // avoids breaks taller than that share.
+        let share = (target - held(heights, end - column_count)?.1) / column_count as f32;
+        if share > 0.0 && share <= full && fits(&mut trial, share) {
+            heights[row] = share;
+            continue;
+        }
+        let mut low = 0.0_f32;
+        let mut high = full;
+        for _ in 0..24 {
+            let middle = (low + high) / 2.0;
+            if fits(&mut trial, middle) {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        // The content extent of the row's columns is the exact height when
+        // it still holds the row's content.
+        trial[row] = high;
+        let extent = held(&trial, end).map_or(0.0, |(placement, _)| {
+            placement
+                .pieces
+                .iter()
+                .flatten()
+                .filter(|piece| piece.column >= end - column_count && piece.column < end)
+                .map(|piece| piece.top + piece.height)
+                .fold(0.0_f32, f32::max)
+        });
+        heights[row] = if extent > 0.0 && extent <= full && fits(&mut trial, extent) {
+            extent
+        } else {
+            high
+        };
+    }
+    Some(())
+}
+
 /// The stream item of `child`, a box of block size `height`.
 fn item(tree: &Document, child: usize, height: f32) -> Item {
     let node = &tree.nodes[child];
@@ -566,7 +649,13 @@ fn fill_item_rows(
             return None;
         }
         let last = heights.len() - 1;
-        let height_of = |column: usize| heights[row_of(column, last)];
+        // `balance-all` balances the columns of every row; a row keeps its
+        // share of the container's height.
+        let mut columns = heights.clone();
+        if column_fill == ColumnFillValue::BalanceAll {
+            balance_rows(items, column_count, last, &mut columns, max_pieces)?;
+        }
+        let height_of = |column: usize| columns[row_of(column, last)];
         let placement = place_columns(items, &height_of, max_pieces, usize::MAX, true).ok()?;
         // Content that fits the last row's columns is balanced in them
         // unless they fill sequentially; the row keeps its height.
@@ -604,6 +693,13 @@ fn fill_item_rows(
         }
         // The last row is as tall as its content, or balanced: the shortest
         // height that keeps the content in that row's columns.
+        let mut columns: Vec<f32> = (0..=last)
+            .map(|row| if row == 0 { first } else { later })
+            .collect();
+        if column_fill == ColumnFillValue::BalanceAll {
+            balance_rows(items, column_count, last, &mut columns, max_pieces)?;
+        }
+        let height_of = |column: usize| columns[row_of(column, last)];
         let fixed = column_count * last;
         let placement = if column_fill == ColumnFillValue::Auto {
             placement
@@ -626,9 +722,7 @@ fn fill_item_rows(
             };
             place_columns(items, &balanced, max_pieces, fixed + column_count, true).ok()?
         };
-        let mut heights: Vec<f32> = (0..last)
-            .map(|row| if row == 0 { first } else { later })
-            .collect();
+        let mut heights = columns[..last].to_vec();
         heights.push(placement.extent_after(fixed));
         (placement, heights)
     };

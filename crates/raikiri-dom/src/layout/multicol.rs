@@ -1204,15 +1204,20 @@ fn plan_nested_continuation(
         // when content before the container offers a break between boxes
         // (CSS Fragmentation 3, 4.4): the container then starts in the next
         // outer column instead.
-        let cut_at_outer_end = rows.pieces.iter().any(|piece| {
-            piece.row == 0
-                && rows
-                    .pieces
-                    .iter()
-                    .any(|later| later.entry == piece.entry && later.row > 0)
-        });
-        if break_before && cursor > 0.0 && cut_at_outer_end {
-            return None;
+        if break_before && cursor > 0.0 {
+            let first_row: std::collections::HashSet<usize> = rows
+                .pieces
+                .iter()
+                .filter(|piece| piece.row == 0)
+                .map(|piece| piece.entry)
+                .collect();
+            let cut_at_outer_end = rows
+                .pieces
+                .iter()
+                .any(|piece| piece.row > 0 && first_row.contains(&piece.entry));
+            if cut_at_outer_end {
+                return None;
+            }
         }
         let root = latest_root(tree, child)?;
         let columns = rows.heights.len() - 1;

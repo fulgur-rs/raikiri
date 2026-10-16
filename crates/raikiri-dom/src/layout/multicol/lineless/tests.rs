@@ -510,3 +510,81 @@ fn boxes_of_earlier_rows_do_not_bound_the_balanced_last_row() {
     // The 150px left after the first row share the last row equally.
     assert_eq!(rows.heights, vec![100.0, 75.0]);
 }
+
+#[test]
+fn balance_all_balances_every_row_of_a_nested_container() {
+    let fill = |column_fill, content| {
+        fill_item_rows(
+            &[split(150.0), avoid(100.0)],
+            2,
+            column_fill,
+            content,
+            100.0,
+            200.0,
+            usize::MAX,
+        )
+        .unwrap()
+    };
+    // `balance` leaves the first row sequential.
+    let rows = fill(ColumnFillValue::Balance, None);
+    assert_eq!(rows.heights, vec![100.0, 100.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 100.0),
+            (0, 0, 1, 0.0, 50.0),
+            (1, 1, 0, 0.0, 100.0)
+        ]
+    );
+    // `balance-all` balances it too, keeping the content it holds.
+    let rows = fill(ColumnFillValue::BalanceAll, None);
+    assert_eq!(rows.heights, vec![75.0, 100.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 75.0),
+            (0, 0, 1, 0.0, 75.0),
+            (1, 1, 0, 0.0, 100.0)
+        ]
+    );
+    // A definite container's row keeps its share of the container's height.
+    let rows = fill(ColumnFillValue::BalanceAll, Some(300.0));
+    assert_eq!(rows.heights, vec![100.0, 200.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 75.0),
+            (0, 0, 1, 0.0, 75.0),
+            (1, 1, 0, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn balance_all_keeps_a_row_tall_enough_for_the_boxes_avoiding_breaks_in_it() {
+    let fill = |column_fill| {
+        fill_item_rows(
+            &[avoid(70.0), avoid(30.0), avoid(90.0), avoid(50.0)],
+            2,
+            column_fill,
+            None,
+            120.0,
+            200.0,
+            usize::MAX,
+        )
+        .unwrap()
+    };
+    assert_eq!(fill(ColumnFillValue::Balance).heights, vec![120.0, 50.0]);
+    // An even share of the first row's 190px does not hold its boxes.
+    let rows = fill(ColumnFillValue::BalanceAll);
+    assert_eq!(rows.heights, vec![100.0, 50.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 70.0),
+            (1, 0, 0, 70.0, 30.0),
+            (2, 0, 1, 0.0, 90.0),
+            (3, 1, 0, 0.0, 50.0)
+        ]
+    );
+}
