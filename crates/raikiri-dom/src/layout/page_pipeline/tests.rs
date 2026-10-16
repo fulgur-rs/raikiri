@@ -6264,12 +6264,8 @@ fn a_table_cell_becomes_an_ifc_root() {
     // are not candidates at all (not refused roots).
     assert!(!doc.nodes[table].is_ifc_root());
     assert!(!doc.nodes[row].is_ifc_root());
-    assert!(!crate::layout::ifc::assign::can_be_ifc_root(
-        &doc, &cascade, table
-    ));
-    assert!(!crate::layout::ifc::assign::can_be_ifc_root(
-        &doc, &cascade, row
-    ));
+    assert!(!crate::layout::ifc::assign::can_be_ifc_root(&doc, table));
+    assert!(!crate::layout::ifc::assign::can_be_ifc_root(&doc, row));
 }
 
 #[test]

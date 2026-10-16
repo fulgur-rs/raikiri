@@ -326,6 +326,7 @@ fn generated_text_of_the_root_is_projected_before_its_content() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge fixture");
     let mut cx = LayoutContext::new();
     let projected = project_ifc(
         &doc,
@@ -376,6 +377,7 @@ fn text_align_is_inherited_from_ancestors() {
     doc.mark_in_document_flags();
     let rules = raikiri_style::build_rule_tree(&doc);
     let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge fixture");
     let mut cx = LayoutContext::new();
     let projected = project_ifc(
         &doc,
@@ -697,6 +699,7 @@ fn generated_text_of_a_contents_element_is_projected_in_place() {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
+    crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge fixture");
     let projected = project_ifc(
         &doc,
         &cascade,
@@ -1389,11 +1392,7 @@ fn blockified_inline_items_and_absolute_roots_admit_their_own_first_letter() {
         );
         let item = fixture.doc.get_node(fixture.root).unwrap().children[0];
         assert_eq!(fixture.cascade.computed[item].display, DisplayValue::Inline);
-        assert!(super::super::assign::can_be_ifc_root(
-            &fixture.doc,
-            &fixture.cascade,
-            item
-        ));
+        assert!(super::super::assign::can_be_ifc_root(&fixture.doc, item));
         let projected = project_ifc(
             &fixture.doc,
             &fixture.cascade,

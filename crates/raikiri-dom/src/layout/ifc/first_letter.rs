@@ -1,6 +1,8 @@
 //! Source-preserving projection and retained paint for typographic letters.
 
 use super::{error::IfcError, projection::styled, style};
+use crate::layout::box_tree::BoxTree;
+use crate::node::BoxPropertiesRef;
 use crate::{Document, generated_content::generated_node_id};
 use raikiri_style::property::{DisplayValue, FloatValue, PositionValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedValues, PseudoElem, StyleNodeId};
@@ -64,7 +66,14 @@ impl FirstLetter {
         predecessors: &PredecessorCache,
     ) -> Self {
         let (origins, line_origins) = if cascade.has_first_letter_styles() {
-            typographic_origins(doc, cascade, origin, predecessors, true)
+            typographic_origins_in(
+                doc,
+                cascade,
+                origin,
+                predecessors,
+                true,
+                BoxTree::for_layout(doc),
+            )
         } else {
             (Vec::new(), Vec::new())
         };
@@ -158,8 +167,7 @@ impl FirstLetter {
                             ),
                         ),
                         NodeKind::Element => {
-                            let cv = &cascade.computed[id];
-                            if cv.display == DisplayValue::None
+                            if node.display() == DisplayValue::None
                                 || node.is_non_rendered_html_element()
                             {
                                 continue;
@@ -169,13 +177,13 @@ impl FirstLetter {
                             // A ruby that falls back to inline layout keeps its
                             // annotations in the text stream.
                             if matches!(
-                                cv.display,
+                                node.display(),
                                 DisplayValue::RubyText | DisplayValue::RubyTextContainer
                             ) && is_planned_annotation(doc, cascade, id, &mut planned)
                             {
                                 continue;
                             }
-                            if cv.display != DisplayValue::Contents {
+                            if node.display() != DisplayValue::Contents {
                                 match super::projection::box_kind(cascade, doc, id) {
                                     Some(
                                         super::boxes::IfcBoxKind::OutOfFlow
@@ -487,9 +495,7 @@ impl FirstLetter {
                             || {
                                 doc.ancestors(source_owner)
                                     .take_while(|&id| id != self.origin)
-                                    .find(|&id| {
-                                        cascade.computed[id].display != DisplayValue::Contents
-                                    })
+                                    .find(|&id| doc.nodes[id].display() != DisplayValue::Contents)
                             },
                             |_| Some(source_owner),
                         ),
@@ -556,17 +562,36 @@ pub(crate) fn typographic_origins(
     predecessors: &PredecessorCache,
     ancestors: bool,
 ) -> (Vec<usize>, Vec<usize>) {
+    typographic_origins_in(
+        doc,
+        cascade,
+        origin,
+        predecessors,
+        ancestors,
+        BoxTree::for_cascade(doc, cascade),
+    )
+}
+
+fn typographic_origins_in(
+    doc: &Document,
+    cascade: &CascadeResult,
+    origin: usize,
+    predecessors: &PredecessorCache,
+    ancestors: bool,
+    boxes: BoxTree<'_>,
+) -> (Vec<usize>, Vec<usize>) {
     let mut origins = Vec::new();
     let mut line_origins = Vec::new();
     let mut current = Some(origin);
     while let Some(id) = current {
         let cv = &cascade.computed[id];
-        let transparent =
-            cv.display == DisplayValue::Contents && !super::assign::is_layout_root(doc, id);
+        let properties = boxes.identity(id);
+        let transparent = properties.display() == DisplayValue::Contents
+            && !super::assign::is_layout_root(doc, id);
         if !transparent
-            && (!(cv.display.is_inline_flow_box()
+            && (!(properties.display().is_inline_flow_box()
                 || matches!(
-                    cv.display,
+                    properties.display(),
                     DisplayValue::Block
                         | DisplayValue::BlockRuby
                         | DisplayValue::FlowRoot
@@ -575,7 +600,7 @@ pub(crate) fn typographic_origins(
                         | DisplayValue::TableCaption
                         | DisplayValue::Contents
                 ))
-                || !super::assign::can_be_ifc_root(doc, cascade, id))
+                || !super::assign::can_be_ifc_root_in(doc, boxes, id))
         {
             break;
         }
@@ -597,9 +622,9 @@ pub(crate) fn typographic_origins(
         // first formatted line. A first block child can contribute it.
         if !transparent
             && (matches!(
-                cv.display,
+                properties.display(),
                 DisplayValue::InlineBlock | DisplayValue::TableCell
-            ) || outside_ancestor_line(cv))
+            ) || outside_ancestor_line(cv, properties))
         {
             break;
         }
@@ -613,7 +638,7 @@ pub(crate) fn typographic_origins(
         {
             break;
         }
-        let blocked = predecessors.has_preceding(doc, cascade, id);
+        let blocked = predecessors.has_preceding(doc, cascade, boxes, id);
         if blocked {
             break;
         }
@@ -630,13 +655,16 @@ pub(crate) fn typographic_origins(
 #[derive(Default)]
 pub(crate) struct PredecessorCache(std::cell::OnceCell<Vec<bool>>);
 
-fn outside_ancestor_line(cv: &ComputedValues) -> bool {
+fn outside_ancestor_line(cv: &ComputedValues, properties: BoxPropertiesRef<'_>) -> bool {
     // Logical float sides remain in flow in the bridge and IFC projection.
     // Footnotes retain their separate ancestor-line eligibility boundary.
     matches!(
         cv.float,
         FloatValue::Left | FloatValue::Right | FloatValue::Footnote
-    ) || matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed)
+    ) || matches!(
+        properties.position(),
+        PositionValue::Absolute | PositionValue::Fixed
+    )
 }
 
 #[cfg(test)]
@@ -645,11 +673,17 @@ thread_local! {
 }
 
 impl PredecessorCache {
-    fn has_preceding(&self, doc: &Document, cascade: &CascadeResult, node: usize) -> bool {
-        self.0.get_or_init(|| Self::build(doc, cascade))[node]
+    fn has_preceding(
+        &self,
+        doc: &Document,
+        cascade: &CascadeResult,
+        boxes: BoxTree<'_>,
+        node: usize,
+    ) -> bool {
+        self.0.get_or_init(|| Self::build(doc, cascade, boxes))[node]
     }
 
-    fn build(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
+    fn build(doc: &Document, cascade: &CascadeResult, boxes: BoxTree<'_>) -> Vec<bool> {
         let mut contributes = vec![false; doc.node_count()];
         let mut blocked = vec![false; doc.node_count()];
         let mut pending: Vec<_> = doc
@@ -669,6 +703,7 @@ impl PredecessorCache {
             #[cfg(test)]
             PREDECESSOR_VISITS.with(|visits| visits.set(visits.get() + 1));
             let cv = &cascade.computed[id];
+            let properties = boxes.identity(id);
             let child_contributes = || {
                 node.children.iter().any(|&child| {
                     #[cfg(test)]
@@ -676,36 +711,37 @@ impl PredecessorCache {
                     contributes[child]
                 })
             };
-            contributes[id] =
-                if cv.display == DisplayValue::None || node.is_non_rendered_html_element() {
-                    false
-                } else if cv.display == DisplayValue::Contents {
-                    [PseudoElem::Before, PseudoElem::After]
-                        .iter()
-                        .any(|&pseudo| {
-                            crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
-                        })
-                        || child_contributes()
-                } else if outside_ancestor_line(cv) {
-                    false
-                } else {
-                    match node.kind() {
-                        NodeKind::Text => super::assign::text_makes_a_line(doc, cascade, id),
-                        NodeKind::Element => {
-                            super::projection::box_kind(cascade, doc, id).is_some()
-                                || matches!(node.tag_name(), Some("br" | "wbr"))
-                                || [PseudoElem::Before, PseudoElem::After]
-                                    .iter()
-                                    .any(|&pseudo| {
-                                        crate::generated_content::is_in_flow_generated_text(
-                                            cascade, id, pseudo,
-                                        )
-                                    })
-                                || child_contributes()
-                        }
-                        _ => false,
+            contributes[id] = if properties.display() == DisplayValue::None
+                || node.is_non_rendered_html_element()
+            {
+                false
+            } else if properties.display() == DisplayValue::Contents {
+                [PseudoElem::Before, PseudoElem::After]
+                    .iter()
+                    .any(|&pseudo| {
+                        crate::generated_content::is_in_flow_generated_text(cascade, id, pseudo)
+                    })
+                    || child_contributes()
+            } else if outside_ancestor_line(cv, properties) {
+                false
+            } else {
+                match node.kind() {
+                    NodeKind::Text => super::assign::text_makes_a_line(doc, cascade, id),
+                    NodeKind::Element => {
+                        super::projection::box_kind_in(cascade, doc, boxes, id).is_some()
+                            || matches!(node.tag_name(), Some("br" | "wbr"))
+                            || [PseudoElem::Before, PseudoElem::After]
+                                .iter()
+                                .any(|&pseudo| {
+                                    crate::generated_content::is_in_flow_generated_text(
+                                        cascade, id, pseudo,
+                                    )
+                                })
+                            || child_contributes()
                     }
-                };
+                    _ => false,
+                }
+            };
             let mut preceding = false;
             for &child in &node.children {
                 #[cfg(test)]
@@ -727,7 +763,7 @@ fn is_planned_annotation(
     planned: &mut std::collections::HashMap<usize, bool>,
 ) -> bool {
     doc.ancestors(id)
-        .find(|&ancestor| cascade.computed[ancestor].display.is_ruby_container())
+        .find(|&ancestor| doc.nodes[ancestor].display().is_ruby_container())
         .is_some_and(|ancestor| {
             *planned
                 .entry(ancestor)

@@ -9,7 +9,8 @@ use super::projection::{
 use super::root::{IfcBuildMode, IfcRoot, IfcState, RetainedKey, RetainedParagraphs};
 use super::style;
 use crate::Document;
-use crate::layout::{BoxParentScope, box_parent};
+use crate::layout::BoxParentScope;
+use crate::layout::box_tree::BoxTree;
 use crate::node::NodeFlags;
 use raikiri_style::property::{ColumnCountValue, DisplayValue, PositionValue, WhiteSpaceCollapse};
 use raikiri_style::{CascadeResult, ComputedColumnWidth};
@@ -26,12 +27,16 @@ use std::collections::HashSet;
 /// starts at, whatever its display. The cascade leaves such elements
 /// `inline`; only the taffy bridge maps them to blocks.
 pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
-    let cv = &cascade.computed[idx];
+    generates_own_box_in(doc, BoxTree::for_cascade(doc, cascade), idx)
+}
+
+fn generates_own_box_in(doc: &Document, boxes: BoxTree<'_>, idx: usize) -> bool {
+    let properties = boxes.identity(idx);
     // Ruby boxes are inline boxes here, as in the rest of the block layout.
-    let display = if cv.display.is_inline_flow() {
+    let display = if properties.display().is_inline_flow() {
         DisplayValue::Inline
     } else {
-        cv.display
+        properties.display()
     };
     match display {
         // Layout starts at the body, which always generates a block box: CSS
@@ -41,7 +46,10 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         DisplayValue::Inline | DisplayValue::Contents if is_layout_root(doc, idx) => true,
         DisplayValue::Contents | DisplayValue::None => false,
         DisplayValue::Inline
-            if matches!(cv.position, PositionValue::Absolute | PositionValue::Fixed) =>
+            if matches!(
+                properties.position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            ) =>
         {
             true
         }
@@ -55,8 +63,9 @@ pub(crate) fn generates_own_box(doc: &Document, cascade: &CascadeResult, idx: us
         {
             true
         }
-        DisplayValue::Inline => box_parent(doc, cascade, idx, BoxParentScope::LayoutRoot)
-            .is_some_and(|parent| cascade.computed[parent].display.is_flex_or_grid_container()),
+        DisplayValue::Inline => boxes
+            .parent(idx, BoxParentScope::LayoutRoot)
+            .is_some_and(|parent| boxes.identity(parent).display().is_flex_or_grid_container()),
         _ => true,
     }
 }
@@ -82,7 +91,11 @@ fn is_above_the_layout_root(doc: &Document, idx: usize) -> bool {
 /// container (the table algorithm lays it out at the table's width). A
 /// multicol container is a root like any block container: its lines are
 /// split in columns.
-pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usize) -> bool {
+pub(crate) fn can_be_ifc_root(doc: &Document, idx: usize) -> bool {
+    can_be_ifc_root_in(doc, BoxTree::for_layout(doc), idx)
+}
+
+pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize) -> bool {
     // Images and inline SVG lay their content out by other means: text
     // inside them (an SVG `<title>`) is not a paragraph of theirs. Form
     // controls and the other replaced elements lay their content (a label,
@@ -96,10 +109,10 @@ pub(crate) fn can_be_ifc_root(doc: &Document, cascade: &CascadeResult, idx: usiz
     {
         return false;
     }
-    if !generates_own_box(doc, cascade, idx) {
+    if !generates_own_box_in(doc, boxes, idx) {
         return false;
     }
-    match cascade.computed[idx].display {
+    match boxes.identity(idx).display() {
         display
             if display.is_inline_flow_box()
                 || matches!(
@@ -173,7 +186,7 @@ fn needs_ifc_layout(
                 Some(_) => {}
                 None => {
                     let cv = &cascade.computed[id];
-                    if cv.display == DisplayValue::None
+                    if doc.nodes[id].display() == DisplayValue::None
                         || node.is_non_rendered_html_element()
                         || node.is_inline_svg_content()
                     {
@@ -182,7 +195,7 @@ fn needs_ifc_layout(
                     if has_in_flow_generated_text(doc, cascade, id, counters)? {
                         return Ok(true);
                     }
-                    if cv.display.is_inline_flow() {
+                    if doc.nodes[id].display().is_inline_flow() {
                         if node.tag_name() == Some("br") {
                             return Ok(true);
                         }
@@ -310,7 +323,7 @@ pub(crate) fn assign_ifc_roots(
         state.last_build = Some(IfcBuildMode::Retained);
         doc.ifc = Some(state);
         write_roots(doc, roots);
-        return check_text_in_paragraphs(doc, cascade);
+        return check_text_in_paragraphs(doc);
     }
     state.retained = None;
     // One set of counters serves the whole pass: the document does not
@@ -353,12 +366,12 @@ pub(crate) fn assign_ifc_roots(
     }
     doc.ifc = Some(state);
     write_roots(doc, roots?);
-    check_text_in_paragraphs(doc, cascade)
+    check_text_in_paragraphs(doc)
 }
 
 /// Refuse a document with text that no paragraph lays out.
-fn check_text_in_paragraphs(doc: &Document, cascade: &CascadeResult) -> Result<(), LayoutError> {
-    match text_outside_paragraphs(doc, cascade) {
+fn check_text_in_paragraphs(doc: &Document) -> Result<(), LayoutError> {
+    match text_outside_paragraphs(doc) {
         Some(node) => Err(LayoutError::IfcUnsupported {
             node,
             reason: "text outside any paragraph",
@@ -372,7 +385,7 @@ fn check_text_in_paragraphs(doc: &Document, cascade: &CascadeResult) -> Result<(
 /// non-rendered elements (`head`, `script`, `template`, ...), of elements
 /// that do not generate boxes (`display: none` on an ancestor), and SVG
 /// content (drawn by the SVG renderer) is not text of the document flow.
-fn text_outside_paragraphs(doc: &Document, cascade: &CascadeResult) -> Option<usize> {
+fn text_outside_paragraphs(doc: &Document) -> Option<usize> {
     (0..doc.nodes.len()).find(|&idx| {
         let node = &doc.nodes[idx];
         if node.kind() != NodeKind::Text
@@ -392,7 +405,7 @@ fn text_outside_paragraphs(doc: &Document, cascade: &CascadeResult) -> Option<us
             let element = &doc.nodes[id];
             element.kind() == NodeKind::Element
                 && (element.is_non_rendered_html_element()
-                    || cascade.computed[id].display == DisplayValue::None)
+                    || doc.nodes[id].display() == DisplayValue::None)
         })
     })
 }
@@ -414,7 +427,7 @@ fn collect_candidates(
     let mut candidates = Vec::new();
     // Elements inside a `display: none` subtree generate no boxes, so their
     // paragraphs would be shaped for nothing.
-    let mut taken = inside_hidden_subtrees(doc, cascade);
+    let mut taken = inside_hidden_subtrees(doc);
     for idx in 0..doc.nodes.len() {
         let node = &doc.nodes[idx];
         // A root is any box that lays its own inline content out, whatever
@@ -424,7 +437,7 @@ fn collect_candidates(
         if node.kind() != NodeKind::Element
             || !node.is_in_document()
             || taken[idx]
-            || !can_be_ifc_root(doc, cascade, idx)
+            || !can_be_ifc_root(doc, idx)
         {
             continue;
         }
@@ -476,16 +489,13 @@ fn collect_candidates(
 }
 
 /// Which nodes are descendants of an element with `display: none`.
-fn inside_hidden_subtrees(doc: &Document, cascade: &CascadeResult) -> Vec<bool> {
+fn inside_hidden_subtrees(doc: &Document) -> Vec<bool> {
     let mut inside = vec![false; doc.nodes.len()];
     let mut stack = vec![(doc.root, false)];
     while let Some((id, hidden)) = stack.pop() {
         inside[id] = hidden;
         let hides = doc.nodes[id].kind() == NodeKind::Element
-            && cascade
-                .computed
-                .get(id)
-                .is_some_and(|computed| computed.display == DisplayValue::None);
+            && doc.nodes[id].display() == DisplayValue::None;
         stack.extend(
             doc.nodes[id]
                 .children
@@ -531,15 +541,15 @@ pub(super) fn is_css_whitespace(c: char) -> bool {
 /// contents` elements) and holds more than
 /// collapsible white space (CSS Flexbox 1, 4; CSS Grid 1, 6). The white-space
 /// test matches the item collection of the taffy tree.
-fn is_anonymous_item_text(doc: &Document, cascade: &CascadeResult, text: usize) -> bool {
+fn is_anonymous_item_text(doc: &Document, text: usize) -> bool {
     let node = &doc.nodes[text];
     if node.kind() != NodeKind::Text || !node.is_in_document() {
         return false;
     }
-    let Some(parent) = box_parent(doc, cascade, text, BoxParentScope::LayoutRoot) else {
+    let Some(parent) = BoxTree::for_layout(doc).parent(text, BoxParentScope::LayoutRoot) else {
         return false;
     };
-    cascade.computed[parent].display.is_flex_or_grid_container()
+    doc.nodes[parent].display().is_flex_or_grid_container()
         && node.text_content().is_some_and(|text| {
             !text
                 .chars()
@@ -558,7 +568,7 @@ fn collect_text_candidates(
 ) -> Result<Vec<Candidate>, LayoutError> {
     let mut candidates = Vec::new();
     for idx in 0..doc.nodes.len() {
-        if !is_anonymous_item_text(doc, cascade, idx) {
+        if !is_anonymous_item_text(doc, idx) {
             continue;
         }
         match project_ifc_text_builder(doc, cascade, idx, &state.fonts, &state.limits) {
