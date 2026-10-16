@@ -1769,9 +1769,11 @@ type LineBreakMove = (usize, f32, u32);
 
 /// The break that keeps the last `widows` lines of a paragraph together at
 /// the top of the page after `current_page` (CSS Fragmentation 3 §3.3).
-/// `line_metrics` holds each line's top and bottom relative to the
-/// paragraph's lines at `effective_y`. Returns `None` when those lines would
-/// not fit on that page either, so the natural break stays.
+/// `line_metrics` holds each line's top and bottom relative to the top of
+/// the paragraph's first line, which sits at `effective_y`, and has at least
+/// `widows` lines. Returns `None` when those lines would not fit on that page
+/// either, so the natural break stays, or when the break would not move them
+/// down.
 fn widows_break_on_next_page(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
@@ -1802,7 +1804,8 @@ fn widows_break_on_next_page(
 /// runs over more pages, whether or not `earlier_break` repaired its first
 /// break. The pages between are full, so only the break before the last page
 /// can leave too few; it moves up the same way while the page before keeps
-/// `orphans`.
+/// `orphans`. `line_metrics` is as for [`widows_break_on_next_page`] and has
+/// at least `orphans + widows` lines.
 fn widows_break_on_last_page(
     line_metrics: &[(f32, f32)],
     effective_y: f32,
@@ -1821,7 +1824,7 @@ fn widows_break_on_last_page(
     let top = |line: usize| effective_y + line_metrics[line].0 + moved(line);
     let bottom = |line: usize| effective_y + line_metrics[line].1 + moved(line);
     // Each line belongs to the page that holds its center (see
-    // [`line_center_on_page`]).
+    // `line_center_on_page`).
     let page_of =
         |line: usize| page_origins.page_index_for_y((top(line) + bottom(line)) * 0.5 + 0.001);
     let first_on = |page: u32| {
