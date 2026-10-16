@@ -506,6 +506,9 @@ fn balance_rows(
             (placement, height)
         })
     };
+    // The heights each probe tries: the committed heights, with the row being
+    // balanced at the height under test.
+    let mut trial = heights.to_vec();
     for row in 0..rows.min(last) {
         // Every probe places the whole stream, so a container with many rows
         // stops balancing once the probes have placed `budget` pieces; the
@@ -518,7 +521,6 @@ fn balance_rows(
         // own placement then rejects it.
         let target = held(heights, end).map_or(f32::INFINITY, |(_, height)| height);
         let full = heights[row];
-        let mut trial = heights.to_vec();
         let fits = |trial: &mut Vec<f32>, height: f32| {
             trial[row] = height;
             held(trial, end).is_some_and(|(_, height)| height >= target - EPSILON)
@@ -556,6 +558,7 @@ fn balance_rows(
         heights[row] = Some(extent)
             .filter(|&extent| extent > 0.0 && extent <= full && fits(&mut trial, extent))
             .unwrap_or(high);
+        trial[row] = heights[row];
     }
 }
 
