@@ -572,7 +572,7 @@ fn inside_inline_opacity_group(
 }
 
 /// One frame of the list a layer keeps of the boxes that wait for its end
-/// (see [`defers_to_positioned_layer`]), as [`sort_positioned_frames`] reads
+/// (see [`defers_to_positioned_layer`]), as [`PositionedQueue`] reads
 /// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PositionedFrame {
@@ -695,8 +695,9 @@ impl<F: Clone> PositionedQueue<F> {
         frames: Vec<F>,
         kind: impl Fn(&F) -> PositionedFrame,
     ) {
+        // The painters hand boxes on only from a box the queue handed out.
         let Some((last, taken)) = self.last.clone() else {
-            return;
+            return; // cov:ignore: no box has been taken yet
         };
         let clip = self.boxes[taken].0;
         let mut place = last.place;
