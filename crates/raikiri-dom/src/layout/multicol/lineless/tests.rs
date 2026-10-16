@@ -637,13 +637,13 @@ fn balance_all_stops_balancing_rows_once_its_probes_use_up_the_budget() {
     let items = [split(150.0), avoid(100.0)];
     let balance = |budget| {
         let mut heights = vec![100.0, 200.0];
-        balance_rows(&items, 2, 1, &mut heights, usize::MAX, budget).unwrap();
+        balance_rows(&items, 2, 1, &mut heights, usize::MAX, budget);
         heights
     };
     assert_eq!(balance(usize::MAX), vec![75.0, 200.0]);
     assert_eq!(balance(0), vec![75.0, 200.0]);
     let mut heights = vec![100.0, 100.0, 200.0];
-    balance_rows(&items, 1, 2, &mut heights, usize::MAX, 0).unwrap();
+    balance_rows(&items, 1, 2, &mut heights, usize::MAX, 0);
     // The first row's probes spend the budget, so the second keeps its height.
     assert_eq!(heights[1], 100.0);
 }

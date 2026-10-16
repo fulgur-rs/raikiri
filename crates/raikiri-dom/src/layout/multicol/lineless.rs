@@ -478,8 +478,8 @@ fn balance_rows(
     heights: &mut [f32],
     max_pieces: usize,
     budget: usize,
-) -> Option<()> {
-    let last = heights.len().checked_sub(1)?;
+) {
+    let last = heights.len().saturating_sub(1);
     let row_of = |column: usize| (column / column_count).min(last);
     // Pieces placed so far by the probes below.
     let work = std::cell::Cell::new(0usize);
@@ -514,7 +514,9 @@ fn balance_rows(
             break;
         }
         let end = column_count * (row + 1);
-        let (_, target) = held(heights, end)?;
+        // A stream that does not fit leaves the row as it is; the caller's
+        // own placement then rejects it.
+        let target = held(heights, end).map_or(f32::INFINITY, |(_, height)| height);
         let full = heights[row];
         let mut trial = heights.to_vec();
         let fits = |trial: &mut Vec<f32>, height: f32| {
@@ -523,7 +525,8 @@ fn balance_rows(
         };
         // The row's content shared equally is the answer when nothing in it
         // avoids breaks taller than that share.
-        let share = (target - held(heights, end - column_count)?.1) / column_count as f32;
+        let before = held(heights, end - column_count).map_or(0.0, |(_, height)| height);
+        let share = (target - before) / column_count as f32;
         if share > 0.0 && share <= full && fits(&mut trial, share) {
             heights[row] = share;
             continue;
@@ -554,7 +557,6 @@ fn balance_rows(
             .filter(|&extent| extent > 0.0 && extent <= full && fits(&mut trial, extent))
             .unwrap_or(high);
     }
-    Some(())
 }
 
 /// The stream item of `child`, a box of block size `height`.
@@ -677,7 +679,7 @@ fn fill_item_rows(
                 &mut columns,
                 max_pieces,
                 BALANCE_ALL_WORK,
-            )?;
+            );
         }
         let height_of = |column: usize| columns[row_of(column, last)];
         let placement = place_columns(items, &height_of, max_pieces, usize::MAX, true).ok()?;
@@ -728,7 +730,7 @@ fn fill_item_rows(
                 &mut columns,
                 max_pieces,
                 BALANCE_ALL_WORK,
-            )?;
+            );
         }
         let height_of = |column: usize| columns[row_of(column, last)];
         let fixed = column_count * last;
