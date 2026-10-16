@@ -41,9 +41,8 @@ pub(crate) enum IfcBoxKind {
     OutOfFlow,
 }
 
-/// A float met while laying out the current line. It is not in the context
-/// yet: `place_floated_box` cannot be undone, so it is only recorded here
-/// until the line is final.
+/// A float met while laying out the current line. Defer placement in the
+/// shared context until the line is final.
 #[derive(Clone, Debug)]
 pub(crate) struct TentativeFloat {
     pub(crate) node: usize,
@@ -84,6 +83,7 @@ impl LineStart {
 
 struct FragmentedFloatOutput<'a> {
     perform: bool,
+    adjoins_top_margin: bool,
     fragmentainer: Option<usize>,
     placements: &'a mut Vec<IfcBoxFragment>,
 }
@@ -113,13 +113,16 @@ pub(crate) fn layout_with_boxes(
     block_ctx: Option<&mut BlockContext<'_>>,
     perform: bool,
 ) -> IfcLines {
-    layout_with_boxes_in(tree, idx, geometry, block_ctx, perform, false)
+    layout_with_boxes_in(tree, idx, geometry, block_ctx, perform, false, false)
 }
 
 /// Lay the paragraph out with its boxes against `block_ctx` (the parent's
 /// context) or a context of its own. When `perform` is true, floats are
 /// committed to the context and the boxes get their final layouts.
 ///
+/// `top_margin_escapes` keeps adjoining leading margins out of the root's
+/// internal coordinates and returns their full set in
+/// [`IfcLines::leading_block_margin`].
 /// `bottom_margin_escapes` is set for a root whose bottom margin may collapse
 /// with the bottom margins of its last block child: the root is in its
 /// parent's formatting context and has no bottom padding, border or height
@@ -131,6 +134,7 @@ pub(crate) fn layout_with_boxes_in(
     geometry: FlowGeometry,
     block_ctx: Option<&mut BlockContext<'_>>,
     perform: bool,
+    top_margin_escapes: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
     resolve_root_percentages(tree, idx, &geometry);
@@ -166,13 +170,16 @@ pub(crate) fn layout_with_boxes_in(
             ctx,
             perform,
             false,
+            top_margin_escapes,
             bottom_margin_escapes,
         ),
         None => {
             let mut bfc = BlockFormattingContext::new();
             let mut ctx = bfc.root_block_context();
             ctx.set_width(geometry.content_size.width + geometry.edges.0 + geometry.edges.1);
-            run_boxes(tree, idx, &root, geometry, &mut ctx, perform, true, false)
+            run_boxes(
+                tree, idx, &root, geometry, &mut ctx, perform, true, false, false,
+            )
         }
     }
 }
@@ -297,6 +304,7 @@ pub(crate) fn layout_with_boxes_in_fragmentainers(
             &mut ctx,
             perform,
             true,
+            false,
             false,
             token,
             segment_height,
@@ -477,6 +485,7 @@ fn run_boxes(
     ctx: &mut BlockContext<'_>,
     perform: bool,
     local: bool,
+    top_margin_escapes: bool,
     bottom_margin_escapes: bool,
 ) -> IfcLines {
     let mut outcome = run_boxes_segment(
@@ -486,6 +495,7 @@ fn run_boxes(
         ctx,
         perform,
         local,
+        top_margin_escapes,
         bottom_margin_escapes,
         root.line_paragraph.start_token(),
         None,
@@ -518,6 +528,7 @@ fn run_boxes_segment(
     ctx: &mut BlockContext<'_>,
     perform: bool,
     local: bool,
+    top_margin_escapes: bool,
     bottom_margin_escapes: bool,
     mut token: BreakToken,
     fragmentainer_height: Option<f32>,
@@ -540,6 +551,9 @@ fn run_boxes_segment(
     // Keeps the paragraph's own floats inside its content box.
     ctx.apply_content_box_inset([edges.0, edges.1]);
 
+    if !top_margin_escapes {
+        ctx.commit_strut();
+    }
     let mut cursor: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -591,7 +605,11 @@ fn run_boxes_segment(
         }
         // Where the next line starts if it is a line: below the margins
         // still pending.
-        let line_y = y + pending.resolve();
+        let line_y = if top_margin_escapes && leading_margin_open {
+            y
+        } else {
+            y + pending.resolve()
+        };
         let base = if root.writing_mode == WritingMode::HorizontalTb {
             line_space(ctx, edges.0, top_edge, width, line_y, assumed_height)
         } else {
@@ -768,6 +786,7 @@ fn run_boxes_segment(
                             geometry,
                             FragmentedFloatOutput {
                                 perform,
+                                adjoins_top_margin: false,
                                 fragmentainer,
                                 placements: &mut fragment_box_placements,
                             },
@@ -795,6 +814,7 @@ fn run_boxes_segment(
                         geometry,
                         FragmentedFloatOutput {
                             perform,
+                            adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
                         },
@@ -817,6 +837,8 @@ fn run_boxes_segment(
                 {
                     y = y.max(threshold - top_edge);
                 }
+                leading_margin_open = false;
+                ctx.commit_strut();
                 lines.push(line);
                 // Floats that did not fit beside the line they are anchored
                 // in go at the start of the next line, before it is measured.
@@ -831,6 +853,7 @@ fn run_boxes_segment(
                         geometry,
                         FragmentedFloatOutput {
                             perform,
+                            adjoins_top_margin: false,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
                         },
@@ -850,6 +873,7 @@ fn run_boxes_segment(
                         geometry,
                         FragmentedFloatOutput {
                             perform,
+                            adjoins_top_margin: top_margin_escapes && leading_margin_open,
                             fragmentainer,
                             placements: &mut fragment_box_placements,
                         },
@@ -866,7 +890,7 @@ fn run_boxes_segment(
                         let at_start = leading_margin_open
                             && lines.is_empty()
                             && y == 0.0
-                            && ceiling == f32::NEG_INFINITY;
+                            && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                         let flow = generated_blocks::Flow {
                             y: &mut y,
                             pending: &mut pending,
@@ -877,6 +901,7 @@ fn run_boxes_segment(
                             top_edge,
                             definite_height: geometry.definite_height,
                             at_start,
+                            top_margin_escapes,
                             rtl: root.rtl,
                         };
                         match edge {
@@ -889,6 +914,7 @@ fn run_boxes_segment(
                                     && let Some(placed) = generated_blocks::close(block, open, flow)
                                 {
                                     leading_margin_open = false;
+                                    ctx.commit_strut();
                                     placed_blocks.push(placed);
                                 }
                             }
@@ -906,10 +932,18 @@ fn run_boxes_segment(
                 let starts_paragraph = leading_margin_open
                     && lines.is_empty()
                     && y == 0.0
-                    && ceiling == f32::NEG_INFINITY;
+                    && (top_margin_escapes || ceiling == f32::NEG_INFINITY);
                 block_line_starts.push((node.0 as usize, lines.len()));
-                let block =
-                    layout_block_child(tree, ctx, node.0 as usize, y, pending, geometry, perform);
+                let block = layout_block_child(
+                    tree,
+                    ctx,
+                    node.0 as usize,
+                    y,
+                    pending,
+                    geometry,
+                    perform,
+                    top_margin_escapes && starts_paragraph,
+                );
                 if starts_paragraph {
                     if let Some(margin) = block.top_margin {
                         leading_block_margin = Some(margin);
@@ -917,6 +951,9 @@ fn run_boxes_segment(
                     leading_margin_open = block.collapses_through;
                 }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
+                if !block.collapses_through {
+                    ctx.commit_strut();
+                }
                 (y, pending) = (block.next_y, block.pending);
                 // A forced page break after the block starts the lines after
                 // it on a new page, which the floats before the break do not
@@ -954,6 +991,9 @@ fn run_boxes_segment(
     // The margins below a last block child collapse through the root's
     // bottom edge when nothing separates them from the root's own; otherwise
     // the paragraph contains them.
+    if top_margin_escapes && leading_margin_open {
+        pending = CollapsibleMarginSet::ZERO;
+    }
     let escaping_margin = if continuation.is_some() {
         CollapsibleMarginSet::ZERO
     } else if bottom_margin_escapes {
@@ -974,6 +1014,7 @@ fn run_boxes_segment(
                 geometry,
                 FragmentedFloatOutput {
                     perform,
+                    adjoins_top_margin: false,
                     fragmentainer,
                     placements: &mut fragment_box_placements,
                 },
@@ -1034,11 +1075,12 @@ fn commit_fragmented_float(
 ) -> f32 {
     let FragmentedFloatOutput {
         perform,
+        adjoins_top_margin,
         fragmentainer,
         placements,
     } = output;
     let node = float.node;
-    let top = commit_float(tree, ctx, float, y, geometry, perform);
+    let top = commit_float(tree, ctx, float, y, geometry, perform, adjoins_top_margin);
     if perform && let Some(fragmentainer) = fragmentainer {
         let layout = tree.nodes[node].unrounded_layout;
         placements.push(IfcBoxFragment {
@@ -1328,6 +1370,7 @@ struct BlockChild {
 /// in-flow block (CSS 2.1 8.3.1): its top margin, with the margins of its
 /// first child that leave it, collapses with the `pending` margins of the
 /// block children above it. With `perform`, its final layout is stored.
+#[allow(clippy::too_many_arguments)]
 fn layout_block_child(
     tree: &mut Document,
     ctx: &mut BlockContext<'_>,
@@ -1336,12 +1379,22 @@ fn layout_block_child(
     pending: CollapsibleMarginSet,
     geometry: FlowGeometry,
     perform: bool,
+    collapse_top: bool,
 ) -> BlockChild {
     if geometry.axes.writing_mode() != WritingMode::HorizontalTb {
         return layout_vertical_block_child(tree, node, y, pending, geometry, perform);
     }
     if !in_the_roots_formatting_context(tree, node) {
-        return layout_formatting_context_child(tree, ctx, node, y, pending, geometry, perform);
+        return layout_formatting_context_child(
+            tree,
+            ctx,
+            node,
+            y,
+            pending,
+            geometry,
+            perform,
+            collapse_top,
+        );
     }
     use taffy::LayoutBlockContainer;
     let mut margin = resolved_margins(tree, node, geometry.width);
@@ -1363,9 +1416,8 @@ fn layout_block_child(
         }
         _ => {}
     }
-    // Placed where its own top margin alone puts it. Margins that leave the
-    // block through its first child are known only after it is laid out; they
-    // move its box below, not the floats it placed inside.
+    // The first pass discovers margins that escape the child. Retry against
+    // its final normal-flow origin before committing shared float geometry.
     // Clearance (CSS 2.1 9.5.2): a cleared block whose top border edge would
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
@@ -1373,68 +1425,116 @@ fn layout_block_child(
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
-    let guess = (y + pending.collapse_with_margin(margin.top).resolve()).max(clear_y);
+    let origin_resolved = ctx.origin_resolved();
+    let mut guess = if origin_resolved && collapse_top {
+        y.max(clear_y)
+    } else {
+        (y + pending.collapse_with_margin(margin.top).resolve()).max(clear_y)
+    };
     // The context measures from the root's border box; the insets are added
     // to the root's own. The right inset follows the used width, as in
     // taffy's own in-flow loop.
     let right = geometry.width - margin.left - width + geometry.edges.1;
-    let mut child_ctx = ctx.sub_context(
-        geometry.top_edge + guess,
-        [geometry.edges.0 + margin.left, right],
-    );
-    let inputs = LayoutInput {
-        run_mode: if perform {
-            RunMode::PerformLayout
+    let snapshot = origin_resolved.then(|| ctx.snapshot());
+    let (output, floats_bottom, top, after, has_clearance, top_set) = loop {
+        let mut child_ctx = ctx.sub_context_for_collapsing_child(
+            geometry.top_edge + guess,
+            [geometry.edges.0 + margin.left, right],
+            geometry.top_edge + y,
+            pending.collapse_with_margin(margin.top),
+            collapse_top,
+        );
+        child_ctx.set_origin_resolved(origin_resolved);
+        let inputs = LayoutInput {
+            run_mode: if perform {
+                RunMode::PerformLayout
+            } else {
+                RunMode::ComputeSize
+            },
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(width),
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(geometry.width),
+                height: geometry.definite_height,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::MaxContent,
+            },
+            // The block is in the paragraph's formatting context: the margins of
+            // its first and last children collapse through it unless its padding,
+            // border or height keep them in (taffy decides and returns them).
+            vertical_margins_are_collapsible: Line::TRUE,
+        };
+        let output = tree.compute_block_child_layout(
+            taffy::NodeId::from(node),
+            inputs,
+            Some(&mut child_ctx),
+        );
+        let floats_bottom = child_ctx.floated_content_height_contribution();
+        let adjoining = child_ctx.top_adjoining_floats();
+        ctx.merge_adjoining_floats(adjoining);
+        let top_set = output.top_margin.collapse_with_margin(margin.top);
+        let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
+        let hypothetical = if origin_resolved && collapse_top {
+            ctx.hypothetical_top_position(pending.collapse_with_set(top_set))
+                .unwrap_or(y)
         } else {
-            RunMode::ComputeSize
-        },
-        sizing_mode: SizingMode::InherentSize,
-        axis: RequestedAxis::Both,
-        known_dimensions: Size {
-            width: Some(width),
-            height: None,
-        },
-        known_dimensions_are_definite: Size {
-            width: true,
-            height: true,
-        },
-        parent_size: Size {
-            width: Some(geometry.width),
-            height: geometry.definite_height,
-        },
-        available_space: Size {
-            width: AvailableSpace::Definite(width),
-            height: AvailableSpace::MaxContent,
-        },
-        // The block is in the paragraph's formatting context: the margins of
-        // its first and last children collapse through it unless its padding,
-        // border or height keep them in (taffy decides and returns them).
-        vertical_margins_are_collapsible: Line::TRUE,
+            y + pending.collapse_with_set(top_set).resolve()
+        };
+        let has_clearance = clear != taffy::Clear::None
+            && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
+        let (top, after) = if has_clearance {
+            {
+                let top = clear_y
+                    - if collapse_top && !origin_resolved {
+                        pending.resolve()
+                    } else {
+                        0.0
+                    };
+                (top, (top + output.size.height, bottom_set))
+            }
+        } else if output.margins_can_collapse_through {
+            // An empty block: its margins and the ones above it are one set, and
+            // its box sits where that set would put the next box's top.
+            let through = pending
+                .collapse_with_set(top_set)
+                .collapse_with_set(bottom_set);
+            (
+                if collapse_top {
+                    y
+                } else {
+                    y + pending.collapse_with_set(top_set).resolve()
+                },
+                (y, through),
+            )
+        } else {
+            let top = if collapse_top {
+                y
+            } else {
+                y + pending.collapse_with_set(top_set).resolve()
+            };
+            (top, (top + output.size.height, bottom_set))
+        };
+        if let Some(snapshot) = &snapshot
+            && ctx.has_floats()
+            && (top - guess).abs() > 0.001
+        {
+            ctx.restore(snapshot);
+            guess = top;
+            continue;
+        }
+        break (output, floats_bottom, top, after, has_clearance, top_set);
     };
-    let output =
-        tree.compute_block_child_layout(taffy::NodeId::from(node), inputs, Some(&mut child_ctx));
-    let floats_bottom = child_ctx.floated_content_height_contribution();
-    let top_set = output.top_margin.collapse_with_margin(margin.top);
-    let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
-    let hypothetical = y + pending.collapse_with_set(top_set).resolve();
-    let has_clearance =
-        clear != taffy::Clear::None && (ctx.has_adjoining_float(clear) || hypothetical < clear_y);
-    let (top, after) = if has_clearance {
-        (clear_y, (clear_y + output.size.height, bottom_set))
-    } else if output.margins_can_collapse_through {
-        // An empty block: its margins and the ones above it are one set, and
-        // its box sits where that set would put the next box's top.
-        let through = pending
-            .collapse_with_set(top_set)
-            .collapse_with_set(bottom_set);
-        (
-            y + pending.collapse_with_set(top_set).resolve(),
-            (y, through),
-        )
-    } else {
-        let top = y + pending.collapse_with_set(top_set).resolve();
-        (top, (top + output.size.height, bottom_set))
-    };
+    ctx.add_child_floated_content_height_contribution(guess + floats_bottom);
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.
@@ -1582,7 +1682,10 @@ fn in_the_roots_formatting_context(tree: &Document, node: usize) -> bool {
     use taffy::{CoreStyle, LayoutBlockContainer};
     let style = tree.get_block_container_style(taffy::NodeId::from(node));
     let overflow = style.overflow();
-    style.is_block() && !overflow.x.is_scroll_container() && !overflow.y.is_scroll_container()
+    style.is_block()
+        && !overflow.x.is_scroll_container()
+        && !overflow.y.is_scroll_container()
+        && !style.contain().establishes_independent_formatting_context()
 }
 
 /// Lay out a block child that establishes a formatting context of its own
@@ -1590,6 +1693,7 @@ fn in_the_roots_formatting_context(tree: &Document, node: usize) -> bool {
 /// collapses with the margins above it but not with its children's, and its
 /// border box does not overlap the floats beside it: it is placed beside
 /// them where it fits, narrowed to the room they leave, or below them.
+#[allow(clippy::too_many_arguments)]
 fn layout_formatting_context_child(
     tree: &mut Document,
     ctx: &mut BlockContext<'_>,
@@ -1598,13 +1702,30 @@ fn layout_formatting_context_child(
     pending: CollapsibleMarginSet,
     geometry: FlowGeometry,
     perform: bool,
+    collapse_top: bool,
 ) -> BlockChild {
     let margin = resolved_margins(tree, node, geometry.width);
     let style_margin = tree.nodes[node].style.margin;
     let clear = tree.nodes[node].style.clear;
     let own_width = used_block_width(tree, node, geometry.width);
     let x_margins = margin.left + margin.right;
-    let min_y = geometry.top_edge + y + pending.collapse_with_margin(margin.top).resolve();
+    let top_margin = pending.collapse_with_margin(margin.top);
+    let hypothetical = if collapse_top {
+        ctx.hypothetical_top_position(top_margin)
+            .unwrap_or(geometry.top_edge + y + top_margin.resolve())
+    } else {
+        geometry.top_edge + y + top_margin.resolve()
+    };
+    let adjoining_float = collapse_top && ctx.has_adjoining_float(taffy::Clear::Both);
+    let forced_clearance = collapse_top && ctx.has_adjoining_float(clear);
+    let min_y = if forced_clearance {
+        ctx.cleared_threshold(clear).unwrap_or(hypothetical)
+    } else if adjoining_float {
+        // An adjoining float moves with the escaping margin strut.
+        geometry.top_edge + y
+    } else {
+        hypothetical
+    };
     // `(stretch width, border-box position, whether floats narrowed it)`.
 
     let (stretch, position, beside_floats) = if ctx.has_active_floats(min_y) {
@@ -1691,7 +1812,17 @@ fn layout_formatting_context_child(
     } else {
         margin.left + auto_left
     };
-    let top = position.y - geometry.top_edge;
+    let separation_origin = if adjoining_float {
+        geometry.top_edge + y
+    } else {
+        hypothetical
+    };
+    let separated = forced_clearance || position.y > separation_origin;
+    let top = if collapse_top && !separated {
+        y
+    } else {
+        position.y - geometry.top_edge
+    };
     if perform {
         let (dx, dy) = relative_inset(
             tree,
@@ -1702,7 +1833,7 @@ fn layout_formatting_context_child(
         );
         let location = taffy::Point {
             x: position.x + extra_left + dx,
-            y: position.y + dy,
+            y: geometry.top_edge + top + dy,
         };
         commit_child_layout(tree, node, &output, location, geometry.width);
     }
@@ -1714,8 +1845,8 @@ fn layout_formatting_context_child(
         floats_bottom: f32::NEG_INFINITY,
         // A box that establishes a formatting context keeps its children's
         // margins, but its own still collapses with the ones above it.
-        top_margin: (!beside_floats && clear == taffy::Clear::None)
-            .then(|| pending.collapse_with_margin(margin.top)),
+        // Specifying clear introduces no clearance without relevant floats.
+        top_margin: (!separated).then_some(top_margin),
         collapses_through: false,
     }
 }
@@ -2001,6 +2132,7 @@ pub(crate) fn commit_float(
     y: f32,
     geometry: FlowGeometry,
     perform: bool,
+    adjoins_top_margin: bool,
 ) -> f32 {
     // The context measures block offsets from the border-box top.
     let position = ctx.place_floated_box(
@@ -2008,7 +2140,7 @@ pub(crate) fn commit_float(
         geometry.top_edge + y,
         float.direction,
         float.clear,
-        false,
+        adjoins_top_margin,
     );
     if perform {
         let location = taffy::Point {

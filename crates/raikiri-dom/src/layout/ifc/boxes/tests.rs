@@ -120,7 +120,7 @@ fn ellipsis_hides_only_atomic_fragments_it_removes() {
 fn unprojected_root_has_no_fragmentainer_tail() {
     let mut doc = Document::new();
     let geometry = FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0);
-    let ordinary = layout_with_boxes_in(&mut doc, 0, geometry, None, false, false);
+    let ordinary = layout_with_boxes_in(&mut doc, 0, geometry, None, false, false, false);
     assert!(ordinary.lines.is_empty());
     assert_eq!(ordinary.unfragmented_tail_column, None);
     let fragmented = layout_with_boxes_in_fragmentainers(
