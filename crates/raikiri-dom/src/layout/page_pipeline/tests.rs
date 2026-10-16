@@ -12179,6 +12179,30 @@ fn an_avoiding_footer_before_the_body_takes_no_table_spacing() {
     assert_eq!(page_flow_y(&doc, footer_cell), 100.0);
 }
 
+#[test]
+fn rows_of_a_row_group_outside_a_table_still_move_to_the_next_page() {
+    let mut second_cell = 0;
+    let (doc, _) = paged_body(|doc, body| {
+        doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;height:60px"),
+        );
+        let group = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:table-row-group"),
+        );
+        append_row(doc, group, "", 30.0);
+        second_cell = append_row(doc, group, "", 30.0).1;
+    });
+    // No table element encloses the group, so its rows take no table lead,
+    // but a row that crosses the page end still moves as a whole.
+    assert_eq!(page_flow_y(&doc, second_cell), 100.0);
+}
+
 /// Appends `table > tbody(break-inside:avoid)` to `parent` and returns the
 /// row group.
 fn append_avoiding_table(doc: &mut Document, parent: usize) -> usize {

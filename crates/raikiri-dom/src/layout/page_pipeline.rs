@@ -3916,198 +3916,15 @@ fn paginate_flow(
         page_step,
         |id| root_flow_offset + current_abs_y(document, id),
     );
-    // The first row of a table without a caption above its grid carries its
-    // offset below the table's top: when the row starts the next page, the
-    // table's spacing and borders above it move with it.
-    let mut table_row_leads = HashMap::<usize, f32>::new();
-    if candidates.iter().any(|candidate| candidate.is_table_row) {
-        let candidate_y: HashMap<usize, f32> = candidates
-            .iter()
-            .map(|candidate| (candidate.node_id, candidate.raw_y))
-            .collect();
-        let table_of = |row: usize| {
-            let mut table = document.parent_of(row);
-            while let Some(id) = table
-                && !matches!(
-                    document.nodes[id].display(),
-                    DisplayValue::Table | DisplayValue::InlineTable
-                )
-            {
-                table = document.parent_of(id);
-            }
-            table
-        };
-        // Each table's first row in visual order: the table layout places a
-        // footer group after the body groups wherever it is in the source.
-        let mut table_first_rows = HashMap::<usize, (usize, f32)>::new();
-        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
-            if let Some(table) = table_of(candidate.node_id) {
-                let first = table_first_rows
-                    .entry(table)
-                    .or_insert((candidate.node_id, candidate.raw_y));
-                if candidate.raw_y < first.1 {
-                    *first = (candidate.node_id, candidate.raw_y);
-                }
-            }
-        }
-        for (table, (row, row_y)) in table_first_rows {
-            // A caption above the grid stays on the current page; an
-            // absolutely positioned one is out of the table's flow. Content
-            // outside the rows, wrapped in an anonymous row, may come before
-            // the first row.
-            if document.nodes[table].children.iter().any(|&child| {
-                document.nodes[child].display() == DisplayValue::TableCaption
-                    && cascade.computed[child].caption_side
-                        == raikiri_style::property::CaptionSideValue::Top
-                    && document.nodes[child].taffy_position() != taffy::Position::Absolute
-                    || document.nodes[child].display() != DisplayValue::TableRow
-                        && document.anonymous_table_cells(child).next().is_some()
-            }) || document.anonymous_table_cells(table).next().is_some()
-            {
-                continue;
-            }
-            let table_y = candidate_y
-                .get(&table)
-                .copied()
-                .unwrap_or_else(|| root_flow_offset + current_abs_y(document, table));
-            table_row_leads.insert(row, (row_y - table_y).max(0.0));
-        }
-    }
-    // A table row group with `break-inside: avoid` starts on the next page
-    // when it would cross the current one. Its first row carries the block
-    // end of the group's rows up to the first forced break between them (a
-    // forced break already splits the group).
-    let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
-    // A header group repeated on each page is placed by the repetition
-    // path; any other header group avoids breaks like a body group.
-    let avoiding_row_group = |group: usize| {
-        (matches!(
-            document.nodes[group].display(),
-            DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
-        ) || (document.nodes[group].display() == DisplayValue::TableHeaderGroup
-            && !table_headers.headers.contains_key(&group)))
-            && matches!(
-                cascade.computed[group].break_inside,
-                raikiri_style::property::BreakInside::Avoid
-                    | raikiri_style::property::BreakInside::AvoidPage
-            )
-    };
-    if candidates.iter().any(|candidate| {
-        candidate.is_table_row
-            && document
-                .parent_of(candidate.node_id)
-                .is_some_and(avoiding_row_group)
-    }) {
-        let mut group_first_rows = HashMap::<usize, Option<usize>>::new();
-        // The last row seen in each row group: rows of a nested table are
-        // visited between two rows of the outer group.
-        let mut previous_rows = HashMap::<Option<usize>, usize>::new();
-        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
-            let row = candidate.node_id;
-            let forced_before =
-                page_break_is_forced(document, row, cascade.computed[row].break_before)
-                    || previous_rows
-                        .insert(document.parent_of(row), row)
-                        .is_some_and(|previous| {
-                            page_break_is_forced(
-                                document,
-                                previous,
-                                cascade.computed[previous].break_after,
-                            )
-                        });
-            let Some(group) = document
-                .parent_of(row)
-                .filter(|&group| avoiding_row_group(group))
-            else {
-                continue;
-            };
-            let entry = group_first_rows.entry(group);
-            let first = match entry {
-                std::collections::hash_map::Entry::Vacant(slot) => {
-                    let lead = table_row_leads.get(&row).copied().unwrap_or(0.0);
-                    avoided_row_groups.insert(row, (candidate.raw_y + candidate.height, lead));
-                    slot.insert(Some(row));
-                    continue;
-                }
-                std::collections::hash_map::Entry::Occupied(slot) => *slot.get(),
-            };
-            let Some(first) = first else {
-                continue;
-            };
-            if forced_before {
-                group_first_rows.insert(group, None);
-                continue;
-            }
-            if let Some((end, _)) = avoided_row_groups.get_mut(&first) {
-                *end = end.max(candidate.raw_y + candidate.height);
-            }
-        }
-    }
-    // Connected class-A sibling runs have a legal break before their first
-    // box. Move a run only when it fits in one page, otherwise relax its
-    // avoidance constraints so an oversized run still makes progress.
-    let mut avoided_run_ends = HashMap::<usize, f32>::new();
-    let mut previous: Option<&PageCandidate> = None;
-    let mut run_start: Option<usize> = None;
-    for candidate in &candidates {
-        if !(candidate.is_direct_body_element
-            || document.nodes[candidate.node_id].kind() == NodeKind::Text
-                && BoxTree::for_layout(document)
-                    .parent(candidate.node_id, BoxParentScope::Document)
-                    == Some(body_id))
-        {
-            continue;
-        }
-        let computed = &cascade.computed[candidate.node_id];
-        // Floats and positioned boxes form parallel flows. Their placement
-        // does not interrupt a connected run of normal-flow siblings.
-        if is_floating_box_for_pagination(document, cascade, candidate.node_id)
-            || matches!(
-                document.nodes[candidate.node_id].position(),
-                PositionValue::Absolute | PositionValue::Fixed
-            )
-        {
-            continue;
-        }
-        let eligible = candidate.is_direct_body_element
-            && (document.nodes[candidate.node_id]
-                .display()
-                .is_block_flex_or_grid_container()
-                || matches!(
-                    document.nodes[candidate.node_id].display(),
-                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
-                ))
-            && !matches!(
-                document.nodes[candidate.node_id].position(),
-                PositionValue::Running(_)
-            );
-        if !eligible {
-            previous = None;
-            run_start = None;
-            continue;
-        }
-        let connected = previous.is_some_and(|prior| {
-            let (after_forced, after_avoided) =
-                page_edge_constraint(document, cascade, prior.node_id, false);
-            let (before_forced, before_avoided) =
-                page_edge_constraint(document, cascade, candidate.node_id, true);
-            !after_forced
-                && !before_forced
-                && prior.page_name == candidate.page_name
-                && (after_avoided || before_avoided)
-        });
-        if let Some(prior) = previous.filter(|_| connected) {
-            let start = *run_start.get_or_insert(prior.node_id);
-            let margin_bottom =
-                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
-                    .unwrap_or(0.0)
-                    .max(0.0);
-            avoided_run_ends.insert(start, candidate.raw_y + candidate.height + margin_bottom);
-        } else {
-            run_start = None;
-        }
-        previous = Some(candidate);
-    }
+    let table_row_leads = table_row_leads(document, cascade, &candidates, root_flow_offset);
+    let avoided_row_groups = avoided_row_groups(
+        document,
+        cascade,
+        &candidates,
+        &table_headers,
+        &table_row_leads,
+    );
+    let avoided_run_ends = avoided_run_ends(document, cascade, &candidates, body_id, content_width);
     let mut flow_shift = 0.0_f32;
     let mut current_page = 0_u32;
     let mut reach = PageReach::default();
@@ -5661,6 +5478,236 @@ fn paginate_flow(
                 .flatten(),
         })
         .collect())
+}
+
+/// The first row of a table without a caption above its grid carries its
+/// offset below the table's top: when the row starts the next page, the
+/// table's spacing and borders above it move with it.
+///
+/// Returns that offset for each such first row.
+fn table_row_leads(
+    document: &Document,
+    cascade: &CascadeResult,
+    candidates: &[PageCandidate],
+    root_flow_offset: f32,
+) -> HashMap<usize, f32> {
+    let mut table_row_leads = HashMap::<usize, f32>::new();
+    if candidates.iter().any(|candidate| candidate.is_table_row) {
+        let candidate_y: HashMap<usize, f32> = candidates
+            .iter()
+            .map(|candidate| (candidate.node_id, candidate.raw_y))
+            .collect();
+        let table_of = |row: usize| {
+            let mut table = document.parent_of(row);
+            while let Some(id) = table
+                && !matches!(
+                    document.nodes[id].display(),
+                    DisplayValue::Table | DisplayValue::InlineTable
+                )
+            {
+                table = document.parent_of(id);
+            }
+            table
+        };
+        // Each table's first row in visual order: the table layout places a
+        // footer group after the body groups wherever it is in the source.
+        let mut table_first_rows = HashMap::<usize, (usize, f32)>::new();
+        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
+            if let Some(table) = table_of(candidate.node_id) {
+                let first = table_first_rows
+                    .entry(table)
+                    .or_insert((candidate.node_id, candidate.raw_y));
+                if candidate.raw_y < first.1 {
+                    *first = (candidate.node_id, candidate.raw_y); // cov:ignore: rows are collected in visual order, so a later row never starts higher.
+                } // cov:ignore: closes the visual-order guard above.
+            }
+        }
+        for (table, (row, row_y)) in table_first_rows {
+            // A caption above the grid stays on the current page; an
+            // absolutely positioned one is out of the table's flow. Content
+            // outside the rows, wrapped in an anonymous row, may come before
+            // the first row.
+            if document.nodes[table].children.iter().any(|&child| {
+                document.nodes[child].display() == DisplayValue::TableCaption
+                    && cascade.computed[child].caption_side
+                        == raikiri_style::property::CaptionSideValue::Top
+                    && document.nodes[child].taffy_position() != taffy::Position::Absolute
+                    || document.nodes[child].display() != DisplayValue::TableRow
+                        && document.anonymous_table_cells(child).next().is_some()
+            }) || document.anonymous_table_cells(table).next().is_some()
+            {
+                continue;
+            }
+            let table_y = candidate_y
+                .get(&table)
+                .copied()
+                .unwrap_or_else(|| root_flow_offset + current_abs_y(document, table));
+            table_row_leads.insert(row, (row_y - table_y).max(0.0));
+        }
+    }
+    table_row_leads
+}
+
+/// A table row group with `break-inside: avoid` starts on the next page
+/// when it would cross the current one. Its first row carries the block
+/// end of the group's rows up to the first forced break between them (a
+/// forced break already splits the group).
+///
+/// Returns, for each such first row, that block end and the row's table
+/// lead.
+fn avoided_row_groups(
+    document: &Document,
+    cascade: &CascadeResult,
+    candidates: &[PageCandidate],
+    table_headers: &super::table::headers::HeaderRepeats,
+    table_row_leads: &HashMap<usize, f32>,
+) -> HashMap<usize, (f32, f32)> {
+    let mut avoided_row_groups = HashMap::<usize, (f32, f32)>::new();
+    // A header group repeated on each page is placed by the repetition
+    // path; any other header group avoids breaks like a body group.
+    let avoiding_row_group = |group: usize| {
+        (matches!(
+            document.nodes[group].display(),
+            DisplayValue::TableRowGroup | DisplayValue::TableFooterGroup
+        ) || (document.nodes[group].display() == DisplayValue::TableHeaderGroup
+            && !table_headers.headers.contains_key(&group)))
+            && matches!(
+                cascade.computed[group].break_inside,
+                raikiri_style::property::BreakInside::Avoid
+                    | raikiri_style::property::BreakInside::AvoidPage
+            )
+    };
+    if candidates.iter().any(|candidate| {
+        candidate.is_table_row
+            && document
+                .parent_of(candidate.node_id)
+                .is_some_and(avoiding_row_group)
+    }) {
+        let mut group_first_rows = HashMap::<usize, Option<usize>>::new();
+        // The last row seen in each row group: rows of a nested table are
+        // visited between two rows of the outer group.
+        let mut previous_rows = HashMap::<Option<usize>, usize>::new();
+        for candidate in candidates.iter().filter(|candidate| candidate.is_table_row) {
+            let row = candidate.node_id;
+            let forced_before =
+                page_break_is_forced(document, row, cascade.computed[row].break_before)
+                    || previous_rows
+                        .insert(document.parent_of(row), row)
+                        .is_some_and(|previous| {
+                            page_break_is_forced(
+                                document,
+                                previous,
+                                cascade.computed[previous].break_after,
+                            )
+                        });
+            let Some(group) = document
+                .parent_of(row)
+                .filter(|&group| avoiding_row_group(group))
+            else {
+                continue;
+            };
+            let entry = group_first_rows.entry(group);
+            let first = match entry {
+                std::collections::hash_map::Entry::Vacant(slot) => {
+                    let lead = table_row_leads.get(&row).copied().unwrap_or(0.0);
+                    avoided_row_groups.insert(row, (candidate.raw_y + candidate.height, lead));
+                    slot.insert(Some(row));
+                    continue;
+                }
+                std::collections::hash_map::Entry::Occupied(slot) => *slot.get(),
+            };
+            let Some(first) = first else {
+                continue;
+            };
+            if forced_before {
+                group_first_rows.insert(group, None);
+                continue;
+            }
+            if let Some((end, _)) = avoided_row_groups.get_mut(&first) {
+                *end = end.max(candidate.raw_y + candidate.height);
+            }
+        }
+    }
+    avoided_row_groups
+}
+
+/// Connected class-A sibling runs have a legal break before their first
+/// box. Pagination moves a run only when it fits in one page, otherwise it
+/// relaxes the run's avoidance constraints so an oversized run still makes
+/// progress.
+///
+/// Returns the block end of each run, including its last box's block-end
+/// margin, keyed by its first box.
+fn avoided_run_ends(
+    document: &Document,
+    cascade: &CascadeResult,
+    candidates: &[PageCandidate],
+    body_id: usize,
+    content_width: f32,
+) -> HashMap<usize, f32> {
+    let mut avoided_run_ends = HashMap::<usize, f32>::new();
+    let mut previous: Option<&PageCandidate> = None;
+    let mut run_start: Option<usize> = None;
+    for candidate in candidates {
+        if !(candidate.is_direct_body_element
+            || document.nodes[candidate.node_id].kind() == NodeKind::Text
+                && BoxTree::for_layout(document)
+                    .parent(candidate.node_id, BoxParentScope::Document)
+                    == Some(body_id))
+        {
+            continue;
+        }
+        let computed = &cascade.computed[candidate.node_id];
+        // Floats and positioned boxes form parallel flows. Their placement
+        // does not interrupt a connected run of normal-flow siblings.
+        if is_floating_box_for_pagination(document, cascade, candidate.node_id)
+            || matches!(
+                document.nodes[candidate.node_id].position(),
+                PositionValue::Absolute | PositionValue::Fixed
+            )
+        {
+            continue;
+        }
+        let eligible = candidate.is_direct_body_element
+            && (document.nodes[candidate.node_id]
+                .display()
+                .is_block_flex_or_grid_container()
+                || matches!(
+                    document.nodes[candidate.node_id].display(),
+                    DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
+                ))
+            && !matches!(
+                document.nodes[candidate.node_id].position(),
+                PositionValue::Running(_)
+            );
+        if !eligible {
+            previous = None;
+            run_start = None;
+            continue;
+        }
+        let connected = previous.is_some_and(|prior| {
+            let (after_forced, after_avoided) =
+                page_edge_constraint(document, cascade, prior.node_id, false);
+            let (before_forced, before_avoided) =
+                page_edge_constraint(document, cascade, candidate.node_id, true);
+            !after_forced
+                && !before_forced
+                && prior.page_name == candidate.page_name
+                && (after_avoided || before_avoided)
+        });
+        if let Some(prior) = previous.filter(|_| connected) {
+            let start = *run_start.get_or_insert(prior.node_id);
+            let margin_bottom =
+                used_computed_length_percentage_or_auto(computed.margin.bottom, content_width)
+                    .unwrap_or(0.0)
+                    .max(0.0);
+            avoided_run_ends.insert(start, candidate.raw_y + candidate.height + margin_bottom);
+        } else {
+            run_start = None;
+        }
+        previous = Some(candidate);
+    }
+    avoided_run_ends
 }
 
 // Pagination adjusts selected boxes after taffy has produced one normal
