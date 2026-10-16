@@ -122,7 +122,8 @@ fn vertical_absolute_box_without_inline_content_starts_at_the_block_start_edge()
 
 #[test]
 fn sideways_absolute_text_uses_the_vertical_block_start_edge() {
-    for (mode, expected_x) in [("sideways-rl", 15.0), ("sideways-lr", 0.0)] {
+    // `sideways-lr` starts its inline axis at the bottom.
+    for (mode, expected) in [("sideways-rl", (15.0, 0.0)), ("sideways-lr", (0.0, 15.0))] {
         let mut doc = Document::new();
         let body = doc.append_element(
             Some(0),
@@ -142,8 +143,10 @@ fn sideways_absolute_text_uses_the_vertical_block_start_edge() {
         doc.mark_in_document_flags();
         let cascade = raikiri_style::cascade(&doc, &raikiri_style::build_rule_tree(&doc)).unwrap();
         layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
-        // The content's shaping fallback does not change block progression.
-        assert_eq!(absolute_rect(&doc, child), (expected_x, 0.0, 15.0, 20.0));
+        assert_eq!(
+            absolute_rect(&doc, child),
+            (expected.0, expected.1, 15.0, 20.0)
+        );
     }
 }
 

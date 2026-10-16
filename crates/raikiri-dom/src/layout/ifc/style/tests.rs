@@ -401,15 +401,39 @@ fn supported_vertical_writing_modes_reach_the_paragraph() {
 }
 
 #[test]
-fn sideways_writing_modes_keep_cssom_values_with_horizontal_layout_fallback() {
+fn sideways_writing_modes_lay_lines_out_vertically() {
     use raikiri_style::property as p;
 
-    for (mode, computed) in [
-        ("sideways-rl", p::WritingMode::SidewaysRl),
-        ("sideways-lr", p::WritingMode::SidewaysLr),
+    // `sideways-rl` runs its lines from top to bottom and `sideways-lr` from
+    // bottom to top, or the other way in a right-to-left direction.
+    for (mode, direction, computed, shodo_mode, inline_edges_px) in [
+        (
+            "sideways-rl",
+            "ltr",
+            p::WritingMode::SidewaysRl,
+            WritingMode::SidewaysRl,
+            (2.0, 3.0),
+        ),
+        (
+            "sideways-lr",
+            "ltr",
+            p::WritingMode::SidewaysLr,
+            WritingMode::SidewaysLr,
+            (3.0, 2.0),
+        ),
+        (
+            "sideways-lr",
+            "rtl",
+            p::WritingMode::SidewaysLr,
+            WritingMode::SidewaysLr,
+            (2.0, 3.0),
+        ),
     ] {
         let fixture = block_fixture(
-            &format!("writing-mode:{mode};padding-left:2px;padding-right:3px"),
+            &format!(
+                "writing-mode:{mode};direction:{direction};padding-top:2px;\
+                 padding-bottom:3px;padding-left:4px;padding-right:5px"
+            ),
             |doc, root| {
                 doc.append_text(root, "x");
             },
@@ -417,12 +441,13 @@ fn sideways_writing_modes_keep_cssom_values_with_horizontal_layout_fallback() {
         let cv = &fixture.cascade.computed[fixture.root];
         assert_eq!(cv.cssom_writing_mode, computed, "{mode}");
         let root = inline_style(cv, fixture.root, &fonts()).expect("root style");
-        let paragraph = paragraph_style(cv, fixture.root, root).expect("layout fallback");
-        assert_eq!(paragraph.writing_mode, WritingMode::HorizontalTb, "{mode}");
-        let (edges, _) = inline_edges(cv, fixture.root, &fonts()).expect("edge fallback");
+        let paragraph = paragraph_style(cv, fixture.root, root).expect("paragraph style");
+        assert_eq!(paragraph.writing_mode, shodo_mode, "{mode}");
+        let (edges, _) = inline_edges(cv, fixture.root, &fonts()).expect("edges");
         assert_eq!(
             (edges.padding.inline_start, edges.padding.inline_end),
-            (2.0, 3.0)
+            inline_edges_px,
+            "{mode}"
         );
     }
 }
@@ -1031,6 +1056,15 @@ fn auto_emphasis_position_is_under_for_horizontal_chinese_only() {
     assert_eq!(resolve(auto, None), Some(P::OverRight));
     let vertical = format!("{auto};writing-mode:vertical-rl");
     assert_eq!(resolve(&vertical, Some("zh")), Some(P::OverRight));
+    // The sideways modes are horizontal typographic modes.
+    for mode in ["sideways-rl", "sideways-lr"] {
+        let sideways = format!("{auto};writing-mode:{mode}");
+        assert_eq!(
+            resolve(&sideways, Some("zh")),
+            Some(P::UnderRight),
+            "{mode}"
+        );
+    }
     // An explicit position is kept.
     let explicit = "text-emphasis-style:dot;text-emphasis-position:over right";
     assert_eq!(resolve(explicit, Some("zh")), Some(P::OverRight));
@@ -1049,6 +1083,22 @@ fn ellipsis_needs_a_non_visible_inline_overflow() {
     assert!(ends("text-overflow:ellipsis;overflow:hidden"));
     assert!(ends("text-overflow:ellipsis;overflow-x:clip"));
     assert!(!ends("text-overflow:ellipsis"));
+    // The inline axis of vertical and sideways modes is vertical. `clip`
+    // keeps the other axis `visible`.
+    for mode in ["vertical-rl", "sideways-rl", "sideways-lr"] {
+        assert!(
+            ends(&format!(
+                "writing-mode:{mode};text-overflow:ellipsis;overflow-x:visible;overflow-y:clip"
+            )),
+            "{mode}"
+        );
+        assert!(
+            !ends(&format!(
+                "writing-mode:{mode};text-overflow:ellipsis;overflow-x:clip;overflow-y:visible"
+            )),
+            "{mode}"
+        );
+    }
     assert!(!ends("text-overflow:clip;overflow:hidden"));
     assert!(!ends("overflow:hidden"));
 }

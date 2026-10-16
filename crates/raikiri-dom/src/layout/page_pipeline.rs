@@ -1044,7 +1044,10 @@ fn layout_single_page_with_table_projection(
     let body_percent_basis = if document.nodes[body_id].parent.is_some_and(|root| {
         matches!(
             cascade.computed[root].cssom_writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr
         )
     }) {
         content_height
@@ -1084,7 +1087,8 @@ fn layout_single_page_with_table_projection(
         style_margin.bottom = LengthPercentageAuto::length(0.0);
     }
     propagate_body_overflow_to_viewport(document, cascade, body_id);
-    let body_top_may_collapse = body_top_margin_may_collapse(document, cascade, body_id);
+    let body_top_may_collapse =
+        body_top_margin_may_collapse(document, cascade, body_id, body_percent_basis);
 
     // Step 4: force body.style.size to the page content box, not the full paper size.
     // Page margins are painted/represented outside this taffy root.
@@ -1131,7 +1135,10 @@ fn layout_single_page_with_table_projection(
     // they leave over as top padding. Only the body's own box changes, so
     // the boxes inside keep their cached layouts.
     let mut paragraph_collapsed_top = None;
-    if body_is_paragraph && let Some(leading) = body_paragraph_leading_margin(document, body_id) {
+    if body_is_paragraph
+        && body_top_may_collapse
+        && let Some(leading) = body_paragraph_leading_margin(document, body_id)
+    {
         let collapsed = leading.collapse_with_margin(body_margin_top).resolve();
         let padding = collapsed - leading.resolve();
         if (padding.max(0.0) - body_padded_top).abs() > 1e-4 {
@@ -4130,23 +4137,8 @@ fn paginate_flow(
         })
         .collect();
     let mut float_shifts = FloatShifts::default();
-    // A nested box that moved inside an ancestor whose height cannot grow
-    // to hold it overflows that ancestor: the part of the shift the
-    // ancestor did not absorb ends where its subtree does, and the page the
-    // flow was on is restored with it.
-    let mut pending_bounded_shifts: Vec<(usize, f32, u32)> = Vec::new();
-    // Formatting-context roots that grew around a moved float, with the
-    // growth the flow after them keeps.
-    let mut pending_context_growth: Vec<(usize, f32)> = Vec::new();
-    // Unpaginated border-box bottom of the last in-flow block-level child
-    // seen for each parent, while no other content followed it. The gap to
-    // the next such sibling is their collapsed margin.
-    let mut previous_block_bottoms: HashMap<usize, (usize, f32)> = HashMap::new();
-    // The empty box whose block-end margin still adjoins the latest forced
-    // break: the forced-break box itself, or an empty box right after it.
-    // A margin collapsed through it follows the break and is kept.
-    let mut forced_break_margin_box: Option<usize> = None;
-    let mut margins_moved_boxes = false;
+    let mut subtree_shifts = SubtreeShifts::default();
+    let mut sibling_margins = SiblingMargins::default();
     let mut last_named = LastNamedBox::default();
     let mut saw_child = false;
     // Paragraph blocks whose leading line or whose orphans and widows move
@@ -4281,25 +4273,7 @@ fn paginate_flow(
             flow_shift += correction;
             pending_underflow = None;
         }
-        // Leaving several bounded subtrees at once returns to the page the
-        // earliest of them started from.
-        let mut restored_page: Option<u32> = None;
-        pending_context_growth.retain(|&(context, growth)| {
-            if is_descendant_or_self(document, node_id, context) {
-                return true;
-            }
-            flow_shift += growth;
-            false
-        });
-        pending_bounded_shifts.retain(|&(ancestor_id, delta, flow_page)| {
-            if is_descendant_or_self(document, node_id, ancestor_id) {
-                return true;
-            }
-            flow_shift -= delta;
-            restored_page = Some(restored_page.map_or(flow_page, |page| page.min(flow_page)));
-            false
-        });
-        if let Some(page) = restored_page {
+        if let Some(page) = subtree_shifts.leave(document, node_id, &mut flow_shift) {
             current_page = page;
         }
         if let Some((delta, flow_page)) = float_shifts.end_pending_outside(document, node_id) {
@@ -4416,8 +4390,7 @@ fn paginate_flow(
                         node_id,
                         shift,
                         body_id,
-                        &mut pending_bounded_shifts,
-                        &mut pending_context_growth,
+                        &mut subtree_shifts,
                         current_page,
                     );
                 }
@@ -4444,7 +4417,7 @@ fn paginate_flow(
                     .map(|(root, _)| root)
                     .or_else(|| box_parent(document, cascade, node_id, BoxParentScope::Document))
             {
-                previous_block_bottoms.remove(&parent_id);
+                sibling_margins.previous_bottoms.remove(&parent_id);
             }
             // A footnote's descendants follow the moved footnote box. They are
             // deliberately not paginated independently, otherwise the stale
@@ -4549,8 +4522,7 @@ fn paginate_flow(
                             moved,
                             delta,
                             body_id,
-                            &mut pending_bounded_shifts,
-                            &mut pending_context_growth,
+                            &mut subtree_shifts,
                             page_before_candidate,
                         );
                     }
@@ -4721,8 +4693,7 @@ fn paginate_flow(
                                 block_id,
                                 shift,
                                 body_id,
-                                &mut pending_bounded_shifts,
-                                &mut pending_context_growth,
+                                &mut subtree_shifts,
                                 page_before_candidate,
                             );
                         }
@@ -5213,8 +5184,7 @@ fn paginate_flow(
                             node_id,
                             node_delta,
                             body_id,
-                            &mut pending_bounded_shifts,
-                            &mut pending_context_growth,
+                            &mut subtree_shifts,
                             page_before_candidate,
                         );
                     } else if forced_transition
@@ -5371,11 +5341,10 @@ fn paginate_flow(
                                     context,
                                     growth,
                                     body_id,
-                                    &mut pending_bounded_shifts,
-                                    &mut pending_context_growth,
+                                    &mut subtree_shifts,
                                     page_before_candidate,
                                 );
-                                pending_context_growth.push((context, growth));
+                                subtree_shifts.growth.push((context, growth));
                             }
                         }
                     } else if !candidate.is_float_descendant
@@ -5398,7 +5367,7 @@ fn paginate_flow(
                 }
                 current_page = target_page;
                 if forced_transition {
-                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
                     starts_after_forced_break = true;
                 }
                 if pending_break_applies {
@@ -5416,7 +5385,7 @@ fn paginate_flow(
                 // A forced break that coincides with a page edge also starts
                 // that page.
                 if forced_before {
-                    forced_break_margin_box = margins_collapse_through.then_some(node_id);
+                    sibling_margins.forced_break_box = margins_collapse_through.then_some(node_id);
                     starts_after_forced_break = true;
                 }
                 // An unforced break that falls inside the collapsed margin
@@ -5425,7 +5394,7 @@ fn paginate_flow(
                 // top of the page instead of keeping the part of the margin
                 // that crossed the page edge.
                 let previous = box_parent(document, cascade, node_id, BoxParentScope::Document)
-                    .and_then(|parent_id| previous_block_bottoms.get(&parent_id).copied())
+                    .and_then(|parent_id| sibling_margins.previous_bottoms.get(&parent_id).copied())
                     .map(|(previous, bottom)| (previous, raw_y - bottom))
                     .filter(|(_, gap)| gap.is_finite() && *gap > 0.0);
                 if let Some((previous, gap)) = previous
@@ -5442,9 +5411,8 @@ fn paginate_flow(
                     // top leaves its collapsed margin after the break.
                     // A later, unforced page edge inside that margin still
                     // truncates it.
-                    let follows_forced_break = forced_break_margin_box.is_some_and(|owner| {
-                        forced_margin_reaches(document, cascade, owner, previous, node_id)
-                    });
+                    let follows_forced_break =
+                        sibling_margins.follows_forced_break(document, cascade, previous, node_id);
                     let after_forced_break =
                         follows_forced_break && (previous_bottom - page_top).abs() <= 0.001;
                     if natural_page > 0
@@ -5478,7 +5446,7 @@ fn paginate_flow(
                             (page_origin(first_edge), page_origin(first_edge))
                         };
                         let delta = target_y - effective_y;
-                        margins_moved_boxes |= delta != 0.0;
+                        sibling_margins.moved_boxes |= delta != 0.0;
                         document.nodes[node_id].unrounded_layout.location.y += delta;
                         follow_moved_ifc_block(document, node_id, delta);
                         flow_shift += delta;
@@ -5519,22 +5487,23 @@ fn paginate_flow(
             // An empty box right after the forced-break box passes the
             // break on to the margin after it; any other box ends it.
             if !starts_after_forced_break {
-                let follows_forced_box = forced_break_margin_box.is_some_and(|owner| {
-                    previous_block_bottoms
-                        .get(&parent_id)
-                        .is_some_and(|&(previous, _)| {
-                            forced_margin_reaches(document, cascade, owner, previous, node_id)
-                        })
-                });
-                forced_break_margin_box = (follows_forced_box
+                let follows_forced_box = sibling_margins
+                    .previous_bottoms
+                    .get(&parent_id)
+                    .is_some_and(|&(previous, _)| {
+                        sibling_margins.follows_forced_break(document, cascade, previous, node_id)
+                    });
+                sibling_margins.forced_break_box = (follows_forced_box
                     && collapses_with_previous_block
                     && margins_collapse_through)
                     .then_some(node_id);
             }
             if collapses_with_previous_block {
-                previous_block_bottoms.insert(parent_id, (node_id, raw_y + height));
+                sibling_margins
+                    .previous_bottoms
+                    .insert(parent_id, (node_id, raw_y + height));
             } else {
-                previous_block_bottoms.remove(&parent_id);
+                sibling_margins.previous_bottoms.remove(&parent_id);
             }
         }
 
@@ -5698,7 +5667,7 @@ fn paginate_flow(
 
     // Truncating margins can move an ancestor of a fixed box. Restore only
     // its block position, preserving the already-corrected subtree layout.
-    if margins_moved_boxes {
+    if sibling_margins.moved_boxes {
         super::fixed::restore_fixed_box_block_positions(document, cascade, body_id, content_height);
     }
 
@@ -6670,24 +6639,97 @@ fn push_in_flow_boxes_rev(
     boxes.push(node_id);
 }
 
+/// The adjoining block margins between siblings, which an unforced page
+/// break inside them truncates.
+#[derive(Default)]
+struct SiblingMargins {
+    /// Unpaginated border-box bottom of the last in-flow block-level child
+    /// seen for each parent, while no other content followed it. The gap to
+    /// the next such sibling is their collapsed margin.
+    previous_bottoms: HashMap<usize, (usize, f32)>,
+    /// The empty box whose block-end margin still adjoins the latest forced
+    /// break: the forced-break box itself, or an empty box right after it.
+    /// A margin collapsed through it follows the break and is kept.
+    forced_break_box: Option<usize>,
+    /// Whether truncating a margin moved a box.
+    moved_boxes: bool,
+}
+
+impl SiblingMargins {
+    /// Whether the margin between `previous` and `node_id` still adjoins
+    /// the latest forced break.
+    fn follows_forced_break(
+        &self,
+        document: &Document,
+        cascade: &CascadeResult,
+        previous: usize,
+        node_id: usize,
+    ) -> bool {
+        self.forced_break_box
+            .is_some_and(|owner| forced_margin_reaches(document, cascade, owner, previous, node_id))
+    }
+}
+
+/// Shifts of the flow that end where a subtree does.
+#[derive(Default)]
+struct SubtreeShifts {
+    /// Ancestors that could not hold a nested box that moved, with the part
+    /// of the shift each did not absorb and the page the flow was on.
+    ///
+    /// A nested box that moved inside an ancestor whose height cannot grow
+    /// to hold it overflows that ancestor: the part of the shift the
+    /// ancestor did not absorb ends where its subtree does, and the page the
+    /// flow was on is restored with it.
+    bounded: Vec<(usize, f32, u32)>,
+    /// Formatting-context roots that grew around a moved float, with the
+    /// growth the flow after them keeps.
+    growth: Vec<(usize, f32)>,
+}
+
+impl SubtreeShifts {
+    /// End the shifts of the subtrees `node_id` is outside of, applying
+    /// them to `flow_shift`, and return the page the flow returns to when a
+    /// bounded subtree ends.
+    ///
+    /// Leaving several bounded subtrees at once returns to the page the
+    /// earliest of them started from.
+    fn leave(&mut self, document: &Document, node_id: usize, flow_shift: &mut f32) -> Option<u32> {
+        let mut restored_page: Option<u32> = None;
+        self.growth.retain(|&(context, growth)| {
+            if is_descendant_or_self(document, node_id, context) {
+                return true;
+            }
+            *flow_shift += growth;
+            false
+        });
+        self.bounded.retain(|&(ancestor_id, delta, flow_page)| {
+            if is_descendant_or_self(document, node_id, ancestor_id) {
+                return true;
+            }
+            *flow_shift -= delta;
+            restored_page = Some(restored_page.map_or(flow_page, |page| page.min(flow_page)));
+            false
+        });
+        restored_page
+    }
+}
+
 /// Grows the auto-height ancestors of `node_id`, which moved down by
 /// `delta`, to hold it. The part of the shift an ancestor does not pass on
 /// to the flow after it, because its height cannot grow or a float in it
-/// already reaches below the moved content, is recorded in
-/// `pending_bounded_shifts` with `flow_page`, the page the flow returns to
-/// past that ancestor. An ancestor that grows more than the flow inside
-/// it moved is recorded in `pending_growth`, for the flow after it to
-/// follow. Returns whether an ancestor's height kept it from holding the
-/// moved content.
-#[allow(clippy::too_many_arguments)]
+/// already reaches below the moved content, is recorded in the bounded
+/// shifts of `shifts` with `flow_page`, the page the flow returns to past
+/// that ancestor. An ancestor that grows more than the flow inside it moved
+/// is recorded in the growth of `shifts`, for the flow after it to follow.
+/// Returns whether an ancestor's height kept it from holding the moved
+/// content.
 fn grow_ancestors_for_shift(
     document: &mut Document,
     cascade: &CascadeResult,
     node_id: usize,
     delta: f32,
     body_id: usize,
-    pending_bounded_shifts: &mut Vec<(usize, f32, u32)>,
-    pending_growth: &mut Vec<(usize, f32)>,
+    shifts: &mut SubtreeShifts,
     flow_page: u32,
 ) -> bool {
     let mut bounded = false;
@@ -6719,7 +6761,7 @@ fn grow_ancestors_for_shift(
             body_id,
         );
         let Some(grown) = grown else {
-            pending_bounded_shifts.push((parent, flow_delta, flow_page));
+            shifts.bounded.push((parent, flow_delta, flow_page));
             bounded = true;
             break;
         };
@@ -6728,12 +6770,14 @@ fn grow_ancestors_for_shift(
         let size_absorbed = (grown.height - height).clamp(0.0, limit);
         let flow_absorbed = (in_flow - old_in_flow).clamp(0.0, limit);
         if flow_absorbed < flow_delta - 0.001 {
-            pending_bounded_shifts.push((parent, flow_delta - flow_absorbed, flow_page));
+            shifts
+                .bounded
+                .push((parent, flow_delta - flow_absorbed, flow_page));
             bounded |= grown.capped;
         } else if flow_absorbed > flow_delta + 0.001 {
             // A box holding its floats grew around a float that moved with
             // the content it overflowed: the flow after the box follows.
-            pending_growth.push((parent, flow_absorbed - flow_delta));
+            shifts.growth.push((parent, flow_absorbed - flow_delta));
         }
         if flow_absorbed <= 0.001 && size_absorbed <= 0.001 {
             break;

@@ -114,6 +114,77 @@ fn a_block_that_avoids_breaks_moves_to_the_next_page() {
 }
 
 #[test]
+fn the_block_end_margin_of_the_body_does_not_add_a_page() {
+    let (doc, ids, pages) = paginate(
+        "writing-mode:vertical-rl",
+        "margin:0 20px",
+        &[
+            ("div", "width:600px", ""),
+            ("div", "width:800px;break-inside:avoid", ""),
+        ],
+    );
+    // The second block fills the second page; the body's block-end margin
+    // after it is truncated at the end of the flow.
+    assert_eq!(origins(&pages), [0.0, 800.0]);
+    assert_eq!(absolute_rect(&doc, ids[1]), (180.0, 0.0, 600.0, 600.0));
+    assert_eq!(absolute_rect(&doc, ids[2]), (-800.0, 0.0, 800.0, 600.0));
+    // The body keeps its block margins as padding on physical axes.
+    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.left, 20.0);
+    assert_eq!(doc.nodes[ids[0]].unrounded_layout.padding.right, 20.0);
+}
+
+#[test]
+fn sideways_rl_pages_continue_to_the_left() {
+    let (doc, ids, pages) = paginate(
+        "writing-mode:sideways-rl",
+        "margin:0",
+        &[("div", "width:800px", ""), ("div", "width:800px", "")],
+    );
+    assert_eq!(origins(&pages), [0.0, 800.0]);
+    assert_eq!(absolute_rect(&doc, ids[1]), (0.0, 0.0, 800.0, 600.0));
+    assert_eq!(absolute_rect(&doc, ids[2]), (-800.0, 0.0, 800.0, 600.0));
+}
+
+#[test]
+fn sideways_lr_blocks_start_at_the_bottom_and_pages_continue_to_the_right() {
+    let (doc, ids, pages) = paginate(
+        "writing-mode:sideways-lr",
+        "margin:0",
+        &[
+            ("div", "width:800px;height:100px", ""),
+            ("div", "width:800px;height:100px", ""),
+        ],
+    );
+    assert_eq!(origins(&pages), [0.0, 800.0]);
+    // The inline axis runs from bottom to top.
+    assert_eq!(absolute_rect(&doc, ids[1]), (0.0, 500.0, 800.0, 100.0));
+    assert_eq!(absolute_rect(&doc, ids[2]), (800.0, 500.0, 800.0, 100.0));
+}
+
+#[test]
+fn upright_text_keeps_the_direction_of_a_sideways_root() {
+    // The sideways modes are horizontal typographic modes, so `upright`
+    // leaves `rtl` in place: the inline axis of `sideways-lr` then runs from
+    // top to bottom.
+    let (doc, ids, _) = paginate(
+        "writing-mode:sideways-lr;direction:rtl;text-orientation:upright",
+        "margin:0",
+        &[("div", "width:800px;height:100px", "")],
+    );
+    assert_eq!(absolute_rect(&doc, ids[1]), (0.0, 0.0, 800.0, 100.0));
+}
+
+#[test]
+fn logical_sizes_of_a_sideways_box_map_onto_its_vertical_axes() {
+    let (doc, ids, _) = paginate(
+        "writing-mode:sideways-rl",
+        "margin:0",
+        &[("div", "inline-size:100px;block-size:200px", "")],
+    );
+    assert_eq!(absolute_rect(&doc, ids[1]), (600.0, 0.0, 200.0, 100.0));
+}
+
+#[test]
 fn a_forced_break_starts_a_page_along_the_block_axis() {
     let (doc, ids, pages) = paginate(
         "writing-mode:vertical-rl",

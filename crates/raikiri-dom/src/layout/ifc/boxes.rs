@@ -568,6 +568,7 @@ fn run_boxes_segment(
     // The collapsed top margins of a block child that starts the paragraph,
     // with no line, float or other margin above it.
     let mut leading_block_margin = None;
+    let mut leading_margin_open = true;
     let mut block_line_starts = Vec::new();
     let mut fragment_box_placements = Vec::new();
     let mut continuation = None;
@@ -862,10 +863,9 @@ fn run_boxes_segment(
                     // root's block axis only; a vertical root breaks its
                     // lines at the tokens.
                     if horizontal {
-                        let at_start = lines.is_empty()
-                            && block_line_starts.is_empty()
+                        let at_start = leading_margin_open
+                            && lines.is_empty()
                             && y == 0.0
-                            && pending == CollapsibleMarginSet::ZERO
                             && ceiling == f32::NEG_INFINITY;
                         let flow = generated_blocks::Flow {
                             y: &mut y,
@@ -888,6 +888,7 @@ fn run_boxes_segment(
                                 if let Some(open) = open_block.take()
                                     && let Some(placed) = generated_blocks::close(block, open, flow)
                                 {
+                                    leading_margin_open = false;
                                     placed_blocks.push(placed);
                                 }
                             }
@@ -902,16 +903,18 @@ fn run_boxes_segment(
                     calls = 0;
                     continue;
                 }
-                let starts_paragraph = lines.is_empty()
-                    && block_line_starts.is_empty()
+                let starts_paragraph = leading_margin_open
+                    && lines.is_empty()
                     && y == 0.0
-                    && pending == CollapsibleMarginSet::ZERO
                     && ceiling == f32::NEG_INFINITY;
                 block_line_starts.push((node.0 as usize, lines.len()));
                 let block =
                     layout_block_child(tree, ctx, node.0 as usize, y, pending, geometry, perform);
                 if starts_paragraph {
-                    leading_block_margin = block.top_margin;
+                    if let Some(margin) = block.top_margin {
+                        leading_block_margin = Some(margin);
+                    }
+                    leading_margin_open = block.collapses_through;
                 }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
                 (y, pending) = (block.next_y, block.pending);
@@ -1312,9 +1315,12 @@ struct BlockChild {
     floats_bottom: f32,
     /// The block's top margin collapsed with the margins that leave it
     /// through its first child, which placed its box: `top` is `y` plus
-    /// these collapsed with `pending`. `None` when something else placed it
-    /// (clearance, floats beside it) or it is collapsed through.
+    /// these collapsed with `pending`. For a collapsed-through box this is
+    /// the full pending set, including its bottom margins. `None` when
+    /// clearance or floats placed it instead.
     top_margin: Option<CollapsibleMarginSet>,
+    /// No content or formatting boundary separates the margins through it.
+    collapses_through: bool,
 }
 
 /// Lay a block child out below the offset `y`, as wide as the content box
@@ -1450,7 +1456,14 @@ fn layout_block_child(
         next_y: after.0,
         pending: after.1,
         floats_bottom: floats_bottom + (guess - top),
-        top_margin: (!has_clearance && !output.margins_can_collapse_through).then_some(top_set),
+        top_margin: (!has_clearance).then(|| {
+            if output.margins_can_collapse_through {
+                after.1
+            } else {
+                pending.collapse_with_set(top_set)
+            }
+        }),
+        collapses_through: !has_clearance && output.margins_can_collapse_through,
     }
 }
 
@@ -1467,7 +1480,10 @@ fn layout_vertical_block_child(
     let inline_basis = geometry.axes.inline_extent(geometry.content_size);
     let mut margin = resolved_margins(tree, node, inline_basis);
     let style_margin = tree.nodes[node].style.margin;
-    let vertical_rl = geometry.axes.writing_mode() == WritingMode::VerticalRl;
+    let vertical_rl = matches!(
+        geometry.axes.writing_mode(),
+        WritingMode::VerticalRl | WritingMode::SidewaysRl
+    );
     let (block_start_margin, block_end_margin) = if vertical_rl {
         (margin.right, margin.left)
     } else {
@@ -1554,6 +1570,7 @@ fn layout_vertical_block_child(
         pending: CollapsibleMarginSet::from_margin(block_end_margin),
         floats_bottom: f32::NEG_INFINITY,
         top_margin: None,
+        collapses_through: false,
     }
 }
 
@@ -1698,7 +1715,8 @@ fn layout_formatting_context_child(
         // A box that establishes a formatting context keeps its children's
         // margins, but its own still collapses with the ones above it.
         top_margin: (!beside_floats && clear == taffy::Clear::None)
-            .then(|| CollapsibleMarginSet::from_margin(margin.top)),
+            .then(|| pending.collapse_with_margin(margin.top)),
+        collapses_through: false,
     }
 }
 
@@ -2221,7 +2239,10 @@ pub(crate) fn intrinsics_of_boxes(tree: &mut Document, idx: usize, basis: f32) -
     let vertical = tree.nodes[idx].ifc.as_ref().is_some_and(|root| {
         matches!(
             root.writing_mode,
-            WritingMode::VerticalRl | WritingMode::VerticalLr
+            WritingMode::VerticalRl
+                | WritingMode::VerticalLr
+                | WritingMode::SidewaysRl
+                | WritingMode::SidewaysLr
         )
     });
     let boxes = tree.nodes[idx]

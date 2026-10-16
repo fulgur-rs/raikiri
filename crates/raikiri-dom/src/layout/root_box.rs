@@ -9,7 +9,7 @@
 
 use super::page::{page_content_insets, page_margins, used_computed_length_percentage_or_auto};
 use crate::Document;
-use raikiri_style::property::{BoxSizing, Direction, DisplayValue};
+use raikiri_style::property::{BoxSizing, Direction, DisplayValue, WritingMode};
 use raikiri_style::{CascadeResult, ComputedLengthPercentageOrAuto, ComputedValues};
 use raikiri_traits::{NodeId, NodeKind, PageBox, PaintInsets, PaintRect, PaintTransform};
 
@@ -139,13 +139,22 @@ pub fn root_box(
             )
         }
         Some(right_to_left) => {
-            let (margin_top, height) = vertical.across_pages(computed, rtl);
+            // `sideways-lr` runs its inline axis from bottom to top, so its
+            // inline start is the bottom side.
+            let bottom_to_top = computed.cssom_writing_mode == WritingMode::SidewaysLr;
+            let (margin_top, height) = vertical.across_pages(computed, rtl != bottom_to_top);
             let (margin_start, width) =
                 horizontal.along_pages(computed, right_to_left, content_origin_y, page_count);
             // A later page sees the box moved by the flow before it, away
-            // from the side the pages continue to.
+            // from the side the pages continue to. Browsers stitch the
+            // fragments of a right-to-left root box in page order from its
+            // left end, as though the pages continued to the right: the
+            // first page shows the part the last page would hold in flow
+            // order, and so on.
             let x = if right_to_left {
-                area_x + area_width - margin_start - width + content_origin_y
+                let last_origin = area_width * page_count.saturating_sub(1) as f32;
+                let mirrored_origin = (last_origin - content_origin_y).max(0.0);
+                area_x + area_width - margin_start - width + mirrored_origin
             } else {
                 area_x + margin_start - content_origin_y
             };

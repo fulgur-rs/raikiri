@@ -45,9 +45,16 @@ pub(crate) fn used_relative_insets(
     } else {
         block.map(|block| block.source)
     };
-    let rtl =
-        source.is_some_and(|block| document.nodes[block].style.direction == taffy::Direction::Rtl);
-    let mode = match crate::taffy_impl::used_writing_mode(document, source.unwrap_or(node_id)) {
+    let used_mode = crate::taffy_impl::used_writing_mode(document, source.unwrap_or(node_id));
+    // The bridge flips the direction of a `sideways-lr` box laid out on
+    // vertical axes, whose inline axis runs from bottom to top; the writing
+    // mode below already says so.
+    let rtl = source.is_some_and(|block| {
+        let flipped = used_mode == WritingMode::SidewaysLr
+            && crate::layout::bridge::uses_vertical_axes(cascade, block);
+        (document.nodes[block].style.direction == taffy::Direction::Rtl) != flipped
+    });
+    let mode = match used_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
         WritingMode::VerticalLr => shodo::geometry::WritingMode::VerticalLr,
         WritingMode::SidewaysRl => shodo::geometry::WritingMode::SidewaysRl,
