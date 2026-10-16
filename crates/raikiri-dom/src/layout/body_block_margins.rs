@@ -88,7 +88,7 @@ pub(crate) fn body_top_margin_may_collapse(
         && doc.nodes[body_id].taffy_position() != TaffyPosition::Absolute
         && !style.overflow.x.is_scroll_container()
         && !style.overflow.y.is_scroll_container()
-        && style.align_content.is_none()
+        && style.align_content.keyword == taffy::AlignContentKeyword::Normal
         && !computed.contain.contains(Contain::LAYOUT)
         && !computed.contain.contains(Contain::PAINT)
         && used_style_length_percentage(style.padding.top, percent_basis).unwrap_or(0.0) == 0.0

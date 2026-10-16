@@ -1,8 +1,9 @@
 use super::*;
 use crate::layout::ifc::projection::project_ifc;
 use crate::layout::ifc::test_support::{ahem_fonts, block_fixture};
+use crate::taffy_impl::block_flow::context::BlockFormattingContext;
 use shodo::limits::Limits;
-use taffy::{BlockFormattingContext, Clear, FloatDirection, Size};
+use taffy::{Clear, FloatDirection, Size};
 
 fn root_of(css: &str, text: &str) -> (IfcRoot, LayoutContext) {
     // Ahem at 10px: an explicit line-height keeps these tests about breaking,

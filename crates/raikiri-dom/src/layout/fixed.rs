@@ -919,9 +919,7 @@ fn static_position_alignment(
     // fallback is safe, for an overflowing box.
     // spec: https://www.w3.org/TR/css-align-3/#overflow-values
     // spec: https://www.w3.org/TR/css-align-3/#distribution-values
-    let justify = parent_style
-        .justify_content
-        .unwrap_or(TaffyAlignContent::FLEX_START);
+    let justify = parent_style.justify_content;
     // `start` and `end` follow the writing mode; `flex-start`, `flex-end`
     // and the fallbacks of the distributed values follow the flex direction.
     let main_overflows = main_size > main_space;
@@ -941,14 +939,15 @@ fn static_position_alignment(
         | AlignContentKeyword::SpaceAround
         | AlignContentKeyword::SpaceEvenly => 0.5,
         AlignContentKeyword::FlexEnd => flex(true, main_reversed),
-        AlignContentKeyword::FlexStart
+        AlignContentKeyword::Normal
+        | AlignContentKeyword::FlexStart
         | AlignContentKeyword::Stretch
         | AlignContentKeyword::SpaceBetween => flex(false, main_reversed),
     };
     let style = &tree.nodes[id].style;
     let align = style
         .align_self
-        .or(parent_style.align_items)
+        .or(Some(parent_style.align_items))
         .unwrap_or(TaffyAlignItems::STRETCH);
     // `self-start` and `self-end` follow the box's own direction where the
     // cross axis is its inline axis.
@@ -965,7 +964,9 @@ fn static_position_alignment(
         AlignItemsKeyword::SelfEnd => flex(!flip, cross_is_rtl),
         AlignItemsKeyword::Center => 0.5,
         AlignItemsKeyword::FlexEnd => flex(true, cross_reversed),
-        AlignItemsKeyword::FlexStart | AlignItemsKeyword::Stretch => flex(false, cross_reversed),
+        AlignItemsKeyword::Normal | AlignItemsKeyword::FlexStart | AlignItemsKeyword::Stretch => {
+            flex(false, cross_reversed)
+        }
     };
     let alignment = if is_row {
         Size {

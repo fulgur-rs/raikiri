@@ -30,9 +30,10 @@ use taffy::util::{MaybeResolve, ResolveOrZero};
 use taffy::{
     AbsoluteAxis, AvailableSpace, Baselines, BoxSizing, CollapsibleMarginSet, Layout, LayoutInput,
     LayoutOutput, LengthPercentage, Line, NodeId, Point, Position as TaffyPosition, Rect, Size,
-    SizingMode, Style, TraversePartialTree, compute_block_layout,
+    SizingMode, Style, TraversePartialTree,
 };
 
+use super::block_flow::compute_block_flow;
 use super::resolve_calc;
 use super::vertical_oof::used_writing_mode;
 use crate::document::Document;
@@ -332,7 +333,7 @@ pub(super) fn compute_vertical_block(
     if let Some(width) = inputs.known_dimensions.width {
         resolve_child_padding(tree, width);
     }
-    let output = compute_block_layout(tree, node_id, inputs, None);
+    let output = compute_block_flow(tree, node_id, inputs, None);
     let mut block = tree.transposed_blocks.pop().expect("pushed above");
     let output = transpose_output(output);
     // Taffy may store a child's layout more than once; the last one stands.
@@ -378,7 +379,7 @@ fn fit_content_inline_size(tree: &mut Document, node_id: NodeId, inputs: LayoutI
             },
             ..inputs
         };
-        compute_block_layout(tree, node_id, measure_inputs, None)
+        compute_block_flow(tree, node_id, measure_inputs, None)
             .size
             .width
     };
@@ -482,6 +483,7 @@ fn transpose_output(output: LayoutOutput) -> LayoutOutput {
         top_margin: CollapsibleMarginSet::ZERO,
         bottom_margin: CollapsibleMarginSet::ZERO,
         margins_can_collapse_through: false,
+        ..output
     }
 }
 

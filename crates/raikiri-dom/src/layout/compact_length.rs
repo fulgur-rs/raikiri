@@ -8,7 +8,7 @@ use taffy::{CompactLength, Dimension, LengthPercentage, LengthPercentageAuto};
 /// fallback basis and apply their own finite-value or range policy.
 fn resolve_compact(raw: CompactLength, basis: Option<f32>) -> Option<f32> {
     // Calc pointers carry address bits in the tag, so inspect them first.
-    if raw.is_calc() {
+    if raw.is_plain_calc() {
         return basis.map(|basis| crate::taffy_impl::resolve_calc(raw.calc_value(), basis));
     }
     match raw.tag() {

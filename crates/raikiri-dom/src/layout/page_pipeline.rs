@@ -6492,7 +6492,7 @@ fn grown_auto_height(
 fn definite_content_height(document: &Document, block: usize) -> Option<f32> {
     let node = &document.nodes[block];
     let raw = node.style.size.height.into_raw();
-    let definite = if raw.is_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
+    let definite = if raw.is_plain_calc() || raw.tag() == taffy::CompactLength::PERCENT_TAG {
         BoxTree::for_layout(document)
             .parent(block, BoxParentScope::Document)
             .is_none_or(|containing| {

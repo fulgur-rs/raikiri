@@ -1083,11 +1083,14 @@ fn bridge_flex(
 /// crate does not accept the `safe` / `unsafe` prefix
 /// (see `parse_content_alignment` / `parse_self_alignment` docs).
 fn bridge_alignment(style: &mut taffy::Style, cv: &ComputedValues) {
-    style.justify_content = content_alignment_to_taffy(cv.justify_content);
-    style.align_content = content_alignment_to_taffy(cv.align_content);
-    style.align_items = self_alignment_to_taffy(cv.align_items);
+    style.justify_content =
+        content_alignment_to_taffy(cv.justify_content).unwrap_or(TaffyAlignContent::NORMAL);
+    style.align_content =
+        content_alignment_to_taffy(cv.align_content).unwrap_or(TaffyAlignContent::NORMAL);
+    style.align_items = self_alignment_to_taffy(cv.align_items).unwrap_or(TaffyAlignItems::NORMAL);
     style.align_self = self_alignment_or_auto_to_taffy(cv.align_self);
-    style.justify_items = self_alignment_to_taffy(cv.justify_items);
+    style.justify_items =
+        self_alignment_to_taffy(cv.justify_items).unwrap_or(TaffyAlignItems::NORMAL);
     style.justify_self = self_alignment_or_auto_to_taffy(cv.justify_self);
 }
 
@@ -1102,12 +1105,9 @@ fn self_alignment_or_auto_to_taffy(v: AlignSelfValue) -> Option<TaffyAlignItems>
         // align-items/justify-items. In flex/grid layout it independently
         // behaves like `stretch` (CSS Box Alignment 3 §8.3 says "In flex
         // layout, this value behaves as stretch"; grid is covered too).
-        // The `Normal => None` mapping in `self_alignment_to_taffy` cannot
-        // apply here: taffy's `None` means inherit the corresponding
-        // container property (exactly the spec behavior of `auto`). Since
-        // `normal` means stretch regardless of the parent's value, map it
-        // explicitly to `STRETCH`.
-        AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(TaffyAlignItems::STRETCH),
+        // Preserve Taffy's explicit NORMAL value. None inherits the
+        // container property and therefore represents CSS auto instead.
+        AlignSelfValue::Value(SelfAlignmentValue::Normal) => Some(TaffyAlignItems::NORMAL),
         AlignSelfValue::Value(v) => self_alignment_to_taffy(v),
         // cov:ignore: unreachable while AlignSelfValue is Auto|Value(_)
         // only; required for its #[non_exhaustive] contract

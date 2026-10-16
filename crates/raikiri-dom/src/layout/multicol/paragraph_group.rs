@@ -64,7 +64,7 @@ fn collect(
     let mut paragraph_count = 0;
     let mut has_empty = false;
     let mut high = 0.0;
-    for &(child, output, _, margin_top, margin_bottom, _) in entries {
+    for &(child, ref output, _, margin_top, margin_bottom, _) in entries {
         let node = &tree.nodes[child];
         // Source whitespace between block elements has no formatting box.
         if node.kind() == NodeKind::Text && output.size.height == 0.0 && node.ifc.is_none() {

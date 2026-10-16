@@ -15,31 +15,31 @@ fn calc_track() -> taffy::TrackSizingFunction {
 
 fn style_has_no_calc(style: &Style) -> bool {
     let scalars = [
-        style.size.width.into_raw().is_calc(),
-        style.size.height.into_raw().is_calc(),
-        style.min_size.width.into_raw().is_calc(),
-        style.min_size.height.into_raw().is_calc(),
-        style.max_size.width.into_raw().is_calc(),
-        style.max_size.height.into_raw().is_calc(),
-        style.inset.left.into_raw().is_calc(),
-        style.inset.right.into_raw().is_calc(),
-        style.inset.top.into_raw().is_calc(),
-        style.inset.bottom.into_raw().is_calc(),
-        style.margin.left.into_raw().is_calc(),
-        style.margin.right.into_raw().is_calc(),
-        style.margin.top.into_raw().is_calc(),
-        style.margin.bottom.into_raw().is_calc(),
-        style.padding.left.into_raw().is_calc(),
-        style.padding.right.into_raw().is_calc(),
-        style.padding.top.into_raw().is_calc(),
-        style.padding.bottom.into_raw().is_calc(),
-        style.border.left.into_raw().is_calc(),
-        style.border.right.into_raw().is_calc(),
-        style.border.top.into_raw().is_calc(),
-        style.border.bottom.into_raw().is_calc(),
-        style.gap.width.into_raw().is_calc(),
-        style.gap.height.into_raw().is_calc(),
-        style.flex_basis.into_raw().is_calc(),
+        style.size.width.into_raw().has_calc(),
+        style.size.height.into_raw().has_calc(),
+        style.min_size.width.into_raw().has_calc(),
+        style.min_size.height.into_raw().has_calc(),
+        style.max_size.width.into_raw().has_calc(),
+        style.max_size.height.into_raw().has_calc(),
+        style.inset.left.into_raw().has_calc(),
+        style.inset.right.into_raw().has_calc(),
+        style.inset.top.into_raw().has_calc(),
+        style.inset.bottom.into_raw().has_calc(),
+        style.margin.left.into_raw().has_calc(),
+        style.margin.right.into_raw().has_calc(),
+        style.margin.top.into_raw().has_calc(),
+        style.margin.bottom.into_raw().has_calc(),
+        style.padding.left.into_raw().has_calc(),
+        style.padding.right.into_raw().has_calc(),
+        style.padding.top.into_raw().has_calc(),
+        style.padding.bottom.into_raw().has_calc(),
+        style.border.left.into_raw().has_calc(),
+        style.border.right.into_raw().has_calc(),
+        style.border.top.into_raw().has_calc(),
+        style.border.bottom.into_raw().has_calc(),
+        style.gap.width.into_raw().has_calc(),
+        style.gap.height.into_raw().has_calc(),
+        style.flex_basis.into_raw().has_calc(),
     ];
     if scalars.into_iter().any(|is_calc| is_calc) {
         return false;
@@ -61,7 +61,7 @@ fn style_has_no_calc(style: &Style) -> bool {
     tracks.extend(style.grid_auto_columns.iter().copied());
     !tracks
         .into_iter()
-        .any(|track| track.min.into_raw().is_calc() || track.max.into_raw().is_calc())
+        .any(|track| track.min.into_raw().has_calc() || track.max.into_raw().has_calc())
 }
 
 #[test]
@@ -76,8 +76,8 @@ fn external_calc_in_size_is_replaced_with_auto() {
     };
     let id = doc.append_element(Some(0), "div", style, None::<&str>);
     let stored = doc.layout_style(id).expect("appended node has a style");
-    assert!(!stored.size.width.into_raw().is_calc());
-    assert!(!stored.size.height.into_raw().is_calc());
+    assert!(!stored.size.width.into_raw().has_calc());
+    assert!(!stored.size.height.into_raw().has_calc());
     assert_eq!(stored.size.width, taffy::Dimension::auto());
     assert_eq!(stored.size.height, taffy::Dimension::auto());
     assert!(style_has_no_calc(stored));
@@ -247,4 +247,49 @@ fn sanitized_document_can_move_across_threads() {
             .join()
             .expect("sanitized document moves across threads");
     });
+}
+
+#[test]
+fn external_fit_content_calc_in_sizes_and_flex_basis_is_sanitized() {
+    let mut doc = Document::new();
+    let value = taffy::Dimension::fit_content_calc(external_calc_ptr());
+    let style = Style {
+        size: taffy::Size {
+            width: value,
+            height: value,
+        },
+        flex_basis: value,
+        ..Style::default()
+    };
+    let id = doc.append_element(Some(0), "div", style, None::<&str>);
+    let stored = doc.layout_style(id).expect("appended node has a style");
+    assert_eq!(stored.size.width, taffy::Dimension::auto());
+    assert_eq!(stored.size.height, taffy::Dimension::auto());
+    assert_eq!(stored.flex_basis, taffy::Dimension::auto());
+    assert!(style_has_no_calc(stored));
+}
+
+#[test]
+fn external_fit_content_calc_in_grid_tracks_is_sanitized() {
+    let mut doc = Document::new();
+    let track = taffy::TrackSizingFunction {
+        min: taffy::MinTrackSizingFunction::auto(),
+        max: taffy::MaxTrackSizingFunction::fit_content_calc(external_calc_ptr()),
+    };
+    let style = Style {
+        grid_template_columns: vec![taffy::GridTemplateComponent::Single(track)],
+        grid_template_rows: vec![taffy::GridTemplateComponent::Repeat(
+            taffy::GridTemplateRepetition {
+                count: taffy::RepetitionCount::Count(2),
+                tracks: vec![track],
+                line_names: Vec::new(),
+            },
+        )],
+        grid_auto_rows: vec![track],
+        grid_auto_columns: vec![track],
+        ..Style::default()
+    };
+    let id = doc.append_element(Some(0), "div", style, None::<&str>);
+    let stored = doc.layout_style(id).expect("appended node has a style");
+    assert!(style_has_no_calc(stored));
 }

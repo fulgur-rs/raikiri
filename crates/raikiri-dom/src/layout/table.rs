@@ -2613,7 +2613,7 @@ fn fixed_column_width(width: Dimension, avail: f32) -> Option<f32> {
     // in fixed table layout. The style layer folds a `calc()` with only a
     // percentage or only a length into that percentage or length, so every
     // `calc()` left here is such a sum.
-    if width.into_raw().is_calc() {
+    if width.into_raw().is_plain_calc() {
         return None;
     }
     resolve_dimension(width, Some(avail))

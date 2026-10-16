@@ -162,7 +162,7 @@ fn a_percentage_max_height_of_an_indefinite_basis_does_not_bound_the_height() {
         ..style
     };
     assert_eq!(ifc_content_height_bounds(&style, None, None), (0.0, 30.0));
-    assert!(ifc_length_only(length).into_raw().is_calc());
+    assert!(ifc_length_only(length).into_raw().is_plain_calc());
     assert!(
         ifc_length_only(taffy::LengthPercentageAuto::calc(calc_ptr))
             .into_raw()

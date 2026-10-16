@@ -211,8 +211,8 @@ pub(crate) fn compute_multicol_layout(
             let container = &tree.nodes[parent].style;
             let item = &tree.nodes[index].style;
             let stretched = matches!(
-                item.align_self.or(container.align_items),
-                None | Some(taffy::AlignItems::STRETCH)
+                item.align_self.or(Some(container.align_items)),
+                None | Some(taffy::AlignItems::STRETCH | taffy::AlignItems::NORMAL)
             );
             match tree.nodes[parent].formatting_context {
                 FormattingContext::Flex => match container.flex_direction {
@@ -466,6 +466,7 @@ pub(crate) fn multicol_definite_dimension(
         | ExpandedDimension::MaxContent
         | ExpandedDimension::FitContentPx(_)
         | ExpandedDimension::FitContentPercent(_)
+        | ExpandedDimension::FitContentCalc(_)
         | ExpandedDimension::FitContent
         | ExpandedDimension::Stretch
         | ExpandedDimension::Content => return None,
@@ -796,14 +797,8 @@ fn layout_column_group(
             let layout = tree.nodes[child].unrounded_layout;
             let margin_top = layout.margin.top;
             let margin_bottom = layout.margin.bottom;
-            measurements.push((
-                child,
-                output,
-                layout,
-                margin_top,
-                margin_bottom,
-                margin_top + output.size.height + margin_bottom,
-            ));
+            let needed = margin_top + output.size.height + margin_bottom;
+            measurements.push((child, output, layout, margin_top, margin_bottom, needed));
         }
         let total = measurements.iter().map(|entry| entry.5).sum::<f32>();
         let largest = measurements.iter().map(|entry| entry.5).fold(0.0, f32::max);
@@ -845,7 +840,13 @@ fn layout_column_group(
             .and_then(|(entries, _)| entries.get(local_order));
         let (mut child_output, mut child_layout, margin_top, margin_bottom, needed) =
             if let Some((_, output, layout, margin_top, margin_bottom, needed)) = measured {
-                (*output, *layout, *margin_top, *margin_bottom, *needed)
+                (
+                    output.clone(),
+                    *layout,
+                    *margin_top,
+                    *margin_bottom,
+                    *needed,
+                )
             } else {
                 let child_height = match fragment_height {
                     Some(height) => AvailableSpace::Definite((height - cursor).max(0.0)),

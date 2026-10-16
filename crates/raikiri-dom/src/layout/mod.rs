@@ -15,6 +15,7 @@ use std::collections::{HashMap, HashSet};
 use crate::document::Document;
 use crate::fragment::{FragmentationContext, MulticolStyle};
 use crate::node::{MulticolTextFragment, NodeData, NodeFlags};
+use crate::taffy_impl::block_flow::context::BlockContext;
 use raikiri_style::property::{
     AlignSelfValue, BoxSizing as StyleBoxSizing, BreakBetween, CalcLengthPercentage, ClearValue,
     ColumnCountValue, ColumnFillValue, ContentAlignmentValue, Direction, DisplayValue,
@@ -31,7 +32,7 @@ use raikiri_style::{
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
-    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace, BlockContext,
+    AlignContent as TaffyAlignContent, AlignItems as TaffyAlignItems, AvailableSpace,
     BoxSizing as TaffyBoxSizing, Clear as TaffyClear, CompactLength, Dimension,
     Direction as TaffyDirection, Display, ExpandedDimension, ExpandedLengthPercentage,
     FlexDirection as TaffyFlexDirection, FlexWrap as TaffyFlexWrap, Float as TaffyFloat,
@@ -61,7 +62,7 @@ fn measured_ch_width(
     cascade.computed[id].width_ch.as_ref()?;
     let width = doc.nodes[id].style.size.width;
     let raw = width.into_raw();
-    if raw.is_calc() {
+    if raw.is_plain_calc() {
         Some(crate::taffy_impl::resolve_calc(
             raw.calc_value(),
             parent_width,

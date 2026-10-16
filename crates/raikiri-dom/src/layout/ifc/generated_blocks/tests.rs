@@ -154,7 +154,7 @@ fn a_negative_end_inset_moves_the_line_ends_out_past_the_line_space() {
             inline_size,
         };
         let block = block(css);
-        let mut bfc = taffy::BlockFormattingContext::new();
+        let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
         let ctx = bfc.root_block_context();
         let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
         let mut flow = flow(&mut y, &mut pending, &mut leading, &ctx);
@@ -249,7 +249,7 @@ fn flow<'a, 'b>(
 fn a_continued_box_takes_the_rest_of_its_height_in_the_next_fragmentainer() {
     let close_after = |css: &str| {
         let block = block(&format!("padding-top: 10px; {css}"));
-        let mut bfc = taffy::BlockFormattingContext::new();
+        let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
         let ctx = bfc.root_block_context();
         let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
         let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));
@@ -537,7 +537,7 @@ fn start_and_end_alignments_resolve_to_the_box_sides() {
 #[test]
 fn a_box_whose_first_line_moves_on_starts_its_lines_in_the_next_fragmentainer() {
     let block = block("");
-    let mut bfc = taffy::BlockFormattingContext::new();
+    let mut bfc = crate::taffy_impl::block_flow::context::BlockFormattingContext::new();
     let ctx = bfc.root_block_context();
     let (mut y, mut pending, mut leading) = (0.0, CollapsibleMarginSet::ZERO, None);
     let open = open(&block, flow(&mut y, &mut pending, &mut leading, &ctx));

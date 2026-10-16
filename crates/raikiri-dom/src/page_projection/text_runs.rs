@@ -1153,7 +1153,7 @@ fn grid_first_line(document: &Document, cascade: &CascadeResult, grid: usize) ->
 /// its `align-self` resolves to `baseline` and neither block-axis margin is
 /// `auto` (CSS Box Alignment 3 §9.3).
 fn aligns_by_baseline(container: &taffy::Style, item: &taffy::Style) -> bool {
-    let align = item.align_self.or(container.align_items);
+    let align = item.align_self.or(Some(container.align_items));
     align.is_some_and(|align| align.keyword() == taffy::AlignItemsKeyword::Baseline)
         && !item.margin.top.is_auto()
         && !item.margin.bottom.is_auto()
