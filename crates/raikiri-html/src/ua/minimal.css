@@ -179,6 +179,9 @@ dialog[open] { display: block; }
  * which have no rule yet (out of scope for this rule set). */
 ol, ul { display: block; margin-block: 1em; padding-inline-start: 40px; }
 ol { list-style-type: decimal; }
+/* The same section resets the list-item counter on each list, so nested
+ * lists number their items from 1 again (CSS Lists 3 §4.6). */
+ol, ul, menu { counter-reset: list-item; }
 ul { list-style-type: disc; }
 
 /* HTML Living Standard "Rendering" §lists (15.3.7) — list items generate a

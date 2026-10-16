@@ -2877,8 +2877,6 @@ css/css-lists/details-open.html
 css/css-lists/implicit-and-explicit-list-item-counters.html
 css/css-lists/li-insert-child.html
 css/css-lists/li-value-reversed-001.html
-css/css-lists/li-value-reversed-002.html
-css/css-lists/li-value-reversed-007a.html
 css/css-lists/li-value-reversed-011.html
 css/css-lists/li-with-height-001.html
 css/css-lists/list-and-block-in-inline.html
@@ -4685,3 +4683,17 @@ css/css-page/body-background-slr-print.html
 css/css-page/body-background-srl-print.html
 css/css-page/body-background-vlr-print.html
 css/css-page/body-background-vrl-print.html
+# Pass once ol start, li value and the implicit list-item increment feed the list-item counter, and out-of-range marker values fall back to decimal inside the style's own prefix and suffix; KEEP in audit-vacuous-passes.
+css/css-counter-styles/counter-style-at-rule/descriptor-prefix-invalid.html
+css/css-counter-styles/counter-style-at-rule/descriptor-suffix.html
+css/css-counter-styles/counter-style-at-rule/system-alphabetic.html
+css/css-counter-styles/counter-style-at-rule/system-fixed.html
+css/css-counter-styles/counter-style-at-rule/system-numeric.html
+css/css-counter-styles/counter-style-at-rule/system-symbolic.html
+css/css-counter-styles/lower-roman/css3-counter-styles-020.html
+css/css-counter-styles/lower-roman/css3-counter-styles-020a.html
+css/css-counter-styles/upper-roman/css3-counter-styles-024.html
+css/css-counter-styles/upper-roman/css3-counter-styles-024a.html
+css/css-lists/counter-list-item-2.html
+css/css-lists/counter-list-item-3.html
+css/css-lists/li-value-counter-reset-001.html

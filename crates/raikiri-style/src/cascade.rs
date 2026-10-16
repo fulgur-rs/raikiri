@@ -578,6 +578,7 @@ pub(crate) use directionality::*;
 pub use query::{SelectorMatcher, SelectorQuery};
 mod custom_property;
 mod html_quirks;
+mod list_hints;
 mod svg_hints;
 mod table_hints;
 pub(crate) use custom_property::*;

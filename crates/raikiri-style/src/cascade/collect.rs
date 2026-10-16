@@ -28,6 +28,7 @@ use super::html_quirks::{
     SubstantialBoundsCache, push_img_dimension_hints, push_margin_collapsing_quirk_declarations,
 };
 use super::limits::{CandidateBudget, CascadeLimits, Counter, WalkCounts};
+use super::list_hints::push_list_attribute_hints;
 use super::rule_index::{AncestorFilter, RuleIndex};
 use super::selector_match::{
     MatchCaches, MatchContext, match_complex_selector_list, selector_matches_pseudo_element,
@@ -584,6 +585,7 @@ impl<'a, 'r, D: StyleDom> Collector<'a, 'r, D> {
         // `img_width_attribute_overridable_by_author_stylesheet_regardless_of_specificity`
         // continues to check the outcome this comment claims.
         push_img_dimension_hints(elem, &mut sink)?;
+        push_list_attribute_hints(elem, &mut sink)?;
         push_table_attribute_hints(
             dom,
             elem,
