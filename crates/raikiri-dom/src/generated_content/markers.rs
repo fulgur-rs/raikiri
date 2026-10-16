@@ -141,10 +141,10 @@ fn list_marker_text_with_ordinal(
     // Ordered marker styles use the CSS default `". "` suffix. The
     // author-supplied string form is handled separately and remains verbatim.
     let suffix = |text: String| format!("{text}. ");
-    // CSS Counter Styles 3 §6: the alphabetic and roman styles cover only
-    // positive values and fall back to `decimal` for the rest.
-    let positive = |format: &dyn Fn(u32) -> String| match u32::try_from(ordinal) {
-        Ok(value) if value > 0 => suffix(format(value)),
+    // CSS Counter Styles 3 §6: the alphabetic styles cover positive values
+    // and the roman styles 1 to 3999; other values fall back to `decimal`.
+    let in_range = |max: u32, format: &dyn Fn(u32) -> String| match u32::try_from(ordinal) {
+        Ok(value @ 1..) if value <= max => suffix(format(value)),
         _ => suffix(ordinal.to_string()),
     };
     match list_style_type {
@@ -164,13 +164,15 @@ fn list_marker_text_with_ordinal(
                     suffix(format!("-{:02}", ordinal.unsigned_abs()))
                 }
                 "decimal-leading-zero" => suffix(format!("{ordinal:02}")),
-                "lower-alpha" | "lower-latin" => positive(&alpha_marker),
+                "lower-alpha" | "lower-latin" => in_range(u32::MAX, &alpha_marker),
                 "upper-alpha" | "upper-latin" => {
-                    positive(&|value| alpha_marker(value).to_uppercase())
+                    in_range(u32::MAX, &|value| alpha_marker(value).to_uppercase())
                 }
                 "lower-roman" | "upper-roman" => {
                     let style = CounterStyle::Named(lower.as_str().into());
-                    positive(&|value| format_counter(value as i32, &style, &cascade.counter_styles))
+                    in_range(3999, &|value| {
+                        format_counter(value as i32, &style, &cascade.counter_styles)
+                    })
                 }
                 _ => custom_marker_text(&cascade.counter_styles, name.as_str(), ordinal)
                     .unwrap_or_else(|| suffix(ordinal.to_string())),

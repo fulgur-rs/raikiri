@@ -394,6 +394,8 @@ fn out_of_range_marker_values_fall_back_to_decimal() {
     assert_eq!(marker("upper-alpha", 2), "B. ");
     assert_eq!(marker("lower-roman", -1), "-1. ");
     assert_eq!(marker("upper-roman", 4), "IV. ");
+    assert_eq!(marker("upper-roman", 3999), "MMMCMXCIX. ");
+    assert_eq!(marker("lower-roman", 4000), "4000. ");
     // The custom style keeps its own prefix and suffix around the fallback.
     assert_eq!(marker("dice", 3), "(BA)");
     assert_eq!(marker("dice", -1), "(-1)");

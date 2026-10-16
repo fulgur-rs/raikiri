@@ -339,8 +339,8 @@ impl CounterScopes {
 /// apply their own directives; descendants of `display: none` are omitted.
 /// This is an owned snapshot so paint can resolve counters without borrowing
 /// the DOM walk's transient scope state.
-/// List-item nodes also carry their sibling ordinal when no explicit
-/// `list-item` counter is in scope.
+/// List items always carry a `list-item` entry, because each one increments
+/// that counter implicitly (CSS Lists 3 §4.6).
 pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 
 /// Build named-counter snapshots in document order for marker and generated
@@ -350,8 +350,8 @@ pub type CounterSnapshot = HashMap<Symbol, Vec<i32>>;
 /// self-nesting and saturating arithmetic, and skips the directives of
 /// `display: none` / `display: contents` elements (CSS Lists 3 §4.5).
 /// `snapshots[idx]` is empty for an unreachable or skipped node.
-/// Ordinary list items receive their one-based sibling ordinal in the
-/// `list-item` entry so marker consumers can reuse it without rescanning.
+/// Each list item applies the implicit `list-item` increment, so its snapshot
+/// holds the full `list-item` stack that its marker reads.
 pub fn counter_snapshots(
     doc: &Document,
     cascade: &CascadeResult,
@@ -455,7 +455,11 @@ pub fn counter_snapshots_with_budget(
                         !matches!(component, raikiri_style::property::ContentComponent::None)
                     })
                 {
-                    scopes.apply(before, false, pending_pops.last_mut());
+                    scopes.apply(
+                        before,
+                        before.display == DisplayValue::ListItem,
+                        pending_pops.last_mut(),
+                    );
                 }
                 let children_start = stack.len();
                 stack.extend(node.children.iter().map(|&child| WalkStep::Enter(child)));
