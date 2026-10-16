@@ -382,7 +382,15 @@ fn block_border_box_end(
     } else {
         parent
             .and_then(|parent| document.nodes.layout_node(parent))
-            .and_then(|parent| parent.percent_basis_height)
+            .and_then(|parent| {
+                if document.pagination_on_transposed_axes {
+                    // Physical width percentages use the containing block's
+                    // content width, now the transposed layout's height.
+                    Some(parent.unrounded_layout.content_box_height())
+                } else {
+                    parent.percent_basis_height
+                }
+            })
     };
     let used = |value: ComputedLengthPercentageOrAuto| {
         match value {

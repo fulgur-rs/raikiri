@@ -89,9 +89,9 @@ pub fn root_box(
                 area_y + layout.location.y,
             ),
             Some(true) => {
-                let last_origin = area_width * page_count.saturating_sub(1) as f32;
+                let layout_width = document.laid_out_page_area_width().unwrap_or(area_width);
                 (
-                    area_x + layout.location.x + (last_origin - content_origin_y).max(0.0),
+                    area_x + layout.location.x + content_origin_y + area_width - layout_width,
                     area_y + layout.location.y,
                 )
             }

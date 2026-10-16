@@ -5,6 +5,46 @@ use raikiri_style::{build_rule_tree, cascade};
 use taffy::Style;
 
 #[test]
+fn paginating_a_vertical_root_preserves_percentage_width_limits() {
+    for writing_mode in ["vertical-rl", "vertical-lr"] {
+        for (limits, child_width, expected_width) in
+            [("max-width:50%", 150, 50.0), ("min-width:75%", 20, 75.0)]
+        {
+            for paginated in [false, true] {
+                let mut doc = Document::new();
+                let html = doc.append_element(
+                    Some(0), "html", Style::default(),
+                    Some(format!("display:block;writing-mode:{writing_mode};width:100px;height:400px;margin:0;padding:5px;border:2px solid").as_str()),
+                );
+                let body = doc.append_element(
+                    Some(html),
+                    "body",
+                    Style::default(),
+                    Some(format!("display:block;margin:0;{limits}").as_str()),
+                );
+                doc.append_element(
+                    Some(body),
+                    "div",
+                    Style::default(),
+                    Some(format!("display:block;width:{child_width}px;height:20px").as_str()),
+                );
+                let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+                if paginated {
+                    crate::layout::layout_pages(with_ahem(&mut doc), &cascade, page_box_800x600())
+                        .unwrap();
+                } else {
+                    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).unwrap();
+                }
+                assert_eq!(
+                    doc.nodes[body].unrounded_layout.size.width, expected_width,
+                    "{writing_mode}, {limits}, paginated={paginated}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn authored_html_and_body_sizes_are_laid_out_inside_the_page_area() {
     let mut doc = Document::new();
     let html = doc.append_element(
