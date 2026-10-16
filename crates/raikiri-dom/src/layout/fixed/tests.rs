@@ -513,7 +513,8 @@ fn absolute_boxes_are_placed_against_a_positioned_ancestor_other_than_the_parent
         "",
         "position:absolute;bottom:0;width:20px;height:10px",
     );
-    assert_eq!(absolute_rect(&doc, abs), (30.0, 590.0, 20.0, 10.0));
+    // The auto-height body contains the 50px spacer and 300px parent.
+    assert_eq!(absolute_rect(&doc, abs), (30.0, 340.0, 20.0, 10.0));
     // The grandparent's padding box: 214px wide at x=30, y=50.
     for (abs_css, expected) in [
         (

@@ -1,12 +1,8 @@
-//! Fixed-position boxes nested below the body.
+//! Out-of-flow boxes inside the document element.
 //!
-//! The body is the taffy root, and its border box is sized to the page
-//! area, the containing block of a fixed box in paged media (CSS 2.1 §10.1, CSS
-//! Position 3 §2.1). Taffy places every absolutely positioned box against
-//! the padding box of its parent, and the inline engine places one inside a
-//! paragraph against the paragraph. So a fixed box nested below the body is
-//! sized against its parent and offset by the parent's position, and even
-//! one that is a direct child of the body is moved by the body's border.
+//! The layout-only ICB has the page-area size. Taffy initially places
+//! absolutely positioned boxes against their immediate layout parent;
+//! the inline engine similarly places one against its paragraph.
 //!
 //! [`place_fixed_boxes_in_page_area`] lays out each fixed box again against
 //! the page area, as taffy lays out absolutely positioned children,
@@ -25,8 +21,8 @@
 //!
 //! An absolutely positioned box with no positioned, transformed or filtered
 //! ancestor has the initial containing block as its containing block (CSS 2.1
-//! §10.1), which in paged media has the size of the page area and starts at
-//! the root's border box origin like the page area of the first page. Taffy
+//! §10.1), which in paged media has the size and origin of the page area,
+//! independently of the root element's margins and dimensions. Taffy
 //! places such a box against its parent too, so it is laid out again here
 //! the same way.
 
@@ -42,7 +38,20 @@ use taffy::{
 /// Whether the element generates a non-atomic inline box: an inline box that
 /// was not blockified and is not a replaced element or form control.
 pub fn generates_inline_box(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    generates_inline_box_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
+    generates_inline_box_with_properties(document, id, cv, query_box_properties(document, id, cv))
+}
+
+fn query_box_properties<'a>(
+    document: &Document,
+    id: usize,
+    cv: &'a ComputedValues,
+) -> BoxPropertiesRef<'a> {
+    let properties = BoxPropertiesRef::from_computed(cv);
+    if super::ifc::assign::is_layout_root(document, id) {
+        properties.blockify_root()
+    } else {
+        properties
+    }
 }
 
 fn generates_inline_box_with_properties(
@@ -57,6 +66,7 @@ fn generates_inline_box_with_properties(
     let node = &document.nodes[id];
     let tag = node.tag_name().unwrap_or("");
     properties.display().is_inline_flow()
+        && !super::ifc::assign::is_layout_root(document, id)
         && !matches!(
             properties.position(),
             PositionValue::Absolute | PositionValue::Fixed
@@ -75,7 +85,7 @@ fn generates_inline_box_with_properties(
 /// Whether the element's `transform` applies to it: layout makes it the
 /// containing block of its fixed descendants, and the painter moves it.
 pub fn is_transformable(document: &Document, id: usize, cv: &ComputedValues) -> bool {
-    is_transformable_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
+    is_transformable_with_properties(document, id, cv, query_box_properties(document, id, cv))
 }
 
 /// Whether the captured box accepts transforms; shared with page projection.
@@ -123,13 +133,23 @@ fn containable(
     ) && !generates_inline_box_with_properties(document, id, cv, properties)
 }
 
+/// Whether this fixed box uses the page area instead of an ancestor box.
+pub(super) fn is_page_fixed(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    document.nodes[id].position() == &PositionValue::Fixed
+        && !document.ancestors(id).any(|ancestor| {
+            cascade.computed.get(ancestor).is_some_and(|cv| {
+                establishes_fixed_containing_block_for_layout(document, ancestor, cv)
+            })
+        })
+}
+
 /// Whether `id` is the containing block of its fixed-position descendants.
 pub fn establishes_fixed_containing_block(
     document: &Document,
     id: usize,
     cv: &ComputedValues,
 ) -> bool {
-    fixed_containing_block_with_properties(document, id, cv, BoxPropertiesRef::from_computed(cv))
+    fixed_containing_block_with_properties(document, id, cv, query_box_properties(document, id, cv))
 }
 
 /// Whether the captured layout box contains its fixed-position descendants.
@@ -236,20 +256,13 @@ pub(crate) fn place_fixed_boxes_in_page_area(
 ) {
     // The page area takes the direction of the root element (CSS Writing
     // Modes 4 §8), not an override on the body.
-    let direction = match document
-        .parent_of(root)
-        .and_then(|html| cascade.computed.get(html))
-    {
-        Some(cv) if cv.direction == Direction::Rtl => TaffyDirection::Rtl,
-        Some(_) => TaffyDirection::Ltr,
-        None => document.nodes[root].style.direction,
-    };
+    let direction = document.nodes[root].style.direction;
     // So does its writing mode.
     let page = Area {
         origin: Point::ZERO,
         size: area_size,
         direction,
-        vertical: is_vertical(document, document.parent_of(root).unwrap_or(root)),
+        vertical: is_vertical(document, root),
     };
     visit_out_of_flow_boxes(
         document,
@@ -351,12 +364,21 @@ fn visit_out_of_flow_boxes(
     root: usize,
     mut visit: impl FnMut(&mut Document, usize, Point<f32>, ContainingBlock),
 ) {
+    let root_origin = document
+        .inclusive_ancestors(root)
+        .fold(Point::ZERO, |origin, id| {
+            let location = document.nodes[id].unrounded_layout.location;
+            Point {
+                x: origin.x + location.x,
+                y: origin.y + location.y,
+            }
+        });
     let root_cv = cascade.computed.get(root);
     // A body that is a containing block for fixed boxes contains its fixed
     // descendants.
     let fixed_cb = match root_cv {
         Some(cv) if establishes_fixed_containing_block_for_layout(document, root, cv) => {
-            containing_block_of(document, root, cv, Point::ZERO)
+            containing_block_of(document, root, cv, root_origin)
         }
         _ => ContainingBlock::Page,
     };
@@ -365,7 +387,7 @@ fn visit_out_of_flow_boxes(
     // containing block, which the page area stands in for.
     let abs_cb = match root_cv {
         Some(cv) if establishes_absolute_containing_block(document, root, cv) => {
-            containing_block_of(document, root, cv, Point::ZERO)
+            containing_block_of(document, root, cv, root_origin)
         }
         _ if document.ancestors(root).any(|id| {
             cascade
@@ -387,7 +409,7 @@ fn visit_out_of_flow_boxes(
         .children
         .iter()
         .rev()
-        .map(|&child| (child, Point::ZERO, in_paragraph, abs_cb, fixed_cb))
+        .map(|&child| (child, root_origin, in_paragraph, abs_cb, fixed_cb))
         .collect();
     while let Some((id, parent_origin, in_paragraph, abs_cb, fixed_cb)) = stack.pop() {
         let node = &document.nodes[id];

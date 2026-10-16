@@ -175,13 +175,59 @@ impl CandidateFrame {
     }
 }
 
+/// The source element and its main content sequence used by pagination.
+/// The element supplies actual coordinates; the contents retain the existing
+/// break-opportunity policies for the document's main flow.
+#[derive(Clone, Copy)]
+pub(super) struct FlowRoots {
+    pub(super) element: usize,
+    pub(super) contents: usize,
+    pub(super) contents_box: usize,
+}
+
+impl FlowRoots {
+    pub(super) fn new(document: &Document, element: usize) -> Self {
+        let ordinary_root = matches!(
+            document.nodes[element].formatting_context,
+            FormattingContext::Block | FormattingContext::Inline
+        );
+        let contents = if ordinary_root {
+            crate::layout::find_body(document).unwrap_or(element)
+        } else {
+            element
+        };
+        let contents_box = if document.nodes[contents].in_ifc_subtree()
+            || document.nodes[contents].display() == DisplayValue::Contents
+        {
+            candidate_parent(document, contents).unwrap_or(element)
+        } else {
+            contents
+        };
+        Self {
+            element,
+            contents,
+            contents_box,
+        }
+    }
+}
+
+/// The box from whose coordinates a candidate is positioned. Inline
+/// ancestors of paragraph boxes and contents elements add no layout frame.
+pub(super) fn candidate_parent(document: &Document, child: usize) -> Option<usize> {
+    let mut parent = document.layout_parent_of(child)?;
+    while document.nodes[parent].display() == DisplayValue::Contents {
+        parent = document.layout_parent_of(parent)?;
+    }
+    Some(parent)
+}
+
 /// Collects the page candidates of a laid-out subtree. Page membership is
 /// decided from source coordinates before local page offsets, so the
 /// recursion carries each node's inherited state in a [`CandidateFrame`].
 pub(super) struct CandidateCollector<'a, 'c> {
     document: &'a Document,
     cascade: &'a CascadeResult,
-    body_id: usize,
+    roots: FlowRoots,
     page_step: f32,
     out: &'a mut Vec<PageCandidate>,
     text_lines: &'a mut TextLineIndex,
@@ -192,7 +238,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
     pub(super) fn new(
         document: &'a Document,
         cascade: &'a CascadeResult,
-        body_id: usize,
+        roots: FlowRoots,
         page_step: f32,
         out: &'a mut Vec<PageCandidate>,
         text_lines: &'a mut TextLineIndex,
@@ -201,7 +247,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
         Self {
             document,
             cascade,
-            body_id,
+            roots,
             page_step,
             out,
             text_lines,
@@ -213,7 +259,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
     /// in source order. `root_flow_offset` is where the body's border box
     /// starts in the page flow.
     pub(super) fn collect_flow(&mut self, root_flow_offset: f32) -> Result<(), LayoutError> {
-        self.collect(self.body_id, CandidateFrame::root(root_flow_offset))
+        self.collect(self.roots.element, CandidateFrame::root(root_flow_offset))
     }
 
     #[inline(never)]
@@ -228,7 +274,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
         let Self {
             document,
             cascade,
-            body_id,
+            roots,
             page_step,
             control,
             ..
@@ -246,6 +292,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
             inside_out_of_flow,
             ..
         } = frame;
+        let body_id = roots.contents;
         control.check_aborted()?;
         let Some(node) = document.get_node(node_id) else {
             return Ok(()); // cov:ignore: traversal IDs come from this document's valid child graph.
@@ -342,7 +389,10 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         matches!(kind, NodeKind::Element | NodeKind::Text) // cov:ignore: children of an inline-engine element are elements or text.
                     });
                     for child_id in rendered_children {
-                        self.collect(child_id, frame.clone())?;
+                        let mut child_frame = frame.clone();
+                        child_frame.direct_body_child =
+                            candidate_parent(document, child_id) == Some(roots.contents_box);
+                        self.collect(child_id, child_frame)?;
                     }
                     return Ok(());
                 }
@@ -421,7 +471,7 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                     own_page_name.clone().or(frame.inherited_page_name.clone())
                 };
                 let child_page_name = own_page_name.clone().or(frame.inherited_page_name);
-                let is_body = node_id == body_id;
+                let is_body = node_id == body_id || node_id == roots.element;
                 let participates_in_flow = matches!(
                     document.nodes[node_id].position(),
                     PositionValue::Static | PositionValue::Relative | PositionValue::Sticky
@@ -586,9 +636,8 @@ impl<'a, 'c> CandidateCollector<'a, 'c> {
                         child_id,
                         CandidateFrame {
                             parent_abs_y: child_parent_y,
-                            direct_body_child: BoxTree::for_layout(document)
-                                .parent(child_id, BoxParentScope::Document)
-                                == Some(body_id),
+                            direct_body_child: candidate_parent(document, child_id)
+                                == Some(roots.contents_box),
                             parent_height: node.unrounded_layout.size.height.max(0.0),
                             inherited_page_name: child_page_name.clone(),
                             inside_table: inside_table

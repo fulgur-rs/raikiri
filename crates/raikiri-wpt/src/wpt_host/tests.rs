@@ -636,7 +636,10 @@ fn scroll_content_extents_match_a_brute_force_walk() {
             }
             (expected_right, expected_bottom)
         };
-        let (cached_right, cached_bottom) = host.scroll_content_extents[node];
+        let (cached_right, cached_bottom) = host.scroll_content_extents[node]
+            .map_or((f64::NEG_INFINITY, f64::NEG_INFINITY), |content| {
+                (content.right, content.bottom)
+            });
         assert_eq!(cached_right, expected_right, "right content of node {node}");
         assert_eq!(
             cached_bottom, expected_bottom,
@@ -1337,5 +1340,128 @@ fn a_containing_block_above_a_fixed_box_does_not_release_a_fixed_ancestor() {
         &mut rt,
         "document.getElementById('target').scrollIntoView(); String(scrollY)",
     );
+    assert_eq!(offset, "0");
+}
+
+#[test]
+fn a_translated_descendant_extends_the_scrolling_area_and_scroll_height() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div id='box' style='height:100px;overflow:hidden'>\
+         <div style='height:50px;transform:translateY(400px)'></div></div>\
+         <div style='height:10px;transform:translateY(3000px)'></div>",
+    );
+    let metrics = text(
+        &mut rt,
+        "var box = document.getElementById('box');\
+         scrollTo(0, 99999); box.scrollHeight + ' ' + scrollY",
+    );
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(metrics, format!("450 {}", 3110.0 - height));
+}
+
+#[test]
+fn a_relatively_offset_box_counts_once_toward_the_scrolling_area() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div id='box' style='position:relative;top:2000px;height:10px'></div>",
+    );
+    let metrics = text(
+        &mut rt,
+        "scrollTo(0, 99999);\
+         document.getElementById('box').getBoundingClientRect().top + scrollY + ' ' + scrollY",
+    );
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(metrics, format!("2000 {}", 2010.0 - height));
+}
+
+#[test]
+fn rotated_descendants_add_their_bounding_box_in_the_container_space() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div id='moved' style='height:100px;overflow:hidden;transform:translateY(100px)'>\
+         <div style='height:300px'></div></div>\
+         <div id='turned' style='height:100px;width:400px;overflow:hidden'>\
+         <div style='width:400px;height:10px;transform:rotate(90deg)'></div></div>",
+    );
+    let metrics = text(
+        &mut rt,
+        "document.getElementById('moved').scrollHeight + ' ' +\
+         document.getElementById('turned').scrollHeight",
+    );
+    // The 400x10 box turns about its center, 5px below the container's top,
+    // and then reaches 200px below that center.
+    assert_eq!(metrics, "300 205");
+}
+
+#[test]
+fn generated_boxes_in_a_paragraph_extend_the_scroll_size_and_area() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0;line-height:20px}\
+         #box::before{content:'';display:inline}\
+         #box::after{content:'';display:block;height:2500px}</style>\
+         <div id='box' style='height:100px;overflow:hidden'>text</div>",
+    );
+    let metrics = text(
+        &mut rt,
+        "scrollTo(0, 99999); document.getElementById('box').scrollHeight + ' ' + scrollY",
+    );
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(metrics, format!("2520 {}", 2520.0 - height));
+}
+
+#[test]
+fn boxes_a_singular_transform_hides_add_nothing() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div id='box' style='height:100px;overflow:hidden'>\
+         <div style='height:500px;transform:scale(0)'><div style='height:900px'></div></div></div>",
+    );
+    let height = text(
+        &mut rt,
+        "String(document.getElementById('box').scrollHeight)",
+    );
+    assert_eq!(height, "100");
+}
+
+#[test]
+fn a_hidden_scroll_container_keeps_its_own_scroll_height() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div style='transform:scale(0)'>\
+         <div id='box' style='height:100px;overflow:hidden'>\
+         <div style='height:500px'></div></div></div>",
+    );
+    let height = text(
+        &mut rt,
+        "String(document.getElementById('box').scrollHeight)",
+    );
+    assert_eq!(height, "500");
+}
+
+#[test]
+fn inverse_undoes_an_affine_transform_and_refuses_a_singular_one() {
+    use raikiri_traits::PaintTransform;
+    let transform = PaintTransform::new(2.0, 0.0, 1.0, 4.0, 10.0, -6.0);
+    let undone = super::inverse(transform).unwrap() * transform;
+    assert_eq!(undone.apply((3.0, 5.0)), (3.0, 5.0));
+    assert!(super::inverse(PaintTransform::new(1.0, 2.0, 2.0, 4.0, 0.0, 0.0)).is_none());
+}
+
+#[test]
+fn the_root_transform_moves_the_scrolling_area_and_a_singular_one_empties_it() {
+    let (_dir, mut rt) = runtime(
+        "<style>html{transform:translateY(2000px)}body{margin:0}</style>\
+         <div style='height:3000px'></div>",
+    );
+    // The content is taller than the page, so the moved canvas ends at the
+    // translation plus the content height whatever the root boxes measure.
+    let offset = text(&mut rt, "scrollTo(0, 99999); String(scrollY)");
+    assert_eq!(offset, "4400");
+    let (_dir, mut rt) = runtime(
+        "<style>html{transform:scale(0)}body{margin:0}</style>\
+         <div style='height:3000px'></div>",
+    );
+    let offset = text(&mut rt, "scrollTo(0, 99999); String(scrollY)");
     assert_eq!(offset, "0");
 }

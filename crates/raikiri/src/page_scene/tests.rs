@@ -180,11 +180,11 @@ fn build_page_scene_populates_metadata_from_hello_world() {
         !scene.node_ids.is_empty(),
         "node_ids must include at least body + descendants"
     );
-    // DFS starts at body, so body_id must be the first entry in node_ids
+    // The document element starts the same walk as the painter.
     assert_eq!(
         scene.node_ids.first().copied(),
-        scene.body_id,
-        "node_ids[0] must be body_id (DFS starts at body, parity with paint_document)"
+        scene.root_id,
+        "the first fragment belongs to the document element"
     );
     // Fragments coverage: every id in node_ids has at least one fragment
     for id in &scene.node_ids {
@@ -465,48 +465,9 @@ fn rasterize_rejects_oversized_direct_page_box() {
     ));
 }
 
-/// Direct unit coverage for the margin helpers.
-///
-/// These pin the used-value resolution that the integration tests above
-/// exercise only through UA margins.
+/// Root margins stay in fragment coordinates and never collapse with body.
 #[test]
-fn margin_helpers_cover_used_value_branches() {
-    use raikiri_style::property::CalcLengthPercentage;
-    use raikiri_style::resolve::ComputedLengthPercentageOrAuto;
-
-    assert_eq!(
-        super::used_margin_px(ComputedLengthPercentageOrAuto::Px(8.0), 800.0),
-        8.0
-    );
-    assert_eq!(
-        super::used_margin_px(ComputedLengthPercentageOrAuto::Percent(10.0), 800.0),
-        80.0
-    );
-    assert_eq!(
-        super::used_margin_px(
-            ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
-                percent: 10.0,
-                px: 5.0
-            }),
-            800.0
-        ),
-        85.0
-    );
-    assert_eq!(
-        super::used_margin_px(ComputedLengthPercentageOrAuto::Auto, 800.0),
-        0.0
-    );
-    assert_eq!(
-        super::used_margin_px(ComputedLengthPercentageOrAuto::Px(f32::NAN), 800.0),
-        0.0
-    );
-}
-
-/// The `<html>` margins add to the page offset as they are: margins of the
-/// root element's box do not collapse with the body's (CSS 2.1 section
-/// 8.3.1), and a missing `<html>` or an unusable percent basis falls back.
-#[test]
-fn html_margins_add_to_the_body_offset() {
+fn html_margins_are_already_in_the_fragment_coordinates() {
     let opts = ParseOptions {
         extra_stylesheets: &[],
         network: None,
@@ -519,7 +480,7 @@ fn html_margins_add_to_the_body_offset() {
     let mut dom = uncascaded.dom;
     raikiri_dom::layout_single_page(&mut dom, &cascade, PageBox::A4).expect("layout Ok");
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
-    assert_eq!(scene.body_offset_pt, (PageBox::A4.width * 0.04, 10.0));
+    assert_eq!(scene.body_offset_pt, (0.0, 0.0));
     let idx = (0..dom.node_count())
         .find(|&i| dom.element_attribute(i, "id") == Some("a"))
         .expect("probe resolves");
@@ -530,16 +491,11 @@ fn html_margins_add_to_the_body_offset() {
         .expect("probe has a fragment");
     // The body's 8px top margin collapses with the div's 30px one.
     assert_eq!(frag.y + scene.body_offset_pt.1, 40.0);
-    let html_idx =
-        (0..dom.node_count()).find(|&i| dom.get_node(i).and_then(|n| n.tag_name()) == Some("html"));
-    assert_eq!(
-        super::html_margin_offsets(&cascade, None, 800.0),
-        (0.0, 0.0)
-    );
-    assert_eq!(
-        super::html_margin_offsets(&cascade, html_idx, f32::NAN),
-        (0.0, 10.0)
-    );
+    let root = scene
+        .fragments
+        .get(&scene.root_id.expect("root"))
+        .expect("root fragment");
+    assert_eq!((root[0].x, root[0].y), (PageBox::A4.width * 0.04, 10.0));
 }
 
 /// The body offset stays finite whatever keeps the body's top margin from
@@ -714,7 +670,7 @@ fn many_sibling_inline_boxes_build_a_page_scene_within_two_seconds() {
     let started = Instant::now();
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     let elapsed = started.elapsed();
-    assert_eq!(scene.node_ids.len(), 30_002);
+    assert_eq!(scene.node_ids.len(), 30_003);
     assert!(
         elapsed < Duration::from_secs(2),
         "building the scene for 30,000 sibling spans took {elapsed:?}"
@@ -754,7 +710,7 @@ fn many_sibling_text_nodes_build_a_page_scene_within_two_seconds() {
     let started = Instant::now();
     let scene = build_page_scene(&dom, &cascade, PageBox::A4);
     let elapsed = started.elapsed();
-    assert_eq!(scene.node_ids.len(), 20_002);
+    assert_eq!(scene.node_ids.len(), 20_003);
     assert!(
         elapsed < Duration::from_secs(2),
         "building the scene for 20,000 sibling text nodes took {elapsed:?}"
@@ -833,11 +789,10 @@ fn build_page_scene_for_page_splits_tall_content_across_pages() {
     assert!(!page1.node_ids.contains(&top_id), "#top is above page 1");
     assert!(page1.node_ids.contains(&low_id), "#low fits on page 1");
 
-    // The body container is present on every page so its propagated
-    // background stays available; both scenes start their DFS there.
-    let body_id = page0.body_id.expect("shaped doc has <body>");
-    assert_eq!(page0.node_ids.first(), Some(&body_id));
-    assert_eq!(page1.node_ids.first(), Some(&body_id));
+    // The actual root spans both pages, and the walk starts there.
+    let root_id = page0.root_id.expect("shaped doc has a root");
+    assert_eq!(page0.node_ids.first(), Some(&root_id));
+    assert_eq!(page1.node_ids.first(), Some(&root_id));
 
     // Fragment y is rebased into page-local space; adding the origin back
     // recovers document order across the page boundary.
@@ -932,4 +887,132 @@ fn page_scene_places_an_atomic_inside_a_span_once() {
         rects(&scene, find_element(&dom, "b")),
         [(40.0, 0.0, 20.0, 10.0)]
     );
+}
+
+#[test]
+fn page_scene_uses_actual_root_and_body_boxes_relative_to_the_page_area() {
+    let (dom, _cascade, scene) = scene_with_engine(
+        "<!doctype html><style>@page{margin:20px;padding:5px;border:2px solid}\
+         html{display:block;margin:10px;padding:5px;border:2px solid;width:240px;height:180px}\
+         body{display:block;margin:20px;padding:3px;border:1px solid;width:100px;height:50px}\
+         div{width:50%;height:50%}</style><div></div>",
+    );
+    let html = find_element(&dom, "html");
+    let body = find_element(&dom, "body");
+    let div = find_element(&dom, "div");
+    assert_eq!(scene.body_offset_pt, (27.0, 27.0));
+    assert_eq!(scene.root_id, Some(NodeId::new(html as u64)));
+    assert_eq!(scene.body_id, Some(NodeId::new(body as u64)));
+    assert_eq!(rects(&scene, html), [(10.0, 10.0, 254.0, 194.0)]);
+    assert_eq!(rects(&scene, body), [(37.0, 37.0, 108.0, 58.0)]);
+    assert_eq!(rects(&scene, div), [(41.0, 41.0, 50.0, 25.0)]);
+    assert_eq!(
+        scene.drawables.block_styles[&NodeId::new(body as u64)].layout_size,
+        Some((108.0, 58.0))
+    );
+}
+
+#[test]
+fn page_scene_projects_vertical_blocks_onto_their_own_pages() {
+    for mode in ["horizontal-tb", "vertical-rl", "vertical-lr"] {
+        let markup = format!(
+            "<!doctype html><style>html{{writing-mode:{mode}}}body{{margin:0}}div{{width:800px;height:600px}}</style><div id=first></div><div id=second></div><div id=fixed style='position:fixed;left:20px;top:10px;width:10px;height:5px'></div>"
+        );
+        let uncascaded = parse(
+            markup.as_bytes(),
+            &ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .expect("parse");
+        let cascade = build_cascaded(&uncascaded).expect("cascade");
+        let mut dom = uncascaded.dom;
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        let slices = raikiri_dom::layout_pages(&mut dom, &cascade, page).expect("pages");
+        assert_eq!(slices.len(), 2, "{mode}");
+        let first = (0..dom.node_count())
+            .find(|&id| dom.element_attribute(id, "id") == Some("first"))
+            .expect("first");
+        let second = (0..dom.node_count())
+            .find(|&id| dom.element_attribute(id, "id") == Some("second"))
+            .expect("second");
+        let fixed = (0..dom.node_count())
+            .find(|&id| dom.element_attribute(id, "id") == Some("fixed"))
+            .expect("fixed");
+        for (i, slice) in slices.iter().enumerate() {
+            let scene =
+                build_page_scene_for_page(&dom, &cascade, page, i as u32, slice.content_origin_y);
+            let (present, absent) = if i == 0 {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            assert_eq!(
+                rects(&scene, present),
+                [(0.0, 0.0, 800.0, 600.0)],
+                "{mode} page {i}"
+            );
+            assert!(
+                !scene.fragments.contains_key(&NodeId::new(absent as u64)),
+                "{mode} page {i}"
+            );
+            assert_eq!(
+                rects(&scene, fixed),
+                [(20.0, 10.0, 10.0, 5.0)],
+                "fixed {mode} page {i}"
+            );
+        }
+    }
+}
+
+#[test]
+fn page_scene_maps_vertical_text_lines_to_physical_rectangles() {
+    for (mode, first_x, second_x) in [("vertical-rl", -200.0, 600.0), ("vertical-lr", 0.0, -800.0)]
+    {
+        let markup = format!(
+            "<!doctype html><style>html{{writing-mode:{mode}}}body{{margin:0;font:10px/10px Ahem}}p{{margin:0;height:10px}}</style><p>{}</p>",
+            vec!["X"; 100].join(" ")
+        );
+        let uncascaded = parse(
+            markup.as_bytes(),
+            &ParseOptions {
+                extra_stylesheets: &[],
+                network: None,
+                base_url: None,
+            },
+        )
+        .expect("parse");
+        let cascade = build_cascaded(&uncascaded).expect("cascade");
+        let mut dom = uncascaded.dom;
+        dom.set_font_collection(
+            raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("fonts"),
+        );
+        let mut page = PageBox::new();
+        page.width = 800.0;
+        page.height = 600.0;
+        let slices = raikiri_dom::layout_pages(&mut dom, &cascade, page).expect("pages");
+        assert_eq!(slices.len(), 2);
+        let paragraph = find_element(&dom, "p");
+        let text = node(&dom, paragraph).children[0];
+        for (i, x) in [first_x, second_x].into_iter().enumerate() {
+            let scene = build_page_scene_for_page(
+                &dom,
+                &cascade,
+                page,
+                i as u32,
+                slices[i].content_origin_y,
+            );
+            // Like horizontal text snapshots, this records the whole owned
+            // line range, translated to the page, rather than clipping it.
+            assert_eq!(
+                rects(&scene, text),
+                [(x, 0.0, 1000.0, 10.0)],
+                "{mode} page {i}"
+            );
+        }
+    }
 }

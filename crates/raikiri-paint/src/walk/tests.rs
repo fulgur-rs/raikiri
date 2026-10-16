@@ -877,16 +877,63 @@ fn ratio_only_auto_background_uses_positioning_area_as_default_size() {
     );
 }
 
+fn root_border_document(style: &str) -> Document {
+    let mut document = Document::new();
+    let html = document.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some(format!("display:block;width:100px;height:100px;{style}")),
+    );
+    document.append_element(Some(html), "body", Style::default(), Some("display:none"));
+    document
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_laid_out_document_decorations(
+    image_cache: &ImageBrushCache,
+    scene: &mut impl PaintScene,
+    document: &mut Document,
+    cascade: &CascadeResult,
+    page: PageBox,
+    pixels: Option<&dyn ImagePixelSource>,
+    warnings: &mut Vec<RenderWarning>,
+) {
+    if document.document_element_index().is_none() {
+        return;
+    }
+    raikiri_dom::layout_single_page(document, cascade, page).expect("layout");
+    let snapshots = document
+        .shared_counter_snapshots(cascade)
+        .expect("counters");
+    paint_document_impl(
+        image_cache,
+        scene,
+        document,
+        cascade,
+        &snapshots,
+        page,
+        0.0,
+        None,
+        page.width,
+        pixels,
+        warnings,
+        &[],
+        Affine::IDENTITY,
+        None,
+    );
+}
+
 #[test]
-fn paint_root_element_border_without_html_is_noop() {
-    let document = Document::new();
+fn painting_document_decorations_without_a_root_is_noop() {
+    let mut document = Document::new();
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(
+    paint_laid_out_document_decorations(
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &document,
+        &mut document,
         &cascade,
         PageBox::A4,
         None,
@@ -896,21 +943,15 @@ fn paint_root_element_border_without_html_is_noop() {
 }
 
 #[test]
-fn paint_root_element_border_paints_html_border_sides() {
-    let mut document = Document::new();
-    document.append_element(
-        Some(document.root_index()),
-        "html",
-        Style::default(),
-        Some("border: 5px solid red"),
-    );
+fn painting_document_decorations_paints_html_border_sides() {
+    let mut document = root_border_document("border:5px solid red");
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(
+    paint_laid_out_document_decorations(
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &document,
+        &mut document,
         &cascade,
         PageBox::A4,
         None,
@@ -5614,21 +5655,15 @@ impl ImagePixelSource for BorderImagePixels {
 /// The fills that painting the root element's border with `style` records,
 /// and the number of warnings it reports.
 fn root_border_fills(style: &str, pixel_source: Option<&dyn ImagePixelSource>) -> (usize, usize) {
-    let mut document = Document::new();
-    document.append_element(
-        Some(document.root_index()),
-        "html",
-        Style::default(),
-        Some(style),
-    );
+    let mut document = root_border_document(style);
     let rules = build_rule_tree(&document);
     let cascade = cascade(&document, &rules).expect("cascade Ok");
     let mut scene = Scene::new();
     let mut warnings = Vec::new();
-    paint_root_element_border(
+    paint_laid_out_document_decorations(
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &document,
+        &mut document,
         &cascade,
         PageBox::A4,
         pixel_source,
@@ -5678,22 +5713,17 @@ fn a_relative_border_image_url_resolves_against_the_document_base_url() {
         pixels: BorderImagePixels::opaque(),
     };
     let fills = |base_url: Option<&str>| {
-        let mut document = Document::new();
+        let mut document =
+            root_border_document("border:5px solid red;border-image:url(border.png#part) 1 fill");
         document.set_base_url(base_url.map(|base| url::Url::parse(base).unwrap()));
-        document.append_element(
-            Some(document.root_index()),
-            "html",
-            Style::default(),
-            Some("border: 5px solid red; border-image: url(border.png#part) 1 fill"),
-        );
         let rules = build_rule_tree(&document);
         let cascade = cascade(&document, &rules).expect("cascade Ok");
         let mut scene = Scene::new();
         let mut warnings = Vec::new();
-        paint_root_element_border(
+        paint_laid_out_document_decorations(
             &crate::walk::ImageBrushCache::for_document(&document),
             &mut scene,
-            &document,
+            &mut document,
             &cascade,
             PageBox::A4,
             Some(&source),
@@ -5799,19 +5829,13 @@ fn a_gradient_border_image_fills_each_part_with_its_first_color() {
 /// The image brushes of the fills that painting the root element's border
 /// with `style` records over a 3×3 image.
 fn root_border_brush_sizes(style: &str) -> Vec<(u32, u32)> {
-    let mut document = Document::new();
-    document.append_element(
-        Some(document.root_index()),
-        "html",
-        Style::default(),
-        Some(style),
-    );
+    let mut document = root_border_document(style);
     let cascade = cascade(&document, &build_rule_tree(&document)).expect("cascade Ok");
     let mut scene = Scene::new();
-    paint_root_element_border(
+    paint_laid_out_document_decorations(
         &crate::walk::ImageBrushCache::default(),
         &mut scene,
-        &document,
+        &mut document,
         &cascade,
         PageBox::A4,
         Some(&BorderImagePixels::opaque()),
@@ -6576,5 +6600,50 @@ fn an_inline_piece_without_a_joined_box_cuts_its_border_image_along_its_axis() {
         let last = inline_border_image_tile_ends(vertical, false, true);
         assert!(!last.is_empty());
         assert!(last.iter().all(|&(_, high)| high > 5.0), "{last:?}");
+    }
+}
+
+#[test]
+fn root_and_body_decorations_use_their_actual_border_boxes() {
+    for display in ["block", "contents"] {
+        for (transform, shift) in [("none", 0), ("translateX(5px)", 5)] {
+            let markup = format!(
+                "<!doctype html><style>html{{display:{display};margin:10px;padding:5px;border:2px solid red;width:120px;height:100px;background:white;transform:{transform}}}body{{display:block;margin:20px;padding:3px;border:1px solid blue;width:40px;height:30px;background:green}}</style><body></body>"
+            );
+            let pixels = paint_ahem_page(&markup, square_page(200.0), 0);
+            let pixel = |x: usize, y: usize| &pixels[(y * 200 + x) * 4..(y * 200 + x) * 4 + 4];
+            // Root border starts at its 10px margin; the body's border starts
+            // 2px border + 5px padding + 20px margin further inside it.
+            assert_eq!(
+                pixel(10 + shift, 10),
+                &[255, 0, 0, 255],
+                "root {display} {transform}"
+            );
+            assert_eq!(
+                pixel(37 + shift, 40),
+                &[0, 0, 255, 255],
+                "body border {display} {transform}"
+            );
+            assert_eq!(
+                pixel(42 + shift, 42),
+                &[0, 128, 0, 255],
+                "body background {display} {transform}"
+            );
+            assert_eq!(
+                pixel(30 + shift, 40),
+                &[255, 255, 255, 255],
+                "body margin {display} {transform}"
+            );
+            assert_eq!(
+                pixel(143 + shift, 60),
+                &[255, 0, 0, 255],
+                "root width {display} {transform}"
+            );
+            assert_eq!(
+                pixel(150 + shift, 60),
+                &[255, 255, 255, 255],
+                "outside root {display} {transform}"
+            );
+        }
     }
 }

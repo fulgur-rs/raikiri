@@ -145,10 +145,11 @@ fn a_vertical_paragraph_continues_at_the_height_of_later_pages() {
 
 #[test]
 fn a_vertical_page_start_after_a_percentage_width_box_is_measured_in_the_page_area() {
-    // The box takes half of the 160px page area, leaving eight lines on
-    // page 0 for 24 words. The other 76 take eleven 360px lines.
+    // A definite 160px body makes the box 80px wide, leaving eight lines
+    // on page 0 for 24 words. The other 76 take eleven 360px lines. The
+    // ordinary auto-width body is no longer a stand-in for the page area.
     let out = run(&format!(
-        "{VERTICAL_PAGES}<div style='width:50%'></div><p>{}</p>",
+        "{VERTICAL_PAGES}<style>body{{width:160px}}</style><div style='width:50%'></div><p>{}</p>",
         words(100).join(" ")
     ));
     assert_eq!(out.slices.len(), 2);
@@ -647,17 +648,14 @@ fn a_formatting_context_body_keeps_its_last_blocks_margin() {
 #[test]
 fn generated_overflow_leaves_a_definite_body_height() {
     // The `::after` overflows the 10px body onto the third page. The body
-    // keeps the box layout gave it, the page area and its border, and does
-    // not follow its overflow there.
+    // keeps its authored 10px content height plus its 1px borders, and
+    // does not follow its generated overflow onto those later pages.
     let out = run(&format!(
         "{}<style>body {{ height: 10px; border: 1px solid }} \
          body::after {{ content: ''; display: block; height: 400px }}</style>",
         PAGES.replace("margin-left: 220px", "margin-top: 20px")
     ));
-    assert_eq!(
-        body_on_pages(&out),
-        vec![Some((20.0, 160.0)), Some((20.0, 2.0)), None]
-    );
+    assert_eq!(body_on_pages(&out), vec![Some((20.0, 12.0)), None, None]);
 }
 
 #[test]

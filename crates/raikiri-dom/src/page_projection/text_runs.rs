@@ -724,9 +724,12 @@ pub(super) fn column_clip_owner(
     id: usize,
 ) -> bool {
     context.fragment_clipped.contains(&id)
-        || cascade.computed.get(id).is_some_and(
-            |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
-        )
+        || document
+            .get_node(id)
+            .is_some_and(|node| node.is_multicol_container())
+            && cascade.computed.get(id).is_some_and(
+                |cv| matches!(cv.column_count, ColumnCountValue::Count(count) if count > 1),
+            )
         || used_columns(document, id) > 1
 }
 

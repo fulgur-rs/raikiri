@@ -179,3 +179,25 @@ fn a_nested_container_taller_than_the_outer_column_resolves_its_gap_in_the_outer
     };
     assert_eq!(differing_pixels(&nested("30%"), &nested("15px")), 0);
 }
+
+#[test]
+fn column_properties_on_flex_grid_and_table_boxes_change_nothing() {
+    // CSS Multi-column Layout 1, 2: the column properties apply only to
+    // block containers, so these boxes paint as they would without them:
+    // unclipped, and with the overflowing lines above the later background.
+    for (outer, inner) in [
+        ("display:flex", "display:grid"),
+        ("display:grid", "display:block"),
+        ("display:flex", "display:block"),
+        ("display:table", "display:table-cell"),
+    ] {
+        let body = |columns: &str| {
+            format!(
+                "<div style='{outer};width:100px;height:20px;{columns}'><div style='{inner}'><p style='margin:0;height:5px;font:10px/15px monospace'>A<br>B<br>C</p><div style='height:15px;background:green'></div></div></div>"
+            )
+        };
+        let actual = raster(&body("column-count:2;column-gap:0"));
+        let expected = raster(&body(""));
+        assert_eq!(differing_pixels(&actual, &expected), 0, "{outer} > {inner}");
+    }
+}

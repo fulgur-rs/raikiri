@@ -72,7 +72,9 @@ fn the_root_element_border_image_replaces_its_border() {
         "html{border:5px solid blue;border-image:linear-gradient(lime,lime) 1}",
         "",
     );
-    assert_eq!(pixel(&pixels, 2, 25), LIME);
+    // An empty auto-height root has only its two 5px border edges.
+    assert_eq!(pixel(&pixels, 2, 5), LIME);
+    assert_eq!(pixel(&pixels, 2, 25), [255, 255, 255]);
 }
 
 #[test]

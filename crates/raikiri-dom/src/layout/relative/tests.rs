@@ -248,14 +248,13 @@ fn a_calc_with_a_zero_percentage_needs_no_definite_height() {
 }
 
 #[test]
-fn body_percentages_resolve_against_the_page_area() {
+fn body_percentages_resolve_against_the_actual_root_content_box() {
     let (document, cascade, body) = relative_body(
-        None,
+        Some("display:block;width:200px;height:100px"),
         "display:block;margin:0;position:relative;left:10%;top:10%",
     );
-    let (width, height) = document.fixed_page_area.expect("the body is laid out");
     let (dx, dy) = used_relative_offset(&document, &cascade, &cascade.computed[body], body);
-    assert!((dx - width * 0.1).abs() < 1e-3 && (dy - height * 0.1).abs() < 1e-3);
+    assert_eq!((dx, dy), (20.0, 10.0));
 }
 
 /// A relatively positioned body of style `body` under an `html` root of
