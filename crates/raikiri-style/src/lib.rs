@@ -33,6 +33,9 @@
 /// nesting retains its stricter limit of 32.
 pub(crate) const MAX_CSS_NESTING_DEPTH: usize = 75;
 
+pub mod easing;
+pub use easing::is_valid_easing_function;
+
 pub mod error;
 pub use error::{CascadeError, CascadeLimitKind};
 
