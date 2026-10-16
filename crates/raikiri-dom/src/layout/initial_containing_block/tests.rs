@@ -983,6 +983,62 @@ fn the_icb_takes_the_writing_mode_of_the_html_body() {
 }
 
 #[test]
+fn a_foreign_body_lookalike_is_not_the_principal_element() {
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;width:100px;writing-mode:horizontal-tb"),
+    );
+    let foreign = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    doc.set_element_namespace(foreign, Some("urn:x".into()));
+    doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;writing-mode:horizontal-tb"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(doc.nodes[html].unrounded_layout.location.x, 0.0);
+}
+
+#[test]
+fn fixed_boxes_take_the_principal_direction_of_the_page_area() {
+    use crate::layout::test_support::absolute_rect;
+    // With both insets, `left` wins in the body's ltr direction even though
+    // the root is rtl.
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;direction:rtl"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;direction:ltr"),
+    );
+    let fixed = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;position:fixed;left:10px;right:10px;top:0;width:50px;height:10px"),
+    );
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).expect("cascade");
+    layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
+    assert_eq!(absolute_rect(&doc, fixed).0, 10.0);
+}
+
+#[test]
 fn paginated_heights_keep_a_flex_items_overflow_outside_its_used_height() {
     // The item's used height is clamped below its content. Pagination only
     // grows it by what a forced break inside it inserts: the 40px of

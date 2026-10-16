@@ -26,8 +26,12 @@ pub(crate) fn prepare_root_element(document: &mut Document) {
 /// on the root or that body disables the propagation (CSS Containment
 /// 2 §2).
 fn principal_element(document: &Document, cascade: &CascadeResult, root: usize) -> usize {
+    const HTML: Option<&str> = Some("http://www.w3.org/1999/xhtml");
+    let is_html = |id: usize, name: &str| {
+        document.nodes[id].tag_name() == Some(name) && document.element_namespace_uri(id) == HTML
+    };
     let contained = |id: usize| cascade.computed[id].contain != Contain::NONE;
-    if document.nodes[root].tag_name() != Some("html") || contained(root) {
+    if !is_html(root, "html") || contained(root) {
         return root;
     }
     document.nodes[root]
@@ -35,8 +39,7 @@ fn principal_element(document: &Document, cascade: &CascadeResult, root: usize) 
         .iter()
         .copied()
         .find(|&child| {
-            document.nodes[child].tag_name() == Some("body")
-                && cascade.computed[child].display != DisplayValue::None
+            is_html(child, "body") && cascade.computed[child].display != DisplayValue::None
         })
         .filter(|&body| !contained(body))
         .unwrap_or(root)
