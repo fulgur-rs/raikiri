@@ -1782,8 +1782,8 @@ fn layout_formatting_context_child(
         floats_bottom: f32::NEG_INFINITY,
         // A box that establishes a formatting context keeps its children's
         // margins, but its own still collapses with the ones above it.
-        top_margin: (!beside_floats && clear == taffy::Clear::None)
-            .then(|| pending.collapse_with_margin(margin.top)),
+        // Specifying clear introduces no clearance without relevant floats.
+        top_margin: (!beside_floats).then(|| pending.collapse_with_margin(margin.top)),
         collapses_through: false,
     }
 }

@@ -224,3 +224,35 @@ fn an_escaping_margin_keeps_a_nested_float_visible_to_following_clearance() {
     assert_box(&html, "float", 20.0, 100.0);
     assert_box(&html, "after", 120.0, 20.0);
 }
+
+#[test]
+fn clear_without_floats_does_not_drop_a_leading_formatting_context_margin() {
+    let html = document(
+        "",
+        "<section id=root><div id=child style='display:flow-root;clear:both;margin-top:20px'>X</div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "root", 20.0, 40.0);
+    assert_box(&html, "child", 20.0, 20.0);
+    assert_box(&html, "after", 60.0, 20.0);
+}
+
+#[test]
+fn generated_clearance_preserves_an_earlier_escaping_margin_set() {
+    let html = document(
+        "section::before{content:'';display:block;margin-top:30px}section::after{content:'X';display:block;clear:both;margin-top:20px}",
+        "<div id=float style='float:left;width:10px;height:100px'></div><section id=root></section><div id=after>Z</div>",
+    );
+    assert_box(&html, "root", 30.0, 90.0);
+    assert_box(&html, "after", 120.0, 20.0);
+}
+
+#[test]
+fn clearance_accounts_for_the_roots_own_margin_when_an_empty_margin_escapes() {
+    let html = document(
+        "section{margin-top:40px}",
+        "<div id=float style='float:left;width:10px;height:100px'></div><section id=root><div style='margin-top:30px'></div><div id=child style='clear:both;margin-top:20px'>X</div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "child", 100.0, 20.0);
+    assert_box(&html, "root", 40.0, 100.0);
+    assert_box(&html, "after", 140.0, 20.0);
+}
