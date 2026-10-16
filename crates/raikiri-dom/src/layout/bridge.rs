@@ -283,6 +283,18 @@ pub(crate) fn apply_computed_to_style(
         }
         bridge_position(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_overflow(style, cv);
+        // Layout and paint containment establish an independent formatting
+        // context, including when the box's content is one IFC paragraph.
+        use raikiri_style::property::Contain;
+        style.contain = match (
+            cv.contain.contains(Contain::LAYOUT),
+            cv.contain.contains(Contain::PAINT),
+        ) {
+            (true, true) => taffy::Contain::CONTENT,
+            (true, false) => taffy::Contain::LAYOUT,
+            (false, true) => taffy::Contain::PAINT,
+            (false, false) => taffy::Contain::NONE,
+        };
         bridge_float(style, cv);
         bridge_margin(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
         bridge_padding(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);

@@ -573,6 +573,8 @@ pub(crate) struct Flow<'a, 'b> {
     pub(crate) definite_height: Option<f32>,
     /// Nothing is placed in the paragraph yet.
     pub(crate) at_start: bool,
+    /// Adjoining margins leave the paragraph through its top edge.
+    pub(crate) top_margin_escapes: bool,
     /// The paragraph's lines start at the right.
     pub(crate) rtl: bool,
 }
@@ -589,13 +591,21 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         .then(|| flow.ctx.cleared_threshold(block.clear))
         .flatten()
         .map(|threshold| threshold - flow.top_edge);
-    let hypothetical = *flow.y + top_set.resolve();
+    let hypothetical = if flow.at_start && flow.top_margin_escapes && flow.ctx.origin_resolved() {
+        flow.ctx
+            .hypothetical_top_position(top_set)
+            .unwrap_or(*flow.y)
+    } else {
+        *flow.y + top_set.resolve()
+    };
+    let escapes = flow.at_start && flow.top_margin_escapes;
+    let flow_top = if escapes { *flow.y } else { hypothetical };
     let clearance = clear_y
         .filter(|&clear_y| flow.ctx.has_adjoining_float(block.clear) || hypothetical < clear_y);
     let content_top = if let Some(clear_y) = clearance {
         Some(clear_y + edges.top)
     } else if edges.top > 0.0 {
-        Some(hypothetical + edges.top)
+        Some(flow_top + edges.top)
     } else {
         None
     };
@@ -610,7 +620,7 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
     OpenBlock {
         lines_before: flow.lines.len(),
         content_top,
-        flow_top: hypothetical,
+        flow_top,
         top_set,
         starts_paragraph: flow.at_start,
         has_clearance: clearance.is_some(),
@@ -654,8 +664,13 @@ pub(crate) fn close(
     let Some(top) = content_top.or_else(|| {
         // An empty box whose margins collapse through it (CSS 2.1 8.3.1)
         // adds them to the margins above it.
-        (height > 0.0 || edges.bottom > 0.0 || block.formatting_root)
-            .then(|| *flow.y + flow.pending.resolve())
+        (height > 0.0 || edges.bottom > 0.0 || block.formatting_root).then(|| {
+            if open.starts_paragraph && flow.top_margin_escapes {
+                *flow.y
+            } else {
+                *flow.y + flow.pending.resolve()
+            }
+        })
     }) else {
         *flow.pending = flow.pending.collapse_with_margin(margins.bottom);
         if open.starts_paragraph {

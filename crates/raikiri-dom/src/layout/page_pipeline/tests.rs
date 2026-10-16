@@ -6619,15 +6619,15 @@ fn margins_are_included_in_the_roots_height() {
 }
 
 #[test]
-fn the_first_block_childs_top_margin_stays_inside_the_root() {
-    // The paragraph contains its first block child's top margin: the root
-    // stays where it is and the block starts 15px into it.
+fn the_first_block_childs_top_margin_escapes_the_root() {
+    // The root and its first block have adjoining top margins: the 15px
+    // margin leaves the content box, whose local coordinates start at zero.
     let run = || three_blocks("", "margin-top:15px", "", "");
     let (root, [a, _, _]) = run();
-    assert_eq!((root.0, a.0), (0.0, 15.0));
+    assert_eq!((root.0, a.0), (0.0, 0.0));
     assert_eq!(
         run(),
-        ((0.0, 45.0), [(15.0, 10.0), (25.0, 0.0), (25.0, 10.0)])
+        ((0.0, 30.0), [(0.0, 10.0), (10.0, 0.0), (10.0, 10.0)])
     );
 }
 

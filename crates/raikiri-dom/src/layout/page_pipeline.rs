@@ -4141,11 +4141,7 @@ fn paginate_flow(
     let mut sibling_margins = SiblingMargins::default();
     let mut last_named = LastNamedBox::default();
     let mut saw_child = false;
-    // Paragraph blocks whose leading line or whose orphans and widows move
-    // them as a unit to the next page. Track the first text child so a block
-    // is not reflowed repeatedly for later lines.
-    let mut checked_block_text = HashSet::new();
-    let mut checked_orphans_widows = HashSet::new();
+    let mut checked_paragraphs = CheckedParagraphs::default();
     // Footnotes are collected in source order and stacked upward from the
     // bottom edge of their anchor page. The normal-flow height is removed
     // from `flow_shift`, leaving the box only in this page-local area.
@@ -4157,10 +4153,7 @@ fn paginate_flow(
     let mut preceding_flex_items = HashMap::<usize, (usize, f32, u32)>::new();
 
     let mut trailing_flex_child_by_parent = HashMap::<usize, Option<usize>>::new();
-    // Paragraphs laid out by the inline engine that already had a candidate
-    // inside them. Only the first candidate of a paragraph may move its root:
-    // a later one would move again what the earlier ones placed.
-    let mut entered_ifc_roots = HashSet::new();
+    let mut entered_paragraphs = EnteredParagraphs::default();
     macro_rules! check_candidate_page {
         ($label:lifetime, $page_index:expr) => {
             match control.check_page_index($page_index) {
@@ -4236,22 +4229,7 @@ fn paginate_flow(
         let keep_local_page_type =
             candidate.named_flex_context.is_none() && page_names.current != comparison_page_name;
         let page_before_candidate = current_page;
-        let moves_ifc_root = {
-            let mut first = candidate
-                .ifc_root
-                .filter(|&(root, _)| document.is_anonymous_cell(root))
-                .is_none_or(|(root, _)| entered_ifc_roots.insert(root));
-            let mut current = document.parent_of(node_id);
-            while let Some(id) = current {
-                if document.nodes[id].is_ifc_root() && !entered_ifc_roots.insert(id) {
-                    first = false;
-                    // Higher IFC roots were registered when this root was first entered.
-                    break;
-                }
-                current = document.parent_of(id);
-            }
-            first
-        };
+        let moves_ifc_root = entered_paragraphs.enter(document, candidate.ifc_root, node_id);
         let ifc_root = candidate.ifc_root.filter(|_| moves_ifc_root);
         pending_line_splits.retain(|&(root, first_moved, shift)| {
             let reached = !is_descendant_or_self(document, node_id, root)
@@ -4476,9 +4454,7 @@ fn paginate_flow(
             let line_block_parent = paragraph_root
                 .or(document.parent_of(node_id))
                 .filter(|parent_id| {
-                    !uses_positioned_coordinates
-                        && (!checked_block_text.contains(parent_id)
-                            || !checked_orphans_widows.contains(parent_id))
+                    !uses_positioned_coordinates && !checked_paragraphs.is_fully_checked(*parent_id)
                 })
                 .and_then(|parent_id| {
                     if document.layout_parent_of(parent_id)? == body_id {
@@ -4530,7 +4506,7 @@ fn paginate_flow(
                 delta
             };
             if let Some((block_id, nested)) = line_block_parent
-                && checked_block_text.insert(block_id)
+                && checked_paragraphs.block_text.insert(block_id)
                 && style_dimension_length(document.nodes[block_id].style.size.height)
                     .is_some_and(|value| value >= 0.0)
             {
@@ -4581,7 +4557,7 @@ fn paginate_flow(
                 });
             if let Some((block_id, nested)) =
                 line_block_parent.or(flex_line_paragraph.map(|(root, _)| (root, true)))
-                && checked_orphans_widows.insert(block_id)
+                && checked_paragraphs.orphans_widows.insert(block_id)
                 && let Some(line_metrics) = paragraph_line_bounds(document, node_id, &text_lines)
             {
                 let page_start = page_origin(current_page);
@@ -6637,6 +6613,61 @@ fn push_in_flow_boxes_rev(
         return;
     }
     boxes.push(node_id);
+}
+
+/// Paragraphs laid out by the inline engine that already had a candidate
+/// inside them. Only the first candidate of a paragraph may move its root: a
+/// later one would move again what the earlier ones placed.
+#[derive(Default)]
+struct EnteredParagraphs {
+    roots: HashSet<usize>,
+}
+
+impl EnteredParagraphs {
+    /// Registers every paragraph root around `node_id` and returns whether
+    /// this is the first candidate inside all of them.
+    ///
+    /// `ifc_root`, the candidate's own paragraph root, is registered directly
+    /// only when it is an anonymous cell; the other roots are the inline
+    /// formatting context roots among the ancestors of `node_id`.
+    fn enter(
+        &mut self,
+        document: &Document,
+        ifc_root: Option<(usize, f32)>,
+        node_id: usize,
+    ) -> bool {
+        let mut first = ifc_root
+            .filter(|&(root, _)| document.is_anonymous_cell(root))
+            .is_none_or(|(root, _)| self.roots.insert(root));
+        let mut current = document.parent_of(node_id);
+        while let Some(id) = current {
+            if document.nodes[id].is_ifc_root() && !self.roots.insert(id) {
+                first = false;
+                // Higher IFC roots were registered when this root was first entered.
+                break;
+            }
+            current = document.parent_of(id);
+        }
+        first
+    }
+}
+
+/// Paragraph blocks whose leading line or whose orphans and widows move them
+/// as a unit to the next page. Each block is checked once, from its first
+/// text child, so it is not reflowed again for later lines.
+#[derive(Default)]
+struct CheckedParagraphs {
+    /// Blocks whose first line was checked against the page end.
+    block_text: HashSet<usize>,
+    /// Blocks whose orphans and widows were checked.
+    orphans_widows: HashSet<usize>,
+}
+
+impl CheckedParagraphs {
+    /// Whether both checks already ran for `block_id`.
+    fn is_fully_checked(&self, block_id: usize) -> bool {
+        self.block_text.contains(&block_id) && self.orphans_widows.contains(&block_id)
+    }
 }
 
 /// The adjoining block margins between siblings, which an unforced page

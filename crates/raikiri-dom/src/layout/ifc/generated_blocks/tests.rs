@@ -240,6 +240,7 @@ fn flow<'a, 'b>(
         top_edge: 0.0,
         definite_height: None,
         at_start: false,
+        top_margin_escapes: false,
         rtl: false,
     }
 }
