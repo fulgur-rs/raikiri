@@ -1343,6 +1343,12 @@ impl DocumentHost for WriteHost {
         fragment.attach_child(root, holder);
         Ok(fragment)
     }
+    fn document_url(&self) -> Option<String> {
+        self.0.document_url()
+    }
+    fn fetch_script(&mut self, url: &str) -> Result<String, HostError> {
+        self.0.fetch_script(url)
+    }
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -1497,4 +1503,52 @@ fn an_abort_in_the_writer_stops_its_written_scripts() {
     );
     assert_eq!(report.aborted, Some(Abort::LoopIterations), "{report:?}");
     assert_eq!(report.scripts_run, 1, "{report:?}");
+}
+
+#[test]
+fn external_script_load_and_error_listeners_write_after_their_script() {
+    let (mut host, _, _, body) = StubHost::page();
+    host.document_url = Some("https://example.test/page.html".to_owned());
+    host.scripts.insert(
+        "https://example.test/ok.js".to_owned(),
+        "document.write('run');".to_owned(),
+    );
+    append_script(
+        &mut host.document,
+        body,
+        &[],
+        "var scripts = document.querySelectorAll('script');\
+         scripts[1].addEventListener('load', function () { \
+             document.write('load:' + (document.currentScript === null)); \
+         });\
+         scripts[2].addEventListener('error', function () { \
+             document.write('error:' + (document.currentScript === null)); \
+         });",
+    );
+    append_script(&mut host.document, body, &[("src", "ok.js")], "");
+    append_script(&mut host.document, body, &[("src", "missing.js")], "");
+    let p = host.document.create_detached_element("p").unwrap();
+    host.document.append_child(body, p).unwrap();
+    let mut rt = DomRuntime::with_options(WriteHost(host), RunOptions::default()).unwrap();
+    let report = rt.run_document();
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(report.fetch_errors.len(), 1, "{report:?}");
+    let children = eval_string(
+        &mut rt,
+        "Array.from(document.body.childNodes, function (n) { \
+             return n.nodeName + ':' + (n.nodeType === 3 ? n.data : ''); \
+         }).join('|')",
+    );
+    assert_eq!(
+        children,
+        "SCRIPT:|SCRIPT:|#text:run|#text:load:true|SCRIPT:|#text:error:true|P:"
+    );
+    // Once the parser moved past every script, writing reopens the document.
+    assert_eq!(
+        eval_string(
+            &mut rt,
+            "try { document.write('late'); 'wrote' } catch (e) { e.name }"
+        ),
+        "NotSupportedError"
+    );
 }

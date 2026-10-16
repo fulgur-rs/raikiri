@@ -301,6 +301,9 @@ impl<'a> Executor<'a> {
     /// reaches evaluation at all (an empty `src`, an unresolvable one, or a
     /// fetch failure) never has `currentScript` set for it in the first
     /// place, matching that a fetch failure never reaches "execute" either.
+    /// The `document.write` insertion point lasts longer: the parser is
+    /// still at this script while its `load` or `error` event fires, so
+    /// that point stays set until the dispatch returns.
     fn run_one(&mut self, index: usize) {
         let base_url = with_state(self.context, |s| s.host.document_url())
             .ok()
@@ -352,12 +355,17 @@ impl<'a> Executor<'a> {
                 self.report.scripts_run += 1;
                 let _ = with_state(self.context, |s| enter_script(s, index));
                 let result = evaluate_script(self.context, &code, Some(&url));
-                let _ = with_state(self.context, leave_script);
+                // `currentScript` ends with the evaluation, but the parser
+                // has not moved on yet: a `load` listener's
+                // `document.write` still lands after this script.
+                let _ = with_state(self.context, |s| s.current_script = None);
                 if let Err(reason) = result {
+                    let _ = with_state(self.context, leave_script);
                     self.report.aborted = Some(reason);
                     return;
                 }
                 fire_lifecycle_event(self.context, self.report, Some(index), "load", false);
+                let _ = with_state(self.context, leave_script);
             }
             Err(HostError(message)) => self.fetch_failed(index, &url, &message),
         }
@@ -365,7 +373,14 @@ impl<'a> Executor<'a> {
 
     fn fetch_failed(&mut self, index: usize, url: &str, reason: &str) {
         self.report.fetch_errors.push(format!("{url}: {reason}"));
+        // The `error` event fires while the parser still sits at this
+        // script, so a listener's `document.write` lands after it, without
+        // `currentScript` being set for a script that never ran.
+        let _ = with_state(self.context, |s| {
+            s.write_point = Some(document::WritePoint::after(index, s.host.document()));
+        });
         fire_lifecycle_event(self.context, self.report, Some(index), "error", false);
+        let _ = with_state(self.context, leave_script);
     }
 }
 
