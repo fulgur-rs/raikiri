@@ -257,7 +257,7 @@ impl<'a> TaffyChildIter<'a> {
         let hidden = doc.size_contained_measure.last() == Some(&usize::from(parent));
         Self {
             doc,
-            flatten: !node.is_display_none() && node.display != DisplayValue::Contents,
+            flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
             stack: if hidden {
                 Vec::new()
             } else {
@@ -271,7 +271,7 @@ impl<'a> TaffyChildIter<'a> {
     fn is_flattened(doc: &Document, child: usize) -> bool {
         let node = &doc.nodes[child];
         node.kind() == raikiri_traits::NodeKind::Element
-            && node.display == DisplayValue::Contents
+            && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
     }
 
@@ -319,7 +319,7 @@ impl Document {
         let container = &self.nodes[top];
         let lifted = top != parent
             && !container.is_display_none()
-            && container.display != DisplayValue::Contents;
+            && container.display() != DisplayValue::Contents;
         Some(if lifted { top } else { parent })
     }
 }
@@ -568,12 +568,12 @@ impl Document {
                 // fit as well (CSS 2.1 17.5.2.2).
                 let ifc_table = formatting_context == FormattingContext::Inline
                     && matches!(
-                        tree.nodes[idx].display,
+                        tree.nodes[idx].display(),
                         DisplayValue::Table | DisplayValue::InlineTable
                     );
                 let inline_shrink_wrap = ifc_table
-                    || (tree.nodes[idx].display.is_atomic_inline_level()
-                        && tree.nodes[idx].display != DisplayValue::InlineTable);
+                    || (tree.nodes[idx].display().is_atomic_inline_level()
+                        && tree.nodes[idx].display() != DisplayValue::InlineTable);
                 // Size containment already gave the box its width.
                 let contained_width = tree.nodes[idx].size_containment.width && !empty;
                 if inline_shrink_wrap
@@ -1442,12 +1442,12 @@ fn measure_ifc_root(
     };
     // An inline-block's baseline is that of its last line box (CSS 2.1
     // 10.8.1); every other box exposes its first.
-    let baseline = if tree.nodes[idx].display == raikiri_style::property::DisplayValue::InlineBlock
-    {
-        flow::last_baseline(&lines)
-    } else {
-        flow::first_baseline(&lines)
-    };
+    let baseline =
+        if tree.nodes[idx].display() == raikiri_style::property::DisplayValue::InlineBlock {
+            flow::last_baseline(&lines)
+        } else {
+            flow::first_baseline(&lines)
+        };
     let leading_margin = if measure.top_margin_escapes {
         lines
             .leading_block_margin
@@ -1524,7 +1524,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     }
     // An ifc root has measured its own baseline from its lines; its children
     // carry no lines of their own.
-    if root_node.display != DisplayValue::InlineBlock
+    if root_node.display() != DisplayValue::InlineBlock
         || root_node.flags.contains(NodeFlags::IS_IFC_ROOT)
     {
         return None;
@@ -1606,7 +1606,7 @@ fn compute_inline_block_shrink_wrap(
     // An ifc root's children are hidden from the block algorithm: the inline
     // engine measures and lays out its content in the same steps below.
     let ifc_root = tree.nodes[idx].flags.contains(NodeFlags::IS_IFC_ROOT) && !empty;
-    let display = tree.nodes[idx].display;
+    let display = tree.nodes[idx].display();
     let is_leaf = tree.nodes[idx].children.is_empty();
     // Clone what the leaf path needs before any exclusive tree use below.
     let mut leaf_style = tree.nodes[idx].style.clone();

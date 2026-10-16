@@ -167,7 +167,7 @@ pub(crate) fn apply_computed_to_style(
         let vertical_sized = vertical_logical_sized(cascade, idx);
         let cv = vertical_sized.as_ref().unwrap_or(&cascade.computed[idx]);
         // Preserve full DisplayValue for table dispatch before taffy collapses it.
-        doc.nodes[idx].display = cv.display;
+        doc.nodes[idx].set_box_properties(cv.display, cv.position.clone());
         // Taffy does not carry CSS `order` in Style. Retain the computed value
         // on Node so flex/grid child traversal can build order-modified order.
         doc.nodes[idx].order = cv.order;
@@ -381,7 +381,7 @@ pub(crate) fn apply_computed_to_style(
             continue;
         }
         let is_table = matches!(
-            doc.nodes[idx].display,
+            doc.nodes[idx].display(),
             DisplayValue::Table | DisplayValue::InlineTable
         );
         if is_table {
@@ -405,7 +405,7 @@ fn classify_formatting_context(node: &Node) -> FormattingContext {
         Display::Flex => FormattingContext::Flex,
         Display::Grid => FormattingContext::Grid,
         _ if matches!(
-            node.display,
+            node.display(),
             DisplayValue::Table | DisplayValue::InlineTable
         ) =>
         {

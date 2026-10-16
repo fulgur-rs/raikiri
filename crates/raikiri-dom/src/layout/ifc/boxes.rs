@@ -2232,7 +2232,7 @@ pub(crate) fn place_out_of_flow(tree: &mut Document, idx: usize, border_box: Siz
                 _ => None,
             })
         });
-        let inline_level = tree.nodes[node].display.is_inline_level();
+        let inline_level = tree.nodes[node].display().is_inline_level();
         let (static_x, static_y) = match anchor {
             Some((index, position)) => {
                 let line = &lines.lines[index];

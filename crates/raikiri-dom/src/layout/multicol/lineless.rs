@@ -40,7 +40,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             continue;
         };
         let defaults: taffy::Style = taffy::Style::default();
-        if node.display != DisplayValue::Block
+        if node.display() != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
             // An orthogonal flow is monolithic in the column's block axis.
             || !is_horizontal(node)

@@ -30,9 +30,9 @@ pub(super) fn is_orthogonal_auto_block_size(tree: &Document, idx: usize) -> bool
     node.style.size.width.is_auto()
         && node.style.position != TaffyPosition::Absolute
         && node.style.float == taffy::Float::None
-        && (node.display.is_block_flex_or_grid_container()
+        && (node.display().is_block_flex_or_grid_container()
             || matches!(
-                node.display,
+                node.display(),
                 DisplayValue::Block | DisplayValue::FlowRoot | DisplayValue::ListItem
             ))
         && used_writing_mode(tree, idx).is_vertical()

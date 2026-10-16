@@ -599,7 +599,10 @@ fn can_balance_paragraph_box(tree: &Document, parent: usize, child: usize) -> bo
         && layout.padding.bottom == 0.0
         && layout.border.top == 0.0
         && layout.border.bottom == 0.0
-        && matches!(child.display, DisplayValue::Block | DisplayValue::ListItem)
+        && matches!(
+            child.display(),
+            DisplayValue::Block | DisplayValue::ListItem
+        )
         && child.break_inside == raikiri_style::property::BreakInside::Auto
         && child.style.size.height.is_auto()
         && child.style.min_size.height.is_auto()
@@ -630,7 +633,7 @@ fn multicol_has_plain_paragraph_chain(tree: &Document, parent: usize) -> bool {
         }
         let node = &tree.nodes[child];
         let zero_margin = LengthPercentageAuto::length(0.0);
-        if node.display != DisplayValue::Block
+        if node.display() != DisplayValue::Block
             || node.style.direction != TaffyDirection::Ltr
             || node.style.float.is_floated()
             || node.style.margin.top != zero_margin

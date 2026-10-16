@@ -67,7 +67,7 @@ fn children_walked_by_index_match_the_child_iterator() {
     }
     tree.append_text(parent, " ");
     let contents = tree.append_element(Some(parent), "span", Style::default(), None::<&str>);
-    tree.nodes[contents].display = DisplayValue::Contents;
+    tree.nodes[contents].set_display(DisplayValue::Contents);
     for _ in 0..3 {
         expected.push(tree.append_element(Some(contents), "div", Style::default(), None::<&str>));
     }
@@ -90,10 +90,10 @@ fn children_walked_by_index_match_the_child_iterator() {
     // The list goes when the walk ends, so a later change of the children
     // is seen without counting them again.
     assert!(tree.taffy_child_walks.borrow().is_empty());
-    tree.nodes[expected[0]].display = DisplayValue::Contents;
+    tree.nodes[expected[0]].set_display(DisplayValue::Contents);
     assert_eq!(usize::from(tree.get_child_id(parent, 0)), expected[1]);
     // Indices out of order read the same children.
-    tree.nodes[expected[0]].display = DisplayValue::Block;
+    tree.nodes[expected[0]].set_display(DisplayValue::Block);
     tree.child_count(parent);
     for index in [39, 2, 0, 38, 1] {
         assert_eq!(

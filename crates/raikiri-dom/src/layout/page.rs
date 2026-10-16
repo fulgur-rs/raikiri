@@ -995,7 +995,7 @@ pub(crate) fn refresh_order_modified_children(doc: &mut Document) {
             while let Some(child) = pending.pop() {
                 let node = &doc.nodes[child];
                 if node.kind() == NodeKind::Element
-                    && node.display == DisplayValue::Contents
+                    && node.display() == DisplayValue::Contents
                     && !node.is_ifc_root()
                 {
                     pending.extend(node.children.iter().rev().copied());
@@ -1210,7 +1210,7 @@ fn grid_pagination_children(document: &Document, parent_id: usize) -> Vec<usize>
     while let Some(child) = pending.pop() {
         let node = &document.nodes[child];
         if node.kind() == NodeKind::Element
-            && node.display == DisplayValue::Contents
+            && node.display() == DisplayValue::Contents
             && !node.is_ifc_root()
         {
             pending.extend(node.layout_children().iter().rev().copied());
@@ -1296,7 +1296,7 @@ fn table_pagination_child_order(
         // non-rendered element whatever its `display`.
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
-            || node.display == DisplayValue::None
+            || node.display() == DisplayValue::None
             || !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         {
             continue;

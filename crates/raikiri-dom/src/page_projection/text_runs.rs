@@ -990,7 +990,7 @@ fn first_line(document: &Document, cascade: &CascadeResult, owner: usize) -> Opt
     loop {
         let node = document.nodes.get(id)?;
         if matches!(
-            node.display,
+            node.display(),
             raikiri_style::property::DisplayValue::Table
                 | raikiri_style::property::DisplayValue::InlineTable
         ) && !node.is_ifc_root()
@@ -1188,7 +1188,7 @@ fn first_block_child(
         if !in_flow(child) {
             return None;
         }
-        match document.nodes[child].display {
+        match document.nodes[child].display() {
             raikiri_style::property::DisplayValue::Contents => {
                 first_block_child(document, child, in_flow)
             }

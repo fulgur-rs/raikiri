@@ -141,7 +141,7 @@ fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool)
         .children
         .iter()
         .copied()
-        .find(|&id| doc.nodes[id].display == DisplayValue::TableCaption)
+        .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
         .filter(|&id| doc.nodes[id].style.position != taffy::Position::Absolute)
     else {
         return 0.0;
@@ -198,7 +198,7 @@ fn layout_table_caption(
         .children
         .iter()
         .copied()
-        .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption)?;
+        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption)?;
     let style = doc.nodes[caption_id].style.clone();
     // Let block layout apply authored sizes in their box-sizing domain.
     let vertical = table_writing_mode(doc, table_idx).is_vertical();
@@ -330,7 +330,7 @@ fn position_table_caption(
         .children
         .iter()
         .copied()
-        .find(|&child| doc.nodes[child].display == DisplayValue::TableCaption);
+        .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption);
     // Keep the legacy positioned caption layout and ink, but exclude it from flow.
     let in_flow =
         caption_id.is_some_and(|id| doc.nodes[id].style.position != taffy::Position::Absolute);
@@ -1022,7 +1022,7 @@ fn position_source_table_parts(
             .take_while(|&id| id != table)
         {
             if matches!(
-                doc.nodes[id].display,
+                doc.nodes[id].display(),
                 DisplayValue::TableRow
                     | DisplayValue::TableRowGroup
                     | DisplayValue::TableHeaderGroup
@@ -1305,13 +1305,13 @@ fn collect_col_widths(
         if !doc.nodes[child_id].is_in_document() {
             continue;
         }
-        match doc.nodes[child_id].display {
+        match doc.nodes[child_id].display() {
             DisplayValue::TableColumnGroup => {
                 for &col_id in &doc.nodes[child_id].children.clone() {
                     if !doc.nodes[col_id].is_in_document() {
                         continue;
                     }
-                    if doc.nodes[col_id].display != DisplayValue::TableColumn {
+                    if doc.nodes[col_id].display() != DisplayValue::TableColumn {
                         continue;
                     }
                     let sz = sizing_of(doc, col_id);
@@ -1384,7 +1384,7 @@ fn collect_rows_inner(
         let mut idxs: Vec<usize> = (0..len).collect();
         let displays: Vec<DisplayValue> = idxs
             .iter()
-            .map(|&i| doc.nodes[doc.nodes[container_idx].children[i]].display)
+            .map(|&i| doc.nodes[doc.nodes[container_idx].children[i]].display())
             .collect();
         section_order(&mut idxs, &displays);
         idxs
@@ -1405,7 +1405,7 @@ fn collect_rows_inner(
         if !matches!(doc.nodes[child_id].data, crate::node::NodeData::Element(_)) {
             continue;
         }
-        let disp = doc.nodes[child_id].display;
+        let disp = doc.nodes[child_id].display();
         let is_row = disp == DisplayValue::TableRow;
         let is_cell = disp == DisplayValue::TableCell;
         // Treat row-group / header / footer / contents as anonymous group
@@ -1476,7 +1476,7 @@ fn collect_cells_in_row(
         .copied()
         .filter(|&cell_id| {
             doc.nodes[cell_id].is_in_document()
-                && doc.nodes[cell_id].display == DisplayValue::TableCell
+                && doc.nodes[cell_id].display() == DisplayValue::TableCell
         });
     push_row(doc, row_id, row_cells, rows, cells, n_cols)
 }
@@ -1947,7 +1947,7 @@ fn cell_baseline_aligned(align: VerticalAlign) -> bool {
 fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<f32> {
     let node = doc.ifc_layout_node(root).expect("table cell layout view");
     if matches!(
-        node.display,
+        node.display(),
         DisplayValue::Table | DisplayValue::InlineTable
     ) && !node.is_ifc_root()
     {
@@ -1990,7 +1990,7 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
             continue;
         }
         if matches!(
-            node.display,
+            node.display(),
             DisplayValue::Table | DisplayValue::InlineTable
         ) && !node.is_ifc_root()
         {
@@ -3119,7 +3119,7 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
         let row_box = |index: usize| {
             grid.rows.get(index).copied().filter(|&row| {
                 doc.ifc_layout_node(row)
-                    .is_some_and(|node| node.display == DisplayValue::TableRow)
+                    .is_some_and(|node| node.display() == DisplayValue::TableRow)
             })
         };
         let first_row = row_box(usize::from(cell.row));
@@ -3155,7 +3155,7 @@ fn resolve_collapsed_row_borders(doc: &mut Document, grid: &TableGrid) {
     for &row in &grid.rows {
         if doc
             .ifc_layout_node(row)
-            .is_none_or(|node| node.display != DisplayValue::TableRow)
+            .is_none_or(|node| node.display() != DisplayValue::TableRow)
         {
             continue;
         }

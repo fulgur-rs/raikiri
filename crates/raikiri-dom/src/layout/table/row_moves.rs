@@ -38,7 +38,7 @@ pub(crate) fn follow_moved_rows(
             .filter(|&id| {
                 !document.nodes[id].is_display_none()
                     && matches!(
-                        document.nodes[id].display,
+                        document.nodes[id].display(),
                         DisplayValue::TableRowGroup
                             | DisplayValue::TableHeaderGroup
                             | DisplayValue::TableFooterGroup
@@ -56,7 +56,8 @@ pub(crate) fn follow_moved_rows(
             }
             // The repeated header is placed with its copies.
             if part == table
-                || repeated_header && document.nodes[part].display == DisplayValue::TableHeaderGroup
+                || repeated_header
+                    && document.nodes[part].display() == DisplayValue::TableHeaderGroup
             {
                 continue;
             }
@@ -69,7 +70,7 @@ pub(crate) fn follow_moved_rows(
         // may content outside the rows, wrapped in an anonymous row.
         let top_caption = document.nodes[table].children.iter().any(|&id| {
             !document.nodes[id].is_display_none()
-                && document.nodes[id].display == DisplayValue::TableCaption
+                && document.nodes[id].display() == DisplayValue::TableCaption
                 && document.nodes[id].caption_side == CaptionSideValue::Top
                 && document.nodes[id].style.position != taffy::Position::Absolute
         });
@@ -99,7 +100,7 @@ pub(crate) fn follow_moved_rows(
 fn table_of(document: &Document, row: usize) -> Option<usize> {
     document.inclusive_ancestors(row).skip(1).find(|&id| {
         matches!(
-            document.nodes[id].display,
+            document.nodes[id].display(),
             DisplayValue::Table | DisplayValue::InlineTable
         )
     })
@@ -113,7 +114,7 @@ fn first_row(document: &Document, part: usize) -> Option<usize> {
         .copied()
         .filter(|&id| {
             !document.nodes[id].is_display_none()
-                && document.nodes[id].display == DisplayValue::TableRow
+                && document.nodes[id].display() == DisplayValue::TableRow
         })
         .min_by(|&a, &b| absolute_y(document, a).total_cmp(&absolute_y(document, b)))
 }

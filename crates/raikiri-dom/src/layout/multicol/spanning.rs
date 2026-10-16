@@ -7,7 +7,7 @@ pub(in crate::layout) fn is_spanner(tree: &Document, child: usize) -> bool {
     let node = &tree.nodes[child];
     node.column_span_all
         && node.is_in_document()
-        && matches!(node.display, DisplayValue::Block | DisplayValue::ListItem)
+        && matches!(node.display(), DisplayValue::Block | DisplayValue::ListItem)
         && !node.is_display_none()
         && node.style.position != TaffyPosition::Absolute
         && !node.style.float.is_floated()
