@@ -1296,3 +1296,135 @@ fn body_onload_content_attribute_runs_during_run_document_like_check_layout() {
         "typeof window.onload === 'function' && document.body.onload === window.onload"
     ));
 }
+
+// ---- document.write ------------------------------------------------------
+
+/// A host whose fragment parser turns `<script>CODE` into a script element
+/// holding `CODE`, fails on `fail`, and reads anything else as one text node.
+struct WriteHost(StubHost);
+
+impl DocumentHost for WriteHost {
+    fn document(&self) -> &Document {
+        self.0.document()
+    }
+    fn document_mut(&mut self) -> &mut Document {
+        self.0.document_mut()
+    }
+    fn flush(&mut self) -> Result<(), HostError> {
+        self.0.flush()
+    }
+    fn box_geometry(&mut self, node: usize) -> Result<Option<BoxGeometry>, HostError> {
+        self.0.box_geometry(node)
+    }
+    fn computed_value(&mut self, node: usize, property: &str) -> Result<Option<String>, HostError> {
+        self.0.computed_value(node, property)
+    }
+    fn parse_fragment(
+        &mut self,
+        context_tag: &str,
+        context_ns: &str,
+        markup: &str,
+    ) -> Result<Document, HostError> {
+        if markup == "fail" {
+            return Err(HostError("parser unavailable".into()));
+        }
+        let Some(code) = markup.strip_prefix("<script>") else {
+            return self.0.parse_fragment(context_tag, context_ns, markup);
+        };
+        let mut fragment = Document::new();
+        let root = fragment.root_index();
+        append_script(&mut fragment, root, &[], code);
+        Ok(fragment)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+/// Run `scripts` as the body's scripts, followed by a `<p>`, and return the
+/// body's child nodes as `name:data` pairs, with the runtime.
+fn run_writes(scripts: &[&str]) -> (RunReport, String, DomRuntime) {
+    let (mut host, _, _, body) = StubHost::page();
+    for script in scripts {
+        append_script(&mut host.document, body, &[], script);
+    }
+    let p = host.document.create_detached_element("p").unwrap();
+    host.document.append_child(body, p).unwrap();
+    let mut rt = DomRuntime::new(WriteHost(host)).unwrap();
+    let report = rt.run_document();
+    let children = eval_string(
+        &mut rt,
+        "Array.from(document.body.childNodes, function (n) { \
+             return n.nodeName + ':' + (n.nodeType === 3 ? n.data : ''); \
+         }).join('|')",
+    );
+    (report, children, rt)
+}
+
+fn body_after_writes(scripts: &[&str]) -> (RunReport, String) {
+    let (report, children, _) = run_writes(scripts);
+    (report, children)
+}
+
+#[test]
+fn written_text_follows_the_script_in_call_order() {
+    let (report, children) = body_after_writes(&[
+        "document.write('a'); document.writeln('b', 'c'); document.write();",
+        "document.write('d');",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:a|#text:bc\n|SCRIPT:|#text:d|P:",);
+}
+
+#[test]
+fn a_write_after_the_last_written_node_left_goes_after_the_script() {
+    let (report, children) = body_after_writes(&[
+        "document.write('a'); document.body.childNodes[1].remove(); document.write('b');",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|#text:b|P:");
+}
+
+#[test]
+fn a_script_that_left_the_tree_writes_nothing() {
+    let (report, children) =
+        body_after_writes(&["document.currentScript.remove(); document.write('lost');"]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "P:");
+}
+
+#[test]
+fn written_scripts_run_after_the_writer_and_before_the_next_script() {
+    let (report, children) = body_after_writes(&[
+        "var log = ['writer']; \
+         document.write('<script>log.push(document.currentScript === document.body.childNodes[1]); document.write(\"inner\");'); \
+         log.push('still writer');",
+        "log.push('next'); document.write(log.join(','));",
+    ]);
+    assert_eq!(report.scripts_run, 3, "{report:?}");
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(
+        children,
+        "SCRIPT:|SCRIPT:|#text:inner|SCRIPT:|#text:writer,still writer,true,next|P:",
+    );
+}
+
+#[test]
+fn write_outside_a_parser_script_or_with_a_failing_parser_throws() {
+    let (report, children, mut rt) = run_writes(&[
+        "var outside; window.addEventListener('load', function () { \
+             try { document.write('x'); } catch (e) { outside = e.name; } \
+         }); \
+         var failed; try { document.write('fail'); } catch (e) { failed = e.name; }",
+    ]);
+    assert!(report.uncaught_errors.is_empty(), "{report:?}");
+    assert_eq!(children, "SCRIPT:|P:");
+    assert_eq!(eval_string(&mut rt, "outside"), "NotSupportedError");
+    assert_eq!(eval_string(&mut rt, "failed"), "Error");
+}

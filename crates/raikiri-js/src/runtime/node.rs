@@ -559,22 +559,7 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
         Err(error) => return Err(host_failure(context, error)),
     };
     let root = fragment.root_index();
-    let within_node_budget = with_state(context, |s| {
-        let document = s.host.document();
-        let Some(remaining_nodes) = s
-            .event_loop
-            .limits
-            .max_nodes
-            .checked_sub(document.node_count())
-        else {
-            return false;
-        };
-        copied_child_node_count(&fragment, root, remaining_nodes).is_some()
-    })?;
-    if !within_node_budget {
-        let reason = super::event_loop::abort(context, super::event_loop::Abort::Nodes);
-        return Err(super::event_loop::abort_error(reason));
-    }
+    guard_fragment_budget(context, &fragment)?;
     with_state(context, |s| {
         let removed = s
             .host
@@ -591,6 +576,33 @@ fn set_inner_html(this: &JsValue, args: &[JsValue], context: &mut Context) -> Js
     super::dispatch::sync_event_handlers_in_subtree(context, index)?;
     super::image::update_images_below(context, index)?;
     Ok(JsValue::undefined())
+}
+
+/// Abort the run unless the live arena plus every node copying the
+/// children of `fragment`'s root will allocate, including template-content
+/// fragment roots, stays within the runtime's node limit.
+pub(crate) fn guard_fragment_budget(
+    context: &mut Context,
+    fragment: &raikiri_dom::Document,
+) -> JsResult<()> {
+    let root = fragment.root_index();
+    let within_node_budget = with_state(context, |s| {
+        let document = s.host.document();
+        let Some(remaining_nodes) = s
+            .event_loop
+            .limits
+            .max_nodes
+            .checked_sub(document.node_count())
+        else {
+            return false;
+        };
+        copied_child_node_count(fragment, root, remaining_nodes).is_some()
+    })?;
+    if !within_node_budget {
+        let reason = super::event_loop::abort(context, super::event_loop::Abort::Nodes);
+        return Err(super::event_loop::abort_error(reason));
+    }
+    Ok(())
 }
 
 /// Count nodes `replace_children_from` will allocate, returning `None` when
@@ -779,6 +791,8 @@ pub(crate) const DOCUMENT_MEMBERS: Members = Members {
     methods: &[
         ("createElement", 1, create_element),
         ("createElementNS", 2, super::document::create_element_ns),
+        ("write", 1, super::document::write),
+        ("writeln", 1, super::document::writeln),
         ("createRange", 0, super::selection::create_range),
         ("createTreeWalker", 2, super::selection::create_tree_walker),
     ],

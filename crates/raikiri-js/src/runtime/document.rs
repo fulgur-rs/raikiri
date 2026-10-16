@@ -7,10 +7,10 @@ use boa_engine::{Context, JsResult, JsValue};
 use raikiri_dom::NodeKind;
 
 use super::interfaces::{HTML_NS, wrap, wrap_optional};
-use super::node::{first_element_child, js_str, mark_dirty};
+use super::node::{first_element_child, guard_fragment_budget, js_str, mark_dirty};
 use super::webidl::{
-    dom_string, guard_node_budget, this_document, throw_dom_exception, unreachable_mutation_error,
-    with_state,
+    dom_string, guard_node_budget, host_failure, this_document, throw_dom_exception,
+    unreachable_mutation_error, with_state,
 };
 
 // ---- createElementNS ("validate and extract", DOM §4.5) ------------------
@@ -311,6 +311,129 @@ impl ReadyState {
             Self::Complete => "complete",
         }
     }
+}
+
+// ---- write / writeln (HTML "dynamic markup insertion") ----------------
+
+/// Where `document.write` inserts while a parser-run script executes: right
+/// after the script, then after the last node the script already wrote.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct WritePoint {
+    script: usize,
+    last_written: Option<usize>,
+}
+
+impl WritePoint {
+    pub(crate) fn after(script: usize) -> Self {
+        Self {
+            script,
+            last_written: None,
+        }
+    }
+}
+
+/// `document.write(...text)`.
+pub(crate) fn write(this: &JsValue, args: &[JsValue], context: &mut Context) -> JsResult<JsValue> {
+    write_markup(this, args, context, "")
+}
+
+/// `document.writeln(...text)`: `write` followed by a line feed.
+pub(crate) fn writeln(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+) -> JsResult<JsValue> {
+    write_markup(this, args, context, "\n")
+}
+
+/// HTML "document write steps" while the parser waits on a script: the text
+/// is parsed as if it followed the script's end tag. Parsing has already
+/// finished when scripts run here, so the text is parsed by itself as a
+/// fragment in the context of the script's parent, and the nodes are
+/// inserted after the script, following anything it wrote before. Markup
+/// split across calls is parsed one call at a time. Written `<script>`
+/// elements run once the writing script returns, before the parser's next
+/// script. A script that has left the tree has nowhere to write.
+///
+/// With no running parser script there is no insertion point, and the steps
+/// would open the document again, which this runtime does not support:
+/// that throws a "NotSupportedError" `DOMException`.
+fn write_markup(
+    this: &JsValue,
+    args: &[JsValue],
+    context: &mut Context,
+    suffix: &str,
+) -> JsResult<JsValue> {
+    this_document(this, context)?;
+    let mut markup = String::new();
+    for index in 0..args.len() {
+        markup.push_str(&dom_string(args, index, context)?);
+    }
+    markup.push_str(suffix);
+    let Some(point) = with_state(context, |s| s.write_point)? else {
+        return Err(throw_dom_exception(
+            context,
+            "NotSupportedError",
+            "document.write outside a script the parser runs would reopen the document",
+        ));
+    };
+    if markup.is_empty() {
+        return Ok(JsValue::undefined());
+    }
+    let place = with_state(context, |s| {
+        let document = s.host.document();
+        let parent = document.parent_of(point.script)?;
+        let tag = document.get_node(parent)?.tag_name()?.to_owned();
+        let namespace = document.element_namespace_uri(parent)?.to_owned();
+        let after = point
+            .last_written
+            .filter(|&last| document.parent_of(last) == Some(parent))
+            .unwrap_or(point.script);
+        let siblings = &document.get_node(parent)?.children;
+        let next = siblings
+            .iter()
+            .position(|&child| child == after)
+            .and_then(|position| siblings.get(position + 1))
+            .copied();
+        Some((parent, next, tag, namespace))
+    })?;
+    let Some((parent, next, tag, namespace)) = place else {
+        return Ok(JsValue::undefined());
+    };
+    let fragment = match with_state(context, |s| {
+        s.host.parse_fragment(&tag, &namespace, &markup)
+    })? {
+        Ok(fragment) => fragment,
+        Err(error) => return Err(host_failure(context, error)),
+    };
+    guard_node_budget(context)?;
+    let holder = with_state(context, |s| {
+        s.host.document_mut().create_detached_fragment()
+    })?;
+    guard_fragment_budget(context, &fragment)?;
+    let written = with_state(context, |s| {
+        let document = s.host.document_mut();
+        document.replace_children_from(holder, &fragment, fragment.root_index());
+        let scripts = super::scripts::scripts_below(document, holder).unwrap_or_default();
+        s.written_scripts.extend(scripts);
+        super::stylesheet::inserted_nodes(s.host.document(), holder)
+    })?;
+    super::dispatch::sync_event_handlers_in_subtree(context, holder)?;
+    super::image::update_images_below(context, holder)?;
+    let inserted = with_state(context, |s| {
+        s.host.document_mut().pre_insert(parent, holder, next)?;
+        super::stylesheet::note_child_list_change(s, parent, &written);
+        if let Some(&last) = written.last() {
+            s.write_point = Some(WritePoint {
+                last_written: Some(last),
+                ..point
+            });
+        }
+        Ok(())
+    })?;
+    inserted.map_err(|error| super::tree::map_mutation_error(context, error))?;
+    mark_dirty(context)?;
+    Ok(JsValue::undefined())
 }
 
 pub(crate) fn ready_state(
