@@ -3636,11 +3636,11 @@ impl PageNames {
         }
     }
 
-    /// The page type `candidate` compares its own against to detect a named
-    /// page change, and whether content already placed in its flow lets that
-    /// change open a new page. `saw_child` tells whether any earlier box was
-    /// placed. Also records the page type an enclosing flow sets for later
-    /// candidates.
+    /// Returns whether content already placed in `candidate`'s flow lets a
+    /// named page change open a new page, and the page type `candidate`
+    /// compares its own against to detect that change. `saw_child` tells
+    /// whether any earlier box was placed. Also records the page type an
+    /// enclosing flow sets for later candidates.
     fn comparison(
         &mut self,
         candidate: &PageCandidate,
