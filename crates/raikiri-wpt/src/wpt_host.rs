@@ -531,7 +531,8 @@ impl DocumentHost for WptDocumentHost {
 
     /// The initial containing block (the viewport-sized page box at the
     /// origin) unioned with the margin box of every box laid out in it. A
-    /// fixed-position subtree stays with the viewport, so it adds nothing.
+    /// fixed-position subtree whose containing block is the viewport stays
+    /// with the viewport, so it adds nothing.
     fn viewport_scrolling_area(&mut self) -> Result<Option<DomRect>, HostError> {
         let Some(scene) = self.page_scene.as_ref() else {
             // cov:ignore: the runtime flushes before asking.
@@ -541,12 +542,14 @@ impl DocumentHost for WptDocumentHost {
         let mut area = rect(0.0, 0.0, f64::from(page.width), f64::from(page.height));
         let document = &self.setup.uncascaded.dom;
         let styles = self.computed_styles.as_ref();
-        let mut pending = vec![document.root_index()];
-        while let Some(index) = pending.pop() {
-            let fixed = styles
-                .and_then(|styles| styles.get(index))
-                .is_some_and(|style| position_kind(&style.position) == PositionKind::Fixed);
-            if fixed {
+        // Each entry carries whether an ancestor is the containing block of
+        // fixed-position descendants, which then move with that ancestor.
+        let mut pending = vec![(document.root_index(), false)];
+        while let Some((index, contained)) = pending.pop() {
+            let style = styles.and_then(|styles| styles.get(index));
+            let fixed =
+                style.is_some_and(|style| position_kind(&style.position) == PositionKind::Fixed);
+            if fixed && !contained {
                 continue;
             }
             let node = document.get_node(index);
@@ -560,9 +563,12 @@ impl DocumentHost for WptDocumentHost {
                         .max(border_box.bottom + f64::from(margin.bottom)),
                 );
             }
-            if let Some(node) = node {
-                pending.extend(node.children.iter().copied());
-            }
+            let contained = contained
+                || style.is_some_and(|style| {
+                    raikiri_dom::establishes_fixed_containing_block(document, index, style)
+                });
+            let children = node.map(|n| &n.children[..]).unwrap_or_default();
+            pending.extend(children.iter().map(|&child| (child, contained)));
         }
         Ok(Some(area))
     }

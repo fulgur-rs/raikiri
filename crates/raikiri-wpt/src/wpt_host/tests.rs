@@ -1292,3 +1292,15 @@ fn the_viewport_scrolling_area_reaches_descendant_margin_edges() {
     let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
     assert_eq!(offset, format!("{}", 1500.0 - height));
 }
+
+#[test]
+fn a_fixed_box_inside_a_transformed_ancestor_counts_toward_the_scrolling_area() {
+    let (_dir, mut rt) = runtime(
+        "<style>body{margin:0}</style>\
+         <div style='transform:translateX(0)'>\
+         <div style='position:fixed;top:3000px;height:10px'></div></div>",
+    );
+    let offset = text(&mut rt, "scrollTo(0, 99999); String(scrollY)");
+    let height = f64::from(DEFAULT_REFTTEST_HEIGHT);
+    assert_eq!(offset, format!("{}", 3010.0 - height));
+}
