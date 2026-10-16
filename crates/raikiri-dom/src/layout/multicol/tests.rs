@@ -3110,3 +3110,125 @@ fn only_a_positioned_block_breaks_the_absolute_boxes_it_contains() {
         true
     ));
 }
+
+#[test]
+fn a_containing_block_that_holds_blocks_breaks_with_them_and_its_absolute_boxes() {
+    let (doc, _, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[
+            ("display:block;height:90px", &[]),
+            (
+                "display:block;position:relative",
+                &[
+                    "display:block;height:20px",
+                    "position:absolute;top:0;width:10px;height:20px",
+                ],
+            ),
+        ],
+    );
+    let (wrapper, boxes) = &ids[1];
+    // The wrapper's pieces span its block's pieces in each column.
+    assert_eq!(
+        fragment_rects(&doc, *wrapper),
+        vec![(0, 0.0, 90.0, 10.0), (1, 100.0, 0.0, 10.0)]
+    );
+    let wrapper_records: Vec<usize> = doc
+        .fragment_tree
+        .fragments
+        .iter()
+        .enumerate()
+        .filter(|(_, fragment)| fragment.node_id == *wrapper)
+        .map(|(index, _)| index)
+        .collect();
+    for node in boxes {
+        let parents: Vec<Option<usize>> = doc
+            .fragment_tree
+            .fragments
+            .iter()
+            .filter(|fragment| fragment.node_id == *node)
+            .map(|fragment| fragment.parent)
+            .collect();
+        assert_eq!(
+            parents,
+            wrapper_records
+                .iter()
+                .copied()
+                .map(Some)
+                .collect::<Vec<_>>()
+        );
+    }
+    assert_eq!(
+        fragment_rects(&doc, boxes[0]),
+        vec![(0, 0.0, 0.0, 10.0), (1, 0.0, 0.0, 10.0)]
+    );
+    assert_eq!(
+        fragment_rects(&doc, boxes[1]),
+        vec![(0, 0.0, 0.0, 20.0), (1, 0.0, -10.0, 20.0)]
+    );
+}
+
+#[test]
+fn only_a_plain_containing_block_holds_blocks_in_the_column_stream() {
+    let supported = |block: &str, out_of_flow: bool| {
+        let (doc, parent, _) = absolute_fixture(
+            DEFINITE_COLUMNS,
+            &[(
+                block,
+                &[
+                    "display:block;height:20px",
+                    "position:absolute;top:0;width:10px;height:20px",
+                ],
+            )],
+        );
+        lineless::supported(&doc, parent, out_of_flow).is_some()
+    };
+    let block = "display:block;position:relative";
+    assert!(supported(block, true));
+    assert!(!supported(block, false));
+    // Blocks in a box that is not their absolute boxes' containing block
+    // keep the other strategies.
+    assert!(!supported("display:block", true));
+    // A wrapper's borders, padding and own block size are not sliced.
+    assert!(!supported(
+        "display:block;position:relative;border-top:1px solid",
+        true
+    ));
+    assert!(!supported(
+        "display:block;position:relative;height:50px",
+        true
+    ));
+    assert!(!supported(
+        "display:block;position:relative;max-height:50px",
+        true
+    ));
+    assert!(!supported(
+        "display:block;position:relative;min-height:100%",
+        true
+    ));
+    assert!(supported(
+        "display:block;position:relative;min-height:0",
+        true
+    ));
+    assert!(!supported(
+        "display:block;position:relative;break-inside:avoid",
+        true
+    ));
+    // A block with content of its own has lines or boxes to break between.
+    let (mut doc, parent, ids) = absolute_fixture(
+        DEFINITE_COLUMNS,
+        &[(
+            block,
+            &[
+                "display:block;height:20px",
+                "position:absolute;top:0;width:10px;height:20px",
+            ],
+        )],
+    );
+    doc.append_element(
+        Some(ids[0].1[0]),
+        "div",
+        Style::default(),
+        Some("height:10px"),
+    );
+    assert!(lineless::supported(&doc, parent, true).is_none());
+}

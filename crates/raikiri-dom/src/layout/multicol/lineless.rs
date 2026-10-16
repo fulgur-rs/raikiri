@@ -22,7 +22,8 @@ use raikiri_style::property::BreakInside;
 ///
 /// With `out_of_flow`, a child may also hold absolutely positioned boxes
 /// that it is the containing block of; [`layout`] breaks them across the
-/// columns as well.
+/// columns as well. Such a child may also hold plain blocks with no
+/// content (see [`wrapped_blocks`]), which take its place in the stream.
 pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
     let container = &tree.nodes[parent];
     if container.ifc.is_some()
@@ -33,47 +34,23 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
         return None;
     }
     let mut children = Vec::new();
-    for &child in &container.children {
+    let mut boxes = Vec::new();
+    for child in rendered_elements(tree, parent) {
         let node = &tree.nodes[child];
-        if !node.is_in_document() || node.is_display_none() {
-            continue;
-        }
-        // Text that renders gives the container lines, refused above, so any
-        // other node here is collapsible white space.
-        let NodeData::Element(_) = &node.data else {
-            continue;
-        };
-        let defaults: taffy::Style = taffy::Style::default();
-        if node.display() != DisplayValue::Block
-            || node.style.direction != TaffyDirection::Ltr
-            // An orthogonal flow is monolithic in the column's block axis.
-            || !is_horizontal(node)
-            // So is a box with size containment (CSS Contain 2, 3.1).
-            || node.size_containment.height
-            || node.taffy_position() != TaffyPosition::Relative
-                && node.taffy_position() != defaults.position
-            || node.style.float.is_floated()
-            || node.style.clear != defaults.clear
-            || node.style.inset != Rect::auto()
-            || block_margins(node).is_none()
-            || node.style.overflow != defaults.overflow
-            || node.tag_name().is_some_and(|tag| {
-                ATOMIC_TAGS.contains(&tag)
-                    || REPLACED_BOX_TAGS.contains(&tag)
-                    || matches!(tag, "fieldset" | "legend" | "details" | "summary")
-            })
-            || node.break_before != BreakBetween::Auto
-            || node.break_after != BreakBetween::Auto
-            || node.has_before_or_after_content
-            || node.multicol.is_some()
-            || node.ifc.is_some()
-            || has_rendered_content(tree, child, out_of_flow && node.contains_absolute_boxes)
-        {
+        if !is_plain_block(tree, child) {
             return None;
+        }
+        if has_rendered_content(tree, child, out_of_flow && node.contains_absolute_boxes) {
+            let leaves = (out_of_flow && node.contains_absolute_boxes)
+                .then(|| wrapped_blocks(tree, child))
+                .flatten()?;
+            boxes.extend(leaves);
+        } else {
+            boxes.push(child);
         }
         children.push(child);
     }
-    children
+    boxes
         .iter()
         .any(|&child| {
             let style = &tree.nodes[child].style;
@@ -81,6 +58,92 @@ pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Op
                 || style_dimension_length(style.min_size.height.into()).is_some_and(|px| px > 0.0)
         })
         .then_some(children)
+}
+
+/// The rendered element children of `parent`. Text that renders gives a
+/// box lines, which the callers refuse, so any other node is collapsible
+/// white space.
+fn rendered_elements(tree: &Document, parent: usize) -> impl Iterator<Item = usize> + '_ {
+    tree.nodes[parent]
+        .children
+        .iter()
+        .copied()
+        .filter(|&child| {
+            let node = &tree.nodes[child];
+            node.is_in_document()
+                && !node.is_display_none()
+                && matches!(node.data, NodeData::Element(_))
+        })
+}
+
+/// Whether `child` is a block that can be sliced at a column end, leaving
+/// aside what it contains.
+fn is_plain_block(tree: &Document, child: usize) -> bool {
+    let node = &tree.nodes[child];
+    let defaults: taffy::Style = taffy::Style::default();
+    !(node.display() != DisplayValue::Block
+        || node.style.direction != TaffyDirection::Ltr
+        // An orthogonal flow is monolithic in the column's block axis.
+        || !is_horizontal(node)
+        // So is a box with size containment (CSS Contain 2, 3.1).
+        || node.size_containment.height
+        || node.taffy_position() != TaffyPosition::Relative
+            && node.taffy_position() != defaults.position
+        || node.style.float.is_floated()
+        || node.style.clear != defaults.clear
+        || node.style.inset != Rect::auto()
+        || block_margins(node).is_none()
+        || node.style.overflow != defaults.overflow
+        || node.tag_name().is_some_and(|tag| {
+            ATOMIC_TAGS.contains(&tag)
+                || REPLACED_BOX_TAGS.contains(&tag)
+                || matches!(tag, "fieldset" | "legend" | "details" | "summary")
+        })
+        || node.break_before != BreakBetween::Auto
+        || node.break_after != BreakBetween::Auto
+        || node.has_before_or_after_content
+        || node.multicol.is_some()
+        || node.ifc.is_some())
+}
+
+/// The in-flow children of `wrapper`, when they are plain blocks with no
+/// content that the column stream can hold in its place.
+///
+/// The wrapper must be sliceable at any column end and must not hold its
+/// block size apart from its children: with no block-axis borders or
+/// padding, an automatic block size and no effects sized from the whole
+/// box, its margins collapse with theirs (CSS 2, 8.3.1) and its pieces span
+/// exactly the pieces of its children.
+fn wrapped_blocks(tree: &Document, wrapper: usize) -> Option<Vec<usize>> {
+    let node = &tree.nodes[wrapper];
+    if has_block_edge_decorations(node)
+        || node.paints_whole_box_effects
+        || matches!(
+            node.break_inside,
+            BreakInside::Avoid | BreakInside::AvoidColumn
+        )
+        || node.style.size.height != Dimension::auto()
+        // A minimum, even a percentage one, can hold the wrapper open past
+        // its blocks.
+        || {
+            let minimum: Dimension = node.style.min_size.height.into();
+            minimum != Dimension::auto() && style_dimension_length(minimum) != Some(0.0)
+        }
+        || node.style.max_size.height != LengthPercentageAuto::auto()
+    {
+        return None;
+    }
+    let mut leaves = Vec::new();
+    for child in rendered_elements(tree, wrapper) {
+        if is_absolute_box(&tree.nodes[child]) {
+            continue;
+        }
+        if !is_plain_block(tree, child) || has_rendered_content(tree, child, false) {
+            return None;
+        }
+        leaves.push(child);
+    }
+    (!leaves.is_empty()).then_some(leaves)
 }
 
 /// Whether the bridged CSS writing mode of `id` is horizontal.
@@ -131,7 +194,7 @@ fn has_rendered_content(tree: &Document, id: usize, skip_absolute: bool) -> bool
 /// viewport, not its parent, as its containing block.
 fn is_absolute_box(node: &crate::Node) -> bool {
     matches!(node.data, NodeData::Element(_))
-        && node.style.position == TaffyPosition::Absolute
+        && node.taffy_position() == TaffyPosition::Absolute
         && !node.fixed_position
 }
 
@@ -258,7 +321,7 @@ fn absolute_pieces(
 }
 
 /// One column's share of a child box.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Piece {
     column: usize,
     /// Block offset of the piece from the top of its column.
@@ -699,6 +762,85 @@ fn balance_rows(
     }
 }
 
+/// The pieces of a wrapper whose blocks start with the piece `first` and
+/// end with the piece `last`. A piece runs from the top of its first block,
+/// or the top of a column it continues in, to the bottom of its last block,
+/// or the end of a column it breaks at.
+fn wrapper_pieces(first: &Piece, last: &Piece, column_height: f32) -> Vec<Piece> {
+    (first.column..=last.column)
+        .map(|column| {
+            let top = if column == first.column {
+                first.top
+            } else {
+                0.0
+            };
+            let bottom = if column == last.column {
+                last.top + last.height
+            } else {
+                column_height
+            };
+            Piece {
+                column,
+                top,
+                height: (bottom - top).max(0.0),
+            }
+        })
+        .collect()
+}
+
+/// Record the pieces `pieces` of `leaf`, a block a wrapper holds, under the
+/// wrapper's pieces `parents` and their fragment `records`.
+fn push_wrapped_block(
+    tree: &mut Document,
+    leaf: usize,
+    pieces: &[Piece],
+    parents: &[Piece],
+    records: &[usize],
+    context: FragmentationContext,
+    column_height: f32,
+) -> Option<()> {
+    let first = pieces.first()?;
+    let wrapper_first = parents.first()?;
+    let mut layout = tree.nodes[leaf].unrounded_layout;
+    let x = layout.location.x;
+    let size = layout.size;
+    layout.location = Point {
+        x: x + context.column_offset_x(first.column)
+            - context.column_offset_x(wrapper_first.column),
+        y: first.top - wrapper_first.top,
+    };
+    tree.set_unrounded_layout(TaffyNodeId::from(leaf), &layout);
+    for (index, piece) in pieces.iter().enumerate() {
+        let parent_index = parents
+            .iter()
+            .position(|parent| parent.column == piece.column)?;
+        let parent = &parents[parent_index];
+        tree.fragment_tree.try_push(LayoutFragment {
+            node_id: leaf,
+            parent: Some(records[parent_index]),
+            fragmentainer: context.column_index + piece.column,
+            rect: FragmentRect {
+                x,
+                y: piece.top - parent.top,
+                width: size.width,
+                height: piece.height,
+            },
+            // A box that stays in one column is not cut.
+            fragmentainer_clip: (pieces.len() > 1).then_some(FragmentRect {
+                x: 0.0,
+                y: -parent.top,
+                width: (x + size.width).max(context.column_width),
+                height: column_height,
+            }),
+            fragment_index: index,
+            fragment_count: pieces.len(),
+            line_start: None,
+            line_end: None,
+        })?;
+    }
+    Some(())
+}
+
 /// The stream item of `child`, a box of block size `height`.
 fn item(tree: &Document, child: usize, height: f32) -> Item {
     let node = &tree.nodes[child];
@@ -961,11 +1103,34 @@ pub(super) fn layout(
         );
         sizes.push(output.size);
     }
-    let items: Vec<Item> = children
+    // A wrapper that holds blocks puts them in the stream in its place, so
+    // each child has a range of stream items.
+    let wrapped: Vec<Option<Vec<usize>>> = children
         .iter()
-        .zip(&sizes)
-        .map(|(&child, size)| item(tree, child, size.height))
+        .map(|&child| wrapped_blocks(tree, child))
         .collect();
+    let mut items = Vec::new();
+    let mut spans = Vec::with_capacity(children.len());
+    for ((&child, size), leaves) in children.iter().zip(&sizes).zip(&wrapped) {
+        let first = items.len();
+        match leaves {
+            None => items.push(item(tree, child, size.height)),
+            Some(leaves) => {
+                items.extend(
+                    leaves.iter().map(|&leaf| {
+                        item(tree, leaf, tree.nodes[leaf].unrounded_layout.size.height)
+                    }),
+                );
+                // The wrapper's margins collapse with those of its first
+                // and last blocks.
+                let (top, bottom) = block_margins(&tree.nodes[child]).unwrap_or_default();
+                let last = items.len() - 1;
+                items[first].margin_top = items[first].margin_top.max(top);
+                items[last].margin_bottom = items[last].margin_bottom.max(bottom);
+            }
+        }
+        spans.push(first..items.len());
+    }
     // One fragment for the container, the rest for the child pieces.
     let max_pieces = tree
         .fragment_tree
@@ -1008,17 +1173,36 @@ pub(super) fn layout(
             return None;
         }
     };
+    let mut child_pieces: Vec<Vec<Piece>> = Vec::with_capacity(children.len());
+    for (span, leaves) in spans.iter().zip(&wrapped) {
+        let pieces = &placements.pieces[span.clone()];
+        child_pieces.push(match leaves {
+            None => pieces.first()?.clone(),
+            Some(_) => wrapper_pieces(
+                pieces.first()?.first()?,
+                pieces.last()?.last()?,
+                column_height,
+            ),
+        });
+    }
+    let planned = placements.pieces.iter().map(Vec::len).sum::<usize>()
+        + wrapped
+            .iter()
+            .zip(&child_pieces)
+            .filter(|(leaves, _)| leaves.is_some())
+            .map(|(_, pieces)| pieces.len())
+            .sum::<usize>();
     let absolute = absolute_pieces(
         tree,
         children,
-        &placements.pieces,
+        &child_pieces,
         context,
         column_height,
         // The last column of a container whose height nothing limits grows
         // to hold what is left (CSS Multi-column 1, 8.1).
         (definite_height.is_none() && maximum.is_none())
             .then(|| context.column_count.saturating_sub(1)),
-        max_pieces.saturating_sub(placements.pieces.iter().map(Vec::len).sum()),
+        max_pieces.saturating_sub(planned),
     )?;
     let used_height = if definite_height.is_some() {
         border_box.height
@@ -1053,7 +1237,7 @@ pub(super) fn layout(
     let mut previous_column = 0usize;
     for (order, ((&child, pieces), absolute)) in children
         .iter()
-        .zip(&placements.pieces)
+        .zip(&child_pieces)
         .zip(&absolute)
         .enumerate()
     {
@@ -1103,6 +1287,22 @@ pub(super) fn layout(
                 line_end: None,
             })?;
             records.push(record);
+        }
+        if let Some(leaves) = &wrapped[order] {
+            let leaf_pieces = &placements.pieces[spans[order].clone()];
+            let pushed = leaves.iter().zip(leaf_pieces).all(|(&leaf, leaf_pieces)| {
+                push_wrapped_block(
+                    tree,
+                    leaf,
+                    leaf_pieces,
+                    pieces,
+                    &records,
+                    context,
+                    column_height,
+                )
+                .is_some()
+            });
+            pushed.then_some(())?;
         }
         for piece in absolute {
             tree.fragment_tree.try_push(LayoutFragment {
