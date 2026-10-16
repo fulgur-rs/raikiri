@@ -521,9 +521,11 @@ impl Document {
             }
         });
         let paragraph = self.nodes[idx].formatting_context == FormattingContext::Inline;
-        let uncached =
-            (paragraph && ifc_basis.is_some() && has_percent_edge(&self.nodes[idx].style))
-                || self.size_contained_measure.last() == Some(&idx);
+        // A shared block context owns float placements and unresolved margin struts.
+        // A size-only cache cannot replay them after a speculative layout is restored.
+        let uncached = block_ctx.is_some()
+            || (paragraph && ifc_basis.is_some() && has_percent_edge(&self.nodes[idx].style))
+            || self.size_contained_measure.last() == Some(&idx);
         // Any other flex item container resolves its own padding and borders
         // against the parent size taffy hands it, which is missing in the
         // main axis while taffy measures the item; they are resolved against

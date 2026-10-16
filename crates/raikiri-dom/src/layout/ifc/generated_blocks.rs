@@ -591,7 +591,13 @@ pub(crate) fn open(block: &GeneratedBlock, flow: Flow<'_, '_>) -> OpenBlock {
         .then(|| flow.ctx.cleared_threshold(block.clear))
         .flatten()
         .map(|threshold| threshold - flow.top_edge);
-    let hypothetical = *flow.y + top_set.resolve();
+    let hypothetical = if flow.at_start && flow.top_margin_escapes && flow.ctx.origin_resolved() {
+        flow.ctx
+            .hypothetical_top_position(top_set)
+            .unwrap_or(*flow.y)
+    } else {
+        *flow.y + top_set.resolve()
+    };
     let escapes = flow.at_start && flow.top_margin_escapes;
     let flow_top = if escapes { *flow.y } else { hypothetical };
     let clearance = clear_y

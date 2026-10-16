@@ -47,7 +47,10 @@ html5ever   = "0.40"
 markup5ever = "0.40"
 
 # ── Layout (taffy) ─────────────────────────────────────────────────────
-taffy = { version = "0.14", default-features = false, features = [
+# Based on Taffy 0.14.0. The exact revision adds shared float snapshot/restore,
+# final normal-flow origin resolution, and IFC strut lifecycle integration.
+# Keep the fork explicit so Git consumers receive the same context contract.
+taffy = { git = "https://github.com/fulgur-rs/taffy", rev = "73a6d082f7394c73ad0b43e20d4420e80025eefb", default-features = false, features = [
     "std",
     "flexbox",
     "grid",

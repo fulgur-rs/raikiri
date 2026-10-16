@@ -41,9 +41,8 @@ pub(crate) enum IfcBoxKind {
     OutOfFlow,
 }
 
-/// A float met while laying out the current line. It is not in the context
-/// yet: `place_floated_box` cannot be undone, so it is only recorded here
-/// until the line is final.
+/// A float met while laying out the current line. Defer placement in the
+/// shared context until the line is final.
 #[derive(Clone, Debug)]
 pub(crate) struct TentativeFloat {
     pub(crate) node: usize,
@@ -552,6 +551,9 @@ fn run_boxes_segment(
     // Keeps the paragraph's own floats inside its content box.
     ctx.apply_content_box_inset([edges.0, edges.1]);
 
+    if !top_margin_escapes {
+        ctx.commit_strut();
+    }
     let mut cursor: Option<FloatCursor> = None;
     let mut y = 0.0_f32;
     let mut lines: Vec<shodo::Line> = Vec::new();
@@ -836,6 +838,7 @@ fn run_boxes_segment(
                     y = y.max(threshold - top_edge);
                 }
                 leading_margin_open = false;
+                ctx.commit_strut();
                 lines.push(line);
                 // Floats that did not fit beside the line they are anchored
                 // in go at the start of the next line, before it is measured.
@@ -911,6 +914,7 @@ fn run_boxes_segment(
                                     && let Some(placed) = generated_blocks::close(block, open, flow)
                                 {
                                     leading_margin_open = false;
+                                    ctx.commit_strut();
                                     placed_blocks.push(placed);
                                 }
                             }
@@ -947,6 +951,9 @@ fn run_boxes_segment(
                     leading_margin_open = block.collapses_through;
                 }
                 block_floats_bottom = block_floats_bottom.max(block.top + block.floats_bottom);
+                if !block.collapses_through {
+                    ctx.commit_strut();
+                }
                 (y, pending) = (block.next_y, block.pending);
                 // A forced page break after the block starts the lines after
                 // it on a new page, which the floats before the break do not
@@ -1409,9 +1416,8 @@ fn layout_block_child(
         }
         _ => {}
     }
-    // Placed where its own top margin alone puts it. Margins that leave the
-    // block through its first child are known only after it is laid out; they
-    // move its box below, not the floats it placed inside.
+    // The first pass discovers margins that escape the child. Retry against
+    // its final normal-flow origin before committing shared float geometry.
     // Clearance (CSS 2.1 9.5.2): a cleared block whose top border edge would
     // sit above the floats it clears is placed below them, and its top
     // margin no longer collapses with the margins above it.
@@ -1419,79 +1425,116 @@ fn layout_block_child(
     let clear_y = ctx
         .cleared_threshold(clear)
         .map_or(f32::NEG_INFINITY, |threshold| threshold - geometry.top_edge);
-    let guess = (y + pending.collapse_with_margin(margin.top).resolve()).max(clear_y);
+    let origin_resolved = ctx.origin_resolved();
+    let mut guess = if origin_resolved && collapse_top {
+        y.max(clear_y)
+    } else {
+        (y + pending.collapse_with_margin(margin.top).resolve()).max(clear_y)
+    };
     // The context measures from the root's border box; the insets are added
     // to the root's own. The right inset follows the used width, as in
     // taffy's own in-flow loop.
     let right = geometry.width - margin.left - width + geometry.edges.1;
-    let mut child_ctx = ctx.sub_context(
-        geometry.top_edge + guess,
-        [geometry.edges.0 + margin.left, right],
-    );
-    let inputs = LayoutInput {
-        run_mode: if perform {
-            RunMode::PerformLayout
-        } else {
-            RunMode::ComputeSize
-        },
-        sizing_mode: SizingMode::InherentSize,
-        axis: RequestedAxis::Both,
-        known_dimensions: Size {
-            width: Some(width),
-            height: None,
-        },
-        known_dimensions_are_definite: Size {
-            width: true,
-            height: true,
-        },
-        parent_size: Size {
-            width: Some(geometry.width),
-            height: geometry.definite_height,
-        },
-        available_space: Size {
-            width: AvailableSpace::Definite(width),
-            height: AvailableSpace::MaxContent,
-        },
-        // The block is in the paragraph's formatting context: the margins of
-        // its first and last children collapse through it unless its padding,
-        // border or height keep them in (taffy decides and returns them).
-        vertical_margins_are_collapsible: Line::TRUE,
-    };
-    let output =
-        tree.compute_block_child_layout(taffy::NodeId::from(node), inputs, Some(&mut child_ctx));
-    let floats_bottom = child_ctx.floated_content_height_contribution();
-    let top_set = output.top_margin.collapse_with_margin(margin.top);
-    let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
-    let hypothetical = y + pending.collapse_with_set(top_set).resolve();
-    let has_clearance = clear != taffy::Clear::None
-        && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
-    let (top, after) = if has_clearance {
-        {
-            let top = clear_y - if collapse_top { pending.resolve() } else { 0.0 };
-            (top, (top + output.size.height, bottom_set))
-        }
-    } else if output.margins_can_collapse_through {
-        // An empty block: its margins and the ones above it are one set, and
-        // its box sits where that set would put the next box's top.
-        let through = pending
-            .collapse_with_set(top_set)
-            .collapse_with_set(bottom_set);
-        (
-            if collapse_top {
-                y
+    let snapshot = origin_resolved.then(|| ctx.snapshot());
+    let (output, floats_bottom, top, after, has_clearance, top_set) = loop {
+        let mut child_ctx = ctx.sub_context_for_collapsing_child(
+            geometry.top_edge + guess,
+            [geometry.edges.0 + margin.left, right],
+            geometry.top_edge + y,
+            pending.collapse_with_margin(margin.top),
+            collapse_top,
+        );
+        child_ctx.set_origin_resolved(origin_resolved);
+        let inputs = LayoutInput {
+            run_mode: if perform {
+                RunMode::PerformLayout
             } else {
-                y + pending.collapse_with_set(top_set).resolve()
+                RunMode::ComputeSize
             },
-            (y, through),
-        )
-    } else {
-        let top = if collapse_top {
-            y
+            sizing_mode: SizingMode::InherentSize,
+            axis: RequestedAxis::Both,
+            known_dimensions: Size {
+                width: Some(width),
+                height: None,
+            },
+            known_dimensions_are_definite: Size {
+                width: true,
+                height: true,
+            },
+            parent_size: Size {
+                width: Some(geometry.width),
+                height: geometry.definite_height,
+            },
+            available_space: Size {
+                width: AvailableSpace::Definite(width),
+                height: AvailableSpace::MaxContent,
+            },
+            // The block is in the paragraph's formatting context: the margins of
+            // its first and last children collapse through it unless its padding,
+            // border or height keep them in (taffy decides and returns them).
+            vertical_margins_are_collapsible: Line::TRUE,
+        };
+        let output = tree.compute_block_child_layout(
+            taffy::NodeId::from(node),
+            inputs,
+            Some(&mut child_ctx),
+        );
+        let floats_bottom = child_ctx.floated_content_height_contribution();
+        let adjoining = child_ctx.top_adjoining_floats();
+        ctx.merge_adjoining_floats(adjoining);
+        let top_set = output.top_margin.collapse_with_margin(margin.top);
+        let bottom_set = output.bottom_margin.collapse_with_margin(margin.bottom);
+        let hypothetical = if origin_resolved && collapse_top {
+            ctx.hypothetical_top_position(pending.collapse_with_set(top_set))
+                .unwrap_or(y)
         } else {
             y + pending.collapse_with_set(top_set).resolve()
         };
-        (top, (top + output.size.height, bottom_set))
+        let has_clearance = clear != taffy::Clear::None
+            && ((collapse_top && ctx.has_adjoining_float(clear)) || hypothetical < clear_y);
+        let (top, after) = if has_clearance {
+            {
+                let top = clear_y
+                    - if collapse_top && !origin_resolved {
+                        pending.resolve()
+                    } else {
+                        0.0
+                    };
+                (top, (top + output.size.height, bottom_set))
+            }
+        } else if output.margins_can_collapse_through {
+            // An empty block: its margins and the ones above it are one set, and
+            // its box sits where that set would put the next box's top.
+            let through = pending
+                .collapse_with_set(top_set)
+                .collapse_with_set(bottom_set);
+            (
+                if collapse_top {
+                    y
+                } else {
+                    y + pending.collapse_with_set(top_set).resolve()
+                },
+                (y, through),
+            )
+        } else {
+            let top = if collapse_top {
+                y
+            } else {
+                y + pending.collapse_with_set(top_set).resolve()
+            };
+            (top, (top + output.size.height, bottom_set))
+        };
+        if let Some(snapshot) = &snapshot
+            && ctx.has_floats()
+            && (top - guess).abs() > 0.001
+        {
+            ctx.restore(snapshot);
+            guess = top;
+            continue;
+        }
+        break (output, floats_bottom, top, after, has_clearance, top_set);
     };
+    ctx.add_child_floated_content_height_contribution(guess + floats_bottom);
     if perform {
         // A relatively positioned block is moved from its place by its
         // offsets, which taffy carries in the layout location.

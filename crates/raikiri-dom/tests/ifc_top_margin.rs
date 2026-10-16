@@ -256,3 +256,91 @@ fn clearance_accounts_for_the_roots_own_margin_when_an_empty_margin_escapes() {
     assert_box(&html, "root", 40.0, 100.0);
     assert_box(&html, "after", 140.0, 20.0);
 }
+
+#[test]
+fn escaping_past_an_external_float_remeasures_the_available_line_width() {
+    let html = document(
+        "main{width:100px}",
+        "<div style='float:left;width:60px;height:30px'></div><section id=root><div id=child style='margin-top:40px'>XX XX</div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "root", 40.0, 40.0);
+    assert_box(&html, "child", 40.0, 20.0);
+    assert_box(&html, "after", 80.0, 20.0);
+}
+
+#[test]
+fn a_later_mixed_child_commits_its_float_at_the_collapsed_margin_origin() {
+    let html = document(
+        "",
+        "<section id=root>Y<article id=inner style='margin-top:10px'><div style='margin-top:40px'>X</div><div id=float style='float:left;width:10px;height:100px'></div>Z</article>W</section><div id=after style='clear:both'>Q</div>",
+    );
+    assert!((fragments(&html, "inner")[0].2 - 60.0).abs() < 0.01);
+    assert_box(&html, "float", 80.0, 100.0);
+    assert_box(&html, "after", 180.0, 20.0);
+}
+
+#[test]
+fn nested_signed_margins_place_the_shared_float_only_once() {
+    let html = document(
+        "article{margin-top:40px}section{margin-top:-15px}",
+        "<article><section id=root><div id=float style='float:left;width:10px;height:100px'></div><div style='margin-top:30px'>X</div>Y</section>Z</article><div id=after style='clear:both'>W</div>",
+    );
+    assert!((fragments(&html, "root")[0].2 - 25.0).abs() < 0.01);
+    assert_box(&html, "float", 25.0, 100.0);
+    assert_box(&html, "after", 125.0, 20.0);
+}
+
+#[test]
+fn relative_offsets_do_not_change_the_shared_float_clearance_origin() {
+    let html = document(
+        "section{position:relative;top:50px}",
+        "<section id=root><div id=float style='float:left;width:10px;height:100px'></div><div style='margin-top:20px'>X</div>Y</section><div id=after style='clear:both'>Z</div>",
+    );
+    assert!((fragments(&html, "root")[0].2 - 70.0).abs() < 0.01);
+    assert_box(&html, "float", 70.0, 100.0);
+    assert_box(&html, "after", 120.0, 20.0);
+}
+
+#[test]
+fn a_deep_leading_strut_resolves_before_descendant_floats_are_committed() {
+    let depth = 12;
+    let mut content = "<section style='margin-top:40px'>".repeat(depth);
+    content.push_str("<div id=float style='float:left;width:10px;height:100px'></div><div style='margin-top:30px'>X</div>");
+    content.push_str(&"Y</section>".repeat(depth));
+    content.push_str("<div id=after style='clear:both'>Z</div>");
+    let html = document("", &content);
+    assert_box(&html, "float", 40.0, 100.0);
+    assert_box(&html, "after", 300.0, 20.0);
+}
+
+#[test]
+fn an_empty_generated_box_with_height_ends_the_adjoining_float_strut() {
+    let html = document(
+        "section::before{content:'';display:block;height:20px}",
+        "<article><div style='float:left;width:10px;height:10px'></div><section id=root><div id=child style='clear:both;margin-top:20px'>X</div>Y</section></article><div id=after>Z</div>",
+    );
+    assert_box(&html, "child", 40.0, 20.0);
+    assert_box(&html, "root", 0.0, 80.0);
+    assert_box(&html, "after", 80.0, 20.0);
+}
+
+#[test]
+fn negative_leading_clearance_uses_the_hypothetical_ancestor_margin_set() {
+    let html = document(
+        "section{margin-top:100px}",
+        "<div style='float:left;width:40px;height:90px'></div><section id=root><div id=child style='clear:left;margin-top:-80px;height:10px'></div>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "child", 90.0, 10.0);
+    assert_box(&html, "root", 100.0, 20.0);
+    assert_box(&html, "after", 120.0, 20.0);
+}
+
+#[test]
+fn negative_generated_clearance_uses_the_hypothetical_ancestor_margin_set() {
+    let html = document(
+        "section{margin-top:100px}section::before{content:'';display:block;clear:left;margin-top:-80px;height:10px}",
+        "<div style='float:left;width:40px;height:90px'></div><section id=root>Y</section><div id=after>Z</div>",
+    );
+    assert_box(&html, "root", 100.0, 20.0);
+    assert_box(&html, "after", 120.0, 20.0);
+}
