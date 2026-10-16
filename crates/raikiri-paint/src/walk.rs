@@ -4226,7 +4226,11 @@ pub(crate) fn paint_document_impl(
                 }
                 let hold_lines = matches!(lines_frame, Some(PaintFrame::Lines { hold: true, .. }));
                 let own_multicol_clip_height = match cv.column_count {
-                    ColumnCountValue::Count(count) if count > 1 && layout.size.height > 0.0 => {
+                    ColumnCountValue::Count(count)
+                        if count > 1
+                            && node.is_multicol_container()
+                            && layout.size.height > 0.0 =>
+                    {
                         Some(layout.size.height)
                     }
                     _ => None,
@@ -4423,8 +4427,7 @@ pub(crate) fn paint_document_impl(
                 // share the enclosing layer.
                 if !defers && raikiri_dom::paint_rules::generates_box(cv) {
                     let allowed = deferral_scopes.last().is_some_and(|layer| layer.allowed)
-                        && matches!(cv.column_count, ColumnCountValue::Auto)
-                        && matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
+                        && !node.is_multicol_container();
                     let close = merge.unwrap_or(
                         if raikiri_dom::paint_rules::hoists_positioned_content(
                             document, cascade, node_id,

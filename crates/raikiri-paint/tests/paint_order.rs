@@ -1138,3 +1138,17 @@ fn negative_content_inside_inline_stacking_contexts_keeps_blocks_before_the_line
     let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
     assert!(step_at(&result, Step::Box(k)) < step_at(&result, Step::Text(m)));
 }
+
+/// The column properties do not apply to a flex box (CSS Multi-column
+/// Layout 1, 2), so the text overflowing an item's block still paints above
+/// the later block's background, as it does in a flex box without them.
+#[test]
+fn column_properties_on_a_flex_box_keep_overflowing_text_above_later_backgrounds() {
+    let result = same_order(
+        "<div style=\"display: flex; columns: 2\"><div>\
+         <div id=b style=\"height: 0\">overflowing text</div>\
+         <div id=c style=\"height: 20px; background: teal\"></div></div></div>",
+    );
+    let [b, c] = ["b", "c"].map(|id| by_id(&result, id));
+    assert!(step_at(&result, Step::Box(c)) < step_at(&result, Step::Text(b)));
+}

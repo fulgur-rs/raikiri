@@ -985,6 +985,14 @@ impl Node {
             .map_or(&[], |root| root.offsets.as_slice())
     }
 
+    /// Whether layout lays this box out as a multi-column container. The
+    /// column properties apply only to block containers (CSS Multi-column
+    /// Layout 1, 2), so a flex, grid or table box with them is not one.
+    #[doc(hidden)]
+    pub fn is_multicol_container(&self) -> bool {
+        self.multicol.is_some()
+    }
+
     /// Line ranges of an ifc root's lines split across the columns of a
     /// multicol container, with the offset each range is drawn at: `x` from
     /// the content-box start, `y` the block offset its first line is drawn

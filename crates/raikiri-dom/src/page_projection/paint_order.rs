@@ -942,8 +942,7 @@ impl Document {
                     // A `display: contents` element has no box, so its
                     // children share the enclosing layer.
                     if !defers && paint_rules::generates_box(cv) {
-                        let columns = !matches!(cv.column_count, ColumnCountValue::Auto)
-                            || !matches!(cv.column_width, raikiri_style::ComputedColumnWidth::Auto);
+                        let columns = node.is_multicol_container();
                         let close = if merges {
                             LayerClose::Merge(node_id)
                         } else if paint_rules::hoists_positioned_content(self, cascade, node_id) {
@@ -1507,10 +1506,11 @@ impl Document {
         cascade: &CascadeResult,
     ) -> Vec<(NodeId, &'static str)> {
         let is_multicol = |node_id: usize| {
-            cascade
-                .computed
-                .get(node_id)
-                .is_some_and(|cv| matches!(cv.column_count, ColumnCountValue::Count(n) if n >= 2))
+            self.get_node(node_id)
+                .is_some_and(|node| node.is_multicol_container())
+                && cascade.computed.get(node_id).is_some_and(
+                    |cv| matches!(cv.column_count, ColumnCountValue::Count(n) if n >= 2),
+                )
         };
         // Whether the node and all its ancestors are in the document and
         // displayed.
