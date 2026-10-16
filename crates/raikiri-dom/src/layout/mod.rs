@@ -118,7 +118,7 @@ pub(crate) use sanitize::sanitize_taffy;
 
 #[doc(hidden)]
 pub use fixed::generates_inline_box;
-pub use fixed::{establishes_fixed_containing_block, is_transformable};
+pub use fixed::{establishes_fixed_containing_block, has_applied_transform, is_transformable};
 pub(crate) use fixed::{
     establishes_fixed_containing_block_for_layout, is_transformable_for_layout,
 };

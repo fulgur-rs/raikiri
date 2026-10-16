@@ -397,3 +397,79 @@ fn fixed_boxes_ignore_containing_blocks_above_the_body() {
         assert_eq!(assert_matches_paint(body, &css), 1, "{css}");
     }
 }
+
+/// The commands the painter records for the first page of `body`.
+fn recorded(body: &str, css: &str) -> String {
+    let document = lay_out(body, css);
+    let page = document.page(0).expect("page");
+    let (document, cascade, page_box, origin) = page.paint_inputs();
+    let mut scene = Scene::new();
+    paint_single_page_with_origin_and_page(
+        &mut scene, document, cascade, page_box, origin, 0, 1, false,
+    )
+    .expect("paint");
+    // Each layout loads its own copy of the font, so blob ids differ.
+    let mut text = format!("{:?}", scene.commands);
+    while let Some(start) = text.find("Blob { id: ") {
+        let end = start + text[start..].find(',').expect("blob id");
+        text.replace_range(start..end, "Blob");
+    }
+    text
+}
+
+#[test]
+fn transforms_on_inline_boxes_change_nothing() {
+    // CSS Transforms 1 §3: a non-replaced inline box is not transformable,
+    // so its transform neither moves it nor makes it a stacking context.
+    let body = "<p><span class=s>xx</span> yy <span class=r>zz</span></p>";
+    let css = ".s { background: red; border-radius: 4px; padding: 0 3px } \
+               .r { position: relative; left: -20px; background: lime }";
+    assert_eq!(
+        recorded(body, &format!("{css} .s {{ transform: translateX(5px) }}")),
+        recorded(body, css),
+    );
+}
+
+#[test]
+fn transformed_atomic_inlines_keep_square_corners() {
+    // The element visit drops corner radii under an applied transform; the
+    // inline engine paints atomic inline boxes and atomic `::before` boxes
+    // with the same rule.
+    let image = "url(\"data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20width=%2210%22%20height=%2210%22/%3E\")";
+    for (body, css) in [
+        (
+            "<p>a<span class=b></span>b</p>",
+            ".b { display: inline-block; width: 20px; height: 10px; \
+             background: red; transform: rotate(10deg) }"
+                .to_string(),
+        ),
+        (
+            "<p>ab</p>",
+            format!(
+                "p::before {{ content: {image}; padding: 2px; background: red; \
+                 transform: rotate(10deg) }}"
+            ),
+        ),
+    ] {
+        assert_eq!(
+            recorded(
+                body,
+                &format!("{css} .b, p::before {{ border-radius: 4px }}")
+            ),
+            recorded(body, &css),
+            "{css}",
+        );
+    }
+}
+
+#[test]
+fn blockified_table_columns_take_their_transform() {
+    // CSS Display 3 §2.7: a grid item's `table-column` is blockified, so the
+    // box is transformable.
+    let body = "<div style=\"display: grid\"><div class=c></div></div>";
+    let css = ".c { display: table-column; background: red; height: 10px }";
+    assert_ne!(
+        recorded(body, &format!("{css} .c {{ transform: translateX(5px) }}")),
+        recorded(body, css),
+    );
+}

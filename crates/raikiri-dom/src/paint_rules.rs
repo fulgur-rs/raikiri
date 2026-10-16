@@ -428,7 +428,7 @@ fn defers_unless_clipped(document: &Document, cascade: &CascadeResult, node_id: 
     fits_parent
         && matches!(cv.position, PositionValue::Static)
         && matches!(cv.float, FloatValue::None)
-        && !establishes_stacking_context(cv)
+        && !establishes_stacking_context(document, node_id, cv)
         && matches!(cv.column_count, ColumnCountValue::Auto)
         && matches!(cv.column_width, ComputedColumnWidth::Auto)
 }
@@ -448,9 +448,12 @@ fn is_block_container(display: DisplayValue) -> bool {
 }
 
 /// Whether a non-positioned box still forms a group of its own: an opacity
-/// group, a transform or a filter.
-fn establishes_stacking_context(cv: &ComputedValues) -> bool {
-    opacity_layer(cv).is_some() || !cv.transform.is_empty() || !cv.filter.is_empty()
+/// group, a transform or a filter. A transform on a box that is not
+/// transformable does not apply, so it forms no group (CSS Transforms 1 §3).
+fn establishes_stacking_context(document: &Document, id: usize, cv: &ComputedValues) -> bool {
+    opacity_layer(cv).is_some()
+        || !cv.filter.is_empty()
+        || crate::layout::has_applied_transform(document, id, cv)
 }
 
 /// Whether a positioned box, or a box that forms a stacking context, waits
@@ -477,7 +480,7 @@ pub fn defers_to_positioned_layer(
             .get_node(node_id)
             .is_some_and(|node| node.kind() == NodeKind::Element)
             && generates_box(cv)
-            && (positioned || establishes_stacking_context(cv))
+            && (positioned || establishes_stacking_context(document, node_id, cv))
             && !negative
             && box_parent(document, cascade, node_id, BoxParentScope::Document).is_some_and(
                 |parent| {
@@ -520,7 +523,7 @@ pub fn hoists_positioned_content(
 ) -> bool {
     cascade.computed.get(node_id).is_some_and(|cv| {
         matches!(cv.position, PositionValue::Static)
-            && !establishes_stacking_context(cv)
+            && !establishes_stacking_context(document, node_id, cv)
             && !is_z_indexed_item(document, cascade, node_id, cv)
             && !clips_overflow(cv)
             && (!matches!(cv.float, FloatValue::None)
@@ -575,7 +578,7 @@ pub fn paints_before_paragraph_lines(
                 | DisplayValue::Table
         ) && matches!(cv.position, PositionValue::Static)
             && matches!(cv.float, FloatValue::None)
-            && !establishes_stacking_context(cv)
+            && !establishes_stacking_context(document, id, cv)
     }) && document
         .get_node(id)
         .is_some_and(|node| node.kind() == NodeKind::Element)
@@ -630,7 +633,7 @@ pub fn holds_negative_stack_level(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: elements in a laid-out paragraph have computed values
         };
-        let stacking = establishes_stacking_context(cv)
+        let stacking = establishes_stacking_context(document, id, cv)
             || (!matches!(cv.position, PositionValue::Static)
                 && matches!(cv.z_index, ZIndexValue::Integer(_)));
         if stacking {
@@ -666,7 +669,7 @@ pub fn closes_deferred_inline_content(
         return false;
     };
     let below_inline_content = matches!(cv.position, PositionValue::Static)
-        && !establishes_stacking_context(cv)
+        && !establishes_stacking_context(document, node_id, cv)
         && (!matches!(cv.float, FloatValue::None)
             || matches!(
                 cv.display,

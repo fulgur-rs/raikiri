@@ -6561,6 +6561,7 @@ fn inline_border_image_tile_ends(
         &piece,
         None,
         InlineProgression::new(writing_mode, false),
+        false,
         0.0,
         0.0,
         None,
