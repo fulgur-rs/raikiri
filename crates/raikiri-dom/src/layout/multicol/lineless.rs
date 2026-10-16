@@ -531,11 +531,9 @@ fn balance_rows(
                 .map(|piece| piece.top + piece.height)
                 .fold(0.0_f32, f32::max)
         });
-        heights[row] = if extent > 0.0 && extent <= full && fits(&mut trial, extent) {
-            extent
-        } else {
-            high
-        };
+        heights[row] = Some(extent)
+            .filter(|&extent| extent > 0.0 && extent <= full && fits(&mut trial, extent))
+            .unwrap_or(high);
     }
     Some(())
 }

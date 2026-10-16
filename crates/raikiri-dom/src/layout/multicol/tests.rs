@@ -2844,3 +2844,36 @@ fn a_nested_column_container_keeps_its_own_fragment_height() {
         .collect();
     assert_eq!(heights.first(), Some(&20.0));
 }
+
+#[test]
+fn a_nested_multicol_whose_last_row_and_bottom_padding_overflow_the_outer_column_is_not_continued_in_rows()
+ {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;columns:2;column-gap:0;padding-bottom:10px"),
+    );
+    doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some("display:block;height:400px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    // The last row fills the outer column, so its bottom padding has no room.
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
+
+    doc.set_element_inline_style(inner, Some("display:block;columns:2;column-gap:0".into()));
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 2);
+}

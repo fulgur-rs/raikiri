@@ -588,3 +588,20 @@ fn balance_all_keeps_a_row_tall_enough_for_the_boxes_avoiding_breaks_in_it() {
         ]
     );
 }
+
+#[test]
+fn a_definite_nested_container_needing_more_rows_than_the_budget_has_no_rows() {
+    let fill = |max_pieces| {
+        fill_item_rows(
+            &[split(1000.0)],
+            2,
+            ColumnFillValue::Balance,
+            Some(1000.0),
+            10.0,
+            10.0,
+            max_pieces,
+        )
+    };
+    assert!(fill(3).is_none());
+    assert_eq!(fill(usize::MAX).unwrap().heights.len(), 100);
+}

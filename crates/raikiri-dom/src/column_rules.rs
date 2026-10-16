@@ -254,10 +254,14 @@ impl Document {
     /// The rules of the row of a nested column container's columns in outer
     /// column `fragmentainer`, relative to that row's box.
     fn row_column_rules(&self, owner: usize, width: f32, fragmentainer: usize) -> Vec<PaintRect> {
-        self.nodes[owner]
-            .multicol_rows
-            .iter()
+        // Layout records one row per outer column from the first row's on,
+        // so the row is found by its offset from the first.
+        let rows = &self.nodes[owner].multicol_rows;
+        rows.first()
+            .and_then(|first| fragmentainer.checked_sub(first.context.column_index))
+            .and_then(|row| rows.get(row))
             .filter(|row| row.context.column_index == fragmentainer)
+            .into_iter()
             .flat_map(|row| {
                 row.occupied
                     .iter()
