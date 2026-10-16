@@ -1812,6 +1812,24 @@ fn positioned_text_line_bounds(document: &Document, node_id: usize) -> Option<Ve
     positioned_owned_text_line_bounds(document, &owned)
 }
 
+/// Where the text `node_id`, placed by positioned coordinates, starts now.
+/// Text of the inline layout rooted at `ifc_root` starts at its first line's
+/// current position; other text starts at its own box's top.
+fn positioned_text_start_y(
+    document: &Document,
+    text_lines: &TextLineIndex,
+    node_id: usize,
+    ifc_root: Option<usize>,
+) -> f32 {
+    let Some(root) = ifc_root else {
+        return current_abs_y(document, node_id);
+    };
+    let owned = text_lines
+        .get(node_id)
+        .expect("text candidate has indexed ownership");
+    current_abs_y(document, root) + text_first_line_offset(document, root, owned, 0.0)
+}
+
 /// Block offset of the first line of `owned` from the border-box top of its
 /// paragraph `root`, after the paragraph's column ranges have moved it.
 /// `fallback` is the line top used when no positioned first line is found:
@@ -4220,15 +4238,12 @@ fn paginate_flow(
             let mut height = candidate.height;
             let candidate_page_name = candidate.page_name.clone();
             let mut effective_y = if uses_positioned_coordinates {
-                if let Some((root, _)) = candidate.ifc_root {
-                    let owned = text_lines
-                        .get(node_id)
-                        .expect("text candidate has indexed ownership");
-                    current_abs_y(document, root)
-                        + text_first_line_offset(document, root, owned, 0.0)
-                } else {
-                    current_abs_y(document, node_id)
-                }
+                positioned_text_start_y(
+                    document,
+                    &text_lines,
+                    node_id,
+                    candidate.ifc_root.map(|(root, _)| root),
+                )
             } else {
                 raw_y + flow_shift
             };
