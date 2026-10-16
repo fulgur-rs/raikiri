@@ -3356,7 +3356,7 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
     // A single paragraph keeps the existing path.
     assert!(!paragraphs("display:none"));
     assert!(paragraphs(
-        "display:block;padding-left:2px;border-right:2px solid"
+        "display:block;margin:0 4px;padding-left:2px;border-right:2px solid"
     ));
     for style in [
         "display:grid",
@@ -3368,6 +3368,9 @@ fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
         "display:block;max-height:20px",
         "display:block;padding-top:2px",
         "display:block;border-bottom:2px solid",
+        "display:block;margin-top:20px",
+        "display:block;margin-bottom:20px",
+        "display:block;margin:0;writing-mode:vertical-rl",
     ] {
         assert!(!paragraphs(style), "{style}");
     }

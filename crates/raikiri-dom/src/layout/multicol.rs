@@ -610,14 +610,23 @@ fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool
     children.clone().nth(1).is_some()
         && children.all(|child| {
             let zero = LengthPercentage::length(0.0);
+            let zero_margin = LengthPercentageAuto::length(0.0);
             // Block-edge decoration needs slice or clone geometry for each
-            // piece, which only the lines are given.
+            // piece, which only the lines are given; the pieces are stacked
+            // without collapsing adjoining margins; and the line offsets are
+            // read as horizontal block offsets.
             child.formatting_context == FormattingContext::Inline
+                && !child
+                    .authored_writing_mode
+                    .is_some_and(WritingMode::is_vertical)
                 && matches!(child.display(), DisplayValue::Block)
                 && [child.style.padding.top, child.style.padding.bottom]
                     .into_iter()
                     .chain([child.style.border.top, child.style.border.bottom])
                     .all(|edge| edge == zero)
+                && [child.style.margin.top, child.style.margin.bottom]
+                    .into_iter()
+                    .all(|edge| edge == zero_margin)
                 && child.taffy_position() != TaffyPosition::Absolute
                 && !child.style.float.is_floated()
                 && child.style.size.height.is_auto()
