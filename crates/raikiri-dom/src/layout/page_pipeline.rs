@@ -4409,14 +4409,7 @@ fn paginate_flow(
             {
                 let page_start = page_origin(current_page);
                 let page_end = page_start + page_step_at(current_page);
-                let ParagraphLineFit {
-                    total_lines,
-                    starts_on_page,
-                    lines_before_break,
-                    orphans,
-                    widows,
-                    violates_line_constraints,
-                } = ParagraphLineFit::measure(
+                let line_fit = ParagraphLineFit::measure(
                     &line_metrics,
                     effective_y,
                     page_start,
@@ -4428,44 +4421,37 @@ fn paginate_flow(
                 let fits_on_page =
                     block_height.is_finite() && block_height <= page_step_at(current_page) + 0.001;
                 // Lines move down inside the paragraph only when it has
-                // lines enough for both constraints, grows with them (a box
-                // with a definite height keeps it), and holds nothing but
-                // text in one column.
-                let splittable = starts_on_page
-                    && orphans + widows <= total_lines
+                // lines enough for both constraints, is its own inline layout
+                // root, has no earlier split pending, and can shift its lines.
+                let splittable = line_fit.has_room_for_both_constraints()
                     && paragraph_root == Some(block_id)
                     && deferred_shifts.line_splits.is_empty()
-                    && height_follows_content(document, block_id)
-                    && document
-                        .ifc_layout_node(block_id)
-                        .and_then(|node| node.ifc.as_ref())
-                        .is_some_and(|ifc| {
-                            ifc.boxes.is_empty() && ifc.multicol_fragments.is_none()
-                        });
+                    && lines_can_shift_inside(document, block_id);
                 // Only the widows are short: the break moves up between
                 // earlier lines (CSS Fragmentation 3 §3.3), so the last
                 // `widows` lines start the next page and the lines before
                 // them stay.
-                let earlier_break =
-                    (splittable && violates_line_constraints && lines_before_break >= orphans)
-                        .then(|| {
-                            widows_break_on_next_page(
-                                &line_metrics,
-                                effective_y,
-                                current_page,
-                                widows,
-                                &page_origins,
-                            )
-                        })
-                        .flatten();
+                let earlier_break = (splittable
+                    && line_fit.violates_line_constraints
+                    && line_fit.lines_before_break >= line_fit.orphans)
+                    .then(|| {
+                        widows_break_on_next_page(
+                            &line_metrics,
+                            effective_y,
+                            current_page,
+                            line_fit.widows,
+                            &page_origins,
+                        )
+                    })
+                    .flatten();
                 let final_break = splittable
                     .then(|| {
                         widows_break_on_last_page(
                             &line_metrics,
                             effective_y,
                             current_page,
-                            orphans,
-                            widows,
+                            line_fit.orphans,
+                            line_fit.widows,
                             earlier_break,
                             &page_origins,
                         )
@@ -4497,9 +4483,9 @@ fn paginate_flow(
                         deferred_shifts.line_splits.push((block_id, line, shift));
                     }
                 } else if line_block_parent.is_some()
-                    && starts_on_page
+                    && line_fit.starts_on_page
                     && fits_on_page
-                    && violates_line_constraints
+                    && line_fit.violates_line_constraints
                 {
                     let block_raw_y =
                         root_flow_offset + current_abs_y(document, block_id) - flow_shift;
@@ -6794,6 +6780,17 @@ fn first_line_overflows(
         && text_y + text_height > page_end
 }
 
+/// Whether later lines of the paragraph `block_id` can move down inside it:
+/// its height grows with them (a box with a definite height keeps it), and it
+/// holds nothing but text in one column.
+fn lines_can_shift_inside(document: &Document, block_id: usize) -> bool {
+    height_follows_content(document, block_id)
+        && document
+            .ifc_layout_node(block_id)
+            .and_then(|node| node.ifc.as_ref())
+            .is_some_and(|ifc| ifc.boxes.is_empty() && ifc.multicol_fragments.is_none())
+}
+
 /// How a paragraph's lines fall against the end of the current page, and
 /// whether the natural break between them honors `orphans` and `widows`.
 struct ParagraphLineFit {
@@ -6814,6 +6811,12 @@ struct ParagraphLineFit {
 }
 
 impl ParagraphLineFit {
+    /// Whether the first line starts on the current page and the paragraph
+    /// has lines enough for both `orphans` and `widows`.
+    fn has_room_for_both_constraints(&self) -> bool {
+        self.starts_on_page && self.orphans + self.widows <= self.total_lines
+    }
+
     /// Measures `line_metrics`, the block-start and block-end edges of each
     /// line relative to `effective_y`, against the page from `page_start`
     /// to `page_end`, with the computed `orphans` and `widows`.
