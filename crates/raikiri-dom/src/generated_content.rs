@@ -417,7 +417,13 @@ impl<'a> CounterValues<'a> {
             appended = true;
         }
 
-        for (counter_name, delta) in computed.counter_increment.iter() {
+        // A `display: list-item` pseudo increments list-item for its own
+        // content as well as for the element's later children.
+        let implicit = crate::target::implicit_list_item_increment(
+            computed,
+            computed.display == DisplayValue::ListItem,
+        );
+        for (counter_name, delta) in computed.counter_increment.iter().chain(implicit.iter()) {
             if counter_name.as_str() != name {
                 continue;
             }

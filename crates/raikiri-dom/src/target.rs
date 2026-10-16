@@ -53,6 +53,21 @@ use crate::document::Document;
 /// The counter that list items increment implicitly (CSS Lists 3 §4.6).
 const LIST_ITEM_COUNTER: &str = "list-item";
 
+/// The `list-item 1` increment a list item applies on top of its own
+/// `counter-increment` (CSS Lists 3 §4.6), or `None` when `list_item` is
+/// false or the element's `counter-increment` names `list-item` itself.
+pub(crate) fn implicit_list_item_increment(
+    cv: &raikiri_style::ComputedValues,
+    list_item: bool,
+) -> Option<(SmolStr, i32)> {
+    (list_item
+        && !cv
+            .counter_increment
+            .iter()
+            .any(|(name, _)| name.as_str() == LIST_ITEM_COUNTER))
+    .then(|| (SmolStr::new_static(LIST_ITEM_COUNTER), 1))
+}
+
 /// Maximum estimated memory retained and cloned for counter snapshots.
 ///
 /// The estimate includes the per-node snapshot vector, hash-table capacity,
@@ -230,12 +245,7 @@ impl CounterScopes {
                 bucket.push(sym);
             }
         }
-        let implicit_list_item = (list_item
-            && !cv
-                .counter_increment
-                .iter()
-                .any(|(name, _)| name.as_str() == LIST_ITEM_COUNTER))
-        .then(|| (SmolStr::new_static(LIST_ITEM_COUNTER), 1));
+        let implicit_list_item = implicit_list_item_increment(cv, list_item);
         for (name, delta) in cv.counter_increment.iter().chain(implicit_list_item.iter()) {
             let sym = Symbol::new(name.clone());
             let stack = self.stacks.entry(sym.clone()).or_default();

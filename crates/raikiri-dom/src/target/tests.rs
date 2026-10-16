@@ -572,3 +572,39 @@ fn list_items_increment_list_item_before_their_counter_set() {
     assert_eq!(snapshots[explicit][&list_item], vec![16]);
     assert_eq!(snapshots[not_list_item][&list_item], vec![16]);
 }
+
+#[test]
+fn list_item_before_pseudo_increments_list_item_for_itself_and_children() {
+    let mut doc = Document::new();
+    let style = doc.append_element(
+        Some(doc.root_index()),
+        "style",
+        Style::default(),
+        None::<&str>,
+    );
+    doc.append_text(
+        style,
+        "div::before { display: list-item; list-style: none; content: counter(list-item) }",
+    );
+    let host = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("counter-reset: list-item 4"),
+    );
+    let child = doc.append_element(Some(host), "span", Style::default(), None::<&str>);
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cr = cascade(&doc, &rules).expect("cascade Ok");
+    let snapshots = counter_snapshots(&doc, &cr).expect("counter snapshots");
+    let (_, text) = crate::generated_content::generated_text(
+        &doc,
+        &cr,
+        host,
+        raikiri_style::PseudoElem::Before,
+        &snapshots,
+    )
+    .expect("::before content");
+    assert_eq!(text, "5");
+    assert_eq!(snapshots[child][&Symbol::new("list-item")], vec![5]);
+}
