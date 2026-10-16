@@ -4671,21 +4671,15 @@ fn paginate_flow(
             && !same_named_coordinate;
         // A forced break at the start of a page already opened by natural
         // overflow describes the same boundary and must not create a blank
-        // page.  This matters when the page height changes after page zero:
-        // the fixed-height pass may have considered the box to be on the
-        // current page, while the scheduled pass places it exactly at the
-        // next page origin.
-        // The forced break sits before the box's margin box, so the test uses
-        // its block-start margin edge. A border box that lands exactly on a
-        // page origin only because the preceding collapsed margin filled the
-        // previous page has not opened that page: the break still moves it,
-        // and the margin after the forced break is kept.
-        let forced_break_at_page_start = forced_before && {
-            let margin_box_y = effective_y - margin_top.max(0.0);
-            let margin_box_page = page_index_in_flow(margin_box_y).unwrap_or(current_page);
-            margin_box_page > current_page
-                || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
-        };
+        // page. The forced break sits before the box's margin box, so the
+        // test uses its block-start margin edge.
+        let forced_break_at_page_start = forced_before
+            && margin_box_starts_page(
+                &page_origins,
+                effective_y - margin_top.max(0.0),
+                current_page,
+                page_start,
+            );
         // Keep an ordinary table row intact when it would cross the current
         // page. The row is a class-A boundary owned by the table engine; its
         // cells and descendants follow the same flow shift below. Rowspans,
@@ -4699,9 +4693,14 @@ fn paginate_flow(
             .map_or(0.0, |header| header.height + header.gap);
         let table_row_lead = table_row_leads.get(&node_id).copied().unwrap_or(0.0);
         let table_row_overflow = candidate.is_table_row
-            && table_row_lead + height + repeated_header_height
-                <= page_step_at(current_page.saturating_add(1)) + 0.001
-            && starts_on_page_and_runs_past_it(flow_y, flow_y + height, page_start, page_end);
+            && table_row_moves(
+                flow_y,
+                height,
+                table_row_lead + height + repeated_header_height,
+                page_start,
+                page_end,
+                page_step_at(current_page.saturating_add(1)),
+            );
         let row_group = avoided_row_groups.get(&node_id).copied();
         let row_group_overflow = row_group
             .is_some_and(|(end, _)| row_group_moves(flow_y, end - raw_y, page_start, page_end));
@@ -6548,6 +6547,45 @@ impl PrecedingFlexItems {
             |(previous_height, previous_page)| previous_height > 0.0 && previous_page == page,
         )
     }
+}
+
+/// Whether a box whose margin box starts at `margin_box_y` falls on a page
+/// after `current_page`, or at `page_start`, the start of `current_page`.
+///
+/// This matters when the page height changes after page zero: the
+/// fixed-height pass may have considered the box to be on the current page,
+/// while the scheduled pass places it exactly at the next page origin. A
+/// border box that lands exactly on a page origin only because the preceding
+/// collapsed margin filled the previous page has not opened that page: the
+/// break still moves it, and the margin after the forced break is kept.
+fn margin_box_starts_page(
+    page_origins: &PageOrigins,
+    margin_box_y: f32,
+    current_page: u32,
+    page_start: f32,
+) -> bool {
+    let margin_box_page = page_origins
+        .page_index_in_flow(margin_box_y)
+        .unwrap_or(current_page);
+    margin_box_page > current_page
+        || (margin_box_y.is_finite() && (margin_box_y - page_start).abs() <= 0.001)
+}
+
+/// Whether a table row of `height` at `flow_y` crosses `page_end` and moves
+/// whole to the next page, whose block size is `next_page_step`.
+///
+/// `needed` is the block size the row takes on the next page: its lead from
+/// the page top, its height, and the copy of any repeated header above it.
+fn table_row_moves(
+    flow_y: f32,
+    height: f32,
+    needed: f32,
+    page_start: f32,
+    page_end: f32,
+    next_page_step: f32,
+) -> bool {
+    needed <= next_page_step + 0.001
+        && starts_on_page_and_runs_past_it(flow_y, flow_y + height, page_start, page_end)
 }
 
 /// Whether a run of `run_height` that avoids breaks inside it, starting at
