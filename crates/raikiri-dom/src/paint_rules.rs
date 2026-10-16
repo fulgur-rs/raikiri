@@ -537,6 +537,177 @@ pub fn hoists_positioned_content(
     })
 }
 
+/// One frame of the list a layer keeps of the boxes that wait for its end
+/// (see [`defers_to_positioned_layer`]), as [`sort_positioned_frames`] reads
+/// it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PositionedFrame {
+    /// The box of element `id`.
+    Box(usize),
+    /// Opens the clip of element `owner` around the frames up to the
+    /// matching [`PositionedFrame::Close`].
+    Open(usize),
+    /// Closes the innermost open clip.
+    Close,
+}
+
+/// The stack level a box that waits for the end of its layer paints at:
+/// its integer `z-index` when it is positioned or a flex or grid item, else
+/// zero (CSS 2.1 Appendix E steps 8 and 9).
+fn positioned_layer_level(document: &Document, cascade: &CascadeResult, node_id: usize) -> i32 {
+    cascade
+        .computed
+        .get(node_id)
+        .map_or(0, |cv| match cv.z_index {
+            ZIndexValue::Integer(level)
+                if !matches!(cv.position, PositionValue::Static)
+                    || is_z_indexed_item(document, cascade, node_id, cv) =>
+            {
+                level
+            }
+            _ => 0,
+        })
+}
+
+/// Stable-sorts the boxes that wait for the end of a layer by stack level.
+///
+/// The boxes of a stacking context with a stack level of zero or more paint
+/// in stack level order, whatever their depth in the tree (CSS 2.1 Appendix
+/// E step 9), and in tree order within a level (step 8). The list holds them
+/// in tree order, inside the clips of the boxes between that keep them
+/// clipped. Each box keeps its clips: a clip opens again around a box moved
+/// out of it, and boxes that stay next to each other share it as before.
+/// `close` is the frame that closes a clip.
+pub fn sort_positioned_frames<F: Clone>(
+    document: &Document,
+    cascade: &CascadeResult,
+    frames: Vec<F>,
+    close: F,
+    kind: impl Fn(&F) -> PositionedFrame,
+) -> Vec<F> {
+    // The clips open in the list, each with the clip it opens inside, and
+    // each box with the innermost clip open around it.
+    let mut clips: Vec<(Option<usize>, usize)> = Vec::new();
+    let mut boxes: Vec<(i32, usize, Option<usize>, usize)> = Vec::new();
+    let mut open: Option<usize> = None;
+    for (index, frame) in frames.iter().enumerate() {
+        match kind(frame) {
+            PositionedFrame::Box(id) => boxes.push((
+                positioned_layer_level(document, cascade, id),
+                id,
+                open,
+                index,
+            )),
+            PositionedFrame::Open(_) => {
+                clips.push((open, index));
+                open = Some(clips.len() - 1);
+            }
+            PositionedFrame::Close => open = open.and_then(|clip| clips[clip].0),
+        }
+    }
+    if boxes.windows(2).all(|pair| pair[0].0 <= pair[1].0) {
+        return frames;
+    }
+    // A positioned box with `z-index: auto` is no stacking context, but the
+    // painters paint the positioned boxes inside it with it. Moving it as a
+    // whole could put a descendant of another level on the wrong side of
+    // the boxes it passes, so such a box stays in place and the boxes on
+    // either side of it are sorted apart.
+    let mut run = 0;
+    let mut keys = Vec::with_capacity(boxes.len());
+    for (level, id, _, _) in &boxes {
+        if holds_leveled_positioned_box(document, cascade, *id) {
+            keys.push((run + 1, 0));
+            run += 2;
+        } else {
+            keys.push((run, *level));
+        }
+    }
+    let mut keyed: Vec<_> = keys.into_iter().zip(boxes).collect();
+    keyed.sort_by_key(|(key, _)| *key);
+    let mut sorted = Vec::with_capacity(frames.len());
+    // The clips open around the last box emitted, outermost first.
+    let mut open: Vec<usize> = Vec::new();
+    for (_, (_, _, innermost, index)) in keyed {
+        let mut path = Vec::new();
+        let mut clip = innermost;
+        while let Some(current) = clip {
+            path.push(current);
+            clip = clips[current].0;
+        }
+        path.reverse();
+        let shared = open.iter().zip(&path).take_while(|(a, b)| a == b).count();
+        for _ in shared..open.len() {
+            sorted.push(close.clone());
+        }
+        open.truncate(shared);
+        for &clip in &path[shared..] {
+            sorted.push(frames[clips[clip].1].clone());
+            open.push(clip);
+        }
+        sorted.push(frames[index].clone());
+    }
+    for _ in 0..open.len() {
+        sorted.push(close.clone());
+    }
+    sorted
+}
+
+/// Whether element `id` is a positioned box with `z-index: auto` that forms
+/// no stacking context and holds a box with a non-zero stack level in the
+/// enclosing stacking context: a positioned box, or a flex or grid item,
+/// with a non-zero `z-index`.
+fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
+    // Fixed and sticky boxes form a stacking context whatever their
+    // `z-index` (CSS Positioned Layout 3 §4).
+    let forms_context = |id: usize, cv: &ComputedValues| {
+        establishes_stacking_context(document, id, cv)
+            || is_z_indexed_item(document, cascade, id, cv)
+            || matches!(cv.position, PositionValue::Fixed | PositionValue::Sticky)
+            || (!matches!(cv.position, PositionValue::Static)
+                && matches!(cv.z_index, ZIndexValue::Integer(_)))
+    };
+    let auto = cascade
+        .computed
+        .get(id)
+        .is_some_and(|cv| !matches!(cv.position, PositionValue::Static) && !forms_context(id, cv));
+    let children = |id: usize| {
+        document
+            .get_node(id)
+            .into_iter()
+            .flat_map(|node| node.children.iter().copied())
+    };
+    let mut stack: Vec<usize> = if auto {
+        children(id).collect()
+    } else {
+        Vec::new()
+    };
+    while let Some(child) = stack.pop() {
+        // Boxes that paint nothing, and the content of a nested stacking
+        // context, take no part in the enclosing context's order. The
+        // children of a `display: contents` element still generate boxes in
+        // this context.
+        let Some(cv) = cascade
+            .computed
+            .get(child)
+            .filter(|cv| cv.display != DisplayValue::None)
+        else {
+            continue;
+        };
+        if !generates_box(cv) {
+            stack.extend(children(child));
+            continue;
+        }
+        if positioned_layer_level(document, cascade, child) != 0 {
+            return true;
+        }
+        if !forms_context(child, cv) {
+            stack.extend(children(child));
+        }
+    }
+    false
+}
+
 /// Whether a flex or grid item with computed values `cv` has an integer
 /// `z-index`, which makes it a stacking context even when it is not
 /// positioned (CSS Flexbox 1 §4.3, CSS Grid 1 §9.5).
