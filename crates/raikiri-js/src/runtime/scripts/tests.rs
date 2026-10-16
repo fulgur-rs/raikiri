@@ -1299,8 +1299,9 @@ fn body_onload_content_attribute_runs_during_run_document_like_check_layout() {
 
 // ---- document.write ------------------------------------------------------
 
-/// A host whose fragment parser turns `<script>CODE` into a script element
-/// holding `CODE`, fails on `fail`, and reads anything else as one text node.
+/// A host whose fragment parser turns `<script>A<script>B` into script
+/// elements holding `A` and `B`, fails on `fail`, and reads anything else as
+/// one text node.
 struct WriteHost(StubHost);
 
 impl DocumentHost for WriteHost {
@@ -1328,12 +1329,18 @@ impl DocumentHost for WriteHost {
         if markup == "fail" {
             return Err(HostError("parser unavailable".into()));
         }
-        let Some(code) = markup.strip_prefix("<script>") else {
+        let Some(codes) = markup.strip_prefix("<script>") else {
             return self.0.parse_fragment(context_tag, context_ns, markup);
         };
         let mut fragment = Document::new();
         let root = fragment.root_index();
-        append_script(&mut fragment, root, &[], code);
+        // `append_child` gives a document one element child at most;
+        // attaching a fragment splices in all of its children.
+        let holder = fragment.create_detached_fragment();
+        for code in codes.split("<script>") {
+            append_script(&mut fragment, holder, &[], code);
+        }
+        fragment.attach_child(root, holder);
         Ok(fragment)
     }
     fn as_any(&self) -> &dyn Any {
@@ -1350,14 +1357,21 @@ impl DocumentHost for WriteHost {
 /// Run `scripts` as the body's scripts, followed by a `<p>`, and return the
 /// body's child nodes as `name:data` pairs, with the runtime.
 fn run_writes(scripts: &[&str]) -> (RunReport, String, DomRuntime) {
+    run_writes_with(Limits::default(), scripts)
+}
+
+fn run_writes_with(limits: Limits, scripts: &[&str]) -> (RunReport, String, DomRuntime) {
     let (mut host, _, _, body) = StubHost::page();
     for script in scripts {
         append_script(&mut host.document, body, &[], script);
     }
     let p = host.document.create_detached_element("p").unwrap();
     host.document.append_child(body, p).unwrap();
-    let mut rt = DomRuntime::new(WriteHost(host)).unwrap();
+    let mut rt = DomRuntime::with_options(WriteHost(host), RunOptions { limits }).unwrap();
     let report = rt.run_document();
+    if report.aborted.is_some() {
+        return (report, String::new(), rt);
+    }
     let children = eval_string(
         &mut rt,
         "Array.from(document.body.childNodes, function (n) { \
@@ -1427,4 +1441,26 @@ fn write_outside_a_parser_script_or_with_a_failing_parser_throws() {
     assert_eq!(children, "SCRIPT:|P:");
     assert_eq!(eval_string(&mut rt, "outside"), "NotSupportedError");
     assert_eq!(eval_string(&mut rt, "failed"), "Error");
+}
+
+#[test]
+fn scripts_a_written_script_writes_run_before_its_later_written_siblings() {
+    let (report, _, mut rt) = run_writes(&[r#"var log = []; var tag = '<' + 'script>';
+           document.write(tag + 'log.push("A"); document.write(tag + "log.push(\'C\')");' +
+               tag + 'log.push("B");');"#]);
+    assert_eq!(report.scripts_run, 4, "{report:?}");
+    assert_eq!(eval_string(&mut rt, "log.join()"), "A,C,B");
+}
+
+#[test]
+fn an_abort_in_the_writer_stops_its_written_scripts() {
+    let (report, ..) = run_writes_with(
+        Limits {
+            max_loop_iterations: 10_000,
+            ..Default::default()
+        },
+        &["document.write('<script>never()'); while (true) {}"],
+    );
+    assert_eq!(report.aborted, Some(Abort::LoopIterations), "{report:?}");
+    assert_eq!(report.scripts_run, 1, "{report:?}");
 }

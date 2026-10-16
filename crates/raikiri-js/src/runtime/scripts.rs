@@ -381,6 +381,24 @@ fn leave_script(state: &mut State) {
     state.write_point = None;
 }
 
+impl Executor<'_> {
+    /// Whether `index` is an HTML `<script>` whose `type` marks a classic
+    /// script.
+    fn is_classic(&mut self, index: usize) -> bool {
+        with_state(self.context, |s| {
+            let doc = s.host.document();
+            let Some(node) = doc.get_node(index) else {
+                return false;
+            };
+            node.kind() == NodeKind::Element
+                && node.tag_name() == Some("script")
+                && doc.element_namespace_uri(index) == Some(HTML_NS)
+                && is_classic_script_type(doc.element_attribute(index, "type"))
+        })
+        .unwrap_or(false)
+    }
+}
+
 impl ScriptExecutor for Executor<'_> {
     fn execute_script(&mut self, element: NodeId) -> ScriptExecution {
         if event_loop::aborted(self.context).is_some() {
@@ -392,27 +410,22 @@ impl ScriptExecutor for Executor<'_> {
             // fails; kept so the code stays correct if that ever changes.
             return ScriptExecution::Continue;
         };
-        let is_classic = with_state(self.context, |s| {
-            let doc = s.host.document();
-            let Some(node) = doc.get_node(index) else {
-                return false;
-            };
-            node.kind() == NodeKind::Element
-                && node.tag_name() == Some("script")
-                && doc.element_namespace_uri(index) == Some(HTML_NS)
-                && is_classic_script_type(doc.element_attribute(index, "type"))
-        })
-        .unwrap_or(false);
-        if is_classic {
-            self.run_one(index);
-        }
         // Scripts `document.write` inserted are parser-inserted too: the
-        // parser would reach them right after the script that wrote them.
-        while let Some(written) = with_state(self.context, |s| s.written_scripts.pop_front())
-            .ok()
-            .flatten()
-        {
-            self.execute_script(NodeId::new(written as u64));
+        // parser reaches each right after the script that wrote it, so the
+        // ones a script writes run before scripts written earlier but placed
+        // after it. The stack keeps that depth-first order without
+        // recursing however deeply writes nest.
+        let mut pending = vec![index];
+        while let Some(script) = pending.pop() {
+            if event_loop::aborted(self.context).is_some() {
+                break;
+            }
+            if self.is_classic(script) {
+                self.run_one(script);
+            }
+            let written = with_state(self.context, |s| std::mem::take(&mut s.written_scripts))
+                .unwrap_or_default();
+            pending.extend(written.into_iter().rev());
         }
         ScriptExecution::Continue
     }

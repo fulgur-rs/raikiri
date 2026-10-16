@@ -172,7 +172,7 @@ pub(crate) struct State {
     pub write_point: Option<document::WritePoint>,
     /// `<script>` elements `document.write` inserted, in insertion order,
     /// waiting to run once the script that wrote them finishes.
-    pub written_scripts: std::collections::VecDeque<usize>,
+    pub written_scripts: Vec<usize>,
     /// `console.*` calls recorded during evaluation, in call order.
     pub console: Vec<window::ConsoleMessage>,
     /// Per-canvas 2d contexts so `canvas.getContext('2d') === canvas.getContext('2d')`.
@@ -394,7 +394,7 @@ impl DomRuntime {
             ready_state: document::ReadyState::default(),
             current_script: None,
             write_point: None,
-            written_scripts: std::collections::VecDeque::new(),
+            written_scripts: Vec::new(),
             console: Vec::new(),
             canvas_contexts: HashMap::new(),
             canvas_fill_styles: HashMap::new(),
