@@ -2116,23 +2116,17 @@ impl Document {
     }
 }
 
-/// A block-level child's style as its block container's layout reads it.
+/// A borrowed style query with optional resolved block-child edges.
 ///
-/// Percentage padding and borders refer to the containing block's width on
-/// all four sides (CSS Box 4 §4), but taffy 0.14's block algorithm resolves
-/// a child's top and bottom against the container's height when it lists
-/// the children, which feeds `box-sizing` and the recorded insets. Those
-/// edges are handed over here already resolved against the container's
-/// content-box width, the same basis the child's own layout uses.
-///
-/// Upstream taffy fixed this after 0.14.0 (DioxusLabs/taffy#1187); this
-/// wrapper and [`block_layout`]'s bookkeeping can go once raikiri depends on
-/// a taffy release that carries the fix.
+/// Project block flow supplies its percentage basis here. The public
+/// out-of-flow adapter uses unresolved edges and captures CSS table identity
+/// for [`taffy::LayoutContainingBlock::get_oof_item_style`].
 #[derive(Clone, Copy)]
 pub struct BlockChildStyle<'a> {
     style: &'a Style,
     padding: taffy::Rect<taffy::LengthPercentage>,
     border: taffy::Rect<taffy::LengthPercentage>,
+    oof_table: bool,
 }
 
 impl<'a> BlockChildStyle<'a> {
@@ -2155,11 +2149,13 @@ impl<'a> BlockChildStyle<'a> {
                 style,
                 padding: resolve_vertical(style.padding, basis),
                 border: resolve_vertical(style.border, basis),
+                oof_table: taffy::OofItemStyle::is_table(style),
             },
             None => Self {
                 style,
                 padding: style.padding,
                 border: style.border,
+                oof_table: taffy::OofItemStyle::is_table(style),
             },
         }
     }
@@ -2176,6 +2172,9 @@ impl CoreStyle for BlockChildStyle<'_> {
     }
     fn is_compressible_replaced(&self) -> bool {
         self.style.is_compressible_replaced()
+    }
+    fn is_replaced(&self) -> bool {
+        self.style.is_replaced()
     }
     fn box_sizing(&self) -> taffy::BoxSizing {
         self.style.box_sizing()
@@ -2230,6 +2229,24 @@ impl taffy::BlockItemStyle for BlockChildStyle<'_> {
     }
     fn clear(&self) -> taffy::Clear {
         taffy::BlockItemStyle::clear(self.style)
+    }
+}
+
+impl taffy::OofItemStyle for BlockChildStyle<'_> {
+    fn align_self(&self) -> Option<taffy::AlignSelf> {
+        self.style.align_self
+    }
+    fn justify_self(&self) -> Option<taffy::AlignSelf> {
+        self.style.justify_self
+    }
+    fn is_table(&self) -> bool {
+        self.oof_table
+    }
+    fn grid_row(&self) -> taffy::Line<taffy::GridPlacement<String>> {
+        self.style.grid_row.clone()
+    }
+    fn grid_column(&self) -> taffy::Line<taffy::GridPlacement<String>> {
+        self.style.grid_column.clone()
     }
 }
 

@@ -4,22 +4,31 @@
 //! positioning. Resolve immediate-container candidates here so all existing
 //! consumers keep locations relative to their layout parent.
 
+use super::BlockChildStyle;
 use crate::Document;
 use taffy::{
     ContainingBlockClaims, DetailedLayoutInfo, LayoutContainingBlock, LayoutOutput,
-    LayoutPartialTree, NodeId, OofCandidate, OofPositioningArea, Style,
+    LayoutPartialTree, NodeId, OofCandidate, OofPositioningArea,
 };
 
 impl LayoutContainingBlock for Document {
     type OofItemStyle<'a>
-        = &'a Style
+        = BlockChildStyle<'a>
     where
         Self: 'a;
 
     fn get_oof_item_style(&self, node: NodeId) -> Self::OofItemStyle<'_> {
         let index = usize::from(node);
-        self.transposed_child_style(index)
-            .unwrap_or(&self.nodes[index].style)
+        let style = self
+            .transposed_child_style(index)
+            .unwrap_or(&self.nodes[index].style);
+        let mut query = BlockChildStyle::new(style, None);
+        query.oof_table |= matches!(
+            self.nodes[index].display(),
+            raikiri_style::property::DisplayValue::Table
+                | raikiri_style::property::DisplayValue::InlineTable
+        );
+        query
     }
 
     fn clear_hoisted_children(&mut self, node: NodeId) {
