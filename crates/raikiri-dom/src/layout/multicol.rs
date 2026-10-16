@@ -204,7 +204,7 @@ pub(crate) fn compute_multicol_layout(
         // take that height. Other known heights come from the item's own
         // content and are rebalanced here.
         let css = &tree.nodes[index].style;
-        let positioned = css.position == TaffyPosition::Absolute;
+        let positioned = tree.nodes[index].taffy_position() == TaffyPosition::Absolute;
         let inset_height = positioned && !css.inset.top.is_auto() && !css.inset.bottom.is_auto();
         // The layout mode of the container that places this box in flow.
         let placement = tree.parent_of(index).filter(|_| !positioned).map(|parent| {
@@ -551,7 +551,7 @@ fn multicol_has_direct_break_flow(tree: &Document, node_id: usize) -> bool {
 fn multicol_has_out_of_flow_descendant(tree: &Document, node_id: usize) -> bool {
     let mut pending = tree.nodes[node_id].children.clone();
     while let Some(child) = pending.pop() {
-        if tree.nodes[child].style.position == TaffyPosition::Absolute {
+        if tree.nodes[child].taffy_position() == TaffyPosition::Absolute {
             return true;
         }
         pending.extend(tree.nodes[child].children.iter().copied());
@@ -1547,12 +1547,12 @@ fn record_nested_ifc_box_fragments(
             path.reverse();
             let plain_block_path = !subtree_has_float
                 && !nested_logical_minimum_scope
-                && tree.nodes[subtree_root].style.display == Display::Block
+                && tree.nodes[subtree_root].taffy_display() == Display::Block
                 && tree.nodes[node_id].ifc_writing_mode()
                     == Some(shodo::geometry::WritingMode::HorizontalTb)
                 && path
                     .iter()
-                    .all(|&ancestor| tree.nodes[ancestor].style.display == Display::Block);
+                    .all(|&ancestor| tree.nodes[ancestor].taffy_display() == Display::Block);
             let node_offset_y = path
                 .iter()
                 .map(|&ancestor| tree.nodes[ancestor].unrounded_layout.location.y)

@@ -66,10 +66,9 @@ impl BoxProperties {
         }
     }
 
-    /// Retain the existing public backend-style export without making it a layout source.
-    pub(crate) fn lower_style(&self, mut style: taffy::Style, multicol: bool) -> taffy::Style {
+    /// Refresh the derived identity exported to Taffy and the public style API.
+    pub(crate) fn apply_to_style(&self, style: &mut taffy::Style, multicol: bool) {
         style.display = self.taffy_display(multicol);
         style.position = self.taffy_position();
-        style
     }
 }

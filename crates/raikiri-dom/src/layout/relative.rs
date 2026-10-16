@@ -217,7 +217,7 @@ fn is_non_atomic_inline(document: &Document, cascade: &CascadeResult, node_id: u
             .computed
             .get(node_id)
             .is_some_and(|cv| cv.display.is_inline_flow())
-        && node.style.position != taffy::Position::Absolute
+        && node.taffy_position() != taffy::Position::Absolute
         && !node
             .tag_name()
             .is_some_and(|tag| REPLACED_BOX_TAGS.contains(&tag))

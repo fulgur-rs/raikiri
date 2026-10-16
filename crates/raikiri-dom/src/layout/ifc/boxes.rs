@@ -1682,7 +1682,7 @@ fn in_the_roots_formatting_context(tree: &Document, node: usize) -> bool {
     use taffy::{CoreStyle, LayoutBlockContainer};
     let style = tree.get_block_container_style(taffy::NodeId::from(node));
     let overflow = style.overflow();
-    style.is_block()
+    tree.nodes[node].taffy_display() == taffy::Display::Block
         && !overflow.x.is_scroll_container()
         && !overflow.y.is_scroll_container()
         && !style.contain().establishes_independent_formatting_context()
@@ -2079,7 +2079,7 @@ fn relative_inset(
 ) -> (f32, f32) {
     use taffy::util::MaybeResolve;
     let style = &tree.nodes[node].style;
-    if style.position != taffy::Position::Relative
+    if tree.nodes[node].taffy_position() != taffy::Position::Relative
         || style.inset.left.is_auto()
             && style.inset.right.is_auto()
             && style.inset.top.is_auto()

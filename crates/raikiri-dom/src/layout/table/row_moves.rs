@@ -72,7 +72,7 @@ pub(crate) fn follow_moved_rows(
             !document.nodes[id].is_display_none()
                 && document.nodes[id].display() == DisplayValue::TableCaption
                 && document.nodes[id].caption_side == CaptionSideValue::Top
-                && document.nodes[id].style.position != taffy::Position::Absolute
+                && document.nodes[id].taffy_position() != taffy::Position::Absolute
         });
         let anonymous_rows = groups
             .iter()

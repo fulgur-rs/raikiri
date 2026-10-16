@@ -130,7 +130,7 @@ fn flex_item_percent_basis(tree: &Document, node: usize) -> Option<Size<Option<f
     tree.flex_item_percent_bases
         .last()
         .filter(|&&(container, _)| {
-            tree.nodes[node].style.position != TaffyPosition::Absolute
+            tree.nodes[node].taffy_position() != TaffyPosition::Absolute
                 && tree.taffy_parent_of(node) == Some(container)
         })
         .map(|&(_, basis)| basis)
@@ -557,7 +557,7 @@ impl Document {
                 }
                 _ => {}
             }
-            // Inline-block shrink-wrap: bridge_display collapses InlineBlock to
+            // Inline-block shrink-wrap: CSS InlineBlock lowers to
             // taffy Block, so without this a width:auto inline-block would
             // stretch-fill like a plain block. Explicit widths keep the normal
             // block path below; only width:auto sizes to fit-content here.
@@ -824,8 +824,8 @@ fn compute_ifc_root(
         insets: ifc_all_insets(&style, parent_inline_size),
         top_margin_escapes: block_ctx.is_some()
             && inputs.vertical_margins_are_collapsible.start
-            && style.is_block()
-            && style.position != TaffyPosition::Absolute
+            && tree.nodes[idx].taffy_display() == taffy::Display::Block
+            && tree.nodes[idx].taffy_position() != TaffyPosition::Absolute
             && style.float == taffy::Float::None
             && !style.overflow.x.is_scroll_container()
             && !style.overflow.y.is_scroll_container()
@@ -1534,7 +1534,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
     for &child in root_node.children.iter().rev() {
         if doc.nodes[child].is_in_document()
             && !doc.nodes[child].is_display_none()
-            && doc.nodes[child].style.position != TaffyPosition::Absolute
+            && doc.nodes[child].taffy_position() != TaffyPosition::Absolute
         {
             stack.push((child, doc.nodes[child].unrounded_layout.location.y));
         }
@@ -1558,7 +1558,7 @@ fn first_inline_baseline(doc: &Document, root: usize) -> Option<f32> {
         for &child in node.children.iter().rev() {
             if doc.nodes[child].is_in_document()
                 && !doc.nodes[child].is_display_none()
-                && doc.nodes[child].style.position != TaffyPosition::Absolute
+                && doc.nodes[child].taffy_position() != TaffyPosition::Absolute
             {
                 stack.push((
                     child,
@@ -1893,7 +1893,7 @@ fn center_absolute_children_in_block_axis(
             } else {
                 (style.margin.left, style.margin.right)
             };
-            style.position == TaffyPosition::Absolute
+            tree.nodes[child].taffy_position() == TaffyPosition::Absolute
                 && !tree.nodes[child].is_display_none()
                 && start.is_auto()
                 && end.is_auto()
@@ -2104,7 +2104,7 @@ impl Document {
                 return false;
             };
             let style = &node.style;
-            style.position != TaffyPosition::Absolute
+            node.taffy_position() != TaffyPosition::Absolute
                 && [
                     style.padding.top,
                     style.padding.bottom,
@@ -2268,7 +2268,7 @@ impl LayoutBlockContainer for Document {
             .block_item_percent_bases
             .last()
             .filter(|&&(container, _)| {
-                style.position != TaffyPosition::Absolute
+                self.nodes[child].taffy_position() != TaffyPosition::Absolute
                     && self.taffy_parent_of(child) == Some(container)
             })
             .and_then(|&(_, basis)| basis);
@@ -2338,9 +2338,8 @@ impl LayoutGridContainer for Document {
         let children = TaffyChildIter::new(self, node_id)
             .map(usize::from)
             .filter(|&child| {
-                let style = &self.nodes[child].style;
-                style.box_generation_mode() != BoxGenerationMode::None
-                    && style.position != TaffyPosition::Absolute
+                self.nodes[child].taffy_display() != taffy::Display::None
+                    && self.nodes[child].taffy_position() != TaffyPosition::Absolute
             })
             .collect::<Vec<_>>();
 

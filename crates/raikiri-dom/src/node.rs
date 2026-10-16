@@ -597,17 +597,36 @@ impl Node {
         self.box_properties.display()
     }
 
+    /// The computed CSS position, including distinctions Taffy does not retain.
+    pub(crate) fn position(&self) -> &PositionValue {
+        self.box_properties.position()
+    }
+
+    /// The backend display derived from this box's CSS identity.
+    pub(crate) fn taffy_display(&self) -> taffy::Display {
+        self.box_properties.taffy_display(self.multicol.is_some())
+    }
+
+    /// The backend position derived from this box's CSS identity.
+    pub(crate) fn taffy_position(&self) -> taffy::Position {
+        self.box_properties.taffy_position()
+    }
+
     /// Capture CSS box identity and keep the public backend-style export current.
     pub(crate) fn set_box_properties(&mut self, display: DisplayValue, position: PositionValue) {
         self.box_properties = BoxProperties::new(display, position);
-        self.style = self
-            .box_properties
-            .lower_style(std::mem::take(&mut self.style), self.multicol.is_some());
+        self.refresh_box_style();
+    }
+
+    /// Refresh the backend projection after rebuilding other style fields.
+    pub(crate) fn refresh_box_style(&mut self) {
+        self.box_properties
+            .apply_to_style(&mut self.style, self.multicol.is_some());
     }
 
     /// Change the display of an engine-created box while retaining its position.
     pub(crate) fn set_display(&mut self, display: DisplayValue) {
-        self.set_box_properties(display, self.box_properties.position().clone());
+        self.set_box_properties(display, self.position().clone());
     }
 
     /// Construct a node carrying `data` and `style`, with every other field at
@@ -621,7 +640,9 @@ impl Node {
         };
         Self {
             formatting_context: match data {
-                NodeData::Element(_) => FormattingContext::from_taffy_display(style.display),
+                NodeData::Element(_) => {
+                    FormattingContext::from_taffy_display(box_properties.taffy_display(false))
+                }
                 _ => FormattingContext::Text,
             },
             style,

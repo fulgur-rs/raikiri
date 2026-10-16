@@ -187,7 +187,7 @@ fn orthogonal_child_inputs(
     let style = &tree.nodes[idx].style;
     if !flows_horizontally(tree, idx)
         || inputs.sizing_mode != SizingMode::InherentSize
-        || style.position == TaffyPosition::Absolute
+        || tree.nodes[idx].taffy_position() == TaffyPosition::Absolute
     {
         return inputs;
     }

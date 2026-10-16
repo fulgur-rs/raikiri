@@ -142,7 +142,7 @@ fn caption_minimum_inline_size(doc: &mut Document, table: usize, vertical: bool)
         .iter()
         .copied()
         .find(|&id| doc.nodes[id].display() == DisplayValue::TableCaption)
-        .filter(|&id| doc.nodes[id].style.position != taffy::Position::Absolute)
+        .filter(|&id| doc.nodes[id].taffy_position() != taffy::Position::Absolute)
     else {
         return 0.0;
     };
@@ -333,7 +333,7 @@ fn position_table_caption(
         .find(|&child| doc.nodes[child].display() == DisplayValue::TableCaption);
     // Keep the legacy positioned caption layout and ink, but exclude it from flow.
     let in_flow =
-        caption_id.is_some_and(|id| doc.nodes[id].style.position != taffy::Position::Absolute);
+        caption_id.is_some_and(|id| doc.nodes[id].taffy_position() != taffy::Position::Absolute);
     let caption_size = if in_flow {
         caption_size.unwrap_or(Size::ZERO)
     } else {
@@ -431,7 +431,7 @@ fn compute_table_layout_checked(
         doc.nodes[table_idx].table_grid_box = None;
         doc.nodes[table_idx].table_first_baseline = None;
     }
-    let abspos_table = doc.nodes[table_idx].style.position == taffy::Position::Absolute;
+    let abspos_table = doc.nodes[table_idx].taffy_position() == taffy::Position::Absolute;
     let parent_is_flex_or_grid = doc
         .taffy_parent_of(table_idx)
         .is_some_and(|parent| doc.nodes[parent].formatting_context.is_flex_or_grid());
@@ -1984,7 +1984,7 @@ fn first_cell_baseline(doc: &Document, root: usize, content_top: f32) -> Option<
         let node = &doc.nodes[id];
         if !node.is_in_document()
             || node.is_display_none()
-            || node.style.position == taffy::Position::Absolute
+            || node.taffy_position() == taffy::Position::Absolute
             || node.style.float != taffy::Float::None
         {
             continue;
@@ -2358,7 +2358,7 @@ fn place_cells(
             .children
             .clone()
         {
-            if doc.nodes[child].style.position != taffy::Position::Absolute {
+            if doc.nodes[child].taffy_position() != taffy::Position::Absolute {
                 let mut child_layout = doc.nodes[child].unrounded_layout;
                 child_layout.location.y += shift;
                 doc.store_unrounded_layout(child, &child_layout);
@@ -2487,7 +2487,7 @@ fn reposition_cells_for_vertical_writing(
         } else {
             node.children
                 .iter()
-                .filter(|&&child| doc.nodes[child].style.position != taffy::Position::Absolute)
+                .filter(|&&child| doc.nodes[child].taffy_position() != taffy::Position::Absolute)
                 .map(|&child| {
                     let child = &doc.nodes[child];
                     // Relative insets move ink after normal flow; they must
@@ -2561,7 +2561,7 @@ fn reposition_cells_for_vertical_writing(
             .children
             .clone()
         {
-            if doc.nodes[child].style.position != taffy::Position::Absolute {
+            if doc.nodes[child].taffy_position() != taffy::Position::Absolute {
                 let mut layout = doc.nodes[child].unrounded_layout;
                 layout.location.x += child_shift;
                 doc.store_unrounded_layout(child, &layout);

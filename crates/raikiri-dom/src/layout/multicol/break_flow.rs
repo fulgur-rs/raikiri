@@ -53,7 +53,7 @@ pub(super) fn supports(tree: &Document, root: usize, context: FragmentationConte
             return false;
         }
         visible = true;
-        if node.style.position == TaffyPosition::Absolute {
+        if node.taffy_position() == TaffyPosition::Absolute {
             // A resumed plain wrapper would replay this unfragmented subtree
             // in every continuation. Atomic parents and root siblings paint once.
             if projected && depth > 0 {
@@ -261,7 +261,7 @@ fn descendant_edge(tree: &Document, id: usize, before: bool, depth: usize) -> Br
         tree.nodes[child].is_in_document()
             && !tree.nodes[child].is_display_none()
             && !tree.nodes[child].style.float.is_floated()
-            && tree.nodes[child].style.position != TaffyPosition::Absolute
+            && tree.nodes[child].taffy_position() != TaffyPosition::Absolute
             && matches!(tree.nodes[child].data, NodeData::Element(_))
     };
     let child = if before {
@@ -285,7 +285,7 @@ fn collect(
         || !tree.nodes[id].is_in_document()
         || tree.nodes[id].is_display_none()
         || !matches!(tree.nodes[id].data, NodeData::Element(_))
-        || tree.nodes[id].style.position == TaffyPosition::Absolute
+        || tree.nodes[id].taffy_position() == TaffyPosition::Absolute
     {
         return;
     }
@@ -416,7 +416,7 @@ fn reserve_measurement_work(tree: &mut Document, root: usize) -> bool {
             && in_document
             && element
             && !hidden
-            && node.style.position != TaffyPosition::Absolute;
+            && node.taffy_position() != TaffyPosition::Absolute;
         let cost = measurements
             .saturating_mul(raw_cost)
             .saturating_add(if in_document {

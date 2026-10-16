@@ -46,8 +46,8 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || !is_horizontal(node)
             // So is a box with size containment (CSS Contain 2, 3.1).
             || node.size_containment.height
-            || node.style.position != TaffyPosition::Relative
-                && node.style.position != defaults.position
+            || node.taffy_position() != TaffyPosition::Relative
+                && node.taffy_position() != defaults.position
             || node.style.float.is_floated()
             || node.style.clear != defaults.clear
             || node.style.inset != Rect::auto()

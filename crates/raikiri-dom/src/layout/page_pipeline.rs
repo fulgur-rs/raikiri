@@ -3874,7 +3874,7 @@ fn paginate_flow(
         }
         let mut child = owner;
         while let Some(parent) = document.layout_parent_of(child) {
-            if document.nodes[child].style.position == TaffyPosition::Absolute
+            if document.nodes[child].taffy_position() == TaffyPosition::Absolute
                 || document.nodes[child].style.float.is_floated()
             {
                 break;
@@ -3964,7 +3964,7 @@ fn paginate_flow(
                 cascade.computed[child].display == DisplayValue::TableCaption
                     && cascade.computed[child].caption_side
                         == raikiri_style::property::CaptionSideValue::Top
-                    && document.nodes[child].style.position != taffy::Position::Absolute
+                    && document.nodes[child].taffy_position() != taffy::Position::Absolute
                     || cascade.computed[child].display != DisplayValue::TableRow
                         && document.anonymous_table_cells(child).next().is_some()
             }) || document.anonymous_table_cells(table).next().is_some()
@@ -6387,7 +6387,7 @@ fn grown_auto_height(
         }
         if child_node.kind() == NodeKind::Text
             || cascade.computed[child].display == DisplayValue::None
-            || child_node.style.position == taffy::Position::Absolute
+            || child_node.taffy_position() == taffy::Position::Absolute
         {
             continue;
         }
@@ -6600,7 +6600,7 @@ fn push_in_flow_boxes_rev(
     if !matches!(node.kind(), NodeKind::Element | NodeKind::Text)
         || collapsed_text
         || cascade.computed[node_id].display == DisplayValue::None
-        || node.style.position == taffy::Position::Absolute
+        || node.taffy_position() == taffy::Position::Absolute
         || is_floating_box_for_pagination(document, cascade, node_id)
     {
         return;
@@ -7237,7 +7237,7 @@ fn holds_floats(document: &Document, cascade: &CascadeResult, node_id: usize) ->
             DisplayValue::Block | DisplayValue::ListItem
         ))
         || matches!(computed.float, FloatValue::Left | FloatValue::Right)
-        || matches!(style.position, taffy::Position::Absolute)
+        || document.nodes[node_id].taffy_position() == taffy::Position::Absolute
         || style.overflow.x.is_scroll_container()
         || style.overflow.y.is_scroll_container()
         || document.nodes[node_id].multicol.is_some()

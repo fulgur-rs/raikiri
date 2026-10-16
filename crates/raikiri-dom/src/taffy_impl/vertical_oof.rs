@@ -28,7 +28,7 @@ pub(crate) fn used_writing_mode(tree: &Document, node: usize) -> WritingMode {
 }
 
 fn is_absolute(tree: &Document, node: usize) -> bool {
-    tree.nodes[node].style.position == TaffyPosition::Absolute
+    tree.nodes[node].taffy_position() == TaffyPosition::Absolute
         && !tree.nodes[node].is_display_none()
 }
 

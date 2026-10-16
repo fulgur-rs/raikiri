@@ -339,7 +339,7 @@ fn visit_out_of_flow_boxes(
         let Some(cv) = cascade.computed.get(id) else {
             continue; // cov:ignore: the cascade has a value for every arena node
         };
-        let out_of_flow = node.style.position == TaffyPosition::Absolute;
+        let out_of_flow = node.taffy_position() == TaffyPosition::Absolute;
         let cb = match cv.position {
             PositionValue::Fixed => fixed_cb,
             PositionValue::Absolute => abs_cb,
