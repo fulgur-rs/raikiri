@@ -608,10 +608,8 @@ pub(crate) fn run_until_idle(context: &mut Context) -> Result<(), Abort> {
                 let job = with_state(context, |state| state.event_loop.cancellable.remove(&token))
                     .ok()
                     .flatten();
-                if let Some(job) = job {
-                    let result = job.call(context);
-                    settle(context, result)?;
-                }
+                let result = job.map_or(Ok(JsValue::undefined()), |job| job.call(context));
+                settle(context, result)?;
             }
         }
         microtask_checkpoint(context)?;
