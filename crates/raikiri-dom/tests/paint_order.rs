@@ -516,7 +516,7 @@ fn a_z_auto_positioned_box_holding_boxes_it_paints_stays_in_place() {
     let item = "position:relative;width:10px;height:10px;background:red";
     for inner in [
         format!("<div style='{item};z-index:-1'></div><div id=f style='{item};z-index:20'></div>"),
-        format!("<span id=f style='position:relative;z-index:20;background:red'>x</span>"),
+        "<span id=f style='position:relative;z-index:20;background:red'>x</span>".to_string(),
         format!(
             "<div style='display:flex;overflow:hidden'><div>\
              <div id=f style='{item};z-index:20'></div></div></div>"
