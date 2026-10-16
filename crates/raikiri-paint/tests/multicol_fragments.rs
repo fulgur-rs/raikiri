@@ -122,3 +122,17 @@ fn an_absolute_box_breaks_across_the_columns_and_paints_over_later_blocks() {
     let expected = raster("<div style='width:100px;height:100px;background:green'></div>");
     assert_eq!(differing_pixels(&actual, &expected), 0);
 }
+
+#[test]
+fn blocks_in_a_containing_block_break_with_its_absolute_boxes() {
+    // The containing block starts 30px down the first 40px column. Its red
+    // block and the absolute box over it both break at the column end, so
+    // the green box covers the red block in both columns.
+    let actual = raster(
+        "<div style='column-count:2;column-fill:auto;column-gap:0;height:40px;width:100px'><div style='height:30px'></div><div style='position:relative'><div style='height:20px;background:red'></div><div style='position:absolute;top:0;width:100%;height:20px;background:green'></div></div></div>",
+    );
+    let expected = raster(
+        "<div style='position:relative;width:100px;height:40px'><div style='position:absolute;left:0;top:30px;width:50px;height:10px;background:green'></div><div style='position:absolute;left:50px;top:0;width:50px;height:10px;background:green'></div></div>",
+    );
+    assert_eq!(differing_pixels(&actual, &expected), 0);
+}
