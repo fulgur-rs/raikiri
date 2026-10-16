@@ -251,6 +251,61 @@ pub(crate) fn prepare(
 }
 
 impl Document {
+    /// The rules of the row of a nested column container's columns in outer
+    /// column `fragmentainer`, relative to that row's box.
+    fn row_column_rules(&self, owner: usize, width: f32, fragmentainer: usize) -> Vec<PaintRect> {
+        self.nodes[owner]
+            .multicol_rows
+            .iter()
+            .filter(|row| row.context.column_index == fragmentainer)
+            .flat_map(|row| {
+                row.occupied
+                    .iter()
+                    .filter(|&&column| row.occupied.contains(&(column + 1)))
+                    .map(move |&column| {
+                        column_rule_rect(
+                            row.context.origin_x,
+                            row.context.origin_y,
+                            &row.context,
+                            column,
+                            width,
+                            row.height,
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// The rules painted in the box of `owner` recorded by layout fragment
+    /// `fragment`, relative to that box. A nested container continued in
+    /// later outer columns has a box per row of its columns, and each box
+    /// draws the rules of its own row.
+    #[doc(hidden)]
+    pub fn fragment_column_rules<'a>(
+        &'a self,
+        cascade: &'a CascadeResult,
+        owner: usize,
+        fragment: Option<usize>,
+    ) -> Vec<ColumnRule> {
+        let row = fragment
+            .and_then(|index| self.fragment_tree.fragments.get(index))
+            .filter(|fragment| {
+                fragment.node_id == owner && !self.nodes[owner].multicol_rows.is_empty()
+            });
+        let Some(fragment) = row else {
+            return self.column_rules(cascade, owner).collect();
+        };
+        let values = &cascade.computed[owner];
+        self.row_column_rules(
+            owner,
+            values.column_rule.width().px(),
+            fragment.fragmentainer,
+        )
+        .into_iter()
+        .map(|rect| ColumnRule::new(owner, rect, values))
+        .collect()
+    }
+
     /// Producer-computed rules relative to the owner's border-box origin.
     #[doc(hidden)]
     pub fn column_rules<'a>(
@@ -305,27 +360,11 @@ pub(crate) fn project(
             let source = if document.nodes[owner].multicol_rows.is_empty() {
                 source.as_slice()
             } else {
-                let width = values.column_rule.width().px();
-                row_rules = document.nodes[owner]
-                    .multicol_rows
-                    .iter()
-                    .filter(|row| row.context.column_index == item.fragmentainer as usize)
-                    .flat_map(|row| {
-                        row.occupied
-                            .iter()
-                            .filter(|&&column| row.occupied.contains(&(column + 1)))
-                            .map(move |&column| {
-                                column_rule_rect(
-                                    row.context.origin_x,
-                                    row.context.origin_y,
-                                    &row.context,
-                                    column,
-                                    width,
-                                    row.height,
-                                )
-                            })
-                    })
-                    .collect();
+                row_rules = document.row_column_rules(
+                    owner,
+                    values.column_rule.width().px(),
+                    item.fragmentainer as usize,
+                );
                 row_rules.as_slice()
             };
             let in_order = document.nodes[owner].multicol_rows.is_empty()

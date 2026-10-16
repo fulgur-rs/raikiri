@@ -1,4 +1,5 @@
-use super::{Item, balanced_height, place, stacked_height};
+use super::{Item, Rows, balanced_height, fill_item_rows, place, stacked_height};
+use raikiri_style::property::ColumnFillValue;
 
 fn shape(items: &[Item], height: f32) -> Vec<Vec<(usize, f32, f32)>> {
     place(items, height, usize::MAX)
@@ -325,4 +326,114 @@ fn self_collapsing_boxes_and_skipped_columns_count_toward_the_limits() {
 #[test]
 fn balancing_boxes_with_no_block_size_gives_empty_columns() {
     assert_eq!(balanced_height(&[split(0.0)], 2, usize::MAX), 0.0);
+}
+
+fn row_shape(rows: &Rows) -> Vec<(usize, usize, usize, f32, f32)> {
+    rows.pieces
+        .iter()
+        .map(|piece| (piece.entry, piece.row, piece.column, piece.y, piece.height))
+        .collect()
+}
+
+#[test]
+fn a_definite_nested_container_ends_with_overflow_columns_in_its_last_row() {
+    // 500px of columns cut at a 300px outer column leave a 200px row, whose
+    // overflow column takes the 100px left of the box.
+    let rows = fill_item_rows(
+        &[split(600.0)],
+        1,
+        ColumnFillValue::Auto,
+        Some(500.0),
+        300.0,
+        300.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![300.0, 200.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 300.0),
+            (0, 1, 0, 0.0, 200.0),
+            (0, 1, 1, 0.0, 100.0)
+        ]
+    );
+}
+
+#[test]
+fn an_auto_height_nested_container_fills_rows_and_balances_the_last() {
+    let rows = fill_item_rows(
+        &[split(400.0)],
+        2,
+        ColumnFillValue::Balance,
+        None,
+        50.0,
+        250.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![50.0, 150.0]);
+    assert_eq!(
+        row_shape(&rows),
+        vec![
+            (0, 0, 0, 0.0, 50.0),
+            (0, 0, 1, 0.0, 50.0),
+            (0, 1, 0, 0.0, 150.0),
+            (0, 1, 1, 0.0, 150.0)
+        ]
+    );
+
+    let rows = fill_item_rows(
+        &[split(250.0)],
+        1,
+        ColumnFillValue::Auto,
+        None,
+        100.0,
+        100.0,
+        usize::MAX,
+    )
+    .unwrap();
+    assert_eq!(rows.heights, vec![100.0, 100.0, 50.0]);
+}
+
+#[test]
+fn a_nested_container_that_fits_its_first_row_has_no_rows() {
+    let fill = |content| {
+        fill_item_rows(
+            &[split(80.0)],
+            2,
+            ColumnFillValue::Balance,
+            content,
+            50.0,
+            100.0,
+            usize::MAX,
+        )
+    };
+    assert_eq!(fill(None), None);
+    assert_eq!(fill(Some(40.0)), None);
+    // No room in the first row, or past the fragment budget, gives none.
+    assert_eq!(
+        fill_item_rows(
+            &[split(80.0)],
+            1,
+            ColumnFillValue::Auto,
+            None,
+            0.0,
+            100.0,
+            usize::MAX
+        ),
+        None
+    );
+    assert_eq!(
+        fill_item_rows(
+            &[split(800.0)],
+            1,
+            ColumnFillValue::Auto,
+            None,
+            10.0,
+            10.0,
+            4
+        ),
+        None
+    );
 }

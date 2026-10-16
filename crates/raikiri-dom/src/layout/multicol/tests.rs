@@ -1957,10 +1957,83 @@ fn a_nested_multicol_slices_a_block_without_lines_into_its_columns() {
 }
 
 #[test]
-fn a_nested_multicol_taller_than_the_outer_column_is_not_sliced_alone() {
-    // Slicing a nested container's own columns does not cut them again at
-    // the end of the outer column, so a container taller than that column
-    // keeps the strategies that place it in the outer context.
+fn a_nested_multicol_taller_than_the_outer_column_continues_in_the_next_one() {
+    // 500px of nested columns cut at the end of a 300px outer column end
+    // with a 200px row in the outer overflow column, whose own overflow
+    // column takes the rest of the box (CSS Multi-column 1, 8.2).
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:300px;column-count:1"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;height:500px;column-count:1"),
+    );
+    let child = doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some("display:block;height:600px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(
+        fragment_rects(&doc, child),
+        vec![
+            (0, 0.0, 0.0, 300.0),
+            (1, 0.0, 0.0, 200.0),
+            (2, 216.0, 0.0, 100.0)
+        ]
+    );
+    assert_eq!(doc.nodes[inner].multicol_rows.len(), 2);
+}
+
+#[test]
+fn content_past_the_last_column_of_a_definite_height_multicol_overflows_inline() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+    let outer = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;width:200px;height:100px;column-count:1"),
+    );
+    doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;height:100px"),
+    );
+    let inner = doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;height:50px;column-count:1"),
+    );
+    doc.append_element(
+        Some(inner),
+        "div",
+        Style::default(),
+        Some("display:block;height:50px"),
+    );
+    layout_nested_flex_float_fixture(&mut doc);
+    assert_eq!(
+        doc.nodes[inner].unrounded_layout.location,
+        Point { x: 216.0, y: 0.0 }
+    );
+}
+
+#[test]
+fn a_nested_multicol_moves_to_the_next_outer_column_rather_than_cutting_a_box() {
+    // The break before the nested container is preferred to cutting its box
+    // at the end of the first outer column (CSS Fragmentation 3, 4.4).
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
     let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
@@ -1970,20 +2043,30 @@ fn a_nested_multicol_taller_than_the_outer_column_is_not_sliced_alone() {
         Style::default(),
         Some("display:block;width:200px;height:100px;columns:2;column-gap:0;column-fill:auto"),
     );
+    doc.append_element(
+        Some(outer),
+        "div",
+        Style::default(),
+        Some("display:block;height:60px"),
+    );
     let inner = doc.append_element(
         Some(outer),
         "div",
         Style::default(),
-        Some("display:block;height:200px;columns:2;column-gap:0;column-fill:auto"),
+        Some("display:block;columns:2;column-gap:0"),
     );
-    let child = doc.append_element(
+    doc.append_element(
         Some(inner),
         "div",
         Style::default(),
-        Some("display:block;height:400px"),
+        Some("display:block;height:100px"),
     );
     layout_nested_flex_float_fixture(&mut doc);
-    assert!(fragment_rects(&doc, child).len() <= 1);
+    assert_eq!(
+        doc.nodes[inner].unrounded_layout.location,
+        Point { x: 100.0, y: 0.0 }
+    );
+    assert!(doc.nodes[inner].multicol_rows.is_empty());
 }
 
 #[test]

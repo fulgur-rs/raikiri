@@ -4650,3 +4650,10 @@ css/css-page/page-size-012-print.html
 css/css-multicol/multicol-rule-nested-balancing-002.html
 css/css-multicol/nested-at-outer-boundary-as-fieldset.html
 css/css-multicol/nested-past-fragmentation-line.html
+
+# --- nested multicol cut at the outer column end (WPT pin 97ea26e2, EXACT, Linux, 2026-10-16) ---
+# Pass once a nested multicol whose children hold no lines continues in rows past the end of its outer column, and a multicol with a definite height continues in overflow columns; KEEP in two audit-vacuous-passes runs.
+css/css-multicol/broken-column-rule-1.html
+css/css-multicol/multicol-nested-030.html
+css/css-multicol/multicol-nested-031.html
+css/css-multicol/multicol-rule-nested-balancing-004.html

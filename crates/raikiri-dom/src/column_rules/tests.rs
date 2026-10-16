@@ -74,3 +74,48 @@ fn hidden_descendants_and_zero_height_containers_do_not_create_rules() {
         [PaintRect::new(49.0, 0.0, 2.0, 20.0)]
     );
 }
+
+#[test]
+fn each_row_box_of_a_continued_nested_container_paints_its_own_rules() {
+    let (mut document, cascade, outer) = crate::layout::test_support::ahem_paragraph_with(
+        "width:200px;height:300px;column-count:1;column-gap:10px",
+        |document, root| {
+            let inner = document.append_element(
+                Some(root),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;height:500px;column-count:1;column-gap:10px;column-rule:2px solid red"),
+            );
+            document.append_element(
+                Some(inner),
+                "div",
+                taffy::Style::default(),
+                Some("display:block;height:600px"),
+            );
+        },
+    );
+    let inner = document.nodes[outer].children[0];
+    layout_single_page(&mut document, &cascade, PageBox::default()).unwrap();
+    let boxes: Vec<usize> = (0..document.fragment_tree.fragments.len())
+        .filter(|&index| {
+            let fragment = &document.fragment_tree.fragments[index];
+            fragment.node_id == inner && !document.fragment_tree.is_retired(index)
+        })
+        .collect();
+    let rules = |fragmentainer: usize| -> Vec<PaintRect> {
+        let index = boxes
+            .iter()
+            .copied()
+            .find(|&index| document.fragment_tree.fragments[index].fragmentainer == fragmentainer)
+            .unwrap();
+        document
+            .fragment_column_rules(&cascade, inner, Some(index))
+            .into_iter()
+            .map(|rule| rule.rect)
+            .collect()
+    };
+    // The first row has one column; the second row has an overflow column
+    // beside its column, and the rule between them is drawn in its own box.
+    assert!(rules(0).is_empty());
+    assert_eq!(rules(1), [PaintRect::new(204.0, 0.0, 2.0, 200.0)]);
+}

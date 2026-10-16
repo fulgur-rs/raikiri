@@ -3801,7 +3801,9 @@ pub(crate) fn paint_document_impl(
                         if let Some(resolved) = rule_clip {
                             push_overflow_clip(scene, resolved, &page_box);
                         }
-                        for mut rule in document.column_rules(cascade, node_id) {
+                        for mut rule in
+                            document.fragment_column_rules(cascade, node_id, fragment_id)
+                        {
                             rule.rect.x += paint_x;
                             rule.rect.y += paint_y;
                             rule.pattern_origin += paint_y;

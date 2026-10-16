@@ -906,7 +906,6 @@ fn layout_column_group(
                 child_output.size,
             );
             if continuation.is_none()
-                && column + 1 < context.column_count
                 && cursor > 0.0
                 && cursor + needed > height
                 && !avoid_column_break
@@ -936,10 +935,12 @@ fn layout_column_group(
         if let Some(plan) = &continuation {
             child_output.size.height = plan.first_height;
         }
+        // Content past the last column of a container with a definite
+        // height continues in overflow columns (CSS Multi-column 1, 8.2).
         if let Some(height) = break_height
             && continuation.is_none()
             && group_balance.is_none()
-            && column + 1 < context.column_count
+            && (column + 1 < context.column_count || fragment_height.is_some())
             && cursor > 0.0
             && cursor + needed > height
             && !avoid_column_break
@@ -1097,6 +1098,9 @@ struct NestedContinuation {
     /// The nested container's children, by entry.
     children: Vec<usize>,
     rows: paragraph_group::Rows,
+    /// The pieces of children that hold no lines, in place of the paragraph
+    /// fragments of `rows`, whose heights they share.
+    lineless: Vec<lineless::RowPiece>,
     /// The nested container's own columns.
     context: FragmentationContext,
     /// Its content-box origin in its border box.
@@ -1132,14 +1136,20 @@ fn plan_nested_continuation(
 ) -> Option<NestedContinuation> {
     let node = &tree.nodes[child];
     let style = node.multicol?;
-    let rows = outer.column_count.checked_sub(column)?;
+    // Children that hold no lines are cut at any block offset, so their
+    // container may also have a definite height and continue in overflow
+    // columns of the outer container (CSS Multi-column 1, 8.2).
+    let lineless_children = style
+        .horizontal
+        .then(|| lineless::supported(tree, child))
+        .flatten();
+    let rows = outer.column_count.saturating_sub(column);
     // A box that avoids breaks inside, has a minimum height or generated
     // content keeps its previous layout: the rows below hold its paragraph
     // lines only.
-    if rows < 2
+    if (lineless_children.is_none()
+        && (rows < 2 || style.height_definite || !node.style.size.height.is_auto()))
         || !style.horizontal
-        || style.height_definite
-        || !node.style.size.height.is_auto()
         || !node.style.min_size.height.is_auto()
         || !node.style.max_size.height.is_auto()
         || node.has_logical_min_block_size
@@ -1166,14 +1176,64 @@ fn plan_nested_continuation(
         return None;
     }
     let context = FragmentationContext::resolve(content_width, None, style)?;
-    let root = (0..tree.fragment_tree.fragments.len())
-        .rev()
-        .find(|&index| {
-            let fragment = &tree.fragment_tree.fragments[index];
-            fragment.node_id == child
-                && fragment.parent.is_none()
-                && !tree.fragment_tree.is_retired(index)
-        })?;
+    let row_top = -(cursor + margin_top);
+    let row_step = outer.column_offset_x(1);
+    if let Some(children) = lineless_children {
+        let max_pieces = tree
+            .fragment_tree
+            .limit
+            .saturating_sub(tree.fragment_tree.fragments.len());
+        let rows = lineless::fill_rows(
+            tree,
+            &children,
+            context.column_count,
+            context.column_fill,
+            style.height_definite.then_some(content_height),
+            first,
+            fragmentainer_height,
+            max_pieces,
+        )?;
+        // Cutting a box at the end of the outer column is a last resort
+        // when content before the container offers a break between boxes
+        // (CSS Fragmentation 3, 4.4): the container then starts in the next
+        // outer column instead.
+        let cut_at_outer_end = rows.pieces.iter().any(|piece| {
+            piece.row == 0
+                && rows
+                    .pieces
+                    .iter()
+                    .any(|later| later.entry == piece.entry && later.row > 0)
+        });
+        if cursor > 0.0 && cut_at_outer_end {
+            return None;
+        }
+        let root = latest_root(tree, child)?;
+        let columns = rows.heights.len() - 1;
+        let end = rows.heights[columns] + block_end_inset;
+        if end > fragmentainer_height + 0.001 {
+            return None;
+        }
+        return Some(NestedContinuation {
+            root,
+            children,
+            rows: paragraph_group::Rows {
+                fragments: Vec::new(),
+                heights: rows.heights,
+            },
+            lineless: rows.pieces,
+            context,
+            content_origin,
+            row_top,
+            row_step,
+            first_height: content_origin.y + first,
+            columns,
+            end,
+        });
+    }
+    if rows < 2 {
+        return None;
+    }
+    let root = latest_root(tree, child)?;
     let children: Vec<usize> = node
         .children
         .iter()
@@ -1216,14 +1276,27 @@ fn plan_nested_continuation(
         root,
         children,
         rows,
+        lineless: Vec::new(),
         context,
         content_origin,
-        row_top: -(cursor + margin_top),
-        row_step: outer.column_offset_x(1),
+        row_top,
+        row_step,
         first_height: content_origin.y + first,
         columns,
         end,
     })
+}
+
+/// The live root record of `node` laid out last.
+fn latest_root(tree: &Document, node: usize) -> Option<usize> {
+    (0..tree.fragment_tree.fragments.len())
+        .rev()
+        .find(|&index| {
+            let fragment = &tree.fragment_tree.fragments[index];
+            fragment.node_id == node
+                && fragment.parent.is_none()
+                && !tree.fragment_tree.is_retired(index)
+        })
 }
 
 /// Record the planned rows of a nested column container, in place of the
@@ -1334,6 +1407,43 @@ fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> 
             y: rect.y - first.y,
         });
     }
+    for piece in &plan.lineless {
+        let child = plan.children[piece.entry];
+        let layout = tree.nodes[child].unrounded_layout;
+        let (row_box, content) = row_boxes[piece.row];
+        let column_x = content.x + plan.context.column_offset_x(piece.column);
+        let rect = crate::fragment::FragmentRect {
+            x: column_x,
+            y: content.y + piece.y,
+            width: layout.size.width,
+            height: piece.height,
+        };
+        tree.fragment_tree
+            .try_push(crate::fragment::LayoutFragment {
+                node_id: child,
+                parent: Some(row_box),
+                fragmentainer: piece.row * plan.context.column_count + piece.column,
+                rect,
+                // A box that stays in one column is not cut.
+                fragmentainer_clip: (piece.count > 1).then_some(crate::fragment::FragmentRect {
+                    x: column_x,
+                    y: content.y,
+                    width: layout.size.width.max(plan.context.column_width),
+                    height: plan.rows.heights[piece.row],
+                }),
+                fragment_index: piece.index,
+                fragment_count: piece.count,
+                line_start: None,
+                line_end: None,
+            })?;
+        if piece.index == 0 {
+            let origin = row_origin(piece.row);
+            tree.nodes[child].unrounded_layout.location = Point {
+                x: origin.x + rect.x,
+                y: origin.y + rect.y,
+            };
+        }
+    }
     // Column rules are drawn in each row's box, which the row's group names
     // by its fragmentainer.
     let mut rows: Vec<crate::fragment::MulticolGroup> = plan
@@ -1356,6 +1466,11 @@ fn apply_nested_continuation(tree: &mut Document, plan: &NestedContinuation) -> 
     for fragment in &plan.rows.fragments {
         if fragment.line_start < fragment.line_end {
             rows[fragment.row].occupied.insert(fragment.column);
+        }
+    }
+    for piece in &plan.lineless {
+        if piece.height > 0.0 {
+            rows[piece.row].occupied.insert(piece.column);
         }
     }
     tree.nodes[root.node_id].multicol_rows = rows;
