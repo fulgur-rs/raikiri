@@ -231,3 +231,36 @@ fn a_horizontal_override_keeps_the_vertical_ancestor_fragmentation_guard() {
         );
     }
 }
+
+#[test]
+fn absolute_auto_width_respects_space_after_its_inset() {
+    use crate::layout::test_support::{absolute_rect, ifc_ahem_fonts, page_box_800x600};
+    let mut doc = crate::Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        taffy::Style::default(),
+        Some("display:block"),
+    );
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        taffy::Style::default(),
+        Some("display:block;margin:0"),
+    );
+    let parent = doc.append_element(
+        Some(body),
+        "div",
+        taffy::Style::default(),
+        Some("display:block;position:relative;width:200px;height:100px"),
+    );
+    let child = doc.append_element(Some(parent), "div", taffy::Style::default(), Some("display:block;position:absolute;left:120px;font-family:Ahem;font-size:10px;line-height:10px"));
+    doc.append_text(child, "aaaa bbbb cccc");
+    doc.mark_in_document_flags();
+    let rules = raikiri_style::build_rule_tree(&doc);
+    let cascade = raikiri_style::cascade(&doc, &rules).expect("cascade");
+    doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+    crate::layout::layout_single_page(&mut doc, &cascade, page_box_800x600()).expect("layout");
+    // CSS 2.2 10.3.7: min(max(40, 200 - 120), 140) = 80px, with three 10px lines.
+    assert_eq!(absolute_rect(&doc, child), (120.0, 0.0, 80.0, 30.0));
+}
