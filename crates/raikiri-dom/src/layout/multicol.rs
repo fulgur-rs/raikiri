@@ -92,7 +92,7 @@ pub(crate) fn compute_multicol_layout(
     // nested container as well as an outermost one.
     let lineless_children =
         (inputs.run_mode == RunMode::PerformLayout && !span_scope && style.horizontal)
-            .then(|| lineless::supported(tree, index))
+            .then(|| lineless::supported(tree, index, tree.fragmentation_stack.is_empty()))
             .flatten();
     // A nested container that turns out taller than its outer column falls
     // back to the custom path, which also breaks it at the outer column end.
@@ -1152,7 +1152,7 @@ fn plan_nested_continuation(
     // columns of the outer container (CSS Multi-column 1, 8.2).
     let lineless_children = style
         .horizontal
-        .then(|| lineless::supported(tree, child))
+        .then(|| lineless::supported(tree, child, false))
         .flatten();
     let rows = outer.column_count.saturating_sub(column);
     // A box that avoids breaks inside, has a minimum height or generated

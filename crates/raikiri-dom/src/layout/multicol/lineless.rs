@@ -19,7 +19,11 @@ use raikiri_style::property::BreakInside;
 /// boxes, positioned or floated boxes, scroll containers and replaced
 /// elements need their own handling at a break, so containers with them keep
 /// the other strategies.
-pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
+///
+/// With `out_of_flow`, a child may also hold absolutely positioned boxes
+/// that it is the containing block of; [`layout`] breaks them across the
+/// columns as well.
+pub(super) fn supported(tree: &Document, parent: usize, out_of_flow: bool) -> Option<Vec<usize>> {
     let container = &tree.nodes[parent];
     if container.ifc.is_some()
         || container.style.direction != TaffyDirection::Ltr
@@ -63,7 +67,7 @@ pub(super) fn supported(tree: &Document, parent: usize) -> Option<Vec<usize>> {
             || node.has_before_or_after_content
             || node.multicol.is_some()
             || node.ifc.is_some()
-            || has_rendered_content(tree, child)
+            || has_rendered_content(tree, child, out_of_flow && node.contains_absolute_boxes)
         {
             return None;
         }
@@ -108,16 +112,149 @@ fn has_block_edge_decorations(node: &crate::Node) -> bool {
     padding.top != zero || padding.bottom != zero || border.top != zero || border.bottom != zero
 }
 
-fn has_rendered_content(tree: &Document, id: usize) -> bool {
+/// Whether `id` has content of its own, other than the absolutely
+/// positioned children that `skip_absolute` leaves out.
+fn has_rendered_content(tree: &Document, id: usize, skip_absolute: bool) -> bool {
     tree.nodes[id].children.iter().any(|&child| {
         let node = &tree.nodes[child];
         node.is_in_document()
             && !node.is_display_none()
+            && !(skip_absolute && is_absolute_box(node))
             && match &node.data {
                 NodeData::Text(text) => !text.text_content.trim().is_empty(),
                 _ => true,
             }
     })
+}
+
+/// Whether `node` is an absolutely positioned element. A fixed box has the
+/// viewport, not its parent, as its containing block.
+fn is_absolute_box(node: &crate::Node) -> bool {
+    matches!(node.data, NodeData::Element(_))
+        && node.style.position == TaffyPosition::Absolute
+        && !node.fixed_position
+}
+
+/// The absolutely positioned children of `child` that are rendered.
+fn absolute_children(tree: &Document, child: usize) -> Vec<usize> {
+    tree.nodes[child]
+        .children
+        .iter()
+        .copied()
+        .filter(|&id| {
+            let node = &tree.nodes[id];
+            node.is_in_document() && !node.is_display_none() && is_absolute_box(node)
+        })
+        .collect()
+}
+
+/// One column's share of an absolutely positioned box, which paints the
+/// whole box moved into the column and clipped to it.
+struct AbsolutePiece {
+    node: usize,
+    column: usize,
+    /// The piece of the containing block it is placed in.
+    parent_piece: usize,
+    rect: FragmentRect,
+    clip: FragmentRect,
+}
+
+/// The pieces of the absolutely positioned boxes of each child, in the
+/// coordinates of the child's pieces. A box breaks at the column ends of
+/// the flow its containing block is part of (CSS Position 3, 3.3.4), and a
+/// box that reaches past the last column continues in overflow columns,
+/// unless `last_column` names a last column with no block-end limit, which
+/// holds the rest of the box. `None` when a box starts above the columns, or continues in a column that
+/// a cut containing block cannot hold it in, or when its pieces would not
+/// fit in `budget` fragments.
+fn absolute_pieces(
+    tree: &Document,
+    children: &[usize],
+    placements: &[Vec<Piece>],
+    context: FragmentationContext,
+    column_height: f32,
+    last_column: Option<usize>,
+    budget: usize,
+) -> Option<Vec<Vec<AbsolutePiece>>> {
+    let column_of = |offset: f32| {
+        let column = (offset / column_height).floor() as usize;
+        last_column.map_or(column, |last| column.min(last))
+    };
+    let mut count = 0usize;
+    let mut all = Vec::with_capacity(children.len());
+    for (&child, pieces) in children.iter().zip(placements) {
+        let mut own = Vec::new();
+        let first = pieces.first()?;
+        let last = pieces.last()?;
+        // The containing block's block offset in the columns laid end to end.
+        let flow_top = first.column as f32 * column_height + first.top;
+        for node in absolute_children(tree, child) {
+            let layout = tree.nodes[node].unrounded_layout;
+            let start = flow_top + layout.location.y;
+            // Descendants that overflow the box are cut with it. The overflow
+            // rect is measured from the padding box, so shift it by the
+            // border to compare it with the border box.
+            let extent = layout
+                .size
+                .height
+                .max(layout.border.top + layout.scrollable_overflow_rect.bottom);
+            // Descendants that overflow above the box start its pieces in an
+            // earlier column.
+            let painted_start =
+                start + (layout.border.top + layout.scrollable_overflow_rect.top).min(0.0);
+            if !painted_start.is_finite() || !extent.is_finite() || painted_start < 0.0 {
+                return None;
+            }
+            let end = start + extent;
+            let first_column = column_of(painted_start);
+            // The column holding the box's block end, which a box that ends
+            // exactly at a column end does not reach past.
+            let end_column = column_of((end - EPSILON).max(painted_start)).max(first_column);
+            count = count.checked_add(end_column - first_column + 1)?;
+            if count > budget {
+                return None;
+            }
+            for column in first_column..=end_column {
+                let parent_piece = match pieces.iter().position(|piece| piece.column == column) {
+                    Some(index) => index,
+                    // An uncut containing block holds the box's pieces in
+                    // the columns after its own.
+                    None if column > last.column && pieces.len() == 1 => 0,
+                    None => return None,
+                };
+                let parent = &pieces[parent_piece];
+                let dx = context.column_offset_x(column) - context.column_offset_x(parent.column);
+                own.push(AbsolutePiece {
+                    node,
+                    column,
+                    parent_piece,
+                    rect: FragmentRect {
+                        x: dx + layout.location.x,
+                        y: start - column as f32 * column_height - parent.top,
+                        width: layout.size.width,
+                        height: layout.size.height,
+                    },
+                    clip: FragmentRect {
+                        x: dx,
+                        y: -parent.top,
+                        width: (layout.location.x
+                            + layout
+                                .size
+                                .width
+                                .max(layout.border.left + layout.scrollable_overflow_rect.right))
+                        .max(context.column_width),
+                        height: if Some(column) == last_column {
+                            (end - column as f32 * column_height).max(column_height)
+                        } else {
+                            column_height
+                        },
+                    },
+                });
+            }
+        }
+        all.push(own);
+    }
+    Some(all)
 }
 
 /// One column's share of a child box.
@@ -871,6 +1008,18 @@ pub(super) fn layout(
             return None;
         }
     };
+    let absolute = absolute_pieces(
+        tree,
+        children,
+        &placements.pieces,
+        context,
+        column_height,
+        // The last column of a container whose height nothing limits grows
+        // to hold what is left (CSS Multi-column 1, 8.1).
+        (definite_height.is_none() && maximum.is_none())
+            .then(|| context.column_count.saturating_sub(1)),
+        max_pieces.saturating_sub(placements.pieces.iter().map(Vec::len).sum()),
+    )?;
     let used_height = if definite_height.is_some() {
         border_box.height
     } else {
@@ -902,7 +1051,12 @@ pub(super) fn layout(
         line_end: None,
     })?;
     let mut previous_column = 0usize;
-    for (order, (&child, pieces)) in children.iter().zip(&placements.pieces).enumerate() {
+    for (order, ((&child, pieces), absolute)) in children
+        .iter()
+        .zip(&placements.pieces)
+        .zip(&absolute)
+        .enumerate()
+    {
         let size = sizes[order];
         let first = pieces.first()?;
         // A break between two children is a resumable point of the flow.
@@ -923,9 +1077,10 @@ pub(super) fn layout(
             y: origin.y + first.top,
         };
         tree.set_unrounded_layout(TaffyNodeId::from(child), &layout);
+        let mut records = Vec::with_capacity(pieces.len());
         for (index, piece) in pieces.iter().enumerate() {
             let x = origin.x + context.column_offset_x(piece.column);
-            tree.fragment_tree.try_push(LayoutFragment {
+            let record = tree.fragment_tree.try_push(LayoutFragment {
                 node_id: child,
                 parent: Some(container),
                 fragmentainer: context.column_index + piece.column,
@@ -944,6 +1099,20 @@ pub(super) fn layout(
                 }),
                 fragment_index: index,
                 fragment_count: pieces.len(),
+                line_start: None,
+                line_end: None,
+            })?;
+            records.push(record);
+        }
+        for piece in absolute {
+            tree.fragment_tree.try_push(LayoutFragment {
+                node_id: piece.node,
+                parent: Some(records[piece.parent_piece]),
+                fragmentainer: context.column_index + piece.column,
+                rect: piece.rect,
+                fragmentainer_clip: Some(piece.clip),
+                fragment_index: 0,
+                fragment_count: 1,
                 line_start: None,
                 line_end: None,
             })?;

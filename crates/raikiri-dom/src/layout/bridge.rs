@@ -221,6 +221,10 @@ pub(crate) fn apply_computed_to_style(
                     })
             });
         doc.nodes[idx].paints_whole_box_effects = paints_whole_box_effects(cv, &initial);
+        doc.nodes[idx].contains_absolute_boxes =
+            super::fixed::establishes_absolute_containing_block(doc, idx, cv)
+                && !super::fixed::establishes_fixed_containing_block(doc, idx, cv);
+        doc.nodes[idx].fixed_position = cv.position == PositionValue::Fixed;
         bridge_size(doc, idx, cv);
         // An intrinsic ratio only participates when at least one preferred
         // dimension is auto; Taffy's leaf sizing otherwise floors an explicit

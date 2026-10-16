@@ -1973,12 +1973,16 @@ css/css-break/monolithic-content-with-forced-break-002.html
 css/css-break/monolithic-content-with-forced-break-003.html
 css/css-break/monolithic-overflow-001.tentative.html
 css/css-break/monolithic-overflow-002.tentative.html
+css/css-break/out-of-flow-in-multicolumn-002.html
+css/css-break/out-of-flow-in-multicolumn-004.html
 css/css-break/out-of-flow-in-multicolumn-005.html
+css/css-break/out-of-flow-in-multicolumn-014.html
 css/css-break/out-of-flow-in-multicolumn-084.html
 css/css-break/out-of-flow-in-multicolumn-097.html
 css/css-break/out-of-flow-in-multicolumn-100.html
 css/css-break/out-of-flow-in-multicolumn-102.html
 css/css-break/out-of-flow-in-multicolumn-116.html
+css/css-break/out-of-flow-in-multicolumn-123.html
 css/css-break/out-of-flow-in-multicolumn-127.html
 css/css-break/overflow-clip-004.html
 css/css-break/table/break-inside-cell-001.html
