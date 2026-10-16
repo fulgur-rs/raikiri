@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use super::supported_property_names;
-use crate::property::is_supported_property_name;
+use crate::property::{is_animatable_property_name, is_supported_property_name};
 
 /// `parse_property_grammar`'s dispatch match, `crates/raikiri-style/src/property/parse/mod.rs`:
 /// the scanned block starts right after `match normalized_name {`
@@ -258,4 +258,28 @@ fn is_supported_property_name_covers_expanding_shorthands() {
     for name in supported_property_names() {
         assert!(is_supported_property_name(name), "{name}");
     }
+}
+
+/// Not-animatable properties are excluded from the animatable set, which
+/// otherwise matches the supported set.
+#[test]
+fn is_animatable_property_name_excludes_not_animatable_properties() {
+    for name in [
+        "contain",
+        "direction",
+        "text-combine-upright",
+        "text-orientation",
+        "unicode-bidi",
+        "will-change",
+        "writing-mode",
+        "WILL-CHANGE",
+    ] {
+        assert!(is_supported_property_name(name), "{name}");
+        assert!(!is_animatable_property_name(name), "{name}");
+    }
+    for name in ["opacity", "font-size", "display", "visibility", "Color"] {
+        assert!(is_animatable_property_name(name), "{name}");
+    }
+    assert!(!is_animatable_property_name("--custom"));
+    assert!(!is_animatable_property_name("not-a-property"));
 }

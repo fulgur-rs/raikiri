@@ -238,8 +238,6 @@ fn unsupported_animation_inputs_throw_type_error() {
             "const validAnimation = target.animate({ fontSize: ['0px', '40px'] }, 40);\
              validAnimation.pause();\
              [\
-               () => target.animate({ fontSize: ['0px'] }, 40),\
-               () => target.animate({ fontSize: [0, '40px'] }, 40),\
                () => target.animate({ fontSize: ['0px', '40px'] }, { duration: -1 }),\
                () => target.animate({ fontSize: ['0px', '40px'] }, { duration: 'slow' }),\
                () => target.animate({ fontSize: ['0px', '40px'] }, 'slow'),\
@@ -249,11 +247,6 @@ fn unsupported_animation_inputs_throw_type_error() {
                () => target.animate({ fontSize: ['0px', '40px'] }, -1),\
                () => target.animate({ fontSize: ['0px', '40px'] }, NaN),\
                () => target.animate({ fontSize: ['0px', '40px'] }, Infinity),\
-               () => target.animate({ fontSize: ['0 px', '40px'] }, 40),\
-               () => target.animate({ fontSize: ['0px', '1.px'] }, 40),\
-               () => target.animate({ fontSize: ['', '40px'] }, 40),\
-               () => target.animate({ fontSize: ['0', '40px'] }, 40),\
-               () => target.animate({ fontSize: ['0em', '40px'] }, 40),\
                () => target.animate({ fontSize: ['0px', '40px'] }, 40).pause.call({})\
              ].every(run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } })",
         )
@@ -384,7 +377,16 @@ fn keyframes_outside_the_sampler_keep_timing_but_never_style() {
                target.animate({}, 40),\
                target.animate(null, 40),\
                target.animate([{ opacity: 0 }, { opacity: 1 }], 40),\
-               target.animate({ fontSize: ['0px', '40px'], wordSpacing: ['0px', '40px'] }, 40)\
+               target.animate({ fontSize: ['0px', '40px'], wordSpacing: ['0px', '40px'] }, 40),\
+               target.animate({ fontSize: '10px' }, 40),\
+               target.animate({ fontSize: ['0px'] }, 40),\
+               target.animate({ fontSize: ['0px', '20px', '40px'] }, 40),\
+               target.animate({ fontSize: [0, '40px'] }, 40),\
+               target.animate({ fontSize: ['0 px', '40px'] }, 40),\
+               target.animate({ fontSize: ['0px', '1.px'] }, 40),\
+               target.animate({ fontSize: ['', '40px'] }, 40),\
+               target.animate({ fontSize: ['0', '40px'] }, 40),\
+               target.animate({ wordSpacing: ['0em', '1em'] }, 40)\
              ];\
              animations.every(animation => {\
                const refused = run => { try { run(); return false; } catch (error) { return error instanceof TypeError; } };\
@@ -998,7 +1000,8 @@ fn keyframe_properties_are_converted_in_idl_name_order() {
              const logged = name => ({ toString() { read.push(name); return '1px'; } });\
              thrown(() => target.animate([{ opacity: logged('opacity'), color: logged('color'),\
                                              'font-size': logged('dashed'), foo: logged('foo'),\
-                                             cssFloat: logged('cssFloat') }], 1));\
+                                             cssFloat: logged('cssFloat'), willChange: logged('willChange'),\
+                                             unicodeBidi: logged('unicodeBidi') }], 1));\
              const order = read.join() === 'color,cssFloat,opacity';\
              const sampled = target.animate({ wordSpacing: ['0px', '40px'], foo: 1, [Symbol('x')]: 1,\
                                               'font-size': 1, float: 1 }, 40);\
@@ -1008,7 +1011,10 @@ fn keyframe_properties_are_converted_in_idl_name_order() {
              && thrown(() => target.animate({ get opacity() { throw marker; } }, 1)) === marker\
              && thrown(() => target.animate({ opacity: [0, { toString() { throw marker; } }] }, 1)) === marker\
              && thrown(() => target.animate({ opacity: { [Symbol.iterator]: 1 } }, 1)) instanceof TypeError\
-             && thrown(() => target.animate({ wordSpacing: '0px' }, 1)) instanceof TypeError\
+             && thrown(() => target.animate({ wordSpacing: '0px' }, 1)) === null\
+             && thrown(() => target.animate({ get willChange() { throw marker; } }, 1)) === null\
+             && thrown(() => target.animate({ get writingMode() { throw marker; } }, 1)) === null\
+             && thrown(() => target.animate([{ get direction() { throw marker; } }], 1)) === null\
              && thrown(() => target.animate({ get ['--x']() { throw marker; } }, 1)) === marker\
              && thrown(() => target.animate({ get ['--']() { throw marker; } }, 1)) === null\
              && (() => {\

@@ -35,6 +35,32 @@ pub fn is_supported_property_name(name: &str) -> bool {
         .is_ok()
 }
 
+/// Supported properties whose definition says "Animation type: not
+/// animatable": `contain` (CSS Containment 2), `direction`, `text-combine-upright`,
+/// `text-orientation`, `unicode-bidi` and `writing-mode` (CSS Writing Modes 4),
+/// and `will-change` (CSS Will Change 1). Sorted for binary search.
+const NOT_ANIMATABLE_PROPERTY_NAMES: &[&str] = &[
+    "contain",
+    "direction",
+    "text-combine-upright",
+    "text-orientation",
+    "unicode-bidi",
+    "will-change",
+    "writing-mode",
+];
+
+/// Returns whether `name` (ASCII case-insensitively) is a supported CSS
+/// property that a user agent can animate: a supported property whose
+/// animation type is not "not animatable". Custom properties (`--*`) are
+/// not included.
+pub fn is_animatable_property_name(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    is_supported_property_name(&name)
+        && NOT_ANIMATABLE_PROPERTY_NAMES
+            .binary_search(&name.as_str())
+            .is_err()
+}
+
 /// Produce a `PropertyValue` from a property name and parser.
 /// Return `None` for an unknown name or invalid value.
 pub fn parse_value(name: &str, input: &mut Parser<'_, '_>) -> Option<PropertyValue> {

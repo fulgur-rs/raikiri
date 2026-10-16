@@ -11,7 +11,7 @@ use boa_engine::{
 };
 
 use raikiri_style::is_valid_easing_function;
-use raikiri_style::property::is_supported_property_name;
+use raikiri_style::property::is_animatable_property_name;
 
 use super::interfaces::{Members, protos};
 use super::webidl::{this_element, throw_dom_exception, with_state};
@@ -164,28 +164,19 @@ fn type_error(message: &str) -> boa_engine::JsError {
     JsNativeError::typ().with_message(message.to_owned()).into()
 }
 
-fn parse_pixel_value(value: &str) -> JsResult<f64> {
+/// A finite `<number>px` length, or `None` for any other value.
+fn parse_pixel_value(value: &str) -> Option<f64> {
     let value = value.trim();
-    let Some(unit_start) = value.len().checked_sub(2) else {
-        return Err(type_error("animation keyframes must use px units"));
-    };
+    let unit_start = value.len().checked_sub(2)?;
     if !value.as_bytes()[unit_start..].eq_ignore_ascii_case(b"px") {
-        return Err(type_error("animation keyframes must use px units"));
+        return None;
     }
-    let Some(number) = value
+    value
         .get(..unit_start)
-        .filter(|number| is_css_number_syntax(number))
-    else {
-        return Err(type_error(
-            "animation keyframe values must be finite numbers",
-        ));
-    };
-    let number = number
+        .filter(|number| is_css_number_syntax(number))?
         .parse::<f64>()
         .ok()
         .filter(|number| number.is_finite())
-        .ok_or_else(|| type_error("animation keyframe values must be finite numbers"))?;
-    Ok(number)
 }
 
 fn is_css_number_syntax(value: &str) -> bool {
@@ -328,8 +319,9 @@ enum PropertyValues {
 }
 
 /// Whether `name` names a keyframe animation property: a custom property
-/// name, or the IDL attribute name of a supported CSS property (`cssFloat`
-/// for `float`, otherwise the camel-cased property name).
+/// name, or the IDL attribute name of a supported CSS property that can be
+/// animated (`cssFloat` for `float`, otherwise the camel-cased property
+/// name). A not-animatable property such as `will-change` is skipped.
 fn is_animatable_idl_name(name: &str) -> bool {
     if let Some(custom) = name.strip_prefix("--") {
         return !custom.is_empty();
@@ -347,7 +339,7 @@ fn is_animatable_idl_name(name: &str) -> bool {
         }
         property.push(character.to_ascii_lowercase());
     }
-    is_supported_property_name(&property)
+    is_animatable_property_name(&property)
 }
 
 /// Convert the animation properties of a keyframe-like object: its own
@@ -512,8 +504,8 @@ fn convert_property_indexed(
 
 /// Parse keyframes into the one sampled property, or `None` when they fall
 /// outside the static sampler (null, a keyframe sequence, no animation
-/// property, an unsupported property, several properties, or keyframe
-/// metadata other than the defaults).
+/// property, an unsupported property, several properties, keyframe
+/// metadata other than the defaults, or values other than two px lengths).
 fn parse_keyframes(
     value: &JsValue,
     context: &mut Context,
@@ -540,21 +532,19 @@ fn parse_keyframes(
     if !plain {
         return Ok(None);
     }
+    // Any other value shape (a single value, a list that is not exactly two
+    // keyframes, or a value other than a finite px length) is still a valid
+    // keyframe; the effect just falls outside the static sampler.
     let PropertyValues::List(values) = values else {
-        return Err(type_error(
-            "animation property values must be a two-item array",
-        ));
+        return Ok(None);
     };
     let [from, to] = values.as_slice() else {
-        return Err(type_error(
-            "animation property values must contain two keyframes",
-        ));
+        return Ok(None);
     };
-    Ok(Some((
-        property,
-        parse_pixel_value(from)?,
-        parse_pixel_value(to)?,
-    )))
+    let (Some(from), Some(to)) = (parse_pixel_value(from), parse_pixel_value(to)) else {
+        return Ok(None);
+    };
+    Ok(Some((property, from, to)))
 }
 
 /// Timing from the `options` argument of `Element.animate`.
