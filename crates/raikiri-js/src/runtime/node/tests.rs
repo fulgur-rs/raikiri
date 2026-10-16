@@ -226,13 +226,20 @@ fn attribute_names_are_validated_as_dom_exceptions() {
         .unwrap();
     ok(
         &mut rt,
-        "try { d.setAttribute('1bad', 'x'); false } catch (e) { e instanceof DOMException && e.name === 'InvalidCharacterError' }",
+        "try { d.setAttribute('bad name', 'x'); false } catch (e) { e instanceof DOMException && e.name === 'InvalidCharacterError' }",
+    );
+    // DOM "valid attribute local name" only excludes whitespace, NULL, `/`,
+    // `>` and `=`, so a digit-leading or `@` name is accepted.
+    ok(
+        &mut rt,
+        "d.setAttribute('1ok', 'a'); d.setAttribute('data@x', 'b'); \
+         d.getAttribute('1ok') === 'a' && d.getAttribute('data@x') === 'b'",
     );
     // DOM §4.9: `removeAttribute` never validates its argument -- it looks
     // an attribute up by name and removes it if found, so a syntactically
     // invalid name is simply never found. Unlike `setAttribute`, this is a
     // silent no-op, not a `DOMException`.
-    ok(&mut rt, "d.removeAttribute('1bad') === undefined");
+    ok(&mut rt, "d.removeAttribute('bad name') === undefined");
 }
 
 #[test]
@@ -468,7 +475,7 @@ fn mutations_set_dirty_and_reads_and_no_op_writes_do_not() {
     assert!(!is_dirty(&mut rt), "reads should not mark dirty");
 
     clear_dirty(&mut rt);
-    rt.evaluate("d.removeAttribute('1bad');").unwrap();
+    rt.evaluate("d.removeAttribute('bad name');").unwrap();
     assert!(
         !is_dirty(&mut rt),
         "an invalid removeAttribute name is a no-op, not a mutation"
@@ -588,7 +595,10 @@ fn set_attribute_ns_keeps_case_and_namespaces_apart() {
             "b.setAttributeNS('urn:x', 'xml:lang', 'x')",
             "NamespaceError",
         ),
-        ("b.setAttributeNS(null, '1a', 'x')", "InvalidCharacterError"),
+        (
+            "b.setAttributeNS(null, 'a=b', 'x')",
+            "InvalidCharacterError",
+        ),
     ] {
         ok(
             &mut rt,
