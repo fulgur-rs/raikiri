@@ -418,3 +418,21 @@ fn boxes_beside_a_z_auto_positioned_box_still_sort() {
     );
     assert!(y < x && x < z, "{events:?}");
 }
+
+#[test]
+fn a_z_auto_positioned_box_holding_a_z_indexed_flex_item_stays_in_place() {
+    let item = "position:relative;width:10px;height:10px;background:red";
+    let events = order(
+        &format!(
+            "<div><div id=a style='{item};z-index:10'></div></div>\
+             <div><div style='position:relative'><div style='display:flex'>\
+             <div id=f style='z-index:20;width:10px;height:10px;background:red'></div>\
+             </div></div></div>"
+        ),
+        0,
+    );
+    assert!(
+        position(&events, "Box(a)") < position(&events, "Box(f)"),
+        "{events:?}"
+    );
+}

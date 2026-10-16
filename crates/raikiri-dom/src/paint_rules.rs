@@ -648,8 +648,8 @@ pub fn sort_positioned_frames<F: Clone>(
 }
 
 /// Whether element `id` is a positioned box with `z-index: auto` that forms
-/// no stacking context and holds a positioned box with a non-zero stack
-/// level.
+/// no stacking context and holds a box with a non-zero stack level: a
+/// positioned box, or a flex or grid item, with a non-zero `z-index`.
 fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id: usize) -> bool {
     let Some(cv) = cascade.computed.get(id) else {
         return false; // cov:ignore: deferred boxes are elements with computed values
@@ -668,10 +668,7 @@ fn holds_leveled_positioned_box(document: &Document, cascade: &CascadeResult, id
         let Some(node) = document.get_node(child) else {
             continue; // cov:ignore: children are nodes of the document
         };
-        if cascade.computed.get(child).is_some_and(|cv| {
-            !matches!(cv.position, PositionValue::Static)
-                && matches!(cv.z_index, ZIndexValue::Integer(level) if level != 0)
-        }) {
+        if positioned_layer_level(document, cascade, child) != 0 {
             return true;
         }
         stack.extend(node.children.iter().copied());
