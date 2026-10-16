@@ -3826,17 +3826,37 @@ pub(crate) fn resolve_border_with_width_provenance(
     let width = if matches!(specified.style, BorderStyle::None | BorderStyle::Hidden) {
         ComputedLength::ZERO
     } else {
-        let width = resolve_length(specified.width, font_size, own_line_height, ctx);
-        match (width_is_computed, ctx.border_width_device_scale) {
-            (true, _) => width,
-            (false, Some(scale)) => snap_border_width_to_device_pixels(width, scale),
-            (false, None) => width,
-        }
+        resolve_border_width_with_provenance(
+            specified.width,
+            font_size,
+            own_line_height,
+            width_is_computed,
+            ctx,
+        )
     };
     ComputedBorder {
         width,
         style: specified.style,
         color: specified.color,
+    }
+}
+
+/// Resolve a border width and snap authored values to the device-pixel grid.
+///
+/// `width_is_computed` preserves inherited widths that were staged back into
+/// [`Length::Px`], avoiding a second snap during page or element finalization.
+pub(crate) fn resolve_border_width_with_provenance(
+    specified: Length,
+    font_size: ComputedLength,
+    own_line_height: Option<ComputedLength>,
+    width_is_computed: bool,
+    ctx: &ResolveContext,
+) -> ComputedLength {
+    let width = resolve_length(specified, font_size, own_line_height, ctx);
+    match (width_is_computed, ctx.border_width_device_scale) {
+        (true, _) => width,
+        (false, Some(scale)) => snap_border_width_to_device_pixels(width, scale),
+        (false, None) => width,
     }
 }
 

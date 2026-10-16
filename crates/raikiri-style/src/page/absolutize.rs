@@ -23,8 +23,9 @@ use crate::resolve::{
     ComputedTextIndent, ResolveContext, lift_border_spacing, lift_length_percentage_or_calc,
     lift_letter_spacing, lift_line_height, lift_tab_size, lift_text_indent, lift_word_spacing,
     resolve_background_size, resolve_border_radius, resolve_border_spacing,
-    resolve_border_with_width_provenance, resolve_box_shadow_item, resolve_css_position,
-    resolve_flex_basis, resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
+    resolve_border_width_with_provenance, resolve_border_with_width_provenance,
+    resolve_box_shadow_item, resolve_css_position, resolve_flex_basis,
+    resolve_grid_auto_track_list, resolve_grid_template_tracks, resolve_length,
     resolve_length_percentage, resolve_length_percentage_or_auto,
     resolve_length_percentage_or_calc, resolve_length_percentage_or_normal, resolve_letter_spacing,
     resolve_line_height, resolve_margin_length_or_auto,
@@ -689,7 +690,14 @@ pub(super) fn absolutize_in_page_context(
             PropertyValue::ColumnRule(basis.border(rule, border_width_is_computed[4]))
         }
         PropertyValue::ColumnRuleWidth(width) => PropertyValue::ColumnRuleWidth(Length::Px(
-            resolve_length(width, font_size, own_line_height, ctx).px(),
+            resolve_border_width_with_provenance(
+                width,
+                font_size,
+                own_line_height,
+                border_width_is_computed[4],
+                ctx,
+            )
+            .px(),
         )),
         PropertyValue::ColumnWidth(ColumnWidthValue::Length(length)) => {
             PropertyValue::ColumnWidth(ColumnWidthValue::Length(Length::Px(

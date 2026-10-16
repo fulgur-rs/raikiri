@@ -1973,6 +1973,46 @@ fn page_border_width_uses_the_requested_device_scale() {
 }
 
 #[test]
+fn page_column_rule_width_snaps_authored_values_and_preserves_inherit() {
+    for (width, scale, expected) in [("0.75px", 2.0, 0.5), ("49.333332px", 1.5, 73.0 / 1.5)] {
+        let mut tree = RuleTree::empty();
+        tree.add_stylesheet(
+            &format!("@page {{ column-rule-width: {width}; column-rule-style: solid }}"),
+            Origin::Author,
+        );
+        let page = cascade_page_with_media_context_and_border_width_device_scale(
+            &tree,
+            &PageContextQuery::default(),
+            PageInheritance::LegacyInitialValues,
+            &MediaContext::default(),
+            Some(scale),
+        );
+        assert_eq!(
+            page.declarations().get(&PropertyKey::ColumnRuleWidth),
+            Some(&PropertyValue::ColumnRuleWidth(Length::Px(expected))),
+            "column-rule-width: {width} at scale {scale}",
+        );
+    }
+
+    let mut root = ComputedValues::initial();
+    root.column_rule.width = crate::resolve::ComputedLength(74.0 / 1.5);
+    root.column_rule.style = BorderStyle::Solid;
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet("@page { column-rule-width: inherit }", Origin::Author);
+    let page = cascade_page_with_media_context_and_border_width_device_scale(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(&root),
+        &MediaContext::default(),
+        Some(1.5),
+    );
+    assert_eq!(
+        page.declarations().get(&PropertyKey::ColumnRuleWidth),
+        Some(&PropertyValue::ColumnRuleWidth(Length::Px(74.0 / 1.5))),
+    );
+}
+
+#[test]
 fn page_style_and_margin_box_do_not_resnap_a_computed_border_width() {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(
