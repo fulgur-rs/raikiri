@@ -16,7 +16,7 @@ fn page(position: PositionKind, computed: &[(&str, &str)]) -> DomRuntime {
     page_at(position, computed, (300.0, 300.0))
 }
 
-/// [`page`] with the 20px box at `origin`.
+/// `page` with the 20px box at `origin`.
 fn page_at(position: PositionKind, computed: &[(&str, &str)], origin: (f64, f64)) -> DomRuntime {
     let (mut host, html, _, body) = StubHost::page();
     let target = host.document.create_detached_element("div").unwrap();
