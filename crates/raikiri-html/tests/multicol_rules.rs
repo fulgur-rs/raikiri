@@ -319,3 +319,38 @@ fn column_properties_do_not_apply_to_flex_grid_or_table_boxes() {
         assert!(rules(&document).is_empty(), "{display}");
     }
 }
+
+#[test]
+fn a_definite_height_container_breaks_paragraphs_between_its_columns() {
+    // Paragraphs fill the columns as the lines of one paragraph do, padding
+    // or not.
+    for css in [".mc{height:40px}", ".mc{height:40px;padding:5px}"] {
+        let placements = |body: &str| {
+            let document = lay_out(
+                &format!("<div class=mc style='column-rule:2px solid red'>{body}</div>"),
+                css,
+            );
+            let runs: Vec<_> = document
+                .page(0)
+                .unwrap()
+                .text_runs()
+                .iter()
+                .map(|run| (run.text.to_owned(), run.origin))
+                .collect();
+            (runs, rules(&document))
+        };
+        let paragraphs = placements("<p>A</p><p>B</p><p>C</p><p>D</p>");
+        assert_eq!(paragraphs, placements("<p>A<br>B<br>C<br>D</p>"), "{css}");
+        let inset = if css.contains("padding") { 5.0 } else { 0.0 };
+        assert_eq!(
+            paragraphs.0[2],
+            ("C".to_owned(), (60.0 + inset, 16.0 + inset)),
+            "{css}"
+        );
+        assert_eq!(
+            paragraphs.1,
+            vec![(49.0 + inset, inset, 2.0, 40.0)],
+            "{css}"
+        );
+    }
+}

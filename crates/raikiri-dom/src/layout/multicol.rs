@@ -88,6 +88,16 @@ pub(crate) fn compute_multicol_layout(
             || multicol_has_direct_break_flow(tree, index))
         && style.horizontal
         && !multicol_has_out_of_flow_descendant(tree, index);
+    // A definite-height container of paragraphs breaks them between lines
+    // too, once their laid-out height shows they fit in its columns.
+    let definite_paragraphs = !custom_scope
+        && !span_scope
+        && tree.fragmentation_stack.is_empty()
+        && style.horizontal
+        && available_height.is_some_and(|height| height > 0.0)
+        && multicol_has_direct_block_child(tree, index)
+        && multicol_has_only_paragraph_children(tree, index)
+        && !multicol_has_out_of_flow_descendant(tree, index);
     // Children that hold no lines are sliced at the column edges, in a
     // nested container as well as an outermost one.
     let lineless_children =
@@ -102,7 +112,7 @@ pub(crate) fn compute_multicol_layout(
     // A nested container that turns out taller than its outer column falls
     // back to the custom path, which also breaks it at the outer column end.
     let nested_fallback = custom_scope && !tree.fragmentation_stack.is_empty();
-    let custom_scope = custom_scope && lineless_children.is_none();
+    let mut custom_scope = custom_scope && lineless_children.is_none();
     let stack_depth = tree.fragmentation_stack.len();
     let outer_height = stack_depth
         .checked_sub(1)
@@ -121,6 +131,18 @@ pub(crate) fn compute_multicol_layout(
             || lineless::starts_the_outer_columns(tree, index)
                 && outer_height.is_some_and(|outer| output.size.height <= outer + lineless::EPSILON)
     });
+    // Overflow columns past the container are not painted yet, so content
+    // that needs them keeps the stacked layout.
+    custom_scope |= definite_paragraphs
+        && lineless_children.is_none()
+        && available_height.is_some_and(|height| {
+            let css = &tree.nodes[index].style;
+            let basis = parent_width.unwrap_or(output.size.width).max(0.0);
+            let content_top = multicol_resolve_inset(tree, css.padding.top, basis)
+                + multicol_resolve_inset(tree, css.border.top, basis);
+            paragraphs_bottom(tree, index, content_top)
+                <= height * context.column_count as f32 + lineless::EPSILON
+        });
     let fragmentainer_height = available_height.or_else(|| {
         multicol_max_fragmentainer_height(
             tree,
@@ -580,6 +602,44 @@ fn multicol_has_direct_block_child(tree: &Document, node_id: usize) -> bool {
             && tree.nodes[child].kind() == NodeKind::Element
             && !tree.nodes[child].is_display_none()
     })
+}
+
+// Whether every child box of `node_id` is an in-flow block of lines whose
+// height comes from its content, which the custom path breaks between lines
+// in a definite-height container as well.
+fn multicol_has_only_paragraph_children(tree: &Document, node_id: usize) -> bool {
+    tree.nodes[node_id]
+        .children
+        .iter()
+        .map(|&child| &tree.nodes[child])
+        .filter(|child| {
+            child.is_in_document() && child.kind() == NodeKind::Element && !child.is_display_none()
+        })
+        .all(|child| {
+            child.formatting_context == FormattingContext::Inline
+                && matches!(child.display(), DisplayValue::Block)
+                && child.taffy_position() != TaffyPosition::Absolute
+                && !child.style.float.is_floated()
+                && child.style.size.height.is_auto()
+                && child.style.min_size.height.is_auto()
+                && child.style.max_size.height.is_auto()
+        })
+}
+
+// The block-end edge of the last child box of `node_id`, laid out in one
+// column, measured from the content-box start `content_top`.
+fn paragraphs_bottom(tree: &Document, node_id: usize, content_top: f32) -> f32 {
+    tree.nodes[node_id]
+        .children
+        .iter()
+        .map(|&child| &tree.nodes[child])
+        .filter(|child| {
+            child.is_in_document() && child.kind() == NodeKind::Element && !child.is_display_none()
+        })
+        .map(|child| {
+            child.unrounded_layout.location.y + child.unrounded_layout.size.height - content_top
+        })
+        .fold(0.0, f32::max)
 }
 
 // A logical non-auto child minimum paired with break avoidance participates

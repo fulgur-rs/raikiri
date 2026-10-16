@@ -3317,3 +3317,42 @@ fn only_a_first_child_at_the_top_of_a_multicol_starts_the_outer_columns() {
     let doc = Document::new();
     assert!(!lineless::starts_the_outer_columns(&doc, 0));
 }
+
+#[test]
+fn only_in_flow_paragraphs_with_content_heights_count_as_paragraph_children() {
+    let paragraphs = |child_style: &str| {
+        let mut doc = Document::new();
+        let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+        let body = doc.append_element(Some(html), "body", Style::default(), Some("margin:0"));
+        let parent = doc.append_element(
+            Some(body),
+            "div",
+            Style::default(),
+            Some("display:block;width:100px;height:40px;column-count:2;column-gap:20px"),
+        );
+        let first = doc.append_element(
+            Some(parent),
+            "p",
+            Style::default(),
+            Some("display:block;margin:0"),
+        );
+        doc.append_text(first, "A");
+        let second = doc.append_element(Some(parent), "p", Style::default(), Some(child_style));
+        doc.append_text(second, "B");
+        layout_nested_flex_float_fixture(&mut doc);
+        multicol_has_only_paragraph_children(&doc, parent)
+    };
+    assert!(paragraphs("display:block;margin:0"));
+    assert!(paragraphs("display:none"));
+    for style in [
+        "display:grid",
+        "display:list-item",
+        "display:block;position:absolute",
+        "display:block;float:left",
+        "display:block;height:20px",
+        "display:block;min-height:20px",
+        "display:block;max-height:20px",
+    ] {
+        assert!(!paragraphs(style), "{style}");
+    }
+}
