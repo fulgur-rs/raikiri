@@ -9,6 +9,34 @@ fn cascaded(doc: &Document) -> CascadeResult {
 }
 
 #[test]
+fn empty_table_cell_classification_walks_text_children() {
+    let mut doc = Document::new();
+    let table = doc.append_element(
+        Some(doc.root_index()),
+        "table",
+        Style::default(),
+        Some("display:table;border-collapse:separate;empty-cells:hide"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.append_text(cell, "visible content");
+    doc.mark_in_document_flags();
+    let cascade = cascaded(&doc);
+
+    assert!(!hides_empty_table_cell(&doc, &cascade, cell));
+}
+
+#[test]
 fn overflow_clip_rejects_an_unknown_document_node() {
     let doc = Document::new();
     let cascade = cascaded(&doc);

@@ -2609,10 +2609,52 @@ fn first_cell_baseline_descends_through_multiple_block_containers() {
         Some("display:block;margin-top:5px;padding-top:4px"),
     );
     doc.append_text(inner, "X");
+    doc.append_text(cell, "later inline content");
     doc.mark_in_document_flags();
     let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
     crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
     assert_eq!(super::first_cell_baseline(&doc, cell, 0.0), Some(22.0));
+}
+
+#[test]
+fn vertical_table_cell_alignment_accounts_for_scrollbar_width() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let table = doc.append_element(
+        Some(body),
+        "table",
+        Style::default(),
+        Some("display:table;width:80px;height:80px;writing-mode:vertical-rl"),
+    );
+    let row = doc.append_element(
+        Some(table),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    let cell_style = Style {
+        scrollbar_width: 20.0,
+        ..Style::default()
+    };
+    let cell = doc.append_element(
+        Some(row),
+        "td",
+        cell_style,
+        Some("display:table-cell;overflow-y:scroll;vertical-align:middle"),
+    );
+    let child = doc.append_element(
+        Some(cell),
+        "div",
+        Style::default(),
+        Some("display:block;position:relative;left:50%;width:10px;height:10px"),
+    );
+    doc.mark_in_document_flags();
+    let computed = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    crate::layout::layout_single_page(&mut doc, &computed, PageBox::A4).unwrap();
+
+    assert_eq!(doc.nodes[cell].unrounded_layout.size.width, 80.0);
+    assert_eq!(doc.nodes[child].unrounded_layout.location.x, 65.0);
 }
 
 #[test]
