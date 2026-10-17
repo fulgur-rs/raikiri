@@ -1444,3 +1444,62 @@ fn negative_content_inside_display_contents_paints_below_the_blocks() {
     assert_eq!(steps[at - 1], Step::Text(m));
     assert_eq!(steps[at + 1], Step::Text(m));
 }
+
+/// A translucent `::first-line` group holds the negative content it wraps,
+/// so in both orders that content paints above the paragraph's blocks with
+/// the rest of the first line.
+/// Content spread over later lines still paints below the blocks.
+#[test]
+fn negative_content_on_a_translucent_first_line_paints_above_the_blocks() {
+    for (body, css) in [
+        (
+            "<div id=m>over <span style=\"position: relative; z-index: -1\">x</span>\
+             <div id=k style=\"background: gray; height: 10px\"></div>tail <b style=\"padding: 1px\">b</b> \
+             <i style=\"display: inline-block\">i</i> <em style=\"position: absolute\">a</em> \
+             <ruby>r<rt>t</rt></ruby></div>",
+            "#m::first-line { opacity: 0.5 }",
+        ),
+        (
+            "<div id=m>over<div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+            "#m::first-line { opacity: 0.5 } \
+             #m::before { content: 'x'; position: relative; z-index: -1 }",
+        ),
+    ] {
+        let result = assert_same_order(body, css);
+        let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+        let page = result.pages().next().expect("a page");
+        let steps = walker_steps(&page);
+        let at = step_at(&result, Step::Box(k));
+        assert!(
+            !steps[..at].contains(&Step::Text(m)),
+            "{css}: {}",
+            describe(&page, &steps)
+        );
+    }
+    let result = assert_same_order(
+        "<div id=m>over <span style=\"position: relative; z-index: -1\">x<br>y</span>\
+         <div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+        "#m::first-line { opacity: 0.5 }",
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(k)) - 1], Step::Text(m));
+}
+
+/// The negative span on a translucent first line paints over the block
+/// that follows it in the paragraph.
+#[test]
+fn negative_text_on_a_translucent_first_line_covers_the_blocks() {
+    let blue = |color: &str| {
+        let result = lay_out(
+            &format!(
+                "<div id=m>AA<span style=\"position: relative; z-index: -1; color: {color}\">BB</span>\
+                 <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+            ),
+            "#m::first-line { opacity: 0.5 }",
+        );
+        pixels_of(&render_first_page(&result), [0, 0, 255])
+    };
+    assert!(blue("red") < blue("transparent"));
+}
