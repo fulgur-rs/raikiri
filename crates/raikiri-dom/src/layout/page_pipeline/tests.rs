@@ -720,6 +720,30 @@ fn avoided_run_moves_only_when_it_crosses_the_page_and_fits_the_next() {
 }
 
 #[test]
+fn avoids_page_break_inside_only_for_avoid_values() {
+    use raikiri_style::property::BreakInside;
+    assert!(avoids_page_break_inside(BreakInside::Avoid));
+    assert!(avoids_page_break_inside(BreakInside::AvoidPage));
+    assert!(!avoids_page_break_inside(BreakInside::Auto));
+    assert!(!avoids_page_break_inside(BreakInside::AvoidColumn));
+}
+
+#[test]
+fn avoided_box_moves_unless_its_margin_box_is_at_the_page_top() {
+    // Starts on the page from 0 to 100 and runs past its end.
+    assert!(avoided_box_moves(80.0, 0.0, 120.0, 0.0, 100.0));
+    // Ends on the page.
+    assert!(!avoided_box_moves(80.0, 0.0, 100.0, 0.0, 100.0));
+    // Its margin box already starts the page.
+    assert!(!avoided_box_moves(10.0, 10.0, 120.0, 0.0, 100.0));
+    // A negative margin is ignored, so the box's own edge is tested.
+    assert!(avoided_box_moves(10.0, -10.0, 120.0, 0.0, 100.0));
+    // Starts on a later page.
+    assert!(!avoided_box_moves(100.0, 0.0, 220.0, 0.0, 100.0));
+    assert!(!avoided_box_moves(f32::NAN, 0.0, 120.0, 0.0, 100.0));
+}
+
+#[test]
 fn row_group_moves_unless_already_at_the_page_top() {
     assert!(row_group_moves(80.0, 40.0, 0.0, 100.0));
     // Moves even when taller than a page.
