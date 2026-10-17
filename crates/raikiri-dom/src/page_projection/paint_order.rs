@@ -178,7 +178,9 @@ struct Layer {
 /// How the queue of a layer's positioned boxes reads its frames.
 fn positioned_frame(frame: &Frame) -> paint_rules::PositionedFrame {
     match frame {
-        Frame::Visit(node_id) => paint_rules::PositionedFrame::Box(*node_id),
+        Frame::Visit(node_id) | Frame::InlineGroup(_, node_id, _) => {
+            paint_rules::PositionedFrame::Box(*node_id)
+        }
         Frame::PushClip(owner) => paint_rules::PositionedFrame::Open(*owner),
         _ => paint_rules::PositionedFrame::Close,
     }
@@ -524,7 +526,32 @@ impl Document {
                 && !layer.flushing
                 && paint_rules::defers_to_positioned_layer(self, cascade, node_id)
             {
-                layer.positioned.push(frame);
+                if paint_rules::leaves_paragraph_lines(self, cascade, node_id) {
+                    paint_rules::insert_positioned_frame(
+                        self,
+                        &mut layer.positioned,
+                        frame,
+                        positioned_frame,
+                    );
+                } else {
+                    layer.positioned.push(frame);
+                }
+                continue;
+            }
+            // So does the group of a positioned inline element that forms a
+            // stacking context in the paragraph's stacking context.
+            if let Frame::InlineGroup(root, group, _) = frame
+                && let Some(layer) = layers.last_mut()
+                && layer.allowed
+                && !layer.flushing
+                && paint_rules::leaves_paragraph_content(self, cascade, root, group)
+            {
+                paint_rules::insert_positioned_frame(
+                    self,
+                    &mut layer.positioned,
+                    frame,
+                    positioned_frame,
+                );
                 continue;
             }
             // A box that does not defer, such as a flex container, paints

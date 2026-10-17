@@ -838,3 +838,51 @@ fn an_extreme_clip_margin_keeps_the_clip_finite() {
         assert!(value.is_finite(), "{:?}", clip.rect);
     }
 }
+
+#[test]
+fn positioned_frames_go_back_to_their_place_in_tree_order() {
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let block = |doc: &mut Document, parent| {
+        doc.append_element(Some(parent), "div", Style::default(), Some("display:block"))
+    };
+    let a = block(&mut doc, body);
+    let b = block(&mut doc, body);
+    let b1 = block(&mut doc, b);
+    let b2 = block(&mut doc, b);
+    let c = block(&mut doc, body);
+    doc.mark_in_document_flags();
+
+    assert!(precedes_in_tree(&doc, a, b1));
+    assert!(precedes_in_tree(&doc, b, b1));
+    assert!(!precedes_in_tree(&doc, b1, b));
+    assert!(!precedes_in_tree(&doc, c, a));
+    assert!(!precedes_in_tree(&doc, a, a));
+    assert!(!precedes_in_tree(&doc, a, usize::MAX));
+
+    use PositionedFrame::{Box, Close, Open};
+    let insert = |mut frames: Vec<PositionedFrame>, frame| {
+        insert_positioned_frame(&doc, &mut frames, frame, |frame| *frame);
+        frames
+    };
+    // A box goes back past the boxes after it, and past a clip around
+    // boxes after it as a whole.
+    assert_eq!(
+        insert(vec![Box(a), Box(c)], Box(b1)),
+        [Box(a), Box(b1), Box(c)]
+    );
+    assert_eq!(
+        insert(vec![Open(b), Box(b1), Close], Box(a)),
+        [Box(a), Open(b), Box(b1), Close]
+    );
+    // It stays after a clip of its own ancestor, which it cannot reenter,
+    // and after a clip still open.
+    assert_eq!(
+        insert(vec![Open(b), Box(b2), Close], Box(b1)),
+        [Open(b), Box(b2), Close, Box(b1)]
+    );
+    assert_eq!(insert(vec![Open(b)], Box(a)), [Open(b), Box(a)]);
+    // Clips keep the order they are added in.
+    assert_eq!(insert(vec![Box(c)], Open(b)), [Box(c), Open(b)]);
+}

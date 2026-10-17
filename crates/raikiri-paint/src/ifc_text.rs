@@ -216,10 +216,41 @@ impl HeldLines<'_> {
 
     /// Composite the paragraph's groups like [`Self::finish`], apart from
     /// its blocks: the paint below the blocks, the blocks in the order they
-    /// were placed, and the paint above them.
-    pub(crate) fn finish_around_blocks(self) -> (Scene, Vec<Scene>, Scene) {
-        self.rest
-            .finish_around_blocks(self.clip, self.paint_transform, self.first_line)
+    /// were placed, and the paint above them. When `leaving`, the groups of
+    /// the positioned inline elements that form a stacking context in the
+    /// paragraph's stacking context (see
+    /// [`raikiri_dom::paint_rules::leaves_paragraph_content`]) are left out
+    /// too, and returned by element, in page space, for the caller to paint
+    /// among the positioned boxes of that stacking context.
+    pub(crate) fn finish_leaving_groups(
+        self,
+        leaving: bool,
+    ) -> (Scene, Vec<Scene>, Scene, Vec<(usize, Scene)>) {
+        let paragraph = self.paragraph;
+        let leaves = |owner: usize| {
+            raikiri_dom::paint_rules::leaves_paragraph_content(
+                paragraph.document,
+                paragraph.cascade,
+                paragraph.root_id,
+                owner,
+            )
+        };
+        let paint_transform = self.paint_transform;
+        let (below, blocks, above, left) = self.rest.finish_leaving(
+            self.clip,
+            paint_transform,
+            self.first_line,
+            leaving.then_some(&leaves as &dyn Fn(usize) -> bool),
+        );
+        let left = left
+            .into_iter()
+            .map(|(owner, content)| {
+                let mut placed = Scene::new();
+                placed.append_scene(content, paint_transform);
+                (owner, placed)
+            })
+            .collect();
+        (below, blocks, above, left)
     }
 }
 

@@ -1746,3 +1746,166 @@ fn a_z_indexed_span_paints_over_the_later_text_of_its_paragraph() {
         .collect();
     assert_eq!(texts, [by_id(&result, "b"), by_id(&result, "a")]);
 }
+
+/// The red and lime pixels of the first page.
+fn red_and_lime(result: &DocumentLayout) -> (usize, usize) {
+    let pixels = render_first_page(result);
+    let count = |color: fn(&[u8]) -> bool| pixels.chunks_exact(4).filter(|p| color(p)).count();
+    (
+        count(|p| p[0] > 200 && p[1] < 50),
+        count(|p| p[1] > 200 && p[0] < 50),
+    )
+}
+
+/// The boxes and text owners of the first page in public paint order.
+fn painted_nodes(result: &DocumentLayout) -> Vec<usize> {
+    let page = result.pages().next().expect("a page");
+    let (document, _, _, _) = page.paint_inputs();
+    page.paint_order()
+        .into_iter()
+        .filter_map(|event| match event {
+            PaintEvent::Box(fragment) => Some(node_index(fragment.node())),
+            PaintEvent::Text(fragment) => document.parent_of(node_index(fragment.node())),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn z_indexed_inline_content_paints_by_level_among_the_boxes_after_its_paragraph() {
+    // The span and the inline block form stacking contexts in the root's,
+    // with a higher level than the positioned block that follows their
+    // paragraph, so they cover it where it overlaps them.
+    for inline in [
+        "<span id=a style=\"position: relative; z-index: 2; background: red; color: red\">AAAA</span>",
+        "<span id=a style=\"position: relative; z-index: 2; display: inline-block; \
+         width: 40px; height: 10px; vertical-align: top; background: red\"></span>",
+    ] {
+        let result = assert_same_order(
+            &format!(
+                "<div>{inline}</div><div id=b style=\"position: relative; z-index: 1; \
+                 margin-top: -10px; width: 20px; height: 10px; background: lime\"></div>"
+            ),
+            "",
+        );
+        assert_eq!(red_and_lime(&result), (400, 0), "{inline}");
+        let order = painted_nodes(&result);
+        let at = |id| order.iter().position(|&node| node == by_id(&result, id));
+        assert!(at("b") < at("a"), "{inline}: {order:?}");
+    }
+}
+
+#[test]
+fn z_indexed_inline_content_keeps_tree_order_with_positioned_boxes_of_its_level() {
+    // At the same level, positioned content paints in tree order: the span
+    // covers the box before its paragraph, and the box after the paragraph
+    // covers the span, though the paragraph's lines paint after both boxes'
+    // backgrounds.
+    let span = "<span id=a style=\"position: relative; z-index: 0; background: red; color: red\">AAAA</span>";
+    let block = |id: &str, margin: &str| {
+        format!(
+            "<div id={id} style=\"position: relative; margin-top: {margin}; width: 20px; \
+             height: 10px; background: lime\"></div>"
+        )
+    };
+    let before = assert_same_order(
+        &format!(
+            "{}<p style=\"margin: -10px 0 0\">{span}</p>",
+            block("b", "0")
+        ),
+        "",
+    );
+    assert_eq!(red_and_lime(&before), (400, 0));
+    let after = assert_same_order(
+        &format!("<p style=\"margin: 0\">{span}</p>{}", block("b", "-10px")),
+        "",
+    );
+    assert_eq!(red_and_lime(&after), (200, 200));
+}
+
+#[test]
+fn z_indexed_inline_content_keeps_the_clip_of_its_lines() {
+    // Margins wider than the page area clip the lines to it; the span that
+    // paints with the positioned boxes keeps that clip.
+    let result = assert_same_order(
+        "<div><span id=a style=\"position: relative; z-index: 2; background: red; \
+         color: red\">AAAA</span></div><div id=b style=\"position: relative; z-index: 1; \
+         margin-top: -10px; width: 20px; height: 10px; background: lime\"></div>",
+        "@page { margin: 20px 80px }",
+    );
+    assert_eq!(red_and_lime(&result), (400, 0));
+}
+
+#[test]
+fn z_indexed_inline_content_inside_a_multicol_container_stays_in_the_lines() {
+    // A multicol container keeps the positioned boxes inside it in place,
+    // so the inline content stays with its lines too, around a block
+    // inside the span and beside an atomic inline.
+    assert_same_order(
+        "<div style=\"columns: 2\"><p>x<span style=\"position: relative; z-index: 1\">\
+         AA<span style=\"display: block\">b</span></span></p></div>",
+        "",
+    );
+    let result = lay_out(
+        "<div style=\"columns: 2\"><p><span style=\"display: inline-block; width: 10px; \
+         height: 10px; background: lime\"></span><span style=\"position: relative; \
+         z-index: 1; color: red\">AA</span></p></div>",
+        "",
+    );
+    assert_eq!(red_and_lime(&result), (200, 100));
+}
+
+#[test]
+fn z_indexed_inline_content_stays_in_the_lines_beside_a_z_indexed_pseudo_element() {
+    // The lines order the groups of a `::before` and a span by stack level,
+    // so the higher `::before` covers the span moved over it.
+    let result = assert_same_order(
+        "<div id=p><span style=\"position: relative; z-index: 1; left: -20px; \
+         color: lime\">AA</span></div><div style=\"position: relative; height: 10px\"></div>",
+        "#p::before { content: \"AA\"; position: relative; z-index: 2; color: red }",
+    );
+    assert_eq!(red_and_lime(&result), (200, 0));
+}
+
+#[test]
+fn z_indexed_inline_content_stays_in_the_lines_of_a_translucent_first_line() {
+    // The group of the translucent first line holds the span's part on it,
+    // so the span paints with the lines on both of them.
+    assert_same_order(
+        "<div id=p style=\"width: 60px\">x <span style=\"position: relative; \
+         z-index: 1\">AAA AAAA</span></div>\
+         <div style=\"position: relative; height: 10px; background: lime\"></div>",
+        "#p::first-line { opacity: 0.5 }",
+    );
+}
+
+#[test]
+fn positioned_flex_items_keep_order_modified_order() {
+    // Flex items paint in order-modified document order (CSS Flexbox 1
+    // §5.4), so the earlier item placed last covers the one placed first.
+    let result = assert_same_order(
+        "<div style=\"display: flex\">\
+         <div id=a style=\"order: 2; position: relative; left: -20px; width: 20px; \
+         height: 10px; background: red\"></div>\
+         <div id=b style=\"order: 1; position: relative; width: 20px; height: 10px; \
+         background: lime\"></div></div>",
+        "",
+    );
+    assert_eq!(red_and_lime(&result), (200, 0));
+}
+
+#[test]
+fn z_indexed_inline_content_stays_in_the_lines_beside_an_empty_block_pseudo_element() {
+    // An empty block-level `::before` has no line fragment, but its group
+    // still orders by stack level with the inline block's in the lines. The
+    // pixels show it; the native trace records the box of a block-level
+    // pseudo-element with the lines at another step than the public list.
+    let result = lay_out(
+        "<div id=p><span style=\"display: inline-block; position: relative; z-index: 1; \
+         top: -10px; width: 20px; height: 10px; background: lime\"></span></div>\
+         <div style=\"position: relative; height: 10px\"></div>",
+        "#p::before { content: \"\"; display: block; position: relative; z-index: 2; \
+         width: 20px; height: 10px; background: red }",
+    );
+    assert_eq!(red_and_lime(&result), (200, 0));
+}
