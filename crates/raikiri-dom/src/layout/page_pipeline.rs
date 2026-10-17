@@ -1387,6 +1387,18 @@ impl PageOrigins {
         (y.is_finite() && y >= 0.0).then(|| self.page_index_for_y(y))
     }
 
+    /// The page that starts at flow position `y` (within 0.001), or else the
+    /// page after the one `y` falls on. A position above the first page falls
+    /// on the first page.
+    fn page_starting_at_or_after(&self, y: f32) -> u32 {
+        let page = self.page_index_for_y(y.max(0.0));
+        if (y - self.origin(page)).abs() <= 0.001 {
+            page
+        } else {
+            page.saturating_add(1)
+        }
+    }
+
     fn page_index_for_end(&self, end: f32) -> u32 {
         if !end.is_finite() || end <= 0.0 {
             return 0;
@@ -4719,10 +4731,14 @@ fn paginate_flow(
         let collapses_with_previous_block =
             collapses_with_previous_block(document, &candidate, participates_in_margin_adjacency);
         let pending_break_applies = pending_break.applies_to(document, node_id);
+        // CSS Fragmentation 3 §5.2: margins adjoining an unforced break are
+        // truncated, while a forced break keeps the block-start margin of the
+        // box after it.
+        let forced_transition = pending_break_applies
+            || (forced_before && !forced_break_at_page_start)
+            || named_page_change;
         let page_transition = saw_child
-            && (pending_break_applies
-                || (forced_before && !forced_break_at_page_start)
-                || named_page_change
+            && (forced_transition
                 || page_overflow
                 || avoided_run_overflow
                 || table_row_overflow
@@ -4734,12 +4750,6 @@ fn paginate_flow(
             // page transition) on this box describe the same boundary, not two
             // blank pages.
             if page_transition {
-                // CSS Fragmentation 3 §5.2: margins adjoining an unforced
-                // break are truncated, while a forced break keeps the
-                // block-start margin of the box after it.
-                let forced_transition = pending_break_applies
-                    || (forced_before && !forced_break_at_page_start)
-                    || named_page_change;
                 let natural_page = if let Some(page) = page_index_in_flow(effective_y) {
                     // Preceding content that overflowed past the current
                     // page (a tall box, or floats it contains) has put this
@@ -4755,12 +4765,7 @@ fn paginate_flow(
                         && reach.flow_max >= page
                         && margin_box_y.is_finite()
                     {
-                        let margin_box_page = page_index_for_y(margin_box_y.max(0.0));
-                        if (margin_box_y - page_origin(margin_box_page)).abs() <= 0.001 {
-                            margin_box_page
-                        } else {
-                            margin_box_page.saturating_add(1)
-                        }
+                        page_origins.page_starting_at_or_after(margin_box_y)
                     } else {
                         page
                     }

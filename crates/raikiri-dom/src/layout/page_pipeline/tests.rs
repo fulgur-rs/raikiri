@@ -653,6 +653,17 @@ fn page_index_in_flow_skips_positions_outside_the_flow() {
 }
 
 #[test]
+fn page_starting_at_or_after_keeps_a_page_start_and_skips_past_mid_page() {
+    let fixed = PageOrigins::new(&[], 100.0);
+    assert_eq!(fixed.page_starting_at_or_after(0.0), 0);
+    assert_eq!(fixed.page_starting_at_or_after(200.0), 2);
+    assert_eq!(fixed.page_starting_at_or_after(200.0005), 2);
+    assert_eq!(fixed.page_starting_at_or_after(250.0), 3);
+    // A position above the first page is on the first page, not at its start.
+    assert_eq!(fixed.page_starting_at_or_after(-10.0), 1);
+}
+
+#[test]
 fn float_top_beside_moves_below_floats_it_does_not_fit_beside() {
     let edge = |node, side, top, bottom, width| FloatEdge {
         node,
