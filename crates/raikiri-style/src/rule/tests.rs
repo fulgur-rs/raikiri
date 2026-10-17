@@ -260,6 +260,17 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
             &[PropertyKey::AlignItems, PropertyKey::JustifyItems],
         ),
         (
+            PropertyKey::Grid,
+            &[
+                PropertyKey::GridTemplateRows,
+                PropertyKey::GridTemplateColumns,
+                PropertyKey::GridTemplateAreas,
+                PropertyKey::GridAutoRows,
+                PropertyKey::GridAutoColumns,
+                PropertyKey::GridAutoFlow,
+            ],
+        ),
+        (
             PropertyKey::GridTemplate,
             &[
                 PropertyKey::GridTemplateRows,
@@ -359,7 +370,6 @@ fn deferred_shorthand_expands_to_each_longhand_key() {
     for (key, class) in [
         (PropertyKey::Width, KeyClass::Longhand),
         (PropertyKey::All, KeyClass::Retained),
-        (PropertyKey::Grid, KeyClass::Retained),
         (PropertyKey::GridArea, KeyClass::Retained),
         (PropertyKey::WhiteSpace, KeyClass::Retained),
         (PropertyKey::TextWrap, KeyClass::Retained),

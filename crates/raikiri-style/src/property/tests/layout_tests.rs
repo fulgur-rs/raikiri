@@ -2176,6 +2176,10 @@ fn grid_template_rejects_invalid_forms() {
         r#""a" / repeat(2, 1fr)"#,
         r#""a" / none"#,
         r#""a" ?"#,
+        r#""a" [b] []"#,
+        r#""a" [] []"#,
+        "100px / 1fr -10px",
+        r#""a" / 1fr -10px"#,
     ] {
         assert_eq!(parse_entire(source, "grid-template"), None, "{source}");
     }
@@ -2190,6 +2194,17 @@ fn grid_shorthand_accepts_the_grid_template_areas_form() {
         (Some(PropertyValue::GridTemplate(t)), Some(PropertyValue::Grid(g))) if t == g
             && matches!(g.areas, GridTemplateAreasValue::Areas(_))
     ));
+}
+
+#[test]
+fn grid_track_lists_reject_a_trailing_negative_track() {
+    for (source, property) in [
+        ("1fr -10px", "grid-template-columns"),
+        ("repeat(2, 10px -5px)", "grid-template-rows"),
+        ("10px -5px", "grid-auto-rows"),
+    ] {
+        assert_eq!(parse_entire(source, property), None, "{property}: {source}");
+    }
 }
 
 #[test]

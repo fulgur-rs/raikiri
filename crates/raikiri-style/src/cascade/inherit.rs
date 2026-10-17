@@ -9,10 +9,9 @@ use crate::computed::{
 };
 use crate::property::{
     Border, BorderColor, BorderRadius, BorderStyle, CornerRadius, CssWideKeyword, FontWeightValue,
-    GridAutoFlowValue, GridLineValue, Length, LengthOrAuto, LengthPercentageOrCalc, PositionValue,
-    PropertyValue, RelativeFontSize, Sides, TextWrapMode, WhiteSpace, WhiteSpaceCollapse,
-    WritingMode, initial_grid_auto_track_list, resolve_text_align_internal_center,
-    resolve_text_align_match_parent,
+    Length, LengthOrAuto, LengthPercentageOrCalc, PositionValue, PropertyValue, RelativeFontSize,
+    Sides, TextWrapMode, WhiteSpace, WhiteSpaceCollapse, WritingMode,
+    resolve_text_align_internal_center, resolve_text_align_match_parent,
 };
 use crate::resolve::{
     ComputedLength, ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc, ResolveContext,
@@ -22,10 +21,10 @@ use crate::rule::{
     expand_border_color, expand_border_css_wide, expand_border_left, expand_border_left_css_wide,
     expand_border_right, expand_border_right_css_wide, expand_border_style, expand_border_top,
     expand_border_top_css_wide, expand_border_width, expand_flex, expand_flex_flow, expand_font,
-    expand_gap, expand_grid_column, expand_grid_row, expand_grid_template, expand_margin,
-    expand_margin_block, expand_margin_inline, expand_outline, expand_overflow, expand_padding,
-    expand_padding_block, expand_padding_inline, expand_place_content, expand_place_items,
-    expand_place_self, expand_text_decoration,
+    expand_gap, expand_grid, expand_grid_column, expand_grid_row, expand_grid_template,
+    expand_margin, expand_margin_block, expand_margin_inline, expand_outline, expand_overflow,
+    expand_padding, expand_padding_block, expand_padding_inline, expand_place_content,
+    expand_place_items, expand_place_self, expand_text_decoration,
 };
 use crate::specified::{INITIAL_BORDER, SpecifiedValues};
 use crate::style_dom::{StyleDom, StyleElement, StyleNode, StyleNodeId, StyleNodeKind};
@@ -3526,18 +3525,7 @@ pub(crate) fn apply_value(value: PropertyValue, target: &mut SpecifiedValues) {
             target.grid_row_end = area.row_end;
             target.grid_column_end = area.column_end;
         }
-        PropertyValue::Grid(shorthand) => {
-            target.grid_template_rows = shorthand.rows;
-            target.grid_template_columns = shorthand.columns;
-            target.grid_template_areas = shorthand.areas;
-            target.grid_auto_columns = initial_grid_auto_track_list();
-            target.grid_auto_rows = initial_grid_auto_track_list();
-            target.grid_auto_flow = GridAutoFlowValue::Row;
-            target.grid_row_start = GridLineValue::Auto;
-            target.grid_row_end = GridLineValue::Auto;
-            target.grid_column_start = GridLineValue::Auto;
-            target.grid_column_end = GridLineValue::Auto;
-        }
+        PropertyValue::Grid(g) => expand_grid(&g, |v| apply_value(v, target)),
         PropertyValue::GridTemplateColumns(v) => target.grid_template_columns = v,
         PropertyValue::GridTemplateRows(v) => target.grid_template_rows = v,
         PropertyValue::GridTemplateAreas(v) => target.grid_template_areas = v,

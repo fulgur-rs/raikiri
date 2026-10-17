@@ -226,6 +226,16 @@ impl PageLengthBasis<'_> {
             }
         }
     }
+
+    /// Resolves the track lists of a `grid` / `grid-template` value with
+    /// [`Self::gtt`]; the named areas hold no lengths.
+    fn grid(self, specified: GridShorthand) -> GridShorthand {
+        GridShorthand {
+            rows: self.gtt(specified.rows),
+            columns: self.gtt(specified.columns),
+            areas: specified.areas,
+        }
+    }
     /// `grid-auto-columns` / `grid-auto-rows` — same round-trip shape as
     /// [`Self::gtt`], for the `<track-size>+` (no `none`, no `<line-names>`)
     /// grammar.
@@ -555,7 +565,6 @@ pub(super) fn absolutize_in_page_context(
         | PropertyValue::Color(_)
         | PropertyValue::CustomProperty(_)
         | PropertyValue::Deferred(_)
-        | PropertyValue::Grid(_)
         | PropertyValue::GridArea(_)
         | PropertyValue::ContextualColor(_)
         | PropertyValue::ContextualShorthand(_)
@@ -1197,11 +1206,8 @@ pub(super) fn absolutize_in_page_context(
         // ── grid-template-columns / grid-template-rows ──────────────────────
         PropertyValue::GridTemplateColumns(v) => PropertyValue::GridTemplateColumns(basis.gtt(v)),
         PropertyValue::GridTemplateRows(v) => PropertyValue::GridTemplateRows(basis.gtt(v)),
-        PropertyValue::GridTemplate(t) => PropertyValue::GridTemplate(GridShorthand {
-            rows: basis.gtt(t.rows),
-            columns: basis.gtt(t.columns),
-            areas: t.areas,
-        }),
+        PropertyValue::GridTemplate(t) => PropertyValue::GridTemplate(basis.grid(t)),
+        PropertyValue::Grid(g) => PropertyValue::Grid(basis.grid(g)),
         // ── grid-auto-columns / grid-auto-rows ───────────────────────────────
         PropertyValue::GridAutoColumns(v) => PropertyValue::GridAutoColumns(basis.gatl(&v)),
         PropertyValue::GridAutoRows(v) => PropertyValue::GridAutoRows(basis.gatl(&v)),

@@ -778,7 +778,7 @@ fn parse_grid_repeat_res<'i>(
         inner.expect_comma()?;
         let mut line_names = vec![parse_line_names_or_empty(inner)];
         let mut tracks = Vec::new();
-        while let Some(size) = parse_track_size(inner) {
+        while let Ok(size) = inner.try_parse(|i| parse_track_size(i).ok_or(())) {
             tracks.push(size);
             line_names.push(parse_line_names_or_empty(inner));
         }
@@ -810,7 +810,10 @@ fn parse_grid_track_list(input: &mut Parser<'_, '_>) -> Option<GridTrackList> {
     loop {
         if let Some(repeat) = parse_grid_repeat(input) {
             components.push(GridTrackListComponent::Repeat(repeat));
-        } else if let Some(size) = parse_track_size(input) {
+        } else if let Ok(size) = input.try_parse(|i| parse_track_size(i).ok_or(())) {
+            // `try_parse` rewinds a rejected token, such as a negative length,
+            // so the caller sees it left over instead of the list silently
+            // ending before it.
             components.push(GridTrackListComponent::Size(size));
         } else {
             break;
@@ -932,10 +935,14 @@ fn parse_grid_template_areas_form(input: &mut Parser<'_, '_>) -> Option<GridShor
     let mut components = Vec::new();
     let mut row_strings = Vec::new();
     let mut cells = Vec::new();
-    let mut pending = parse_line_names_or_empty(input);
-    let mut leading_names_need_a_row = !pending.is_empty();
-    while let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| SmolStr::new(s.as_ref()))) {
-        cells.push(tokenize_grid_area_row(&s)?);
+    // A `<line-names>` group, even an empty `[]`, that opens a row must be
+    // followed by that row's `<string>`.
+    let leading = parse_line_names(input);
+    let mut leading_names_need_a_row = leading.is_some();
+    let mut pending = leading.unwrap_or_default();
+    while let Some(row) = parse_grid_area_row(input) {
+        let (s, tokens) = row.ok()?;
+        cells.push(tokens);
         row_strings.push(s);
         line_names.push(std::mem::take(&mut pending));
         let size = input
@@ -943,9 +950,9 @@ fn parse_grid_template_areas_form(input: &mut Parser<'_, '_>) -> Option<GridShor
             .unwrap_or(GridTrackSize::Breadth(GridTrackBreadth::Auto));
         components.push(GridTrackListComponent::Size(size));
         pending = parse_line_names_or_empty(input);
-        let next_leading = parse_line_names_or_empty(input);
-        leading_names_need_a_row = !next_leading.is_empty();
-        pending.extend(next_leading);
+        let next_leading = parse_line_names(input);
+        leading_names_need_a_row = next_leading.is_some();
+        pending.extend(next_leading.unwrap_or_default());
     }
     if cells.is_empty() || leading_names_need_a_row {
         return None;
@@ -996,7 +1003,7 @@ pub(super) fn parse_grid_auto_track_list(
     input: &mut Parser<'_, '_>,
 ) -> Option<Arc<Vec<GridTrackSize>>> {
     let mut tracks = Vec::new();
-    while let Some(size) = parse_track_size(input) {
+    while let Ok(size) = input.try_parse(|i| parse_track_size(i).ok_or(())) {
         tracks.push(size);
     }
     if tracks.is_empty() {
@@ -1220,8 +1227,9 @@ fn is_grid_area_ident_char(c: char) -> bool {
 /// grid cells, but those cells do not form a single filled-in rectangle, the
 /// declaration is invalid."
 ///
-/// The caller [`parse_grid_template_areas`] guarantees that `rows` is nonempty;
-/// otherwise it returns `None` before calling this function.
+/// The callers [`parse_grid_template_areas`] and
+/// [`parse_grid_template_areas_form`] guarantee that `rows` is nonempty;
+/// otherwise they return `None` before calling this function.
 fn build_grid_template_areas(
     rows: Vec<Vec<Option<SmolStr>>>,
     row_strings: Vec<SmolStr>,
@@ -1280,6 +1288,19 @@ fn build_grid_template_areas(
 /// Module Level 1 §7.3
 /// <https://www.w3.org/TR/css-grid-1/#grid-template-areas-property>);
 /// see the [`GridTemplateAreasValue`] docs.
+/// One authored `grid-template-areas` row string and its cells.
+type GridAreaRow = (SmolStr, Vec<Option<SmolStr>>);
+
+/// Parses the next `<string>` of a named-area grid: `None` when no string
+/// follows, otherwise the string and its cells, or `Err` when the string is
+/// not a valid row (see [`tokenize_grid_area_row`]).
+fn parse_grid_area_row(input: &mut Parser<'_, '_>) -> Option<Result<GridAreaRow, ()>> {
+    let s = input
+        .try_parse(|i| i.expect_string().map(|s| SmolStr::new(s.as_ref())))
+        .ok()?;
+    Some(tokenize_grid_area_row(&s).map(|cells| (s, cells)).ok_or(()))
+}
+
 pub(crate) fn parse_grid_template_areas(
     input: &mut Parser<'_, '_>,
 ) -> Option<GridTemplateAreasValue> {
@@ -1288,8 +1309,8 @@ pub(crate) fn parse_grid_template_areas(
     }
     let mut row_strings: Vec<SmolStr> = Vec::new();
     let mut rows: Vec<Vec<Option<SmolStr>>> = Vec::new();
-    while let Ok(s) = input.try_parse(|i| i.expect_string().map(|s| SmolStr::new(s.as_ref()))) {
-        let tokens = tokenize_grid_area_row(&s)?;
+    while let Some(row) = parse_grid_area_row(input) {
+        let (s, tokens) = row.ok()?;
         row_strings.push(s);
         rows.push(tokens);
     }

@@ -2321,6 +2321,83 @@ fn author_grid_template_areas_computes_through_cascade() {
 }
 
 #[test]
+fn grid_template_shorthand_computes_like_its_longhands() {
+    let shorthand = cascade_with_ua(
+        "",
+        r#"div { font-size: 20px; grid-template: [a] "x y" 2em [b] / 1fr 10px; }"#,
+        "div",
+        None,
+    );
+    let longhands = cascade_with_ua(
+        "",
+        r#"div { font-size: 20px; grid-template-rows: [a] 40px [b];
+             grid-template-columns: 1fr 10px; grid-template-areas: "x y"; }"#,
+        "div",
+        None,
+    );
+    assert!(matches!(
+        shorthand.grid_template_areas,
+        crate::property::GridTemplateAreasValue::Areas(_)
+    ));
+    assert_eq!(shorthand.grid_template_rows, longhands.grid_template_rows);
+    assert_eq!(
+        shorthand.grid_template_columns,
+        longhands.grid_template_columns
+    );
+    assert_eq!(shorthand.grid_template_areas, longhands.grid_template_areas);
+}
+
+#[test]
+fn grid_shorthands_and_longhands_follow_declaration_order() {
+    // A later `grid` resets everything an earlier `grid-template` or
+    // longhand set, including the implicit grid.
+    let later_grid = cascade_with_ua(
+        "",
+        r#"div { grid-template: "x" 3px / 2px; grid-template-areas: "b";
+             grid-auto-flow: column; grid-row-start: 2; grid: none; }"#,
+        "div",
+        None,
+    );
+    let initial = cascade_with_ua("", "div { grid-row-start: 2; }", "div", None);
+    assert_eq!(later_grid.grid_template_rows, initial.grid_template_rows);
+    assert_eq!(
+        later_grid.grid_template_columns,
+        initial.grid_template_columns
+    );
+    assert_eq!(later_grid.grid_template_areas, initial.grid_template_areas);
+    assert_eq!(later_grid.grid_auto_flow, initial.grid_auto_flow);
+    // `grid` does not reset the placement properties.
+    assert_eq!(later_grid.grid_row_start, initial.grid_row_start);
+
+    // A later longhand overrides just its part of an earlier `grid`.
+    let later_longhand = cascade_with_ua(
+        "",
+        r#"div { grid: "a" 10px / 1fr; grid-template-rows: 20px; }"#,
+        "div",
+        None,
+    );
+    let expected = cascade_with_ua(
+        "",
+        r#"div { grid-template-rows: 20px; grid-template-columns: 1fr;
+             grid-template-areas: "a"; }"#,
+        "div",
+        None,
+    );
+    assert_eq!(
+        later_longhand.grid_template_rows,
+        expected.grid_template_rows
+    );
+    assert_eq!(
+        later_longhand.grid_template_columns,
+        expected.grid_template_columns
+    );
+    assert_eq!(
+        later_longhand.grid_template_areas,
+        expected.grid_template_areas
+    );
+}
+
+#[test]
 fn author_grid_auto_flow_and_placement_longhands_compute_through_cascade() {
     let cv = cascade_with_ua(
         "",
@@ -8202,7 +8279,8 @@ fn apply_value_direct_grid_shorthand_fall_through() {
     // above: `apply_value`'s `PropertyValue::Grid(shorthand)` arm is
     // unreachable via the cascade path for the same reason — not a
     // safety net, a canary that also checks the shorthand's documented
-    // sub-property reset behavior.
+    // sub-property reset behavior. The placement properties are not among
+    // them (CSS Grid Layout Module Level 1 §7.8).
     let mut cv = SpecifiedValues::initial();
     cv.grid_auto_flow = GridAutoFlowValue::Column;
     cv.grid_row_start = GridLineValue::Line(9);
@@ -8218,10 +8296,7 @@ fn apply_value_direct_grid_shorthand_fall_through() {
     assert_eq!(cv.grid_auto_columns, initial_grid_auto_track_list());
     assert_eq!(cv.grid_auto_rows, initial_grid_auto_track_list());
     assert_eq!(cv.grid_auto_flow, GridAutoFlowValue::Row);
-    assert_eq!(cv.grid_row_start, GridLineValue::Auto);
-    assert_eq!(cv.grid_row_end, GridLineValue::Auto);
-    assert_eq!(cv.grid_column_start, GridLineValue::Auto);
-    assert_eq!(cv.grid_column_end, GridLineValue::Auto);
+    assert_eq!(cv.grid_row_start, GridLineValue::Line(9));
 }
 
 #[test]
