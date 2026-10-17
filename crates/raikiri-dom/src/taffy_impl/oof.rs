@@ -5,13 +5,13 @@
 //! consumers keep locations relative to their layout parent.
 
 use super::BlockChildStyle;
-use crate::Document;
+use crate::layout::context::LayoutSession;
 use taffy::{
     ContainingBlockClaims, DetailedLayoutInfo, LayoutContainingBlock, LayoutOutput,
     LayoutPartialTree, NodeId, OofCandidate, OofPositioningArea,
 };
 
-impl LayoutContainingBlock for Document {
+impl LayoutContainingBlock for LayoutSession<'_> {
     type OofItemStyle<'a>
         = BlockChildStyle<'a>
     where
@@ -21,7 +21,7 @@ impl LayoutContainingBlock for Document {
         let index = usize::from(node);
         let style = self
             .transposed_child_style(index)
-            .unwrap_or(&self.nodes[index].style);
+            .unwrap_or(self.layout_node_with_style(index).unwrap().style);
         let mut query = BlockChildStyle::new(style, None);
         query.oof_table |= matches!(
             self.nodes[index].display(),
@@ -32,12 +32,15 @@ impl LayoutContainingBlock for Document {
     }
 
     fn clear_hoisted_children(&mut self, node: NodeId) {
-        self.taffy_hoisted_children.remove(&usize::from(node));
+        self.context
+            .taffy_hoisted_children
+            .remove(&usize::from(node));
     }
 
     fn add_hoisted_children(&mut self, node: NodeId, children: &[NodeId]) {
         if !children.is_empty() {
-            self.taffy_hoisted_children
+            self.context
+                .taffy_hoisted_children
                 .entry(usize::from(node))
                 .or_default()
                 .extend_from_slice(children);
@@ -45,13 +48,18 @@ impl LayoutContainingBlock for Document {
     }
 
     fn get_detailed_layout_info(&self, node: NodeId) -> &DetailedLayoutInfo<String> {
-        self.grid_layout_info
+        self.context
+            .grid_layout_info
             .get(&usize::from(node))
             .unwrap_or(&DetailedLayoutInfo::None)
     }
 }
 
-pub(super) fn layout_local_oof(tree: &mut Document, node: NodeId, output: &mut LayoutOutput) {
+pub(super) fn layout_local_oof(
+    tree: &mut LayoutSession<'_>,
+    node: NodeId,
+    output: &mut LayoutOutput,
+) {
     let Some(area) = output.oof_positioning_area else {
         return;
     };
@@ -62,7 +70,7 @@ pub(super) fn layout_local_oof(tree: &mut Document, node: NodeId, output: &mut L
 }
 
 pub(super) fn layout_candidates(
-    tree: &mut Document,
+    tree: &mut LayoutSession<'_>,
     owner: NodeId,
     candidates: &[OofCandidate],
     area: OofPositioningArea,

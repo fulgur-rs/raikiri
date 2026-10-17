@@ -357,6 +357,13 @@ impl Document {
                 node
             })
             .collect();
+        doc.retained_layout_styles.retain_source_styles();
+        for id in 1..doc.nodes.len() {
+            doc.retained_layout_styles.insert(
+                crate::node::arena::BoxKey::Source(id),
+                taffy::Style::default(),
+            );
+        }
         // Rebuild O(1) parent pointers from the validated `children` lists.
         // `validate` already enforced single-parent, bounds, and acyclicity,
         // so every listed child resolves to exactly one parent here.

@@ -949,7 +949,10 @@ fn inside_marker_is_first_inline_content_and_only_indents_the_first_line() {
     assert_eq!(projected.paragraph.text(), "\u{2066}X \u{2069}aaaa bbbb");
     assert_eq!(line_texts(&projected, 70.0), ["X aaaa", "bbbb"]);
     assert_eq!(
-        fixture.doc.nodes[fixture.root]
+        fixture
+            .doc
+            .layout_node_with_style(fixture.root)
+            .unwrap()
             .style
             .padding
             .left
@@ -1089,8 +1092,10 @@ fn image_marker_has_intrinsic_extents_and_uses_authored_style_in_vertical_and_rt
             crate::layout::test_support::page_box_800x600(),
         )
         .unwrap();
-        let inputs =
-            crate::layout::ifc::boxes::intrinsics_of_boxes(&mut fixture.doc, fixture.root, 100.0);
+        let inputs = {
+            let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+            crate::layout::ifc::boxes::intrinsics_of_boxes(&mut session, fixture.root, 100.0)
+        };
         let root = fixture.doc.nodes[fixture.root].ifc.as_ref().unwrap();
         let extents = root.paragraph.intrinsic_sizes(
             &mut LayoutContext::new(),

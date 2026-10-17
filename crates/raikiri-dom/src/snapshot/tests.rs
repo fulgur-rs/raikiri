@@ -36,12 +36,14 @@ fn rich_document() -> Document {
 #[test]
 fn roundtrip_all_logical_kinds() {
     let before = rich_document().logical_snapshot();
-    assert_eq!(
-        Document::from_logical_snapshot(before.clone(), 100)
-            .unwrap()
-            .logical_snapshot(),
-        before
-    );
+    let restored = Document::from_logical_snapshot(before.clone(), 100).unwrap();
+    assert_eq!(restored.logical_snapshot(), before);
+    for id in 0..restored.node_count() {
+        assert!(
+            restored.layout_style(id).is_some(),
+            "restored source node {id}"
+        );
+    }
 }
 
 #[test]

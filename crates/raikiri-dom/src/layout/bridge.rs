@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 use crate::node::{FormattingContext, Node};
 use raikiri_style::property::{ContentComponent, TextOrientation};
 use raikiri_style::{PseudoElem, StyleNodeId};
@@ -149,15 +150,40 @@ fn vertical_logical_sized(cascade: &CascadeResult, idx: usize) -> Option<Compute
     Some(sized)
 }
 
+#[cfg(test)]
 pub(crate) fn apply_computed_to_style(
     doc: &mut Document,
     cascade: &CascadeResult,
 ) -> Result<(), LayoutError> {
+    let mut session = LayoutSession::new(doc);
+    apply_computed_to_style_in_session(&mut session, cascade)
+}
+
+pub(crate) fn apply_computed_to_style_in_session(
+    doc: &mut LayoutSession<'_>,
+    cascade: &CascadeResult,
+) -> Result<(), LayoutError> {
+    // Keep the previous payloads alive while styles are rebuilt in place.
+    // A later error or unwind may leave some styles with old handles and
+    // others with newly appended handles, so only a complete successful
+    // bridge can release the old prefix.
+    let old_calc_len = doc.document.retained_layout_styles.calc_values.len();
+    let result = apply_computed_to_style_in_session_inner(doc, cascade);
+    if result.is_ok() {
+        doc.document
+            .retained_layout_styles
+            .calc_values
+            .drain(..old_calc_len);
+    }
+    result
+}
+
+fn apply_computed_to_style_in_session_inner(
+    doc: &mut LayoutSession<'_>,
+    cascade: &CascadeResult,
+) -> Result<(), LayoutError> {
     super::initial_containing_block::prepare_root_element(doc);
     bridge_writing_modes(doc, cascade);
-    // Styles retain raw pointers to these payloads for Taffy's calc callback;
-    // rebuild the arena for every cascade/layout pass.
-    doc.calc_values.clear();
     let initial = ComputedValues::initial();
     for idx in 0..doc.nodes.len() {
         if doc.nodes[idx].kind() != NodeKind::Element {
@@ -178,8 +204,8 @@ pub(crate) fn apply_computed_to_style(
             multicol_style_from_computed(cv).filter(|_| !lays_out_without_columns(cv.display));
         doc.nodes[idx].column_span_all =
             cv.column_span == raikiri_style::property::ColumnSpanValue::All;
-        doc.nodes[idx].set_box_properties(cv.display, cv.position.clone());
-        // Table engine inputs — no taffy::Style counterpart (taffy 0.12
+        doc.set_box_properties(idx, cv.display, cv.position.clone());
+        // Table engine inputs — no taffy::Style counterpart (taffy 0.15
         // has no table layout), carried Node-side like `display` above.
         doc.nodes[idx].table_layout = cv.table_layout;
         doc.nodes[idx].table_vertical_align = cv.vertical_align;
@@ -228,44 +254,61 @@ pub(crate) fn apply_computed_to_style(
         bridge_size(doc, idx, cv);
         // Replaced elements keep their natural size where an auto width or
         // `normal` alignment would stretch other boxes.
-        doc.nodes[idx].style.item_is_replaced = crate::paint_rules::lays_out_as_replaced(doc, idx);
+        doc.layout_node_with_style_mut(idx)
+            .unwrap()
+            .style
+            .item_is_replaced = crate::paint_rules::lays_out_as_replaced(doc, idx);
         // An intrinsic ratio only participates when at least one preferred
         // dimension is auto; Taffy's leaf sizing otherwise floors an explicit
         // height to the ratio-derived height.
-        doc.nodes[idx].style.aspect_ratio =
-            if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
-                || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
-            {
-                doc.nodes[idx]
-                    .image_intrinsic_box()
-                    .and_then(|intrinsic| intrinsic.aspect_ratio)
-                    .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
-            } else {
-                None
-            };
+        doc.layout_node_with_style_mut(idx)
+            .unwrap()
+            .style
+            .aspect_ratio = if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+            || matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        {
+            doc.nodes[idx]
+                .image_intrinsic_box()
+                .and_then(|intrinsic| intrinsic.aspect_ratio)
+                .filter(|ratio| ratio.is_finite() && *ratio > 0.0)
+        } else {
+            None
+        };
         // SVG 2 geometry: auto dimensions on svg are treated as 100%.
         // With only a viewBox ratio and no definite height, width establishes
         // the viewport and the ratio determines its auto height.
         if doc.nodes[idx].is_inline_svg_root()
             && doc.nodes[idx].attribute("width").is_none()
             && doc.nodes[idx].attribute("height").is_none()
-            && doc.nodes[idx].style.aspect_ratio.is_some()
+            && doc
+                .layout_node_with_style(idx)
+                .unwrap()
+                .style
+                .aspect_ratio
+                .is_some()
         {
             if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
                 && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
             {
-                doc.nodes[idx].style.size.width = Dimension::percent(1.0);
+                doc.layout_node_with_style_mut(idx)
+                    .unwrap()
+                    .style
+                    .size
+                    .width = Dimension::percent(1.0);
             } else if !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 // Taffy transfers max-height to max-width through this ratio
                 // even for a definite width. SVG leaf measurement handles its
                 // auto height without shrinking an authored width.
-                doc.nodes[idx].style.aspect_ratio = None;
+                doc.layout_node_with_style_mut(idx)
+                    .unwrap()
+                    .style
+                    .aspect_ratio = None;
             }
         }
         if let Some((intrinsic_width, intrinsic_height)) =
             bridge_known_image_intrinsic_size(doc, idx, cv)
         {
-            let style = &mut doc.nodes[idx].style;
+            let style = &mut doc.document.layout_node_with_style_mut(idx).unwrap().style;
             // The supplied size is the image's natural size.
             style.item_is_replaced = true;
             if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
@@ -275,15 +318,23 @@ pub(crate) fn apply_computed_to_style(
                 style.size.height = Dimension::length(intrinsic_height);
             }
         }
-        doc.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
+        doc.document.nodes[idx].has_logical_min_block_size = cv.min_block_size.is_some()
             && matches!(cv.break_inside, raikiri_style::property::BreakInside::Avoid);
-        doc.nodes[idx].needs_relative_block_paint_offset = false;
+        doc.document.nodes[idx].needs_relative_block_paint_offset = false;
         let vertical_axes = uses_vertical_axes(cascade, idx);
-        let is_contents = doc.nodes[idx].display() == DisplayValue::Contents;
-        let style = &mut doc.nodes[idx].style;
-        bridge_direction(style, cv, vertical_axes);
-        bridge_inset(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_overflow(style, cv);
+        let is_contents = doc.document.nodes[idx].display() == DisplayValue::Contents;
+        // Build this style off-map so its calc pointers are not exposed until
+        // their Arc owners have been retained by the document.
+        let mut style = doc.document.layout_style_for_key(idx).unwrap().clone();
+        let mut calc_values = Vec::new();
+        bridge_direction(&mut style, cv, vertical_axes);
+        bridge_inset(
+            &mut style,
+            cv,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
+        bridge_overflow(&mut style, cv);
         // Layout and paint containment establish an independent formatting
         // context, including when the box's content is one IFC paragraph.
         use raikiri_style::property::Contain;
@@ -296,28 +347,53 @@ pub(crate) fn apply_computed_to_style(
             (false, true) => taffy::Contain::PAINT,
             (false, false) => taffy::Contain::NONE,
         };
-        bridge_float(style, cv);
-        bridge_margin(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_padding(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
+        bridge_float(&mut style, cv);
+        bridge_margin(
+            &mut style,
+            cv,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
+        bridge_padding(
+            &mut style,
+            cv,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
         bridge_min_max_size(
-            style,
+            &mut style,
             cv,
             vertical_axes,
-            &mut doc.calc_values,
-            &mut doc.layout_warnings,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
         );
-        bridge_border(style, cv, &mut doc.layout_warnings);
-        bridge_box_sizing(style, cv);
-        bridge_flex(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_alignment(style, cv);
-        bridge_gap(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
-        bridge_grid(style, cv, &mut doc.calc_values, &mut doc.layout_warnings);
+        bridge_border(&mut style, cv, &mut doc.context.layout_warnings);
+        bridge_box_sizing(&mut style, cv);
+        bridge_flex(
+            &mut style,
+            cv,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
+        bridge_alignment(&mut style, cv);
+        bridge_gap(
+            &mut style,
+            cv,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
+        bridge_grid(
+            &mut style,
+            cv,
+            &mut calc_values,
+            &mut doc.context.layout_warnings,
+        );
         if is_contents {
             // A `display: contents` element generates no box (CSS Display 3
             // §2.5). Where layout still keeps a node for it, the node stands
             // in for the anonymous box its contents would get, so none of
             // the element's own box properties apply to it.
-            *style = taffy::Style {
+            style = taffy::Style {
                 direction: style.direction,
                 ..taffy::Style::default()
             };
@@ -329,8 +405,17 @@ pub(crate) fn apply_computed_to_style(
             doc.nodes[idx].column_span_all = false;
             doc.nodes[idx].multicol_auto_width = true;
             doc.nodes[idx].has_logical_min_block_size = false;
-            doc.nodes[idx].refresh_box_style();
+            doc.set_box_properties(idx, cv.display, cv.position.clone());
         }
+        // Keep the owners before publishing any raw calc pointers through the
+        // retained style map. A panic while inserting owners can only leave
+        // extra owners behind; it cannot leave a dangling style handle.
+        doc.document
+            .retained_layout_styles
+            .calc_values
+            .extend(calc_values);
+        let key = doc.nodes.box_key(idx).expect("source node has a box key");
+        doc.document.retained_layout_styles.insert(key, style);
     }
     // Whether a box is a non-atomic inline box depends on its parent's
     // display, which the loop above has now bridged for every node.
@@ -347,7 +432,7 @@ pub(crate) fn apply_computed_to_style(
         // Replaced content with size containment has no natural size or
         // aspect ratio to stand in for an `auto` size.
         if containment.width || containment.height {
-            let style = &mut doc.nodes[idx].style;
+            let style = &mut doc.layout_node_with_style_mut(idx).unwrap().style;
             style.aspect_ratio = None;
             if containment.width && matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::auto();
@@ -357,7 +442,10 @@ pub(crate) fn apply_computed_to_style(
             }
         }
         if stretches_on_both_grid_axes(doc, idx, cv) {
-            doc.nodes[idx].style.aspect_ratio = None;
+            doc.layout_node_with_style_mut(idx)
+                .unwrap()
+                .style
+                .aspect_ratio = None;
         }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
@@ -770,21 +858,25 @@ fn bridge_inset(
 ///
 /// Page dimensions belong to a separate initial-containing-block box. The
 /// element's preferred width and height remain the authored sizing inputs.
-fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
+fn bridge_size(doc: &mut LayoutSession<'_>, node_id: usize, cv: &ComputedValues) {
     // width and height are written together, so use a struct literal.
     let width = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.calc_values,
+        &mut doc.document.retained_layout_styles.calc_values,
         cv.width,
         "width",
-        &mut doc.layout_warnings,
+        &mut doc.context.layout_warnings,
     );
     let height = computed_length_percentage_or_auto_to_taffy_dimension(
-        &mut doc.calc_values,
+        &mut doc.document.retained_layout_styles.calc_values,
         cv.height,
         "height",
-        &mut doc.layout_warnings,
+        &mut doc.context.layout_warnings,
     );
-    doc.nodes[node_id].style.size = Size { width, height };
+    doc.document
+        .layout_node_with_style_mut(node_id)
+        .unwrap()
+        .style
+        .size = Size { width, height };
 }
 
 /// Whether in-flow replaced grid item `idx` with auto width and height is
@@ -795,9 +887,9 @@ fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
 /// The ratio is dropped from the item's style, which also removes it from
 /// track sizing, so this applies only when every row track has a fixed size
 /// and the item's height contribution cannot size a row.
-fn stretches_on_both_grid_axes(doc: &Document, idx: usize, cv: &ComputedValues) -> bool {
+fn stretches_on_both_grid_axes(doc: &LayoutSession<'_>, idx: usize, cv: &ComputedValues) -> bool {
     use taffy::AlignItemsKeyword;
-    let style = &doc.nodes[idx].style;
+    let style = &doc.layout_node_with_style(idx).unwrap().style;
     if !style.item_is_replaced
         || style.aspect_ratio.is_none()
         || style.position == taffy::Position::Absolute
@@ -818,7 +910,7 @@ fn stretches_on_both_grid_axes(doc: &Document, idx: usize, cv: &ComputedValues) 
         value.unwrap_or(fallback).keyword == AlignItemsKeyword::Stretch
     };
     doc.taffy_parent_of(idx).is_some_and(|parent| {
-        let container = &doc.nodes[parent].style;
+        let container = &doc.layout_node_with_style(parent).unwrap().style;
         container.display == taffy::Display::Grid
             && has_only_fixed_rows(doc, parent)
             && stretch(style.justify_self, container.justify_items)
@@ -830,13 +922,13 @@ fn stretches_on_both_grid_axes(doc: &Document, idx: usize, cv: &ComputedValues) 
 /// no item contributes to a row's size: the explicit rows are fixed, and so
 /// are the implicit ones unless the grid has a single in-flow item with an
 /// automatic one-row placement, which puts it in the first explicit row.
-fn has_only_fixed_rows(doc: &Document, grid: usize) -> bool {
+fn has_only_fixed_rows(doc: &LayoutSession<'_>, grid: usize) -> bool {
     use taffy::TraversePartialTree;
     let fixed = |track: &taffy::TrackSizingFunction| {
         track.min.into_raw().tag() == taffy::CompactLength::LENGTH_TAG
             && track.max.into_raw().tag() == taffy::CompactLength::LENGTH_TAG
     };
-    let style = &doc.nodes[grid].style;
+    let style = &doc.layout_node_with_style(grid).unwrap().style;
     let explicit = !style.grid_template_rows.is_empty()
         && style.grid_template_rows.iter().all(|row| match row {
             taffy::GridTemplateComponent::Single(track) => fixed(track),
@@ -844,12 +936,19 @@ fn has_only_fixed_rows(doc: &Document, grid: usize) -> bool {
         });
     let implicit = !style.grid_auto_rows.is_empty() && style.grid_auto_rows.iter().all(fixed);
     let mut items = doc.child_ids(taffy::NodeId::from(grid)).filter(|&child| {
-        let child = &doc.nodes[usize::from(child)].style;
+        let child = &doc
+            .layout_node_with_style(usize::from(child))
+            .unwrap()
+            .style;
         child.display != taffy::Display::None && child.position != taffy::Position::Absolute
     });
     let lone_auto_placed_item = match (items.next(), items.next()) {
         (Some(item), None) => {
-            let row = &doc.nodes[usize::from(item)].style.grid_row;
+            let row = &doc
+                .layout_node_with_style(usize::from(item))
+                .unwrap()
+                .style
+                .grid_row;
             use taffy::GridPlacement::{Auto, Span};
             matches!(
                 (&row.start, &row.end),
@@ -870,7 +969,7 @@ fn bridge_known_image_intrinsic_size(
     node_id: usize,
     cv: &ComputedValues,
 ) -> Option<(f32, f32)> {
-    let node = &doc.nodes[node_id];
+    let node = &doc.layout_node_with_style(node_id).unwrap();
     if node.tag_name() != Some("img") {
         return None;
     }

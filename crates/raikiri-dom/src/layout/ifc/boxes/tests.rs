@@ -1,4 +1,6 @@
 use super::*;
+use crate::Document;
+use crate::layout::context::LayoutSession;
 pub(super) mod clear_break_tests;
 mod group_align_tests;
 mod percent_edge_tests;
@@ -8,6 +10,49 @@ use crate::layout::test_support::{
     ahem_paragraph, ahem_paragraph_with_atomic, ahem_paragraph_with_float, ifc_ahem_fonts,
     line_start_x,
 };
+
+pub(super) fn layout_with_boxes(
+    tree: &mut Document,
+    idx: usize,
+    geometry: FlowGeometry,
+    block_ctx: Option<&mut BlockContext<'_>>,
+    perform: bool,
+) -> IfcLines {
+    let mut session = LayoutSession::new(tree);
+    super::layout_with_boxes(&mut session, idx, geometry, block_ctx, perform)
+}
+
+pub(super) fn layout_with_boxes_in(
+    tree: &mut Document,
+    idx: usize,
+    geometry: FlowGeometry,
+    block_ctx: Option<&mut BlockContext<'_>>,
+    perform: bool,
+    top_margin_escapes: bool,
+    bottom_margin_escapes: bool,
+) -> IfcLines {
+    let mut session = LayoutSession::new(tree);
+    super::layout_with_boxes_in(
+        &mut session,
+        idx,
+        geometry,
+        block_ctx,
+        perform,
+        top_margin_escapes,
+        bottom_margin_escapes,
+    )
+}
+
+pub(super) fn layout_with_boxes_in_fragmentainers(
+    tree: &mut Document,
+    idx: usize,
+    geometry: FlowGeometry,
+    context: crate::fragment::FragmentationContext,
+    perform: bool,
+) -> IfcLines {
+    let mut session = LayoutSession::new(tree);
+    super::layout_with_boxes_in_fragmentainers(&mut session, idx, geometry, context, perform)
+}
 
 #[test]
 fn many_atomics_keep_placement_and_visibility_work_linear() {

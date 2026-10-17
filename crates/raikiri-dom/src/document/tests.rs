@@ -14,6 +14,7 @@ mod mark_in_document_flags_tests;
 mod marker_image_tests;
 mod parent_pointer_tests;
 mod replace_children_from_tests;
+mod retained_layout_styles_tests;
 mod send_soundness_tests;
 mod serialize_inner_html_tests;
 mod stylesheets_tests;

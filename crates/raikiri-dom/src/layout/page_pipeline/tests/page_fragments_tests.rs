@@ -126,7 +126,7 @@ fn separate_ifc_roots_project_their_own_wrapped_pieces_and_text_lines() {
     );
     assert_eq!(pages.len(), 1);
     for (root, span, text) in owners {
-        let node = &document.nodes[root];
+        let node = &document.layout_node_with_style(root).unwrap();
         assert!(node.is_ifc_root());
         let expected_box = node
             .ifc_inline_boxes()

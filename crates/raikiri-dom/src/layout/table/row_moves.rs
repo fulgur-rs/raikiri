@@ -87,7 +87,7 @@ pub(crate) fn follow_moved_rows(
         {
             move_top(document, table, delta);
         }
-        let node = &document.nodes[table];
+        let node = &document.layout_node_with_style(table).unwrap();
         let gap = if node.border_collapse == BorderCollapseValue::Collapse {
             0.0
         } else {

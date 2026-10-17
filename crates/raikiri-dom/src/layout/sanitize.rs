@@ -1,4 +1,5 @@
 use super::*;
+use crate::layout::context::LayoutSession;
 
 // ---------------------------------------------------------------------------
 // Guard for non-finite f32.
@@ -217,11 +218,10 @@ pub(crate) const MAX_TAFFY_MAGNITUDE: f32 = 1e7;
 /// - The `bridge_*` → `apply_computed_to_style` chain consists only of private functions within the crate,
 ///   so passing `diag: &mut Vec<LayoutWarn>` is completed with a crate-internal signature change (the pub
 ///   signature remains intact).
-/// - `set_unrounded_layout` can accept `self` (`&mut Document`), so by having the observer as an **owned
-///   buffer** (`Document::layout_warnings`) in `self` instead of a closure, it can be pushed from the
-///   choke point without changing the trait signature. `layout_single_page` drains this buffer at the end
-///   of the path and flows it to observer-or-eprintln via `fonts.rs`, which is the same as
-///   `emit_warn_via`.
+/// - `set_unrounded_layout` can accept `self` (`&mut LayoutSession`), so the observer can be an **owned
+///   buffer** in the session instead of a closure. The Taffy callback pushes into it without changing the
+///   trait signature. `layout_single_page` drains this buffer at the end of the path and sends each event
+///   to the observer-or-eprintln path via `fonts.rs`, which is the same as `emit_warn_via`.
 ///
 /// I avoid "spreading raw `eprintln!` per-node and spamming" — [`push_layout_warn`] only accumulates an
 /// event if clamping actually occurred (the value changed), so normal range layouts leave nothing in the
@@ -400,13 +400,10 @@ impl std::fmt::Display for LayoutWarn {
 /// `FontWarnObserver`. Unlike that alias, this one carries no inner lifetime
 /// (`LayoutWarn` is fully owned), so it is a plain, non-higher-ranked
 /// `Option<&mut dyn FnMut(&LayoutWarn)>`. Not yet reachable from any public
-/// entry point — see [`Document::layout_warnings`](crate::document::Document)
-/// for why (dom→paint wall: `layout_single_page`'s signature is consumed by
-/// `raikiri-paint` and the `raikiri` crate, so adding a parameter — or a new
-/// `_with_observer` sibling — to it is a decision for that wall, not this
-/// task). This scaffolding exists so a future `_with_observer` addition only
-/// has to plumb one new parameter through, rather than re-deriving the whole
-/// mechanism.
+/// entry point: `layout_single_page` is consumed by `raikiri-paint` and the
+/// `raikiri` crate, so exposing an observer requires a public API addition.
+/// This scaffolding lets a future observer API pass one new parameter through
+/// the existing warning path.
 pub(crate) type LayoutWarnObserver<'o> = Option<&'o mut dyn FnMut(&LayoutWarn)>;
 
 /// Emit a [`LayoutWarn`] event: call the observer if `Some`, otherwise
@@ -503,10 +500,9 @@ pub(crate) fn push_layout_warn(diag: &mut Vec<LayoutWarn>, event: LayoutWarn) {
 /// fields actually get clamped (site labels: `"layout.location"`,
 /// `"layout.size"`, `"layout.scrollable_overflow_rect"`, `"layout.scrollbar_size"`,
 /// `"layout.border"`, `"layout.padding"`, `"layout.margin"`). Its only
-/// caller is [`Document::store_unrounded_layout`], which taffy and the table
-/// algorithm use to store whole layouts, and which passes `&mut self.layout_warnings` — an owned buffer on `Document`, not a
-/// live observer — because taffy's `set_unrounded_layout` signature is fixed
-/// and cannot receive one (see `Document::layout_warnings`'s doc for why).
+/// caller is [`LayoutSession::store_unrounded_layout`], which passes the
+/// operation's warning buffer because Taffy's `set_unrounded_layout`
+/// signature cannot receive a diagnostic observer.
 pub(crate) fn sanitize_taffy_layout(
     layout: &TaffyLayout,
     diag: &mut Vec<LayoutWarn>,
@@ -544,7 +540,7 @@ pub(crate) fn sanitize_taffy_layout(
     }
 }
 
-impl Document {
+impl LayoutSession<'_> {
     /// Write `layout` to the node's `unrounded_layout` after clamping every
     /// field to a finite value with [`sanitize_taffy_layout`].
     ///
@@ -553,7 +549,7 @@ impl Document {
     /// that shift or scale an already stored layout in place (page breaking,
     /// out-of-flow placement, table cell offsets) write the field directly.
     pub(crate) fn store_unrounded_layout(&mut self, idx: usize, layout: &TaffyLayout) {
-        let sanitized = sanitize_taffy_layout(layout, &mut self.layout_warnings);
+        let sanitized = sanitize_taffy_layout(layout, &mut self.context.layout_warnings);
         self.nodes[idx].unrounded_layout = sanitized;
         // The rows an anonymous table wraps are DOM children of its parent,
         // so they move with the table.
@@ -568,7 +564,7 @@ impl Document {
         location: Point<f32>,
         size: Size<f32>,
     ) {
-        let diag = &mut self.layout_warnings;
+        let diag = &mut self.context.layout_warnings;
         let grid_box = raikiri_traits::PaintRect::new(
             sanitize_taffy(location.x, "table_grid_box.location", diag),
             sanitize_taffy(location.y, "table_grid_box.location", diag),
@@ -659,7 +655,7 @@ impl Document {
 /// `lib.rs`) do not go through this pass — those tests are for the characterization of
 /// `sanitize_taffy_layout` (finiteness only), and semantic invariants are not covered (see
 /// `taffy_block_layout_does_not_hang_on_raw_nonfinite_style_geometry`'s doc).
-pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize) {
+pub(crate) fn enforce_layout_invariants(document: &mut LayoutSession<'_>, root_idx: usize) {
     let mut content_box_violations = 0usize;
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
@@ -690,7 +686,7 @@ pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize
     }
     if content_box_violations > 0 {
         push_layout_warn(
-            &mut document.layout_warnings,
+            &mut document.context.layout_warnings,
             LayoutWarn::GeometryInvariantViolated {
                 invariant: "content_box_non_negative",
                 subtree_count: content_box_violations,
@@ -704,7 +700,7 @@ pub(crate) fn enforce_layout_invariants(document: &mut Document, root_idx: usize
 /// [`taffy::Layout::with_order`] (which only keeps `order` and sets all others to zero). Iterative (`Vec`
 /// stack) — recursion is not used, precisely because the target is a deep DOM (see the "traversal is not
 /// recursive" section of [`enforce_layout_invariants`]).
-fn zero_layout_subtree(document: &mut Document, root_idx: usize) {
+fn zero_layout_subtree(document: &mut LayoutSession<'_>, root_idx: usize) {
     let mut stack = vec![root_idx];
     while let Some(idx) = stack.pop() {
         let order = document.nodes[idx].unrounded_layout.order;

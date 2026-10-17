@@ -1591,7 +1591,7 @@ fn an_inline_svg_with_content_takes_its_attribute_size_in_a_paragraph() {
 #[test]
 fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
     use raikiri_style::{build_rule_tree, cascade};
-    use taffy::{AvailableSpace, LayoutInput, LayoutPartialTree, NodeId, Size, SizingMode};
+    use taffy::{AvailableSpace, LayoutInput, NodeId, Size, SizingMode};
     let mut doc = Document::new();
     let svg = doc.append_element(
         Some(0),
@@ -1629,23 +1629,27 @@ fn ratio_only_svg_intrinsic_probes_and_calc_width_are_measured() {
             Size::ZERO,
         ),
     ] {
-        let output = doc.compute_child_layout(
-            NodeId::from(svg),
-            LayoutInput {
-                run_mode: taffy::RunMode::ComputeSize,
-                sizing_mode,
-                axis: taffy::RequestedAxis::Both,
-                parent_size: Size {
-                    width: Some(800.0),
-                    height: Some(600.0),
+        let output = {
+            let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+            taffy::LayoutPartialTree::compute_child_layout(
+                &mut session,
+                NodeId::from(svg),
+                LayoutInput {
+                    run_mode: taffy::RunMode::ComputeSize,
+                    sizing_mode,
+                    axis: taffy::RequestedAxis::Both,
+                    parent_size: Size {
+                        width: Some(800.0),
+                        height: Some(600.0),
+                    },
+                    available_space: Size {
+                        width,
+                        height: AvailableSpace::MaxContent,
+                    },
+                    ..LayoutInput::HIDDEN
                 },
-                available_space: Size {
-                    width,
-                    height: AvailableSpace::MaxContent,
-                },
-                ..LayoutInput::HIDDEN
-            },
-        );
+            )
+        };
         assert_eq!(output.size, expected);
     }
 }

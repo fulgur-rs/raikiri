@@ -1390,6 +1390,88 @@ fn relayout_nested_multicol_children_packs_block_children_into_columns() {
 }
 
 #[test]
+fn layout_pages_reuses_one_context_across_nested_multicol_placements() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);
+    let body = doc.append_element(Some(html), "body", Style::default(), None::<&str>);
+    let lead = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:20px"),
+    );
+    let multicol = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;column-count:2;column-gap:20px;width:200px"),
+    );
+    let children: Vec<_> = (0..4)
+        .map(|_| {
+            doc.append_element(
+                Some(multicol),
+                "div",
+                Style::default(),
+                Some("display:block;height:30px"),
+            )
+        })
+        .collect();
+    let tail = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("display:block;height:50px"),
+    );
+
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 300.0;
+    page.height = 100.0;
+    let pages = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    assert_eq!(
+        pages,
+        [
+            PageSlice {
+                page_index: 0,
+                content_origin_y: 0.0,
+                page_name: None,
+            },
+            PageSlice {
+                page_index: 1,
+                content_origin_y: 100.0,
+                page_name: None,
+            },
+        ]
+    );
+
+    let fragmentainer_of = |node: usize| {
+        doc.fragment_tree
+            .fragments
+            .iter()
+            .rev()
+            .find(|fragment| fragment.node_id == node && fragment.line_start.is_none())
+            .map(|fragment| fragment.fragmentainer)
+    };
+    assert_eq!(
+        children
+            .iter()
+            .map(|&child| fragmentainer_of(child))
+            .collect::<Vec<_>>(),
+        [Some(0), Some(0), Some(1), Some(1)]
+    );
+    assert_eq!(doc.nodes[lead].unrounded_layout.location.y, 0.0);
+    assert_eq!(doc.nodes[multicol].unrounded_layout.location.y, 20.0);
+    assert_eq!(doc.nodes[tail].unrounded_layout.location.y, 80.0);
+    assert!((doc.nodes[children[0]].unrounded_layout.location.x - 0.0).abs() < 0.01);
+    assert!((doc.nodes[children[2]].unrounded_layout.location.x - 110.0).abs() < 0.01);
+}
+
+#[test]
 fn auto_fill_keeps_auto_height_block_children_in_source_order() {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
@@ -1594,7 +1676,7 @@ fn ch_box_values_reach_taffy_before_percentage_children() {
     let child_layout = doc.nodes[child].unrounded_layout;
     assert!((parent_layout.size.width - 64.0).abs() < 0.01);
     assert!((parent_layout.size.height - 64.0).abs() < 0.01);
-    let used_style = &doc.nodes[parent].style;
+    let used_style = &doc.layout_node_with_style(parent).unwrap().style;
     assert_eq!(used_style.padding.top.into_raw().value(), 16.0);
     assert_eq!(used_style.padding.right.into_raw().value(), 32.0);
     assert_eq!(used_style.padding.bottom.into_raw().value(), 16.0);
@@ -1648,7 +1730,10 @@ fn layout_single_page_bridges_display_none() {
     let cr = cascade(&doc, &rules).expect("cascade Ok");
 
     layout_single_page(&mut doc, &cr, PageBox::A4).expect("layout Ok");
-    assert_eq!(doc.nodes[body].style.display, Display::None);
+    assert_eq!(
+        doc.layout_node_with_style(body).unwrap().style.display,
+        Display::None
+    );
 }
 
 #[test]
@@ -2843,6 +2928,62 @@ fn layout_pages_ignores_page_names_inside_monolithic_boxes() {
 }
 
 #[test]
+fn layout_pages_does_not_seed_transposed_pages_from_names_inside_a_table() {
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let mut doc = Document::new();
+    let html = doc.append_element(
+        Some(0),
+        "html",
+        Style::default(),
+        Some("display:block;writing-mode:vertical-rl"),
+    );
+    let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
+    let absolute = doc.append_element(
+        Some(body),
+        "div",
+        Style::default(),
+        Some("position:absolute"),
+    );
+    let table = doc.append_element(
+        Some(absolute),
+        "table",
+        Style::default(),
+        Some("display:table"),
+    );
+    let group = doc.append_element(
+        Some(table),
+        "tbody",
+        Style::default(),
+        Some("display:table-row-group;page:inner"),
+    );
+    let row = doc.append_element(
+        Some(group),
+        "tr",
+        Style::default(),
+        Some("display:table-row"),
+    );
+    doc.append_element(
+        Some(row),
+        "td",
+        Style::default(),
+        Some("display:table-cell"),
+    );
+    doc.mark_in_document_flags();
+    let rules = build_rule_tree(&doc);
+    let cascade = cascade(&doc, &rules).expect("cascade Ok");
+    let mut page = PageBox::new();
+    page.width = 100.0;
+    page.height = 100.0;
+
+    let slices = layout_pages(&mut doc, &cascade, page).expect("pagination Ok");
+
+    assert_eq!(slices.len(), 1);
+    assert_eq!(slices[0].page_name, None);
+}
+
+#[test]
 fn layout_pages_does_not_propagate_row_flex_item_page_names() {
     let pages = named_page_slices(
         "display:block",
@@ -3629,8 +3770,7 @@ fn lines_survive_a_second_layout_pass() {
 #[test]
 fn first_baseline_includes_the_top_padding_and_border() {
     use taffy::{
-        AvailableSpace, LayoutInput, LayoutPartialTree, Line, NodeId, RequestedAxis, RunMode, Size,
-        SizingMode,
+        AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
     };
     let (mut doc, cascade, root) = ahem_paragraph(
         "aa",
@@ -3638,31 +3778,35 @@ fn first_baseline_includes_the_top_padding_and_border() {
     );
     lay_out(&mut doc, &cascade);
     // Ask the root for its layout output again: the baselines are part of it.
-    let output = doc.compute_child_layout(
-        NodeId::from(root),
-        LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size {
-                width: None,
-                height: None,
+    let output = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        taffy::LayoutPartialTree::compute_child_layout(
+            &mut session,
+            NodeId::from(root),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size {
+                    width: None,
+                    height: None,
+                },
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(800.0),
+                    height: Some(600.0),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(800.0),
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
             },
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: true,
-            },
-            parent_size: Size {
-                width: Some(800.0),
-                height: Some(600.0),
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(800.0),
-                height: AvailableSpace::MaxContent,
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-        },
-    );
+        )
+    };
     // Ahem ascent 8px + 6px padding + 3px border, from the border-box top.
     assert_eq!(output.baselines.first, Some(17.0));
 }
@@ -3695,34 +3839,37 @@ fn a_floated_root_with_a_narrow_max_width_breaks_at_that_width() {
 #[test]
 fn an_inline_block_baseline_follows_the_last_ifc_line() {
     use taffy::{
-        AvailableSpace, LayoutInput, LayoutPartialTree, Line, NodeId, RequestedAxis, RunMode, Size,
-        SizingMode,
+        AvailableSpace, LayoutInput, Line, NodeId, RequestedAxis, RunMode, Size, SizingMode,
     };
     let (mut doc, cascade, wrapper, _root) =
         ahem_paragraph_in_block_wrapper("aaaa bbbb cccc", "display:inline-block;width:50px");
     lay_out(&mut doc, &cascade);
-    let output = doc.compute_child_layout(
-        NodeId::from(wrapper),
-        LayoutInput {
-            run_mode: RunMode::PerformLayout,
-            sizing_mode: SizingMode::InherentSize,
-            axis: RequestedAxis::Both,
-            known_dimensions: Size::NONE,
-            known_dimensions_are_definite: Size {
-                width: true,
-                height: true,
+    let output = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut doc);
+        taffy::LayoutPartialTree::compute_child_layout(
+            &mut session,
+            NodeId::from(wrapper),
+            LayoutInput {
+                run_mode: RunMode::PerformLayout,
+                sizing_mode: SizingMode::InherentSize,
+                axis: RequestedAxis::Both,
+                known_dimensions: Size::NONE,
+                known_dimensions_are_definite: Size {
+                    width: true,
+                    height: true,
+                },
+                parent_size: Size {
+                    width: Some(800.0),
+                    height: Some(600.0),
+                },
+                available_space: Size {
+                    width: AvailableSpace::Definite(800.0),
+                    height: AvailableSpace::MaxContent,
+                },
+                vertical_margins_are_collapsible: Line::FALSE,
             },
-            parent_size: Size {
-                width: Some(800.0),
-                height: Some(600.0),
-            },
-            available_space: Size {
-                width: AvailableSpace::Definite(800.0),
-                height: AvailableSpace::MaxContent,
-            },
-            vertical_margins_are_collapsible: Line::FALSE,
-        },
-    );
+        )
+    };
     // Three 10px lines: the last baseline is 20px + the 8px Ahem ascent.
     assert_eq!(output.baselines.first, Some(28.0));
 }
@@ -8580,12 +8727,24 @@ fn logical_ch_minimums_follow_the_bridge_axis() {
         let (mut doc, cascade, root) = ch_ahem_paragraph("aa", &css);
         lay_out(&mut doc, &cascade);
         assert_eq!(
-            doc.nodes[root].style.min_size.width.into_raw().value(),
+            doc.layout_node_with_style(root)
+                .unwrap()
+                .style
+                .min_size
+                .width
+                .into_raw()
+                .value(),
             64.0,
             "{css}"
         );
         assert_eq!(
-            doc.nodes[root].style.min_size.height.into_raw().value(),
+            doc.layout_node_with_style(root)
+                .unwrap()
+                .style
+                .min_size
+                .height
+                .into_raw()
+                .value(),
             expected_height,
             "{css}"
         );
@@ -13721,13 +13880,19 @@ fn forced_break_clearance_applies_to_paged_layout_only() {
 
     layout_pages(&mut doc, &cascade, page).expect("paged layout succeeds");
     assert_eq!(doc.forced_break_clearance, vec![second]);
-    assert_eq!(doc.nodes[second].style.clear, taffy::Clear::Both);
+    assert_eq!(
+        doc.layout_node_with_style(second).unwrap().style.clear,
+        taffy::Clear::Both
+    );
 
     // A single page has no break to clear at, so the box sits beside the
     // float again and the cached paged layout is not reused.
     layout_single_page(&mut doc, &cascade, page).expect("single page layout succeeds");
     assert!(doc.forced_break_clearance.is_empty());
-    assert_eq!(doc.nodes[second].style.clear, taffy::Clear::None);
+    assert_eq!(
+        doc.layout_node_with_style(second).unwrap().style.clear,
+        taffy::Clear::None
+    );
     assert_eq!(doc.nodes[second].unrounded_layout.location.y, 0.0);
 }
 
@@ -14888,6 +15053,48 @@ fn forced_break_line_clearance_applies_to_paged_layout_only() {
     let (x, y, _, _) = crate::layout::test_support::absolute_rect(&doc, span);
     assert_eq!(x, 40.0);
     assert!(y < 50.0, "{y}");
+}
+
+#[test]
+fn continuation_inputs_and_retained_outputs_survive_session_drop() {
+    use crate::layout::test_support::{ahem_paragraph, with_ahem};
+    use raikiri_style::{build_rule_tree, cascade};
+    use raikiri_traits::PageBox;
+
+    let build = || {
+        let (mut document, _, root) = ahem_paragraph("a a a a a a", "width:40px");
+        let text = document.nodes[root].children[0];
+        let rules = build_rule_tree(&document);
+        let cascade = cascade(&document, &rules).expect("cascade Ok");
+        with_ahem(&mut document);
+        (document, cascade, text)
+    };
+
+    let mut page = PageBox::new();
+    page.width = 40.0;
+    page.height = 15.0;
+
+    let (mut document, cascade, text) = build();
+    let first_slices = layout_pages(&mut document, &cascade, page).expect("first layout");
+    document
+        .project_pages(&cascade, page, &first_slices, &[])
+        .expect("first projection");
+    assert!(!first_slices.is_empty());
+    assert!(document.page_fragments(0).count() > 0);
+    assert!(document.ifc_text_lines(text).is_some());
+
+    document.set_continuation_break(Some((text, 4)));
+    let resumed_slices = layout_pages(&mut document, &cascade, page).expect("continued layout");
+    document
+        .project_pages(&cascade, page, &resumed_slices, &[])
+        .expect("continued projection");
+    assert_eq!(document.continuation_break, Some((text, 4)));
+
+    let (mut reference, reference_cascade, reference_text) = build();
+    reference.set_continuation_break(Some((reference_text, 4)));
+    let expected_slices = layout_pages(&mut reference, &reference_cascade, page)
+        .expect("reference continuation layout");
+    assert_eq!(resumed_slices, expected_slices);
 }
 
 #[test]

@@ -58,7 +58,7 @@ pub(crate) struct TableObjects {
     pub(crate) headers: super::headers::HeaderRepeats,
     pub(crate) cells: Vec<AnonymousCell>,
     /// The layout views of `cells`, moved into the node arena once built.
-    cell_nodes: Vec<Node>,
+    cell_nodes: Vec<(Node, taffy::Style)>,
     pub(crate) tables: Vec<AnonymousTable>,
     /// The anonymous table index of each wrapped row or row group.
     table_by_part: HashMap<usize, usize>,
@@ -67,7 +67,7 @@ pub(crate) struct TableObjects {
     content_by_owner: HashMap<usize, Vec<Content>>,
     overlay_contents_by_owner: HashMap<usize, Vec<usize>>,
     overlay_contents_owner: HashMap<usize, usize>,
-    prototypes_by_owner: HashMap<usize, Node>,
+    prototypes_by_owner: HashMap<usize, (Node, taffy::Style)>,
     pub(crate) rows: HashMap<usize, Vec<Row>>,
     pub(crate) paragraph_owner: Vec<Option<usize>>,
     pub(crate) part_background_cells: HashMap<usize, Vec<raikiri_traits::PaintRect>>,
@@ -128,7 +128,7 @@ fn children(
             out.push(content);
             continue;
         };
-        let node = &doc.nodes[id];
+        let node = &doc.layout_node_with_style(id).unwrap();
         if !node.is_in_document()
             || node.is_non_rendered_html_element()
             || node.display() == DisplayValue::None
@@ -180,13 +180,20 @@ fn children(
     out
 }
 
-fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
-    let source = &doc.nodes[owner];
+fn anonymous_prototype(doc: &Document, owner: usize) -> (Node, taffy::Style) {
+    let source = &doc.layout_node_with_style(owner).unwrap();
     // Anonymous boxes have no source attributes, children or retained layout
     // payloads. Text/style projection reads the original owner instead.
+    let mut style = taffy::Style {
+        direction: doc
+            .layout_style(owner)
+            .expect("anonymous cell owner has a style")
+            .direction,
+        ..Default::default()
+    };
     let mut node = Node::new_element(
         source.tag_name().unwrap_or("div").into(),
-        taffy::Style::default(),
+        style.clone(),
         None,
     );
     if let crate::node::NodeData::Element(source_data) = &source.data {
@@ -200,16 +207,16 @@ fn anonymous_prototype(doc: &Document, owner: usize) -> Node {
     node.flags = source.flags;
     node.flags
         .remove(NodeFlags::IS_IFC_ROOT | NodeFlags::IN_IFC_SUBTREE);
-    node.style.direction = source.style.direction;
     node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
     node.set_display(DisplayValue::TableCell);
+    node.refresh_box_style(&mut style);
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;
     node.caption_side = source.caption_side;
     node.authored_writing_mode = source.authored_writing_mode;
     node.used_writing_mode = source.used_writing_mode;
     node.under_vertical_writing = source.under_vertical_writing;
-    node
+    (node, style)
 }
 
 fn anonymous_cell(
@@ -224,8 +231,8 @@ fn anonymous_cell(
         .entry(owner)
         .or_insert_with(|| anonymous_prototype(doc, owner));
     #[cfg(test)]
-    tests::record_owner_clone(prototype);
-    let mut node = prototype.clone();
+    tests::record_owner_clone(&prototype.0);
+    let (mut node, style) = prototype.clone();
     node.children = content
         .iter()
         .filter_map(|entry| match entry {
@@ -255,7 +262,7 @@ fn anonymous_cell(
         objects.cell_by_content.insert(entry, index);
     }
     objects.cells.push(AnonymousCell { owner, content });
-    objects.cell_nodes.push(node);
+    objects.cell_nodes.push((node, style));
     key
 }
 
@@ -414,7 +421,7 @@ fn is_row_or_group(display: DisplayValue) -> bool {
 /// whose markers sit on their first line, and vertical and multicol
 /// containers keep their rows as blocks as well.
 fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent: usize) -> bool {
-    let node = &doc.nodes[parent];
+    let node = &doc.layout_node_with_style(parent).unwrap();
     let cv = &cascade.computed[parent];
     if !matches!(
         node.display(),
@@ -442,7 +449,7 @@ fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent:
         return false;
     }
     node.children.iter().all(|&child| {
-        let child_node = &doc.nodes[child];
+        let child_node = &doc.layout_node_with_style(child).unwrap();
         !child_node.is_in_document()
             || child_node.is_non_rendered_html_element()
             || if child_node.kind() == NodeKind::Text {
@@ -463,7 +470,7 @@ fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent:
 fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<AnonymousTable> {
     let mut tables = Vec::new();
     for parent in 0..doc.nodes.len() {
-        let node = &doc.nodes[parent];
+        let node = &doc.layout_node_with_style(parent).unwrap();
         if !node.is_in_document()
             || node.kind() != NodeKind::Element
             || !node
@@ -476,7 +483,7 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
         }
         let mut run = Vec::new();
         for &child in &node.children {
-            let child_node = &doc.nodes[child];
+            let child_node = &doc.layout_node_with_style(child).unwrap();
             if child_node.kind() == NodeKind::Element
                 && child_node.is_in_document()
                 && is_row_or_group(child_node.display())
@@ -509,9 +516,16 @@ fn anonymous_table_runs(doc: &Document, cascade: &CascadeResult) -> Vec<Anonymou
 /// The layout view of the anonymous table in `parent` around `parts`. It
 /// inherits its inherited table properties from `parent` and has initial
 /// values for the rest.
-fn anonymous_table_node(doc: &Document, parent: usize, parts: &[usize]) -> Node {
-    let source = &doc.nodes[parent];
-    let mut node = Node::new_element("div".into(), taffy::Style::default(), None);
+fn anonymous_table_node(doc: &Document, parent: usize, parts: &[usize]) -> (Node, taffy::Style) {
+    let source = &doc.layout_node_with_style(parent).unwrap();
+    let mut style = taffy::Style {
+        direction: doc
+            .layout_style(parent)
+            .expect("anonymous table parent has a style")
+            .direction,
+        ..Default::default()
+    };
+    let mut node = Node::new_element("div".into(), style.clone(), None);
     if let crate::node::NodeData::Element(source_data) = &source.data {
         let target = node.data.as_element_mut().expect("element prototype");
         target.namespace = source_data.namespace.clone();
@@ -519,16 +533,16 @@ fn anonymous_table_node(doc: &Document, parent: usize, parts: &[usize]) -> Node 
     node.parent = Some(parent);
     node.children = parts.to_vec();
     node.flags = NodeFlags::IS_IN_DOCUMENT | NodeFlags::IS_TABLE_ROOT;
-    node.style.direction = source.style.direction;
     node.computed_border = Some(raikiri_style::ComputedValues::initial().border);
     node.set_display(DisplayValue::Table);
+    node.refresh_box_style(&mut style);
     node.border_collapse = source.border_collapse;
     node.border_spacing = source.border_spacing;
     node.caption_side = source.caption_side;
     node.authored_writing_mode = None;
     node.used_writing_mode = source.used_writing_mode;
     node.under_vertical_writing = source.under_vertical_writing;
-    node
+    (node, style)
 }
 
 pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(), LayoutError> {
@@ -539,14 +553,14 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
     }
     // An unsuccessful rebuild must not expose cells from the previous pass.
     doc.table_objects = TableObjects::default();
-    doc.nodes.set_anonymous_cells(Vec::new());
+    doc.set_anonymous_cells(Vec::new());
     let tables = anonymous_table_runs(doc, cascade);
     let table_nodes = tables
         .iter()
         .map(|table| anonymous_table_node(doc, table.parent, &table.parts))
         .collect();
     // The tables are set first: their number fixes the keys of the cells.
-    doc.nodes.set_anonymous_tables(table_nodes);
+    doc.set_anonymous_tables(table_nodes);
     let mut objects = TableObjects {
         paragraph_owner: vec![None; doc.nodes.len()],
         ..TableObjects::default()
@@ -571,14 +585,13 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
                 objects.prototypes_by_owner.clear();
             }
             Err(error) => {
-                doc.nodes.set_anonymous_tables(Vec::new());
+                doc.set_anonymous_tables(Vec::new());
                 return Err(error);
             }
         }
     }
     objects.tables = tables;
-    doc.nodes
-        .set_anonymous_cells(std::mem::take(&mut objects.cell_nodes));
+    doc.set_anonymous_cells(std::mem::take(&mut objects.cell_nodes));
     doc.table_objects = objects;
     Ok(())
 }
@@ -651,7 +664,7 @@ impl Document {
             OWNER_CELL_VISITS.with(|visits| visits.set(visits.get() + 1));
             if let Some(&index) = self.table_objects.cell_by_content.get(&content) {
                 let key = self.nodes.anonymous_cell_key(index);
-                let node = &self.nodes[key];
+                let node = &self.layout_node_with_style(key).unwrap();
                 if self.table_objects.cells[index].content.first() == Some(&content) {
                     if node.is_ifc_root() {
                         out.push(key);

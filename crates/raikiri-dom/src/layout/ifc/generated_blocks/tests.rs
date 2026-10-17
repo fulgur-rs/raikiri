@@ -571,25 +571,28 @@ fn a_block_box_split_across_fragmentainers_indents_only_its_first_line() {
     .expect("layout");
     // Fragmentainers two lines tall: the box's first two lines fill the
     // first, its last two go on in the second.
-    let lines = crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
-        &mut fixture.doc,
-        fixture.root,
-        crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
-        crate::fragment::FragmentationContext {
-            available_width: 200.0,
-            available_height: Some(20.0),
-            column_fill: raikiri_style::property::ColumnFillValue::Auto,
-            column_width: 100.0,
-            column_count: 2,
-            column_gap: 0.0,
-            column_index: 0,
-            origin_x: 0.0,
-            origin_y: 0.0,
-            orphans: 1,
-            widows: 1,
-        },
-        false,
-    );
+    let lines = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+        crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+            &mut session,
+            fixture.root,
+            crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
+            crate::fragment::FragmentationContext {
+                available_width: 200.0,
+                available_height: Some(20.0),
+                column_fill: raikiri_style::property::ColumnFillValue::Auto,
+                column_width: 100.0,
+                column_count: 2,
+                column_gap: 0.0,
+                column_index: 0,
+                origin_x: 0.0,
+                origin_y: 0.0,
+                orphans: 1,
+                widows: 1,
+            },
+            false,
+        )
+    };
     assert_eq!(line_starts(&lines.lines), [5.0, 0.0, 0.0, 0.0]);
 }
 
@@ -611,25 +614,28 @@ fn line_starts_beside_a_float_in_the_second_fragmentainer(text_indent: &str) -> 
         page_box_800x600(),
     )
     .expect("layout");
-    let lines = crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
-        &mut fixture.doc,
-        fixture.root,
-        crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
-        crate::fragment::FragmentationContext {
-            available_width: 200.0,
-            available_height: Some(20.0),
-            column_fill: raikiri_style::property::ColumnFillValue::Auto,
-            column_width: 100.0,
-            column_count: 2,
-            column_gap: 0.0,
-            column_index: 0,
-            origin_x: 0.0,
-            origin_y: 0.0,
-            orphans: 1,
-            widows: 1,
-        },
-        false,
-    );
+    let lines = {
+        let mut session = crate::layout::context::LayoutSession::new(&mut fixture.doc);
+        crate::layout::ifc::boxes::layout_with_boxes_in_fragmentainers(
+            &mut session,
+            fixture.root,
+            crate::layout::ifc::flow::FlowGeometry::horizontal(100.0, (0.0, 0.0), 0.0),
+            crate::fragment::FragmentationContext {
+                available_width: 200.0,
+                available_height: Some(20.0),
+                column_fill: raikiri_style::property::ColumnFillValue::Auto,
+                column_width: 100.0,
+                column_count: 2,
+                column_gap: 0.0,
+                column_index: 0,
+                origin_x: 0.0,
+                origin_y: 0.0,
+                orphans: 1,
+                widows: 1,
+            },
+            false,
+        )
+    };
     line_starts(&lines.lines)
 }
 

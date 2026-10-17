@@ -807,7 +807,7 @@ fn walk_counter_scopes(
     while let Some(step) = stack.pop() {
         match step {
             WalkStep::Enter(idx) => {
-                let node = &doc.nodes[idx];
+                let node = &doc.layout_node_with_style(idx).unwrap();
                 if !node.is_in_document() {
                     continue;
                 }

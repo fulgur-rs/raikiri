@@ -85,7 +85,13 @@ fn relative_insets_with_box_tree(
     let rtl = source.is_some_and(|block| {
         let flipped = used_mode == WritingMode::SidewaysLr
             && crate::layout::bridge::uses_vertical_axes(cascade, block);
-        (document.nodes[block].style.direction == taffy::Direction::Rtl) != flipped
+        (document
+            .layout_node_with_style(block)
+            .unwrap()
+            .style
+            .direction
+            == taffy::Direction::Rtl)
+            != flipped
     });
     let mode = match used_mode {
         WritingMode::VerticalRl => shodo::geometry::WritingMode::VerticalRl,
@@ -281,7 +287,7 @@ fn is_table_part(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> boo
 
 /// Whether the box is a non-atomic inline in the selected box tree.
 fn is_non_atomic_inline(document: &Document, boxes: BoxTree<'_>, node_id: usize) -> bool {
-    let node = &document.nodes[node_id];
+    let node = &document.layout_node_with_style(node_id).unwrap();
     node.kind() == NodeKind::Element
         && !super::ifc::assign::is_layout_root(document, node_id)
         && boxes.properties(node_id).is_some_and(|properties| {
