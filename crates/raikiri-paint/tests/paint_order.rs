@@ -740,18 +740,23 @@ fn blocks_inside_paragraphs_paint_before_the_lines() {
 /// its content or not.
 #[test]
 fn blocks_inside_paragraphs_paint_between_negative_content_and_the_lines() {
-    for style in ["", "position: relative; z-index: 0"] {
-        let result = same_order(&format!(
-            "<div id=m style=\"{style}\">over\
-             <span style=\"position: relative; z-index: -1\">x</span>\
-             <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
-        ));
-        let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
-        let page = result.pages().next().expect("a page");
-        let steps = walker_steps(&page);
-        let at = step_at(&result, Step::Box(k));
-        assert_eq!(steps[at - 1], Step::Text(m), "{style}");
-        assert_eq!(steps[at + 1], Step::Text(m), "{style}");
+    for page_css in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let result = assert_same_order(
+                &format!(
+                    "<div id=m style=\"{style}\">over\
+                     <span style=\"position: relative; z-index: -1\">x</span>\
+                     <div id=k style=\"background: gray; height: 10px\"></div>tail</div>"
+                ),
+                page_css,
+            );
+            let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+            let page = result.pages().next().expect("a page");
+            let steps = walker_steps(&page);
+            let at = step_at(&result, Step::Box(k));
+            assert_eq!(steps[at - 1], Step::Text(m), "{page_css} {style}");
+            assert_eq!(steps[at + 1], Step::Text(m), "{page_css} {style}");
+        }
     }
 }
 
@@ -1318,22 +1323,29 @@ fn pixels_of(pixels: &[u8], rgb: [u8; 3]) -> usize {
         .count()
 }
 
+/// Page margins that leave a content box at most half as wide as the page,
+/// to which flowed text is clipped.
+const NARROW_PAGE: &str = "@page { margin: 20px 80px }";
+
 /// A block inside a paragraph covers the text positioned below it and stays
-/// below the paragraph's other text.
+/// below the paragraph's other text, also on a page that clips the text to
+/// its content box.
 #[test]
 fn paragraph_blocks_cover_negative_text_and_stay_below_the_rest() {
-    for style in ["", "position: relative; z-index: 0"] {
-        let result = lay_out(
-            &format!(
-                "<div style=\"{style}; color: black\">AA\
-                 <span style=\"position: relative; z-index: -1; color: red\">BB</span>CC\
-                 <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
-            ),
-            "",
-        );
-        let pixels = render_first_page(&result);
-        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{style}");
-        assert_eq!(pixels_of(&pixels, [0, 0, 0]), 400, "{style}");
+    for page in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let result = lay_out(
+                &format!(
+                    "<div style=\"{style}; color: black\">AA\
+                     <span style=\"position: relative; z-index: -1; color: red\">BB</span>CC\
+                     <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+                ),
+                page,
+            );
+            let pixels = render_first_page(&result);
+            assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{page} {style}");
+            assert_eq!(pixels_of(&pixels, [0, 0, 0]), 400, "{page} {style}");
+        }
     }
 }
 
@@ -1357,13 +1369,15 @@ fn negative_inline_elements_paint_by_stack_level() {
 #[test]
 fn paragraph_blocks_cover_negative_pseudo_elements() {
     let css = "#m::before { content: 'BB'; position: relative; z-index: -1; color: red }";
-    for style in ["", "position: relative; z-index: 0"] {
-        let body = format!(
-            "<div id=m style=\"{style}; color: black\">AA\
-             <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
-        );
-        let pixels = render_first_page(&lay_out(&body, css));
-        assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{style}");
-        assert_eq!(pixels_of(&pixels, [0, 0, 0]), 200, "{style}");
+    for page in ["", NARROW_PAGE] {
+        for style in ["", "position: relative; z-index: 0"] {
+            let body = format!(
+                "<div id=m style=\"{style}; color: black\">AA\
+                 <div style=\"background: blue; height: 30px; margin-top: -20px\"></div></div>"
+            );
+            let pixels = render_first_page(&lay_out(&body, &format!("{page} {css}")));
+            assert_eq!(pixels_of(&pixels, [255, 0, 0]), 0, "{page} {style}");
+            assert_eq!(pixels_of(&pixels, [0, 0, 0]), 200, "{page} {style}");
+        }
     }
 }

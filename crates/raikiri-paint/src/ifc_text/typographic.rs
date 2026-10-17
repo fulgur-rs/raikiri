@@ -128,6 +128,9 @@ pub(super) struct TypographicPaint {
     /// Boxes laid out beside the lines outside every group, placed in
     /// `normal` like groups.
     root_children: Vec<Child>,
+    /// In-flow blocks inside the paragraph's inline content, in the order
+    /// they were placed.
+    blocks: Vec<Scene>,
     groups: Vec<Group>,
     nearest_groups: HashMap<FragmentKey, Option<usize>>,
     piece_groups: HashMap<FragmentKey, Option<usize>>,
@@ -149,6 +152,7 @@ impl TypographicPaint {
         let mut paint = Self {
             normal: Scene::new(),
             root_children: Vec::new(),
+            blocks: Vec::new(),
             groups: Vec::new(),
             nearest_groups: HashMap::new(),
             piece_groups: HashMap::new(),
@@ -413,7 +417,7 @@ impl TypographicPaint {
     /// Appendix E steps 3, 4 and 7). Blocks keep the order they are placed
     /// in.
     pub(super) fn add_block(&mut self, content: Scene) {
-        self.root_children.push((0, 0, 0, content));
+        self.blocks.push(content);
     }
 
     /// Whether the paragraph composites any group.
@@ -441,12 +445,29 @@ impl TypographicPaint {
     /// with that opacity: a group composited before the others of the
     /// paragraph, as it comes first in tree order.
     pub(super) fn finish(
-        mut self,
+        self,
         scene: &mut impl PaintScene,
         clip: Rect,
         paint_transform: Affine,
         first_line: Option<(Self, f32)>,
     ) {
+        let (below, blocks, above) = self.finish_around_blocks(clip, paint_transform, first_line);
+        scene.append_scene(below, Affine::IDENTITY);
+        for block in blocks {
+            scene.append_scene(block, Affine::IDENTITY);
+        }
+        scene.append_scene(above, Affine::IDENTITY);
+    }
+
+    /// Composite the groups like [`Self::finish`], apart from the
+    /// paragraph's blocks: the paint below them, the blocks, and the paint
+    /// above them.
+    pub(super) fn finish_around_blocks(
+        mut self,
+        clip: Rect,
+        paint_transform: Affine,
+        first_line: Option<(Self, f32)>,
+    ) -> (Scene, Vec<Scene>, Scene) {
         // The enclosing TransformScene transforms recorded commands on replay.
         // Counter-transform only the opacity clip so it remains in page space.
         let inverse = paint_transform.inverse();
@@ -529,7 +550,15 @@ impl TypographicPaint {
                 None => roots.push(child),
             }
         }
-        scene.append_scene(merge_children(self.normal, roots), Affine::IDENTITY);
+        // Groups and boxes with negative stack levels outside every group
+        // paint below the blocks, at the start of the paragraph's paint.
+        let (below, above): (Vec<_>, Vec<_>) =
+            roots.into_iter().partition(|&(_, level, _, _)| level < 0);
+        (
+            merge_children(Scene::new(), below),
+            self.blocks,
+            merge_children(self.normal, above),
+        )
     }
 }
 

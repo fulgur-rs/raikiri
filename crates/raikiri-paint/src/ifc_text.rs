@@ -213,6 +213,14 @@ impl HeldLines<'_> {
         self.rest
             .finish(scene, self.clip, self.paint_transform, self.first_line);
     }
+
+    /// Composite the paragraph's groups like [`Self::finish`], apart from
+    /// its blocks: the paint below the blocks, the blocks in the order they
+    /// were placed, and the paint above them.
+    pub(crate) fn finish_around_blocks(self) -> (Scene, Vec<Scene>, Scene) {
+        self.rest
+            .finish_around_blocks(self.clip, self.paint_transform, self.first_line)
+    }
 }
 
 /// Paint the lines of `root_id` like [`draw_ifc_lines_with_resources`], but

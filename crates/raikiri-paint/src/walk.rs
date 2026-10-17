@@ -2592,8 +2592,17 @@ pub(crate) fn paint_document_impl(
                 hold,
                 boxes_in_groups,
             } => {
+                let early_start = early_boxes
+                    .iter()
+                    .rposition(|&(root, _, _)| root != node_id)
+                    .map_or(0, |index| index + 1);
+                let early: Vec<_> = early_boxes.drain(early_start..).collect();
+                // Lines that are not held but have blocks inside them paint
+                // around those blocks, which the clip of the lines does not
+                // cover.
+                let around_blocks = !hold && !early.is_empty();
                 let text_clip = text_page_clip(inside_fixed);
-                if let Some(clip) = &text_clip {
+                if let Some(clip) = text_clip.as_ref().filter(|_| !around_blocks) {
                     scene.scene.push_clip_layer(page_clip_transform, clip);
                 }
                 // A paragraph whose lines carry no visible text (only
@@ -2609,11 +2618,6 @@ pub(crate) fn paint_document_impl(
                 }
                 let saved_transform = scene.transform;
                 scene.transform = paint_transform;
-                let early_start = early_boxes
-                    .iter()
-                    .rposition(|&(root, _, _)| root != node_id)
-                    .map_or(0, |index| index + 1);
-                let early: Vec<_> = early_boxes.drain(early_start..).collect();
                 if hold {
                     let lines = crate::ifc_text::hold_ifc_lines(
                         image_cache,
@@ -2654,6 +2658,39 @@ pub(crate) fn paint_document_impl(
                             }
                         }
                     }
+                } else if around_blocks {
+                    // The content positioned below the blocks paints first,
+                    // then the blocks, then the rest of the lines (CSS 2.1
+                    // Appendix E steps 3, 4 and 7).
+                    let (below, _, above) = crate::ifc_text::hold_ifc_lines(
+                        image_cache,
+                        document,
+                        cascade,
+                        node_id,
+                        crate::ifc_text::IfcPosition { x, y, shift_y },
+                        &decorations,
+                        fragmentainer,
+                        custom_highlights,
+                        pixel_source,
+                        warnings,
+                        page_box,
+                        flow_band.filter(|_| !inside_fixed),
+                        paint_transform,
+                    )
+                    .map(crate::ifc_text::HeldLines::finish_around_blocks)
+                    .unwrap_or_default();
+                    for (content, blocks) in [(below, early), (above, Vec::new())] {
+                        if let Some(clip) = &text_clip {
+                            scene.scene.push_clip_layer(page_clip_transform, clip);
+                        }
+                        scene.append_scene(content, Affine::IDENTITY);
+                        if text_clip.is_some() {
+                            scene.pop_layer();
+                        }
+                        for (_, _, block) in blocks {
+                            scene.scene.append_scene(block, Affine::IDENTITY);
+                        }
+                    }
                 } else {
                     crate::ifc_text::draw_ifc_lines_with_resources(
                         image_cache,
@@ -2673,7 +2710,7 @@ pub(crate) fn paint_document_impl(
                     );
                 }
                 scene.transform = saved_transform;
-                if text_clip.is_some() {
+                if text_clip.is_some() && !around_blocks {
                     scene.pop_layer();
                 }
                 continue;
@@ -4170,15 +4207,13 @@ pub(crate) fn paint_document_impl(
                 // In-flow blocks inside the paragraph's inline content, whose
                 // backgrounds paint before its lines.
                 let mut block_frames = Vec::new();
-                // With content positioned below the blocks, the held lines
-                // place the blocks between that content and the rest. Lines
-                // that are not held keep the blocks with their content.
+                // With content positioned below the blocks, the lines place
+                // the blocks between that content and the rest.
                 let negative_content = node.is_ifc_root()
                     && raikiri_dom::paint_rules::holds_negative_stack_level(
                         document, cascade, node_id,
                     );
-                let blocks_first =
-                    node.is_ifc_root() && !children.is_empty() && (!negative_content || hold_lines);
+                let blocks_first = node.is_ifc_root() && !children.is_empty();
                 for child in children.into_iter().rev() {
                     if let Some(cell) = document.anonymous_table_cell(child) {
                         child_frames.push(PaintFrame::AnonymousParagraph {
@@ -4282,7 +4317,7 @@ pub(crate) fn paint_document_impl(
                     // A box beside held lines joins the groups of the
                     // paragraph, which composite it with the rest of their
                     // paint once the lines and boxes are all recorded.
-                    let captured = hold_lines && (!block || negative_content);
+                    let captured = (hold_lines && !block) || (block && negative_content);
                     if captured {
                         frames.push(PaintFrame::EndBox {
                             root: node_id,
