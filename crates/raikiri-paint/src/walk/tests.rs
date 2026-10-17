@@ -6782,3 +6782,101 @@ fn a_cell_in_a_vertical_table_clips_each_background_layer_to_its_own_box() {
         row_of(&[('?', 4), ('R', 94), ('?', 2)])
     );
 }
+
+/// The page-space bounds of every clip layer the scene pushes.
+fn clip_layer_bounds(scene: &Scene) -> Vec<Rect> {
+    scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::PushClipLayer(clip) => Some(
+                clip.transform
+                    .transform_rect_bbox(kurbo::Shape::bounding_box(&clip.clip)),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Lay `markup` out on one 800x600 page with the Ahem font and paint it.
+fn paged_scene(markup: &str) -> Scene {
+    let mut parsed = raikiri_html::parse(
+        markup.as_bytes(),
+        &raikiri_html::ParseOptions {
+            extra_stylesheets: &[],
+            network: None,
+            base_url: None,
+        },
+    )
+    .unwrap();
+    parsed.dom.set_font_collection(
+        raikiri_dom::build_wpt_font_collection(std::path::Path::new(FONT_DIR)).expect("collection"),
+    );
+    let cascade = raikiri_html::build_cascaded(&parsed).expect("the cascade succeeds");
+    let mut page = PageBox::new();
+    page.width = 800.0;
+    page.height = 600.0;
+    raikiri_dom::layout_pages(&mut parsed.dom, &cascade, page).unwrap();
+    let mut scene = Scene::new();
+    crate::paint_single_page_with_origin_and_page(
+        &mut scene,
+        &parsed.dom,
+        &cascade,
+        page,
+        0.0,
+        0,
+        1,
+        false,
+    )
+    .unwrap();
+    scene
+}
+
+#[test]
+fn a_column_clip_grows_outward_across_the_columns_only() {
+    let clip = Rect::new(274.5, 8.5, 525.25, 88.25);
+    assert_eq!(
+        snap_column_clip_outward(clip, false),
+        Rect::new(274.0, 8.5, 526.0, 88.25)
+    );
+    assert_eq!(
+        snap_column_clip_outward(clip, true),
+        Rect::new(274.5, 8.0, 525.25, 89.0)
+    );
+}
+
+#[test]
+fn a_fragment_clip_on_a_fractional_column_edge_does_not_dim_the_first_ink_column() {
+    // Three columns of 250.67px at x = 8, 274.67 and 541.33. The paragraph in
+    // the wrapper starts in the second column and breaks into the third,
+    // where each piece of it is clipped to the column; a paragraph directly
+    // in the multicol container is not. Both must paint the same pixels.
+    let page = |lines: &str| {
+        format!(
+            "<!DOCTYPE html><style>.c{{columns:3;column-fill:auto;height:5em;orphans:3;widows:3;font:16px/1 Ahem}}</style><body><div class=c><div>a<br>b<br>c<br></div>{lines}</div></body>"
+        )
+    };
+    let rows = "d<br>e<br>f<br>g<br>h<br>i<br>j<br>";
+    let wrapped = paged_scene(&page(&format!("<div><div>{rows}</div></div>")));
+    let direct = paged_scene(&page(&format!("<div>{rows}</div>")));
+    let clips = clip_layer_bounds(&wrapped);
+    assert_eq!(
+        clips.len(),
+        2,
+        "one clip for each column the paragraph is in"
+    );
+    for clip in clips {
+        assert_eq!((clip.x0.fract(), clip.x1.fract()), (0.0, 0.0), "{clip:?}");
+    }
+    let raster = |scene: Scene| {
+        anyrender::render_to_buffer::<anyrender_vello_cpu::VelloCpuImageRenderer, _>(
+            |renderer| renderer.append_scene(scene, Affine::IDENTITY),
+            800,
+            600,
+        )
+    };
+    assert!(
+        raster(wrapped) == raster(direct),
+        "the wrapped paragraph paints differently from the direct one"
+    );
+}
