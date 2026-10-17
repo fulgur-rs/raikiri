@@ -3880,10 +3880,11 @@ fn inter_character_ruby_annotations_compute_to_vertical_rl() {
         "rt",
         Some("display: ruby-text; margin-inline-start: 5px"),
     );
-    // An explicit annotation container and the annotation it holds.
+    // An explicit annotation container keeps its writing mode; the
+    // annotation it holds is forced.
     let rtc = doc.push_element(ruby, "rtc", Some("display: ruby-text-container"));
     let inner = doc.push_element(rtc, "rt", Some("display: ruby-text"));
-    // An annotation that sets a writing mode of its own keeps it.
+    // An annotation's own writing mode is forced too.
     let own = doc.push_element(
         ruby,
         "rt",
@@ -3902,12 +3903,15 @@ fn inter_character_ruby_annotations_compute_to_vertical_rl() {
         WritingMode::HorizontalTb
     );
     assert_eq!(r.computed[rt].cssom_writing_mode, WritingMode::VerticalRl);
-    assert_eq!(r.computed[rtc].cssom_writing_mode, WritingMode::VerticalRl);
+    assert_eq!(
+        r.computed[rtc].cssom_writing_mode,
+        WritingMode::HorizontalTb
+    );
     assert_eq!(
         r.computed[inner].cssom_writing_mode,
         WritingMode::VerticalRl
     );
-    assert_eq!(r.computed[own].cssom_writing_mode, WritingMode::VerticalLr);
+    assert_eq!(r.computed[own].cssom_writing_mode, WritingMode::VerticalRl);
     assert_eq!(
         r.computed[floated].cssom_writing_mode,
         WritingMode::HorizontalTb

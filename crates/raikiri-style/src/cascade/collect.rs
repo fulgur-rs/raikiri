@@ -901,7 +901,6 @@ pub(crate) fn flow_mapping(
     let mut direction: Option<RankedDecl> = None;
     let mut display: Option<RankedDecl> = None;
     let mut float: Option<RankedDecl> = None;
-    let mut ruby_position: Option<RankedDecl> = None;
     for (idx, candidate) in decls.iter().enumerate() {
         let slot = match candidate.key() {
             PropertyKey::WritingMode => &mut writing_mode,
@@ -909,7 +908,6 @@ pub(crate) fn flow_mapping(
             PropertyKey::Direction => &mut direction,
             PropertyKey::Display => &mut display,
             PropertyKey::Float => &mut float,
-            PropertyKey::RubyPosition => &mut ruby_position,
             _ => continue,
         };
         let ranked = candidate.precedence().ranked(idx);
@@ -940,14 +938,8 @@ pub(crate) fn flow_mapping(
         Some(PropertyValue::Float(float)) => float,
         _ => FloatValue::None,
     };
-    let ruby_position = match winner(ruby_position) {
-        Some(PropertyValue::RubyPosition(position)) => position,
-        _ => inherited.ruby_position,
-    };
     let writing_mode = if crate::specified::is_inter_character_annotation(
         crate::property::resolve_display_for_float(display, float),
-        ruby_position,
-        writing_mode,
         inherited,
     ) {
         WritingMode::VerticalRl
