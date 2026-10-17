@@ -46,9 +46,12 @@ impl ImageBrushCache {
     }
 
     /// This cache for a raster output with `device_scale` device pixels per
-    /// CSS pixel, or for a vector output with `None`.
+    /// CSS pixel, or for a vector output with `None` or a scale that is not
+    /// finite and positive.
     pub(crate) fn with_device_scale(mut self, device_scale: Option<f32>) -> Self {
-        self.device_scale = device_scale.map(f64::from);
+        self.device_scale = device_scale
+            .filter(|scale| scale.is_finite() && *scale > 0.0)
+            .map(f64::from);
         self
     }
 

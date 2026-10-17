@@ -107,8 +107,12 @@ fn a_whole_brush_does_not_hide_missing_crop_pixels() {
 #[test]
 fn the_device_grid_follows_the_root_and_paint_transforms() {
     let cache = ImageBrushCache::default();
-    // A vector output has no device pixels.
+    // A vector output has no device pixels, nor does an invalid scale.
     assert_eq!(cache.device_grid(Affine::IDENTITY), None);
+    for invalid in [-1.0, 0.0, f32::NAN] {
+        let cache = ImageBrushCache::default().with_device_scale(Some(invalid));
+        assert_eq!(cache.device_grid(Affine::IDENTITY), None);
+    }
     let cache = cache.with_device_scale(Some(2.0));
     cache.set_root_transform(Affine::translate((0.25, 0.0)));
     assert_eq!(
