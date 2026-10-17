@@ -3618,25 +3618,53 @@ fn missing_glyph_boxes_are_drawn_only_on_horizontal_lines() {
 }
 
 #[test]
-fn missing_glyph_boxes_skip_advances_too_narrow_for_a_box() {
+fn missing_glyph_boxes_keep_their_size_under_negative_letter_spacing() {
+    // The spacing narrows the layout advance, not the box, as with glyph ink.
+    let scene = painted_root(
+        "width:100px;font-size:20px;letter-spacing:-16px",
+        |doc, root| {
+            doc.append_text(root, "\u{FDD0}");
+        },
+    );
+    let boxes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Stroke(stroke) => Some(kurbo::Shape::bounding_box(
+                &(stroke.transform * stroke.shape.clone()),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    // One em less the insets on both sides.
+    assert!((boxes[0].width() - 14.75).abs() < 0.01, "{boxes:?}");
+}
+
+#[test]
+fn missing_glyph_boxes_skip_non_finite_positions_and_sizes() {
     let mut scene = Scene::new();
-    let glyph = |x, advance| raikiri_dom::LineGlyph {
+    let glyph = |x, y| raikiri_dom::LineGlyph {
         id: 0,
         x,
-        y: 20.0,
-        advance,
+        y,
+        advance: 10.0,
         cluster: 0,
     };
     crate::text::draw_missing_glyph_boxes(
         &mut scene,
-        &[glyph(0.0, 2.0), glyph(2.0, f32::NAN), glyph(4.0, 10.0)],
+        &[
+            glyph(f32::NAN, 20.0),
+            glyph(0.0, f32::INFINITY),
+            glyph(4.0, 20.0),
+        ],
         10.0,
         peniko::Color::BLACK,
         Affine::IDENTITY,
     );
     crate::text::draw_missing_glyph_boxes(
         &mut scene,
-        &[glyph(0.0, 10.0)],
+        &[glyph(0.0, 20.0)],
         0.0,
         peniko::Color::BLACK,
         Affine::IDENTITY,
