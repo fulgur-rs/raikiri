@@ -178,16 +178,17 @@ fn collapsed_rows_join_the_lines_on_either_side_in_the_collapsing_model() {
 }
 
 #[test]
-fn the_joined_line_is_the_narrowest_line_in_the_collapsed_run() {
-    // The last row has no top border, so it shares no line with the first.
+fn the_rows_around_a_collapsed_run_share_their_resolved_line() {
+    // Once the collapsed row is gone, the first row's 4px bottom border wins
+    // the line it shares with the last row, which absorbs it.
     let (doc, _, cells) = collapsing_table(&[
         (ROW, "border-bottom:4px solid black"),
-        (COLLAPSED, "border-top:4px solid black"),
+        (COLLAPSED, "border-top:1px solid black"),
         (ROW, ""),
     ]);
     assert_eq!(
         cell_box(&doc, cells[2]).0 - cell_box(&doc, cells[0]).0,
-        20.0
+        16.0
     );
 }
 

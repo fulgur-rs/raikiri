@@ -441,18 +441,24 @@ fn compute_table_layout_checked(
     let cell_index =
         (collapse && !grid.rows.is_empty() && grid.n_cols > 0).then(|| CellIndex::new(&grid));
     let collapsed_rows = collapsed_rows(doc, &grid);
-    if cell_index.is_some() {
-        // Collapsed rows take no part in border conflict resolution: the rows
-        // around them, and the table edge, resolve against each other.
-        let shown = collapsed_rows
-            .contains(&true)
-            .then(|| without_collapsed_rows(&grid, &collapsed_rows));
-        let shown = shown.as_ref().unwrap_or(&grid);
-        if !shown.rows.is_empty() {
-            let index = CellIndex::new(shown);
-            resolve_collapsed_row_borders(doc, shown);
-            resolve_collapsed_cell_borders(doc, shown, &index);
-            resolve_collapsed_table_edges(doc, shown, table_idx);
+    // Collapsed rows take no part in border conflict resolution: the rows
+    // around them, and the table edge, resolve against each other.
+    let shown = (cell_index.is_some() && collapsed_rows.contains(&true))
+        .then(|| without_collapsed_rows(&grid, &collapsed_rows));
+    let shown_index = shown
+        .as_ref()
+        .filter(|shown| !shown.rows.is_empty())
+        .map(CellIndex::new);
+    if let Some(index) = cell_index.as_ref() {
+        let (resolved, index) = match (shown.as_ref(), shown_index.as_ref()) {
+            (Some(shown), Some(shown_index)) => (Some(shown), shown_index),
+            (Some(_), None) => (None, index),
+            (None, _) => (Some(&grid), index),
+        };
+        if let Some(resolved) = resolved {
+            resolve_collapsed_row_borders(doc, resolved);
+            resolve_collapsed_cell_borders(doc, resolved, index);
+            resolve_collapsed_table_edges(doc, resolved, table_idx);
         }
     }
     let vertical_writing = table_writing_mode(doc, table_idx).is_vertical();
@@ -490,72 +496,43 @@ fn compute_table_layout_checked(
 
     // Collapsed grid lines (collapse only; separate keeps zero overlaps so
     // the positioning path below is shared).
-    let mut collapsed = if let Some(index) = cell_index.as_ref() {
-        compute_collapsed_lines(doc, &grid, index, &table_border, inputs.parent_size.width)
-    } else {
-        CollapsedLines::separate(&table_border)
-    };
     // Collapsed rows keep their measured contribution to the columns and to
     // spanning cells, then lose their height and spacing (CSS Tables 3,
-    // "Visibility-collapse rendering"). The rows on either side of a run of
-    // collapsed rows meet at one line, approximated by the narrowest line in
-    // the run; a run at either end of the table leaves no line behind.
-    let lines = collapsed.row_overlaps.clone();
-    let mut previous_kept: Option<usize> = None;
-    for (row, &row_collapsed) in collapsed_rows.iter().enumerate() {
-        if row_collapsed {
-            if let Some(line) = collapsed.row_overlaps.get_mut(row) {
-                *line = 0.0;
+    // "Visibility-collapse rendering"). Their lines come from the rows that
+    // remain: the rows around a collapsed run meet at their resolved line,
+    // and a run at either end of the table leaves no line behind.
+    let collapsed = match (cell_index.as_ref(), shown.as_ref(), shown_index.as_ref()) {
+        (None, ..) => CollapsedLines::separate(&table_border),
+        (Some(index), None, _) => {
+            compute_collapsed_lines(doc, &grid, index, &table_border, inputs.parent_size.width)
+        }
+        (Some(_), Some(shown), Some(shown_index)) => {
+            let lines = compute_collapsed_lines(
+                doc,
+                shown,
+                shown_index,
+                &table_border,
+                inputs.parent_size.width,
+            );
+            let kept: Vec<usize> = (0..collapsed_rows.len())
+                .filter(|&row| !collapsed_rows[row])
+                .collect();
+            let mut row_overlaps = vec![0.0; grid.rows.len() - 1];
+            for (line, rows) in lines.row_overlaps.iter().zip(kept.windows(2)) {
+                row_overlaps[rows[0]] = *line;
             }
-            if let Some(line) = row
-                .checked_sub(1)
-                .and_then(|line| collapsed.row_overlaps.get_mut(line))
-            {
-                *line = 0.0;
+            CollapsedLines {
+                row_overlaps,
+                ..lines
             }
-            continue;
         }
-        if let Some(kept) = previous_kept
-            && row > kept + 1
-            && let Some(line) = collapsed.row_overlaps.get_mut(kept)
-        {
-            *line = lines[kept..row]
-                .iter()
-                .copied()
-                .fold(f32::INFINITY, f32::min);
-        }
-        previous_kept = Some(row);
-    }
-    // A collapsed row at either end gives way to the outermost row that
-    // remains, so its cells' borders no longer form the table's outer edge.
-    if collapse && collapsed_rows.contains(&true) {
-        let first_kept = collapsed_rows.iter().position(|collapsed| !collapsed);
-        let last_kept = collapsed_rows.iter().rposition(|collapsed| !collapsed);
-        let edge = |kept: Option<usize>, side: fn(&Rect<f32>) -> f32, table_side: f32| {
-            grid.cells
-                .iter()
-                .filter(|cell| {
-                    kept.is_some_and(|row| {
-                        (cell.row as usize..cell.row as usize + cell.row_span as usize)
-                            .contains(&row)
-                    })
-                })
-                .map(|cell| {
-                    side(&cell_border_sides(
-                        doc,
-                        cell.node_id,
-                        inputs.parent_size.width,
-                    ))
-                })
-                .fold(table_side, f32_max_compat)
-        };
-        if first_kept != Some(0) {
-            collapsed.outer_top = edge(first_kept, |border| border.top, table_border.top);
-        }
-        if last_kept != Some(grid.rows.len() - 1) {
-            collapsed.outer_bottom = edge(last_kept, |border| border.bottom, table_border.bottom);
-        }
-    }
+        (Some(index), Some(_), None) => CollapsedLines {
+            row_overlaps: vec![0.0; grid.rows.len() - 1],
+            outer_top: table_border.top,
+            outer_bottom: table_border.bottom,
+            ..compute_collapsed_lines(doc, &grid, index, &table_border, inputs.parent_size.width)
+        },
+    };
     let border_spacing = if collapse {
         (0.0, 0.0)
     } else {
