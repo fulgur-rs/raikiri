@@ -3650,6 +3650,8 @@ fn zero_advance_stub_glyphs_take_no_box_of_their_own() {
         ("\u{FDD0}\u{FE0F}", 1),
         ("\u{FDD0}\u{0301}", 1),
         ("\u{FDD0}\u{200D}\u{FDD1}\u{FE0F}", 2),
+        // One grapheme: the mark sits half an em into the first box.
+        ("\u{1F600}\u{0301}\u{200D}\u{1F600}", 2),
     ] {
         let scene = painted_root("width:200px;font-size:20px", |doc, root| {
             doc.append_text(root, text);

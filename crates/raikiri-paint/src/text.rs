@@ -73,7 +73,7 @@ pub(crate) fn draw_missing_glyph_boxes(
 /// none, so they stay invisible. A cluster thus takes one box per em of its
 /// shaping advance. A zero-advance glyph shares its origin with a neighbor
 /// in its cluster, or sits half an em back for a mark, so the boxes go at
-/// the cluster's distinct origins from the left.
+/// the cluster's distinct origins on its em grid.
 pub(crate) fn missing_glyph_origins(
     run: &shodo::GlyphRunView<'_>,
     glyphs: impl IntoIterator<Item = (u32, f32, f32)>,
@@ -101,7 +101,32 @@ pub(crate) fn missing_glyph_origins(
             glyphs[start..end].iter().map(|&(_, x, y)| (x, y)).collect();
         points.sort_by(|a, b| a.0.total_cmp(&b.0));
         points.dedup_by(|b, a| (b.0 - a.0).abs() < size * 1e-3);
-        origins.extend(points.into_iter().take(boxes as usize));
+        // The characters with an em sit one em apart. A mark sits half an em
+        // off that grid, so the boxes go on the grid that holds the most
+        // origins, starting from the leftmost such origin.
+        let count = boxes as usize;
+        let on_grid = |anchor: f32, x: f32| {
+            let steps = (x - anchor) / size;
+            let step = steps.round();
+            (steps - step).abs() < 1e-3 && step >= 0.0 && (step as usize) < count
+        };
+        let anchor = points
+            .iter()
+            .map(|&(anchor, _)| {
+                let matches = points.iter().filter(|&&(x, _)| on_grid(anchor, x)).count();
+                (matches, anchor)
+            })
+            .fold(
+                None,
+                |best: Option<(usize, f32)>, (matches, anchor)| match best {
+                    Some((most, _)) if most >= matches => best,
+                    _ => Some((matches, anchor)),
+                },
+            )
+            .map(|(_, anchor)| anchor);
+        if let Some(anchor) = anchor {
+            origins.extend(points.into_iter().filter(|&(x, _)| on_grid(anchor, x)));
+        }
     }
     origins
 }
