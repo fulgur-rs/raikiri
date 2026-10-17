@@ -87,6 +87,7 @@ fn a_grid_image_stretched_on_both_axes_fills_its_area() {
         for (grid_css, image_css) in [
             ("", "align-self:stretch;justify-self:stretch"),
             ("align-items:stretch;justify-items:stretch", ""),
+            ("place-items:stretch", "grid-row:span 1"),
         ] {
             let grid = doc.append_element(
                 Some(body),
@@ -98,7 +99,7 @@ fn a_grid_image_stretched_on_both_axes_fills_its_area() {
         }
     });
     let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
-    assert_eq!(sizes, vec![(100.0, 100.0); 2]);
+    assert_eq!(sizes, vec![(100.0, 100.0); 3]);
 }
 
 #[test]
@@ -186,4 +187,23 @@ fn stretched_grid_images_fill_fixed_implicit_rows_but_not_repeated_ones() {
     assert_eq!(&sizes[..2], &[(100.0, 100.0); 2]);
     // A repeat() row list is not inspected and keeps the ratio.
     assert_eq!(sizes[2], (100.0, 200.0));
+}
+
+#[test]
+fn a_lone_stretched_grid_image_placed_in_an_implicit_row_keeps_its_ratio() {
+    let mut images = Vec::new();
+    let doc = laid_out(|doc, body| {
+        for placement in ["grid-row:2", "grid-row:span 2"] {
+            let grid = doc.append_element(
+                Some(body),
+                "div",
+                Style::default(),
+                Some("display:grid;grid-template-rows:100px;grid-template-columns:100px;place-items:stretch"),
+            );
+            images.push(doc.append_element(Some(grid), "img", Style::default(), Some(placement)));
+        }
+    });
+    let sizes: Vec<_> = images.into_iter().map(|image| size(&doc, image)).collect();
+    assert_eq!(sizes[0], (100.0, 200.0));
+    assert_eq!(sizes[1].0 / sizes[1].1, 0.5);
 }

@@ -826,8 +826,8 @@ fn stretches_on_both_grid_axes(doc: &Document, idx: usize, cv: &ComputedValues) 
 
 /// Whether every row an item of `grid` can land in has a fixed length, so
 /// no item contributes to a row's size: the explicit rows are fixed, and so
-/// are the implicit ones unless the grid has a single in-flow item, which
-/// auto-placement puts in the first explicit row.
+/// are the implicit ones unless the grid has a single in-flow item with an
+/// automatic one-row placement, which puts it in the first explicit row.
 fn has_only_fixed_rows(doc: &Document, grid: usize) -> bool {
     use taffy::TraversePartialTree;
     let fixed = |track: &taffy::TrackSizingFunction| {
@@ -841,17 +841,22 @@ fn has_only_fixed_rows(doc: &Document, grid: usize) -> bool {
             taffy::GridTemplateComponent::Repeat(_) => false,
         });
     let implicit = !style.grid_auto_rows.is_empty() && style.grid_auto_rows.iter().all(fixed);
-    explicit
-        && (implicit
-            || doc
-                .child_ids(taffy::NodeId::from(grid))
-                .filter(|&child| {
-                    let child = &doc.nodes[usize::from(child)].style;
-                    child.display != taffy::Display::None
-                        && child.position != taffy::Position::Absolute
-                })
-                .count()
-                == 1)
+    let mut items = doc.child_ids(taffy::NodeId::from(grid)).filter(|&child| {
+        let child = &doc.nodes[usize::from(child)].style;
+        child.display != taffy::Display::None && child.position != taffy::Position::Absolute
+    });
+    let lone_auto_placed_item = match (items.next(), items.next()) {
+        (Some(item), None) => {
+            let row = &doc.nodes[usize::from(item)].style.grid_row;
+            use taffy::GridPlacement::{Auto, Span};
+            matches!(
+                (&row.start, &row.end),
+                (Auto, Auto) | (Auto, Span(1)) | (Span(1), Auto)
+            )
+        }
+        _ => false,
+    };
+    explicit && (implicit || lone_auto_placed_item)
 }
 
 /// Supply the dimensions of the small set of WPT image assets whose bytes are
