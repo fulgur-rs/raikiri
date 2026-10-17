@@ -666,6 +666,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                                 coords: &coords,
                                 glyph_transform,
                                 document,
+                                missing_glyph_boxes: !vertical && !draw.turned,
                                 emphasis_origin: emphasis_origin(
                                     position,
                                     line.block_offset(),
@@ -716,6 +717,16 @@ pub(crate) fn hold_ifc_lines<'a>(
                         run_transform,
                         glyph_transform,
                         draw.glyphs.iter().map(anyrender_glyph),
+                    );
+                } else if !vertical && !draw.turned {
+                    // Horizontal runs only: a vertical run's advances run
+                    // down the line, which the boxes do not follow yet.
+                    crate::text::draw_missing_glyph_boxes(
+                        scene,
+                        &draw.glyphs,
+                        font_size,
+                        draw.color,
+                        run_transform,
                     );
                 }
                 // Emphasis marks sit over or under their characters; vertical
@@ -974,6 +985,8 @@ struct ShadowRun<'a, 'b> {
     /// Where the run's emphasis marks are placed from: its start and its
     /// baseline.
     emphasis_origin: (f32, f32),
+    /// The run draws missing-glyph boxes where its font has no outlines.
+    missing_glyph_boxes: bool,
 }
 
 /// The start and baseline a run's emphasis marks are placed from.
@@ -1068,6 +1081,14 @@ fn draw_shadow(
             shadow_transform,
             run.glyph_transform,
             run.draw.glyphs.iter().map(anyrender_glyph),
+        );
+    } else if run.missing_glyph_boxes {
+        crate::text::draw_missing_glyph_boxes(
+            scene,
+            &run.draw.glyphs,
+            font_size,
+            css_color_to_peniko(color),
+            shadow_transform,
         );
     }
     let (x, baseline) = run.emphasis_origin;

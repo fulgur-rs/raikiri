@@ -27,6 +27,42 @@ pub(crate) fn has_glyph_outlines(font: &peniko::FontData) -> bool {
         .is_ok()
 }
 
+/// Draw the missing-glyph boxes of a run shaped with shodo's stub face, as
+/// browsers draw a box for a character no font covers. Each glyph gets an
+/// outlined box inside its advance that rises from the baseline, in the
+/// coordinates of the run's glyph positions.
+pub(crate) fn draw_missing_glyph_boxes(
+    scene: &mut impl PaintScene,
+    glyphs: &[raikiri_dom::LineGlyph],
+    font_size: f32,
+    color: Color,
+    transform: Affine,
+) {
+    let size = f64::from(font_size);
+    if !(size.is_finite() && size > 0.0) {
+        return;
+    }
+    let line = size / 16.0;
+    let stroke = Stroke::new(line);
+    for glyph in glyphs {
+        let (x, y) = (f64::from(glyph.x), f64::from(glyph.y));
+        let advance = f64::from(glyph.advance);
+        // Inset by half the line width plus a gap, so neighboring boxes and
+        // their strokes stay apart.
+        let inset = size * 0.1 + line / 2.0;
+        if !(advance.is_finite() && x.is_finite() && y.is_finite()) || advance <= 2.0 * inset {
+            continue;
+        }
+        let rect = Rect::new(
+            x + inset,
+            y - size * 0.7 + line / 2.0,
+            x + advance - inset,
+            y - line / 2.0,
+        );
+        scene.stroke(&stroke, transform, color, None, &rect);
+    }
+}
+
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {
     if enabled {
         let size = font_size as f64;
