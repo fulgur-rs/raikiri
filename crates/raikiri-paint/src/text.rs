@@ -86,8 +86,9 @@ pub(crate) fn missing_glyph_origins(
     let mut origins = Vec::new();
     for cluster in run.clusters() {
         let boxes = (cluster.shaping_advance / size).round();
-        // A zero font size gives no count at all.
-        if boxes.is_nan() || boxes < 1.0 {
+        // A zero font size gives no count at all. With no font in the
+        // document, the stub face also shapes white space, which stays blank.
+        if boxes.is_nan() || boxes < 1.0 || cluster.flags.whitespace {
             continue;
         }
         let start =
