@@ -3542,24 +3542,23 @@ fn a_wrapping_vertical_inline_slices_its_shadow_from_the_joined_box() {
 }
 
 #[test]
-fn characters_no_font_covers_draw_no_glyphs_but_keep_their_decorations() {
+fn characters_no_font_covers_draw_missing_glyph_boxes_and_keep_their_decorations() {
     // U+FDD0 is a noncharacter, so no font covers it and shodo shapes it with
     // its stub face, which has no outlines for a renderer to scale.
     let scene = painted_root(
-        "width:100px;text-shadow:1px 1px red;text-decoration:underline",
+        "width:100px;font-size:20px;color:rgb(0,0,255);\
+         text-shadow:1px 1px rgb(255,0,0);text-decoration:underline",
         |doc, root| {
-            doc.append_text(root, "\u{FDD0}");
+            doc.append_text(root, "\u{FDD0}\u{FDD0}");
         },
     );
-    let runs: Vec<_> = scene
-        .commands
-        .iter()
-        .filter_map(|command| match command {
-            RenderCommand::GlyphRun(run) => Some(run),
-            _ => None,
-        })
-        .collect();
-    assert!(runs.is_empty(), "drew {} glyph runs", runs.len());
+    assert!(
+        !scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::GlyphRun(_))),
+        "the stub face has no glyphs to draw"
+    );
     assert!(
         scene
             .commands
@@ -3567,6 +3566,157 @@ fn characters_no_font_covers_draw_no_glyphs_but_keep_their_decorations() {
             .any(|command| matches!(command, RenderCommand::Fill(_))),
         "the underline and its shadow still paint"
     );
+    // One outlined box per character, for the shadow and then for the text,
+    // each inside its own advance and above the baseline.
+    let boxes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Stroke(stroke) => Some((
+                kurbo::Shape::bounding_box(&(stroke.transform * stroke.shape.clone())),
+                stroke.brush.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boxes.len(), 4, "{boxes:?}");
+    let (red, blue) = (solid(255, 0, 0), solid(0, 0, 255));
+    assert!(
+        boxes[..2].iter().all(|(_, brush)| *brush == red),
+        "{boxes:?}"
+    );
+    assert!(
+        boxes[2..].iter().all(|(_, brush)| *brush == blue),
+        "{boxes:?}"
+    );
+    let (first, second) = (boxes[2].0, boxes[3].0);
+    assert!(
+        first.x1 < second.x0,
+        "the boxes stay apart: {first:?} {second:?}"
+    );
+    // 0.7em tall, less the 1/16em line width.
+    assert!((first.height() - 12.75).abs() < 0.01, "{first:?}");
+    assert!(
+        (second.width() - first.width()).abs() < 0.01,
+        "{first:?} {second:?}"
+    );
+    let shadow = boxes[0].0;
+    assert!((shadow.x0 - first.x0 - 1.0).abs() < 0.01 && (shadow.y0 - first.y0 - 1.0).abs() < 0.01);
+}
+
+#[test]
+fn missing_glyph_boxes_are_drawn_only_on_horizontal_lines() {
+    let scene = painted_root("height:100px;writing-mode:vertical-rl", |doc, root| {
+        doc.append_text(root, "\u{FDD0}");
+    });
+    assert!(
+        !scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Stroke(_))),
+    );
+}
+
+#[test]
+fn missing_glyph_boxes_keep_their_size_under_negative_letter_spacing() {
+    // The spacing narrows the layout advance, not the box, as with glyph ink.
+    let scene = painted_root(
+        "width:100px;font-size:20px;letter-spacing:-16px",
+        |doc, root| {
+            doc.append_text(root, "\u{FDD0}");
+        },
+    );
+    let boxes: Vec<_> = scene
+        .commands
+        .iter()
+        .filter_map(|command| match command {
+            RenderCommand::Stroke(stroke) => Some(kurbo::Shape::bounding_box(
+                &(stroke.transform * stroke.shape.clone()),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(boxes.len(), 1, "{boxes:?}");
+    // One em less the insets on both sides.
+    assert!((boxes[0].width() - 14.75).abs() < 0.01, "{boxes:?}");
+}
+
+#[test]
+fn zero_advance_stub_glyphs_take_no_box_of_their_own() {
+    // The stub face gives joiners, variation selectors and marks no advance
+    // so they stay invisible; only the characters with an em take a box.
+    for (text, font_size, expected) in [
+        ("\u{FDD0}\u{200D}\u{FDD1}", "20px", 2),
+        ("\u{FDD0}\u{FE0F}", "20px", 1),
+        ("\u{FDD0}\u{0301}", "20px", 1),
+        ("\u{FDD0}\u{200D}\u{FDD1}\u{FE0F}", "20px", 2),
+        // One grapheme: the mark sits half an em into the first box.
+        ("\u{1F600}\u{0301}\u{200D}\u{1F600}", "20px", 2),
+        // Layout rounds a fractional em, so the boxes follow the rounded one.
+        ("\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}", "10.1px", 3),
+        (
+            "\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}",
+            "10.1px",
+            5,
+        ),
+        (
+            "\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}\u{200D}\u{1F600}",
+            "0.1px",
+            9,
+        ),
+    ] {
+        let style = format!("width:200px;font-size:{font_size}");
+        let scene = painted_root(&style, |doc, root| {
+            doc.append_text(root, text);
+        });
+        let boxes: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Stroke(stroke) => Some(kurbo::Shape::bounding_box(
+                    &(stroke.transform * stroke.shape.clone()),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(boxes.len(), expected, "{text:?}: {boxes:?}");
+        for pair in boxes.windows(2) {
+            assert!(pair[0].x1 < pair[1].x0, "{text:?}: {boxes:?}");
+        }
+    }
+}
+
+#[test]
+fn a_zero_font_size_draws_no_missing_glyph_boxes() {
+    let scene = painted_root("width:200px;font-size:0", |doc, root| {
+        doc.append_text(root, "\u{FDD0}");
+    });
+    assert!(
+        !scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Stroke(_)))
+    );
+}
+
+#[test]
+fn missing_glyph_boxes_skip_non_finite_positions_and_sizes() {
+    let mut scene = Scene::new();
+    crate::text::draw_missing_glyph_boxes(
+        &mut scene,
+        [(f32::NAN, 20.0), (0.0, f32::INFINITY), (4.0, 20.0)],
+        10.0,
+        peniko::Color::BLACK,
+        Affine::IDENTITY,
+    );
+    crate::text::draw_missing_glyph_boxes(
+        &mut scene,
+        [(0.0, 20.0)],
+        0.0,
+        peniko::Color::BLACK,
+        Affine::IDENTITY,
+    );
+    assert_eq!(scene.commands.len(), 1);
 }
 
 #[test]
