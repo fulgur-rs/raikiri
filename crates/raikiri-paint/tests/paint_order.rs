@@ -1503,3 +1503,27 @@ fn negative_text_on_a_translucent_first_line_covers_the_blocks() {
     };
     assert!(blue("red") < blue("transparent"));
 }
+
+/// A block-level `::after` on a later line than a translucent first line
+/// paints below the paragraph's block, even with no content of its own.
+#[test]
+fn negative_block_pseudo_elements_after_a_translucent_first_line_paint_below_the_blocks() {
+    let css = "#m::first-line { opacity: 0.5 } \
+               #m::after { content: ''; display: block; height: 5px; background: red; \
+               position: relative; z-index: -1 }";
+    let result = assert_same_order(
+        "<div id=m>one<br>two<div id=k style=\"background: gray; height: 10px\"></div>tail</div>",
+        css,
+    );
+    let [m, k] = ["m", "k"].map(|id| by_id(&result, id));
+    let page = result.pages().next().expect("a page");
+    let steps = walker_steps(&page);
+    assert_eq!(steps[step_at(&result, Step::Box(k)) - 1], Step::Text(m));
+    // The block covers the `::after` drawn over it.
+    let result = lay_out(
+        "<div id=m>one<br>two\
+         <div style=\"background: gray; height: 40px; margin-bottom: -40px\"></div></div>",
+        css,
+    );
+    assert_eq!(pixels_of(&render_first_page(&result), [255, 0, 0]), 0);
+}

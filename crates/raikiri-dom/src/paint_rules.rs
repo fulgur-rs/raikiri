@@ -363,9 +363,11 @@ fn within_translucent_first_line(document: &Document, root: usize, id: usize) ->
                 )
                 .any(|ancestor| ancestor == id)
     };
-    !document
-        .get_node(root)
-        .and_then(|node| node.ifc_lines())
+    let Some(node) = document.get_node(root) else {
+        return false; // cov:ignore: a translucent first line belongs to a paragraph node
+    };
+    let on_later_lines = node
+        .ifc_lines()
         .into_iter()
         .flatten()
         .skip(1)
@@ -376,7 +378,14 @@ fn within_translucent_first_line(document: &Document, root: usize, id: usize) ->
             shodo::Fragment::InlineBox(inline) => Some(inline.node.0 as usize),
             shodo::Fragment::RubyAnnotation(_) | shodo::Fragment::OutOfFlowAnchor(_) => None,
         })
-        .any(inside)
+        .any(inside);
+    // A block-level `::before` or `::after` paints its own box with the
+    // line it goes with, which need not hold any of its content.
+    !on_later_lines
+        && !node
+            .ifc_generated_block_pieces()
+            .iter()
+            .any(|piece| piece.line > 0 && inside(piece.node))
 }
 
 /// The stack level a pseudo-element group of [`pseudo_opacity_layer`]
