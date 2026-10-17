@@ -531,11 +531,10 @@ fn snapping_follows_the_offset_and_scale_of_each_axis() {
     .expect("geometry");
     for part in &geometry.parts {
         let (x, y, w, h) = part.area;
-        for edge in [x + w] {
-            let device = edge * 1.5 + 0.25;
-            if edge != 200.0 {
-                assert!((device - device.round()).abs() < 1e-9, "{edge}");
-            }
+        let right = x + w;
+        let device = right * 1.5 + 0.25;
+        if right != 200.0 {
+            assert!((device - device.round()).abs() < 1e-9, "{right}");
         }
         for edge in [y, y + h] {
             let device = edge * 3.0;
