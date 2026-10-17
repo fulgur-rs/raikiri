@@ -173,6 +173,19 @@ pub(crate) fn is_replaced_element(document: &Document, node_id: usize) -> bool {
     })
 }
 
+/// Whether the element lays out as a replaced box with a natural size: it
+/// keeps that size instead of stretching to fill an auto width or a
+/// `normal`-aligned grid area (CSS 2.1 §10.3.4, CSS Grid 1 §6.2). Replaced
+/// content without a resolved natural size (an `<iframe>`, an unloaded
+/// `<video>`, an `<object>` showing fallback) and inline SVG roots, whose auto
+/// width is 100%, keep the ordinary block sizing.
+pub(crate) fn lays_out_as_replaced(document: &Document, node_id: usize) -> bool {
+    let node = &document.nodes[node_id];
+    is_replaced_element(document, node_id)
+        && !node.is_inline_svg_root()
+        && node.image_intrinsic_box().is_some()
+}
+
 /// Resolve the clip of a replaced element's own content (its image or canvas
 /// bitmap) in paint coordinates, from its used border box, border widths and
 /// padding. Each clipping axis clips at the overflow clip edge, the content

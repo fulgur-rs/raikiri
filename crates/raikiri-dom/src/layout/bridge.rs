@@ -226,6 +226,9 @@ pub(crate) fn apply_computed_to_style(
                 && !super::fixed::establishes_fixed_containing_block(doc, idx, cv);
         doc.nodes[idx].fixed_position = cv.position == PositionValue::Fixed;
         bridge_size(doc, idx, cv);
+        // Replaced elements keep their natural size where an auto width or
+        // `normal` alignment would stretch other boxes.
+        doc.nodes[idx].style.item_is_replaced = crate::paint_rules::lays_out_as_replaced(doc, idx);
         // An intrinsic ratio only participates when at least one preferred
         // dimension is auto; Taffy's leaf sizing otherwise floors an explicit
         // height to the ratio-derived height.
@@ -263,6 +266,8 @@ pub(crate) fn apply_computed_to_style(
             bridge_known_image_intrinsic_size(doc, idx, cv)
         {
             let style = &mut doc.nodes[idx].style;
+            // The supplied size is the image's natural size.
+            style.item_is_replaced = true;
             if matches!(cv.width, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.width = Dimension::length(intrinsic_width);
             }
@@ -350,6 +355,9 @@ pub(crate) fn apply_computed_to_style(
             if containment.height && matches!(cv.height, ComputedLengthPercentageOrAuto::Auto) {
                 style.size.height = Dimension::auto();
             }
+        }
+        if stretches_on_both_grid_axes(doc, idx, cv) {
+            doc.nodes[idx].style.aspect_ratio = None;
         }
     }
     // Paragraph roots are assigned first: a `display: contents` paragraph
@@ -777,6 +785,80 @@ fn bridge_size(doc: &mut Document, node_id: usize, cv: &ComputedValues) {
         &mut doc.layout_warnings,
     );
     doc.nodes[node_id].style.size = Size { width, height };
+}
+
+/// Whether in-flow replaced grid item `idx` with auto width and height is
+/// stretched along both axes, in which case its natural aspect ratio is
+/// ignored and it fills its grid area (CSS Grid 1 §6.2, csswg-drafts#5713).
+/// An auto margin in either axis turns that axis's stretch off.
+///
+/// The ratio is dropped from the item's style, which also removes it from
+/// track sizing, so this applies only when every row track has a fixed size
+/// and the item's height contribution cannot size a row.
+fn stretches_on_both_grid_axes(doc: &Document, idx: usize, cv: &ComputedValues) -> bool {
+    use taffy::AlignItemsKeyword;
+    let style = &doc.nodes[idx].style;
+    if !style.item_is_replaced
+        || style.aspect_ratio.is_none()
+        || style.position == taffy::Position::Absolute
+        || !matches!(cv.width, ComputedLengthPercentageOrAuto::Auto)
+        || !matches!(cv.height, ComputedLengthPercentageOrAuto::Auto)
+        || [
+            style.margin.left,
+            style.margin.right,
+            style.margin.top,
+            style.margin.bottom,
+        ]
+        .iter()
+        .any(|margin| margin.is_auto())
+    {
+        return false;
+    }
+    let stretch = |value: Option<taffy::AlignItems>, fallback: taffy::AlignItems| {
+        value.unwrap_or(fallback).keyword == AlignItemsKeyword::Stretch
+    };
+    doc.taffy_parent_of(idx).is_some_and(|parent| {
+        let container = &doc.nodes[parent].style;
+        container.display == taffy::Display::Grid
+            && has_only_fixed_rows(doc, parent)
+            && stretch(style.justify_self, container.justify_items)
+            && stretch(style.align_self, container.align_items)
+    })
+}
+
+/// Whether every row an item of `grid` can land in has a fixed length, so
+/// no item contributes to a row's size: the explicit rows are fixed, and so
+/// are the implicit ones unless the grid has a single in-flow item with an
+/// automatic one-row placement, which puts it in the first explicit row.
+fn has_only_fixed_rows(doc: &Document, grid: usize) -> bool {
+    use taffy::TraversePartialTree;
+    let fixed = |track: &taffy::TrackSizingFunction| {
+        track.min.into_raw().tag() == taffy::CompactLength::LENGTH_TAG
+            && track.max.into_raw().tag() == taffy::CompactLength::LENGTH_TAG
+    };
+    let style = &doc.nodes[grid].style;
+    let explicit = !style.grid_template_rows.is_empty()
+        && style.grid_template_rows.iter().all(|row| match row {
+            taffy::GridTemplateComponent::Single(track) => fixed(track),
+            taffy::GridTemplateComponent::Repeat(_) => false,
+        });
+    let implicit = !style.grid_auto_rows.is_empty() && style.grid_auto_rows.iter().all(fixed);
+    let mut items = doc.child_ids(taffy::NodeId::from(grid)).filter(|&child| {
+        let child = &doc.nodes[usize::from(child)].style;
+        child.display != taffy::Display::None && child.position != taffy::Position::Absolute
+    });
+    let lone_auto_placed_item = match (items.next(), items.next()) {
+        (Some(item), None) => {
+            let row = &doc.nodes[usize::from(item)].style.grid_row;
+            use taffy::GridPlacement::{Auto, Span};
+            matches!(
+                (&row.start, &row.end),
+                (Auto, Auto) | (Auto, Span(1)) | (Span(1), Auto)
+            )
+        }
+        _ => false,
+    };
+    explicit && (implicit || lone_auto_placed_item)
 }
 
 /// Supply the dimensions of the small set of WPT image assets whose bytes are

@@ -1333,6 +1333,40 @@ fn align_self_parse_explicit_reuses_self_alignment_grammar() {
     );
 }
 
+#[test]
+fn left_and_right_align_only_in_the_justify_axis() {
+    for property in ["align-items", "align-self"] {
+        assert_eq!(parse("left", property), None, "{property}");
+        assert_eq!(parse("safe right", property), None, "{property}");
+    }
+    assert_eq!(parse("left", "place-items"), None);
+    assert_eq!(parse("right", "place-self"), None);
+    assert_eq!(
+        parse("left", "justify-items"),
+        Some(PropertyValue::JustifyItems(SelfAlignmentValue::Start))
+    );
+    assert_eq!(
+        parse("right", "justify-self"),
+        Some(PropertyValue::JustifySelf(AlignSelfValue::Value(
+            SelfAlignmentValue::End
+        )))
+    );
+    assert_eq!(
+        parse("center right", "place-items"),
+        Some(PropertyValue::PlaceItems(PlaceItemsShorthand {
+            align: SelfAlignmentValue::Center,
+            justify: SelfAlignmentValue::End,
+        }))
+    );
+    assert_eq!(
+        parse("auto left", "place-self"),
+        Some(PropertyValue::PlaceSelf(PlaceSelfShorthand {
+            align: AlignSelfValue::Auto,
+            justify: AlignSelfValue::Value(SelfAlignmentValue::Start),
+        }))
+    );
+}
+
 // ── row-gap / column-gap (CSS Box Alignment Module Level 3 §8.1) ────
 
 #[test]
