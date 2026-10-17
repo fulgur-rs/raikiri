@@ -229,3 +229,23 @@ fn the_group_of_a_nested_root_is_its_own() {
     });
     assert_eq!(starts, [vec![60.0], vec![80.0]]);
 }
+
+#[test]
+fn a_root_without_a_parent_block_context_groups_its_own_lines() {
+    assert_eq!(
+        starts("text-group-align: end; overflow: hidden", text("AAAA\nAA")),
+        [60.0, 60.0]
+    );
+}
+
+#[test]
+fn physical_group_sides_place_the_group_left_or_right() {
+    assert_eq!(
+        starts("text-group-align: left", text("AAAA\nAA")),
+        [0.0, 0.0]
+    );
+    assert_eq!(
+        starts("text-group-align: right", text("AAAA\nAA")),
+        [60.0, 60.0]
+    );
+}
