@@ -480,11 +480,31 @@ fn compute_table_layout_checked(
 
     // Collapsed grid lines (collapse only; separate keeps zero overlaps so
     // the positioning path below is shared).
-    let collapsed = if let Some(index) = cell_index.as_ref() {
+    let mut collapsed = if let Some(index) = cell_index.as_ref() {
         compute_collapsed_lines(doc, &grid, index, &table_border, inputs.parent_size.width)
     } else {
         CollapsedLines::separate(&table_border)
     };
+    // Collapsed rows keep their measured contribution to the columns and to
+    // spanning cells, then lose their height and spacing (CSS Tables 3,
+    // "Visibility-collapse rendering"). The rows on either side of one meet
+    // at a single collapsed line, so the line after it absorbs nothing (the
+    // line before it when it is the last row).
+    let collapsed_rows = collapsed_rows(doc, &grid);
+    for (row, _) in collapsed_rows
+        .iter()
+        .enumerate()
+        .filter(|(_, collapsed)| **collapsed)
+    {
+        let line = if row < collapsed.row_overlaps.len() {
+            Some(row)
+        } else {
+            row.checked_sub(1)
+        };
+        if let Some(overlap) = line.and_then(|line| collapsed.row_overlaps.get_mut(line)) {
+            *overlap = 0.0;
+        }
+    }
     let border_spacing = if collapse {
         (0.0, 0.0)
     } else {
@@ -582,7 +602,11 @@ fn compute_table_layout_checked(
     // `padding_border_size`. Collapse zeroes `border_spacing`.
     // A row whose overlapping cells all hide their empty boxes has zero
     // height and only one spacing side (CSS 2.2 section 17.6.1.1).
-    let hidden_rows = hidden_empty_rows(doc, &grid);
+    let hidden_rows: Vec<bool> = hidden_empty_rows(doc, &grid)
+        .into_iter()
+        .zip(&collapsed_rows)
+        .map(|(hidden, collapsed)| hidden || *collapsed)
+        .collect();
     let row_gaps: Vec<_> = hidden_rows
         .iter()
         .map(|hidden| if *hidden { 0.0 } else { border_spacing.1 })
@@ -908,7 +932,7 @@ fn compute_table_layout_checked(
         doc,
         &mut grid,
         &column_widths,
-        (&row_heights, &row_gaps),
+        (&row_heights, &row_gaps, &collapsed_rows),
         (&col_origins, &row_origins),
         border_spacing,
         vertical_writing,
@@ -1899,6 +1923,23 @@ fn distribute_columns_with_authored(
     w
 }
 
+/// Rows removed by `visibility: collapse` on the row or its row group (CSS
+/// Tables 3, "Visibility-collapse rendering"). Anonymous rows have no style
+/// of their own and never collapse.
+fn collapsed_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
+    grid.rows
+        .iter()
+        .map(|&row_id| {
+            let row = &doc.nodes[row_id];
+            row.display() == DisplayValue::TableRow
+                && (row.collapses_table_rows
+                    || row
+                        .parent
+                        .is_some_and(|group| doc.nodes[group].collapses_table_rows))
+        })
+        .collect()
+}
+
 fn hidden_empty_rows(doc: &Document, grid: &TableGrid) -> Vec<bool> {
     let mut rows = vec![None; grid.rows.len()];
     for cell in &grid.cells {
@@ -2246,12 +2287,12 @@ fn place_cells(
     doc: &mut Document,
     grid: &mut TableGrid,
     column_widths: &[f32],
-    row_tracks: (&[f32], &[f32]),
+    row_tracks: (&[f32], &[f32], &[bool]),
     origins: (&[f32], &[f32]),
     spacing: (f32, f32),
     vertical_writing: bool,
 ) -> Result<(), raikiri_traits::LayoutError> {
-    let (row_heights, row_gaps) = row_tracks;
+    let (row_heights, row_gaps, collapsed_rows) = row_tracks;
     let (col_x, row_y) = origins;
     let mut row_baselines = vec![0.0f32; row_heights.len()];
     for cell in &grid.cells {
@@ -2266,17 +2307,29 @@ fn place_cells(
     }
     for (order, cell) in grid.cells.iter_mut().enumerate() {
         let columns = cell_column_range(cell, column_widths.len())?;
-        let end_row = (cell.row as usize + cell.row_span as usize).min(row_heights.len());
+        let span_end = (cell.row as usize + cell.row_span as usize).min(row_heights.len());
+        // A cell spanning collapsed rows shrinks to the rows that remain and
+        // clips its contents; with none left it has no block extent (CSS
+        // Tables 3, "Visibility-collapse cell rendering").
+        let mut kept = (cell.row as usize..span_end).filter(|&row| !collapsed_rows[row]);
+        let first_kept = kept.next();
+        let (start_row, end_row) = match first_kept {
+            Some(first) => (first, kept.next_back().unwrap_or(first) + 1),
+            None => (cell.row as usize, cell.row as usize),
+        };
+        let spans_collapsed_row = collapsed_rows[cell.row as usize..span_end]
+            .iter()
+            .any(|collapsed| *collapsed);
+        doc.nodes[cell.node_id].clips_collapsed_table_span = spans_collapsed_row;
         let cell_x = *col_x.get(columns.start).ok_or_else(table_column_error)?;
-        let cell_y = row_y[cell.row as usize];
+        let cell_y = row_y[start_row];
         // Full spanned widths — origins already net out the collapsed
         // overlaps for *positioning*; shrinking the box by the overlap as
         // well would double-count the absorbed line. Separated borders add
         // the spanned gaps instead, matching the origin differences.
         let cell_width = spanned_size(&column_widths[columns], spacing.0);
-        let start_row = cell.row as usize;
         let cell_height = row_heights[start_row..end_row].iter().sum::<f32>()
-            + row_gaps[start_row..end_row.saturating_sub(1)]
+            + row_gaps[start_row..end_row.saturating_sub(1).max(start_row)]
                 .iter()
                 .filter(|gap| **gap != 0.0)
                 .count() as f32
@@ -2333,11 +2386,12 @@ fn place_cells(
             )
         };
         let vertical_cell = vertical_writing && table_writing_mode(doc, cell.node_id).is_vertical();
-        let collapsed_empty = cell_height == 0.0
-            && doc
-                .ifc_layout_node(cell.node_id)
-                .expect("table cell layout view")
-                .hides_empty_table_cell;
+        let collapsed_empty = first_kept.is_none()
+            || cell_height == 0.0
+                && doc
+                    .ifc_layout_node(cell.node_id)
+                    .expect("table cell layout view")
+                    .hides_empty_table_cell;
         if collapsed_empty {
             // Hidden empty rows have no block extent, including the cell's
             // otherwise retained padding/border. Keep the zero content box

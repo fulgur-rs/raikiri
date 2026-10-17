@@ -134,6 +134,47 @@ fn overflow_clip_propagates_a_block_root_to_the_viewport() {
 }
 
 #[test]
+fn a_cell_spanning_a_collapsed_row_clips_its_block_axis() {
+    let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
+    let no_border = PaintInsets::new(0.0, 0.0, 0.0, 0.0);
+    for (css, expected) in [
+        // Visible overflow: only the block axis clips, at the border box.
+        ("display:block", {
+            let mut clip = PaintClip::new(border_box);
+            clip.clip_x = false;
+            clip
+        }),
+        // A clipped inline axis keeps its edges; the block axis joins it.
+        ("display:block;overflow-x:clip;overflow-y:visible", {
+            let mut clip = PaintClip::new(border_box);
+            clip.clip_y = true;
+            clip
+        }),
+        // A clipped block axis keeps its own edge.
+        ("display:block;overflow:clip;overflow-clip-margin:5px", {
+            PaintClip::new(PaintRect::new(5.0, 15.0, 110.0, 60.0))
+        }),
+    ] {
+        let mut doc = Document::new();
+        let node = doc.append_element(Some(doc.root_index()), "div", Style::default(), Some(css));
+        doc.mark_in_document_flags();
+        let cascade = cascaded(&doc);
+        let before = overflow_clip(&doc, &cascade, node, border_box, no_border);
+        assert_eq!(
+            before == Some(expected),
+            css.contains("overflow:clip"),
+            "{css}: only an element clipping both axes clips the same before"
+        );
+        doc.nodes[node].clips_collapsed_table_span = true;
+        assert_eq!(
+            overflow_clip(&doc, &cascade, node, border_box, no_border),
+            Some(expected),
+            "{css}"
+        );
+    }
+}
+
+#[test]
 fn negative_z_index_sorts_before_static_and_positive_after() {
     let mut doc = Document::new();
     let html = doc.append_element(Some(0), "html", Style::default(), None::<&str>);

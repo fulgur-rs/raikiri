@@ -144,12 +144,9 @@ pub fn overflow_clip(
     border_box: PaintRect,
     border: PaintInsets,
 ) -> Option<PaintClip> {
-    if !clips_element_overflow(document, cascade, node_id) {
-        return None;
-    }
-    let padding = document.nodes[node_id].unrounded_layout.padding;
-    let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
-    Some(
+    let clip = clips_element_overflow(document, cascade, node_id).then(|| {
+        let padding = document.nodes[node_id].unrounded_layout.padding;
+        let padding = PaintInsets::new(padding.top, padding.right, padding.bottom, padding.left);
         OverflowClipGeometry::new(
             &cascade.computed[node_id],
             border_box,
@@ -157,8 +154,28 @@ pub fn overflow_clip(
             padding,
             is_replaced_element(document, node_id),
         )
-        .at(border_box),
-    )
+        .at(border_box)
+    });
+    if !document
+        .get_node(node_id)
+        .is_some_and(|node| node.clips_collapsed_table_span)
+    {
+        return clip;
+    }
+    // A cell that spans a collapsed row keeps the rows that remain and clips
+    // the contents that no longer fit to its border box in the block axis
+    // (CSS Tables 3, "Visibility-collapse cell rendering").
+    let Some(mut clip) = clip else {
+        let mut clip = PaintClip::new(border_box);
+        clip.clip_x = false;
+        return Some(clip);
+    };
+    if !clip.clip_y {
+        clip.rect.y = border_box.y;
+        clip.rect.height = border_box.height;
+        clip.clip_y = true;
+    }
+    Some(clip)
 }
 
 /// Whether the element is a replaced element, whose overflow and
