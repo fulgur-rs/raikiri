@@ -2153,6 +2153,7 @@ pub(crate) fn paint_document_impl(
         /// waits for the end of the layer like the positioned boxes. Its
         /// lines leave its paint in `left_groups`.
         InlineGroup {
+            root: usize,
             node_id: usize,
         },
         /// Close a layer of deferred inline content: paint what its blocks
@@ -2318,7 +2319,7 @@ pub(crate) fn paint_document_impl(
     let mut early_boxes: Vec<(usize, usize, anyrender::Scene)> = Vec::new();
     // The paint of the inline groups waiting for the end of their layer (see
     // `PaintFrame::InlineGroup`), in page space, by element.
-    let mut left_groups: std::collections::HashMap<usize, (usize, anyrender::Scene)> =
+    let mut left_groups: std::collections::HashMap<usize, anyrender::Scene> =
         std::collections::HashMap::new();
     // Paragraphs whose text below their blocks was traced before the blocks.
     let mut traced_below = std::collections::HashSet::new();
@@ -2377,7 +2378,7 @@ pub(crate) fn paint_document_impl(
     // How the queue of a layer's positioned boxes reads its frames.
     fn positioned_frame(frame: &PaintFrame<'_>) -> raikiri_dom::paint_rules::PositionedFrame {
         match frame {
-            PaintFrame::Visit { node_id, .. } | PaintFrame::InlineGroup { node_id } => {
+            PaintFrame::Visit { node_id, .. } | PaintFrame::InlineGroup { node_id, .. } => {
                 raikiri_dom::paint_rules::PositionedFrame::Box(*node_id)
             }
             PaintFrame::PushClip { node_id, .. } => {
@@ -2413,7 +2414,7 @@ pub(crate) fn paint_document_impl(
     fn leave_groups<'a>(
         document: &Document,
         deferral_scopes: &mut [DeferralLayer<'a>],
-        left_groups: &mut std::collections::HashMap<usize, (usize, anyrender::Scene)>,
+        left_groups: &mut std::collections::HashMap<usize, anyrender::Scene>,
         root: usize,
         left: Vec<(usize, anyrender::Scene)>,
         clip: Option<(Affine, Rect)>,
@@ -2421,7 +2422,7 @@ pub(crate) fn paint_document_impl(
         for (node_id, content) in left {
             let entry = left_groups.entry(node_id);
             let waiting = matches!(entry, std::collections::hash_map::Entry::Occupied(_));
-            let (_, paint) = entry.or_insert_with(|| (root, anyrender::Scene::default()));
+            let paint = entry.or_default();
             if let Some((transform, clip)) = clip {
                 paint.push_clip_layer(transform, &clip);
                 paint.append_scene(content, Affine::IDENTITY);
@@ -2433,7 +2434,7 @@ pub(crate) fn paint_document_impl(
                 raikiri_dom::paint_rules::insert_positioned_frame(
                     document,
                     &mut layer.positioned,
-                    PaintFrame::InlineGroup { node_id },
+                    PaintFrame::InlineGroup { root, node_id },
                     positioned_frame,
                 );
             }
@@ -3047,24 +3048,23 @@ pub(crate) fn paint_document_impl(
                 }
                 continue;
             }
-            PaintFrame::InlineGroup { node_id } => {
-                if let Some((root, content)) = left_groups.remove(&node_id) {
-                    // The text of one paragraph painted at once is one step,
-                    // even when it spans several groups.
-                    if let Some(t) = trace.as_deref_mut()
-                        && t.last() != Some(&crate::PaintTraceEvent::Text(root))
-                        && traced_text(
-                            document,
-                            cascade,
-                            root,
-                            |_| true,
-                            |owner| in_left_group(document, cascade, root, owner, Some(node_id)),
-                        )
-                    {
-                        t.push(crate::PaintTraceEvent::Text(root));
-                    }
-                    scene.scene.append_scene(content, Affine::IDENTITY);
-                } // cov:ignore: a group's frame is queued once, with its paint, and paints once
+            PaintFrame::InlineGroup { root, node_id } => {
+                // The text of one paragraph painted at once is one step, even
+                // when it spans several groups.
+                if let Some(t) = trace.as_deref_mut()
+                    && t.last() != Some(&crate::PaintTraceEvent::Text(root))
+                    && traced_text(
+                        document,
+                        cascade,
+                        root,
+                        |_| true,
+                        |owner| in_left_group(document, cascade, root, owner, Some(node_id)),
+                    )
+                {
+                    t.push(crate::PaintTraceEvent::Text(root));
+                }
+                let content = left_groups.remove(&node_id).unwrap_or_default();
+                scene.scene.append_scene(content, Affine::IDENTITY);
                 continue;
             }
             PaintFrame::PopClip => {
