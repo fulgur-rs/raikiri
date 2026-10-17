@@ -183,8 +183,7 @@ fn fixed_height_edge_boxes_sit_against_the_page_area_or_center() {
 
 #[test]
 fn box_lengths_resolve_against_their_basis() {
-    let document = engine_document();
-    let px = |value| length_or_auto_px(&document, value, None, 200.0);
+    let px = |value| length_or_auto_px(value, 200.0);
     assert_eq!(px(ComputedLengthPercentageOrAuto::Auto), None);
     assert_eq!(px(ComputedLengthPercentageOrAuto::Px(5.0)), Some(5.0));
     assert_eq!(

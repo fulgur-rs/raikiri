@@ -200,14 +200,17 @@ pub trait StyleDom {
         self.focused_element()
     }
 
-    /// The measurer of `line-height: normal` in the fonts this document's
-    /// text is laid out with, used by a cascade whose
-    /// [`crate::CascadeOptions::normal_line_height`] is `None`.
+    /// The font metrics provider for this document's text, including the
+    /// used `line-height: normal` and, when available, the U+0030 advance for
+    /// `ch`. A cascade uses it when
+    /// [`crate::CascadeOptions::normal_line_height`] is `None`, and as the
+    /// `ch` fallback when that options provider does not measure `ch`.
     ///
     /// The default `None` leaves the basis of the `lh` and `rlh` units
-    /// unresolved on elements whose line height is `normal`; a DOM that
-    /// knows its fonts overrides it so every cascade of the document
-    /// resolves those units the same way, whichever entry point runs it.
+    /// unresolved on elements whose line height is `normal`, and makes `ch`
+    /// use its `0.5em` fallback. A DOM that knows its fonts overrides it so
+    /// each cascade resolves those metrics the same way, whichever entry
+    /// point runs it.
     fn normal_line_height(&self) -> Option<crate::resolve::NormalLineHeightSource> {
         None
     }

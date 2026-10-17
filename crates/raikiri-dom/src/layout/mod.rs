@@ -24,11 +24,11 @@ use raikiri_style::property::{
     OverflowValue, PositionValue, PropertyKey, PropertyValue, SelfAlignmentValue, WritingMode,
 };
 use raikiri_style::{
-    CascadeResult, ChLengthProvenance, ComputedColumnWidth, ComputedFlexBasis,
-    ComputedGridTemplateTracks, ComputedGridTrackBreadth, ComputedGridTrackListComponent,
-    ComputedGridTrackSize, ComputedLength, ComputedLengthPercentage,
-    ComputedLengthPercentageOrAuto, ComputedLengthPercentageOrCalc,
-    ComputedLengthPercentageOrNormal, ComputedLineHeight, ComputedValues,
+    CascadeResult, ComputedColumnWidth, ComputedFlexBasis, ComputedGridTemplateTracks,
+    ComputedGridTrackBreadth, ComputedGridTrackListComponent, ComputedGridTrackSize,
+    ComputedLength, ComputedLengthPercentage, ComputedLengthPercentageOrAuto,
+    ComputedLengthPercentageOrCalc, ComputedLengthPercentageOrNormal, ComputedLineHeight,
+    ComputedValues,
 };
 use raikiri_traits::{LayoutError, PageBox};
 use taffy::{
@@ -49,27 +49,6 @@ pub(crate) mod table;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {
     resolve_dimension(value, None).filter(|value| value.is_finite())
-}
-
-/// The used width a measured `ch` width was given before Taffy: a length, or
-/// a calc() sum whose percentage resolves against `parent_width`.
-fn measured_ch_width(
-    doc: &Document,
-    cascade: &CascadeResult,
-    id: usize,
-    parent_width: f32,
-) -> Option<f32> {
-    cascade.computed[id].width_ch.as_ref()?;
-    let width = doc.nodes[id].style.size.width;
-    let raw = width.into_raw();
-    if raw.is_plain_calc() {
-        Some(crate::taffy_impl::resolve_calc(
-            raw.calc_value(),
-            parent_width,
-        ))
-    } else {
-        style_dimension_length(width)
-    }
 }
 
 mod body_overflow;

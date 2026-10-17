@@ -377,12 +377,9 @@ impl RunningTemplate {
     }
 }
 
-/// Font matching data captured when an authored `ch` value is computed.
+/// Font matching data passed to a font-metrics provider during cascade.
 ///
-/// Inherited values retain the ancestor's key, so a descendant with a different
-/// font does not re-measure the inherited value against the wrong glyph
-/// advance. Non-inherited box values use the declaring node's own key. The
-/// key currently covers family, size, weight, style, and optical sizing;
+/// The key currently covers family, size, weight, style, and optical sizing;
 /// explicit variation axes and vertical text orientation remain outside this
 /// layout's horizontal metric scope.
 #[derive(Clone, Debug, PartialEq)]
@@ -407,43 +404,8 @@ pub struct ChFontKey {
 pub struct VerticalLogicalSize {
     /// Physical width: the block size, or the authored `width`.
     pub width: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance of [`Self::width`].
-    pub width_ch: Option<ChLengthProvenance>,
     /// Physical height: the inline size, or the authored `height`.
     pub height: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance of [`Self::height`].
-    pub height_ch: Option<ChLengthProvenance>,
-}
-
-/// Authored `ch` provenance retained until the layout sink can probe the
-/// declaring font's U+0030 advance.
-///
-/// A `calc()` that mixes `ch` with other terms also records the rest of the
-/// sum, so the used value is `factor * advance + offset` plus `percent` of
-/// the property's percentage basis.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ChLengthProvenance {
-    /// Authored multiplier, for example `2` in `width: 2ch`.
-    pub factor: f32,
-    /// Font matching data from the declaring node for this value; inherited
-    /// values keep the ancestor's key.
-    pub font: ChFontKey,
-    /// The absolute part of a `calc()` sum in CSS px, for example `10` in
-    /// `calc(2ch + 10px)`; zero for a plain `Nch` length.
-    pub offset: f32,
-    /// The percentage coefficient of a `calc()` sum (`100%` is `100.0`);
-    /// zero for a plain `Nch` length.
-    pub percent: f32,
-}
-
-impl ChLengthProvenance {
-    /// The used value once the declaring font's `0` advance is known.
-    pub fn with_advance(&self, advance: f32) -> crate::property::CalcLengthPercentage {
-        crate::property::CalcLengthPercentage {
-            percent: self.percent,
-            px: self.factor * advance + self.offset,
-        }
-    }
 }
 
 /// The most background layers a renderer paints for one box, top first.
@@ -917,16 +879,6 @@ pub struct ComputedValues {
     /// property is inherited; [`crate::specified::SpecifiedValues::inherit_from`]
     /// lifts the parent's computed value with [`crate::resolve::lift_text_indent`].
     pub text_indent: ComputedTextIndent,
-    /// Authored `ch` factor retained for the font-metric-aware layout sink.
-    pub text_indent_ch_factor: Option<f32>,
-    /// Absolute part (px) of a `ch`-bearing `calc()` for `text-indent`, paired with
-    /// the factor: a font-aware consumer resolves it as
-    /// `factor * advance + offset`. Zero for a plain `Nch` value.
-    pub text_indent_ch_offset: f32,
-    /// Source font for an inherited `ch` value.
-    pub text_indent_ch_font: Option<ChFontKey>,
-    /// Whether the `ch` value was inherited from an ancestor.
-    pub text_indent_ch_inherited: bool,
     /// `text-indent`'s `hanging` flag. Inherited, initial `false`.
     pub text_indent_hanging: bool,
     /// `text-indent`'s `each-line` flag. Inherited, initial `false`.
@@ -948,8 +900,6 @@ pub struct ComputedValues {
     /// Cascade 5 §4.5 <https://www.w3.org/TR/css-cascade-5/#used>); in Raikiri,
     /// this is delegated to Taffy.
     pub padding: Sides<ComputedLengthPercentageOrCalc>,
-    /// Authored `ch` provenance for each padding side.
-    pub padding_ch: Sides<Option<ChLengthProvenance>>,
     /// `margin`: four-sided box-model margin (top / right / bottom / left).
     /// **Not inherited**; initial: `0` on each side
     /// (`Sides::all(ComputedLengthPercentageOrAuto::Px(0.0))`).
@@ -970,8 +920,6 @@ pub struct ComputedValues {
     ///   [`margin`](https://www.w3.org/TR/css-box-3/#margin-shorthand) —
     ///   "Value: `<'margin-top'>{1,4}`", 1/2/3/4 value expansion rules.
     pub margin: Sides<ComputedLengthPercentageOrAuto>,
-    /// Authored `ch` provenance for each margin side.
-    pub margin_ch: Sides<Option<ChLengthProvenance>>,
     /// `border`: four-sided box-model border (width / style / color × 4 sides).
     /// **Not inherited**; each side initially has width [`ComputedLength::ZERO`],
     /// style [`BorderStyle::None`], and color [`BorderColor::CurrentColor`].
@@ -1057,8 +1005,6 @@ pub struct ComputedValues {
     /// size is the containing-block width minus margin, border, and padding.
     /// This differs from distributing free space for `margin: auto`.
     pub width: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance for the preferred width.
-    pub width_ch: Option<ChLengthProvenance>,
     /// `height`: preferred vertical size. **Not inherited**; initial:
     /// `ComputedLengthPercentageOrAuto::Auto` (CSS Sizing 3 §3.1.1, "Preferred
     /// Size Properties" <https://www.w3.org/TR/css-sizing-3/#preferred-size-properties>;
@@ -1083,32 +1029,20 @@ pub struct ComputedValues {
     ///   "Initial: auto", "Applies to: all elements except non-replaced
     ///   inlines", "Inherited: no", "Percentages: relative to containing block".
     pub height: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance for the preferred height.
-    pub height_ch: Option<ChLengthProvenance>,
     /// `max-width` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_width: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance of [`Self::max_width`].
-    pub max_width_ch: Option<ChLengthProvenance>,
     /// `max-height` — **non-inherited**, initial `none` (mapped to Auto as placeholder).
     pub max_height: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance of [`Self::max_height`].
-    pub max_height_ch: Option<ChLengthProvenance>,
     /// `min-width` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_width: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance of [`Self::min_width`], after logical mapping.
-    pub min_width_ch: Option<ChLengthProvenance>,
     /// `min-height` — **non-inherited**, initial `auto` (CSS Sizing 3 §4
     /// <https://www.w3.org/TR/css-sizing-3/#min-size-properties>).
     pub min_height: ComputedLengthPercentageOrAuto,
-    /// Authored `ch` provenance of [`Self::min_height`], after logical mapping.
-    pub min_height_ch: Option<ChLengthProvenance>,
     /// Authored logical `min-block-size`, retained so layout can distinguish
     /// its fragmentation behavior from a physical `min-height` declaration.
     /// The used value is already mapped into `min_width`/`min_height`.
     pub min_block_size: Option<ComputedLengthPercentageOrAuto>,
-    /// Authored `ch` provenance of [`Self::min_block_size`].
-    pub min_block_size_ch: Option<ChLengthProvenance>,
     /// Physical `(width, height)` of the authored `inline-size` /
     /// `block-size` mapped through a `vertical-rl` or `vertical-lr`
     /// writing mode (CSS Logical Properties 1 §4.1). `None` without a logical
@@ -1221,10 +1155,6 @@ pub struct ComputedValues {
     /// paint can trim or extend each decoration segment without re-resolving
     /// against the originating font.
     pub text_decoration_inset: ComputedTextDecorationInset,
-    /// Authored `ch` provenance for the inset's inline-start length.
-    pub text_decoration_inset_start_ch: Option<ChLengthProvenance>,
-    /// Authored `ch` provenance for the inset's inline-end length.
-    pub text_decoration_inset_end_ch: Option<ChLengthProvenance>,
     /// `text-underline-offset`. **inherited**, initial: `auto` (CSS Text
     /// Decoration 4 §2.8). Length values are fixed computed offsets and are
     /// carried with the decoration origin; mixed calcs retain that resolved
@@ -1446,17 +1376,6 @@ pub struct ComputedValues {
     /// serialization. This carries percentages and mixed length-percentage
     /// calcs separately from the absolute renderer fallback.
     pub letter_spacing_computed: ComputedLetterSpacing,
-    /// Authored `ch` factor for `letter-spacing`, retained so the text-layout
-    /// sink can replace the style fallback with the shaping font's `0` advance.
-    pub letter_spacing_ch_factor: Option<f32>,
-    /// Absolute part (px) of a `ch`-bearing `calc()` for `letter-spacing`, paired with
-    /// the factor: a font-aware consumer resolves it as
-    /// `factor * advance + offset`. Zero for a plain `Nch` value.
-    pub letter_spacing_ch_offset: f32,
-    /// Font that declared [`Self::letter_spacing_ch_factor`]. The computed
-    /// value is an absolute length, so an inherited `ch` measures with the
-    /// declaring element's font, not the inheriting element's.
-    pub letter_spacing_ch_font: Option<ChFontKey>,
     /// Absolute renderer/layout fallback for `word-spacing`. The inherited CSSOM
     /// computed form, including percentages and mixed calc terms, is retained in
     /// [`Self::word_spacing_computed`]. Initial fallback: zero.
@@ -1464,18 +1383,6 @@ pub struct ComputedValues {
     /// CSS Text 4 computed `word-spacing` value. Percentages and mixed calc
     /// terms remain distinct from the absolute renderer/layout fallback.
     pub word_spacing_computed: ComputedWordSpacing,
-    /// Authored `ch` factor for `word-spacing`, when the winning declaration
-    /// used that font-metric-relative unit. The factor is retained through
-    /// inheritance so the text-layout sink can replace the style-layer
-    /// fallback with the shaping font's `0` glyph advance.
-    pub word_spacing_ch_factor: Option<f32>,
-    /// Absolute part (px) of a `ch`-bearing `calc()` for `word-spacing`, paired with
-    /// the factor: a font-aware consumer resolves it as
-    /// `factor * advance + offset`. Zero for a plain `Nch` value.
-    pub word_spacing_ch_offset: f32,
-    /// Font that declared [`Self::word_spacing_ch_factor`]; see
-    /// [`Self::letter_spacing_ch_font`].
-    pub word_spacing_ch_font: Option<ChFontKey>,
     /// `tab-size`. **inherited**, initial: [`ComputedTabSize::Number`]`(8.0)`
     /// (CSS Text Module Level 3 §4.2 "Tab Character Size: the tab-size
     /// property" <https://www.w3.org/TR/css-text-3/#tab-size-property>,
@@ -2203,19 +2110,13 @@ impl ComputedValues {
             ruby_position: RubyPosition::Over,
             // CSS Text 3 §8.1: initial text-indent is `0`.
             text_indent: ComputedTextIndent::Px(0.0),
-            text_indent_ch_factor: None,
-            text_indent_ch_offset: 0.0,
-            text_indent_ch_font: None,
-            text_indent_ch_inherited: false,
             text_indent_hanging: false,
             text_indent_each_line: false,
             // CSS Box 3 §4.1: initial padding is 0 on all four sides.
             padding: Sides::all(ComputedLengthPercentageOrCalc::Px(0.0)),
-            padding_ch: Sides::all(None),
             // CSS Box 3 §3.1: the physical margin-* properties initially have
             // value `0`, spread to all four sides by `Sides::all(0)`.
             margin: Sides::all(ComputedLengthPercentageOrAuto::Px(0.0)),
-            margin_ch: Sides::all(None),
             // CSS Backgrounds 3 §3.3/§3.2/§3.1: on every side, the initial
             // border style is none and the color is the `currentcolor` keyword.
             // `BorderColor::CurrentColor` replaced a `CssColor::BLACK` placeholder
@@ -2250,20 +2151,13 @@ impl ComputedValues {
             overflow_clip_margin: ComputedOverflowClipMargin::INITIAL,
             // CSS Sizing 3 §3.1.1: initial width is `auto`.
             width: ComputedLengthPercentageOrAuto::Auto,
-            width_ch: None,
             // CSS Sizing 3 §3.1.1: initial height is `auto`.
             height: ComputedLengthPercentageOrAuto::Auto,
-            height_ch: None,
             max_width: ComputedLengthPercentageOrAuto::Auto,
-            max_width_ch: None,
             max_height: ComputedLengthPercentageOrAuto::Auto,
-            max_height_ch: None,
             min_width: ComputedLengthPercentageOrAuto::Auto,
-            min_width_ch: None,
             min_height: ComputedLengthPercentageOrAuto::Auto,
-            min_height_ch: None,
             min_block_size: None,
-            min_block_size_ch: None,
             vertical_logical_size: None,
             top: ComputedLengthPercentageOrAuto::Auto,
             right: ComputedLengthPercentageOrAuto::Auto,
@@ -2288,8 +2182,6 @@ impl ComputedValues {
                 start: ComputedLength::ZERO,
                 end: ComputedLength::ZERO,
             },
-            text_decoration_inset_start_ch: None,
-            text_decoration_inset_end_ch: None,
             text_underline_offset: ComputedTextUnderlineOffset::Auto,
             text_underline_position: TextUnderlinePosition::AUTO,
             text_emphasis_position: TextEmphasisPosition::Position {
@@ -2338,14 +2230,8 @@ impl ComputedValues {
             // word-spacing compute to `0` (`ComputedLength::ZERO`).
             letter_spacing: ComputedLength::ZERO,
             letter_spacing_computed: ComputedLetterSpacing::Px(0.0),
-            letter_spacing_ch_factor: None,
-            letter_spacing_ch_offset: 0.0,
-            letter_spacing_ch_font: None,
             word_spacing: ComputedLength::ZERO,
             word_spacing_computed: ComputedWordSpacing::Px(0.0),
-            word_spacing_ch_factor: None,
-            word_spacing_ch_offset: 0.0,
-            word_spacing_ch_font: None,
             // CSS Text 3 §4.2: initial tab-size is `8`.
             tab_size: ComputedTabSize::Number(8.0),
             // CSS Fragmentation 3 §3.1 / §3.2: break-before, break-after,

@@ -2,6 +2,8 @@
 //! CSS painting order) and the text of page-margin boxes and generated
 //! content, which lies outside the paragraphs of the document.
 
+use std::collections::HashMap;
+
 use anyrender::PaintScene;
 use kurbo::{Affine, BezPath, Cap, Circle, Point, Rect, Stroke, Vec2};
 use peniko::{Color, Fill};
@@ -25,6 +27,115 @@ pub(crate) fn has_glyph_outlines(font: &peniko::FontData) -> bool {
     skrifa::FontRef::from_index(font.data.data(), font.index)
         .and_then(|font| font.head())
         .is_ok()
+}
+
+/// Draw the missing-glyph boxes of a run shaped with shodo's stub face, as
+/// browsers draw a box for a character no font covers. Each origin from
+/// [`missing_glyph_origins`] gets an outlined box inside the stub glyph's
+/// natural advance of one em, rising from the baseline, in the run's
+/// coordinates. The
+/// box ignores the spacing in the layout advance, as glyph ink does when
+/// `letter-spacing` or justification widens or narrows it.
+pub(crate) fn draw_missing_glyph_boxes(
+    scene: &mut impl PaintScene,
+    origins: impl IntoIterator<Item = (f32, f32)>,
+    font_size: f32,
+    color: Color,
+    transform: Affine,
+) {
+    let size = f64::from(font_size);
+    if !(size.is_finite() && size > 0.0) {
+        return;
+    }
+    let line = size / 16.0;
+    let stroke = Stroke::new(line);
+    // Inset by half the line width plus a gap, so neighboring boxes and
+    // their strokes stay apart.
+    let inset = size * 0.1 + line / 2.0;
+    for (x, y) in origins {
+        let (x, y) = (f64::from(x), f64::from(y));
+        if !(x.is_finite() && y.is_finite()) {
+            continue;
+        }
+        let rect = Rect::new(
+            x + inset,
+            y - size * 0.7 + line / 2.0,
+            x + size - inset,
+            y - line / 2.0,
+        );
+        scene.stroke(&stroke, transform, color, None, &rect);
+    }
+}
+
+/// The origins of the stub-face glyphs of `run` that take a missing-glyph
+/// box, from its glyphs as `(text offset, x, y)`.
+///
+/// The stub face gives a character one em of advance, and gives marks and
+/// default-ignorable code points (a zero width joiner, a variation selector)
+/// none, so they stay invisible. A cluster thus takes one box per em of its
+/// shaping advance. A zero-advance glyph shares its origin with a neighbor
+/// in its cluster, or sits half an em back for a mark, so the boxes go at
+/// the cluster's distinct origins on its em grid.
+pub(crate) fn missing_glyph_origins(
+    run: &shodo::GlyphRunView<'_>,
+    glyphs: impl IntoIterator<Item = (u32, f32, f32)>,
+) -> Vec<(f32, f32)> {
+    let size = run.font_size();
+    // Sorted by text offset, so each cluster finds its glyphs by search
+    // rather than by a scan of the whole run.
+    let mut glyphs: Vec<_> = glyphs.into_iter().collect();
+    glyphs.sort_by_key(|&(offset, ..)| offset);
+    // Layout advances the pen in 1/64 px and rounds each stub glyph's em to
+    // that, so boxes are counted and spaced by the rounded em.
+    let pitch = (size * 64.0).round() / 64.0;
+    let mut origins = Vec::new();
+    for cluster in run.clusters() {
+        let boxes = (cluster.shaping_advance / pitch).round();
+        // An em that rounds to zero gives no count at all. With no font in the
+        // document, the stub face also shapes white space, which stays blank.
+        if boxes.is_nan() || boxes < 1.0 || cluster.flags.whitespace {
+            continue;
+        }
+        let start =
+            glyphs.partition_point(|&(offset, ..)| (offset as usize) < cluster.text_range.start);
+        // A generated cluster such as a `text-overflow` ellipsis has an empty
+        // text range, with its glyphs at that offset.
+        let range_end = cluster.text_range.end.max(cluster.text_range.start + 1);
+        let end = glyphs.partition_point(|&(offset, ..)| (offset as usize) < range_end);
+        let mut points: Vec<(f32, f32)> =
+            glyphs[start..end].iter().map(|&(_, x, y)| (x, y)).collect();
+        points.sort_by(|a, b| a.0.total_cmp(&b.0));
+        points.dedup_by(|b, a| (b.0 - a.0).abs() < size * 1e-3);
+        // The characters with an em sit one em apart. A mark sits half an em
+        // off that grid, so the boxes go on the grid that holds the most
+        // origins, starting from the leftmost such origin.
+        let count = boxes as usize;
+        let on_grid = |anchor: f32, x: f32| {
+            let steps = (x - anchor) / pitch;
+            let step = steps.round();
+            (steps - step).abs() < 1e-3 && step >= 0.0 && (step as usize) < count
+        };
+        // Origins on one grid share their offset from the first origin modulo
+        // the pitch, so a single pass sorts them into grids, each anchored at
+        // its leftmost origin.
+        let first = points.first().map_or(0.0, |&(x, _)| x);
+        let mut grids: HashMap<i64, (f32, usize)> = HashMap::new();
+        for &(x, _) in &points {
+            let phase = ((x - first) / pitch).rem_euclid(1.0);
+            let key = (phase * 1000.0).round() as i64 % 1000;
+            let (anchor, matches) = grids.entry(key).or_insert((x, 0));
+            if on_grid(*anchor, x) {
+                *matches += 1;
+            }
+        }
+        let anchor = grids
+            .into_values()
+            .max_by(|a, b| a.1.cmp(&b.1).then(b.0.total_cmp(&a.0)))
+            // A cluster with no glyph has no grid, and no origin is on NaN.
+            .map_or(f32::NAN, |(anchor, _)| anchor);
+        origins.extend(points.into_iter().filter(|&(x, _)| on_grid(anchor, x)));
+    }
+    origins
 }
 
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {

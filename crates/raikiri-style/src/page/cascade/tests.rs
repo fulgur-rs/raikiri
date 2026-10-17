@@ -1558,6 +1558,35 @@ fn page(css: &str, root: &ComputedValues) -> PageCascadeResult {
     )
 }
 
+#[test]
+fn page_context_font_size_ch_uses_inherited_font_advance() {
+    let root = root_with_font_size(20.0);
+    let result = page_measuring_ch("@page { font-size: 2ch }", &root);
+
+    assert_eq!(
+        result.declarations().get(&PropertyKey::FontSize),
+        Some(&PropertyValue::FontSize(Length::Px(30.0)))
+    );
+}
+
+#[test]
+fn page_context_uses_own_ch_advance_for_phase_3_and_page_size() {
+    let root = root_with_font_size(20.0);
+    let result = page_measuring_ch(
+        "@page { font-size: 30px; padding: 1ch; size: 4ch 5ch }",
+        &root,
+    );
+
+    assert_eq!(padding_top_of(&result), Some(Length::Px(22.5)));
+    assert_eq!(
+        result.size(),
+        Some(PageSize::Lengths {
+            width: Length::Px(90.0),
+            height: Length::Px(112.5),
+        })
+    );
+}
+
 /// `@page { padding: 2em }` — the `em` basis is the page context's own
 /// font-size, which here comes from the inheritance parent (§6 "The page
 /// context inherits from the root element"). Root 20px → 40px.
@@ -1712,6 +1741,18 @@ impl NormalLineHeight for PageNormal {
     }
 }
 
+struct PageCh;
+
+impl NormalLineHeight for PageCh {
+    fn normal_line_height(&self, _font: &crate::ChFontKey) -> Option<ComputedLength> {
+        None
+    }
+
+    fn ch_advance(&self, font: &crate::ChFontKey) -> Option<ComputedLength> {
+        Some(ComputedLength(font.size.0 * 0.75))
+    }
+}
+
 fn page_measuring_normal(css: &str, root: &ComputedValues) -> PageCascadeResult {
     let mut tree = RuleTree::empty();
     tree.add_stylesheet(css, Origin::Author);
@@ -1721,6 +1762,19 @@ fn page_measuring_normal(css: &str, root: &ComputedValues) -> PageCascadeResult 
         PageInheritance::FromRoot(root),
         &MediaContext::default(),
         Some(&PageNormal),
+        None,
+    )
+}
+
+fn page_measuring_ch(css: &str, root: &ComputedValues) -> PageCascadeResult {
+    let mut tree = RuleTree::empty();
+    tree.add_stylesheet(css, Origin::Author);
+    cascade_page_with_normal_line_height(
+        &tree,
+        &PageContextQuery::default(),
+        PageInheritance::FromRoot(root),
+        &MediaContext::default(),
+        Some(&PageCh),
         None,
     )
 }

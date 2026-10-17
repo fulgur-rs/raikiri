@@ -5,7 +5,9 @@
 use crate::Document;
 use crate::layout::ifc::projection::project_ifc;
 use crate::layout::ifc::root::IfcRoot;
-use crate::layout::ifc::test_support::{ahem_fonts, block_fixture, span};
+use crate::layout::ifc::test_support::{
+    ahem_fonts, block_fixture, block_fixture_with_font_collection, span,
+};
 use crate::layout::layout_single_page;
 use crate::layout::test_support::{ahem_paragraph_with, page_box_800x600, with_ahem};
 use raikiri_traits::PageBox;
@@ -16,12 +18,19 @@ use shodo::{Fragment, LayoutContext};
 /// and the text node `C`.
 fn padded(root_css: &str, span_css: &str) -> (Document, usize, usize) {
     let mut tail = 0;
-    let (mut doc, cascade, root) = ahem_paragraph_with(root_css, |doc, root| {
-        doc.append_text(root, "A");
-        let inner = span(doc, root, &format!("display:inline;{span_css}"));
-        doc.append_text(inner, "B");
-        tail = doc.append_text(root, "C");
-    });
+    let fixture = block_fixture_with_font_collection(
+        &format!("line-height:10px;{root_css}"),
+        |doc, root| {
+            doc.append_text(root, "A");
+            let inner = span(doc, root, &format!("display:inline;{span_css}"));
+            doc.append_text(inner, "B");
+            tail = doc.append_text(root, "C");
+        },
+        ahem_fonts(),
+    );
+    let mut doc = fixture.doc;
+    let cascade = fixture.cascade;
+    let root = fixture.root;
     layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
     (doc, root, tail)
 }

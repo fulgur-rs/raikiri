@@ -99,8 +99,16 @@ mod ifc_geometry_tests {
     fn vertical_inline_size_constrains_lines_like_height() {
         let layout = |size_css: &str| {
             let css = format!("writing-mode:vertical-rl;{size_css}");
-            let (mut doc, cascade, root) = ahem_paragraph("aaaa bbbb cccc", &css);
-            doc.set_font_collection_with_limits(ifc_ahem_fonts(), shodo::limits::Limits::default());
+            let fixture = crate::layout::ifc::test_support::block_fixture_with_font_collection(
+                &format!("line-height:10px;{css}"),
+                |doc, root| {
+                    doc.append_text(root, "aaaa bbbb cccc");
+                },
+                ifc_ahem_fonts(),
+            );
+            let mut doc = fixture.doc;
+            let cascade = fixture.cascade;
+            let root = fixture.root;
             layout_single_page(with_ahem(&mut doc), &cascade, page_box_800x600()).expect("layout");
             let lines = doc.nodes[root].ifc_lines().expect("lines").len();
             (

@@ -11,6 +11,7 @@ use crate::specified::SpecifiedValues;
 const CTX: ResolveContext = ResolveContext {
     root_font_size: ComputedLength(INITIAL_FONT_SIZE_PX),
     root_line_height: None,
+    ch_advance: None,
     viewport_width: 480.0,
     viewport_height: 288.0,
     vertical_root: false,
@@ -198,10 +199,10 @@ fn font_size_percent_resolves_against_parent_font_size() {
     );
 }
 
-/// `ex` / `ch` always use the spec's unknown-metric fallback,
-/// `0.5em`, because the style layer has no real font metrics (`Length::Ex` / `Length::Ch`
-/// docs). In `font-size` they use the **parent's** basis, like other font-relative units,
-/// avoiding self-reference.
+/// This test's `ResolveContext` has no supplied `ch_advance`, so `ex` and
+/// `ch` use the spec's unknown-metric `0.5em` fallback (`Length::Ex` /
+/// `Length::Ch` docs). In `font-size` they use the **parent's** basis, like
+/// other font-relative units, avoiding self-reference.
 #[test]
 fn font_size_ex_and_ch_resolve_against_parent_font_size_with_half_em_fallback() {
     assert_eq!(
@@ -403,20 +404,18 @@ fn length_ex_ch_ic_resolve_against_own_font_size() {
 }
 
 #[test]
-fn length_or_normal_with_ch_retains_authored_factor() {
-    let resolved = resolve_length_or_normal_with_ch(
+fn length_or_normal_resolves_ch_using_the_context_advance() {
+    let ctx = CTX.with_ch_advance(Some(ComputedLength(7.0)));
+    let resolved = resolve_length_or_normal(
         LengthOrNormal::Length(Length::Ch(2.0)),
         ComputedLength(20.0),
         None,
-        &CTX,
+        &ctx,
     );
-    assert_eq!(resolved.value, ComputedLength(20.0));
-    assert_eq!(resolved.ch_factor, Some(2.0));
+    assert_eq!(resolved, ComputedLength(14.0));
 
-    let normal =
-        resolve_length_or_normal_with_ch(LengthOrNormal::Normal, ComputedLength(20.0), None, &CTX);
-    assert_eq!(normal.value, ComputedLength::ZERO);
-    assert_eq!(normal.ch_factor, None);
+    let normal = resolve_length_or_normal(LengthOrNormal::Normal, ComputedLength(20.0), None, &ctx);
+    assert_eq!(normal, ComputedLength::ZERO);
 }
 
 #[test]
@@ -469,22 +468,53 @@ fn letter_spacing_computed_value_preserves_percentages_and_calcs() {
 }
 
 #[test]
-fn letter_spacing_layout_fallback_remains_zero_for_deferred_values() {
+fn letter_spacing_calc_resolves_ch_using_the_context_advance() {
+    let ctx = CTX.with_ch_advance(Some(ComputedLength(7.0)));
+    assert_eq!(
+        resolve_letter_spacing(
+            LetterSpacingValue::Calc(LengthPercentageCalc {
+                percent: 0.0,
+                px: 3.0,
+                em: 0.0,
+                ch: 2.0,
+            }),
+            ComputedLength(40.0),
+            None,
+            &ctx,
+        ),
+        ComputedLetterSpacing::Px(17.0),
+    );
+}
+
+#[test]
+fn letter_spacing_percentages_remain_deferred() {
     let font_size = ComputedLength(40.0);
-    for specified in [
-        LetterSpacingValue::Length(Length::Percent(110.0)),
-        LetterSpacingValue::Calc(LengthPercentageCalc {
+    assert_eq!(
+        resolve_letter_spacing(
+            LetterSpacingValue::Length(Length::Percent(110.0)),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLetterSpacing::Percent(110.0),
+    );
+    assert_eq!(
+        resolve_letter_spacing(
+            LetterSpacingValue::Calc(LengthPercentageCalc {
+                percent: -15.0,
+                px: 10.0,
+                em: 0.0,
+                ch: 0.0,
+            }),
+            font_size,
+            None,
+            &CTX,
+        ),
+        ComputedLetterSpacing::Calc(CalcLengthPercentage {
             percent: -15.0,
             px: 10.0,
-            em: 0.0,
-            ch: 0.0,
         }),
-    ] {
-        assert_eq!(
-            resolve_letter_spacing_with_ch(specified, font_size, None, &CTX).value,
-            ComputedLength::ZERO,
-        );
-    }
+    );
 }
 
 #[test]
@@ -551,16 +581,14 @@ fn tab_size_calc_clamps_negative_derived_to_zero() {
 }
 
 #[test]
-fn length_percentage_with_ch_retains_authored_factor() {
-    let resolved =
-        resolve_length_percentage_with_ch(Length::Ch(2.0), ComputedLength(20.0), None, &CTX);
-    assert_eq!(resolved.value, ComputedLengthPercentage::Px(20.0),);
-    assert_eq!(resolved.ch_factor, Some(2.0));
+fn length_percentage_resolves_ch_using_the_context_advance() {
+    let ctx = CTX.with_ch_advance(Some(ComputedLength(7.0)));
+    let resolved = resolve_length_percentage(Length::Ch(2.0), ComputedLength(20.0), None, &ctx);
+    assert_eq!(resolved, ComputedLengthPercentage::Px(14.0));
 
     let percentage =
-        resolve_length_percentage_with_ch(Length::Percent(25.0), ComputedLength(20.0), None, &CTX);
-    assert_eq!(percentage.value, ComputedLengthPercentage::Percent(25.0),);
-    assert_eq!(percentage.ch_factor, None);
+        resolve_length_percentage(Length::Percent(25.0), ComputedLength(20.0), None, &ctx);
+    assert_eq!(percentage, ComputedLengthPercentage::Percent(25.0));
 }
 
 #[test]
@@ -2226,7 +2254,7 @@ fn relative_calc_arithmetic_rejects_non_finite_results() {
 }
 
 #[test]
-fn relative_calc_ch_terms_fall_back_to_half_an_em_and_split_for_layout() {
+fn relative_calc_ch_terms_resolve_in_the_cascade_context() {
     let calc =
         crate::cascade::parse_relative_calc_length_percentage("calc(50% + 2ch + 1em + 10px)")
             .unwrap();
@@ -2239,29 +2267,18 @@ fn relative_calc_ch_terms_fall_back_to_half_an_em_and_split_for_layout() {
             px: 50.0,
         })
     );
-    // Layout gets the `ch` coefficient and the rest of the sum.
+    let measured_ctx = CTX.with_ch_advance(Some(ComputedLength(6.0)));
     assert_eq!(
-        relative_calc_ch_parts(calc, font_size, None, &CTX),
-        Some((
-            2.0,
-            CalcLengthPercentage {
-                percent: 50.0,
-                px: 30.0,
-            }
-        ))
-    );
-    let without_ch =
-        crate::cascade::parse_relative_calc_length_percentage("calc(1em + 10px)").unwrap();
-    assert_eq!(
-        relative_calc_ch_parts(without_ch, font_size, None, &CTX),
-        None
-    );
-    // An `lh` term without a basis leaves the rest unresolved.
-    let unresolved =
-        crate::cascade::parse_relative_calc_length_percentage("calc(2ch + 1lh)").unwrap();
-    assert_eq!(
-        relative_calc_ch_parts(unresolved, font_size, None, &CTX),
-        None
+        resolve_length_percentage_or_auto(
+            LengthOrAuto::RelativeCalc(calc),
+            font_size,
+            None,
+            &measured_ctx,
+        ),
+        ComputedLengthPercentageOrAuto::Calc(CalcLengthPercentage {
+            percent: 50.0,
+            px: 42.0,
+        })
     );
 }
 

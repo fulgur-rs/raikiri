@@ -101,21 +101,6 @@ impl FlowAxes {
         };
     }
 
-    fn style_sides_cloned<T: Clone>(self, sides: &mut raikiri_style::property::Sides<T>) {
-        let (top, right, bottom, left) = self.sides(
-            sides.top.clone(),
-            sides.right.clone(),
-            sides.bottom.clone(),
-            sides.left.clone(),
-        );
-        *sides = raikiri_style::property::Sides {
-            top,
-            right,
-            bottom,
-            left,
-        };
-    }
-
     /// The layout of a box on transposed axes. `parent_width` is the
     /// physical width of the box its location is relative to.
     fn layout(self, layout: TaffyLayout, parent_width: f32) -> TaffyLayout {
@@ -212,21 +197,14 @@ impl FlowAxes {
         // mapping; every other box has them in `width` and `height`.
         if let Some(size) = crate::layout::bridge::vertical_logical_size(cascade, idx) {
             values.width = size.width;
-            values.width_ch = size.width_ch.clone();
             values.height = size.height;
-            values.height_ch = size.height_ch.clone();
         }
         values.vertical_logical_size = None;
         std::mem::swap(&mut values.width, &mut values.height);
-        std::mem::swap(&mut values.width_ch, &mut values.height_ch);
         std::mem::swap(&mut values.min_width, &mut values.min_height);
-        std::mem::swap(&mut values.min_width_ch, &mut values.min_height_ch);
         std::mem::swap(&mut values.max_width, &mut values.max_height);
-        std::mem::swap(&mut values.max_width_ch, &mut values.max_height_ch);
         self.style_sides(&mut values.margin);
-        self.style_sides_cloned(&mut values.margin_ch);
         self.style_sides(&mut values.padding);
-        self.style_sides_cloned(&mut values.padding_ch);
         self.style_sides(&mut values.border);
         let (top, right, bottom, left) =
             self.sides(values.top, values.right, values.bottom, values.left);

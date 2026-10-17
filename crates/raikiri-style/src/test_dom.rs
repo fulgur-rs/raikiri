@@ -17,6 +17,8 @@ pub(crate) struct TestDoc {
     pub(crate) focused: Option<usize>,
     /// Whether the focused element does not indicate focus.
     pub(crate) focus_hidden: bool,
+    /// Optional font metrics used by cascade tests.
+    pub(crate) normal_line_height: Option<crate::resolve::NormalLineHeightSource>,
 }
 
 pub(crate) struct TestNode {
@@ -52,6 +54,7 @@ impl TestDoc {
             quirks_mode: StyleQuirksMode::NoQuirks,
             focused: None,
             focus_hidden: false,
+            normal_line_height: None,
         }
     }
 
@@ -234,6 +237,10 @@ impl StyleDom for TestDoc {
 
     fn focus_visible_element(&self) -> Option<StyleNodeId> {
         self.focused_element().filter(|_| !self.focus_hidden)
+    }
+
+    fn normal_line_height(&self) -> Option<crate::resolve::NormalLineHeightSource> {
+        self.normal_line_height.clone()
     }
 
     fn parent_id(&self, child: StyleNodeId) -> Option<StyleNodeId> {

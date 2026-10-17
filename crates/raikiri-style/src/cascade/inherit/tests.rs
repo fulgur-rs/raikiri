@@ -1,7 +1,7 @@
 use super::*;
 use crate::cascade::candidate::{OwnedCandidates, Precedence};
 use crate::cascade::test_support::*;
-use crate::cascade::{cascade, cascade_with_media_context_for_page};
+use crate::cascade::{cascade, cascade_with_media_context_for_page, cascade_with_options};
 use crate::computed::{ComputedValues, INITIAL_FONT_SIZE_PX};
 use crate::media::MediaContext;
 use crate::property::CssColor;
@@ -1078,6 +1078,137 @@ fn cascade_measuring_normal(doc: &TestDoc) -> (crate::CascadeResult, Arc<ScaledN
     )
     .expect("cascade Ok");
     (result, measurer)
+}
+
+struct DoubleCh;
+
+impl crate::resolve::NormalLineHeight for DoubleCh {
+    fn normal_line_height(&self, _: &crate::ChFontKey) -> Option<ComputedLength> {
+        None
+    }
+
+    fn ch_advance(&self, font: &crate::ChFontKey) -> Option<ComputedLength> {
+        Some(ComputedLength(font.size.0 * 2.0))
+    }
+}
+
+struct DocumentMetrics;
+
+impl crate::resolve::NormalLineHeight for DocumentMetrics {
+    fn normal_line_height(&self, font: &crate::ChFontKey) -> Option<ComputedLength> {
+        Some(ComputedLength(font.size.0 * 1.25))
+    }
+
+    fn ch_advance(&self, font: &crate::ChFontKey) -> Option<ComputedLength> {
+        Some(ComputedLength(font.size.0 * 3.0))
+    }
+}
+
+struct OptionsWithoutMetrics;
+
+impl crate::resolve::NormalLineHeight for OptionsWithoutMetrics {
+    fn normal_line_height(&self, _: &crate::ChFontKey) -> Option<ComputedLength> {
+        None
+    }
+}
+
+fn cascade_with_double_ch(doc: &TestDoc) -> crate::CascadeResult {
+    let options = crate::CascadeOptions {
+        normal_line_height: Some(crate::NormalLineHeightSource::new(DoubleCh)),
+        ..Default::default()
+    };
+    let tree = build_rule_tree(doc);
+    cascade_with_options(
+        doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok")
+}
+
+#[test]
+fn ch_uses_parent_advance_for_font_size_and_own_advance_for_later_values() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size:20px"));
+    let child = doc.push_element(
+        html,
+        "p",
+        Some("font-size:2ch;line-height:2ch;width:1ch;padding-left:calc(2ch + 5px)"),
+    );
+
+    let result = cascade_with_double_ch(&doc);
+    let style = &result.computed[child];
+    assert_eq!(style.font_size, ComputedLength(80.0));
+    assert_eq!(
+        style.line_height,
+        ComputedLineHeight::Length(ComputedLength(320.0))
+    );
+    assert_eq!(
+        style.width,
+        crate::resolve::ComputedLengthPercentageOrAuto::Px(160.0)
+    );
+    assert_eq!(
+        style.padding.left,
+        ComputedLengthPercentageOrCalc::Px(325.0)
+    );
+}
+
+#[test]
+fn inherited_text_indent_keeps_its_computed_ch_length() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size:20px;text-indent:2ch"));
+    let child = doc.push_element(html, "p", Some("font-size:40px"));
+
+    let result = cascade_with_double_ch(&doc);
+    assert_eq!(
+        result.computed[html].text_indent,
+        ComputedTextIndent::Px(80.0)
+    );
+    assert_eq!(
+        result.computed[child].text_indent,
+        ComputedTextIndent::Px(80.0)
+    );
+}
+
+#[test]
+fn ch_uses_the_half_em_fallback_without_a_metric_provider() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size:20px;width:2ch"));
+    let tree = build_rule_tree(&doc);
+    let result = cascade(&doc, &tree).expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[html].width,
+        crate::resolve::ComputedLengthPercentageOrAuto::Px(20.0)
+    );
+}
+
+#[test]
+fn ch_falls_through_to_document_metrics_but_normal_keeps_options_precedence() {
+    let mut doc = TestDoc::new();
+    let html = doc.push_element(0, "html", Some("font-size:20px;width:1ch"));
+    doc.normal_line_height = Some(crate::NormalLineHeightSource::new(DocumentMetrics));
+    let options = crate::CascadeOptions {
+        normal_line_height: Some(crate::NormalLineHeightSource::new(OptionsWithoutMetrics)),
+        ..Default::default()
+    };
+    let tree = build_rule_tree(&doc);
+    let result = cascade_with_options(
+        &doc,
+        &tree,
+        &MediaContext::default(),
+        &crate::PageContextQuery::default(),
+        &options,
+    )
+    .expect("cascade Ok");
+
+    assert_eq!(
+        result.computed[html].width,
+        crate::resolve::ComputedLengthPercentageOrAuto::Px(60.0)
+    );
+    assert_eq!(result.computed[html].normal_line_height, None);
 }
 
 #[test]
@@ -3225,7 +3356,7 @@ fn text_indent_inherits_from_parent_element() {
 }
 
 #[test]
-fn text_indent_ch_preserves_source_font_through_inheritance_and_override() {
+fn text_indent_ch_is_resolved_before_inheritance() {
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("font-size: 20px; text-indent: 1ch"));
     let inherited = doc.push_element(p, "span", Some("font-size: 40px"));
@@ -3235,35 +3366,20 @@ fn text_indent_ch_preserves_source_font_through_inheritance_and_override() {
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
 
-    assert_eq!(r.computed[p].text_indent_ch_factor, Some(1.0));
-    assert_eq!(r.computed[inherited].text_indent_ch_factor, Some(1.0));
+    assert_eq!(r.computed[p].text_indent, ComputedTextIndent::Px(10.0));
     assert_eq!(
-        r.computed[inherited]
-            .text_indent_ch_font
-            .as_ref()
-            .expect("inherited source font")
-            .size,
-        ComputedLength(20.0)
+        r.computed[inherited].text_indent,
+        ComputedTextIndent::Px(10.0)
     );
-    assert_eq!(r.computed[own].text_indent_ch_factor, Some(2.0));
+    assert_eq!(r.computed[own].text_indent, ComputedTextIndent::Px(40.0));
     assert_eq!(
-        r.computed[own]
-            .text_indent_ch_font
-            .as_ref()
-            .expect("own source font")
-            .size,
-        ComputedLength(40.0)
+        r.computed[own_child].text_indent,
+        ComputedTextIndent::Px(40.0)
     );
     assert_eq!(
-        r.computed[own_child]
-            .text_indent_ch_font
-            .as_ref()
-            .expect("inherited own source font")
-            .size,
-        ComputedLength(40.0)
+        r.computed[cleared].text_indent,
+        ComputedTextIndent::Px(80.0)
     );
-    assert_eq!(r.computed[cleared].text_indent_ch_factor, None);
-    assert_eq!(r.computed[cleared].text_indent_ch_font, None);
 }
 
 #[test]
@@ -4763,29 +4879,41 @@ fn word_spacing_preserves_css_text_4_computed_percentages_and_calcs() {
 }
 
 #[test]
-fn word_spacing_ch_provenance_survives_inheritance() {
+fn word_spacing_ch_is_resolved_before_inheritance() {
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("word-spacing: 1ch"));
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(r.computed[p].word_spacing_ch_factor, Some(1.0));
-    assert_eq!(r.computed[span].word_spacing_ch_factor, Some(1.0));
+    assert_eq!(
+        r.computed[p].word_spacing_computed,
+        ComputedLetterSpacing::Px(8.0)
+    );
+    assert_eq!(
+        r.computed[span].word_spacing_computed,
+        ComputedLetterSpacing::Px(8.0)
+    );
 }
 
 #[test]
-fn letter_spacing_ch_provenance_survives_inheritance() {
+fn letter_spacing_ch_is_resolved_before_inheritance() {
     let mut doc = TestDoc::new();
     let p = doc.push_element(0, "p", Some("letter-spacing: 1ch"));
     let span = doc.push_element(p, "span", None);
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(r.computed[p].letter_spacing_ch_factor, Some(1.0));
-    assert_eq!(r.computed[span].letter_spacing_ch_factor, Some(1.0));
+    assert_eq!(
+        r.computed[p].letter_spacing_computed,
+        ComputedLetterSpacing::Px(8.0)
+    );
+    assert_eq!(
+        r.computed[span].letter_spacing_computed,
+        ComputedLetterSpacing::Px(8.0)
+    );
 }
 
 #[test]
-fn spacing_ch_preserves_source_font_through_inheritance_and_override() {
+fn spacing_ch_is_resolved_before_inheritance_and_override() {
     let mut doc = TestDoc::new();
     let p = doc.push_element(
         0,
@@ -4802,40 +4930,36 @@ fn spacing_ch_preserves_source_font_through_inheritance_and_override() {
     let cleared = doc.push_element(p, "em", Some("font-size: 40px; letter-spacing: 1px"));
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    let size = |font: &Option<crate::ChFontKey>| font.as_ref().map(|font| font.size);
-
     assert_eq!(
-        size(&r.computed[p].letter_spacing_ch_font),
-        Some(ComputedLength(20.0))
+        r.computed[p].letter_spacing_computed,
+        ComputedLetterSpacing::Px(10.0)
     );
     assert_eq!(
-        size(&r.computed[p].word_spacing_ch_font),
-        Some(ComputedLength(20.0))
+        r.computed[p].word_spacing_computed,
+        ComputedLetterSpacing::Px(20.0)
     );
     for child in [inherited, explicit] {
-        // A descendant keeps measuring with the font that declared the value.
-        assert_eq!(r.computed[child].letter_spacing_ch_factor, Some(1.0));
         assert_eq!(
-            size(&r.computed[child].letter_spacing_ch_font),
-            Some(ComputedLength(20.0))
+            r.computed[child].letter_spacing_computed,
+            ComputedLetterSpacing::Px(10.0)
         );
         assert_eq!(
-            size(&r.computed[child].word_spacing_ch_font),
-            Some(ComputedLength(20.0))
+            r.computed[child].word_spacing_computed,
+            ComputedLetterSpacing::Px(20.0)
         );
     }
-    assert_eq!(r.computed[own].letter_spacing_ch_factor, Some(3.0));
     assert_eq!(
-        size(&r.computed[own].letter_spacing_ch_font),
-        Some(ComputedLength(40.0))
+        r.computed[own].letter_spacing_computed,
+        ComputedLetterSpacing::Px(60.0)
     );
-    // The inherited word-spacing still points at the parent's font.
     assert_eq!(
-        size(&r.computed[own].word_spacing_ch_font),
-        Some(ComputedLength(20.0))
+        r.computed[own].word_spacing_computed,
+        ComputedLetterSpacing::Px(20.0)
     );
-    assert_eq!(r.computed[cleared].letter_spacing_ch_factor, None);
-    assert_eq!(r.computed[cleared].letter_spacing_ch_font, None);
+    assert_eq!(
+        r.computed[cleared].letter_spacing_computed,
+        ComputedLetterSpacing::Px(1.0)
+    );
 }
 
 #[test]
@@ -9448,7 +9572,7 @@ fn text_decoration_inset_resolves_and_keeps_auto_distinct() {
 }
 
 #[test]
-fn text_decoration_inset_retains_each_ch_endpoint_font_provenance() {
+fn text_decoration_inset_resolves_each_ch_endpoint_in_cascade() {
     let cv = cascade_doc(
         "",
         "div",
@@ -9461,26 +9585,6 @@ fn text_decoration_inset_retains_each_ch_endpoint_font_provenance() {
             end: ComputedLength(-10.0),
         }
     );
-    let start = cv
-        .text_decoration_inset_start_ch
-        .as_ref()
-        .expect("retain start ch provenance");
-    let end = cv
-        .text_decoration_inset_end_ch
-        .as_ref()
-        .expect("retain end ch provenance");
-    assert_eq!(start.factor, 1.0);
-    assert_eq!(end.factor, -1.0);
-    for provenance in [start, end] {
-        assert_eq!(provenance.font.size, ComputedLength(20.0));
-        assert!(
-            provenance
-                .font
-                .family
-                .iter()
-                .any(|family| family.as_str() == "Ahem")
-        );
-    }
 }
 
 #[test]
@@ -9501,8 +9605,6 @@ fn text_decoration_inset_is_non_inherited() {
         result.computed[child].text_decoration_inset,
         ComputedValues::initial().text_decoration_inset
     );
-    assert_eq!(result.computed[child].text_decoration_inset_start_ch, None);
-    assert_eq!(result.computed[child].text_decoration_inset_end_ch, None);
 }
 
 #[test]
@@ -10582,7 +10684,7 @@ fn border_rollback_deferred_var_substituting_to_css_wide() {
 }
 
 #[test]
-fn calc_with_ch_term_keeps_factor_and_absolute_offset_for_spacing_and_indent() {
+fn calc_with_ch_term_is_fully_resolved_for_spacing_and_indent() {
     let cv = cascade_doc(
         "",
         "p",
@@ -10591,19 +10693,15 @@ fn calc_with_ch_term_keeps_factor_and_absolute_offset_for_spacing_and_indent() {
              letter-spacing: calc(1ch + 1em); text-indent: calc(3ch - 2px)",
         ),
     );
-    // Style computes only a `0.5em` fallback for the `ch` term.
+    // This fixture has no metric provider, so the cascade uses the `0.5em`
+    // fallback for each `ch` term.
     assert_eq!(cv.word_spacing_computed, ComputedLetterSpacing::Px(44.0));
-    assert_eq!(cv.word_spacing_ch_factor, Some(2.0));
-    assert_eq!(cv.word_spacing_ch_offset, 4.0);
-    assert_eq!(cv.letter_spacing_ch_factor, Some(1.0));
-    assert_eq!(cv.letter_spacing_ch_offset, 40.0);
+    assert_eq!(cv.letter_spacing_computed, ComputedLetterSpacing::Px(60.0));
     assert_eq!(cv.text_indent, ComputedTextIndent::Px(58.0));
-    assert_eq!(cv.text_indent_ch_factor, Some(3.0));
-    assert_eq!(cv.text_indent_ch_offset, -2.0);
 }
 
 #[test]
-fn calc_with_ch_and_percentage_keeps_percentage_in_text_indent() {
+fn calc_with_ch_and_percentage_resolves_only_the_length_component() {
     let cv = cascade_doc(
         "",
         "p",
@@ -10616,25 +10714,26 @@ fn calc_with_ch_and_percentage_keeps_percentage_in_text_indent() {
             px: 40.0,
         })
     );
-    assert_eq!(cv.text_indent_ch_factor, Some(2.0));
-    assert_eq!(cv.text_indent_ch_offset, 0.0);
 }
 
 #[test]
-fn plain_ch_and_single_term_calc_ch_have_no_offset() {
+fn plain_ch_and_single_term_calc_ch_resolve_to_px() {
     for value in ["2ch", "calc(2ch)"] {
         let cv = cascade_doc(
             "",
             "p",
             Some(&format!("font-size: 40px; word-spacing: {value}")),
         );
-        assert_eq!(cv.word_spacing_ch_factor, Some(2.0), "{value}");
-        assert_eq!(cv.word_spacing_ch_offset, 0.0, "{value}");
+        assert_eq!(
+            cv.word_spacing_computed,
+            ComputedLetterSpacing::Px(40.0),
+            "{value}"
+        );
     }
 }
 
 #[test]
-fn calc_ch_provenance_and_offset_survive_inheritance_and_reset_on_override() {
+fn calc_ch_values_survive_inheritance_and_override_as_computed_values() {
     let mut doc = TestDoc::new();
     let p = doc.push_element(
         0,
@@ -10645,14 +10744,16 @@ fn calc_ch_provenance_and_offset_survive_inheritance_and_reset_on_override() {
     let over = doc.push_element(p, "b", Some("word-spacing: 3px; text-indent: 1ch"));
     let tree = build_rule_tree(&doc);
     let r = cascade(&doc, &tree).expect("cascade Ok");
-    assert_eq!(r.computed[span].word_spacing_ch_factor, Some(2.0));
-    assert_eq!(r.computed[span].word_spacing_ch_offset, 4.0);
-    assert_eq!(r.computed[span].text_indent_ch_factor, Some(1.0));
-    assert_eq!(r.computed[span].text_indent_ch_offset, 6.0);
-    assert_eq!(r.computed[over].word_spacing_ch_factor, None);
-    assert_eq!(r.computed[over].word_spacing_ch_offset, 0.0);
-    assert_eq!(r.computed[over].text_indent_ch_factor, Some(1.0));
-    assert_eq!(r.computed[over].text_indent_ch_offset, 0.0);
+    assert_eq!(
+        r.computed[span].word_spacing_computed,
+        ComputedLetterSpacing::Px(20.0)
+    );
+    assert_eq!(r.computed[span].text_indent, ComputedTextIndent::Px(14.0));
+    assert_eq!(
+        r.computed[over].word_spacing_computed,
+        ComputedLetterSpacing::Px(3.0)
+    );
+    assert_eq!(r.computed[over].text_indent, ComputedTextIndent::Px(8.0));
 }
 
 #[test]
@@ -11366,6 +11467,55 @@ fn root_self_referential_lh_uses_the_initial_fonts_normal_line() {
         r.computed[html].line_height,
         ComputedLineHeight::Length(ComputedLength(40.0))
     );
+}
+
+#[test]
+fn svg_font_size_ch_exports_the_fallback_em_multiple() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(style, "#text { font-size: 2ch }");
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let text = doc.push_element_with_namespace(
+        svg,
+        "text",
+        "http://www.w3.org/2000/svg",
+        &[("id", "text")],
+    );
+
+    let result = cascade_with_double_ch(&doc);
+    assert_eq!(result.computed[text].font_size, ComputedLength(64.0));
+    let font_size = result
+        .svg_style_properties(StyleNodeId(text as u64))
+        .iter()
+        .find(|property| property.property == PropertyKey::FontSize)
+        .and_then(|property| property.expression.as_deref());
+    assert_eq!(font_size, Some("1em"));
+}
+
+#[test]
+fn svg_font_size_calc_with_ch_exports_the_fallback_em_multiple() {
+    let mut doc = TestDoc::new();
+    let style = doc.push_element(0, "style", None);
+    doc.push_text(
+        style,
+        "svg { font-size: 20px } #text { font-size: calc(50% + 2ch + 1em) }",
+    );
+    let svg = doc.push_element_with_namespace(0, "svg", "http://www.w3.org/2000/svg", &[]);
+    let text = doc.push_element_with_namespace(
+        svg,
+        "text",
+        "http://www.w3.org/2000/svg",
+        &[("id", "text")],
+    );
+
+    let result = cascade_with_double_ch(&doc);
+    assert_eq!(result.computed[text].font_size, ComputedLength(110.0));
+    let font_size = result
+        .svg_style_properties(StyleNodeId(text as u64))
+        .iter()
+        .find(|property| property.property == PropertyKey::FontSize)
+        .and_then(|property| property.expression.as_deref());
+    assert_eq!(font_size, Some("2.5em"));
 }
 
 #[test]

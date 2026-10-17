@@ -4733,9 +4733,8 @@ fn img_src_url(document: &Document, node_id: usize) -> Option<url::Url> {
 ///
 /// Taffy owns the used-value resolution for the layout pass. Ordinary
 /// percentage/px padding keeps the painter's historical containing-width
-/// calculation, while a side authored in `ch` or as a mixed `calc()` takes the
-/// exact used value from layout. This avoids re-probing fonts in the paint crate
-/// and keeps backgrounds/images aligned with the geometry.
+/// calculation, while a mixed `calc()` takes the exact used value from layout.
+/// This keeps backgrounds and images aligned with the geometry.
 fn used_padding_for_paint(
     cv: &raikiri_style::ComputedValues,
     layout: &taffy::Layout,
@@ -4744,31 +4743,23 @@ fn used_padding_for_paint(
         return layout.padding;
     }
     let reference = layout.size.width;
-    let choose = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc,
-                  ch: &Option<raikiri_style::ChLengthProvenance>,
-                  used: f32| {
+    let choose = |value: raikiri_style::resolve::ComputedLengthPercentageOrCalc, used: f32| {
         // A calc() sum resolves its percentage against the containing block,
         // which layout already did; take its used value.
-        if ch.is_some()
-            || matches!(
-                value,
-                raikiri_style::resolve::ComputedLengthPercentageOrCalc::Calc(_)
-            )
-        {
+        if matches!(
+            value,
+            raikiri_style::resolve::ComputedLengthPercentageOrCalc::Calc(_)
+        ) {
             used
         } else {
             value.resolve(reference)
         }
     };
     taffy::Rect {
-        top: choose(cv.padding.top, &cv.padding_ch.top, layout.padding.top),
-        right: choose(cv.padding.right, &cv.padding_ch.right, layout.padding.right),
-        bottom: choose(
-            cv.padding.bottom,
-            &cv.padding_ch.bottom,
-            layout.padding.bottom,
-        ),
-        left: choose(cv.padding.left, &cv.padding_ch.left, layout.padding.left),
+        top: choose(cv.padding.top, layout.padding.top),
+        right: choose(cv.padding.right, layout.padding.right),
+        bottom: choose(cv.padding.bottom, layout.padding.bottom),
+        left: choose(cv.padding.left, layout.padding.left),
     }
 }
 

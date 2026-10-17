@@ -20,10 +20,35 @@ pub(crate) struct Fixture {
 }
 
 /// Build `<div style="display:block;font-family:Ahem;font-size:10px;{extra}">`,
-/// let `build` add its children, and cascade the result.
+/// let `build` add its children, and cascade without a document font collection.
 pub(crate) fn block_fixture(
     extra_style: &str,
     build: impl FnOnce(&mut Document, usize),
+) -> Fixture {
+    block_fixture_inner(extra_style, build, None)
+}
+
+/// [`block_fixture`] after installing the Ahem font collection and before cascading.
+pub(crate) fn block_fixture_with_ahem(
+    extra_style: &str,
+    build: impl FnOnce(&mut Document, usize),
+) -> Fixture {
+    block_fixture_inner(extra_style, build, Some(ahem_fonts()))
+}
+
+/// [`block_fixture`] after installing the document's font collection and before cascading.
+pub(crate) fn block_fixture_with_font_collection(
+    extra_style: &str,
+    build: impl FnOnce(&mut Document, usize),
+    fonts: FontCollection,
+) -> Fixture {
+    block_fixture_inner(extra_style, build, Some(fonts))
+}
+
+fn block_fixture_inner(
+    extra_style: &str,
+    build: impl FnOnce(&mut Document, usize),
+    fonts: Option<FontCollection>,
 ) -> Fixture {
     let mut doc = Document::new();
     // No UA sheet is applied here, so the ancestors are made block containers
@@ -34,6 +59,9 @@ pub(crate) fn block_fixture(
     let root = doc.append_element(Some(body), "div", Style::default(), Some(style.as_str()));
     build(&mut doc, root);
     doc.mark_in_document_flags();
+    if let Some(fonts) = fonts {
+        doc.set_font_collection(fonts);
+    }
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).expect("cascade");
     crate::layout::apply_computed_to_style(&mut doc, &cascade).expect("bridge fixture");
