@@ -14,6 +14,9 @@ pub(crate) enum BoxKey {
     Source(usize),
     /// A layout-only anonymous table cell, by its index among those cells.
     AnonymousCell(usize),
+    /// A layout-only anonymous table that wraps table parts outside any
+    /// table, by its index among those tables.
+    AnonymousTable(usize),
     /// The page-area initial containing block, outside the source DOM.
     InitialContainingBlock,
 }
@@ -21,7 +24,7 @@ pub(crate) enum BoxKey {
 // A reserved layout key stays valid when source nodes or anonymous cells grow.
 const INITIAL_CONTAINING_BLOCK_KEY: usize = usize::MAX;
 
-/// Source DOM nodes, anonymous table cells, and the page-area ICB.
+/// Source DOM nodes, anonymous table boxes, and the page-area ICB.
 ///
 /// The arena dereferences to the source nodes only, so length, iteration and
 /// mutation of the DOM never see a layout-only box. Indexing with a layout
@@ -29,10 +32,12 @@ const INITIAL_CONTAINING_BLOCK_KEY: usize = usize::MAX;
 #[derive(Debug, Clone, Default)]
 pub(crate) struct NodeArena {
     source: Vec<Node>,
+    anonymous_tables: Vec<Node>,
     anonymous_cells: Vec<Node>,
-    /// The key of the first anonymous cell: the number of source nodes when
-    /// the cells were set. Table fixup sets the cells again on every layout
-    /// pass, after any change to the DOM.
+    /// The key of the first anonymous table, followed by the anonymous
+    /// cells: the number of source nodes when the boxes were set. Table
+    /// fixup sets the boxes again on every layout pass, after any change to
+    /// the DOM.
     anonymous_base: usize,
     initial_containing_block: Option<Box<Node>>,
 }
@@ -50,6 +55,10 @@ impl NodeArena {
             return Some(BoxKey::Source(key));
         }
         let index = key.checked_sub(self.anonymous_base)?;
+        if index < self.anonymous_tables.len() {
+            return Some(BoxKey::AnonymousTable(index));
+        }
+        let index = index - self.anonymous_tables.len();
         (index < self.anonymous_cells.len()).then_some(BoxKey::AnonymousCell(index))
     }
 
@@ -58,8 +67,18 @@ impl NodeArena {
         matches!(self.box_key(key), Some(BoxKey::AnonymousCell(_)))
     }
 
+    /// Whether `key` names a layout-only anonymous table.
+    pub(crate) fn is_anonymous_table(&self, key: usize) -> bool {
+        matches!(self.box_key(key), Some(BoxKey::AnonymousTable(_)))
+    }
+
     /// The layout key of the anonymous cell at `index`.
     pub(crate) fn anonymous_cell_key(&self, index: usize) -> usize {
+        self.anonymous_base + self.anonymous_tables.len() + index
+    }
+
+    /// The layout key of the anonymous table at `index`.
+    pub(crate) fn anonymous_table_key(&self, index: usize) -> usize {
         self.anonymous_base + index
     }
 
@@ -68,6 +87,7 @@ impl NodeArena {
         match self.box_key(key)? {
             BoxKey::Source(id) => Some(&self.source[id]),
             BoxKey::AnonymousCell(index) => Some(&self.anonymous_cells[index]),
+            BoxKey::AnonymousTable(index) => Some(&self.anonymous_tables[index]),
             BoxKey::InitialContainingBlock => self.initial_containing_block.as_deref(),
         }
     }
@@ -92,10 +112,19 @@ impl NodeArena {
         self.anonymous_base = self.source.len();
     }
 
+    /// Replace the anonymous tables of the previous pass. Setting them moves
+    /// the keys of the anonymous cells, so table fixup sets the tables
+    /// before it creates any cell.
+    pub(crate) fn set_anonymous_tables(&mut self, tables: Vec<Node>) {
+        self.anonymous_tables = tables;
+        self.anonymous_base = self.source.len();
+    }
+
     /// Every source node and generated box a layout pass may lay out.
     pub(crate) fn layout_nodes_mut(&mut self) -> impl Iterator<Item = &mut Node> {
         self.source
             .iter_mut()
+            .chain(&mut self.anonymous_tables)
             .chain(&mut self.anonymous_cells)
             .chain(self.initial_containing_block.as_deref_mut())
     }
@@ -112,6 +141,7 @@ impl From<Vec<Node>> for NodeArena {
         Self {
             anonymous_base: source.len(),
             source,
+            anonymous_tables: Vec::new(),
             anonymous_cells: Vec::new(),
             initial_containing_block: None,
         }
@@ -144,6 +174,7 @@ impl Index<usize> for NodeArena {
     fn index(&self, key: usize) -> &Node {
         match self.box_key(key) {
             Some(BoxKey::AnonymousCell(index)) => &self.anonymous_cells[index],
+            Some(BoxKey::AnonymousTable(index)) => &self.anonymous_tables[index],
             Some(BoxKey::InitialContainingBlock) => {
                 self.initial_containing_block.as_deref().unwrap()
             }
@@ -157,6 +188,7 @@ impl IndexMut<usize> for NodeArena {
     fn index_mut(&mut self, key: usize) -> &mut Node {
         match self.box_key(key) {
             Some(BoxKey::AnonymousCell(index)) => &mut self.anonymous_cells[index],
+            Some(BoxKey::AnonymousTable(index)) => &mut self.anonymous_tables[index],
             Some(BoxKey::InitialContainingBlock) => {
                 self.initial_containing_block.as_deref_mut().unwrap()
             }

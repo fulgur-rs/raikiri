@@ -247,6 +247,9 @@ fn ifc_all_insets(style: &Style, parent_inline_size: Option<f32>) -> taffy::Rect
 pub struct TaffyChildIter<'a> {
     doc: &'a Document,
     flatten: bool,
+    /// Whether the children are those of a source box, among which an
+    /// anonymous table stands in for the rows it wraps.
+    wrap_tables: bool,
     stack: Vec<core::slice::Iter<'a, usize>>,
 }
 
@@ -258,6 +261,7 @@ impl<'a> TaffyChildIter<'a> {
         Self {
             doc,
             flatten: !node.is_display_none() && node.display() != DisplayValue::Contents,
+            wrap_tables: !doc.is_anonymous_table(usize::from(parent)),
             stack: if hidden {
                 Vec::new()
             } else {
@@ -317,6 +321,9 @@ impl Document {
         if let Some(cell) = self.anonymous_cell_of(node) {
             return Some(cell);
         }
+        if let Some(table) = self.anonymous_table_of(node) {
+            return Some(table);
+        }
         let parent = self.parent_of(node)?;
         let mut top = parent;
         while TaffyChildIter::is_flattened(self, top) {
@@ -345,6 +352,16 @@ impl Iterator for TaffyChildIter<'_> {
             if self.flatten && Self::is_flattened(doc, child) {
                 self.stack.push(doc.nodes[child].layout_children().iter());
                 continue;
+            }
+            // An anonymous table takes the place of the run of rows it wraps
+            // among its parent's children; the rows are its own children.
+            if self.wrap_tables
+                && let Some(table) = doc.anonymous_table_of(child)
+            {
+                if doc.nodes[table].children.first() != Some(&child) {
+                    continue;
+                }
+                return Some(NodeId::from(table));
             }
             return Some(NodeId::from(child));
         }

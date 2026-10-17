@@ -117,9 +117,9 @@ pub(crate) fn can_be_ifc_root_in(doc: &Document, boxes: BoxTree<'_>, idx: usize)
         {
             true
         }
-        // A row or row group outside any table is laid out as a block (no
-        // anonymous table wraps it, see the taffy bridge), so it lays its own
-        // inline content out. Inside a table that content belongs to
+        // A row or row group outside any table that no anonymous table wraps
+        // (see `layout::table::anonymous`) is laid out as a block, so it lays
+        // its own inline content out. Inside a table that content belongs to
         // anonymous cells instead.
         DisplayValue::TableRow
         | DisplayValue::TableRowGroup

@@ -555,6 +555,9 @@ impl Document {
     pub(crate) fn store_unrounded_layout(&mut self, idx: usize, layout: &TaffyLayout) {
         let sanitized = sanitize_taffy_layout(layout, &mut self.layout_warnings);
         self.nodes[idx].unrounded_layout = sanitized;
+        // The rows an anonymous table wraps are DOM children of its parent,
+        // so they move with the table.
+        self.offset_anonymous_table_parts(idx);
     }
 
     /// Store a table's grid rectangle, clamped to finite values like

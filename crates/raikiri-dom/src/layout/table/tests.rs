@@ -7,6 +7,7 @@ use raikiri_traits::PageBox;
 use taffy::style::{Dimension, LengthPercentage, LengthPercentageAuto};
 use taffy::{AvailableSpace, LayoutInput, Rect, Size, Style};
 
+mod anonymous_table_tests;
 mod cell_index_tests;
 mod rowspan_tests;
 

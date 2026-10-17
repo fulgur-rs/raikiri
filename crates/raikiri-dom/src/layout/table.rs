@@ -976,7 +976,10 @@ fn position_source_table_parts(
 ) {
     // Pagination needs parent-relative source boxes even when all cells are
     // explicit. Single-page callers retain their table-coordinate grid.
+    // The parts of an anonymous table are DOM children of its parent, which
+    // places them through their own boxes.
     if !doc.table_objects.project_explicit_parts
+        && !doc.is_anonymous_table(table)
         && !grid
             .cells
             .iter()
@@ -984,6 +987,7 @@ fn position_source_table_parts(
     {
         return;
     }
+    let boundary = doc.table_parts_boundary(table);
     let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
     let (col_x, row_y) = origins;
     let width = col_x
@@ -1019,7 +1023,7 @@ fn position_source_table_parts(
         }
         for id in doc
             .inclusive_ancestors(doc.ifc_source_owner(marker))
-            .take_while(|&id| id != table)
+            .take_while(|&id| id != boundary)
         {
             if matches!(
                 doc.nodes[id].display(),
@@ -1059,7 +1063,7 @@ fn position_source_table_parts(
             for &marker in &grid.rows[usize::from(cell.row)..end_row] {
                 let mut source = Some(doc.ifc_source_owner(marker));
                 while let Some(id) = source {
-                    if id == table {
+                    if id == boundary {
                         break;
                     }
                     if let Some(part) = parts.get(&id)
@@ -1091,7 +1095,7 @@ fn position_source_table_parts(
     }
     let origin_of = |owner: usize| {
         doc.inclusive_ancestors(owner)
-            .take_while(|&id| id != table)
+            .take_while(|&id| id != boundary)
             .find_map(|id| parts.get(&id))
             .map_or(Point::ZERO, |part| part.location)
     };
@@ -1136,6 +1140,7 @@ fn position_source_table_parts(
             }
         }
     }
+    doc.place_anonymous_table_parts(table);
 }
 
 fn extend_part_bounds(part: &mut TaffyLayout, other: &TaffyLayout) {
