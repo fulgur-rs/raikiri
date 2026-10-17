@@ -45,6 +45,7 @@ use taffy::{
     TrackSizingFunction, style_helpers as taffy_style_helpers,
 };
 
+pub(crate) mod context;
 pub(crate) mod table;
 
 fn style_dimension_length(value: Dimension) -> Option<f32> {
