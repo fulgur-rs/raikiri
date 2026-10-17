@@ -28,9 +28,10 @@ pub(crate) fn has_glyph_outlines(font: &peniko::FontData) -> bool {
 }
 
 /// Draw the missing-glyph boxes of a run shaped with shodo's stub face, as
-/// browsers draw a box for a character no font covers. Each glyph gets an
-/// outlined box inside the stub glyph's natural advance of one em, rising
-/// from the baseline at its glyph origin, in the run's coordinates. The
+/// browsers draw a box for a character no font covers. Each origin from
+/// [`missing_glyph_origins`] gets an outlined box inside the stub glyph's
+/// natural advance of one em, rising from the baseline, in the run's
+/// coordinates. The
 /// box ignores the spacing in the layout advance, as glyph ink does when
 /// `letter-spacing` or justification widens or narrows it.
 pub(crate) fn draw_missing_glyph_boxes(
@@ -62,6 +63,40 @@ pub(crate) fn draw_missing_glyph_boxes(
         );
         scene.stroke(&stroke, transform, color, None, &rect);
     }
+}
+
+/// The origins of the stub-face glyphs of `run` that take a missing-glyph
+/// box, from its glyphs as `(text offset, x, y)`.
+///
+/// The stub face gives a character one em of advance, and gives marks and
+/// default-ignorable code points (a zero width joiner, a variation selector)
+/// none, so they stay invisible. A cluster thus takes one box per em of its
+/// shaping advance. A zero-advance glyph shares its origin with a neighbor
+/// in its cluster, or sits half an em back for a mark, so the boxes go at
+/// the cluster's distinct origins from the left.
+pub(crate) fn missing_glyph_origins(
+    run: &shodo::GlyphRunView<'_>,
+    glyphs: impl IntoIterator<Item = (u32, f32, f32)>,
+) -> Vec<(f32, f32)> {
+    let size = run.font_size();
+    let glyphs: Vec<_> = glyphs.into_iter().collect();
+    let mut origins = Vec::new();
+    for cluster in run.clusters() {
+        let boxes = (cluster.shaping_advance / size).round();
+        // A zero font size gives no count at all.
+        if boxes.is_nan() || boxes < 1.0 {
+            continue;
+        }
+        let mut points: Vec<(f32, f32)> = glyphs
+            .iter()
+            .filter(|(offset, ..)| cluster.text_range.contains(&(*offset as usize)))
+            .map(|&(_, x, y)| (x, y))
+            .collect();
+        points.sort_by(|a, b| a.0.total_cmp(&b.0));
+        points.dedup_by(|b, a| (b.0 - a.0).abs() < size * 1e-3);
+        origins.extend(points.into_iter().take(boxes as usize));
+    }
+    origins
 }
 
 pub(crate) fn synthetic_embolden(enabled: bool, font_size: f32) -> Vec2 {

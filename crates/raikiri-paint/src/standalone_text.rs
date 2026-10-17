@@ -135,7 +135,14 @@ pub(crate) fn draw(
                 if line.writing_mode() == shodo::geometry::WritingMode::HorizontalTb {
                     crate::text::draw_missing_glyph_boxes(
                         scene,
-                        glyphs.iter().map(|glyph| (glyph.x, glyph.y)),
+                        crate::text::missing_glyph_origins(
+                            &run,
+                            run.glyphs().enumerate().filter_map(|(index, glyph)| {
+                                let (gx, gy) = run.glyph_origin(index)?;
+                                let (x, y) = converter.point(gx + shift, gy + line.block_offset());
+                                Some((glyph.cluster, x, y))
+                            }),
+                        ),
                         font_size,
                         color,
                         transform,

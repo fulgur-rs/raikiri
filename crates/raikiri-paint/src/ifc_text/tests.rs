@@ -3642,6 +3642,49 @@ fn missing_glyph_boxes_keep_their_size_under_negative_letter_spacing() {
 }
 
 #[test]
+fn zero_advance_stub_glyphs_take_no_box_of_their_own() {
+    // The stub face gives joiners, variation selectors and marks no advance
+    // so they stay invisible; only the characters with an em take a box.
+    for (text, expected) in [
+        ("\u{FDD0}\u{200D}\u{FDD1}", 2),
+        ("\u{FDD0}\u{FE0F}", 1),
+        ("\u{FDD0}\u{0301}", 1),
+        ("\u{FDD0}\u{200D}\u{FDD1}\u{FE0F}", 2),
+    ] {
+        let scene = painted_root("width:200px;font-size:20px", |doc, root| {
+            doc.append_text(root, text);
+        });
+        let boxes: Vec<_> = scene
+            .commands
+            .iter()
+            .filter_map(|command| match command {
+                RenderCommand::Stroke(stroke) => Some(kurbo::Shape::bounding_box(
+                    &(stroke.transform * stroke.shape.clone()),
+                )),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(boxes.len(), expected, "{text:?}: {boxes:?}");
+        for pair in boxes.windows(2) {
+            assert!(pair[0].x1 < pair[1].x0, "{text:?}: {boxes:?}");
+        }
+    }
+}
+
+#[test]
+fn a_zero_font_size_draws_no_missing_glyph_boxes() {
+    let scene = painted_root("width:200px;font-size:0", |doc, root| {
+        doc.append_text(root, "\u{FDD0}");
+    });
+    assert!(
+        !scene
+            .commands
+            .iter()
+            .any(|command| matches!(command, RenderCommand::Stroke(_)))
+    );
+}
+
+#[test]
 fn missing_glyph_boxes_skip_non_finite_positions_and_sizes() {
     let mut scene = Scene::new();
     crate::text::draw_missing_glyph_boxes(
