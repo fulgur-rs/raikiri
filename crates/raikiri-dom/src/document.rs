@@ -435,11 +435,6 @@ pub struct Document {
     /// containing block of fixed boxes, and the initial containing block
     /// orthogonal flows size against; `None` before any layout.
     pub(crate) fixed_page_area: Option<(f32, f32)>,
-    /// The laid-out border-box height of each auto-height box that the most
-    /// recent layout then grew to hold a float descendant it does not
-    /// contain: the flow after such a box follows this height, not its grown
-    /// one (CSS 2.1 §10.6.3).
-    pub(crate) in_flow_heights: HashMap<usize, f32>,
     /// Whether the paginator is running on the transposed axes of a document
     /// whose root element lays out its blocks on vertical axes. Pagination
     /// then treats the boxes laid out on horizontal axes as monolithic.
@@ -743,7 +738,6 @@ impl Document {
             layout_cascade_generation: None,
             taffy_child_walks: Default::default(),
             fixed_page_area: None,
-            in_flow_heights: HashMap::new(),
             pagination_on_transposed_axes: false,
             continuation_break: None,
             skipped_displays: Default::default(),
@@ -2111,7 +2105,6 @@ impl Document {
             layout_cascade_generation: _,
             taffy_child_walks: _,
             fixed_page_area: _,
-            in_flow_heights: _,
             pagination_on_transposed_axes: _,
             continuation_break: _,
             skipped_displays: _,
