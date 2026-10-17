@@ -583,6 +583,7 @@ pub(crate) fn hold_ifc_lines<'a>(
                 offsets,
                 custom_highlights,
                 &positioned_line.runs,
+                &positioned_line.converter,
             );
         }
         let resolved_decorations = raikiri_dom::text_decoration::positioned_line_decorations(
@@ -855,12 +856,14 @@ fn draw_custom_highlights(
     offsets: &[(usize, (f32, f32))],
     custom_highlights: &[crate::TextHighlightRange],
     runs: &[raikiri_dom::PositionedRun<'_>],
+    converter: &PhysicalConverter,
 ) {
     let highlights = LineHighlights {
         paragraph,
         position,
         offsets,
         custom_highlights,
+        converter,
     };
     draw_line_highlights(
         paint,
@@ -901,6 +904,8 @@ struct LineHighlights<'a> {
     position: IfcPosition,
     offsets: &'a [(usize, (f32, f32))],
     custom_highlights: &'a [crate::TextHighlightRange],
+    /// The map from the paragraph's logical coordinates to physical ones.
+    converter: &'a PhysicalConverter,
 }
 
 /// Fill the highlighted text of `line`, line `line_index` of
@@ -983,18 +988,24 @@ fn draw_line_highlights(
         );
         let scene = paint.target(group);
         for selected in selection {
-            let (x0, y0) = place(selected.inline_start, selected.block_start);
-            let (x1, y1) = place(
+            let (inline_a, block_a) = place(selected.inline_start, selected.block_start);
+            let (inline_b, block_b) = place(
                 selected.inline_start + selected.inline_size,
                 selected.block_start + selected.block_size,
             );
-            let x = position.x + offset_x;
-            let y = position.y + position.shift_y + offset_y;
+            let placed = highlights.converter.rect(shodo::geometry::LogicalRect {
+                inline_start: inline_a.min(inline_b),
+                block_start: block_a.min(block_b),
+                inline_size: (inline_b - inline_a).abs(),
+                block_size: (block_b - block_a).abs(),
+            });
+            let x = position.x + offset_x + placed.x;
+            let y = position.y + position.shift_y + offset_y + placed.y;
             let rect = Rect::new(
-                f64::from(x + x0.min(x1)),
-                f64::from(y + y0.min(y1)),
-                f64::from(x + x0.max(x1)),
-                f64::from(y + y0.max(y1)),
+                f64::from(x),
+                f64::from(y),
+                f64::from(x + placed.width),
+                f64::from(y + placed.height),
             );
             scene.fill(Fill::NonZero, Affine::IDENTITY, color, None, &rect);
         }

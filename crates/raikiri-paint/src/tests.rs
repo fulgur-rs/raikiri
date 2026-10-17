@@ -294,10 +294,13 @@ fn custom_highlight_paints_selected_text_before_its_glyphs() {
     assert!(highlight_index < glyph_index);
 }
 
-/// Paint a ruby `<ruby>a<rt>xyz</rt></ruby>` with `ruby_style`, the text of
-/// its annotation highlighted, and return the highlight's rectangles and the
+/// Paint a ruby `<ruby>a<rt>xyz</rt></ruby>` with `ruby_style` in a
+/// paragraph with `paragraph_style`, the text of its annotation highlighted, and return the highlight's rectangles and the
 /// origins of the annotation's glyphs.
-fn highlighted_ruby_annotation(ruby_style: &str) -> (Vec<kurbo::Rect>, Vec<kurbo::Point>) {
+fn highlighted_ruby_annotation(
+    paragraph_style: &str,
+    ruby_style: &str,
+) -> (Vec<kurbo::Rect>, Vec<kurbo::Point>) {
     use anyrender::types::Paint;
 
     let mut doc = Document::new();
@@ -309,12 +312,7 @@ fn highlighted_ruby_annotation(ruby_style: &str) -> (Vec<kurbo::Rect>, Vec<kurbo
         "::highlight(sample) { background-color: rgb(0, 255, 255); }",
     );
     let body = doc.append_element(Some(html), "body", Style::default(), Some("display:block"));
-    let paragraph = doc.append_element(
-        Some(body),
-        "p",
-        Style::default(),
-        Some("display:block;font-size:20px"),
-    );
+    let paragraph = doc.append_element(Some(body), "p", Style::default(), Some(paragraph_style));
     let ruby = doc.append_element(Some(paragraph), "ruby", Style::default(), Some(ruby_style));
     let base = doc.append_element(
         Some(ruby),
@@ -389,7 +387,8 @@ fn highlighted_ruby_annotation(ruby_style: &str) -> (Vec<kurbo::Rect>, Vec<kurbo
 
 #[test]
 fn custom_highlight_paints_the_text_of_a_ruby_annotation() {
-    let (highlights, glyphs) = highlighted_ruby_annotation("display:ruby");
+    let (highlights, glyphs) =
+        highlighted_ruby_annotation("display:block;font-size:20px", "display:ruby");
     assert_eq!(highlights.len(), 1, "{highlights:?}");
     let rect = highlights[0];
     for glyph in &glyphs {
@@ -459,9 +458,28 @@ fn custom_highlight_skips_hidden_text_on_a_line_with_visible_text() {
 }
 
 #[test]
-fn custom_highlight_of_an_inter_character_ruby_annotation_runs_down_its_text() {
+fn custom_highlight_of_a_ruby_annotation_follows_it_in_a_right_to_left_line() {
     let (highlights, glyphs) =
-        highlighted_ruby_annotation("display:ruby;ruby-position:inter-character");
+        highlighted_ruby_annotation("display:block;font-size:20px;direction:rtl", "display:ruby");
+    assert_eq!(highlights.len(), 1, "{highlights:?}");
+    let rect = highlights[0];
+    for glyph in &glyphs {
+        assert!(
+            rect.x0 <= glyph.x + 1e-3
+                && glyph.x < rect.x1
+                && rect.y0 < glyph.y
+                && glyph.y <= rect.y1,
+            "{rect:?} {glyphs:?}"
+        );
+    }
+}
+
+#[test]
+fn custom_highlight_of_an_inter_character_ruby_annotation_runs_down_its_text() {
+    let (highlights, glyphs) = highlighted_ruby_annotation(
+        "display:block;font-size:20px",
+        "display:ruby;ruby-position:inter-character",
+    );
     assert!(!highlights.is_empty());
     let bounds = highlights
         .iter()
