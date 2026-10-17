@@ -149,3 +149,45 @@ fn the_anonymous_table_inherits_border_spacing_from_its_parent() {
     assert_eq!(absolute_rect(&doc, cells[0]), (4.0, 2.0, 10.0, 10.0));
     assert_eq!(absolute_rect(&doc, cells[1]), (18.0, 2.0, 10.0, 10.0));
 }
+
+#[test]
+fn preserved_white_space_beside_rows_keeps_them_blocks() {
+    let doc = laid_out(
+        "font-family:Ahem;font-size:10px;line-height:10px;white-space:pre",
+        |doc, body| {
+            doc.append_text(body, "\n");
+            let row = div(doc, body, "display:table-row");
+            div(doc, row, "display:table-cell;width:10px;height:10px");
+        },
+    );
+    // The newline forms a line, so the inline engine lays the rows out.
+    assert!(doc.table_objects.tables.is_empty());
+}
+
+#[test]
+fn an_empty_row_group_keeps_its_place_across_layout_passes() {
+    use raikiri_style::{build_rule_tree, cascade};
+    let mut doc = Document::new();
+    let html = doc.append_element(Some(0), "html", Style::default(), Some("display:block"));
+    let body = doc.append_element(
+        Some(html),
+        "body",
+        Style::default(),
+        Some("display:block;margin:0;width:200px"),
+    );
+    div(&mut doc, body, "display:block;height:50px");
+    let group = div(&mut doc, body, "display:table-row-group");
+    let row = div(&mut doc, body, "display:table-row");
+    div(&mut doc, row, "display:table-cell;width:10px;height:10px");
+    doc.mark_in_document_flags();
+    let cascade = cascade(&doc, &build_rule_tree(&doc)).unwrap();
+    let mut page = raikiri_traits::PageBox::new();
+    page.width = 200.0;
+    page.height = 200.0;
+    let mut tops = Vec::new();
+    for _ in 0..3 {
+        crate::layout::page_pipeline::layout_pages(&mut doc, &cascade, page).unwrap();
+        tops.push(absolute_rect(&doc, group).1);
+    }
+    assert_eq!(tops, vec![50.0; 3]);
+}

@@ -83,9 +83,6 @@ impl TableObjects {
 
     /// The anonymous table index that wraps the source part `id`.
     pub(crate) fn table_of_part(&self, id: usize) -> Option<usize> {
-        if self.tables.is_empty() {
-            return None;
-        }
         self.table_by_part.get(&id).copied()
     }
 }
@@ -449,7 +446,10 @@ fn holds_only_block_level_boxes(doc: &Document, cascade: &CascadeResult, parent:
         !child_node.is_in_document()
             || child_node.is_non_rendered_html_element()
             || match child_node.kind() {
-                NodeKind::Text => whitespace(doc, Content::Node(child)),
+                // White space that `white-space` preserves forms a line.
+                NodeKind::Text => {
+                    !crate::layout::ifc::assign::text_makes_a_line(doc, cascade, child)
+                }
                 NodeKind::Element => {
                     let display = child_node.display();
                     display == DisplayValue::None
@@ -568,9 +568,16 @@ pub(crate) fn prepare(doc: &mut Document, cascade: &CascadeResult) -> Result<(),
             )
     });
     for id in source_tables.chain(table_keys).collect::<Vec<_>>() {
-        let table_rows = rows(doc, cascade, &mut objects, id, true, &mut 0)?;
-        objects.rows.insert(id, table_rows);
-        objects.prototypes_by_owner.clear();
+        match rows(doc, cascade, &mut objects, id, true, &mut 0) {
+            Ok(table_rows) => {
+                objects.rows.insert(id, table_rows);
+                objects.prototypes_by_owner.clear();
+            }
+            Err(error) => {
+                doc.nodes.set_anonymous_tables(Vec::new());
+                return Err(error);
+            }
+        }
     }
     objects.tables = tables;
     doc.nodes
@@ -706,10 +713,12 @@ impl Document {
     }
 
     /// Source owner of a paragraph, retaining real DOM ids for decorations.
+    /// An anonymous table takes its parent, which it inherits from.
     #[doc(hidden)]
     pub fn ifc_source_owner(&self, key: usize) -> usize {
         match self.nodes.box_key(key) {
             Some(BoxKey::AnonymousCell(index)) => self.table_objects.cells[index].owner,
+            Some(BoxKey::AnonymousTable(index)) => self.table_objects.tables[index].parent,
             _ => key,
         }
     }
@@ -739,6 +748,14 @@ impl Document {
         match self.nodes.box_key(table) {
             Some(BoxKey::AnonymousTable(index)) => self.table_objects.tables[index].parent,
             _ => table,
+        }
+    }
+
+    /// The rows and row groups that the anonymous table `table` wraps.
+    pub(crate) fn anonymous_table_parts(&self, table: usize) -> Option<&[usize]> {
+        match self.nodes.box_key(table) {
+            Some(BoxKey::AnonymousTable(index)) => Some(&self.table_objects.tables[index].parts),
+            _ => None,
         }
     }
 

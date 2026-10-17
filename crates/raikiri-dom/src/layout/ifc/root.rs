@@ -575,6 +575,9 @@ pub(crate) struct RetainedKey {
     pub(crate) node_count: usize,
     pub(crate) continuation_break: Option<(usize, u32)>,
     pub(crate) anonymous_cells: usize,
+    /// Anonymous tables come before the cells among the layout keys, so
+    /// their number moves the cell keys too.
+    pub(crate) anonymous_tables: usize,
 }
 
 /// How a layout pass built its paragraphs.

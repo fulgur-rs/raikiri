@@ -988,6 +988,15 @@ fn position_source_table_parts(
         return;
     }
     let boundary = doc.table_parts_boundary(table);
+    // A part the grid does not place, such as an empty row group, must not
+    // keep a box from an earlier pass as its table-relative box.
+    for part in doc
+        .anonymous_table_parts(table)
+        .unwrap_or_default()
+        .to_vec()
+    {
+        doc.nodes[part].unrounded_layout = TaffyLayout::new();
+    }
     let mut parts: std::collections::HashMap<usize, TaffyLayout> = Default::default();
     let (col_x, row_y) = origins;
     let width = col_x
