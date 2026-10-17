@@ -1467,6 +1467,51 @@ fn stacking_pseudo_elements_paint_over_the_later_text_of_their_paragraph() {
         assert_eq!((reddish, greenish), (200, 100), "{position}");
         assert_same_order(body, &css);
     }
+    // Inside a translucent span, the sticky pseudo-element still forms a
+    // group of its own, which paints after the rest of the span's content.
+    // A `display: contents` one generates no box to form a stacking context
+    // with, so the later span paints over it.
+    for (body, css, expected) in [
+        (
+            "<div><span id=m style=\"opacity: 0.5\"><span style=\"margin-left: -10px; color: lime\">BB</span></span></div>",
+            "#m::before { content: 'AA'; position: sticky; color: red }",
+            (200, 100),
+        ),
+        (
+            "<div id=m><span style=\"margin-left: -10px; color: lime\">BB</span></div>",
+            "#m::before { content: 'AA'; display: contents; position: sticky; color: red }",
+            (100, 200),
+        ),
+    ] {
+        let result = lay_out(body, css);
+        let pixels = render_first_page(&result);
+        let reddish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[0] > p[1] && p[0] > p[2])
+            .count();
+        let greenish = pixels
+            .chunks_exact(4)
+            .filter(|p| p[1] > p[0] && p[1] > p[2])
+            .count();
+        assert_eq!((reddish, greenish), expected, "{css}");
+        // The public order lists the pseudo-element's content last when it
+        // paints over the later span.
+        let page = result.pages().next().expect("a page");
+        let generated: Vec<_> = page
+            .paint_order()
+            .into_iter()
+            .filter_map(|event| match event {
+                PaintEvent::Text(_) => Some(false),
+                PaintEvent::GeneratedBox(_) => Some(true),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            generated,
+            [expected == (100, 200), expected == (200, 100)],
+            "{css}"
+        );
+    }
 }
 
 /// A `display: contents` element forms no stacking context, so the negative

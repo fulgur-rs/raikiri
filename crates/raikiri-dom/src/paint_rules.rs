@@ -1117,15 +1117,26 @@ pub fn inline_stacking_group(
         .find(|&ancestor| !forms_no_inline_stacking_context(document, cascade, ancestor))
     {
         None => level >= 0 && !within_translucent_first_line(document, root, id),
-        Some(context) => {
-            cascade
-                .computed
-                .get(context)
-                .is_some_and(|cv| cv.display.is_inline_flow() && cv.opacity < 1.0)
-                || negative_inline_group(document, cascade, root, context)
-                || inline_stacking_group(document, cascade, root, context)
-        }
+        Some(context) => paints_as_inline_group(document, cascade, root, context),
     }
+}
+
+/// Whether inline element `context` of paragraph `root`, which forms a
+/// stacking context, paints as a group: a translucent one, one that
+/// [`negative_inline_group`] finds, or one that [`inline_stacking_group`]
+/// finds.
+fn paints_as_inline_group(
+    document: &Document,
+    cascade: &CascadeResult,
+    root: usize,
+    context: usize,
+) -> bool {
+    cascade
+        .computed
+        .get(context)
+        .is_some_and(|cv| cv.display.is_inline_flow() && cv.opacity < 1.0)
+        || negative_inline_group(document, cascade, root, context)
+        || inline_stacking_group(document, cascade, root, context)
 }
 
 /// Whether the `::before` or `::after` with generated id `id`, laid out in
@@ -1152,34 +1163,54 @@ pub fn negative_pseudo_group(
 }
 
 /// Whether the `::before` or `::after` with generated id `id`, laid out in
-/// the lines of paragraph `root`, forms a stacking context with a stack
-/// level of zero or more outside every inline box of the paragraph that
-/// forms one, with content beyond the paragraph's translucent first line, if
-/// it has one: a sticky one, which always forms one (CSS Positioned Layout 3
-/// §3.4), or a relatively positioned one with an integer `z-index`.
+/// the lines of paragraph `root`, generates a box that forms a stacking
+/// context with a stack level of zero or more: a sticky one, which always
+/// forms one (CSS Positioned Layout 3 §3.4), or a relatively positioned one
+/// with an integer `z-index`. It paints as a group outside every inline box
+/// of the paragraph that forms a stacking context, beyond the paragraph's
+/// translucent first line, if it has one, or inside an inline element of
+/// the paragraph that forms one and paints as a group (a translucent one,
+/// one that [`negative_inline_group`] finds, or one that
+/// [`inline_stacking_group`] finds).
 ///
 /// Like the elements [`inline_stacking_group`] finds, its boxes, images and
-/// text paint as a group after the rest of the paragraph's inline content
-/// (CSS 2.1 Appendix E steps 8 and 9).
+/// text paint as a group after the rest of the inline content of the
+/// enclosing stacking context (CSS 2.1 Appendix E steps 8 and 9).
 pub fn pseudo_stacking_group(
     document: &Document,
     cascade: &CascadeResult,
     root: usize,
     id: usize,
 ) -> bool {
-    crate::generated_content::generated_origin(id).is_some_and(|(element, pseudo)| {
-        matches!(pseudo, PseudoElem::Before | PseudoElem::After)
-            && crate::generated_content::computed_for_id(cascade, id).is_some_and(|cv| {
-                match cv.position {
-                    PositionValue::Sticky => true,
-                    PositionValue::Relative => matches!(cv.z_index, ZIndexValue::Integer(_)),
-                    _ => false,
-                }
+    let Some((element, _)) = crate::generated_content::generated_origin(id)
+        .filter(|&(_, pseudo)| matches!(pseudo, PseudoElem::Before | PseudoElem::After))
+        .filter(|_| {
+            crate::generated_content::computed_for_id(cascade, id).is_some_and(|cv| {
+                // A `display: contents` pseudo-element generates no box to
+                // form a stacking context with (CSS Display 3 §2.5).
+                cv.display != DisplayValue::Contents
+                    && match cv.position {
+                        PositionValue::Sticky => true,
+                        PositionValue::Relative => {
+                            matches!(cv.z_index, ZIndexValue::Integer(_))
+                        }
+                        _ => false,
+                    }
             })
-            && pseudo_stack_level(cascade, id) >= 0
-            && outside_inline_stacking_contexts(document, cascade, root, element)
-            && !within_translucent_first_line(document, root, id)
-    })
+        })
+        .filter(|_| pseudo_stack_level(cascade, id) >= 0)
+    else {
+        return false;
+    };
+    let owner = document.ifc_source_owner(root);
+    match document
+        .inclusive_ancestors(element)
+        .take_while(|&ancestor| ancestor != root && ancestor != owner)
+        .find(|&ancestor| !forms_no_inline_stacking_context(document, cascade, ancestor))
+    {
+        None => !within_translucent_first_line(document, root, id),
+        Some(context) => paints_as_inline_group(document, cascade, root, context),
+    }
 }
 
 /// Whether `start` and the elements around it, up to paragraph `root`, are
