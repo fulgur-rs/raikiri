@@ -4804,14 +4804,8 @@ fn paginate_flow(
                 // candidate itself underflows into the preceding page.
                 let node_delta = node_target_y - effective_y;
                 let shift_delta = target_y - effective_y;
-                let row_flex_break_before = forced_before
-                    && document.parent_of(node_id).is_some_and(|parent_id| {
-                        document.nodes[parent_id].formatting_context == FormattingContext::Flex
-                            && matches!(
-                                cascade.computed[parent_id].flex_direction,
-                                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
-                            )
-                    });
+                let row_flex_break_before =
+                    forced_before && in_row_flex_container(document, cascade, node_id);
                 if node_delta.is_finite() && shift_delta.is_finite() {
                     document.nodes[node_id].unrounded_layout.location.y += node_delta;
                     follow_moved_ifc_block(document, node_id, node_delta);
@@ -4849,59 +4843,20 @@ fn paginate_flow(
                         // only the boxes after it in block flow follow it,
                         // up to the first ancestor that does not stack its
                         // children in block order.
-                        // A `display: contents` ancestor has no box; its
-                        // parent lays the moved box out among its siblings.
                         // A box pulled back over the break by a negative
                         // margin still leaves the flow after it at the break.
-                        // A paragraph's content after a block on its lines
-                        // follows the same way, also when the moved box sits
-                        // deeper inside that block.
-                        let flow_delta = node_delta.max(shift_delta);
-                        let mut child = node_id;
-                        let mut next = document.parent_of(node_id);
-                        while let Some(parent) = next
-                            && parent != body_id
-                        {
-                            next = document.parent_of(parent);
-                            if document.nodes[parent].display() == DisplayValue::Contents {
-                                continue;
-                            }
-                            let paragraph = ifc_paragraph_of_block(document, child) == Some(parent);
-                            if !paragraph && !stacks_children_in_block_flow(document, parent) {
-                                break;
-                            }
-                            // The moved box itself already took the lines
-                            // after it along.
-                            if paragraph && child != node_id {
-                                let layout = document.nodes[child].unrounded_layout;
-                                let top = layout.location.y;
-                                follow_ifc_block(
-                                    document,
-                                    parent,
-                                    child,
-                                    top,
-                                    top + layout.size.height,
-                                    flow_delta,
-                                );
-                            }
-                            shift_later_block_siblings(document, parent, child, flow_delta);
-                            child = parent;
-                        }
+                        shift_block_flow_after(
+                            document,
+                            node_id,
+                            body_id,
+                            node_delta.max(shift_delta),
+                        );
                     }
                     // A forced break on one wrapped row-flex item belongs to
                     // its whole flex line. Move same-line siblings together;
                     // other lines keep their existing flow coordinates.
                     if row_flex_break_before && let Some(parent_id) = document.parent_of(node_id) {
-                        let siblings = document.nodes[parent_id].children.clone();
-                        for sibling_id in siblings {
-                            if sibling_id == node_id {
-                                continue;
-                            }
-                            let sibling_raw_y = current_abs_y(document, sibling_id);
-                            if (sibling_raw_y - raw_y).abs() <= 0.001 {
-                                materialize_y(document, sibling_id, sibling_raw_y + shift_delta);
-                            }
-                        }
+                        move_flex_line_siblings(document, parent_id, node_id, raw_y, shift_delta);
                     }
                     if node_target_y < target_y {
                         flow_shift += node_delta;
@@ -8073,6 +8028,85 @@ fn collapses_with_previous_block(
         && !candidate.is_flex_item
         && !candidate.is_grid_item
         && participates_in_margin_adjacency
+}
+
+/// Moves the boxes after `node_id` in block flow down by `flow_delta`, up to
+/// the first ancestor below `body_id` that does not stack its children in
+/// block order.
+///
+/// A `display: contents` ancestor has no box; its parent lays the moved box
+/// out among its siblings. A paragraph's content after a block on its lines
+/// follows the same way, also when the moved box sits deeper inside that
+/// block.
+fn shift_block_flow_after(
+    document: &mut Document,
+    node_id: usize,
+    body_id: usize,
+    flow_delta: f32,
+) {
+    let mut child = node_id;
+    let mut next = document.parent_of(node_id);
+    while let Some(parent) = next
+        && parent != body_id
+    {
+        next = document.parent_of(parent);
+        if document.nodes[parent].display() == DisplayValue::Contents {
+            continue;
+        }
+        let paragraph = ifc_paragraph_of_block(document, child) == Some(parent);
+        if !paragraph && !stacks_children_in_block_flow(document, parent) {
+            break;
+        }
+        // The moved box itself already took the lines after it along.
+        if paragraph && child != node_id {
+            let layout = document.nodes[child].unrounded_layout;
+            let top = layout.location.y;
+            follow_ifc_block(
+                document,
+                parent,
+                child,
+                top,
+                top + layout.size.height,
+                flow_delta,
+            );
+        }
+        shift_later_block_siblings(document, parent, child, flow_delta);
+        child = parent;
+    }
+}
+
+/// Whether the parent of `node_id` is a flex container whose main axis is
+/// the inline axis, so its items sit side by side on flex lines.
+fn in_row_flex_container(document: &Document, cascade: &CascadeResult, node_id: usize) -> bool {
+    document.parent_of(node_id).is_some_and(|parent_id| {
+        document.nodes[parent_id].formatting_context == FormattingContext::Flex
+            && matches!(
+                cascade.computed[parent_id].flex_direction,
+                FlexDirectionValue::Row | FlexDirectionValue::RowReverse
+            )
+    })
+}
+
+/// Moves the siblings of `node_id` in `parent_id` that start at its raw
+/// position `raw_y` down by `shift_delta`, taking them as the other items on
+/// its flex line. Every other sibling keeps its flow coordinates.
+fn move_flex_line_siblings(
+    document: &mut Document,
+    parent_id: usize,
+    node_id: usize,
+    raw_y: f32,
+    shift_delta: f32,
+) {
+    let siblings = document.nodes[parent_id].children.clone();
+    for sibling_id in siblings {
+        if sibling_id == node_id {
+            continue;
+        }
+        let sibling_raw_y = current_abs_y(document, sibling_id);
+        if (sibling_raw_y - raw_y).abs() <= 0.001 {
+            materialize_y(document, sibling_id, sibling_raw_y + shift_delta);
+        }
+    }
 }
 
 /// Whether `display` makes a block-level box in the normal flow, whose
