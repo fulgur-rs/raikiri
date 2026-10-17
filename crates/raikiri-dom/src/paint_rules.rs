@@ -203,9 +203,10 @@ pub(crate) struct OverflowClipGeometry {
 }
 
 impl OverflowClipGeometry {
-    /// The clip edge is the padding box, except that an `overflow: clip`
-    /// axis clips at the overflow clip edge: the box and outset that
-    /// `overflow-clip-margin` names (CSS Overflow 4 §3.2). On a `replaced`
+    /// An `overflow: clip` axis clips at the overflow clip edge: the box and
+    /// outset that `overflow-clip-margin` names (CSS Overflow 4 §3.2). A
+    /// scroll container axis clips at the padding box, or at a `padding-box` or
+    /// `content-box` edge that lies inside it. On a `replaced`
     /// element every non-`visible` axis is used as `clip` (CSS Overflow 4
     /// §3.1), and an omitted box is the content box.
     pub(crate) fn new(
@@ -238,29 +239,21 @@ impl OverflowClipGeometry {
             };
             inset - margin.offset.px()
         };
-        let clips_x = overflow.x == OverflowValue::Clip;
-        let clips_y = overflow.y == OverflowValue::Clip;
+        // A `clip` axis uses the overflow clip edge as is. A scroll container
+        // axis keeps it within the padding box: a `border-box` value is
+        // ignored with its offset, and an outward offset stops at the padding
+        // box (CSS Overflow 3 §3.2).
+        let edge = |overflow, border: f32, padding: f32| match overflow {
+            OverflowValue::Clip => margin_edge(border, padding),
+            OverflowValue::Visible => border,
+            _ if visual_box == VisualBox::BorderBox => border,
+            _ => margin_edge(border, padding).max(border),
+        };
         let edges = PaintInsets::new(
-            if clips_y {
-                margin_edge(border.top, padding.top)
-            } else {
-                border.top
-            },
-            if clips_x {
-                margin_edge(border.right, padding.right)
-            } else {
-                border.right
-            },
-            if clips_y {
-                margin_edge(border.bottom, padding.bottom)
-            } else {
-                border.bottom
-            },
-            if clips_x {
-                margin_edge(border.left, padding.left)
-            } else {
-                border.left
-            },
+            edge(overflow.y, border.top, padding.top),
+            edge(overflow.x, border.right, padding.right),
+            edge(overflow.y, border.bottom, padding.bottom),
+            edge(overflow.x, border.left, padding.left),
         );
         let corner_radii =
             if overflow.x != OverflowValue::Visible && overflow.y != OverflowValue::Visible {

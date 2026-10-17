@@ -4748,6 +4748,9 @@ css/css-overflow/overflow-clip-margin-014.html
 css/css-overflow/overflow-clip-margin-015.html
 css/css-overflow/overflow-clip-margin-016.html
 css/css-overflow/overflow-clip-margin-017.html
+css/css-overflow/overflow-clip-margin-018.html
+css/css-overflow/overflow-clip-margin-019.html
+css/css-overflow/overflow-clip-margin-020.html
 css/css-overflow/overflow-clip-margin-021.html
 css/css-overflow/overflow-clip-margin-022.html
 css/css-overflow/overflow-clip-margin-border-radius-002.html

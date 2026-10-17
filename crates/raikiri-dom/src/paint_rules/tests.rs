@@ -729,3 +729,47 @@ fn a_replaced_element_clips_every_hidden_axis_from_its_content_box() {
     assert_eq!(clip.rect, PaintRect::new(2.0, 22.0, 116.0, 46.0));
     assert!(clip.clip_x && !clip.clip_y);
 }
+
+#[test]
+fn a_scroll_container_applies_only_an_inward_clip_margin() {
+    let mut doc = Document::new();
+    let inward = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:hidden;overflow-clip-margin:content-box"),
+    );
+    let outward = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:auto;overflow-clip-margin:10px"),
+    );
+    let border_box_value = doc.append_element(
+        Some(doc.root_index()),
+        "div",
+        Style::default(),
+        Some("display:block;overflow:hidden;overflow-clip-margin:border-box -10px"),
+    );
+    doc.mark_in_document_flags();
+    for node in [inward, outward, border_box_value] {
+        doc.nodes[node].unrounded_layout.padding = taffy::Rect {
+            left: 3.0,
+            right: 3.0,
+            top: 3.0,
+            bottom: 3.0,
+        };
+    }
+    let cascade = cascaded(&doc);
+    let border_box = PaintRect::new(10.0, 20.0, 100.0, 50.0);
+    let border = PaintInsets::new(2.0, 2.0, 2.0, 2.0);
+    // The content box lies inside the padding box, so it clips there.
+    let clip = overflow_clip(&doc, &cascade, inward, border_box, border).unwrap();
+    assert_eq!(clip.rect, PaintRect::new(15.0, 25.0, 90.0, 40.0));
+    // An outward margin stays at the padding box.
+    let clip = overflow_clip(&doc, &cascade, outward, border_box, border).unwrap();
+    assert_eq!(clip.rect, PaintRect::new(12.0, 22.0, 96.0, 46.0));
+    // A `border-box` value is ignored, offset included.
+    let clip = overflow_clip(&doc, &cascade, border_box_value, border_box, border).unwrap();
+    assert_eq!(clip.rect, PaintRect::new(12.0, 22.0, 96.0, 46.0));
+}
