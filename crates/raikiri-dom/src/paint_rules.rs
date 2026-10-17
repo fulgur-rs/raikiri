@@ -160,7 +160,8 @@ pub fn overflow_clip(
 /// padding. Each clipping axis clips at the overflow clip edge, the content
 /// box under the UA default `overflow-clip-margin: content-box`; a visible
 /// axis lets the content paint outside its box (CSS Overflow 3 §3.1). The
-/// edges are not snapped, so the content keeps its exact placement.
+/// edges snap like [`overflow_clip`], whose clip the page paint order puts
+/// around the same content.
 pub fn replaced_content_clip(
     cv: &ComputedValues,
     border_box: PaintRect,
@@ -170,7 +171,7 @@ pub fn replaced_content_clip(
     if cv.overflow.x == OverflowValue::Visible && cv.overflow.y == OverflowValue::Visible {
         return None;
     }
-    Some(OverflowClipGeometry::new(cv, border_box, border, padding).clip(border_box, false))
+    Some(OverflowClipGeometry::new(cv, border_box, border, padding).at(border_box))
 }
 
 /// Position-independent clip geometry shared by every placement of a source.
@@ -256,24 +257,17 @@ impl OverflowClipGeometry {
 
     /// Snap edges only after translating the whole border box to its page.
     pub(crate) fn at(self, border_box: PaintRect) -> PaintClip {
-        self.clip(border_box, true)
-    }
-
-    /// The clip of `border_box`. With `snap`, the origin and an
-    /// `overflow: clip` far edge are floored.
-    fn clip(self, border_box: PaintRect, snap: bool) -> PaintClip {
-        let floor = |value: f32| if snap { value.floor() } else { value };
-        let x0 = floor(border_box.x + self.edges.left);
-        let y0 = floor(border_box.y + self.edges.top);
+        let x0 = (border_box.x + self.edges.left).floor();
+        let y0 = (border_box.y + self.edges.top).floor();
         let right = border_box.x + border_box.width - self.edges.right;
         let bottom = border_box.y + border_box.height - self.edges.bottom;
         let x1 = if self.overflow.x == OverflowValue::Clip {
-            floor(right)
+            right.floor()
         } else {
             right
         };
         let y1 = if self.overflow.y == OverflowValue::Clip {
-            floor(bottom)
+            bottom.floor()
         } else {
             bottom
         };

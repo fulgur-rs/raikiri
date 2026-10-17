@@ -654,7 +654,7 @@ fn overflow_clip_margin_reshapes_the_corners_from_the_border_edge() {
 }
 
 #[test]
-fn replaced_content_clip_follows_overflow_per_axis_without_snapping() {
+fn replaced_content_clip_follows_overflow_per_axis() {
     let mut doc = Document::new();
     let visible = doc.append_element(
         Some(doc.root_index()),
@@ -686,7 +686,8 @@ fn replaced_content_clip_follows_overflow_per_axis_without_snapping() {
     );
     let clip =
         replaced_content_clip(&cascade.computed[clipped], border_box, border, padding).unwrap();
-    assert_eq!(clip.rect, PaintRect::new(3.5, 3.25, 34.0, 24.0));
+    // The origin and the far edges of the clipping axes snap down.
+    assert_eq!(clip.rect, PaintRect::new(3.0, 3.0, 34.0, 24.0));
     assert!(clip.clip_x && clip.clip_y);
     let clip =
         replaced_content_clip(&cascade.computed[block_only], border_box, border, padding).unwrap();
