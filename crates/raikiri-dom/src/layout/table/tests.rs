@@ -56,7 +56,7 @@ fn place_cells_in_session(
     document: &mut Document,
     grid: &mut super::TableGrid,
     column_widths: &[f32],
-    row_tracks: (&[f32], &[f32]),
+    row_tracks: (&[f32], &[f32], &[bool]),
     origins: (&[f32], &[f32]),
     spacing: (f32, f32),
     vertical_writing: bool,
