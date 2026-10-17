@@ -12195,6 +12195,17 @@ fn repeated_header_table_grows_over_anonymous_cells_on_later_pages() {
 /// `html > body(margin:0)` built by `build`, laid out on 100px-square pages.
 /// Returns the document and its page count.
 fn paged_body(build: impl FnOnce(&mut Document, usize)) -> (Document, usize) {
+    paged_body_impl(build, false)
+}
+
+fn paged_body_with_ifc(build: impl FnOnce(&mut Document, usize)) -> (Document, usize) {
+    paged_body_impl(build, true)
+}
+
+fn paged_body_impl(
+    build: impl FnOnce(&mut Document, usize),
+    enable_ifc: bool,
+) -> (Document, usize) {
     use raikiri_style::{build_rule_tree, cascade};
     use raikiri_traits::PageBox;
 
@@ -12210,6 +12221,9 @@ fn paged_body(build: impl FnOnce(&mut Document, usize)) -> (Document, usize) {
     doc.mark_in_document_flags();
     let rules = build_rule_tree(&doc);
     let cascade = cascade(&doc, &rules).unwrap();
+    if enable_ifc {
+        crate::layout::test_support::with_ahem(&mut doc);
+    }
     let mut page = PageBox::new();
     page.width = 100.0;
     page.height = 100.0;
