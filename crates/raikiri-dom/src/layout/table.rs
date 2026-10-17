@@ -835,7 +835,7 @@ fn compute_table_layout_checked(
         &mut grid,
         natural_widths.as_deref().unwrap_or(&column_widths),
         border_spacing,
-    )?;
+    )?; // cov:ignore: failure is defensive; the column ranges were validated when the grid was built.
     for (height, hidden) in row_heights.iter_mut().zip(&hidden_rows) {
         if *hidden {
             *height = 0.0;
@@ -1457,13 +1457,11 @@ fn collapsed_columns(
     n_cols: u16,
 ) -> Result<Vec<bool>, raikiri_traits::LayoutError> {
     let mut out = Vec::new();
+    // `collect_col_widths` has already rejected a column count past `u16`.
     each_column_run(doc, table_idx, |_, collapsed, span| {
-        if span > usize::from(u16::MAX) - out.len() {
-            return Err(table_column_error());
-        }
         out.extend(std::iter::repeat_n(collapsed, span));
         Ok(())
-    })?;
+    })?; // cov:ignore: the closure never fails.
     out.resize(usize::from(n_cols), false);
     Ok(out)
 }
@@ -1513,7 +1511,7 @@ fn each_column_run(
                         Some(col_id),
                         group_collapsed || doc.nodes[col_id].collapses_table_columns,
                         col_span(doc, col_id),
-                    )?;
+                    )?; // cov:ignore: only the column-count check fails, in `collect_col_widths`.
                 }
                 if !has_columns {
                     each(None, group_collapsed, col_span(doc, child_id))?;

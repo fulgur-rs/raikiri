@@ -222,6 +222,20 @@ fn a_column_group_collapses_its_columns() {
 }
 
 #[test]
+fn a_column_group_ignores_children_that_are_not_columns() {
+    let fixture = table_with(
+        SEPARATE,
+        &[Column::Group(GROUP, vec![COL, "display:block"])],
+        &[30.0, 40.0],
+        1,
+        None,
+        "",
+    );
+    // The stray child is no column, so only the first column has a box.
+    assert_eq!(table_size(&fixture).0, 10.0 + 30.0 + 10.0 + 40.0 + 10.0);
+}
+
+#[test]
 fn a_column_group_without_columns_stands_for_its_span() {
     let fixture = table_with(
         SEPARATE,
